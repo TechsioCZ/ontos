@@ -53,6 +53,18 @@ const handleMutateAgentProposals = Effect.fn('MutateAgentProposalsAction.handle'
 
 export const mutateAgentProposalsAction = defineAction(
   {
+    // The agent-proposal transport itself is routine: an agent may run it because its authority is
+    // derived per proposed Action inside the preflight (the target Action's own `propose`/`execute`
+    // answer), never from this carrier. The `oauth_connection` policy narrows an approval connection to
+    // inserting its own proposals, and lifecycle administration is checked separately (O14, O22, O43).
+    accessDeclaration: {
+      key: 'core.identity.agent-proposal.mutate',
+      kind: 'action',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'extended' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'core.identity.mutate-agent-proposals.access.v1',
@@ -64,7 +76,7 @@ export const mutateAgentProposalsAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.mutate-agent-proposals',
       moduleKey: 'core.identity',
       role: 'action',

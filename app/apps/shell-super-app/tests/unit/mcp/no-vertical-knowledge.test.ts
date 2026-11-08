@@ -75,7 +75,10 @@ const verticals = readdirSync(verticalsRoot).flatMap((directory) => {
 const escapeRegex = (value: string): string => value.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
 
 const patterns = verticals.flatMap(({ appId, moduleId }) => [
-  { id: appId, pattern: new RegExp(`['"\`/]${escapeRegex(appId)}['"\`/]`, 'u') },
+  {
+    id: appId,
+    pattern: new RegExp(`(?:['"\`]${escapeRegex(appId)}['"\`]|(?:@app/|verticals/)${escapeRegex(appId)}['"\`/])`, 'u'),
+  },
   ...(moduleId === undefined ? [] : [{ id: moduleId, pattern: new RegExp(escapeRegex(moduleId), 'u') }]),
 ]);
 
@@ -193,6 +196,27 @@ it('still scans runtime literals and module ids after the permitted import witho
 it('does not permit another vertical descriptor at the enrollment root', () => {
   const source = "import { INVENTORY_DATABASE_IDENTITY_DESCRIPTOR } from '@app/inventory/database-identities';";
   expect(verticalKnowledgeIn(ENROLLMENT_ROOT, source)).toEqual([`${ENROLLMENT_ROOT}:1 names inventory`]);
+});
+
+it('allows Core-local catalog imports without confusing their directory with a vertical app', () => {
+  const file = 'packages/core-runtime/src/access/example.ts';
+  expect(verticalKnowledgeIn(file, "import { CatalogSnapshot } from './catalog/index.ts';")).toEqual([]);
+  expect(verticalKnowledgeIn(file, "import { CatalogSnapshot } from '../catalog/queries.ts';")).toEqual([]);
+});
+
+it('still rejects vertical package and relative workspace imports with the same catalog directory name', () => {
+  const file = 'packages/core-runtime/src/access/example.ts';
+  expect(verticalKnowledgeIn(file, "import { catalog } from '@app/catalog';")).toEqual([`${file}:1 names catalog`]);
+  expect(verticalKnowledgeIn(file, "import { catalog } from '../../../../verticals/catalog/src/index.ts';")).toEqual([
+    `${file}:1 names catalog`,
+  ]);
+});
+
+it('rejects a domain workload literal inside a generic Core enrollment schema', () => {
+  const file = 'packages/core-runtime/src/install/example.ts';
+  expect(verticalKnowledgeIn(file, "const workloads = new Set(['demo.crm.party-intake']);")).toEqual([
+    `${file}:1 names demo.crm`,
+  ]);
 });
 
 it('keeps Core and the whole Shell platform free of vertical ids', () => {

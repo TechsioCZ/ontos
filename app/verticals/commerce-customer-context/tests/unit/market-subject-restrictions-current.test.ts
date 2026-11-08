@@ -6,8 +6,8 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { MarketSubjectRestrictionsCurrentRequestSchema } from '../../shared/apis/market-subject-restrictions-current.ts';
 import {
-  marketSubjectRestrictionsCurrentPermissionTarget,
   readCurrentMarketSubjectRestrictionsFromServices,
+  marketSubjectRestrictionsCurrentRead,
 } from '../../src/api/market-subject-restrictions-current.read.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -145,22 +145,11 @@ describe('Current Market subject restrictions owner read', () => {
       expect(denied).toMatchObject({ decision: 'DENIED', outcome: 'SUBJECT_RESTRICTIONS_CURRENT' });
     }),
   );
+});
 
-  it('authorizes against exact Retail Profile or Counterparty owner targets', () => {
-    const retail = Schema.decodeUnknownSync(MarketSubjectRestrictionsCurrentRequestSchema)({
-      subject: { kind: 'RETAIL_PROFILE', profileRef: retailProfileRef },
-    });
-    const counterparty = Schema.decodeUnknownSync(MarketSubjectRestrictionsCurrentRequestSchema)({
-      subject: { counterpartyRef, kind: 'COUNTERPARTY', profileRef: counterpartyProfileRef },
-    });
-    expect(marketSubjectRestrictionsCurrentPermissionTarget(retail, operationalScope)).toMatchObject({
-      businessPermission: { permission: 'retail.profile.read', target: { profileId: retailProfileRef.resourceId } },
-    });
-    expect(marketSubjectRestrictionsCurrentPermissionTarget(counterparty, operationalScope)).toMatchObject({
-      businessPermission: {
-        permission: 'counterparty.profile.read',
-        target: { counterpartyId: counterpartyRef.resourceId },
-      },
-    });
+it('declares the Commerce Market Catalog subject-restriction caller with an identity subject', () => {
+  expect(marketSubjectRestrictionsCurrentRead.descriptor.accessActor).toMatchObject({
+    callers: ['commerce-market-catalog'],
+    subject: 'identity',
   });
 });

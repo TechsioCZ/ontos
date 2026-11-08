@@ -12,6 +12,7 @@ import type {
 } from '@app/core-runtime';
 import { makeGovernedReadHttpHandler } from '@app/core-runtime/http/governed-read';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
+import { taxRegistration } from '../../vertical.registration.ts';
 import { NodeCrypto } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { makeGovernedReadProblems } from '@app/shared-contracts/server/effect-bff-runtime';
@@ -147,6 +148,7 @@ const evaluationHttp = Effect.fn('ImportedNonPayerTest.evaluationHttp')(function
   scope: OperationalScope,
 ) {
   const harness = yield* makeReadTestHarness({
+    access: 'allowed',
     executeOwnerQuery: (query) =>
       runtimeClient.withTransaction(
         runtimeClient
@@ -161,7 +163,7 @@ const evaluationHttp = Effect.fn('ImportedNonPayerTest.evaluationHttp')(function
       ),
     operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-02-01T00:00:00.000Z')),
     ownerAuthorizationDecision: 'allowed',
-    permissionDecision: 'allowed',
+    ownerRegistration: taxRegistration,
     scope,
   });
   const builtContext = yield* Layer.build(harness.layer);

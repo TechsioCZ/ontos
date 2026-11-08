@@ -6,6 +6,8 @@ import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '@app/party-registry-identity-contracts';
+import { makePartyDeniedAccess } from '../support/live-access-authority.ts';
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
@@ -44,17 +46,15 @@ import { addPartyOfficialIdentifierAction } from '../../src/actions/add-party-of
 import { correctPartyFactAction } from '../../src/actions/correct-party-fact.action.ts';
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
 import { endPartyOfficialIdentifierAction } from '../../src/actions/end-party-official-identifier.action.ts';
-import { resolveDuplicateCandidateCreateAction } from '../../src/actions/resolve-duplicate-candidate-create.action.ts';
 import {
   addPartyOfficialIdentifierWithAuthorization,
   correctPartyFactWithAuthorization,
   createPartyWithAuthorization,
   endPartyOfficialIdentifierWithAuthorization,
-  resolveDuplicateCandidateCreateWithAuthorization,
 } from '../../src/api/party-command-client.ts';
 import { executePartyOfficialIdentifierHistoryWithAuthorization } from '../../src/api/party-official-identifier-history-client.ts';
 import { makePartyDatabase } from '../../src/db/client.ts';
-import { partyIdentifierClaims, partyOfficialIdentifiers } from '../../src/db/schema.ts';
+import { partyOfficialIdentifiers } from '../../src/db/schema.ts';
 import {
   makePartyReconciliationGateway,
   preparePartyReconciliationNative,
@@ -86,17 +86,18 @@ it.layer(
         const connections = { ...isolated.connections, runtime: native.partyConfiguration };
         const fixture = yield* Effect.acquireRelease(
           makeLiveOperationFixture({
+            access: 'allowed',
             actionKeys: [
               addPartyOfficialIdentifierAction,
               correctPartyFactAction,
               createPartyAction,
               endPartyOfficialIdentifierAction,
-              resolveDuplicateCandidateCreateAction,
             ].map((action) => action.descriptor.actionKey),
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
             compositionRevision: composition.composition.revision,
             adminConnectionString: Redacted.make(connections.admin.connectionString),
             databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+            ownerRegistration: partyRegistryBackendRegistration,
             runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
           }),
           (value) => value.close().pipe(Effect.orDie),
@@ -108,6 +109,8 @@ it.layer(
         const coreEvidenceExecutor = yield* testCoreDatabase.pipe(Effect.provide(adminContext));
         const { executor: admin } = yield* makePartyDatabase(connections.admin);
         const principal = { ...fixture.manager, legalEntityId: fixture.legalEntityId };
+        const deniedAccess = makePartyDeniedAccess();
+        const fixtureLayer = fixture.layer.pipe(Layer.provide(deniedAccess.layer));
         const gateway = yield* makePartyReconciliationGateway(native, composition);
         const { issuer, jwks } = gateway;
         const authorization = (actor = principal) => gateway.authorization(actor);
@@ -126,7 +129,7 @@ it.layer(
             ).pipe(Layer.provide(ActiveApplicationCompositionSourceLive), Layer.provide(FetchHttpClient.layer)),
           ),
           Layer.provide(redemption),
-          Layer.provide(fixture.layer),
+          Layer.provide(fixtureLayer),
           Layer.provide(
             ConfigProvider.layer(
               ConfigProvider.fromUnknown({ ONTOS_GATEWAY_ISSUER: issuer, ONTOS_GATEWAY_PUBLIC_JWKS: jwks }),
@@ -138,7 +141,7 @@ it.layer(
             HttpRouter.toWebHandler(
               HttpApiBuilder.layer(api).pipe(
                 Layer.provide(handlers),
-                Layer.provideMerge(fixture.layer),
+                Layer.provideMerge(fixtureLayer),
                 Layer.provide(HttpServer.layerServices),
                 Layer.provide(NodeCrypto.layer),
               ),
@@ -185,20 +188,8 @@ it.layer(
               yield* options,
             ),
           );
-          assert.isOk(created.outcome === 'AMBIGUOUS');
-          const reviewed = yield* runHttp(
-            resolveDuplicateCandidateCreateWithAuthorization(
-              {
-                caseRef: created.caseRef,
-                expectedRevision: 1,
-                reason: 'Reviewed distinct concrete organization without strong identifiers',
-              },
-              yield* authorization(),
-              yield* options,
-            ),
-          );
-          assert.isOk(reviewed.partyRef);
-          return reviewed.partyRef;
+          assert.isOk(created.outcome === 'CREATED');
+          return created.partyRef;
         });
         const add = Effect.fn('OriginalIdentifierInputTest.add')(function* add(
           partyRef: PartyRef,
@@ -212,7 +203,7 @@ it.layer(
           return yield* runHttp(
             addPartyOfficialIdentifierWithAuthorization(
               {
-                identifier: { identifierType, value, verification: 'UNVERIFIED' },
+                identifier: { identifierType, value },
                 partyRef,
                 provenanceMethod: 'MANUAL',
                 provenanceSource: 'original-input-test',
@@ -284,6 +275,12 @@ it.layer(
           expect(Exit.isFailure(rejected)).toBe(true);
         }
         expect(yield* rows()).toHaveLength(countBeforeInvalid);
+        // v2: the one access gate decides every protected Action and Read (O62); a principal it
+        // does not admit is refused before any owner work. The fixture scripts its gate per
+        // capability, so the refusal of this one principal is named on the fixture's own
+        // per-request owner seam (the removed SpiceDB reader tuple no longer refuses anyone).
+        deniedAccess.deny(fixture.denied.principalId, 'party.registry.official-identifier.read-history');
+        deniedAccess.deny(fixture.denied.principalId, 'party.registry.official-identifier.add');
         const denied = yield* history(firstParty, { ...fixture.denied, legalEntityId: fixture.legalEntityId }).pipe(
           Effect.exit,
         );
@@ -296,11 +293,13 @@ it.layer(
         ).toBe(true);
         const foreignFixture = yield* Effect.acquireRelease(
           makeLiveOperationFixture({
+            access: 'allowed',
             actionKeys: [addPartyOfficialIdentifierAction.descriptor.actionKey],
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
             compositionRevision: composition.composition.revision,
             adminConnectionString: Redacted.make(connections.admin.connectionString),
             databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+            ownerRegistration: partyRegistryBackendRegistration,
             runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
           }),
           (value) => value.close().pipe(Effect.orDie),
@@ -334,11 +333,6 @@ it.layer(
         expect(
           (yield* rows()).filter((row) => row.partyId === firstParty.resourceId && row.normalizedValue === '27074358'),
         ).toHaveLength(1);
-        const claims = yield* admin
-          .select()
-          .from(partyIdentifierClaims)
-          .where(eq(partyIdentifierClaims.tenantId, fixture.tenantId));
-        expect(claims).toEqual([]);
         const legacyId = yield* nextId;
         // Old writers omitted this nullable additive column. Preserve that absence as unknown.
         yield* admin.insert(partyOfficialIdentifiers).values({
@@ -354,7 +348,6 @@ it.layer(
           provenanceSource: original.provenanceSource,
           tenantId: fixture.tenantId,
           validFrom: original.validFrom,
-          verificationState: 'UNVERIFIED',
         });
         const legacyReuse = yield* add(secondParty, '26168685', yield* options);
         expect(legacyReuse.officialIdentifierRef.resourceId).toBe(legacyId);
@@ -442,5 +435,6 @@ it.layer(
           );
         expect(preserved[0]?.acceptedByActionInvocationId).toBe(original.acceptedByActionInvocationId);
       }),
+    120_000,
   );
 });

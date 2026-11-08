@@ -5,27 +5,18 @@ import {
   DeliveryDestinationResolutionRequestSchema,
   DeliveryDestinationResolutionResponseSchema,
 } from '../../shared/apis/delivery-destination-resolution.ts';
-import type { DeliveryDestinationResolutionRequest } from '../../shared/apis/delivery-destination-resolution.ts';
 import { resolveDeliveryDestination } from '../../shared/domain/destination-resolution.ts';
 import { deliveryDestinationReadServiceFactory } from './address-read-support.ts';
-import {
-  makePurchaseResolutionPermission,
-  makePurchaseResolutionReadHandler,
-} from './purchase-resolution-read-support.ts';
+import { makePurchaseResolutionReadHandler, purchaseResolutionOwnerFacts } from './purchase-resolution-read-support.ts';
 
 const moduleKey = 'commerce.customer-context' as const;
 const deliveryDestinationResolutionEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.delivery-destination-resolution',
   moduleKey,
   role: 'api',
 });
-
-const deliveryDestinationResolutionPermission = makePurchaseResolutionPermission(
-  (input: DeliveryDestinationResolutionRequest) =>
-    input.explicitChoice?.kind === 'SAVED_ADDRESS' ? input.explicitChoice.savedAddressRef : undefined,
-);
 
 const handleDeliveryDestinationResolution = makePurchaseResolutionReadHandler({
   effectName: 'DeliveryDestinationResolutionRead.handle',
@@ -35,7 +26,16 @@ const handleDeliveryDestinationResolution = makePurchaseResolutionReadHandler({
 
 export const deliveryDestinationResolutionRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.delivery-destination.resolve',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'address-book', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
+    accessOwnerFacts: purchaseResolutionOwnerFacts,
     entrypoint: deliveryDestinationResolutionEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',
@@ -44,7 +44,6 @@ export const deliveryDestinationResolutionRead = defineRead(
     inputSchema: DeliveryDestinationResolutionRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'conditional',
     policies: [],
     readKey: 'commerce.customer-context.api.delivery-destination-resolution',
     resultSchema: DeliveryDestinationResolutionResponseSchema,
@@ -52,5 +51,4 @@ export const deliveryDestinationResolutionRead = defineRead(
   },
   { load: handleDeliveryDestinationResolution },
   deliveryDestinationReadServiceFactory,
-  deliveryDestinationResolutionPermission,
 );

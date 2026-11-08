@@ -63,6 +63,14 @@ export const handleImportSellerVatRegimeDeclarations = Effect.fn('ImportSellerVa
 
 export const importSellerVatRegimeDeclarationsAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.tax.seller-vat-regime-declaration.import',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'seller-vat-regime', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.tax.import-seller-vat-regime-declarations.access.v1',
@@ -74,7 +82,7 @@ export const importSellerVatRegimeDeclarationsAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.tax.import-seller-vat-regime-declarations',
       moduleKey: 'commerce.tax',
       role: 'action',

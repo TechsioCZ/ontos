@@ -1,12 +1,6 @@
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { MerchandiseCommandSchema, MerchandiseLifecycleConflict } from '../../shared/actions/apply-command.ts';
-import {
-  AKROS_LEGAL_ENTITY_ID,
-  ESHOP_LEGAL_ENTITY_ID,
-  staffCommandAllowed,
-  staffMarketCommandAllowed,
-} from '../../shared/actions/command-guard.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
 import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
@@ -24,32 +18,6 @@ it('accepts 1 000 pieces in 500-piece packages and rejects stock/minimum/package
   for (const quantity of [0, 1, 600, 2500, Number.NaN, Infinity]) {
     expect(isOrderQuantityValid(quantity, rules)).toBe(false);
   }
-});
-it('allows dispatch only status processing and stock movement while preserving other company behavior', () => {
-  for (const tag of [
-    'EditOrder',
-    'ChangePrice',
-    'UpdateProduct',
-    'CreateProduct',
-    'BulkUpdateProducts',
-    'CreateOrder',
-    'RemoveDemoOrder',
-  ]) {
-    expect(staffCommandAllowed(AKROS_LEGAL_ENTITY_ID, false, tag)).toBe(false);
-    expect(staffCommandAllowed(AKROS_LEGAL_ENTITY_ID, true, tag)).toBe(true);
-  }
-  for (const tag of ['ChangeOrderStatus', 'RecordStockMovement']) {
-    expect(staffCommandAllowed(AKROS_LEGAL_ENTITY_ID, false, tag)).toBe(true);
-  }
-  expect(staffCommandAllowed(ESHOP_LEGAL_ENTITY_ID, false, 'EditOrder')).toBe(true);
-  expect(staffCommandAllowed(ESHOP_LEGAL_ENTITY_ID, false, 'RemoveDemoOrder')).toBe(false);
-});
-const rights = (administrator: boolean, companyAdministrator: boolean) => ({ administrator, companyAdministrator });
-it('lets the AKROS company administrator manage market offers and price lists, never dispatch', () => {
-  expect(staffMarketCommandAllowed(AKROS_LEGAL_ENTITY_ID, rights(false, true))).toBe(true);
-  expect(staffMarketCommandAllowed(AKROS_LEGAL_ENTITY_ID, rights(true, false))).toBe(true);
-  expect(staffMarketCommandAllowed(AKROS_LEGAL_ENTITY_ID, rights(false, false))).toBe(false);
-  expect(staffMarketCommandAllowed(ESHOP_LEGAL_ENTITY_ID, rights(false, false))).toBe(true);
 });
 const seeded = Effect.gen(function* seed() {
   const product = yield* apply(

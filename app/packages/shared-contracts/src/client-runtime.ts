@@ -1,6 +1,6 @@
 import { Effect, Schema, makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import type { EffectHttpApiClientOptions, HttpApi, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
-import { Redacted } from 'effect';
+import { Redacted, Option } from 'effect';
 import { Headers as HttpHeaders, HttpClient } from 'effect/http';
 
 const EffectBffOperationContextSchema = Schema.Struct({
@@ -80,12 +80,26 @@ export const makeEffectBffClientOptions = ({
   );
 };
 
+/**
+ * O80: the one request mode a module endpoint transports, as a closed literal on both sides. The
+ * browser client offers exactly this value, and the Action runtime decodes the same literal from
+ * `x-action-intent`, so an unsupported string can never travel as a request mode.
+ */
+const ActionIntentSchema = Schema.Literal('propose');
+export type ActionIntent = typeof ActionIntentSchema.Type;
+
 interface GovernedEffectBffClientConfig<ApiId extends string, Groups extends HttpApiGroup.Constraint> {
   readonly api: HttpApi.HttpApi<ApiId, Groups>;
   readonly credential: Redacted.Redacted;
   readonly defaultApiPrefix: string | URL;
   /** Action transport header; endpoint contracts declare no header codec. */
   readonly idempotencyKey?: string | undefined;
+  /**
+   * O80: the caller's explicit proposal request. Absence is absence — no intent sends no header, so a
+   * denial, a gate refusal or an ordinary write never becomes a proposal implicitly. Only a client
+   * whose declared Action can park a proposal offers this option at all (O85).
+   */
+  readonly intent?: ActionIntent | undefined;
   readonly requestCorrelation: string;
   readonly requestTrace?: string;
 }
@@ -111,25 +125,39 @@ export const makeGovernedEffectBffClient = <ApiId extends string, Groups extends
     credential,
     defaultApiPrefix,
     idempotencyKey,
+    intent,
     requestCorrelation,
     requestTrace,
   }: GovernedEffectBffClientConfig<ApiId, Groups>,
   options: Pick<EffectBffClientOptions, 'baseUrl' | 'compositionRevision' | 'referenceCredentials' | 'requestCache'>,
 ) => {
   const baseUrl = String(options.baseUrl ?? defaultApiPrefix);
-  // Header construction skips undefined values, so absent optional headers stay absent.
-  const transportHeaders = {
-    authorization: Redacted.value(credential),
-    'cache-control': options.requestCache,
-    'idempotency-key': idempotencyKey,
-    'x-correlation-id': requestCorrelation,
-    'x-ontos-composition-revision': options.compositionRevision,
-    'x-ontos-reference-credentials':
-      options.referenceCredentials === undefined ? undefined : Redacted.value(options.referenceCredentials),
-    'x-trace-id': requestTrace,
-  };
+  // The intent is decoded before the client exists, so a caller outside the closed literal fails with the
+  // transport's own SchemaError instead of sending an unrecognized request mode.
+  const intentHeader: Effect.Effect<Option.Option<string>, Schema.SchemaError> = intent === undefined
+    ? Effect.succeed(Option.none())
+    : Schema.decodeUnknownEffect(ActionIntentSchema)(intent).pipe(Effect.map(Option.some));
   return Schema.decodeUnknownEffect(Schema.Literal(true))(isGovernedBaseUrl(baseUrl)).pipe(
-    Effect.flatMap(() => makeEffectBffClientOptions({ baseUrl, defaultApiPrefix, transportHeaders })),
+    Effect.andThen(intentHeader),
+    Effect.flatMap((decodedIntent) =>
+      makeEffectBffClientOptions({
+        baseUrl,
+        defaultApiPrefix,
+        // Header construction skips undefined values, so absent optional headers stay absent: no intent
+        // produces no `x-action-intent` at all.
+        transportHeaders: {
+          authorization: Redacted.value(credential),
+          'cache-control': options.requestCache,
+          'idempotency-key': idempotencyKey,
+          'x-action-intent': Option.getOrUndefined(decodedIntent),
+          'x-correlation-id': requestCorrelation,
+          'x-ontos-composition-revision': options.compositionRevision,
+          'x-ontos-reference-credentials':
+            options.referenceCredentials === undefined ? undefined : Redacted.value(options.referenceCredentials),
+          'x-trace-id': requestTrace,
+        },
+      }),
+    ),
     // eslint-disable-next-line effect-native/no-per-operation-http-api-client -- #358 explicitly requires lazy uncached client construction so request metadata and credentials cannot survive across operations. expires: 2026-12-31.
     Effect.flatMap((clientOptions) => makeEffectHttpApiClient(api, clientOptions)),
   );

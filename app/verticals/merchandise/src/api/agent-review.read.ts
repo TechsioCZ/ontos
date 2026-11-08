@@ -32,7 +32,7 @@ const reviewRecordsRequest = (input: AgentReviewRequest, scope: OperationalScope
 };
 const agentReviewEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'demo.merchandise.api.agent-review',
   moduleKey,
   role: 'api',
@@ -82,6 +82,14 @@ const reviewItem = Effect.fn('Merchandise.agentReview.item')(function* reviewIte
 
 export const agentReviewRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'demo.merchandise.api-agent-review.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'merchandise', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: agentReviewEntrypoint,
     evidencePolicy: {
@@ -91,7 +99,6 @@ export const agentReviewRead = defineRead(
     inputSchema: AgentReviewRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'demo.merchandise.api.agent-review',
     resultSchema: AgentReviewResponseSchema,
@@ -135,5 +142,4 @@ export const agentReviewRead = defineRead(
       ).pipe(Effect.withSpan('Merchandise.agentReview.load')),
   },
   makeAgentReviewServices,
-  () => ({ kind: 'module', moduleId: moduleKey }),
 );

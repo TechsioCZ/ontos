@@ -184,6 +184,7 @@
           "tooLong": "Use at most 300 characters.",
           "duplicateCode": "Another record already uses this code.",
           "alreadyCommitted": "The change has already been saved. Refresh the records and check the result before making another change.",
+          "approvalRequired": "The proposal is awaiting approval. The change has not been applied.",
           "commitIndeterminate": "The save result cannot be confirmed yet. Do not save again until the result has been checked."
         },
         "unitStory": {

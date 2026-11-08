@@ -2,7 +2,8 @@ import { selectItem } from '../../../../ui/select-item.ts';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Facility operations — S11 Evidence bezpečnostních zařízení. OWNED BY THE `security` LANE.
-// Restricted agenda: the server returns no state without facility.operations.read_all (external persona → forbidden).
+// Restricted agenda: the server returns no state without the restricted field group
+// (facility.operations.records-restricted.read; external persona → forbidden).
 import { EmptyState, PageHeader, StatCard, StatRow, formatDate, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';

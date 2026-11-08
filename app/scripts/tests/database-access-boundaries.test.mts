@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -8,6 +8,175 @@ import { Array as EffectArray, Effect, Order } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { checkDatabaseAccessBoundaries } from '../check-database-access-boundaries.mts';
+
+const BILLING_TABLE_SOURCE_PATH = 'verticals/billing/src/database/table.ts';
+const rawExecutorReturn = 'return { transaction };';
+const closedExecutorServiceReturn = 'return { load: () => transaction.select() };';
+
+it.live('uses actual import provenance and declaration reach rather than comments or unrelated exports', () =>
+  Effect.gen(function* exactCapabilityProvenance() {
+    const root = yield* Effect.acquireRelease(
+      Effect.promise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-db-boundary-provenance-'))),
+      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+    );
+    const files = {
+      'apps/shell/api/comment.ts': `/**
+ * CoreDatabase is provided beside identity enrollment.
+ * import { Pool } from 'pg';
+ */
+export const label = "CoreDatabase import('pg')";
+const inert = /CoreDatabase/;
+type CoreDatabase = { readonly id: string };
+`,
+      'verticals/stock/src/actions/foreign-name.action.ts':
+        "import type { CoreDatabase } from 'non-database-contract'; export type Metadata = CoreDatabase;",
+      'verticals/stock/src/actions/hidden-alias.action.ts': `import {
+  CoreDatabase as Global
+} from '@app/core-runtime';
+const handler = () => Global;
+`,
+      'verticals/stock/src/actions/hidden-namespace.action.ts':
+        "import * as Core from '@app/core-runtime'; export const handler = () => Core.CoreDatabase;",
+      'verticals/stock/src/actions/namespace-barrel.action.ts':
+        "import { namespaceAlias } from '../services/barrel.ts';",
+      'verticals/stock/src/actions/namespace-member.action.ts': "import { namespaceRaw } from '../services/mixed.ts';",
+      'verticals/stock/src/actions/namespace-type.action.ts':
+        "import type { NamespaceHandler } from '../services/mixed.ts';",
+      'verticals/stock/src/actions/namespace.action.ts': "import * as service from '../services/mixed.ts';",
+      'verticals/stock/src/actions/safe.action.ts': "import { safe } from '../services/barrel.ts';",
+      'verticals/stock/src/actions/side-effect.action.ts': "import '../services/mixed.ts';",
+      'verticals/stock/src/actions/type-leak.action.ts': "import type { Handler } from '../services/mixed.ts';",
+      'verticals/stock/src/actions/unsafe.action.ts': "import { unsafe } from '../services/barrel.ts';",
+      'verticals/stock/src/services/barrel.ts':
+        "export { owner as safe, alias as unsafe, namespaceAlias } from './mixed.ts';",
+      'verticals/stock/src/services/mixed.ts': `import { CoreDatabase as Global } from '@app/core-runtime';
+import * as Core from '@app/core-runtime';
+import type { ScopedTransactionExecutor as Executor, OperationalScope } from '@app/core-runtime';
+export const owner = (transaction: Executor, scope: OperationalScope) => ({ read: () => transaction.select() });
+export const raw = () => Global;
+export const alias = raw;
+export const namespaceRaw = () => Core.CoreDatabase;
+export const namespaceAlias = namespaceRaw;
+export interface Handler { readonly database: typeof Global; }
+export interface NamespaceHandler { readonly database: Core.CoreDatabase; }
+`,
+    };
+    for (const [file, source] of Object.entries(files)) {
+      const target = path.join(root, file);
+      yield* Effect.promise(() => mkdir(path.dirname(target), { recursive: true }));
+      yield* Effect.promise(() => writeFile(target, source));
+    }
+    const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+    expect(violations.map(({ file }) => file)).toEqual([
+      'verticals/stock/src/actions/hidden-alias.action.ts',
+      'verticals/stock/src/actions/hidden-namespace.action.ts',
+      'verticals/stock/src/actions/namespace-barrel.action.ts',
+      'verticals/stock/src/actions/namespace-member.action.ts',
+      'verticals/stock/src/actions/namespace-type.action.ts',
+      'verticals/stock/src/actions/namespace.action.ts',
+      'verticals/stock/src/actions/side-effect.action.ts',
+      'verticals/stock/src/actions/type-leak.action.ts',
+      'verticals/stock/src/actions/unsafe.action.ts',
+    ]);
+    expect(violations.find(({ file }) => file.endsWith('/hidden-alias.action.ts'))?.line).toBe(2);
+  }),
+);
+
+it.live('proves native service factory forwarding instead of trusting a Parameters type or method name', () =>
+  Effect.gen(function* originalNativeFactoryForwarding() {
+    const root = yield* Effect.acquireRelease(
+      Effect.promise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-db-boundary-native-factory-port-'))),
+      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+    );
+    const nativeCoreTypes =
+      "import type { ScopedTransactionExecutor as Executor, OperationalScope, ActionServicePreparationContext as Preparation } from '@app/core-runtime';";
+    const owner = `import { Context, Effect, Layer } from 'effect';
+${nativeCoreTypes}
+const original = Effect.fn('original')(function* original(transaction: Executor, scope: OperationalScope) {
+  return { load: () => transaction.select() };
+});
+export class Production extends Context.Service<Production, {
+  readonly bind: (...input: Parameters<typeof original>) => Effect.Effect<Services>;
+}>()('Production') {}
+export const live = Layer.effect(Production, Effect.gen(function* live() {
+  return { bind: (...input: Parameters<typeof original>) => original(...input) };
+}));
+`;
+    const action = `import { defineAction } from '@app/core-runtime';
+${nativeCoreTypes}
+import { Effect, Option } from 'effect';
+import { Production } from '../services/CASE.ts';
+const services = Effect.fn('services')(function* services(transaction: Executor, scope: OperationalScope) {
+  const production = yield* Effect.serviceOption(Production);
+  if (Option.isNone(production)) return yield* Effect.fail(unavailable);
+  return yield* production.value.bind(transaction, scope);
+});
+defineAction(descriptor, handler, services);
+`;
+    const nativeImports = "import { Context, Effect, Layer } from 'effect';";
+    const preparedOwner = `${owner.slice(0, owner.indexOf('const original'))}
+const original = Effect.fn('prepare')(function* prepare(payload, context: Preparation) {
+  const load = Effect.fn('snapshot')(function* snapshot(transaction: Executor, scope: OperationalScope) {
+    const rows = yield* transaction.select();
+    return { count: rows.length };
+  });
+  yield* context.transaction(transaction => load(transaction, context.scope));
+  return Effect.fn('factory')(function* factory(transaction: Executor, scope: OperationalScope, revision: string) {
+    yield* load(transaction, scope);
+    return { load: () => transaction.select() };
+  });
+});
+${owner.slice(owner.indexOf('export class'))}`;
+    const preparedAction = action
+      .replace('services(transaction: Executor, scope: OperationalScope)', 'services(payload, context: Preparation)')
+      .replace('production.value.bind(transaction, scope)', 'production.value.bind(payload, context)')
+      .replace(
+        'defineAction(descriptor, handler, services);',
+        'defineAction(descriptor, handler, ordinary, { prepareServices: services });',
+      );
+    const nativeForwarding = '=> original(...input)';
+    const cases = {
+      'invalid-foreign-context': owner.replace(
+        nativeImports,
+        "import { Context } from 'foreign-effect'; import { Effect, Layer } from 'effect';",
+      ),
+      'invalid-foreign-layer': owner.replace(
+        nativeImports,
+        "import { Layer } from 'foreign-effect'; import { Context, Effect } from 'effect';",
+      ),
+      'invalid-mutable-contract': owner.replace('readonly bind:', 'bind:'),
+      'invalid-opaque-forwarder': owner.replace(nativeForwarding, '=> unknownFactory(...input)'),
+      'invalid-prepared-opaque-forwarder': preparedOwner.replace(nativeForwarding, '=> unknownFactory(...input)'),
+      'invalid-prepared-raw-result': preparedOwner.replace(closedExecutorServiceReturn, rawExecutorReturn),
+      'invalid-raw-result': owner.replace(closedExecutorServiceReturn, rawExecutorReturn),
+      'invalid-transformed-forwarder': owner.replace(
+        nativeForwarding,
+        '=> original(...input).pipe(Effect.map(change))',
+      ),
+      'valid-native-factory': owner,
+      'valid-prepared-factory': preparedOwner,
+    };
+    for (const [name, source] of Object.entries(cases)) {
+      for (const [file, contents] of [
+        [`verticals/stock/src/services/${name}.ts`, source],
+        [
+          `verticals/stock/src/actions/${name}.action.ts`,
+          (name.includes('prepared') ? preparedAction : action).replace('CASE', name),
+        ],
+      ]) {
+        const target = path.join(root, file ?? '');
+        yield* Effect.promise(() => mkdir(path.dirname(target), { recursive: true }));
+        yield* Effect.promise(() => writeFile(target, contents ?? ''));
+      }
+    }
+    const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+    expect([...new Set(violations.map(({ file }) => file))]).toEqual(
+      Object.keys(cases)
+        .filter((name) => name.startsWith('invalid-'))
+        .map((name) => `verticals/stock/src/actions/${name}.action.ts`),
+    );
+  }),
+);
 
 it.live(
   'allows owner database factories and rejects Action, read, nested BFF, hidden Core database, and second-driver bypasses deterministically',
@@ -348,6 +517,148 @@ it.live(
     }),
 );
 
+const DB_OWNERSHIP_CONSUMER = 'verticals/stock/src/owner-services.ts';
+const makeDatabaseOwnershipFixture = Effect.fn(function* databaseOwnershipFixture() {
+  const root = yield* Effect.acquireRelease(
+    Effect.promise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-db-owner-origins-'))),
+    (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+  );
+  const files = new Map([
+    ['verticals/stock/src/database/table.ts', 'export const table = {};\n'],
+    [BILLING_TABLE_SOURCE_PATH, 'export const table = {};\nexport interface BillingRow { readonly id: string }\n'],
+    ['verticals/billing/src/database/transaction.ts', 'export const businessTransaction = () => true;\n'],
+    ['verticals/billing/src/repositories/customer.ts', 'export const repository = () => true;\n'],
+    [
+      'verticals/billing/shared/contracts.ts',
+      "export { table } from '../src/database/table.ts';\nexport type { BillingRow } from '../src/database/table.ts';\n",
+    ],
+    [
+      'verticals/billing/package.json',
+      JSON.stringify({ exports: { './contracts': './shared/contracts.ts' }, name: '@app/accounting-contracts' }),
+    ],
+  ]);
+  for (const file of ['package.json', 'src/index.ts', 'src/db/scoped-routine.ts']) {
+    const relative = `packages/core-runtime/${file}`;
+    files.set(
+      relative,
+      yield* Effect.promise(() => readFile(path.resolve(import.meta.dirname, '../..', relative), 'utf-8')),
+    );
+  }
+  for (const [file, source] of files) {
+    const target = path.join(root, file);
+    yield* Effect.promise(() => mkdir(path.dirname(target), { recursive: true }));
+    yield* Effect.promise(() => writeFile(target, source));
+  }
+  return root;
+});
+
+for (const [form, source, origin] of [
+  [
+    'foreign database table',
+    "import { table } from '../../billing/src/database/table.ts';\n",
+    BILLING_TABLE_SOURCE_PATH,
+  ],
+  [
+    'foreign business transaction',
+    "import { businessTransaction } from '../../billing/src/database/transaction.ts';\n",
+    'verticals/billing/src/database/transaction.ts',
+  ],
+  [
+    'foreign repository',
+    "import { repository } from '../../billing/src/repositories/customer.ts';\n",
+    'verticals/billing/src/repositories/customer.ts',
+  ],
+  [
+    'renamed contracts barrel',
+    "import { table } from '@app/accounting-contracts/contracts';\n",
+    BILLING_TABLE_SOURCE_PATH,
+  ],
+  [
+    'type-only foreign table',
+    "import type { BillingRow } from '@app/accounting-contracts/contracts';\n",
+    BILLING_TABLE_SOURCE_PATH,
+  ],
+  [
+    'private Core routine implementation',
+    "import { defineScopedRoutine } from '../../../packages/core-runtime/src/db/scoped-routine.ts';\n",
+    'packages/core-runtime/src/db/scoped-routine.ts',
+  ],
+] as const) {
+  it.live(`rejects database ownership via ${form}`, () =>
+    Effect.gen(function* rejectsPrivateDatabaseOrigin() {
+      const root = yield* makeDatabaseOwnershipFixture();
+      yield* Effect.promise(() => writeFile(path.join(root, DB_OWNERSHIP_CONSUMER), source));
+      const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+      expect(
+        violations.some((violation) => violation.file === DB_OWNERSHIP_CONSUMER && violation.origin === origin),
+        form,
+      ).toBe(true);
+    }),
+  );
+}
+
+it.live('preserves own database services and the genuine approved Core routine public boundary', () =>
+  Effect.gen(function* acceptsOwnerDatabaseAndCoreRoutine() {
+    const root = yield* makeDatabaseOwnershipFixture();
+    yield* Effect.promise(() =>
+      writeFile(
+        path.join(root, DB_OWNERSHIP_CONSUMER),
+        "import { table } from './database/table.ts';\nimport { defineScopedRoutine } from '@app/core-runtime';\n",
+      ),
+    );
+    const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+    expect(violations.filter((violation) => violation.file === DB_OWNERSHIP_CONSUMER)).toEqual([]);
+  }),
+);
+
+for (const hiddenPrivateTable of [false, true]) {
+  it.live(`keeps wide public dependency traversal distinct from private origin ${hiddenPrivateTable}`, () =>
+    Effect.gen(function* wideDatabaseOwnershipGraph() {
+      const root = yield* makeDatabaseOwnershipFixture();
+      const declarations: string[] = [];
+      const directory = path.join(root, 'verticals/billing/shared/values');
+      yield* Effect.promise(() => mkdir(directory, { recursive: true }));
+      for (let index = 0; index < 135; index += 1) {
+        yield* Effect.promise(() =>
+          writeFile(path.join(directory, `value-${index}.ts`), `export const value${index} = ${index};\n`),
+        );
+        declarations.push(`export { value${index} } from './values/value-${index}.ts';`);
+      }
+      if (hiddenPrivateTable) {
+        declarations.push("export { table } from '../src/database/table.ts';");
+      }
+      yield* Effect.promise(() =>
+        writeFile(path.join(root, 'verticals/billing/shared/wide-contract.ts'), declarations.join('\n')),
+      );
+      yield* Effect.promise(() =>
+        writeFile(
+          path.join(root, DB_OWNERSHIP_CONSUMER),
+          `import { ${hiddenPrivateTable ? 'table' : 'value0'} } from '../../billing/shared/wide-contract.ts';\n`,
+        ),
+      );
+      const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+      const consumerViolations = violations.filter((violation) => violation.file === DB_OWNERSHIP_CONSUMER);
+      if (hiddenPrivateTable) {
+        expect(consumerViolations.some((violation) => violation.origin === BILLING_TABLE_SOURCE_PATH)).toBe(true);
+      } else {
+        expect(consumerViolations).toEqual([]);
+      }
+    }),
+  );
+}
+
+it.live('preserves actual operator tooling consuming Core public composition APIs', () =>
+  Effect.gen(function* operatorCompositionBoundary() {
+    const root = yield* makeDatabaseOwnershipFixture();
+    const file = 'scripts/active-application-composition.mts';
+    const source = yield* Effect.promise(() => readFile(path.resolve(import.meta.dirname, '../..', file), 'utf-8'));
+    yield* Effect.promise(() => mkdir(path.join(root, 'scripts'), { recursive: true }));
+    yield* Effect.promise(() => writeFile(path.join(root, file), source));
+    const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+    expect(violations.filter((violation) => violation.file === file)).toEqual([]);
+  }),
+);
+
 const yieldedExecutorField = 'return yield* Fx.succeed({ transaction });';
 const effectModuleImport = "from 'effect'";
 const foreignEffectModuleImport = "from 'foreign-effect'";
@@ -544,7 +855,7 @@ export const prepare: Preflight<P, S, E> = Fx.fn('prepare')(function* prepare(pa
       ),
       'invalid-raw-snapshot': source('context', callback.replace(snapshotResult, 'return transaction;')),
       'invalid-returned-callback': `${header}export const prepare: Preflight<P, S, E> = Fx.fn('prepare')(function* prepare() { return ${callback}; });`,
-      'invalid-snapshot-field': source('context', callback.replace(snapshotResult, 'return { transaction };')),
+      'invalid-snapshot-field': source('context', callback.replace(snapshotResult, rawExecutorReturn)),
       'invalid-snapshot-handler': source(
         'context',
         callback.replace(snapshotResult, 'return { read: (raw: Executor) => raw.select() };'),
@@ -688,7 +999,7 @@ export class OwnerProduction extends Ctx.Service<OwnerProduction, {
       },
       'invalid-returned-raw-field': {
         action: contextualPreparationAction('invalid-returned-raw-field'),
-        source: production.replace(closedCommitServices, 'return { transaction };'),
+        source: production.replace(closedCommitServices, rawExecutorReturn),
       },
       'invalid-returned-yielded-raw-field': {
         action: contextualPreparationAction('invalid-returned-yielded-raw-field'),

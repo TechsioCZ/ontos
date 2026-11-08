@@ -108,7 +108,7 @@ export const MarketsPanel = ({ canManage, markets, onCommitted, onReload, produc
           onCommitted(t(key(offered ? 'offeredSaved' : 'withdrawnSaved'), { code: market.marketCode }));
           return;
         }
-        setError(failure(outcome.reason, onReload));
+        setError(failure(outcome.reason, onReload, outcome.proposal));
       },
     );
   };

@@ -12,7 +12,9 @@ import {
 
 export const CorrectablePartyFactSchema = Schema.Literals([
   'PARTY_TYPE',
-  'DISPLAY_NAME',
+  'FIRST_NAME',
+  'LAST_NAME',
+  'BUSINESS_NAME',
   'OFFICIAL_IDENTIFIER',
   'RELATIONSHIP',
 ]);
@@ -64,14 +66,14 @@ const correctionEvidenceFields = {
 export const IdentityCorrectionCommandSchema = Schema.Struct({
   subjectEvidence: Schema.optionalKey(PartySubjectEvidenceListSchema),
   ...correctionEvidenceFields,
-  factKind: Schema.Literals(['PARTY_TYPE', 'DISPLAY_NAME', 'OFFICIAL_IDENTIFIER']),
+  factKind: Schema.Literals(['PARTY_TYPE', 'FIRST_NAME', 'LAST_NAME', 'BUSINESS_NAME', 'OFFICIAL_IDENTIFIER']),
   partyId: PartyIdSchema,
   replacementValue: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
   targetAssertionId: TargetAssertionIdSchema,
 }).check(
   Schema.makeFilter((command) =>
     command.factKind !== 'OFFICIAL_IDENTIFIER' && command.replacementValue === undefined
-      ? 'Party Type and display-name correction require a replacement assertion'
+      ? 'Party Type and name correction require a replacement assertion'
       : undefined,
   ),
 );
@@ -125,7 +127,9 @@ const CorrectionRouteSchema = Schema.Literals([
 export type CorrectionRoute = typeof CorrectionRouteSchema.Type;
 
 const correctionRoutes = {
-  DISPLAY_NAME: 'ENRICHMENT_REVIEW',
+  FIRST_NAME: 'ENRICHMENT_REVIEW',
+  LAST_NAME: 'ENRICHMENT_REVIEW',
+  BUSINESS_NAME: 'ENRICHMENT_REVIEW',
   OFFICIAL_IDENTIFIER: 'CLAIM_REASSIGNMENT_REVIEW',
   PARTY_TYPE: 'LIFECYCLE_REVIEW',
   RELATIONSHIP: 'RELATIONSHIP_REVIEW',
@@ -167,7 +171,7 @@ const AssertionStateSchema = Schema.Literals(['ACTIVE', 'ENDED', 'SUPERSEDED', '
 export const PartyCorrectionAssertionValueSchema = Schema.Union([
   Schema.Struct({
     ...assertionHistoryFields,
-    factKind: Schema.Literals(['PARTY_TYPE', 'DISPLAY_NAME']),
+    factKind: Schema.Literals(['PARTY_TYPE', 'FIRST_NAME', 'LAST_NAME', 'BUSINESS_NAME']),
     state: AssertionStateSchema,
     validFrom: RelationshipIsoTimestampSchema,
     value: Schema.String,
@@ -180,7 +184,6 @@ export const PartyCorrectionAssertionValueSchema = Schema.Union([
     state: AssertionStateSchema,
     validFrom: RelationshipIsoTimestampSchema,
     value: Schema.String,
-    verification: Schema.Literals(['UNVERIFIED', 'VERIFIED', 'REJECTED']),
   }),
   Schema.Struct({
     ...assertionHistoryFields,
@@ -230,4 +233,17 @@ export const PartyCorrectionDetailSchema = Schema.Struct({
   replacementRelationshipRef: Schema.OptionFromNullOr(PartyRelationshipRefSchema),
   resultingAssertion: Schema.OptionFromNullOr(PartyCorrectionAssertionValueSchema),
   targetAssertionId: TargetAssertionIdSchema,
+});
+/**
+ * A correction as the read answers it: the evidence and the authority are governed field classes, so
+ * a caller without those capabilities receives the correction without them (O17, O58).
+ */
+export const PartyCorrectionDetailViewSchema = Schema.Struct({
+  ...PartyCorrectionDetailSchema.fields,
+  actingPrincipalId: Schema.optionalKey(PartyCorrectionDetailSchema.fields.actingPrincipalId),
+  approvingPrincipalId: Schema.optionalKey(PartyCorrectionDetailSchema.fields.approvingPrincipalId),
+  evidenceRefs: Schema.optionalKey(PartyCorrectionDetailSchema.fields.evidenceRefs),
+  originalAssertion: Schema.optionalKey(PartyCorrectionDetailSchema.fields.originalAssertion),
+  reasonDetail: Schema.optionalKey(PartyCorrectionDetailSchema.fields.reasonDetail),
+  resultingAssertion: Schema.optionalKey(PartyCorrectionDetailSchema.fields.resultingAssertion),
 });

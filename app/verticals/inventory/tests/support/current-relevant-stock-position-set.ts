@@ -16,21 +16,19 @@ const principalId = '66666666-6666-4666-8666-666666666666';
 const locationId = '77777777-7777-4777-8777-777777777777';
 const positionId = '88888888-8888-4888-8888-888888888888';
 const time = new Date('2026-10-05T12:00:00.000Z');
-export const scope = {
-  ...trustVerifiedGatewayPrincipalContext(
-    {
-      authBindingId: principalId,
-      authContextRef: 'better-auth-session:test',
-      authMethod: 'session',
-      legalEntityId: sellerId,
-      principalId,
-      tenantId,
-      trustedStorefrontId: 'storefront',
-    },
-    'a'.repeat(64),
-  ),
-  correlationId: 'test',
-};
+export const scope = trustVerifiedGatewayPrincipalContext(
+  {
+    authBindingId: principalId,
+    authContextRef: 'better-auth-session:test',
+    authMethod: 'session',
+    correlationId: 'test',
+    legalEntityId: sellerId,
+    principalId,
+    tenantId,
+    trustedStorefrontId: 'storefront',
+  },
+  'a'.repeat(64),
+);
 export const request = Schema.decodeUnknownSync(RelevantStockPositionSetRequestSchema)({
   commerceVerificationRequest: {
     actor: { kind: 'AUTHENTICATED_CUSTOMER', principalId },

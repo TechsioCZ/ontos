@@ -13,11 +13,14 @@ import {
   parseDatabaseConfig,
 } from '@app/core-runtime';
 import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
+  TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
@@ -31,6 +34,7 @@ import {
   GatewayAssertionRedemptionLive,
 } from '../../api/auth/gateway-assertion-redemption.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { storefrontRegistryRegistration } from '../../vertical.registration.ts';
 import { registerStorefrontApplicationAction } from '../../src/actions/register-storefront-application.action.ts';
 import {
   RegisterStorefrontApplicationPayloadSchema,
@@ -77,10 +81,27 @@ const main = Effect.scoped(
     const states = TenantModuleStateServiceLive.pipe(Layer.provide(persistence));
     const gate = ModuleStateGateLive.pipe(Layer.provide(states));
     const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(gate));
-    const scopes = OperationalScopeResolverLive.pipe(Layer.provide(Layer.mergeAll(persistence, ContextAccessLive)));
-    const actions = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+    const accessEnforcement = AccessDecisionLive.pipe(
+      Layer.provideMerge(AccessEnforcementPortsLive),
+      Layer.provide(TenantIntentLoaderLive),
+      Layer.provide(persistence),
+      Layer.provide(database),
+      Layer.provide(NodeCrypto.layer),
+    );
+    const scopes = OperationalScopeResolverLive.pipe(
+      Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, accessEnforcement)),
+    );
+    const actions = makeActionRuntimeLive(ultramodernDeliveryUnit, storefrontRegistryRegistration).pipe(
       Layer.provide(
-        Layer.mergeAll(ActionRepositoryLive, ActionPermissionLive, gate, gateway, scopes, ContextAccessLive),
+        Layer.mergeAll(
+          ActionRepositoryLive,
+          ActionPermissionLive,
+          gate,
+          gateway,
+          scopes,
+          ContextAccessLive,
+          accessEnforcement,
+        ),
       ),
       Layer.provide(persistence),
       Layer.provide(ActionPrincipalVerifierLive),

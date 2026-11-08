@@ -7,7 +7,10 @@ import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
-import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
+import { installedModuleKeysOf } from '../../packages/core-runtime/src/install/installation-runtime.ts';
+import { decodeAccessDeclarationOrThrow } from '../../packages/core-runtime/src/authorization/access-declaration.ts';
+import type { AccessCatalogModule } from '../../packages/core-runtime/src/authorization/access-declaration.ts';
+import { defineTenantModuleEntrypoint } from '../../packages/core-runtime/src/modules/module-entrypoint.ts';
 import { makeModuleContractFixture } from '../../packages/core-runtime/src/testing/module-contract.ts';
 import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
 import { SPICEDB_TEST_CERTIFICATE } from '../../packages/core-runtime/tests/support/spicedb-test-certificate.ts';
@@ -16,7 +19,6 @@ import {
   LOCAL_DEVELOPMENT_VERTICALS,
   LOCAL_DEVELOPMENT_CONTEXT,
   LocalDevelopmentInitializationError,
-  buildLocalDevelopmentRelationships,
   classifyExactLocalRecord,
   classifyLocalModuleState,
   deriveActivatedModuleIds,
@@ -179,23 +181,12 @@ it.effect('derives the fixed local commerce launch modules through generated own
     yield* Effect.tryPromise(() => mkdir(path.join(root, TOPOLOGY_DIRECTORY), { recursive: true }));
     yield* Effect.tryPromise(() => writeFile(path.join(root, TOPOLOGY_PATH), topology, 'utf-8'));
     expect(
-      yield* deriveActivatedModuleIds(root, deriveVerticalCoreContract, [
-        PARTY_REGISTRY_VERTICAL_ID,
-        MARKET_CATALOG_VERTICAL_ID,
-        CUSTOMER_CONTEXT_VERTICAL_ID,
-      ]).pipe(Effect.provide(NodeServices.layer)),
+      yield* deriveActivatedModuleIds(root, deriveVerticalCoreContract).pipe(Effect.provide(NodeServices.layer)),
     ).toEqual(['commerce-customer-context.core', 'commerce-market-catalog.core', 'party-registry.core']);
     expect(LOCAL_DEVELOPMENT_VERTICALS).toEqual([
       PARTY_REGISTRY_VERTICAL_ID,
       MARKET_CATALOG_VERTICAL_ID,
       CUSTOMER_CONTEXT_VERTICAL_ID,
-      'workforce',
-      'tagging',
-      'sales-pipeline',
-      'merchandise',
-      'sales-insights',
-      'facility-operations',
-      'crm',
     ]);
   }),
 );
@@ -290,59 +281,48 @@ it.effect('rejects duplicate module IDs derived from different verticals', () =>
   }),
 );
 
-it.effect('generates stable module state IDs and complete access relationships', () =>
-  Effect.gen(function* testEffect7() {
+const accessModuleOf = (moduleId: string, entrypointKey: string): AccessCatalogModule => {
+  const entrypoint = defineTenantModuleEntrypoint({
+    access: 'read',
+    authorization: { kind: 'protected' },
+    entrypointKey,
+    moduleKey: moduleId,
+    role: 'api',
+  });
+  return {
+    descriptors: [
+      {
+        accessDeclaration: decodeAccessDeclarationOrThrow(
+          {
+            key: entrypointKey,
+            kind: 'read',
+            modes: ['run'],
+            placement: { group: 'local', level: 'basic' },
+            risk: 'routine',
+            selectors: [],
+          },
+          entrypoint,
+        ),
+        entrypoint,
+      },
+    ],
+    moduleId,
+  };
+};
+
+it.effect('generates stable module state IDs and installs the activated modules plus Core', () =>
+  Effect.sync(() => {
     expect(moduleStateIdFor(PARTY_REGISTRY_MODULE_ID)).toBe(moduleStateIdFor(PARTY_REGISTRY_MODULE_ID));
     expect(moduleStateIdFor(PARTY_REGISTRY_MODULE_ID)).not.toBe(moduleStateIdFor(INVENTORY_MODULE_ID));
-    const relationships = yield* buildLocalDevelopmentRelationships([PARTY_REGISTRY_MODULE_ID, INVENTORY_MODULE_ID]);
-    expect(relationships.length).toBe(12);
-    expect(relationships).toContainEqual({
-      relation: 'company_member',
-      resourceId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
-      resourceType: 'tenant',
-      subjectId: LOCAL_DEVELOPMENT_CONTEXT.principalId,
-      subjectType: 'principal',
-    });
-    expect(relationships.some((row) => row.resourceType === 'tenant' && row.relation === 'member')).toBe(false);
-    expect(relationships.filter(({ resourceType }) => resourceType === 'principal')).toEqual([
-      {
-        relation: 'tenant',
-        resourceId: LOCAL_DEVELOPMENT_CONTEXT.principalId,
-        resourceType: 'principal',
-        subjectId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
-        subjectType: 'tenant',
-      },
-      {
-        relation: 'self',
-        resourceId: LOCAL_DEVELOPMENT_CONTEXT.principalId,
-        resourceType: 'principal',
-        subjectId: LOCAL_DEVELOPMENT_CONTEXT.principalId,
-        subjectType: 'principal',
-      },
-    ]);
-    expect(relationships.filter(({ relation }) => relation === 'accessor')).toEqual([]);
-    expect(relationships.filter(({ relation }) => relation === 'legal_entity').length).toBe(3);
-    const localSuperadminRole = toScopedRoleObjectId({
-      roleKey: 'superadmin',
-      tenantId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
-    });
-    expect(relationships).toContainEqual({
-      relation: 'superadmin',
-      resourceId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
-      resourceType: 'tenant',
-      subjectId: localSuperadminRole,
-      subjectRelation: 'member',
-      subjectType: 'scoped_role',
-    });
-    expect(relationships).toContainEqual({
-      relation: 'member',
-      resourceId: localSuperadminRole,
-      resourceType: 'scoped_role',
-      subjectId: LOCAL_DEVELOPMENT_CONTEXT.principalId,
-      subjectType: 'principal',
-    });
-    expect(relationships.some(({ relation }) => relation === 'party_identity_reader')).toBe(false);
-    expect(relationships.some(({ resourceId }) => resourceId === '70000000-0000-4000-8000-000000000020')).toBe(false);
+    const modules = [
+      accessModuleOf(PARTY_REGISTRY_MODULE_ID, 'party.registry.party.read'),
+      accessModuleOf('core.shell', 'core.shell.composition.read'),
+      accessModuleOf(CATALOG_MODULE_ID, 'commerce.catalog.product.read'),
+    ];
+    // The local principal works with Parties, so that vertical is installed beside Core's own modules.
+    expect(installedModuleKeysOf([PARTY_REGISTRY_MODULE_ID], modules)).toEqual(['core.shell', 'party.registry']);
+    // A vertical the local development does not activate stays out: its capabilities never decide here.
+    expect(installedModuleKeysOf([PARTY_REGISTRY_MODULE_ID], modules)).not.toContain(CATALOG_MODULE_ID);
   }),
 );
 
@@ -379,15 +359,7 @@ it.effect('native commit failure becomes a typed bootstrap error', () =>
               }),
             }),
           )
-        : Effect.sync(() => {
-            if (sql.includes('inner join "core"."tenants"')) {
-              return [{ companyStatus: 'active', kind: 'human', principalStatus: 'active', tenantStatus: 'active' }];
-            }
-            if (sql.includes('from "core"."principal_company_memberships"')) {
-              return [{ affiliation: 'employee', status: 'active' }];
-            }
-            return [];
-          }),
+        : Effect.succeed([]),
     );
 
     const error = yield* reconcileCoreContext(database, LOCAL_AUTH_USER_ID, []).pipe(Effect.flip);

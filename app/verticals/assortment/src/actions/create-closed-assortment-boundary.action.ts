@@ -2,7 +2,8 @@
 // @ontos-action-owner commerce.assortment
 // @ontos-action-slug create-closed-assortment-boundary
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionAssortmentPermissions, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { assortmentCurrentnessFacts } from '../services/assortment-currentness.ts';
 import { Effect, Schema } from 'effect';
 import {
   CreateClosedAssortmentBoundaryPayloadSchema,
@@ -18,7 +19,7 @@ import {
 } from '../../shared/domain/policy-errors.ts';
 import type { BoundaryAdministrationService } from '../services/boundary-administration.service.ts';
 import { boundaryAdministrationService, boundaryRef } from '../services/boundary-administration.service.ts';
-import { createBoundaryPermissionTarget, boundaryMeaningFingerprint } from './boundary-administration-support.ts';
+import { boundaryMeaningFingerprint, createBoundaryCurrentnessTarget } from './boundary-administration-support.ts';
 import {
   CreateClosedAssortmentBoundaryCommerceAssortmentBoundaryCreatedV1OutboxPayloadSchema,
   createCreateClosedAssortmentBoundaryCommerceAssortmentBoundaryCreatedV1OutboxMessage,
@@ -109,21 +110,49 @@ export const handleCreateClosedAssortmentBoundary = Effect.fn('CreateClosedAssor
 
 export const createClosedAssortmentBoundaryAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.assortment.closed-assortment-boundary.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'boundaries', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.assortment.create-closed-assortment-boundary.access.v1',
     },
+    accessFieldGroups: [
+      {
+        fieldClass: 'personal_data',
+        fields: ['subject'],
+        key: 'commerce.assortment.closed-assortment-boundary.customer-subject',
+        kind: 'field_write',
+        modes: ['run'],
+        placement: { group: 'boundaries-subject', level: 'manage' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+      {
+        fieldClass: 'assortment_policy',
+        fields: ['admissionSet', 'commercialScope', 'decisionPurpose'],
+        key: 'commerce.assortment.closed-assortment-boundary.policy-detail',
+        kind: 'field_write',
+        modes: ['run'],
+        placement: { group: 'boundaries-policy', level: 'manage' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
+    accessOwnerFacts: (payload, scope) => assortmentCurrentnessFacts(createBoundaryCurrentnessTarget(payload, scope)),
     actionKey: 'commerce.assortment.create-closed-assortment-boundary',
-    assortmentPermissions: defineActionAssortmentPermissions<CreateClosedAssortmentBoundaryPayload>(
-      (payload, scope) => [createBoundaryPermissionTarget(payload, scope)],
-    ),
     auditEvidenceSchema: AssortmentPolicyAuditEvidenceSchema,
     auditProfile: 'sensitive',
     domainErrorSchema: ActionErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.assortment.create-closed-assortment-boundary',
       moduleKey: 'commerce.assortment',
       role: 'action',

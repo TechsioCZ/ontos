@@ -7,10 +7,31 @@ import { foldSearchText } from '@app/admin-ui';
 import { DateTime, Option, Schema } from 'effect';
 
 import type { CustomerListItem } from '../../../../../shared/apis/customer-list.ts';
+import type { PartyContactPointsResponse } from '../../../../../shared/apis/party-contact-points.ts';
+import type { PartyDetailResponse } from '../../../../../shared/apis/party-detail.ts';
+import type { PartyOfficialIdentifierHistoryResponse } from '../../../../../shared/apis/party-official-identifier-history.ts';
 import type { AresSubjectEvidence } from '../../../../../shared/domain/ares-evidence.ts';
-import type { Party } from '../../../../../shared/domain/identity-contracts.ts';
 import type { OfficialIdentifierAssertion } from '../../../../../shared/domain/identifier-contracts.ts';
 import { isValidCzechIco } from '../../../../../shared/domain/identifier-contracts.ts';
+
+/** The Party as its detail read answers it; the names are absent without the Party identity capability. */
+export type CustomerParty = PartyDetailResponse['party'];
+/** A contact point as the read answers it; the value is absent without the contact-value capability. */
+export type CustomerContactPointRead = PartyContactPointsResponse['items'][number];
+/** An identifier as the read answers it; the value is absent without the identifier-value capability. */
+export type CustomerIdentifierRead = PartyOfficialIdentifierHistoryResponse['items'][number];
+
+/** Only a contact whose value this reader received can be shown or edited; a withheld value is never guessed. */
+const visibleContact = (contact: CustomerContactPointRead): readonly PartyContactPoint[] => {
+  const { value, ...rest } = contact;
+  return value === undefined ? [] : [{ ...rest, value }];
+};
+
+/** Only an identifier whose value this reader received can be shown or edited. */
+const visibleIdentifier = (identifier: CustomerIdentifierRead): readonly OfficialIdentifierAssertion[] => {
+  const { normalizedValue, ...rest } = identifier;
+  return normalizedValue === undefined ? [] : [{ ...rest, normalizedValue }];
+};
 
 const DAY_MS = 86_400_000;
 const NEW_CUSTOMER_WINDOW_MS = 30 * DAY_MS;
@@ -306,9 +327,15 @@ export interface CustomerContactRow {
   readonly id: string;
   readonly type: 'EMAIL' | 'PHONE' | 'ADDRESS';
 }
-export const customerContactRows = (contacts: readonly PartyContactPoint[]): CustomerContactRow[] => {
-  const rows: CustomerContactRow[] = contacts.flatMap((existing) =>
-    existing.current ? [{ existing, id: existing.contactPointRef.resourceId, type: existing.value.type }] : [],
+export const customerContactRows = (contacts: readonly CustomerContactPointRead[]): CustomerContactRow[] => {
+  const rows: CustomerContactRow[] = contacts.flatMap((contact) =>
+    contact.current
+      ? visibleContact(contact).map((existing) => ({
+          existing,
+          id: existing.contactPointRef.resourceId,
+          type: existing.value.type,
+        }))
+      : [],
   );
   for (const type of ['EMAIL', 'PHONE', 'ADDRESS'] as const) {
     rows.push({ id: `new-${type}`, type });
@@ -322,13 +349,14 @@ export interface CustomerIdentifierRow {
   readonly type: 'ICO' | 'CZ_DIC';
 }
 export const customerIdentifierRows = (
-  identifiers: readonly OfficialIdentifierAssertion[],
+  identifiers: readonly CustomerIdentifierRead[],
   now: string,
 ): CustomerIdentifierRow[] => {
   const current = identifiers.filter(
     (item) => item.state === 'ACTIVE' && item.validFrom <= now && (item.validTo === null || item.validTo > now),
   );
-  const rows: CustomerIdentifierRow[] = current.map((existing) => ({
+  // A current identifier with a withheld value still exists: it gets no editable row and no "add" row either.
+  const rows: CustomerIdentifierRow[] = current.flatMap(visibleIdentifier).map((existing) => ({
     existing,
     id: existing.officialIdentifierRef.resourceId,
     type: existing.identifierType,
@@ -341,12 +369,14 @@ export const customerIdentifierRows = (
   return rows;
 };
 
-export const customerIdentitySummary = (customer: CustomerListItem, party: Party | undefined) => {
+export const customerIdentitySummary = (customer: CustomerListItem, party: CustomerParty | undefined) => {
   if (party === undefined) {
     return { name: customer.displayName ?? '', status: customer.status };
   }
   return {
-    name: Option.getOrElse(party.displayName, () => ''),
+    // A withheld Party name leaves the name this reader's own customer read returned.
+    name:
+      party.displayName === undefined ? (customer.displayName ?? '') : Option.getOrElse(party.displayName, () => ''),
     status: Option.isSome(party.archivedAt) ? 'ARCHIVED' : 'ACTIVE',
   };
 };
@@ -387,10 +417,10 @@ export const relatedCustomerUrl = (
 };
 
 export const customerHistoryRows = (
-  contacts: readonly PartyContactPoint[],
-  identifiers: readonly OfficialIdentifierAssertion[],
+  contacts: readonly CustomerContactPointRead[],
+  identifiers: readonly CustomerIdentifierRead[],
 ) => [
-  ...identifiers.flatMap((item) =>
+  ...identifiers.flatMap(visibleIdentifier).flatMap((item) =>
     item.state === 'ACTIVE'
       ? []
       : [
@@ -402,7 +432,7 @@ export const customerHistoryRows = (
           },
         ],
   ),
-  ...contacts.flatMap((item) =>
+  ...contacts.flatMap(visibleContact).flatMap((item) =>
     item.current
       ? []
       : [

@@ -1,5 +1,6 @@
+import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import { NodeServices, NodeSocket } from '@effect/platform-node';
-import { Context, Effect, Fiber, FileSystem, Layer, Option, Schema, Stream } from 'effect';
+import { Context, Effect, Fiber, FileSystem, Layer, Option, Path, Schema, Stream } from 'effect';
 import { Socket } from 'effect/socket';
 import { ChildProcess } from 'effect/process';
 import { expect, it } from 'effect-rstest';
@@ -160,18 +161,52 @@ it.effect('bounds an unterminated frame before JSON decoding', () =>
 
 const marketNativeDescription = Effect.scoped(
   Effect.gen(function* prepareMarketNativeDescription() {
-    const { artifact, directory } = yield* bundleMarketRevisionNativeChild();
+    const { artifact, directory, publishedOwners } = yield* bundleMarketRevisionNativeChild();
+    const ownerImports = yield* Effect.forEach(
+      publishedOwners.filter(({ specifier }) => !specifier.startsWith('@app/commerce-customer-context/')),
+      ({ artifact: ownerArtifact, specifier }) =>
+        Effect.gen(function* importPublishedOwner() {
+          const owner = yield* ChildProcess.make(
+            process.execPath,
+            ['--input-type=module', '--eval', 'await import(process.argv[1]);', ownerArtifact],
+            { cwd: directory, stderr: 'pipe', stdin: 'ignore', stdout: 'pipe' },
+          );
+          const [code, stdout, stderr] = yield* Effect.all(
+            [
+              owner.exitCode,
+              owner.stdout.pipe(Stream.decodeText, Stream.mkString),
+              owner.stderr.pipe(Stream.decodeText, Stream.mkString),
+            ],
+            { concurrency: 3 },
+          );
+          return { code, specifier, stderr, stdout };
+        }),
+      { concurrency: 1 },
+    );
     const child = yield* ChildProcess.make(process.execPath, [artifact, '--describe'], {
       cwd: directory,
       stderr: 'pipe',
       stdin: 'ignore',
       stdout: 'pipe',
     });
-    const [code, stdout] = yield* Effect.all(
-      [child.exitCode, child.stdout.pipe(Stream.decodeText, Stream.mkString), Stream.runDrain(child.stderr)],
+    const [code, stdout, stderr] = yield* Effect.all(
+      [
+        child.exitCode,
+        child.stdout.pipe(Stream.decodeText, Stream.mkString),
+        child.stderr.pipe(Stream.decodeText, Stream.mkString),
+      ],
       { concurrency: 3 },
     );
-    return { code, stdout };
+    const errorClasses = stderr.match(/\b(?:SyntaxError|ReferenceError|TypeError|Error \[ERR_[A-Z_]+\])/gu) ?? [];
+    const missingExport =
+      /does not provide an export named '(?<exportName>[A-Za-z_$][\w$]*)'/u.exec(stderr)?.groups?.exportName ?? null;
+    const missingModule =
+      /Cannot find (?:package|module) '(?<moduleName>[@A-Za-z0-9/._-]+)'/u
+        .exec(stderr)
+        ?.groups?.moduleName?.split('/')
+        .slice(-4)
+        .join('/') ?? null;
+    return { code, errorClasses, missingExport, missingModule, ownerImports, stderr, stdout };
   }),
 );
 
@@ -189,20 +224,66 @@ const marketNativeDescriptionLayer = Layer.effect(MarketNativeDescription, marke
 it.layer(marketNativeDescriptionLayer, { timeout: '30 seconds' })(
   'Market native bundle in the actual test runner',
   (suite) => {
+    for (const specifier of [
+      '@app/shell-super-app/testing/api-key-gateway-native',
+      '@app/storefront-registry/testing/current-storefront-native',
+    ]) {
+      suite.effect(`imports the isolated published fixture ${specifier} without opening its backend`, () =>
+        Effect.gen(function* importOwner() {
+          const { ownerImports } = yield* MarketNativeDescription;
+          const owner = yield* Effect.fromNullishOr(ownerImports.find((result) => result.specifier === specifier));
+          expect(
+            owner.code,
+            `${specifier} import exited with ${owner.code}\nstdout:\n${owner.stdout}\nstderr:\n${owner.stderr}`,
+          ).toBe(0);
+        }),
+      );
+    }
     suite.effect('resolves public owner exports and describes the bundled child without opening its backend', () =>
       Effect.gen(function* describeBundledChild() {
-        const { code, stdout } = yield* MarketNativeDescription;
-        expect(code).toBe(0);
+        const { code, errorClasses, missingExport, missingModule, stderr, stdout } = yield* MarketNativeDescription;
+        expect(
+          { code, errorClasses, missingExport, missingModule },
+          `Market child --describe exited with ${code}\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+        ).toEqual({
+          code: 0,
+          errorClasses: [],
+          missingExport: null,
+          missingModule: null,
+        });
         const response = yield* Schema.decodeUnknownEffect(
           Schema.fromJsonString(
             Schema.Struct({
-              marker: Schema.Struct({ appId: Schema.Literal('commerce-market-catalog') }),
+              marker: Schema.Struct({
+                appId: Schema.Literal('commerce-market-catalog'),
+                buildMarker: Schema.String,
+                sourceRevision: Schema.String,
+              }),
               protocolVersion: Schema.Number,
               responseTransport: Schema.String,
             }),
           ),
         )(stdout.trim());
-        expect(response.marker.appId).toBe('commerce-market-catalog');
+        const filesystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const generated = yield* Schema.decodeUnknownEffect(
+          Schema.fromJsonString(
+            Schema.Struct({
+              deliveryUnit: Schema.Struct({
+                buildMarker: Schema.String,
+                unitId: Schema.String.pipe(Schema.brand('UltramodernDeliveryUnitId')),
+              }),
+            }),
+          ),
+        )(yield* filesystem.readFileString(path.join(process.cwd(), 'shared/ultramodern-build.json')));
+        const expected = yield* Effect.try(() =>
+          resolveUltramodernReleaseIdentity({
+            generationBuildMarker: generated.deliveryUnit.buildMarker,
+            unitId: generated.deliveryUnit.unitId,
+            workspaceRoot: path.resolve(process.cwd(), '../..'),
+          }),
+        );
+        expect(response.marker).toEqual({ appId: 'commerce-market-catalog', ...expected });
         expect(response.protocolVersion).toBe(2);
         expect(response.responseTransport).toBe('private-unix-duplex');
       }),

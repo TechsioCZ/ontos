@@ -2,13 +2,13 @@
 // @ontos-action-owner commerce.cart
 // @ontos-action-slug revise-cart-draft
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect } from 'effect';
 import { ReviseCartDraftPayloadSchema, ReviseCartDraftResultSchema } from '../../shared/actions/revise-cart-draft.ts';
 import type { ReviseCartDraftPayload } from '../../shared/actions/revise-cart-draft.ts';
 import { CartDraftRejected } from '../../shared/domain/cart-draft.ts';
 import { cartPopulationService } from '../services/cart-population.service.ts';
-import { cartDraftAuthorityPolicy } from '../policies/cart-draft-authority.policy.ts';
+import { cartDraftAuthorityPolicy, cartTargetOwnerFacts } from '../policies/cart-draft-authority.policy.ts';
 
 const owningModuleKey = 'commerce.cart';
 
@@ -29,14 +29,23 @@ const handleReviseCartDraft = Effect.fn('ReviseCartDraftAction.handle')(function
 
 export const reviseCartDraftAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.cart.cart-draft.revise',
+      kind: 'action',
+      modes: ['run', 'propose'],
+      placement: { group: 'cart-drafts', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'commerce.cart.revise-cart-draft.access.v1' },
+    accessOwnerFacts: (payload) => cartTargetOwnerFacts(payload.cartRef),
     actionKey: 'commerce.cart.revise-cart-draft',
     auditProfile: 'standard',
     domainErrorSchema: CartDraftRejected,
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.cart.revise-cart-draft',
       moduleKey: owningModuleKey,
       role: 'action',
@@ -46,10 +55,6 @@ export const reviseCartDraftAction = defineAction(
     owningModuleKey,
     payloadSchema: ReviseCartDraftPayloadSchema,
     policies: [cartDraftAuthorityPolicy],
-    resourcePermission: defineActionResourcePermission<ReviseCartDraftPayload>(({ cartRef }) => ({
-      permission: 'write',
-      resource: cartRef,
-    })),
     resultSchema: ReviseCartDraftResultSchema,
     schemaVersion: '1',
   },

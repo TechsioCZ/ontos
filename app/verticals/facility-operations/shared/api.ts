@@ -1,3 +1,4 @@
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import {
   MicroVerticalBuildMarkerSchema,
@@ -16,6 +17,7 @@ import { MetersSearchApi } from './apis/meters-search.ts';
 import { OverviewApi } from './apis/overview.ts';
 import { RecordsApi } from './apis/records.ts';
 import { RequestSearchRebuildActionApi } from './apis/request-search-rebuild-action.ts';
+import { UpdatePersonalAgendaActionApi } from './apis/update-personal-agenda-action.ts';
 // </generated-governed-http-api-imports>
 
 export type FacilityOperationsReadiness = MicroVerticalReadiness;
@@ -39,6 +41,7 @@ export const facilityOperationsFoundationApi = HttpApi.make('FacilityOperationsA
 
 export const facilityOperationsApi = HttpApi.make('FacilityOperationsApi')
   .addHttpApi(facilityOperationsFoundationApi)
+  .addHttpApi(OwnerActionApprovalApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(ApplyCommandActionApi)
   .addHttpApi(AssetsSearchApi)
@@ -48,6 +51,7 @@ export const facilityOperationsApi = HttpApi.make('FacilityOperationsApi')
   .addHttpApi(OverviewApi)
   .addHttpApi(RecordsApi)
   .addHttpApi(RequestSearchRebuildActionApi)
+  .addHttpApi(UpdatePersonalAgendaActionApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);

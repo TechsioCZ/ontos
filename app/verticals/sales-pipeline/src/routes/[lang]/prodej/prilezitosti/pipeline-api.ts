@@ -1,4 +1,4 @@
-import { Effect, Random } from 'effect';
+import { Effect, Predicate, Random } from 'effect';
 import { opportunityRelatedData } from './pipeline-related.ts';
 import type { ApplyCommandPayload } from '../../../../../shared/actions/apply-command.ts';
 import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
@@ -29,6 +29,9 @@ const sendPipelineCommand = Effect.fn('SalesPipeline.sendCommand')(function* sen
   const nonce = yield* Random.nextInt;
   const idempotencyKey = `sales-pipeline:apply:${nonce}`;
   return yield* executeApplyCommand({ command, expectedRevision }, idempotencyKey, { idempotencyKey }).pipe(
+    Effect.flatMap((result) =>
+      Predicate.isTagged(result, 'ActionProposalAccepted') ? Effect.fail(result) : Effect.succeed(result),
+    ),
     Effect.ensuring(Effect.sync(() => opportunityRelatedData.invalidate())),
   );
 });

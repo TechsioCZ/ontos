@@ -51,10 +51,7 @@ describe('Set Product Type Action contract', () => {
         reason: 'Invalid tenant',
       }),
     ).toThrow();
-    expect(setProductTypeAction.descriptor.entrypoint.authorization).toEqual({
-      kind: 'action_execution',
-      provisioning: 'explicit',
-    });
+    expect(setProductTypeAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
     expect(setProductTypeAction.descriptor.idempotency).toBe('required');
     expect(setProductTypeAction.descriptor.legalEntityScope).toBe('forbidden');
   });

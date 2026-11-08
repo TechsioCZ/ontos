@@ -4,7 +4,6 @@
 import type { ActionHandlerContext, PrincipalEligibilityService } from '@app/core-runtime';
 import {
   defineAction,
-  defineActionBusinessPermission,
   defineTenantModuleEntrypoint,
   OperationContextUnavailable,
   PrincipalEligibility,
@@ -29,6 +28,7 @@ import type {
   ChangePrincipalPurchaseLimitOverrideResult,
 } from '../../shared/actions/change-principal-purchase-limit-override.ts';
 import { createChangePrincipalPurchaseLimitOverrideCommerceCustomerContextPrincipalPurchaseLimitOverrideChangedV1OutboxMessage as createPrincipalPurchaseLimitOverrideChangedOutboxMessage } from './change-principal-purchase-limit-override.commerce-customer-context-principal-purchase-limit-override-changed-v1.outbox-message.ts';
+import { counterpartyOwnerFacts } from './owner-access-facts.ts';
 
 const MODULE_KEY = 'commerce.customer-context';
 const EVENT_TYPE = `${MODULE_KEY}.principal-purchase-limit-override-changed.v1`;
@@ -150,29 +150,27 @@ const handleChangePrincipalPurchaseLimitOverride = Effect.fn('ChangePrincipalPur
 
 export const changePrincipalPurchaseLimitOverrideAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.principal-purchase-limit-override.change',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'purchase-limits', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.change-principal-purchase-limit-override.access.v1',
     },
+    accessOwnerFacts: (payload) => counterpartyOwnerFacts(payload.counterpartyRef.resourceId),
     actionKey: 'commerce.customer-context.change-principal-purchase-limit-override',
     auditEvidenceSchema: PurchaseLimitPolicyAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission<ChangePrincipalPurchaseLimitOverridePayload>(
-      (payload, scope) => ({
-        permission: 'counterparty.purchase_limit.manage',
-        target: {
-          counterpartyId: payload.counterpartyRef.resourceId,
-          kind: 'counterparty',
-          legalEntityId: scope.legalEntityId ?? '',
-          tenantId: scope.tenantId,
-        },
-      }),
-    ),
     domainErrorSchema: ChangePrincipalPurchaseLimitOverrideErrorSchema,
     domainEvents: { [EVENT_TYPE]: PrincipalPurchaseLimitOverrideChangedEventSchema },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.change-principal-purchase-limit-override',
       moduleKey: 'commerce.customer-context',
       role: 'action',

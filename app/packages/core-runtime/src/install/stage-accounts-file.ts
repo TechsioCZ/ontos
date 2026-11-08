@@ -1,7 +1,7 @@
 import { Effect, FileSystem, Schema } from 'effect';
 
-import { ONTOS_SPICEDB_SCHEMA } from '../permissions/schema.ts';
-import { toScopedRoleObjectId } from '../permissions/scoped-role.ts';
+import { ModuleKeySchema } from '../access/ids.ts';
+import { WorkloadKeySchema } from '../authorization/access-declaration.ts';
 
 /** Environment variable naming the operator-provided stage accounts file (JSON, mode 600, outside the repo). */
 export const STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY = 'ONTOS_STAGE_ACCOUNTS_FILE';
@@ -12,33 +12,31 @@ const TenantIdSchema = uuid.pipe(Schema.brand('TenantId'));
 const LegalEntityIdSchema = uuid.pipe(Schema.brand('LegalEntityId'));
 const ModuleStateIdSchema = uuid.pipe(Schema.brand('ModuleStateId'));
 const PrincipalIdSchema = uuid.pipe(Schema.brand('PrincipalId'));
-const RoleKeySchema = TrimmedNonEmptyString.pipe(Schema.brand('ScopedRoleKey'));
 const AuthBindingIdSchema = uuid.pipe(Schema.brand('AuthBindingId'));
-const ModuleKeySchema = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/u)).pipe(
-  Schema.brand('ModuleKey'),
-);
 const SlugSchema = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u));
-const ActionKeySchema = Schema.String.check(Schema.isPattern(/^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/u)).pipe(
-  Schema.brand('ActionKey'),
-);
-const RelationNameSchema = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9_]*$/u));
+/**
+ * The roles one stage account holds, as data. `full_access` is the tenant's own "Plný přístup" role,
+ * which the bootstrap compiles from the release; role templates arrive with the role editor and extend
+ * this list, so the closed literal is the whole vocabulary an operator may name today (O67-Q6).
+ */
+const StageAccountRoleSchema = Schema.Literal('full_access');
 const AccountEmailSchema = Schema.Trim.check(
   Schema.isNonEmpty(),
   Schema.makeFilter((value) => (/^[^\s@]+@[^\s@]+$/u.test(value) ? undefined : 'must be an email address')),
 );
 
 /**
- * The SpiceDB grants one stage account holds, as data. `tenantRelations` are Principal relations on
- * the account's own Tenant; `explicitActions` lists the `explicit` Action keys the account executes,
- * or `"all"` for every current `explicit` Action. Nothing in code assigns rights by account kind.
+ * The v2 authority one stage account holds, as data (CUTOVER-PLAN §3.5). `owner` names the one account
+ * that owns the tenant — it is the principal `bootstrapTenantAccess` creates the tenant's scopes,
+ * memberships and "Plný přístup" assignment for. `roles` lists what a further account holds beside its
+ * membership; nothing in code assigns rights by account kind.
  */
 const StageAccountGrantsSchema = Schema.Struct({
-  explicitActions: Schema.Union([Schema.Literal('all'), Schema.Array(ActionKeySchema)]),
-  tenantRelations: Schema.Array(RelationNameSchema),
+  owner: Schema.Boolean,
+  roles: Schema.Array(StageAccountRoleSchema),
 });
 
 const StageAccountSchema = Schema.Struct({
-  affiliation: Schema.Literals(['employee', 'external']),
   authBindingId: AuthBindingIdSchema,
   displayName: TrimmedNonEmptyString,
   email: AccountEmailSchema,
@@ -57,18 +55,32 @@ const StageTenantSchema = Schema.Struct({
     registrationCountry: Schema.String.check(Schema.isPattern(/^[A-Z]{2}$/u)),
     registrationNumber: TrimmedNonEmptyString,
   }),
-  /** The module the stage Tenant activates for its accounts; operator data, never fixed in code. */
+  /** Explicit operator installation intent, checked against the supplied composition before writes. */
   moduleKey: ModuleKeySchema,
   moduleStateId: ModuleStateIdSchema,
   slug: SlugSchema,
   tenantId: TenantIdSchema,
+  /**
+   * The trusted machine workloads this tenant registers, as operator data (O73). Each names a
+   * principal of the tenant and one `<module>.<workload-name>` key the principal may run; the stage
+   * bootstrap writes the binding through Core's own registry, so a workload Action admits exactly
+   * the principals the operator declared and nothing else.
+   */
+  workloads: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        principalId: PrincipalIdSchema,
+        workloadKey: WorkloadKeySchema,
+      }),
+    ),
+  ),
 });
 
-/** A former stage Tenant whose bootstrap relationships are deleted and whose Core rows are archived. */
+/** A former stage Tenant whose authority ends and whose Core rows are archived. */
 const StageRetiredTenantSchema = Schema.Struct({
   legalEntityId: LegalEntityIdSchema,
-  moduleKey: ModuleKeySchema,
-  principalIds: Schema.Array(PrincipalIdSchema),
+  /** Non-empty: the retired tenant is reconciled under the scope of a principal that is leaving it. */
+  principalIds: Schema.NonEmptyArray(PrincipalIdSchema),
   tenantId: TenantIdSchema,
 });
 
@@ -76,41 +88,10 @@ const StageRetiredTenantSchema = Schema.Struct({
  * The operator stage accounts file. Its values never enter source control; only this shape does.
  * The number of Tenants and accounts, their identifiers, and their grants are all data.
  */
-const ScopedRoleSchema = Schema.Struct({
-  legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
-  principalIds: Schema.Array(PrincipalIdSchema),
-  roleKey: RoleKeySchema,
-  tenantId: TenantIdSchema,
-});
-
-const ScopedActionRoleGrantSchema = Schema.Struct({
-  actionKey: ActionKeySchema,
-  legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
-  roleKey: RoleKeySchema,
-  tenantId: TenantIdSchema,
-});
-
-const ScopedActionAssertionSchema = Schema.Struct({
-  actionKey: ActionKeySchema,
-  assertions: Schema.NonEmptyArray(
-    Schema.Struct({
-      expected: Schema.Literals(['allowed', 'denied']),
-      principalId: PrincipalIdSchema,
-    }),
-  ),
-  legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
-  tenantId: TenantIdSchema,
-});
-
-export const StageAccountsFileSchema = Schema.Struct({
-  actionAuthorization: Schema.Struct({
-    actionAssertions: Schema.Array(ScopedActionAssertionSchema),
-    roleGrants: Schema.Array(ScopedActionRoleGrantSchema),
-  }),
+const StageAccountsFileSchema = Schema.Struct({
   retiredAccountEmails: Schema.Array(AccountEmailSchema),
   retiredTenants: Schema.Array(StageRetiredTenantSchema),
-  schemaVersion: Schema.Literal(4),
-  scopedRoles: Schema.Array(ScopedRoleSchema),
+  schemaVersion: Schema.Literal(2),
   tenants: Schema.NonEmptyArray(StageTenantSchema),
 });
 
@@ -118,6 +99,7 @@ export type StageAccountsFile = typeof StageAccountsFileSchema.Type;
 export type StageTenant = StageAccountsFile['tenants'][number];
 export type StageAccount = StageTenant['accounts'][number];
 export type StageRetiredTenant = StageAccountsFile['retiredTenants'][number];
+export type StageAccountRole = StageAccount['grants']['roles'][number];
 
 /** The accounts file as read by the operator runtime: its text and POSIX permission bits. */
 export interface StageAccountsFileContents {
@@ -136,36 +118,20 @@ const invalid = (reason: string, cause?: unknown): StageAccountsFileError =>
 /** The low six permission bits are the group and other read/write/execute flags. */
 const GROUP_AND_OTHER_PERMISSION_RANGE = 0o100;
 
-const TENANT_DEFINITION_PATTERN = /definition tenant \{(?<body>[^}]*)\}/u;
-const PRINCIPAL_RELATION_PATTERN = /relation (?<name>[a-z_]+): principal\b/gu;
-
-/**
- * Grantable principal authority excludes both independent and company-derived admission.
- * Company admission comes only from explicit SQL membership selections.
- */
-export const STAGE_GRANTABLE_TENANT_RELATIONS: readonly string[] = Object.freeze(
-  [
-    ...(TENANT_DEFINITION_PATTERN.exec(ONTOS_SPICEDB_SCHEMA)?.groups?.['body'] ?? '').matchAll(
-      PRINCIPAL_RELATION_PATTERN,
-    ),
-  ].flatMap((match) => {
-    const relation = match.groups?.['name'];
-    return relation === undefined || ['member', 'company_member'].includes(relation) ? [] : [relation];
-  }),
-);
-const GRANTABLE_TENANT_RELATION_SET: ReadonlySet<string> = new Set(STAGE_GRANTABLE_TENANT_RELATIONS);
-
 const hasDuplicates = (values: readonly string[]): boolean =>
   new Set(values.map((value) => value.toLowerCase())).size !== values.length;
 
 /**
  * Validates the operator accounts file without echoing any of its values: owner-only permissions,
  * the documented schema, unique identifiers and emails, grants that name only schema relations,
- * and retired data that never overlaps an active Tenant or account.
+ * and retired data that never overlaps an active Tenant or account. The caller supplies the
+ * reviewed composition's workload declarations; Core knows no deployment's workload keys.
  */
 export const parseStageAccountsFile = Effect.fn('StageAccountsFile.parse')(function* parseAccountsFile(
   contents: StageAccountsFileContents,
+  declaredWorkloadKeys: ReadonlySet<string>,
 ) {
+  const declaredWorkloads = new Set(declaredWorkloadKeys.values());
   if (contents.mode % GROUP_AND_OTHER_PERMISSION_RANGE !== 0) {
     return yield* invalid(
       `The ${STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY} file must be readable only by its owner (chmod 600)`,
@@ -197,31 +163,42 @@ export const parseStageAccountsFile = Effect.fn('StageAccountsFile.parse')(funct
   if (activeEmails.size !== accounts.length) {
     return yield* invalid('Every stage account needs its own email');
   }
-  if (
-    accounts.some(
-      ({ grants }) =>
-        hasDuplicates(grants.tenantRelations) ||
-        grants.tenantRelations.some((relation) => !GRANTABLE_TENANT_RELATION_SET.has(relation)) ||
-        (grants.explicitActions !== 'all' && hasDuplicates(grants.explicitActions)),
-    )
-  ) {
-    return yield* invalid('Stage account grants must name unique Tenant relations defined by the SpiceDB schema');
+  if (accounts.some(({ grants }) => hasDuplicates(grants.roles))) {
+    return yield* invalid('Stage account roles must be unique');
   }
-  const roleIds = file.scopedRoles.map(toScopedRoleObjectId);
+  const tenantWorkloads = file.tenants.flatMap(({ workloads }) => workloads ?? []);
+  if (tenantWorkloads.some(({ workloadKey }) => !declaredWorkloads.has(workloadKey))) {
+    return yield* invalid('Every registered workload must name a workload declared by the composition');
+  }
   if (
-    new Set(roleIds).size !== roleIds.length ||
-    file.scopedRoles.some((role) => {
-      const tenant = file.tenants.find(({ tenantId }) => tenantId === role.tenantId);
-      return (
-        tenant === undefined ||
-        (role.legalEntityId !== undefined && role.legalEntityId !== tenant.legalEntity.legalEntityId) ||
-        role.principalIds.length === 0 ||
-        hasDuplicates(role.principalIds) ||
-        role.principalIds.some((principalId) => !tenant.accounts.some((account) => account.principalId === principalId))
-      );
+    file.tenants.some(({ accounts: tenantAccounts, workloads }) => {
+      const tenantPrincipalIds = new Set(tenantAccounts.map(({ principalId }) => principalId));
+      return workloads?.some(({ principalId }) => !tenantPrincipalIds.has(principalId)) === true;
     })
   ) {
-    return yield* invalid('Stage scoped roles require unique exact scopes and explicit tenant-local account members');
+    return yield* invalid('Every registered workload needs a principal of its own tenant');
+  }
+  if (
+    file.tenants.some(({ workloads }) =>
+      workloads === undefined
+        ? false
+        : new Set(workloads.map(({ principalId, workloadKey }) => `${principalId}:${workloadKey}`)).size !==
+          workloads.length,
+    )
+  ) {
+    return yield* invalid('A tenant may register each workload key for a principal only once');
+  }
+  if (
+    file.tenants.some(
+      ({ accounts: tenantAccounts }) => tenantAccounts.filter(({ grants }) => grants.owner).length === 0,
+    )
+  ) {
+    return yield* invalid('Every stage Tenant needs exactly one owner account');
+  }
+  if (
+    file.tenants.some(({ accounts: tenantAccounts }) => tenantAccounts.filter(({ grants }) => grants.owner).length > 1)
+  ) {
+    return yield* invalid('Every stage Tenant needs exactly one owner account');
   }
   const retiredEmails = file.retiredAccountEmails.map((email) => email.toLowerCase());
   if (hasDuplicates(retiredEmails) || retiredEmails.some((email) => activeEmails.has(email))) {

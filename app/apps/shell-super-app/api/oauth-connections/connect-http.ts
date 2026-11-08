@@ -3,7 +3,7 @@
  * session, runs the connect service and maps its errors to Problem Details: Invalid 400 (404 for unknown drafts and
  * grants), Unauthorized 401, Forbidden 403 (detail = Czech reason), Unavailable 503.
  */
-import { PrincipalResolver } from '@app/core-runtime';
+import { OperationalScopeResolver, PrincipalResolver } from '@app/core-runtime';
 import { Cookies, HttpApiBuilder, HttpEffect, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Match } from 'effect';
 import type { Headers as HttpHeaders } from 'effect/http';
@@ -144,15 +144,33 @@ const connectSession = Effect.fn('shell.oauthConnect.session')(function* connect
   if (sessionId.length === 0) {
     return yield* new ConnectionUnauthorized({ code: 'session_missing' });
   }
-  const userId = yield* (yield* PrincipalResolver)
-    .resolveBetterAuthUserForPrincipal({ principalId: principal.principalId, tenantId: principal.tenantId })
-    .pipe(Effect.mapError((cause) => new ConnectionUnavailable({ cause })));
+  // Keep user lookup before scope revalidation: an unresolved provider user must fail before later scope I/O.
+  const [userId, scope] = yield* Effect.all(
+    [
+      Effect.gen(function* resolveConnectUser() {
+        return yield* (yield* PrincipalResolver)
+          .resolveBetterAuthUserForPrincipal({ principalId: principal.principalId, tenantId: principal.tenantId })
+          .pipe(Effect.mapError((cause) => new ConnectionUnavailable({ cause })));
+      }),
+      Effect.gen(function* resolveConnectScope() {
+        return yield* (yield* OperationalScopeResolver)
+          .resolve({
+            correlationId: request.headers['x-correlation-id'] ?? 'missing',
+            legalEntityScope: 'optional',
+            principal,
+          })
+          .pipe(Effect.mapError((cause) => new ConnectionUnavailable({ cause })));
+      }),
+    ],
+    { concurrency: 1 },
+  );
   return {
     activeLegalEntityId: context.state === 'authenticated' ? context.identity.legalEntityId : null,
     authBindingId: principal.authBindingId,
     companies: context.availableLegalEntities,
     displayName: context.identity.displayName,
     principalId: principal.principalId,
+    scope,
     sessionId,
     tenantId: principal.tenantId,
     userId,

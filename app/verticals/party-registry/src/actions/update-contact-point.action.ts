@@ -23,7 +23,6 @@ import {
 import {
   PartyContactPointSchema,
   assertAddressPurposeRules,
-  assertVerificationRules,
   normalizeContactPointInput,
 } from '../../shared/domain/contact-point.ts';
 import type {
@@ -32,7 +31,6 @@ import type {
   ContactPointInput,
   ContactPointPrivacyClassification,
   ContactPointProvenance,
-  ContactPointVerification,
   PartyContactPoint,
 } from '../../shared/domain/contact-point.ts';
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
@@ -81,10 +79,6 @@ export interface UpdateContactPointCommand {
         readonly type: 'END_ADDRESS_PURPOSE';
       }>
     | Readonly<{
-        readonly type: 'ENRICH_VERIFICATION';
-        readonly verification: ContactPointVerification;
-      }>
-    | Readonly<{
         readonly provenance: ContactPointProvenance;
         readonly type: 'ADD_PROVENANCE';
       }>
@@ -96,7 +90,6 @@ export interface UpdateContactPointCommand {
           readonly privacyClassification: ContactPointPrivacyClassification;
           readonly provenance: ContactPointProvenance;
           readonly validFrom: string;
-          readonly verification: ContactPointVerification;
         }>;
         readonly type: 'CORRECT_CONTACT_POINT';
       }>;
@@ -160,7 +153,6 @@ const persistenceChange = (change: UpdateContactPointPayload['change']): UpdateC
         ...value,
         effectiveEnd: DateTime.formatIso(DateTime.makeUnsafe(value.effectiveEnd)),
       }),
-      ENRICH_VERIFICATION: (value) => value,
       SET_ADDRESS_PURPOSE: (value) => value,
       SET_CHANNEL_PREFERRED: (value) => value,
     }),
@@ -176,19 +168,11 @@ const handleUpdateContactPoint = Effect.fn('UpdateContactPointAction.handleUpdat
       Services
     >,
   ) {
-    if (payload.change.type === 'ENRICH_VERIFICATION') {
-      const { verification } = payload.change;
-      yield* Effect.try({
-        catch: (cause) => invalidContactPoint('Verification enrichment is missing its required evidence', cause),
-        try: () => assertVerificationRules(verification),
-      });
-    }
     if (payload.change.type === 'CORRECT_CONTACT_POINT' && payload.change.replacement !== undefined) {
       const { replacement } = payload.change;
       yield* Effect.try({
         catch: (cause) => invalidContactPoint('The correction replacement does not satisfy Contact Point rules', cause),
         try: () => {
-          assertVerificationRules(replacement.verification);
           if (replacement.contactPoint.type === 'ADDRESS') {
             assertAddressPurposeRules(replacement.contactPoint.purposes, replacement.provenance);
           }
@@ -231,6 +215,15 @@ const handleUpdateContactPoint = Effect.fn('UpdateContactPointAction.handleUpdat
 
 export const updateContactPointAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.contact-point.update',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'contact-data', level: 'extended' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessTarget: (payload) => ({ moduleKey: 'party.registry', recordKey: payload.contactPointRef.resourceId }),
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.update-contact-point.access.v1',
@@ -243,10 +236,7 @@ export const updateContactPointAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.update-contact-point',
       moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
@@ -258,7 +248,6 @@ export const updateContactPointAction = defineAction(
     policies: [],
     resultSchema: UpdateContactPointResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_party_identity',
   },
   handleUpdateContactPoint,
   (transaction, scope) =>

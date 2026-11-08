@@ -2,12 +2,7 @@
 // @ontos-action-owner commerce.inventory
 // @ontos-action-slug resolve-inventory-source-conflict
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect } from 'effect';
 
 import {
@@ -59,29 +54,25 @@ export const handleResolveInventorySourceConflict = Effect.fn('ResolveInventoryS
 
 export const resolveInventorySourceConflictAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.inventory.source-conflict.resolve',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'recovery', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.inventory.resolve-inventory-source-conflict.access.v1',
     },
     actionKey: ACTION_KEY,
     auditProfile: 'standard',
-    businessPermission: defineActionBusinessPermission<ResolveInventorySourceConflictPayload>((payload, scope) => ({
-      permission: 'inventory.recovery.execute',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: payload.conflictRef.moduleId,
-          resourceId: payload.conflictRef.resourceId,
-          resourceType: payload.conflictRef.resourceType,
-        },
-        tenantId: payload.conflictRef.tenantId === scope.tenantId ? scope.tenantId : '',
-      },
-    })),
     domainErrorSchema: ResolveInventorySourceConflictErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: MODULE_KEY,
       role: 'action',
@@ -91,10 +82,6 @@ export const resolveInventorySourceConflictAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: ResolveInventorySourceConflictPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<ResolveInventorySourceConflictPayload>((payload) => ({
-      permission: 'write',
-      resource: payload.conflictRef,
-    })),
     resultSchema: ResolveInventorySourceConflictResultSchema,
     schemaVersion: '1',
   },

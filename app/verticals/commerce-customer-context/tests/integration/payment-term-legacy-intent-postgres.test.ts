@@ -175,6 +175,7 @@ it.live(
         yield* migrateOwner(isolated.connections, 'migrate', true);
         const fixture = yield* Effect.acquireRelease(
           makeLiveOperationFixture({
+            access: 'allowed',
             actionKeys: [],
             adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
             allowedAudiences: ['commerce-customer-context'],

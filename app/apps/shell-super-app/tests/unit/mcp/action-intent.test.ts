@@ -1,5 +1,6 @@
 // @rstest-environment node
-import { defineAction } from '@app/core-runtime';
+import { defineAction, defineOntosModuleManifest, defineVerticalRuntimeRegistration } from '@app/core-runtime';
+import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { AgentProposalSubmitRequestSchema } from '@app/shared-contracts/agent-proposals';
 import { Effect, Predicate, Schema } from 'effect';
@@ -41,6 +42,14 @@ const request = Schema.decodeUnknownSync(AgentProposalSubmitRequestSchema)({
 // Core's real runtime owns authorization, hash conflicts, persistence and committed retry evidence.
 const proposalFixture = defineAction(
   {
+    accessDeclaration: {
+      key: 'test.mcp.submit.run',
+      kind: 'action',
+      modes: ['run'],
+      placement: { group: 'actions', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'test.mcp.intent.access.v1' },
     actionKey: 'test.mcp.submit',
     auditProfile: 'minimal',
@@ -48,7 +57,7 @@ const proposalFixture = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'test.mcp.submit',
       moduleKey: 'test.mcp',
       role: 'action',
@@ -64,6 +73,26 @@ const proposalFixture = defineAction(
   (payload) => Effect.succeed({ instruction: payload.instruction }),
 );
 
+const contract = makeModuleContractFixture({ appId: 'fixture-mcp-intent', moduleId: 'test.mcp' });
+const ownerRegistration = defineVerticalRuntimeRegistration({
+  actions: [proposalFixture],
+  manifest: defineOntosModuleManifest({
+    ...contract.manifest,
+    publicSurface: {
+      ...contract.manifest.publicSurface,
+      actions: [proposalFixture],
+      api: {},
+      components: {},
+      events: [],
+      operationContracts: [],
+      reports: [],
+      search: [],
+    },
+  }),
+  outboxWorkers: [],
+  reads: [],
+});
+
 type Harness = Effect.Success<ReturnType<typeof makeActionTestHarness>>;
 const submitNativeFixture = (harness: Harness, payload = request) =>
   Effect.gen(function* submitNativeFixtureEffect() {
@@ -76,7 +105,7 @@ describe('authenticated MCP caller intent boundary with native Action runtime', 
     'retains the exact key, principal, run and payload across committed retry and changed-payload conflict',
     () =>
       Effect.gen(function* nativeIntentReplay() {
-        const harness = yield* makeActionTestHarness({ actionPermission: 'allowed' });
+        const harness = yield* makeActionTestHarness({ access: 'allowed', ownerRegistration });
         const intent = { idempotencyKey: 'Caller-Intent:AbC_123/retry' };
         const run = (payload = request, correlationId = 'original-http-request') =>
           withMcpActionIntent(submitNativeFixture(harness, payload), intent).pipe(
@@ -122,7 +151,7 @@ describe('authenticated MCP caller intent boundary with native Action runtime', 
 
   it.effect('rejects absent or invalid tool keys and missing real request context before native mutation', () =>
     Effect.gen(function* refuseInvalidIntent() {
-      const harness = yield* makeActionTestHarness({ actionPermission: 'allowed' });
+      const harness = yield* makeActionTestHarness({ access: 'allowed', ownerRegistration });
       for (const key of ['', ' ', 'line\nbreak', 'x'.repeat(201)]) {
         const failure = yield* withMcpActionIntent(submitNativeFixture(harness), { idempotencyKey: key }).pipe(
           Effect.provideService(AgentReadRequestIdentity, { correlationId: 'real-http-request' }),
@@ -141,7 +170,7 @@ describe('authenticated MCP caller intent boundary with native Action runtime', 
 
   it.effect('does not turn a valid intent key into native Action authority', () =>
     Effect.gen(function* keyIsNotAuthority() {
-      const harness = yield* makeActionTestHarness();
+      const harness = yield* makeActionTestHarness({ ownerRegistration });
       const failure = yield* withMcpActionIntent(submitNativeFixture(harness), {
         idempotencyKey: 'valid-but-not-authority',
       }).pipe(Effect.provideService(AgentReadRequestIdentity, { correlationId: 'real-http-request' }), Effect.flip);
@@ -153,7 +182,7 @@ describe('authenticated MCP caller intent boundary with native Action runtime', 
 
   it.effect('isolates distinct per-tool keys within one request and across requests', () =>
     Effect.gen(function* independentCallerIntents() {
-      const harness = yield* makeActionTestHarness({ actionPermission: 'allowed' });
+      const harness = yield* makeActionTestHarness({ access: 'allowed', ownerRegistration });
       for (const [index, key] of ['tool-one', 'tool-two', 'next-request'].entries()) {
         yield* withMcpActionIntent(submitNativeFixture(harness, { ...request, instruction: key }), {
           idempotencyKey: key,

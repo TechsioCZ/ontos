@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug create-approval-hierarchy
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import {
   CreateApprovalHierarchyPayloadSchema,
@@ -16,8 +16,8 @@ import type {
 import type { PurchasingApprovalWorkflowService } from '../persistence/purchasing-approval-persistence.ts';
 import { purchasingApprovalWorkflowForScope } from '../persistence/purchasing-approval-persistence.ts';
 import {
+  purchasingApprovalOwnerFacts,
   recordPurchasingApprovalResourceAccess,
-  purchasingApprovalPermissionTarget,
   trustedPurchasingContext,
 } from './purchasing-approval-action-support.ts';
 import { purchasingApprovalPolicy } from '../policies/purchasing-approval.policy.ts';
@@ -106,28 +106,33 @@ const handleCreateApprovalHierarchy = Effect.fn('CreateApprovalHierarchyAction.h
 
 export const createApprovalHierarchyAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.approval-hierarchy.create',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'purchasing-approval', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.create-approval-hierarchy.access.v1',
     },
+    accessOwnerFacts: (payload) =>
+      purchasingApprovalOwnerFacts({
+        counterpartyRef: payload.hierarchy.selector.counterpartyRef,
+        storefrontId: payload.hierarchy.selector.storefrontId,
+      }),
     actionKey: 'commerce.customer-context.create-approval-hierarchy',
     auditEvidenceSchema: CreateApprovalHierarchyAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission((payload: CreateApprovalHierarchyPayload, scope) =>
-      purchasingApprovalPermissionTarget({
-        counterpartyRef: payload.hierarchy.selector.counterpartyRef,
-        permission: 'counterparty.approval_hierarchy.manage',
-        scope,
-        storefrontId: payload.hierarchy.selector.storefrontId,
-      }),
-    ),
     domainErrorSchema: CreateApprovalHierarchyRejected,
     domainEvents: {
       'commerce.customer-context.approval-hierarchy-created.v1': ApprovalHierarchyCreatedEventSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.create-approval-hierarchy',
       moduleKey: MODULE_KEY,
       role: 'action',

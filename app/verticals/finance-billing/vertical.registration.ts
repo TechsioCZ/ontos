@@ -5,10 +5,12 @@ import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { financeBillingManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
+import { leaseInvoicesRead } from './src/api/lease-invoices.read.ts';
+import { recordsRead } from './src/api/records.read.ts';
 import { draftInvoiceFromWonOpportunityWorker } from './src/workers/draft-invoice-from-won-opportunity.worker.ts';
 import { projectSearchWorker } from './src/workers/project-search.worker.ts';
 import { rebuildSearchWorker } from './src/workers/rebuild-search.worker.ts';
-import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 // </generated-module-registration-imports>
 
 export const financeBillingRegistration = defineVerticalRuntimeRegistration({
@@ -22,6 +24,7 @@ export const financeBillingRegistration = defineVerticalRuntimeRegistration({
     api: {
       // <generated-module-registration-apis>
       'lease-invoices': () => import('./src/api/lease-invoices-client.ts'),
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       records: () => import('./src/api/records-client.ts'),
       // </generated-module-registration-apis>
     },
@@ -52,6 +55,12 @@ export const financeBillingRegistration = defineVerticalRuntimeRegistration({
     projectSearchWorker,
     rebuildSearchWorker,
     // </generated-module-registration-workers>
+  ],
+  reads: [
+    // <generated-module-registration-reads>
+    leaseInvoicesRead,
+    recordsRead,
+    // </generated-module-registration-reads>
   ],
 });
 

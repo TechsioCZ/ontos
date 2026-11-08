@@ -1,3 +1,4 @@
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { identity } from 'effect';
 import {
   MicroVerticalBuildMarkerSchema,
@@ -88,6 +89,7 @@ export const taxFoundationApi = HttpApi.make('TaxApiFoundation').add(
 
 export const taxApi = HttpApi.make('TaxApi')
   .addHttpApi(taxFoundationApi)
+  .addHttpApi(OwnerActionApprovalApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(ApplicableTaxRuleSetApi)
   .addHttpApi(CorrectTaxRuleRevisionActionApi)

@@ -366,10 +366,7 @@ describe('Catalog attribute value Actions', () => {
       removeVariantAttributeOverrideAction,
     ]) {
       expect(action.descriptor.entrypoint.scope).toBe('tenant');
-      expect(action.descriptor.entrypoint.authorization).toEqual({
-        kind: 'action_execution',
-        provisioning: 'explicit',
-      });
+      expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
       expect(action.descriptor.idempotency).toBe('required');
       expect(action.descriptor.legalEntityScope).toBe('forbidden');
       expect(Schema.is(action.descriptor.domainErrorSchema)(conflict)).toBe(true);

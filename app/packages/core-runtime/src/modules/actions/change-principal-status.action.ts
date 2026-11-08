@@ -61,6 +61,14 @@ const handle = Effect.fn('ChangePrincipalStatusAction.handle')(function* changeP
 
 export const changePrincipalStatusAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'core.identity.principal.change-status',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'core.identity.change-principal-status.access.v1',
@@ -71,10 +79,7 @@ export const changePrincipalStatusAction = defineAction(
     domainEvents: principalLifecycleDomainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.change-principal-status',
       moduleKey: 'core.identity',
       role: 'action',
@@ -86,7 +91,6 @@ export const changePrincipalStatusAction = defineAction(
     policies: [],
     resultSchema: ChangePrincipalStatusResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_identity',
   },
   handle,
   (transaction, scope) => {

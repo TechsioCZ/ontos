@@ -1,21 +1,34 @@
 import {
-  ContextAccess,
+  CoreSearchProjectionHitSchema,
   CoreSearchProjectionDocumentSchema,
   CoreSearchProjectionStore,
   CoreSearchQueryRuntime,
-  ResourceContainmentRelationshipMutation,
   coreSearchIngestionRegistryLayer,
   defineCoreSearchIngestionRegistrations,
-  ownerResourceModuleContainment,
 } from '@app/core-runtime';
 import type { OperationalScope, OutboxWorkerHandlerContext } from '@app/core-runtime';
+import type { ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
+import { RecordKeySchema } from '@app/core-runtime/access/ids';
 import { matchesCoreSearchValues, parseCoreSearchQuery } from '@app/core-runtime/search-contract';
 import { compareCoreSearchHits, coreSearchRelevance } from '@app/core-runtime/search-ranking';
-import { Array as Arr, Context, Effect, Layer, Schema } from 'effect';
+import { Context, Effect, Layer, Option, Schema } from 'effect';
 import type { AgreementsState } from '../../shared/apis/records.ts';
 import { SearchSource } from './search-source.ts';
 import { presentContracts } from './persistence.service.ts';
 import { searchUnavailable as unavailable } from '../../shared/domain/search-projection-error.ts';
+import type { ParentContractRead } from './search-access.ts';
+import {
+  loadParentContractPredicate,
+  requireSearchFields,
+  requireSearchPredicate,
+  searchRecordVisible,
+} from './search-access.ts';
+
+export interface LegalSearchAuthorization {
+  readonly deniedFieldPaths: readonly (readonly string[])[] | undefined;
+  readonly listAccess: ListAccessPredicate | undefined;
+  readonly parentRead?: ParentContractRead;
+}
 
 const moduleId = 'legal.agreements';
 export const searchIngestionRegistrations = defineCoreSearchIngestionRegistrations([
@@ -121,7 +134,6 @@ export const buildSearchDocuments = Effect.fn('Agreements.buildSearchDocuments')
 export const createSearchProjector = Effect.gen(function* createProjector() {
   const sourcePort = yield* SearchSource;
   const store = yield* CoreSearchProjectionStore;
-  const containment = yield* ResourceContainmentRelationshipMutation;
   return {
     project: Effect.fn('Agreements.projectSearch')(function* project(context: OutboxWorkerHandlerContext) {
       const source = yield* sourcePort.load(context);
@@ -129,25 +141,10 @@ export const createSearchProjector = Effect.gen(function* createProjector() {
         return yield* unavailable();
       }
       const documents = yield* buildSearchDocuments(source);
-      // All snapshot SQL has committed. Containment is a governed, idempotent module_access TOUCH, never a grant.
-      const relationships = yield* Effect.forEach(
-        documents,
-        (document) => {
-          const relationship =
-            document.selectedLegalEntityId === undefined
-              ? undefined
-              : ownerResourceModuleContainment(source.tenantId, document.selectedLegalEntityId, document.ref);
-          return relationship === undefined ? Effect.fail(unavailable()) : Effect.succeed(relationship);
-        },
-        { concurrency: 1 },
-      );
-      yield* Effect.forEach(Arr.chunksOf(relationships, 100), (batch) => containment.touch({ relationships: batch }), {
-        concurrency: 1,
-        discard: true,
-      }).pipe(Effect.mapError(unavailable));
+      // All snapshot SQL has committed. Core Search enforces the caller's access list predicate and fields;
+      // the owner writes no permission-graph containment edge.
       // Core atomically replaces each complete resource-type unit at the same reserved generation.
       // No individual apply: preserve Core floors, CAS and deletion semantics.
-      // All containment touches finish before either unit can be published.
       yield* Effect.forEach(
         ['legal.agreements.contract', 'legal.agreements.document'],
         (resourceType) =>
@@ -176,10 +173,13 @@ export const loadSearchHits = Effect.fn('Agreements.loadSearchHits')(function* l
   scope: OperationalScope,
   resourceType: 'legal.agreements.contract',
   input: { readonly includeArchived?: boolean; readonly query: string },
+  authorization: LegalSearchAuthorization,
 ) {
   if (scope.legalEntityId === undefined) {
     return yield* unavailable();
   }
+  yield* requireSearchFields(authorization.deniedFieldPaths);
+  const predicate = yield* requireSearchPredicate(authorization.listAccess);
   const runtime = yield* CoreSearchQueryRuntime;
   const hits = yield* runtime.search(
     {
@@ -191,16 +191,21 @@ export const loadSearchHits = Effect.fn('Agreements.loadSearchHits')(function* l
       tenantId: scope.tenantId,
     },
     scope,
+    { listAccess: predicate },
+  );
+  const validated = yield* Schema.decodeUnknownEffect(Schema.Array(CoreSearchProjectionHitSchema))(hits).pipe(
+    Effect.mapError(unavailable),
   );
   return yield* Effect.forEach(
-    hits,
+    validated,
     (hit) => {
       if (
         hit.ref.moduleId !== moduleId ||
         hit.ref.resourceType !== resourceType ||
         hit.ref.tenantId !== scope.tenantId ||
         hit.selectedLegalEntityId !== scope.legalEntityId ||
-        (hit.archived && input.includeArchived !== true)
+        (hit.archived && input.includeArchived !== true) ||
+        !searchRecordVisible(predicate, hit.ref.resourceId)
       ) {
         return Effect.fail(unavailable());
       }
@@ -212,32 +217,72 @@ export const loadSearchHits = Effect.fn('Agreements.loadSearchHits')(function* l
 
 /**
  * Recheck current owner evidence and archive state, never the shortlist's stale text/flags.
- * Linked documents also require their current parent's resource permission through Core's
- * public authorization adapter, after the owner snapshot transaction has closed.
+ * Linked documents independently require the original contract Read's canonical LIST predicate.
+ * Translate exact currently visible parent keys into document keys before Core's index limit.
  */
 export const loadCurrentSearchHits = Effect.fn('Agreements.loadCurrentSearchHits')(function* load(
   scope: OperationalScope,
   resourceType: 'legal.agreements.contract' | 'legal.agreements.document',
   input: { readonly includeArchived?: boolean; readonly includeRelevance?: boolean; readonly query: string },
   visible: AgreementsState,
+  authorization: LegalSearchAuthorization,
 ) {
   const { legalEntityId } = scope;
   if (legalEntityId === undefined) {
     return yield* unavailable();
   }
+  yield* requireSearchFields(authorization.deniedFieldPaths);
+  const predicate = yield* requireSearchPredicate(authorization.listAccess);
   const parsed = yield* Effect.fromResult(parseCoreSearchQuery(input.query)).pipe(Effect.mapError(unavailable));
   const documents = yield* buildSearchDocuments({
     companies: [{ legalEntityId, state: visible }],
     projectionVersion: '1',
     tenantId: scope.tenantId,
   });
+  const eligible = documents.filter(
+    (document) =>
+      document.ref.resourceType === resourceType &&
+      (input.includeArchived === true || !document.archived) &&
+      searchRecordVisible(predicate, document.ref.resourceId) &&
+      matchesCoreSearchValues([document.title, ...document.searchableText], parsed.tokens),
+  );
+  const eligibleIds = new Set<string>(eligible.map(({ ref }) => ref.resourceId));
+  const parentByDocument = new Map(
+    resourceType === 'legal.agreements.document'
+      ? visible.documents.flatMap((document) =>
+          document.contractRef === null || !eligibleIds.has(document.documentRef.resourceId)
+            ? []
+            : [[document.documentRef.resourceId, document.contractRef] as const],
+        )
+      : [],
+  );
+  let parentPredicate = Option.none<ListAccessPredicate>();
+  if (parentByDocument.size > 0) {
+    if (authorization.parentRead === undefined) {
+      return yield* unavailable();
+    }
+    parentPredicate = yield* loadParentContractPredicate(scope, authorization.parentRead);
+  }
   const current = new Map(
-    documents.flatMap((document) =>
-      document.ref.resourceType === resourceType && (input.includeArchived === true || !document.archived)
+    eligible.flatMap((document) =>
+      !parentByDocument.has(document.ref.resourceId) ||
+      Option.exists(parentPredicate, (parentAccess) => {
+        const parent = parentByDocument.get(document.ref.resourceId);
+        return parent !== undefined && searchRecordVisible(parentAccess, parent.resourceId);
+      })
         ? [[document.ref.resourceId, document] as const]
         : [],
     ),
   );
+  if (current.size === 0) {
+    return [];
+  }
+  const recordKeys = yield* Schema.decodeUnknownEffect(Schema.NonEmptyArray(RecordKeySchema))([...current.keys()]).pipe(
+    Effect.mapError(unavailable),
+  );
+  const admitted: ListAccessPredicate = {
+    groups: [...predicate.groups, { clauses: [{ conditions: [{ _tag: 'RecordKeyIn', recordKeys }] }] }],
+  };
   const runtime = yield* CoreSearchQueryRuntime;
   // Keep archived candidates in the shortlist so the current owner snapshot decides inclusion.
   const hits = yield* runtime
@@ -251,78 +296,28 @@ export const loadCurrentSearchHits = Effect.fn('Agreements.loadCurrentSearchHits
         tenantId: scope.tenantId,
       },
       scope,
+      { listAccess: admitted },
     )
     .pipe(Effect.mapError(unavailable));
-  const matched = hits.flatMap((hit) => {
+  const validated = yield* Schema.decodeUnknownEffect(Schema.Array(CoreSearchProjectionHitSchema))(hits).pipe(
+    Effect.mapError(unavailable),
+  );
+  if (new Set(validated.map(({ ref }) => ref.resourceId)).size !== validated.length) {
+    return yield* unavailable();
+  }
+  const matched = validated.flatMap((hit) => {
     const document = current.get(hit.ref.resourceId);
     return document === undefined ||
       hit.ref.moduleId !== moduleId ||
       hit.ref.resourceType !== resourceType ||
       hit.ref.tenantId !== scope.tenantId ||
       hit.selectedLegalEntityId !== legalEntityId ||
+      !searchRecordVisible(admitted, hit.ref.resourceId) ||
       !matchesCoreSearchValues([document.title, ...document.searchableText], parsed.tokens)
       ? []
       : [document];
   });
-  const matchedIds = new Set<string>(matched.map(({ ref }) => ref.resourceId));
-  const parentByDocument = new Map(
-    resourceType === 'legal.agreements.document'
-      ? visible.documents.flatMap((document) =>
-          matchedIds.has(document.documentRef.resourceId) && document.contractRef !== null
-            ? [[document.documentRef.resourceId, document.contractRef] as const]
-            : [],
-        )
-      : [],
-  );
-  const parents = new Map(
-    [...parentByDocument.values()].map((parent) => [
-      `${parent.moduleId}:${parent.resourceType}:${parent.resourceId}`,
-      parent,
-    ]),
-  );
-  const allowedParents = new Set<string>();
-  if (parents.size > 0) {
-    const access = yield* ContextAccess;
-    const decisions = yield* access.resources({
-      legalEntityId,
-      permission: 'read',
-      principalId: scope.principalId,
-      resources: [...parents.values()],
-      tenantId: scope.tenantId,
-    });
-    // Missing, duplicate, foreign, conditional or indeterminate decisions are not an empty success.
-    const decisionSchema = Schema.Array(
-      Schema.Struct({
-        decision: Schema.Literals(['allowed', 'denied', 'unavailable']),
-        key: Schema.String,
-      }),
-    );
-    if (!Schema.is(decisionSchema)(decisions) || decisions.length !== parents.size) {
-      return yield* unavailable();
-    }
-    const seen = new Set<string>();
-    for (const decision of decisions) {
-      if (
-        Reflect.ownKeys(decision).length !== 2 ||
-        !parents.has(decision.key) ||
-        seen.has(decision.key) ||
-        decision.decision === 'unavailable'
-      ) {
-        return yield* unavailable();
-      }
-      seen.add(decision.key);
-      if (decision.decision === 'allowed') {
-        allowedParents.add(decision.key);
-      }
-    }
-  }
   return matched
-    .filter((document) => {
-      const parent = parentByDocument.get(document.ref.resourceId);
-      return (
-        parent === undefined || allowedParents.has(`${parent.moduleId}:${parent.resourceType}:${parent.resourceId}`)
-      );
-    })
     .toSorted((left, right) => compareCoreSearchHits(left, right, parsed))
     .map((document) => {
       const result = { ref: document.ref, selectedLegalEntityId: legalEntityId, title: document.title };

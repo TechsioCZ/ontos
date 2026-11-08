@@ -1,20 +1,19 @@
-import { ActiveApplicationCompositionService, ActionPermissionDenied, ContextAccess } from '@app/core-runtime';
+import { crmRegistration } from '../../vertical.registration.ts';
+import { ActiveApplicationCompositionService } from '@app/core-runtime';
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
 import { HttpServerRequest } from 'effect/http';
 import { Layer, Effect, Schema } from 'effect';
-import type { ContextAccessService } from '@app/core-runtime';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';
 
 import { expect, it } from 'effect-rstest';
-import {
-  ApplyCommandPayloadSchema,
-  CrmPermissionDenied,
-  CrmReferenceUnavailable,
-} from '../../shared/actions/apply-command.ts';
+import { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
 import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
 
 const unusedReference = () => Effect.die('Unexpected reference boundary access');
 const referenceBoundary = Layer.mergeAll(
+  makeTestAccessGateLayers(),
   Layer.succeed(ActiveApplicationCompositionService, { load: unusedReference() }),
   Layer.succeed(GatewayPrincipalVerifierConfiguration, { configuration: unusedReference() }),
   Layer.succeed(
@@ -41,22 +40,23 @@ const payload = Schema.decodeSync(ApplyCommandPayloadSchema)({
 });
 const unused = () => Effect.die('Unexpected permission adapter');
 
-const accessFor = (decision: 'denied' | 'unavailable', assertOutsideSql: () => void): ContextAccessService => ({
-  contextPermissions: ({ targets }) =>
-    Effect.sync(() => {
-      assertOutsideSql();
-      return targets.map(({ moduleId, permission }) => ({ decision, key: `${moduleId}:${permission}` }));
-    }),
-  legalEntities: unused,
-  modules: unused,
-  resources: unused,
-  tenants: unused,
-});
+const accessFor = (decision: 'denied' | 'unavailable', assertOutsideSql: () => void) => {
+  const gate = makeTestAccessDecision({ defaultAnswer: { outcome: decision === 'denied' ? 'DENIED' : 'UNAVAILABLE' } });
+  return {
+    ...gate,
+    decideMany: (questions: Parameters<typeof gate.decideMany>[0]) =>
+      Effect.sync(assertOutsideSql).pipe(Effect.andThen(gate.decideMany(questions))),
+  };
+};
 
 const preparedPermissionTest = (decision: 'denied' | 'unavailable') =>
   Effect.scoped(
     Effect.gen(function* preparedPermissions() {
-      const harness = yield* makeActionTestHarness({ actionPermission: 'allowed' });
+      const harness = yield* makeActionTestHarness({
+        access: 'allowed',
+        compositionRevision: 'a'.repeat(64),
+        ownerRegistration: crmRegistration,
+      });
       let checks = 0;
       const access = accessFor(decision, () => {
         expect(harness.snapshot().transactionCount).toBe(0);
@@ -69,10 +69,10 @@ const preparedPermissionTest = (decision: 'denied' | 'unavailable') =>
           registration: applyCommandAction,
           transport: { correlationId: 'crm-command', idempotencyKey: `crm-command-${decision}` },
         })
-        .pipe(Effect.provideService(ContextAccess, access), Effect.flip);
-      expect(
-        decision === 'denied' ? Schema.is(CrmPermissionDenied)(failure) : Schema.is(CrmReferenceUnavailable)(failure),
-      ).toBe(true);
+        .pipe(Effect.provideService(AccessDecisionGate, access), Effect.flip);
+      expect(failure).toMatchObject({
+        _tag: decision === 'denied' ? 'CrmPermissionDenied' : 'CrmReferenceUnavailable',
+      });
       expect(checks).toBe(1);
       expect(harness.snapshot().committed).toEqual([]);
       expect(harness.snapshot().transactionCount).toBe(0);
@@ -89,7 +89,11 @@ it.layer(referenceBoundary)('reference boundary is unused on denial', (suite) =>
   suite.effect('Core executor denial never reaches crm permission preparation', () =>
     Effect.scoped(
       Effect.gen(function* executorDenied() {
-        const harness = yield* makeActionTestHarness({ actionPermission: 'denied' });
+        const harness = yield* makeActionTestHarness({
+          access: 'denied',
+          compositionRevision: 'a'.repeat(64),
+          ownerRegistration: crmRegistration,
+        });
         const failure = yield* harness.runtime
           .runAction({
             payload,
@@ -98,16 +102,14 @@ it.layer(referenceBoundary)('reference boundary is unused on denial', (suite) =>
             transport: { correlationId: 'work-denied', idempotencyKey: 'work-denied' },
           })
           .pipe(
-            Effect.provideService(ContextAccess, {
-              contextPermissions: unused,
-              legalEntities: unused,
-              modules: unused,
-              resources: unused,
-              tenants: unused,
+            Effect.provideService(AccessDecisionGate, {
+              ...makeTestAccessDecision(),
+              decideMany: unused,
+              list: unused,
             }),
             Effect.flip,
           );
-        expect(Schema.is(ActionPermissionDenied)(failure)).toBe(true);
+        expect(failure).toMatchObject({ _tag: 'ActionPermissionDenied' });
         expect(harness.snapshot().transactionCount).toBe(0);
       }),
     ),

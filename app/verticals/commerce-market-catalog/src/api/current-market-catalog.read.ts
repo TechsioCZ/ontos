@@ -14,7 +14,7 @@ const commerceMarketCatalogModuleKey = 'commerce.market-catalog';
 
 const currentMarketCatalogEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.market-catalog.api.current-market-catalog',
   moduleKey: commerceMarketCatalogModuleKey,
   role: 'api',
@@ -40,6 +40,19 @@ export const handleCurrentMarketCatalog = Effect.fn('CurrentMarketCatalogRead.ha
 
 export const currentMarketCatalogRead = defineRead(
   {
+    accessActor: {
+      callers: ['pricing'],
+      reason: "Pricing reads the current Market catalog while it evaluates a verified requester's prices.",
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.market-catalog.market-catalog.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'markets', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: currentMarketCatalogEntrypoint,
     evidencePolicy: {
@@ -49,14 +62,12 @@ export const currentMarketCatalogRead = defineRead(
     inputSchema: CurrentMarketCatalogRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: commerceMarketCatalogModuleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.market-catalog.api.current-market-catalog',
     resultSchema: CurrentMarketCatalogResponseSchema,
     schemaVersion: '1',
   },
-  { load: handleCurrentMarketCatalog },
-  (transaction, scope, compositionRevision) =>
-    marketCatalogReadPersistenceForScope(transaction, scope, compositionRevision),
-  () => ({ kind: 'module', moduleId: commerceMarketCatalogModuleKey }),
+  handleCurrentMarketCatalog,
+  (transaction, scope, compositionRevision, listAccess) =>
+    marketCatalogReadPersistenceForScope(transaction, scope, compositionRevision, listAccess),
 );

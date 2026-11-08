@@ -1,5 +1,4 @@
 import {
-  ContextAccess,
   CoreSearchProjectionHitSchema,
   CoreSearchProjectionUnavailable,
   CoreSearchQueryRuntime,
@@ -8,7 +7,7 @@ import {
   ReadPermissionDenied,
   ReadPermissionUnavailable,
 } from '@app/core-runtime';
-import type { ContextAccessDecision, ContextAccessService, OperationalScope } from '@app/core-runtime';
+import type { OperationalScope } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
@@ -16,6 +15,7 @@ import { expect, it } from 'effect-rstest';
 import { ProjectsProviderRequestSchema, ProjectsProviderResponseSchema } from '../../shared/apis/projects-search.ts';
 import { projectsRead } from '../../src/search/projects.provider.ts';
 import type { ProjectSearchMetadata } from '../../src/services/project-search-projection.ts';
+import { projectsRegistration } from '../../vertical.registration.ts';
 import { projectsManifest } from '../../vertical.manifest.ts';
 import { creatorId, tenantId } from '../support/project.ts';
 
@@ -48,17 +48,9 @@ const decodeHits = (rows: readonly ProjectSearchMetadata[]) =>
       title: 'Obsolete indexed name',
     })),
   );
-const access = (decision: ContextAccessDecision, key = tenantId): ContextAccessService => ({
-  legalEntities: () => Effect.die('Project finish must not invent company permissions'),
-  modules: () => Effect.die('Project finish must not substitute module permissions'),
-  resources: () => Effect.die('Project finish must not invent resource permissions'),
-  tenants: (request) => {
-    expect(request).toEqual({ permission: 'access', principalId: creatorId, tenantIds: [tenantId] });
-    return Effect.succeed([{ decision, key }]);
-  },
-});
 const harnessFor = (rows: readonly ProjectSearchMetadata[], scope: OperationalScope = readScope) =>
   makeReadTestHarness({
+    access: 'allowed',
     executeOwnerQuery: ({ params, scope: installed, sql }) => {
       expect(installed).toEqual({ legalEntityId: scope.legalEntityId ?? '', tenantId });
       expect(sql).toContain('from "projects"."projects"');
@@ -75,7 +67,7 @@ const harnessFor = (rows: readonly ProjectSearchMetadata[], scope: OperationalSc
     },
     operationTime,
     ownerAuthorizationDecision: 'allowed',
-    permissionDecision: 'allowed',
+    ownerRegistration: projectsRegistration,
     scope,
   });
 type Harness = Effect.Success<ReturnType<typeof harnessFor>>;
@@ -93,18 +85,25 @@ const run = (harness: Harness, payload: SearchTestInput = input, scope: Operatio
     transport: { correlationId: scope.correlationId },
   });
 
-it('keeps canonical tenant read admission, actual resource identity and metadata-only evidence', () => {
+it('keeps canonical tenant-wide protected search admission, actual resource identity and metadata-only evidence', () => {
   expect(projectsRead.descriptor).toMatchObject({
-    entrypoint: { authorization: { kind: 'authenticated_principal' }, scope: 'tenant' },
+    accessDeclaration: {
+      key: 'projects.core.project.search',
+      kind: 'read',
+      modes: ['run'],
+      selectors: [],
+    },
+    entrypoint: { authorization: { kind: 'protected' }, scope: 'tenant' },
     evidencePolicy: { captureMode: 'metadata_only' },
     legalEntityScope: 'optional',
     owningModuleKey: 'projects.core',
-    permissionTarget: 'tenant',
   });
   expect(projectsManifest.publicSurface.search).toEqual([
     {
       accessFiltering: 'tenant_scope',
+      accessKey: 'projects.core.project.search',
       key: 'projects.core.projects',
+      legalEntityScope: 'optional',
       owningModuleId: 'projects.core',
       requestFilters: ['includeArchived'],
       resourceType: 'projects.project',
@@ -254,14 +253,15 @@ it.layer(NodeCrypto.layer)('Projects current-owner indexed search (injected cand
     }),
   );
 
-  test.effect('denies initial unavailable or forbidden tenant access before Core or owner queries', () =>
+  test.effect('denies an unavailable or refused v2 gate decision before Core or owner queries', () =>
     Effect.gen(function* admissionFailures() {
-      for (const permissionDecision of ['denied', 'unavailable'] as const) {
+      for (const accessDecision of ['denied', 'unavailable'] as const) {
         const harness = yield* makeReadTestHarness({
+          access: accessDecision,
           executeOwnerQuery: () => Effect.die('Denied read must not load Projects'),
           operationTime,
           ownerAuthorizationDecision: 'allowed',
-          permissionDecision,
+          ownerRegistration: projectsRegistration,
           scope: readScope,
         });
         const failure = yield* run(harness).pipe(
@@ -271,41 +271,13 @@ it.layer(NodeCrypto.layer)('Projects current-owner indexed search (injected cand
           Effect.provide(harness.layer),
           Effect.flip,
         );
-        expect(
-          Schema.is(permissionDecision === 'denied' ? ReadPermissionDenied : ReadPermissionUnavailable)(failure),
-        ).toBe(true);
+        expect(Schema.is(accessDecision === 'denied' ? ReadPermissionDenied : ReadPermissionUnavailable)(failure)).toBe(
+          true,
+        );
         expect(harness.snapshot().ownerQueries).toEqual([]);
         expect(harness.snapshot().stages).not.toContain('handler_executed');
       }
     }),
-  );
-
-  test.effect(
-    'rechecks current tenant access after owner load and refuses revoked, unavailable or mismatched decisions',
-    () =>
-      Effect.gen(function* freshCurrentAccess() {
-        const rows = [row(1)];
-        const hits = yield* decodeHits(rows);
-        for (const decision of ['denied', 'unavailable', 'allowed'] as const) {
-          const harness = yield* harnessFor(rows);
-          const key = decision === 'allowed' ? foreignTenantId : tenantId;
-          const currentAccess = access(decision, key);
-          const failure = yield* run(harness).pipe(
-            Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed(hits) }),
-            Effect.provideService(ContextAccess, {
-              ...currentAccess,
-              tenants: (request) => {
-                expect(harness.snapshot().ownerQueries).toHaveLength(1);
-                return currentAccess.tenants(request);
-              },
-            }),
-            Effect.provide(harness.layer),
-            Effect.flip,
-          );
-          expect(Schema.is(decision === 'denied' ? ReadPermissionDenied : ReadHandlerUnavailable)(failure)).toBe(true);
-          expect(harness.snapshot().stages).not.toContain('evidence_persisted');
-        }
-      }),
   );
 
   test.effect(
@@ -377,12 +349,11 @@ it.layer(NodeCrypto.layer)('Projects current-owner indexed search (injected cand
     }),
   );
 
-  test.effect('empty candidates perform no owner SQL but still recheck current tenant access', () =>
+  test.effect('empty candidates perform no owner SQL and persist the scope-wide evidence', () =>
     Effect.gen(function* noCandidates() {
       const harness = yield* harnessFor([]);
       const result = yield* run(harness).pipe(
         Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed([]) }),
-        Effect.provideService(ContextAccess, access('allowed')),
         Effect.provide(harness.layer),
       );
       expect(result).toEqual([]);

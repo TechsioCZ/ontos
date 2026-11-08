@@ -2,12 +2,12 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug create-dsr-case
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { CreateDsrCasePayloadSchema, CreateDsrCaseResultSchema } from '../actions/create-dsr-case.ts';
 
 export { CreateDsrCasePayloadSchema } from '../actions/create-dsr-case.ts';
-
 export const CreateDsrCaseActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreateDsrCaseActionInvalidProblem',
   400,
@@ -21,6 +21,7 @@ export const CreateDsrCaseActionForbiddenProblemSchema = makeProblemDetailsSchem
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -139,7 +140,7 @@ export const createDsrCaseActionGroupDefinition = HttpApiGroup.make('createDsrCa
     HttpApiEndpoint.post('execute', '/privacy/actions/create-dsr-case', {
       error: actionErrors,
       payload: Schema.toEncoded(CreateDsrCasePayloadSchema),
-      success: CreateDsrCaseResultSchema,
+      success: [ActionProposalAcceptedSchema, CreateDsrCaseResultSchema],
     }),
   )
   .middleware(CreateDsrCaseActionSchemaErrorMiddleware);

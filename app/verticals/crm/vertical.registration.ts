@@ -4,9 +4,13 @@
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { crmManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
+import { agentReviewRead } from './src/api/agent-review.read.ts';
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
+import { intakeClientPartyAction } from './src/actions/intake-client-party.action.ts';
+import { pendingClientIntakeRead } from './src/api/pending-client-intake.read.ts';
 import { projectSearchWorker } from './src/workers/project-search.worker.ts';
 import { rebuildSearchWorker } from './src/workers/rebuild-search.worker.ts';
+import { recordsRead } from './src/api/records.read.ts';
 import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 // </generated-module-registration-imports>
 
@@ -14,6 +18,7 @@ export const crmRegistration = defineVerticalRuntimeRegistration({
   actions: [
     // <generated-module-registration-actions>
     applyCommandAction,
+    intakeClientPartyAction,
     requestSearchRebuildAction,
     // </generated-module-registration-actions>
   ],
@@ -21,6 +26,8 @@ export const crmRegistration = defineVerticalRuntimeRegistration({
     api: {
       // <generated-module-registration-apis>
       'agent-review': () => import('./src/api/agent-review-client.ts'),
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
+      'pending-client-intake': () => import('./src/api/pending-client-intake-client.ts'),
       records: () => import('./src/api/records-client.ts'),
       // </generated-module-registration-apis>
     },
@@ -56,6 +63,13 @@ export const crmRegistration = defineVerticalRuntimeRegistration({
     projectSearchWorker,
     rebuildSearchWorker,
     // </generated-module-registration-workers>
+  ],
+  reads: [
+    // <generated-module-registration-reads>
+    agentReviewRead,
+    pendingClientIntakeRead,
+    recordsRead,
+    // </generated-module-registration-reads>
   ],
 });
 

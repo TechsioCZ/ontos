@@ -33,8 +33,7 @@ import type {
 } from '../../shared/domain/price-group-ports.ts';
 import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain/price-group-ports.ts';
 import { createMigrateCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupMigratedV1OutboxMessage } from './migrate-customer-price-group.commerce-customer-context-customer-price-group-migrated-v1.outbox-message.ts';
-import { priceGroupActionServicesForTransaction } from './price-group-action-services.ts';
-import { preparePriceGroupActionServices } from './price-group-action-preparation.ts';
+import { migrateCustomerPriceGroupServicesForTransaction } from './price-group-action-services.ts';
 
 const MigrateCustomerPriceGroupErrorSchema = Schema.Union([
   CustomerPriceGroupCatalogRejected,
@@ -285,6 +284,14 @@ const handleMigrateCustomerPriceGroup = Effect.fn('MigrateCustomerPriceGroupActi
 
 export const migrateCustomerPriceGroupAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.customer-price-group.migrate',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'customer-pricing', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.migrate-customer-price-group.access.v1',
@@ -297,7 +304,7 @@ export const migrateCustomerPriceGroupAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.migrate-customer-price-group',
       moduleKey: 'commerce.customer-context',
       role: 'action',
@@ -311,6 +318,5 @@ export const migrateCustomerPriceGroupAction = defineAction(
     schemaVersion: '1',
   },
   handleMigrateCustomerPriceGroup,
-  priceGroupActionServicesForTransaction,
-  { prepareServices: preparePriceGroupActionServices },
+  migrateCustomerPriceGroupServicesForTransaction,
 );

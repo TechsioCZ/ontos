@@ -1,13 +1,10 @@
 import { ReadHandlerUnavailable } from '@app/core-runtime';
-import { Effect, Predicate, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../../../packages/core-runtime/src/actions/principal-context.ts';
-import {
-  getReadPermissionTargetResolver,
-  runReadOwnerSteps,
-} from '../../../../packages/core-runtime/src/reads/definition.ts';
+import { runReadOwnerSteps } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import {
   DuplicateCandidateListForbiddenProblemSchema,
   DuplicateCandidateListRequestSchema,
@@ -35,16 +32,17 @@ const page = {
   nextCaseRef: null,
 };
 
-it('the queue is a tenant reviewer read without a required commercial Legal Entity', () => {
+it('the queue is a v2 protected reviewer read without a required commercial Legal Entity', () => {
   expect(duplicateCandidateListRead.descriptor.accessKind).toBe('list');
   expect(duplicateCandidateListRead.descriptor.legalEntityScope).toBe('optional');
-  expect(duplicateCandidateListRead.descriptor.permissionTarget).toBe('tenant');
+  expect(duplicateCandidateListRead.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+  expect(duplicateCandidateListRead.descriptor.accessDeclaration).toMatchObject({
+    key: 'party.registry.duplicate-candidate.list',
+    kind: 'read',
+    selectors: ['all'],
+  });
+  expect(duplicateCandidateListRead.descriptor.permissionTarget).toBeUndefined();
   expect(duplicateCandidateListRead.descriptor.evidencePolicy.captureMode).toBe('metadata_only');
-  const resolve = getReadPermissionTargetResolver(duplicateCandidateListRead);
-  expect(Predicate.isFunction(resolve)).toBe(true);
-  if (Predicate.isFunction(resolve)) {
-    expect(resolve(request, scope)).toEqual({ kind: 'tenant', permission: 'review_party_identity' });
-  }
 });
 
 it.effect('the queue forwards the typed cursor and records only the result count as evidence', () =>

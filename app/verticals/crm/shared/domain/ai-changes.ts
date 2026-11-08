@@ -177,7 +177,7 @@ export type AiChangesSlice = typeof AiChangesSliceSchema.Type;
 
 export const initialAiChangesSlice: AiChangesSlice = { batches: [], changes: [], log: [] };
 
-/** Only read_all viewers (vedení, správce, the agent itself) see the AI approval queue; salespeople do not. */
+/** Only full readers (vedení, správce, the agent itself) see the AI approval queue; salespeople do not. */
 export const projectAiChangesSlice = (slice: AiChangesSlice | undefined, viewer: CrmViewer): AiChangesSlice =>
   slice !== undefined && canSeeEverything(viewer) ? slice : initialAiChangesSlice;
 

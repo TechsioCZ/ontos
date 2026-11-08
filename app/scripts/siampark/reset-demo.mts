@@ -1,18 +1,10 @@
 import { NodeServices } from '@effect/platform-node';
-import { counterpartyResourceDescriptor } from '@app/party-registry/resources/counterparty';
-import {
-  toContextPermissionAccessObjectId,
-  toLegalEntityAccessObjectId,
-  toModuleAccessObjectId,
-  toResourceAccessObjectId,
-} from '@app/core-runtime';
-import { Config, ConfigProvider, Console, Effect, Exit, FileSystem, Layer, Path, Schema } from 'effect';
+import { Config, ConfigProvider, Console, Effect, Exit, FileSystem, Layer, Path, Result, Schema } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { Command, Flag } from 'effect/cli';
 
 import {
   demoAccounts,
-  demoId,
   demoLegalEntityId,
   demoOwnerPorts,
   demoSearchDocuments,
@@ -20,14 +12,17 @@ import {
   ContextFixtureSchema,
   PartyFixtureSchema,
   encodeOperatorFixture,
-  demoRef,
   demoTenantId,
   partyFixture,
+  demoId,
 } from './fixtures.mts';
-import type { Relationship } from './fixtures.mts';
-import { demoPrincipalRoleKey, roleRelationship } from '../demo/permissions.mts';
-import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
+import { readAccessCatalogArtifact } from '../authorization-catalog-artifact.mts';
 import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } from './reset-configuration.mts';
+import { AccessCatalogModulesSchema } from '@app/core-runtime/access/catalog';
+import type { AccessCatalogModule } from '@app/core-runtime';
+import { policyReleaseEntries, policyRoleCellRows } from '../demo/access-policy.mts';
+import type { PolicyCellRow, PolicyRole } from '../demo/access-policy.mts';
+import { reviewedCompanyRole } from '../demo/reviewed-owner-role.mts';
 
 class DemoResetError extends Schema.TaggedError<DemoResetError>()('DemoResetError', { reason: Schema.String }) {}
 const workModuleId = 'work.tasks';
@@ -55,150 +50,140 @@ const moduleIds = [
   // read_all/write_all context permissions, so it stays out of `salesDemoModuleIds`.
   'commerce.customer-context',
 ] as const;
-type AddRelationship = (
-  resourceType: string,
-  resourceId: string,
-  relation: string,
-  subjectType: string,
-  subjectId: string,
-) => number;
-/** Indexes into `demoAccounts`: Vedení, Provoz, Účetní and provoz@ (same read pattern); external@ stays outside it. */
-const internalStaffIndexes = new Set([0, 1, 2, 4]);
-/** Operations and provoz@ share the write_all grant; no other Nájempark account holds it. */
+/**
+ * The reviewed Nájempark access policy, as canonical v2 intent (ADR-0030). The five accounts take part in
+ * the demo company; their rights are Roles whose cells this seed compiles from the release it publishes, so
+ * nothing here writes a SpiceDB relationship — the engine is a projection of this intent.
+ */
+/** Operations and provoz@ write the shared work; every other installed module stays readable to staff. */
+const managementRoleKey = 'najempark-management';
+const operationsRoleKey = 'najempark-operations';
 const operationsStaffIndexes = new Set([1, 4]);
-const addPermissionRelationships = (add: AddRelationship, index: number, principalId: string) => {
-  for (const moduleId of [workModuleId, relationshipsModuleId, ...salesDemoModuleIds]) {
-    for (const permission of ['read_all', 'write_all']) {
-      const objectId =
-        toContextPermissionAccessObjectId(demoTenantId, demoLegalEntityId, {
-          moduleId,
-          // Permission keys allow only [a-z0-9_] segments; hyphenated module ids use underscores.
-          permission: `${moduleId.replaceAll('-', '_')}.${permission}`,
-        }) ?? '';
-      add('context_permission', objectId, 'tenant', 'tenant', demoTenantId);
-      add(
-        'context_permission',
-        objectId,
-        'legal_entity',
-        'legal_entity',
-        toLegalEntityAccessObjectId(demoTenantId, demoLegalEntityId) ?? '',
-      );
-      if (
-        (permission === 'read_all' && internalStaffIndexes.has(index)) ||
-        (permission === 'write_all' && operationsStaffIndexes.has(index))
-      ) {
-        add('context_permission', objectId, 'grantee', 'principal', principalId);
-      }
-    }
-  }
+const operationsWriteModuleIds = [workModuleId, relationshipsModuleId, ...salesDemoModuleIds] as const;
+const readModules = Object.fromEntries([...moduleIds, 'core.shell'].map((moduleId) => [moduleId, 'read' as const]));
+const operationsModules = {
+  ...readModules,
+  ...Object.fromEntries(operationsWriteModuleIds.map((moduleId) => [moduleId, 'write' as const])),
 };
-const relationships = (): readonly Relationship[] => {
-  const result: Relationship[] = [];
-  const add = (resourceType: string, resourceId: string, relation: string, subjectType: string, subjectId: string) => {
-    if (subjectType !== 'principal' || ['member', 'company_member'].includes(relation)) {
-      return result.push({ relation, resourceId, resourceType, subjectId, subjectType });
-    }
-    const roleId = toScopedRoleObjectId({
-      legalEntityId: demoLegalEntityId,
-      roleKey: demoPrincipalRoleKey(subjectId),
-      tenantId: demoTenantId,
-    });
-    let roleRelation = relation;
-    if (relation === 'accessor') {
-      roleRelation = 'accessor_role';
-    }
-    if (relation === 'grantee') {
-      roleRelation = 'role_grantee';
-    }
-    return result.push(roleRelationship(resourceType, resourceId, roleRelation, roleId));
-  };
-  const legal = toLegalEntityAccessObjectId(demoTenantId, demoLegalEntityId) ?? '';
-  add('legal_entity', legal, 'tenant', 'tenant', demoTenantId);
-  for (const [index, account] of demoAccounts.entries()) {
-    add('tenant', demoTenantId, 'company_member', 'principal', account.principalId);
-    add(
-      'scoped_role',
-      toScopedRoleObjectId({
-        legalEntityId: demoLegalEntityId,
-        roleKey: demoPrincipalRoleKey(account.principalId),
-        tenantId: demoTenantId,
-      }),
-      'member',
-      'principal',
-      account.principalId,
+/** The external salesperson reaches only the parties, work and activities their own records need. */
+const externalModules = {
+  'core.shell': 'read' as const,
+  [partyModuleId]: 'read' as const,
+  [relationshipsModuleId]: 'read' as const,
+  [workModuleId]: 'read' as const,
+};
+const reviewedRoles = [
+  {
+    key: managementRoleKey,
+    label: 'Vedení Nájempark',
+    legalEntityId: demoLegalEntityId,
+    policy: { label: 'Vedení Nájempark', modules: readModules },
+    sourcePrincipalIds: [demoAccounts[0].principalId],
+  },
+  {
+    key: operationsRoleKey,
+    label: 'Provoz Nájempark',
+    legalEntityId: demoLegalEntityId,
+    policy: { label: 'Provoz Nájempark', modules: operationsModules },
+    sourcePrincipalIds: [demoAccounts[1].principalId, demoAccounts[4].principalId],
+  },
+  {
+    key: 'najempark-finance',
+    label: 'Účetní Nájempark',
+    legalEntityId: demoLegalEntityId,
+    policy: { label: 'Účetní Nájempark', modules: readModules },
+    sourcePrincipalIds: [demoAccounts[2].principalId],
+  },
+  {
+    key: 'najempark-external',
+    label: 'Externí obchodník',
+    legalEntityId: demoLegalEntityId,
+    policy: { label: 'Externí obchodník', modules: externalModules },
+    sourcePrincipalIds: [demoAccounts[3].principalId],
+  },
+] as const satisfies readonly {
+  readonly key: string;
+  readonly label: string;
+  readonly legalEntityId: string;
+  readonly policy: PolicyRole;
+  readonly sourcePrincipalIds: readonly [string, ...string[]];
+}[];
+const roleKeyForAccount = (index: number): string =>
+  operationsStaffIndexes.has(index)
+    ? operationsRoleKey
+    : ([managementRoleKey, operationsRoleKey, 'najempark-finance', 'najempark-external', operationsRoleKey][index] ??
+      managementRoleKey);
+const sameCells = (left: readonly PolicyCellRow[], right: readonly PolicyCellRow[]): boolean =>
+  left.length === right.length &&
+  left.every(
+    (cell, index) =>
+      cell.capabilityKey === right[index]?.capabilityKey &&
+      cell.mode === right[index]?.mode &&
+      cell.selector === right[index]?.selector,
+  );
+export const reviewedSiamparkAccess = (accessModules: readonly AccessCatalogModule[]) => {
+  const entries = policyReleaseEntries(accessModules, moduleIds);
+  if (Result.isFailure(entries)) {
+    return Result.fail(`The Nájempark release could not be built: ${entries.failure}`);
+  }
+  const wireModules = Schema.decodeUnknownResult(Schema.toEncoded(AccessCatalogModulesSchema))(accessModules);
+  if (Result.isFailure(wireModules)) {
+    return Result.fail(wireModules.failure.message);
+  }
+  const roles = reviewedRoles.map(({ key, label, legalEntityId, policy, sourcePrincipalIds }) => {
+    const cells = policyRoleCellRows(
+      reviewedCompanyRole(policy, legalEntityId, { principalId: sourcePrincipalIds[0], tenantId: demoTenantId }),
+      entries.success,
     );
-    add('legal_entity', legal, 'member', 'principal', account.principalId);
-    const shell = toModuleAccessObjectId(demoTenantId, demoLegalEntityId, 'core.shell') ?? '';
-    add('module_access', shell, 'legal_entity', 'legal_entity', legal);
-    add('module_access', shell, 'accessor', 'principal', account.principalId);
-    if (internalStaffIndexes.has(index)) {
-      add('tenant', demoTenantId, 'party_identity_reader', 'principal', account.principalId);
-      add('legal_entity', legal, 'counterparty_reader', 'principal', account.principalId);
-      for (const counterparty of partyFixture.counterparties) {
-        const reference = {
-          moduleId: partyModuleId,
-          resourceId: counterparty.id,
-          resourceType: counterpartyResourceDescriptor.key,
-        };
-        const resource = toResourceAccessObjectId(demoTenantId, demoLegalEntityId, reference) ?? '';
-        add(
-          'resource',
-          resource,
-          'module',
-          'module_access',
-          toModuleAccessObjectId(demoTenantId, demoLegalEntityId, partyModuleId) ?? '',
+    if (Result.isSuccess(cells)) {
+      for (const principalId of sourcePrincipalIds.slice(1)) {
+        const peer = policyRoleCellRows(
+          reviewedCompanyRole(policy, legalEntityId, { principalId, tenantId: demoTenantId }),
+          entries.success,
         );
-        add('resource', resource, 'reader', 'principal', account.principalId);
+        if (Result.isFailure(peer) || !sameCells(cells.success, peer.success)) {
+          return Result.fail(`Reviewed shared Role ${key} does not have identical source authority for every holder`);
+        }
       }
     }
-    for (const moduleId of moduleIds) {
-      const module = toModuleAccessObjectId(demoTenantId, demoLegalEntityId, moduleId) ?? '';
-      add('module_access', module, 'legal_entity', 'legal_entity', legal);
-      if (
-        internalStaffIndexes.has(index) ||
-        moduleId === partyModuleId ||
-        moduleId === workModuleId ||
-        moduleId === relationshipsModuleId
-      ) {
-        add('module_access', module, 'accessor', 'principal', account.principalId);
-      }
-    }
-    addPermissionRelationships(add, index, account.principalId);
+    return Result.isFailure(cells)
+      ? Result.fail(cells.failure)
+      : Result.succeed({ cells: [...cells.success], key, label, legalEntityId });
+  });
+  const failures = roles.flatMap((role) => (Result.isFailure(role) ? [role.failure] : []));
+  if (failures.length > 0) {
+    return Result.fail(failures.join('; '));
   }
-  for (const reference of [
-    demoRef(workModuleId, 'task', 'task.external-agent-assigned'),
-    demoRef(relationshipsModuleId, 'activity', 'activity.external'),
-    demoRef(partyModuleId, 'counterparty', 'counterparty.b201'),
-  ]) {
-    const objectId = toResourceAccessObjectId(demoTenantId, demoLegalEntityId, reference) ?? '';
-    add(
-      'resource',
-      objectId,
-      'module',
-      'module_access',
-      toModuleAccessObjectId(demoTenantId, demoLegalEntityId, reference.moduleId) ?? '',
-    );
-    add('resource', objectId, 'reader', 'principal', demoAccounts[3].principalId);
-  }
-  return [
-    ...new Map(
-      result.map((relationship) => [
-        [
-          relationship.resourceType,
-          relationship.resourceId,
-          relationship.relation,
-          relationship.subjectType,
-          relationship.subjectId,
-          relationship.subjectRelation ?? '',
-        ].join('|'),
-        relationship,
-      ]),
-    ).values(),
-  ];
+  return Result.succeed({
+    assignments: demoAccounts.map((account, index) => ({
+      legalEntityId: demoLegalEntityId,
+      principalId: account.principalId,
+      roleKey: roleKeyForAccount(index),
+    })),
+    legalEntityIds: [demoLegalEntityId],
+    // Every account takes part in the demo company; the owner's own memberships come from the bootstrap.
+    memberships: demoAccounts.map((account) => ({
+      kind: 'member' as const,
+      legalEntityId: demoLegalEntityId,
+      principalId: account.principalId,
+    })),
+    modules: wireModules.success,
+    roles: roles.flatMap((role) => (Result.isSuccess(role) ? [role.success] : [])),
+    workloads: [],
+  });
 };
 const encodedPorts = Effect.gen(function* encodeDemoPortInputs() {
+  const path = yield* Path.Path;
+  const root = yield* path.fromFileUrl(new URL('../..', import.meta.url));
+  // The pinned declaration set: the seed compiles each reviewed Role's cells from the release it publishes.
+  const accessModules = yield* readAccessCatalogArtifact(root);
   const accounts = yield* encodeOperatorFixture(AccountsFixtureSchema, { accounts: demoAccounts });
+  const access = reviewedSiamparkAccess(accessModules);
+  if (Result.isFailure(access)) {
+    return yield* new DemoResetError({ reason: access.failure });
+  }
   const context = yield* encodeOperatorFixture(ContextFixtureSchema, {
+    access: access.success,
     accounts: demoAccounts,
     companyMemberships: [
       { affiliation: 'employee', legalEntityId: demoLegalEntityId, principalId: demoAccounts[0].principalId },
@@ -217,7 +202,6 @@ const encodedPorts = Effect.gen(function* encodeDemoPortInputs() {
       moduleId,
       stateId: `78000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
     })),
-    relationships: relationships(),
     searchDocuments: demoSearchDocuments,
     tenant: { defaultLocale: 'cs', displayName: 'Nájempark DEMO', slug: 'siampark-demo', tenantId: demoTenantId },
   });

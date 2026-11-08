@@ -1,3 +1,6 @@
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import { makeTestBoundAccessGate } from '@app/core-runtime/testing/access-gate';
+import { merchandiseRegistration } from '../../vertical.registration.ts';
 import {
   OntosMcpTextSchema,
   OperationContextDenied,
@@ -9,7 +12,7 @@ import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
 import { recordsRead } from '../../src/api/records.read.ts';
 import { expect, it } from 'effect-rstest';
-import { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
+import { MerchandiseCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
 import {
   PRODUCT_DETAIL_PAGE_LIMIT,
   RecordsRequestSchema,
@@ -21,7 +24,7 @@ import { MinorAmountSchema } from '../../shared/domain/merchandise-model.ts';
 
 type StorefrontCatalogQueryInput = typeof StorefrontCatalogQuerySchema.Encoded;
 
-const isPayload = Schema.is(ApplyCommandPayloadSchema);
+const isPayload = Schema.is(MerchandiseCommandPayloadSchema);
 
 it('accepts a CreateOrder command with a caller-supplied order id', () => {
   expect(
@@ -140,7 +143,9 @@ it('accepts explicit category-only and product modes through the public catalog 
 it.layer(NodeCrypto.layer)('Merchandise governed catalog reads', (suite) => {
   suite.effect('category-only governed reads execute no product SQL and preserve published navigation order', () =>
     Effect.gen(function* categoryOnlyRead() {
+      const gate = makeTestBoundAccessGate({ defaultAnswer: { outcome: 'ALLOWED' } });
       const harness = yield* makeReadTestHarness({
+        accessDecision: gate.bound,
         executeOwnerQuery: ({ params, scope, sql }) => {
           expect(scope).toEqual({ legalEntityId: catalogScope.legalEntityId, tenantId: catalogScope.tenantId });
           expect(params).toContain(catalogScope.tenantId);
@@ -163,12 +168,12 @@ it.layer(NodeCrypto.layer)('Merchandise governed catalog reads', (suite) => {
         },
         operationTime,
         ownerAuthorizationDecision: 'allowed',
-        permissionDecision: 'allowed',
+        ownerRegistration: merchandiseRegistration,
         scope: catalogScope,
       });
       const result = yield* harness.runtime
         .runRead(catalogInvocation({ includeCategories: true, mode: 'categories' }))
-        .pipe(Effect.provide(harness.layer));
+        .pipe(Effect.provide(harness.layer), Effect.provideService(AccessDecisionGate, gate.accessDecision));
       expect(result.products).toEqual([]);
       expect(result.orders).toEqual([]);
       expect(result.movements).toEqual([]);
@@ -189,7 +194,9 @@ it.layer(NodeCrypto.layer)('Merchandise governed catalog reads', (suite) => {
 
   suite.effect('ordinary catalog modes still count/page products and return the identical visible category tree', () =>
     Effect.gen(function* ordinaryCatalogRead() {
+      const gate = makeTestBoundAccessGate({ defaultAnswer: { outcome: 'ALLOWED' } });
       const harness = yield* makeReadTestHarness({
+        accessDecision: gate.bound,
         executeOwnerQuery: ({ sql }) => {
           if (sql.includes('from "demo_merchandise"."products"')) {
             expect(sql).toContain('count(*)::int');
@@ -222,7 +229,7 @@ it.layer(NodeCrypto.layer)('Merchandise governed catalog reads', (suite) => {
         },
         operationTime,
         ownerAuthorizationDecision: 'allowed',
-        permissionDecision: 'allowed',
+        ownerRegistration: merchandiseRegistration,
         scope: catalogScope,
       });
       const queries: readonly StorefrontCatalogQueryInput[] = [
@@ -230,7 +237,9 @@ it.layer(NodeCrypto.layer)('Merchandise governed catalog reads', (suite) => {
         { fields: 'card', includeCategories: true, mode: 'products' },
       ];
       for (const query of queries) {
-        const result = yield* harness.runtime.runRead(catalogInvocation(query)).pipe(Effect.provide(harness.layer));
+        const result = yield* harness.runtime
+          .runRead(catalogInvocation(query))
+          .pipe(Effect.provide(harness.layer), Effect.provideService(AccessDecisionGate, gate.accessDecision));
         expect(result).toMatchObject({
           homepageFeaturedProductIds: ['featured-id'],
           page: 1,
@@ -248,11 +257,13 @@ it.layer(NodeCrypto.layer)('Merchandise governed catalog reads', (suite) => {
 
   suite.effect('category-only reads reject a cross-tenant principal before owner SQL', () =>
     Effect.gen(function* crossTenantCategories() {
+      const gate = makeTestBoundAccessGate({ defaultAnswer: { outcome: 'ALLOWED' } });
       const harness = yield* makeReadTestHarness({
+        accessDecision: gate.bound,
         executeOwnerQuery: () => Effect.die('Cross-tenant owner SQL must not run'),
         operationTime,
         ownerAuthorizationDecision: 'allowed',
-        permissionDecision: 'allowed',
+        ownerRegistration: merchandiseRegistration,
         scope: catalogScope,
       });
       const failure = yield* harness.runtime
@@ -260,7 +271,11 @@ it.layer(NodeCrypto.layer)('Merchandise governed catalog reads', (suite) => {
           ...catalogInvocation({ mode: 'categories' }),
           principal: { ...catalogScope, tenantId: '55555555-5555-4555-8555-555555555555' },
         })
-        .pipe(Effect.provide(harness.layer), Effect.flip);
+        .pipe(
+          Effect.provide(harness.layer),
+          Effect.provideService(AccessDecisionGate, gate.accessDecision),
+          Effect.flip,
+        );
       expect(Schema.is(OperationContextDenied)(failure)).toBe(true);
       expect(harness.snapshot().ownerQueries).toEqual([]);
     }),
@@ -268,19 +283,25 @@ it.layer(NodeCrypto.layer)('Merchandise governed catalog reads', (suite) => {
 
   suite.effect('category-only reads fail closed without the scoped catalog head', () =>
     Effect.gen(function* missingCategoryHead() {
+      const gate = makeTestBoundAccessGate({ defaultAnswer: { outcome: 'ALLOWED' } });
       const harness = yield* makeReadTestHarness({
+        accessDecision: gate.bound,
         executeOwnerQuery: ({ sql }) => {
           expect(sql).toContain('from "demo_merchandise"."catalog_heads"');
           return Effect.succeed([]);
         },
         operationTime,
         ownerAuthorizationDecision: 'allowed',
-        permissionDecision: 'allowed',
+        ownerRegistration: merchandiseRegistration,
         scope: catalogScope,
       });
       const failure = yield* harness.runtime
         .runRead(catalogInvocation({ mode: 'categories' }))
-        .pipe(Effect.provide(harness.layer), Effect.flip);
+        .pipe(
+          Effect.provide(harness.layer),
+          Effect.provideService(AccessDecisionGate, gate.accessDecision),
+          Effect.flip,
+        );
       expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
       expect(harness.snapshot().ownerQueries).toHaveLength(1);
       expect(harness.snapshot().evidenceWrites).toBe(0);
@@ -288,7 +309,9 @@ it.layer(NodeCrypto.layer)('Merchandise governed catalog reads', (suite) => {
   );
   suite.effect('unfinished bootstrap rejects category reads before any partial category data escapes', () =>
     Effect.gen(function* unfinishedBootstrap() {
+      const gate = makeTestBoundAccessGate({ defaultAnswer: { outcome: 'ALLOWED' } });
       const harness = yield* makeReadTestHarness({
+        accessDecision: gate.bound,
         executeOwnerQuery: ({ sql }) => {
           expect(sql).toContain('from "demo_merchandise"."catalog_heads"');
           return Effect.succeed([
@@ -302,12 +325,16 @@ it.layer(NodeCrypto.layer)('Merchandise governed catalog reads', (suite) => {
         },
         operationTime,
         ownerAuthorizationDecision: 'allowed',
-        permissionDecision: 'allowed',
+        ownerRegistration: merchandiseRegistration,
         scope: catalogScope,
       });
       const failure = yield* harness.runtime
         .runRead(catalogInvocation({ mode: 'categories' }))
-        .pipe(Effect.provide(harness.layer), Effect.flip);
+        .pipe(
+          Effect.provide(harness.layer),
+          Effect.provideService(AccessDecisionGate, gate.accessDecision),
+          Effect.flip,
+        );
       expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
       expect(harness.snapshot().ownerQueries).toHaveLength(1);
       expect(harness.snapshot().evidenceWrites).toBe(0);

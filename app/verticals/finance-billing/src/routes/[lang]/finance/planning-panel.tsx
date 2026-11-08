@@ -30,8 +30,8 @@ import {
   invoiceActualMinor,
   monthOf,
 } from '../../../../shared/domain/finance-planning.ts';
-import { minorToInput, monthLabel, outcomeMessage, parseAmountMinor } from './finance-ui.tsx';
-import type { FinanceCommandDraft, FinanceViewModel } from './finance-ui.tsx';
+import { minorToInput, monthLabel, outcomeNotice, parseAmountMinor } from './finance-ui.tsx';
+import type { FinanceCommandDraft, FinanceNotice, FinanceViewModel } from './finance-ui.tsx';
 import { BUDGET_CATEGORIES } from './incoming-invoice-dialog.tsx';
 import { emptyObjectSelection, objectAnchors, ObjectFields, objectSummary } from './object-fields.tsx';
 import type { ObjectSelection } from './object-fields.tsx';
@@ -194,7 +194,7 @@ const planningPanelSaveBudgetProgram = Effect.fn('Finance.saveBudget')(function*
   const planned = parseAmountMinor(draft.planned === '' ? '0' : draft.planned);
   const actual = draft.actual.trim() === '' ? undefined : parseAmountMinor(draft.actual);
   if (planned === undefined || (draft.actual.trim() !== '' && actual === undefined) || draft.category.trim() === '') {
-    setError('Zkontrolujte kategorii a částky (např. 25 000 nebo 25 000,50).');
+    setError({ status: 'error', text: 'Zkontrolujte kategorii a částky (např. 25 000 nebo 25 000,50).' });
     return;
   }
   const upsertBudgetLineCommand = buildBudgetLineCommand({ actual, budgetMonth, draft, planned, vm });
@@ -203,7 +203,7 @@ const planningPanelSaveBudgetProgram = Effect.fn('Finance.saveBudget')(function*
     setDraft(undefined);
     setError(undefined);
   } else {
-    setError(outcomeMessage(vm, outcome));
+    setError(outcomeNotice(vm, outcome));
   }
 });
 
@@ -217,7 +217,7 @@ const planningPanelSaveOpeningProgram = Effect.fn('Finance.saveOpening')(functio
   const normalized = openingAmount.trim().startsWith('-') ? openingAmount.trim().slice(1) : openingAmount;
   const amount = parseAmountMinor(normalized);
   if (amount === undefined || openingDate === '') {
-    setError('Zadejte počáteční stav a datum.');
+    setError({ status: 'error', text: 'Zadejte počáteční stav a datum.' });
     return;
   }
   const setOpeningBalanceCommand: FinanceCommandDraft<'SetOpeningBalance'> = {
@@ -233,7 +233,7 @@ const planningPanelSaveOpeningProgram = Effect.fn('Finance.saveOpening')(functio
     setOpeningOpen(false);
     setError(undefined);
   } else {
-    setError(outcomeMessage(vm, outcome));
+    setError(outcomeNotice(vm, outcome));
   }
 });
 
@@ -247,7 +247,7 @@ const usePlanningPanel = (vm: FinanceViewModel) => {
   const [budgetMonth, setBudgetMonth] = useState(currentMonth);
   const [draft, setDraft] = useState<BudgetDraft>();
   const [deleteTarget, setDeleteTarget] = useState<BudgetLine>();
-  const [error, setError] = useState<string>();
+  const [error, setError] = useState<FinanceNotice>();
   const [openingOpen, setOpeningOpen] = useState(false);
   const [openingAmount, setOpeningAmount] = useState('');
   const [openingDate, setOpeningDate] = useState(`${currentMonth}-01`);
@@ -893,8 +893,8 @@ export const PlanningPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
   return (
     <div className="flex flex-col gap-250">
       {error !== undefined && (
-        <StatusText showIcon size="sm" status="error">
-          {error}
+        <StatusText showIcon size="sm" status={error.status}>
+          {error.text}
         </StatusText>
       )}
       <StatRow>

@@ -2,13 +2,13 @@
 // @ontos-action-http-owner commerce.pricing
 // @ontos-action-http-slug revise-commercial-fee
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { PricingCommercialFeeScheduleAcknowledgementSchema } from '@app/pricing-contracts/domain/commercial-fee';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { ReviseCommercialFeePayloadSchema, ReviseCommercialFeeResultSchema } from '../actions/revise-commercial-fee.ts';
 
 export { ReviseCommercialFeePayloadSchema } from '../actions/revise-commercial-fee.ts';
-
 const ReviseCommercialFeeActionHeadersSchema = Schema.Struct({
   'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
 });
@@ -26,6 +26,7 @@ export const ReviseCommercialFeeActionForbiddenProblemSchema = makeProblemDetail
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -172,7 +173,7 @@ export const reviseCommercialFeeActionGroupDefinition = HttpApiGroup.make('revis
       error: actionErrors,
       headers: ReviseCommercialFeeActionHeadersSchema,
       payload: Schema.toEncoded(ReviseCommercialFeePayloadSchema),
-      success: ReviseCommercialFeeResultSchema,
+      success: [ActionProposalAcceptedSchema, ReviseCommercialFeeResultSchema],
     }),
   )
   .middleware(ReviseCommercialFeeActionSchemaErrorMiddleware);

@@ -25,6 +25,8 @@ const AutosaveStatusContent = ({ onReloadLatest, onRetry, status }: AutosaveStat
         Neuloženo – opravte zvýrazněná pole
       </StatusText>
     )),
+    // Informational, not a failure: the change waits for approval and offers nothing to retry.
+    Match.when('proposed', () => <StatusText size="sm">Čeká na schválení – změna zatím nebyla provedena</StatusText>),
     Match.when('error', () => (
       <>
         <StatusText showIcon size="sm" status="error">

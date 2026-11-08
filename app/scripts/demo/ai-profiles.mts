@@ -21,7 +21,7 @@ const command = Command.make(
       const operator = yield* Effect.acquireRelease(authenticateAgentProfileOperator, (session) =>
         session.close.pipe(Effect.ignore),
       );
-      yield* Console.log(yield* runAgentProfileSetup(operator.principal, inputs, mode, sourceFingerprint));
+      yield* Console.log(yield* runAgentProfileSetup(operator, inputs, mode, sourceFingerprint));
     }).pipe(Effect.scoped),
 ).pipe(Command.provide(AgentProfileOperatorLive));
 

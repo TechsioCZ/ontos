@@ -14,6 +14,14 @@ export const getTaggingReadiness = Effect.fn('Tagging.readiness')(function* read
 // <generated-action-http-client-exports>
 export { executeApplyCommand, executeApplyCommandWithAuthorization } from './apply-command-action-client.ts';
 export type { ApplyCommandActionClientOptions } from './apply-command-action-client.ts';
+export { executeUpdateTag, executeUpdateTagWithAuthorization } from './update-tag-action-client.ts';
+export type { UpdateTagActionClientOptions } from './update-tag-action-client.ts';
+export { executeDeleteTag, executeDeleteTagWithAuthorization } from './delete-tag-action-client.ts';
+export type { DeleteTagActionClientOptions } from './delete-tag-action-client.ts';
+export { executeAssignTag, executeAssignTagWithAuthorization } from './assign-tag-action-client.ts';
+export type { AssignTagActionClientOptions } from './assign-tag-action-client.ts';
+export { executeUnassignTag, executeUnassignTagWithAuthorization } from './unassign-tag-action-client.ts';
+export type { UnassignTagActionClientOptions } from './unassign-tag-action-client.ts';
 // </generated-action-http-client-exports>
 
 // <generated-module-api-client-exports>

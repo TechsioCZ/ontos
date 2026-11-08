@@ -40,6 +40,7 @@ const execute = Effect.fn('ExecutePrivacyMeasureActionServer.execute')(function*
     mapError: mapExecutePrivacyMeasureActionProblem,
     payload: decoded,
     registration: executePrivacyMeasureAction,
+    successContract: 'result-or-proposal',
     requestHeaders: {
       authorization: Redacted.make(request.headers['authorization']),
       'x-correlation-id': correlationId,

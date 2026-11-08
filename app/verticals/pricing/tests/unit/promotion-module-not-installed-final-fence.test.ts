@@ -11,6 +11,7 @@ import { describe, expect, it } from 'effect-rstest';
 import { PricingOwnerMaterialEvidenceFenceGatewayUnavailable } from '../../src/integrations/material-evidence-owner-final-fence.ts';
 import type { PricingOwnerMaterialEvidenceFenceGatewayRequest } from '../../src/integrations/material-evidence-owner-final-fence.ts';
 import { makePromotionModuleNotInstalledFinalFenceGateway } from '../../src/integrations/promotion-module-not-installed-final-fence.ts';
+import { verifiedTestScope } from '../support/owner-gateway-connection.fixture.ts';
 import { makeIssue779Scenario } from './support/issue-779-line-value.fixture.ts';
 
 const revision = 'a'.repeat(64);
@@ -67,6 +68,12 @@ const snapshot = (
     validUntil: until,
   });
 
+const subjectScope = verifiedTestScope({
+  correlationId: 'promotion-absence-790',
+  legalEntityId: '33333333-3333-4333-8333-333333333333',
+  principalId: '44444444-4444-4444-8444-444444444444',
+  tenantId: '22222222-2222-4222-8222-222222222222',
+});
 const candidateRef = 'candidate:790:promotion-absence';
 const selectedPromotionExpectation = {
   currentFacts: [],
@@ -98,6 +105,7 @@ const makeVerifyRequest = Effect.gen(function* makePromotionVerifyRequest() {
   return {
     candidateRef,
     compositionRevision: revision,
+    scope: subjectScope,
     sources: [],
     verificationContext: verificationContext(compositionRequest.decision),
   } satisfies PricingOwnerMaterialEvidenceFenceGatewayRequest;
@@ -115,6 +123,7 @@ describe('Promotion module-not-installed final fence (#790)', () => {
         candidateRef: verifyRequest.candidateRef,
         compositionRevision: revision,
         observations: verification.observations,
+        scope: subjectScope,
         through: evaluatedAt,
         typedSources: [],
       });
@@ -180,6 +189,7 @@ describe('Promotion module-not-installed final fence (#790)', () => {
         .verifyOpaqueProofsAgainstCurrentState({
           ...request,
           compositionRevision: mismatchedRevision,
+          scope: subjectScope,
         })
         .pipe(Effect.flip);
       const second = yield* gateway
@@ -187,6 +197,7 @@ describe('Promotion module-not-installed final fence (#790)', () => {
           candidateRef,
           compositionRevision: mismatchedRevision,
           observations: [],
+          scope: subjectScope,
           through: evaluatedAt,
         })
         .pipe(Effect.flip);

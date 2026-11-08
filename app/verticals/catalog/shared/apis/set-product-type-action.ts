@@ -2,11 +2,13 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug set-product-type
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { SetProductTypePayloadSchema, SetProductTypeResultSchema } from '../actions/set-product-type.ts';
 
 export { SetProductTypePayloadSchema } from '../actions/set-product-type.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const SetProductTypeActionInvalidProblemSchema = makeProblemDetailsSchema(
   'SetProductTypeActionInvalidProblem',
@@ -21,6 +23,7 @@ export const SetProductTypeActionForbiddenProblemSchema = makeProblemDetailsSche
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -129,7 +132,7 @@ export const SetProductTypeActionApi = HttpApi.make('SetProductTypeActionApi').a
       HttpApiEndpoint.post('execute', '/catalog/actions/set-product-type', {
         error: actionErrors,
         payload: Schema.toEncoded(SetProductTypePayloadSchema),
-        success: SetProductTypeResultSchema,
+        success: [ActionProposalAcceptedSchema, SetProductTypeResultSchema],
       }),
     )
     .middleware(SetProductTypeActionSchemaErrorMiddleware),

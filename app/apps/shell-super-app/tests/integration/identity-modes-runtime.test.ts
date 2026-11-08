@@ -1,9 +1,11 @@
-import { SHARED_RUNTIME_IDENTITY } from '@app/core-runtime/db/database-identity-manifest';
+import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
+import { CoreDatabase } from '@app/core-runtime/db/client';
+import { makeShellTestAuthentication } from '../support/shell-authentication.ts';
 import { randomUUID } from 'node:crypto';
 
 import {
+  SHARED_RUNTIME_IDENTITY,
   ActionRuntime,
-  ContextAccess,
   PrincipalResolver,
   SupportRecoveryPrincipalContextResolver,
   makeOperationalScopeRepository,
@@ -11,6 +13,8 @@ import {
   makePrincipalResolver,
   makeSupportRecoveryPrincipalContextResolver,
 } from '@app/core-runtime';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import { writeTestTenantScopes } from '@app/core-runtime/testing/tenant-access';
 import { and, eq, inArray } from 'drizzle-orm';
 import { NodeCrypto } from '@effect/platform-node';
 import { Context, Crypto, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
@@ -46,7 +50,7 @@ import {
 import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
 import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
-import { AuthDatabase, BetterAuthNativeAdapterLive, makeAuthDatabase } from '../../api/auth/db/client.ts';
+import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { account, apikey, session, supportImpersonationRecovery, user } from '../../api/auth/db/schema.ts';
 import { issueGatewayContextAssertion, makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
 import { makeIdentityLifecycleService } from '../../api/auth/identity-lifecycle.ts';
@@ -58,18 +62,9 @@ import {
   SupportImpersonationCorrelationId,
   SupportImpersonationStoreService,
 } from '../../api/auth/impersonation-service.ts';
-import { BetterAuthFrameworkLive } from '../../api/auth/better-auth-framework.ts';
-import { BetterAuthRuntimeLive } from '../../api/auth/better-auth-runtime.ts';
-import { AuthenticationService, makeAuthenticationService } from '../../api/auth/service.ts';
-import { OAuthCredentialsLive } from '../../api/auth/db/oauth-credentials-live.ts';
-import { OAuthEndpointGuardsLive } from '../../api/auth/oauth-server/endpoint-guards.ts';
-import { OAuthConnectionHooksLive } from '../../api/oauth-connections/better-auth-hooks.ts';
-import { OAuthEndpointGuardDataLive } from '../../api/oauth-connections/grant-store.ts';
-import { CoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
-import { OAuthAuthenticationAuditLive } from '../../../../packages/core-runtime/src/auth/oauth-authentication-audit.ts';
-import { OAuthGrantRegistryLive } from '../../../../packages/core-runtime/src/auth/oauth-grant-registry-live.ts';
+import { AuthenticationService } from '../../api/auth/service.ts';
+import { makeShellTestAccessGate, shellTestAnswers } from '../support/access-decision-double.ts';
 import { scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
-import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const cookieHeader = (setCookieHeaders: readonly string[]): string => {
   const cookies = new Map<string, string>();
@@ -113,7 +108,7 @@ it.live.each([
     const baseConfiguration = yield* loadAuthConfig();
     const coreClient = yield* makeTestPgClient(baseConfiguration.connectionString);
     const authPersistence = yield* makeAuthDatabase({
-      connectionString: baseConfiguration.connectionString,
+      ...baseConfiguration,
       expectedRole: SHARED_RUNTIME_IDENTITY.role,
     });
     const authDatabase = authPersistence.executor;
@@ -143,63 +138,30 @@ it.live.each([
       { executor: coreDatabase },
       { authenticationNamespaceId: staffAuthenticationNamespaceId },
     );
-    let supportPermissionAllowed = true;
-    const allowedContextAccess = {
-      legalEntities: () => Effect.succeed([]),
-      modules: () => Effect.succeed([]),
-      resources: () => Effect.succeed([]),
-      tenants: ({ permission, tenantIds }: Parameters<(typeof ContextAccess)['Service']['tenants']>[0]) =>
-        Effect.succeed(
-          tenantIds.map((key) => ({
-            decision:
-              permission === 'impersonate' && !supportPermissionAllowed ? ('denied' as const) : ('allowed' as const),
-            key,
-          })),
-        ),
-    };
-    const provideContextAccess = <Success, Failure, Requirements>(
-      effect: Effect.Effect<Success, Failure, Requirements>,
-    ) =>
-      provideAuthenticationNamespaceRegistry(effect.pipe(Effect.provideService(ContextAccess, allowedContextAccess)));
+    // The impersonation capability is the only question this suite toggles; every other protected
+    // entrypoint of the fixture is admitted (O35: a revoked impersonation is refused on the next
+    // request by the scope resolver, and stopping it stays allowed).
+    const supportAnswers = shellTestAnswers({ 'core.identity.support.impersonate': 'allowed' });
+    const accessGate = makeShellTestAccessGate({ answers: supportAnswers, defaultAnswer: 'allowed' });
+    const provideAccessGate = <Success, Failure, Requirements>(effect: Effect.Effect<Success, Failure, Requirements>) =>
+      provideAuthenticationNamespaceRegistry(effect.pipe(Effect.provideService(AccessDecisionGate, accessGate)));
     const operationalScope = yield* makeOperationalScopeResolver(
-      makeOperationalScopeRepository({ executor: coreDatabase }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
-      allowedContextAccess,
+      makeOperationalScopeRepository({ executor: coreDatabase }, SHELL_DATABASE_IDENTITY_ENROLLMENT),
+      accessGate,
     );
     const actionRuntime = makeActionRuntime(
       { executor: coreDatabase },
       makeActionRepository(yield* Crypto.Crypto),
       { checkActionPermission: () => Effect.succeed('allowed' as const) },
       operationalScope,
-      {
-        ...openActionRuntimeOptions,
-        contextAccess: allowedContextAccess,
-        databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
-      },
+      { ...openActionRuntimeOptions, accessDecision: accessGate.bound },
     );
-    const betterAuthRuntime = Layer.succeedContext(yield* Layer.build(BetterAuthRuntimeLive));
-    const oauthAuthenticationLayer = Layer.mergeAll(
-      betterAuthRuntime,
-      BetterAuthNativeAdapterLive,
-      OAuthAuthenticationAuditLive,
-      OAuthEndpointGuardDataLive,
-      OAuthConnectionHooksLive.pipe(Layer.provide(OAuthGrantRegistryLive)),
-    ).pipe(
-      Layer.provide(Layer.mergeAll(OAuthGrantRegistryLive, OAuthCredentialsLive)),
-      Layer.provide(
-        Layer.mergeAll(
-          Layer.succeed(CoreDatabase, { executor: coreDatabase }),
-          Layer.succeed(AuthDatabase, authPersistence),
-        ),
-      ),
-    );
-    const fixtureFramework = BetterAuthFrameworkLive({ allowFixtureSignUp: true }).pipe(
-      Layer.provideMerge(oauthAuthenticationLayer),
-    );
-    const fixtureGuards = OAuthEndpointGuardsLive.pipe(Layer.provideMerge(fixtureFramework));
-    const fixtureAuthentication = yield* makeAuthenticationService().pipe(
-      Effect.provide(fixtureGuards),
+    const fixtureAuthentication = yield* makeShellTestAuthentication({
+      allowFixtureSignUp: true,
+    }).pipe(
       Effect.provideService(AuthConfig, baseConfiguration),
       Effect.provideService(AuthDatabase, authPersistence),
+      Effect.provideService(CoreDatabase, { executor: coreDatabase }),
       Effect.provideService(PrincipalResolver, resolver),
     );
     let originalUserId = '';
@@ -222,7 +184,7 @@ it.live.each([
         coreDatabase.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId)),
         coreDatabase.delete(principalAuthBindings).where(eq(principalAuthBindings.tenantId, tenantId)),
         coreDatabase.delete(principals).where(eq(principals.tenantId, tenantId)),
-        coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId)),
+        // Core retains access intent (D27): the Tenant's scope and fence, and so the Tenant, stay.
       ]);
     });
     yield* Effect.acquireRelease(
@@ -268,6 +230,8 @@ it.live.each([
         tenantId,
       },
     ]);
+    // The governed Actions run under the Tenant's real access fence.
+    yield* writeTestTenantScopes(coreDatabase, { principalId: originalPrincipalId, tenantId });
     yield* coreDatabase.insert(principalAuthBindings).values([
       {
         authenticationNamespaceId: staffAuthenticationNamespaceId,
@@ -304,12 +268,10 @@ it.live.each([
       ...baseConfiguration,
       supportUserIds: [originalUserId],
     };
-    const authenticationFramework = BetterAuthFrameworkLive().pipe(Layer.provideMerge(oauthAuthenticationLayer));
-    const authenticationGuards = OAuthEndpointGuardsLive.pipe(Layer.provideMerge(authenticationFramework));
-    const authentication = yield* makeAuthenticationService().pipe(
-      Effect.provide(authenticationGuards),
+    const authentication = yield* makeShellTestAuthentication({}).pipe(
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
+      Effect.provideService(CoreDatabase, { executor: coreDatabase }),
       Effect.provideService(PrincipalResolver, resolver),
     );
     const signedIn = yield* authentication.signIn(
@@ -324,8 +286,9 @@ it.live.each([
     const keys = yield* makeApiKeyService().pipe(
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
+      Effect.provideService(CoreDatabase, { executor: coreDatabase }),
     );
-    const resolvedOriginal = yield* provideContextAccess(authentication.resolveTenantContext(originalHeaders));
+    const resolvedOriginal = yield* provideAccessGate(authentication.resolveTenantContext(originalHeaders));
     expect(resolvedOriginal.state).toBe('authenticated');
     if (resolvedOriginal.state !== 'authenticated') {
       throw new Error('The live original session did not resolve');
@@ -485,7 +448,6 @@ it.live.each([
         correlationId: randomUUID(),
         idempotencyKey: randomUUID(),
         managedPrincipalId: managedPrincipal.principalId,
-        managedScope: 'tenant-managed',
         name: 'Cross-admin key',
         principal: resolvedOriginal.principal,
         requestHeaders: originalHeaders,
@@ -496,7 +458,7 @@ it.live.each([
       password,
       new Headers({ origin: configuration.baseUrl }),
     );
-    const secondAdministratorContext = yield* provideContextAccess(
+    const secondAdministratorContext = yield* provideAccessGate(
       authentication.resolveTenantContext(
         new Headers({
           cookie: cookieHeader(secondAdministratorSignIn.setCookieHeaders),
@@ -515,7 +477,6 @@ it.live.each([
         expectedStatus: 'active',
         idempotencyKey: randomUUID(),
         managedPrincipalId: managedPrincipal.principalId,
-        managedScope: 'tenant-managed',
         newStatus: 'disabled',
         principal: secondAdministratorContext.principal,
         reason: 'Cross-admin lifecycle integration proof',
@@ -540,7 +501,7 @@ it.live.each([
         Context.add(SupportImpersonationStoreService, makeSupportImpersonationStore(authDatabase)),
       ),
     );
-    const started = yield* provideContextAccess(
+    const started = yield* provideAccessGate(
       providePrincipalManagementRepository(
         support
           .start({
@@ -574,7 +535,7 @@ it.live.each([
       .set({ impersonationActionId: null })
       .where(eq(session.id, impersonationSession.id));
     const incompleteImpersonation = yield* Effect.flip(
-      provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders)),
+      provideAccessGate(authentication.resolveTenantContext(impersonatedHeaders)),
     );
     expect(Predicate.isTagged(incompleteImpersonation, 'OntosIdentityForbiddenError')).toBe(true);
     yield* authDatabase
@@ -586,14 +547,14 @@ it.live.each([
       .set({ impersonationReason: 'Tampered support reason' })
       .where(eq(session.id, impersonationSession.id));
     const mismatchedImpersonationReason = yield* Effect.flip(
-      provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders)),
+      provideAccessGate(authentication.resolveTenantContext(impersonatedHeaders)),
     );
     expect(Predicate.isTagged(mismatchedImpersonationReason, 'OntosIdentityForbiddenError')).toBe(true);
     yield* authDatabase
       .update(session)
       .set({ impersonationReason: 'Investigating a tenant support request' })
       .where(eq(session.id, impersonationSession.id));
-    const impersonated = yield* provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders));
+    const impersonated = yield* provideAccessGate(authentication.resolveTenantContext(impersonatedHeaders));
     expect(impersonated.state).toBe('authenticated');
     if (impersonated.state === 'authenticated') {
       expect(impersonated.principal.authMethod).toBe('support_impersonation');
@@ -614,12 +575,12 @@ it.live.each([
         }),
       );
     }
-    supportPermissionAllowed = false;
+    supportAnswers['core.identity.support.impersonate'] = 'denied';
     const revokedImpersonation = yield* Effect.flip(
-      provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders)),
+      provideAccessGate(authentication.resolveTenantContext(impersonatedHeaders)),
     );
     expect(Predicate.isTagged(revokedImpersonation, 'OntosIdentityForbiddenError')).toBe(true);
-    const stopped = yield* provideContextAccess(
+    const stopped = yield* provideAccessGate(
       providePrincipalManagementRepository(
         support
           .stop({

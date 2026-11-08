@@ -16,8 +16,8 @@
     "./permissions/pricing.price_group.revision.create": "./shared/permissions/pricing-price-group-revision-create.ts",
     "./resources/price-group": "./shared/resources/price-group.ts",
     "./resources/price-group-catalog-root": "./shared/resources/price-group-catalog-root.ts",
-    "./outbox-worker-host": "./src/worker-host/entry.ts",
-    "./testing/price-group-current-receiver": "./tests/support/price-group-current-receiver.fixture.ts"
+    "./testing/price-group-current-receiver": "./tests/support/price-group-current-receiver.fixture.ts",
+    "./testing/server-owner-native": "./tests/support/server-owner-native.fixture.ts"
   },
   "scripts": {
     "dev": "node ../../scripts/prepare-dev-module-contract.mts price-group-catalog && modern dev",
@@ -30,7 +30,6 @@
     "serve": "modern serve",
     "test:integration": "rstest --project integration",
     "test:unit": "rstest --project unit",
-    "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
@@ -66,7 +65,7 @@
   },
   "modernjs": {
     "preset": "presetUltramodern",
-    "role": "module-federation-remote",
+    "role": "api-only",
     "appId": "price-group-catalog",
     "topology": "../../topology/reference-topology.json",
     "apiRuntime": "effect",

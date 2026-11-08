@@ -176,10 +176,7 @@ describe('governed GTIN Action contracts', () => {
     for (const action of [confirmGtinAction, correctGtinAction, markGtinUnresolvedAction, retireGtinAction]) {
       expect(action.descriptor.idempotency).toBe('required');
       expect(action.descriptor.legalEntityScope).toBe('forbidden');
-      expect(action.descriptor.entrypoint.authorization).toEqual({
-        kind: 'action_execution',
-        provisioning: 'explicit',
-      });
+      expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
     }
   });
 

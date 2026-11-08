@@ -72,6 +72,8 @@ export const makePartyRegistryRetailPartyResolver =
   (request): ReturnType<RetailPartyResolver> => {
     if (
       request.tenantId !== input.tenantId ||
+      request.actionInvocationId.trim().length === 0 ||
+      !/^[a-f0-9]{64}$/u.test(request.compositionRevision) ||
       input.requestCorrelation.trim().length === 0 ||
       request.partyResourceId.trim().length === 0 ||
       request.partyResourceId !== request.partyResourceId.trim()
@@ -84,24 +86,28 @@ export const makePartyRegistryRetailPartyResolver =
       resourceType: 'party.registry.party' as const,
       tenantId: input.tenantId,
     };
-    const read =
-      execute === undefined
-        ? acquireRetailPartyGateway({
-            compositionRevision: request.compositionRevision,
-            legalEntityId: input.legalEntityId,
-            requestCorrelation: input.requestCorrelation,
-            tenantId: input.tenantId,
-          }).pipe(
-            Effect.flatMap(({ credential, options }) =>
-              executePartyDetailWithAuthorization(
-                { partyRef: requestedPartyRef },
-                Redacted.value(credential),
-                input.requestCorrelation,
-                options,
-              ),
+    const read: Effect.Effect<
+      Effect.Success<ReturnType<typeof executePartyDetailWithAuthorization>>,
+      | Effect.Error<ReturnType<typeof executePartyDetailWithAuthorization>>
+      | ProfilePersistenceDependencyFailure
+      | Effect.Error<ReturnType<typeof acquireRetailPartyGateway>>
+    > = execute === undefined
+      ? acquireRetailPartyGateway({
+          compositionRevision: request.compositionRevision,
+          legalEntityId: input.legalEntityId,
+          requestCorrelation: input.requestCorrelation,
+          tenantId: input.tenantId,
+        }).pipe(
+          Effect.flatMap(({ credential, options }) =>
+            executePartyDetailWithAuthorization(
+              { partyRef: requestedPartyRef },
+              Redacted.value(credential),
+              input.requestCorrelation,
+              options,
             ),
-          )
-        : execute({ partyRef: requestedPartyRef }, input.requestCorrelation);
+          ),
+        )
+      : execute({ partyRef: requestedPartyRef }, input.requestCorrelation);
     return read.pipe(
       Effect.mapError((cause) => dependencyFailure('The Party Registry Party Detail operation is unavailable', cause)),
       Effect.flatMap((response): Effect.Effect<RetailPartyResolution, ProfilePersistenceDependencyFailure> => {
@@ -164,7 +170,6 @@ export const preparedRetailPartyResolution: Effect.Effect<
   ActiveApplicationCompositionService | Scope.Scope
 > = Effect.gen(function* prepareRetailPartyResolution() {
   const transport = yield* Effect.serviceOption(RetailPartyDetailExecutor);
-  const execute = Option.getOrUndefined(transport)?.execute;
   const compositions = yield* ActiveApplicationCompositionService;
   let prepared: {
     readonly request: Parameters<RetailPartyResolver>[0];
@@ -225,6 +230,14 @@ export const preparedRetailPartyResolution: Effect.Effect<
           partyResourceId: payload.subject.partyRef.resourceId,
           tenantId: scope.tenantId,
         };
+        const execute: RetailPartyResolutionExecutor | undefined = Option.isNone(transport)
+          ? undefined
+          : (detailRequest, correlation) =>
+              transport.value.execute(detailRequest, correlation, {
+                actionInvocationId: input.actionInvocationId,
+                compositionRevision: active.composition.revision,
+                scope: input.scope,
+              });
         const result = yield* makePartyRegistryRetailPartyResolver(scope, execute)(request);
         prepared = { request, result, scope };
         // Owner evidence is not a grant: ordinary native Action authorization still applies.

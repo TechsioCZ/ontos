@@ -7,6 +7,18 @@ import { expect, it } from 'effect-rstest';
 import { runScaffoldEffect } from '../cli.mts';
 import { write, snapshotTree } from './fixture-files.mts';
 
+const lifecycleWorker = 'project-people-lifecycle-search';
+const lifecycleTopic = 'core.identity.principal-lifecycle-changed.v1';
+const payloadDeclaration = 'export const OutboxPayloadSchema = {};';
+const replaceWorkerValue = (value: string, worker: string, topic: string): string => {
+  if (value === lifecycleWorker) {
+    return worker;
+  }
+  return value === lifecycleTopic ? topic : value;
+};
+const subscriptionsPath = 'packages/core-runtime/src/people/people-search-subscriptions.ts';
+const peopleSearchPath = 'packages/core-runtime/src/people/people-search.ts';
+const outboxWorkerCommand = 'outbox-worker';
 const verticalFlag = '--vertical';
 const coreOwner = 'core';
 const personResource = 'person';
@@ -28,9 +40,7 @@ const providerArgs = [
   resourceFlag,
   personResource,
   '--authorization',
-  'context_permission',
-  '--permission',
-  'module.access',
+  'protected',
 ];
 const workerArgs = [
   verticalFlag,
@@ -38,9 +48,9 @@ const workerArgs = [
   '--producer',
   coreOwner,
   '--worker',
-  'project-people-lifecycle-search',
+  lifecycleWorker,
   '--topic',
-  'core.identity.principal-lifecycle-changed.v1',
+  lifecycleTopic,
   '--authorization',
   'owner_local_background',
 ];
@@ -68,10 +78,10 @@ it.effect('Core person generator preserves conditional exports and provider emit
       });
       yield* scaffold(root, 'search-provider', providerArgs);
       const files = yield* snapshotTree(root);
-      expect(files['packages/core-runtime/src/people/people-search.ts']).toContain('defineSystemModuleEntrypoint');
-      expect(files['packages/core-runtime/src/people/people-search.ts']).toContain("legalEntityScope: 'required'");
-      expect(files['packages/core-runtime/src/people/people-search.ts']).toContain("permission: 'read_people'");
-      expect(files['packages/core-runtime/src/people/people-search.ts']).toContain('result.map(({ ref }) => ref)');
+      expect(files[peopleSearchPath]).toContain('defineSystemModuleEntrypoint');
+      expect(files[peopleSearchPath]).toContain("legalEntityScope: 'required'");
+      expect(files[peopleSearchPath]).toContain("key: 'core.identity.people-search.query'");
+      expect(files[peopleSearchPath]).not.toContain('read_people');
       expect(files['packages/core-runtime/src/people/people-search-contract.ts']).toContain(
         "accessFiltering: 'resource_permission'",
       );
@@ -85,7 +95,7 @@ it.effect('Core provider and worker reject unsupported owners, topics and public
     Effect.gen(function* refusedCoreBoundary() {
       for (const args of [
         providerArgs.map((value) => (value === 'people' ? 'anything' : value)),
-        providerArgs.map((value) => (value === 'module.access' ? 'read_all' : value)),
+        providerArgs.map((value) => (value === 'protected' ? 'public' : value)),
       ]) {
         const before = yield* snapshotTree(root);
         yield* scaffold(root, 'search-provider', args).pipe(Effect.flip);
@@ -93,12 +103,13 @@ it.effect('Core provider and worker reject unsupported owners, topics and public
       }
       yield* scaffold(root, 'resource', [verticalFlag, coreOwner, resourceFlag, 'anything']).pipe(Effect.flip);
       for (const args of [
+        workerArgs.map((value) => (value === lifecycleTopic ? 'other.owner.changed.v1' : value)),
+        workerArgs.map((value) => (value === lifecycleWorker ? 'unreviewed-worker' : value)),
         workerArgs.map((value) =>
-          value === 'core.identity.principal-lifecycle-changed.v1' ? 'other.owner.changed.v1' : value,
+          replaceWorkerValue(value, 'project-people-role-search', 'core.identity.scoped-role-membership-changed.v1'),
         ),
-        workerArgs.map((value) => (value === 'project-people-lifecycle-search' ? 'unreviewed-worker' : value)),
       ]) {
-        yield* scaffold(root, 'outbox-worker', args).pipe(Effect.flip);
+        yield* scaffold(root, outboxWorkerCommand, args).pipe(Effect.flip);
       }
       expect(yield* snapshotTree(root)).toEqual({});
     }),
@@ -111,20 +122,14 @@ it.effect('Core worker consumes only a published Core contract and registers a s
       yield* write(
         root,
         'packages/core-runtime/src/outbox/core-identity-principal-lifecycle-changed-v1.ts',
-        'export const OutboxPayloadSchema = {};',
+        payloadDeclaration,
       );
-      yield* scaffold(root, 'outbox-worker', workerArgs);
+      yield* scaffold(root, outboxWorkerCommand, workerArgs);
       const files = yield* snapshotTree(root);
       const worker = files['packages/core-runtime/src/people/project-people-lifecycle-search.worker.ts'];
-      expect(files['packages/core-runtime/src/people/people-search-subscriptions.ts']).toContain(
-        'consumerModuleKey: coreIdentity',
-      );
-      expect(files['packages/core-runtime/src/people/people-search-subscriptions.ts']).toContain(
-        'producerModuleKey: coreIdentity',
-      );
-      expect(files['packages/core-runtime/src/people/people-search-subscriptions.ts']).toContain(
-        'defineSystemModuleEntrypoint',
-      );
+      expect(files[subscriptionsPath]).toContain('consumerModuleKey: coreIdentity');
+      expect(files[subscriptionsPath]).toContain('producerModuleKey: coreIdentity');
+      expect(files[subscriptionsPath]).toContain('defineSystemModuleEntrypoint');
       expect(worker).toContain('projector.project(context)');
       expect(worker).not.toContain('defineTenantModuleEntrypoint');
       expect(files['packages/core-runtime/src/people/people-search-workers.ts']).toContain(
@@ -134,25 +139,35 @@ it.effect('Core worker consumes only a published Core contract and registers a s
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect('Core rebuild HTTP generator refuses other Actions and emits only the approved tenant ingress adapter', () =>
+it.effect('Core HTTP generation is not routed through the business vertical generator', () =>
   withFixture((root) =>
-    Effect.gen(function* approvedCoreHttp() {
-      yield* scaffold(root, 'action-http', [verticalFlag, coreOwner, '--action', 'arbitrary-write']).pipe(Effect.flip);
-      expect(yield* snapshotTree(root)).toEqual({});
+    Effect.gen(function* noBusinessCoreHttp() {
+      for (const action of ['arbitrary-write', 'request-people-search-rebuild']) {
+        yield* scaffold(root, 'action-http', [verticalFlag, coreOwner, '--action', action]).pipe(Effect.flip);
+        expect(yield* snapshotTree(root)).toEqual({});
+      }
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('generates the live rebuild subscription, never the retired role-change stream', () =>
+  withFixture((root) =>
+    Effect.gen(function* liveRebuildWorker() {
       yield* write(
         root,
-        'packages/core-runtime/src/modules/actions/request-people-search-rebuild.action.ts',
-        "// @ontos-action-owner core.identity\nconst descriptor = { legalEntityScope: 'forbidden' };",
+        'packages/core-runtime/src/outbox/core-identity-people-search-rebuild-requested-v1.ts',
+        payloadDeclaration,
       );
-      yield* scaffold(root, 'action-http', [verticalFlag, coreOwner, '--action', 'request-people-search-rebuild']);
+      const args = workerArgs.map((value) =>
+        replaceWorkerValue(value, 'rebuild-people-search', 'core.identity.people-search-rebuild-requested.v1'),
+      );
+      yield* scaffold(root, outboxWorkerCommand, args);
       const files = yield* snapshotTree(root);
-      expect(files['apps/shell-super-app/api/people-search-rebuild.ts']).toContain('runtime.runAction');
-      expect(files['apps/shell-super-app/api/people-search-rebuild.ts']).not.toContain('runRead');
-      expect(files['apps/shell-super-app/shared/core-actions/request-people-search-rebuild.ts']).toContain(
-        '/core.identity/actions/request-people-search-rebuild',
+      expect(files[subscriptionsPath]).toContain("topic: 'core.identity.people-search-rebuild-requested.v1'");
+      expect(files['packages/core-runtime/src/people/rebuild-people-search.worker.ts']).toContain(
+        'projector.project(context)',
       );
-      expect(files['apps/shell-super-app/api/index.ts']).toBeUndefined();
-      expect(files['apps/shell-super-app/shared/api.ts']).toBeUndefined();
+      expect(JSON.stringify(files)).not.toContain('scoped-role-membership-changed');
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );

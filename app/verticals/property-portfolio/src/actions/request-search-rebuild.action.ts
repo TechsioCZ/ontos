@@ -37,6 +37,14 @@ const handleRequestSearchRebuild = Effect.fn('PropertySearch.requestRebuild')(fu
 
 export const requestSearchRebuildAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'property.portfolio.request-search-rebuild.write',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'property-portfolio', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'property.portfolio.request-search-rebuild.access.v1',
@@ -47,7 +55,7 @@ export const requestSearchRebuildAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'property.portfolio.request-search-rebuild',
       moduleKey: owningModuleKey,
       role: 'action',
@@ -59,7 +67,6 @@ export const requestSearchRebuildAction = defineAction(
     policies: [],
     resultSchema: RequestSearchRebuildResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_identity',
   },
   handleRequestSearchRebuild,
 );

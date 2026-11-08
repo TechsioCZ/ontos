@@ -7,6 +7,7 @@ import type {
   ScopedTransactionExecutor,
   ActionServicePreparationContext,
   ActionServiceFactory,
+  ActionServicePreflight,
   ReadOwnerTransaction,
 } from '@app/core-runtime';
 import {
@@ -27,7 +28,7 @@ import {
 import type { PricingQuotationBinding, PricingQuotationIssuanceRequest } from '@app/pricing-contracts/domain/quotation';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { Context, DateTime, Duration, Effect, Layer, Match, Option, Schema } from 'effect';
+import { Context, Crypto, DateTime, Duration, Effect, Layer, Match, Option, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
 import {
@@ -49,6 +50,11 @@ import {
   currentPricingDecisionWholeEvaluationForScope,
   currentPricingDecisionWholeEvaluationPerRead,
 } from '../integrations/current-pricing-decision-whole-evaluation-adapters.ts';
+import {
+  manageQuotationRequirements,
+  requirePricingSubjectOperation,
+} from '../integrations/pricing-operation-requirements.ts';
+import type { PricingWholeEvaluationRequirements } from '../integrations/pricing-operation-requirements.ts';
 import { assertPreparedPricingScope } from '../integrations/commercial-fee-catalog-target-evidence.ts';
 import { revalidatePreparedPricingOwnerEvidence } from '../integrations/prepared-pricing-owner-evidence.ts';
 import type { PricingOwnerMaterialEvidenceFenceGateway } from '../integrations/material-evidence-owner-final-fence.ts';
@@ -197,6 +203,15 @@ const scopeMismatch = (reason: string, cause?: unknown) => {
 const sameCurrentDecisionRequest = Schema.toEquivalence(CurrentPricingDecisionRequestSchema);
 const sameTrustedPrincipal = Schema.toEquivalence(TrustedPrincipalContextSchema);
 
+const subjectAuthorityForQuotation = (
+  authority: CurrentPricingDecisionSubjectAuthorityService,
+): CurrentPricingDecisionSubjectAuthorityService => ({
+  verify: (input) =>
+    requirePricingSubjectOperation(manageQuotationRequirements.purchaseContext).pipe(
+      Effect.andThen(() => authority.verify(input)),
+    ),
+});
+
 const mapSubjectAuthorityFailure = (failure: CurrentPricingDecisionSubjectAuthorityFailure) =>
   Match.value(failure).pipe(
     Match.tag('CurrentPricingDecisionSubjectAuthorityRejected', (cause) =>
@@ -217,32 +232,41 @@ type CurrentPricingDecisionWholeSource =
 interface FreshCurrentResolverDependencies {
   readonly compositionRevision: string;
   readonly evaluationFactory: CurrentPricingDecisionEvaluationFactoryService;
+  readonly legalEntityId: string;
   readonly pricingOwnerFinalFence: PricingOwnerMaterialEvidenceFenceGateway;
-  readonly scope: OperationalScope & { readonly legalEntityId: string };
+  readonly requirements?: PricingWholeEvaluationRequirements;
+  readonly scope: OperationalScope;
   readonly source: CurrentPricingDecisionWholeSource;
   readonly subjectAuthority: CurrentPricingDecisionSubjectAuthorityService;
 }
 
 const freshRequestMatchesTrustedScope = (
   input: Parameters<ManageQuotationFreshCurrentResolver>[0],
-  scope: FreshCurrentResolverDependencies['scope'],
+  scope: OperationalScope,
+  legalEntityId: string,
   operationTime: string,
 ): boolean =>
   input.trusted.tenantId === scope.tenantId &&
   input.trusted.principalId === scope.principalId &&
-  input.trusted.legalEntityId === scope.legalEntityId &&
+  input.trusted.legalEntityId === legalEntityId &&
   input.currentDecision.decision.tenantId === scope.tenantId &&
-  input.currentDecision.decision.commercialScope.sellingLegalEntityId === scope.legalEntityId &&
+  input.currentDecision.decision.commercialScope.sellingLegalEntityId === legalEntityId &&
   input.currentDecision.decision.operationTime === operationTime;
 
 export const makeFreshCurrentResolver = (
   dependencies: FreshCurrentResolverDependencies,
 ): ManageQuotationFreshCurrentResolver => {
-  const { evaluationFactory, pricingOwnerFinalFence, scope, source, subjectAuthority } = dependencies;
-  const evaluation = evaluationFactory.make(source, pricingOwnerFinalFence, dependencies.compositionRevision);
+  const { evaluationFactory, legalEntityId, pricingOwnerFinalFence, scope, source, subjectAuthority } = dependencies;
+  const evaluation = evaluationFactory.make(
+    source,
+    pricingOwnerFinalFence,
+    dependencies.compositionRevision,
+    scope,
+    dependencies.requirements,
+  );
   return Effect.fn('ManageQuotationFreshCurrentAuthority.resolveFresh')(function* resolveFresh(input) {
     const operationTime = DateTime.formatIso(DateTime.makeUnsafe(input.trusted.trustedOperationAt));
-    if (!freshRequestMatchesTrustedScope(input, scope, operationTime)) {
+    if (!freshRequestMatchesTrustedScope(input, scope, legalEntityId, operationTime)) {
       return yield* scopeMismatch(
         'Fresh Current Pricing evaluation must match the trusted actor, Tenant, SLE, and time',
       );
@@ -250,7 +274,7 @@ export const makeFreshCurrentResolver = (
 
     const authorityInput = {
       request: input.currentDecision,
-      scope: { principal: scope, sellingLegalEntityId: scope.legalEntityId },
+      scope: { principal: scope, sellingLegalEntityId: legalEntityId },
     };
     const verifiedAuthority = yield* subjectAuthority
       .verify(authorityInput)
@@ -273,12 +297,7 @@ export const makeFreshCurrentResolver = (
       verifiedAuthority.evidence.subjectAuthority.kind !== subject.kind ||
       (subject.kind === 'PROFILE' &&
         (verifiedAuthority.evidence.subjectAuthority.kind !== 'PROFILE' ||
-          verifiedAuthority.evidence.subjectAuthority.actorPrincipalId !==
-            ((isOrderFinalizationPricingContext(input.currentDecision.decision.purchasingContext.contextRef) ||
-              /^ccc:preproposal:[a-f0-9-]{36}$/u.test(input.currentDecision.decision.purchasingContext.contextRef)) &&
-            input.currentDecision.decision.purchasingContext.actor.kind === 'PRINCIPAL'
-              ? input.currentDecision.decision.purchasingContext.actor.principalId
-              : scope.principalId)))
+          verifiedAuthority.evidence.subjectAuthority.actorPrincipalId !== scope.principalId))
     ) {
       return yield* scopeMismatch('Customer Context subject authority does not belong to the trusted actor');
     }
@@ -286,7 +305,7 @@ export const makeFreshCurrentResolver = (
     const result = yield* evaluation
       .evaluate(input.currentDecision, {
         purchaseContextEvidence: verifiedAuthority.evidence,
-        sellingLegalEntityId: scope.legalEntityId,
+        sellingLegalEntityId: legalEntityId,
         tenantId: scope.tenantId,
       })
       .pipe(
@@ -359,6 +378,7 @@ export const makeFreshCurrentResolver = (
 export const manageQuotationFreshCurrentAuthorityLive = Layer.effect(
   ManageQuotationFreshCurrentAuthority,
   Effect.gen(function* makeManageQuotationFreshCurrentAuthority() {
+    const crypto = yield* Crypto.Crypto;
     const evaluationFactory = yield* CurrentPricingDecisionEvaluationFactory;
     const externalValidation = yield* PricingExternalOwnerEvidenceValidation;
     const installedSubjectAuthority = yield* Effect.serviceOption(CurrentPricingDecisionSubjectAuthority);
@@ -373,7 +393,7 @@ export const manageQuotationFreshCurrentAuthorityLive = Layer.effect(
               reason: 'Quotation preparation requires a Selling Legal Entity',
             });
           }
-          const verifiedScope = { ...scope, legalEntityId: scope.legalEntityId };
+          const verifiedScope = scope;
           const ownerTransaction: ReadOwnerTransaction = (use) =>
             context.transaction(use).pipe(
               Effect.catchTag('ActionTransactionError', (cause) =>
@@ -409,24 +429,30 @@ export const manageQuotationFreshCurrentAuthorityLive = Layer.effect(
             ownerTransaction,
             verifiedScope,
             compositionRevision,
+            manageQuotationRequirements,
           );
           return makeFreshCurrentResolver({
             compositionRevision,
             evaluationFactory,
+            legalEntityId: scope.legalEntityId,
             pricingOwnerFinalFence: pricingCurrentDecisionPricingOwnerFinalFenceGatewayPerRead(
               ownerTransaction,
               verifiedScope,
               compositionRevision,
             ),
+            requirements: manageQuotationRequirements,
             scope: verifiedScope,
             source,
-            subjectAuthority,
+            subjectAuthority: subjectAuthorityForQuotation(subjectAuthority),
           });
         },
         Effect.provideService(PricingExternalOwnerEvidenceValidation, externalValidation),
+        Effect.provideService(Crypto.Crypto, crypto),
       ),
       forScope: (transaction, scope, compositionRevision) => {
-        if (scope.legalEntityId === undefined) {
+        // The verified scope object is passed on unchanged: a copy would drop the gateway provenance owners require.
+        const { legalEntityId } = scope;
+        if (legalEntityId === undefined) {
           return Effect.fail(
             new OperationContextUnavailable({
               code: 'operation_context_unavailable',
@@ -434,7 +460,6 @@ export const manageQuotationFreshCurrentAuthorityLive = Layer.effect(
             }),
           );
         }
-        const verifiedScope = { ...scope, legalEntityId: scope.legalEntityId };
         const authority = Option.match(installedSubjectAuthority, {
           onNone: () => {
             const fromEnvironment = currentPricingDecisionCustomerContextSubjectAuthorityFromEnvironment(
@@ -454,10 +479,15 @@ export const manageQuotationFreshCurrentAuthorityLive = Layer.effect(
             authority,
             pricingOwnerFinalFence: pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope(
               transaction,
-              verifiedScope,
+              scope,
               compositionRevision,
             ),
-            source: currentPricingDecisionWholeEvaluationForScope(transaction, verifiedScope, compositionRevision),
+            source: currentPricingDecisionWholeEvaluationForScope(
+              transaction,
+              scope,
+              compositionRevision,
+              manageQuotationRequirements,
+            ),
           },
           { concurrency: 3 },
         ).pipe(
@@ -465,13 +495,16 @@ export const manageQuotationFreshCurrentAuthorityLive = Layer.effect(
             makeFreshCurrentResolver({
               compositionRevision,
               evaluationFactory,
+              legalEntityId,
               pricingOwnerFinalFence,
-              scope: verifiedScope,
+              requirements: manageQuotationRequirements,
+              scope,
               source,
-              subjectAuthority,
+              subjectAuthority: subjectAuthorityForQuotation(subjectAuthority),
             }),
           ),
           Effect.provideService(PricingExternalOwnerEvidenceValidation, externalValidation),
+          Effect.provideService(Crypto.Crypto, crypto),
         );
       },
     } satisfies ManageQuotationFreshCurrentAuthorityService;
@@ -654,7 +687,7 @@ const handleManageQuotation = Effect.fn('ManageQuotationAction.handle')(function
 
 const quotationActionServicesForScope: ActionServiceFactory<
   ManageQuotationActionServices,
-  PricingExternalOwnerEvidenceValidation
+  Crypto.Crypto | PricingExternalOwnerEvidenceValidation
 > = (transaction, scope, compositionRevision) => {
   if (scope.legalEntityId === undefined) {
     return Effect.fail(
@@ -664,41 +697,49 @@ const quotationActionServicesForScope: ActionServiceFactory<
       }),
     );
   }
-  return Effect.all(
-    {
-      currentAuthority: Effect.serviceOption(ManageQuotationFreshCurrentAuthority).pipe(
-        Effect.flatMap(
-          Option.match({
-            onNone: () =>
-              Effect.succeed<ManageQuotationFreshCurrentResolver>(() =>
-                Effect.fail(currentAuthorityUnavailable('Fresh Current Pricing authority is not installed')),
-              ),
-            onSome: (service) => service.forScope(transaction, scope, compositionRevision),
-          }),
+  return Effect.gen(function* makeQuotationServices() {
+    const crypto = yield* Crypto.Crypto;
+    const { currentAuthority, persistence } = yield* Effect.all(
+      {
+        currentAuthority: Effect.serviceOption(ManageQuotationFreshCurrentAuthority).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () =>
+                Effect.succeed<ManageQuotationFreshCurrentResolver>(() =>
+                  Effect.fail(currentAuthorityUnavailable('Fresh Current Pricing authority is not installed')),
+                ),
+              onSome: (service) => service.forScope(transaction, scope, compositionRevision),
+            }),
+          ),
         ),
-      ),
-      persistence: quotationPersistenceForScope(transaction, scope),
-    },
-    { concurrency: 2 },
-  ).pipe(
-    Effect.map(({ currentAuthority, persistence }) => ({
+        persistence: quotationPersistenceForScope(transaction, scope),
+      },
+      { concurrency: 2 },
+    );
+    return {
       lookupInvocation: persistence.lookupInvocation,
       resolveFresh: currentAuthority,
       store: persistence.store,
       verifyFinalCandidate: (payload: ManageQuotationPayload) =>
-        verifyFinalCartQuotationRequest(payload, scope, compositionRevision).pipe(
+        verifyFinalCartQuotationRequest(payload, scope, compositionRevision, crypto).pipe(
           Effect.asVoid,
           Effect.mapError((cause) => currentAuthorityUnavailable('Final Cart authority could not be verified', cause)),
         ),
-    })),
-  );
+    };
+  });
 };
 
-const prepareQuotationActionServices = Effect.fn('ManageQuotationAction.prepareServices')(function* prepareServices(
+const prepareQuotationActionServices: ActionServicePreflight<
+  ManageQuotationPayload,
+  ManageQuotationActionServices,
+  ManageQuotationRejected | ManageQuotationUnavailable | QuotationIdentityConflict | QuotationPersistenceUnavailable,
+  Crypto.Crypto | PricingExternalOwnerEvidenceValidation
+> = Effect.fn('ManageQuotationAction.prepareServices')(function* prepareServices(
   payload: ManageQuotationPayload,
   context: ActionServicePreparationContext,
 ) {
   const { compositionRevision, scope } = context;
+  const crypto = yield* Crypto.Crypto;
   if (
     scope.legalEntityId === undefined ||
     payload.currentDecision.decision.tenantId !== scope.tenantId ||
@@ -712,7 +753,7 @@ const prepareQuotationActionServices = Effect.fn('ManageQuotationAction.prepareS
     ),
   );
   if (isOrderFinalizationPricingContext(payload.currentDecision.decision.purchasingContext.contextRef)) {
-    yield* verifyFinalCartQuotationRequest(payload, scope, compositionRevision).pipe(
+    yield* verifyFinalCartQuotationRequest(payload, scope, compositionRevision, crypto).pipe(
       Effect.mapError((cause) => currentAuthorityUnavailable('Final Cart authority could not be verified', cause)),
     );
   }
@@ -843,6 +884,14 @@ const prepareQuotationActionServices = Effect.fn('ManageQuotationAction.prepareS
 
 export const manageQuotationAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.pricing.quotation.issue',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'commercial-commitments', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.pricing.manage-quotation.access.v1',
@@ -863,7 +912,7 @@ export const manageQuotationAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.pricing.manage-quotation',
       moduleKey: 'commerce.pricing',
       role: 'action',

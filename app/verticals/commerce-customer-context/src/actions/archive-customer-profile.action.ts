@@ -78,6 +78,14 @@ const handle = Effect.fn('ArchiveCustomerProfileAction.handle')(function* handle
 });
 export const archiveCustomerProfileAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.customer-profile.archive',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'customer-profiles', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.archive-customer-profile.access.v1',
@@ -90,7 +98,7 @@ export const archiveCustomerProfileAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.archive-customer-profile',
       moduleKey: MODULE_KEY,
       role: 'action',

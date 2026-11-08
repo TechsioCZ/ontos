@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.market-catalog
 // @ontos-action-slug activate-market
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { DateTime, Effect, Match, Schema } from 'effect';
 import {
   ActivateMarketPayloadSchema,
@@ -103,6 +103,14 @@ const handleActivateMarket = Effect.fn('ActivateMarketAction.handle')(function* 
 
 export const activateMarketAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.market-catalog.market.activate',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'markets', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.market-catalog.activate-market.access.v1',
@@ -114,7 +122,7 @@ export const activateMarketAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.market-catalog.activate-market',
       moduleKey: 'commerce.market-catalog',
       role: 'action',
@@ -124,10 +132,6 @@ export const activateMarketAction = defineAction(
     owningModuleKey: 'commerce.market-catalog',
     payloadSchema: ActivateMarketPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<ActivateMarketPayload>(({ marketRef }) => ({
-      permission: 'write',
-      resource: marketRef,
-    })),
     resultSchema: ActivateMarketResultSchema,
     schemaVersion: '1',
   },

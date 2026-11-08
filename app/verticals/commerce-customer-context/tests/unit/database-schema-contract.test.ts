@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs';
+
 import { Array as EffectArray, Order } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { getTableConfig } from 'drizzle-orm/pg-core';
+import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';
 
 import {
   COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME,
@@ -33,6 +35,7 @@ import {
   commerceQuantityRuleRevisions,
   commerceQuantityRuleAssignments,
   customerCommercePolicyCompletenessGenerations,
+  customerConsentReceipts,
   demoNewsletterChoices,
 } from '../../src/database/schema.ts';
 
@@ -50,44 +53,9 @@ it('owns an exact private Commerce Customer Context table catalog', () => {
   );
 
   expect(COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME).toBe('commerce_customer_context');
-  expect(COMMERCE_CUSTOMER_CONTEXT_TABLES).toHaveLength(54);
+  expect(COMMERCE_CUSTOMER_CONTEXT_TABLES).toHaveLength(53);
+  expect(new Set(actual).size).toBe(53);
   expect(actual).toEqual(expected);
-});
-
-it('stores only the current scoped demo newsletter choice with a positive integer revision', () => {
-  const config = getTableConfig(demoNewsletterChoices);
-  expect(
-    EffectArray.sort(
-      config.columns.map(({ name }) => name),
-      Order.String,
-    ),
-  ).toEqual([
-    'changed_at',
-    'decision',
-    'last_request_id',
-    'legal_entity_id',
-    'notice_version',
-    'party_id',
-    'revision',
-    'tenant_id',
-  ]);
-  expect(config.columns.every(({ notNull }) => notNull)).toBe(true);
-  expect(config.columns.find(({ name }) => name === 'revision')?.getSQLType()).toBe('integer');
-  expect(config.columns.find(({ name }) => name === 'last_request_id')?.getSQLType()).toBe('uuid');
-  expect(config.columns.find(({ name }) => name === 'changed_at')?.hasDefault).toBe(true);
-  expect(config.primaryKeys.map(({ columns }) => columns.map(({ name }) => name))).toEqual([
-    ['tenant_id', 'legal_entity_id', 'party_id'],
-  ]);
-  expect(
-    EffectArray.sort(
-      config.checks.map(({ name }) => name),
-      Order.String,
-    ),
-  ).toEqual([
-    'ccc_demo_newsletter_choice_decision_ck',
-    'ccc_demo_newsletter_choice_notice_ck',
-    'ccc_demo_newsletter_choice_revision_ck',
-  ]);
 });
 
 it('stores exact Market retirement evidence behind one active reservation per scoped Market', () => {
@@ -320,6 +288,65 @@ it('requires tenant and Selling Legal Entity scope with complete forced-RLS poli
         : `${config.name} needs a tenant/legal-entity-qualified identity`,
     ).toBe(true);
   }
+});
+
+it('keeps consent receipts and newsletter choices tenant/controller-qualified in schema and shipped SQL', () => {
+  const dialect = new PgDialect();
+  for (const [table, migration, identity] of [
+    [
+      customerConsentReceipts,
+      '20261023125636_customer-consent-receipts',
+      ['tenant_id', 'legal_entity_id', 'receipt_id'],
+    ],
+    [demoNewsletterChoices, '20261026212115_demo-newsletter-choice', ['tenant_id', 'legal_entity_id', 'party_id']],
+  ] as const) {
+    const config = getTableConfig(table);
+    const shipped = readFileSync(new URL(`../../drizzle/${migration}/migration.sql`, import.meta.url), 'utf-8');
+    expect(
+      [...config.primaryKeys, ...config.uniqueConstraints].some(
+        ({ columns }) => JSON.stringify(columns.map(({ name }) => name)) === JSON.stringify(identity),
+      ),
+    ).toBe(true);
+    for (const policy of config.policies) {
+      expect(policy.using !== undefined).toBe(policy.for !== 'insert');
+      expect(policy.withCheck !== undefined).toBe(policy.for !== 'select' && policy.for !== 'delete');
+      for (const predicate of [policy.using, policy.withCheck].filter((value) => value !== undefined)) {
+        const { sql } = dialect.sqlToQuery(predicate);
+        expect(sql).toContain(`"${config.name}"."tenant_id"`);
+        expect(sql).toContain(`"${config.name}"."legal_entity_id"`);
+        expect(sql).toContain("nullif(current_setting('ontos.tenant_id', true), '')::uuid");
+        expect(sql).toContain("nullif(current_setting('ontos.legal_entity_id', true), '')::uuid");
+      }
+    }
+    expect(shipped).toContain(`ALTER TABLE "${config.schema}"."${config.name}" ENABLE ROW LEVEL SECURITY`);
+    expect(shipped).toContain(`ALTER TABLE ${config.schema}.${config.name} FORCE ROW LEVEL SECURITY`);
+    expect(shipped).toContain(`REVOKE ALL ON TABLE ${config.schema}.${config.name} FROM PUBLIC, ontos_runtime`);
+    expect(shipped).toContain(
+      "p_tenant_id IS DISTINCT FROM nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+    );
+    expect(shipped).toContain(
+      "p_legal_entity_id IS DISTINCT FROM nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+    );
+    expect(shipped).toContain('item.tenant_id = p_tenant_id AND item.legal_entity_id = p_legal_entity_id');
+  }
+  const consentSql = readFileSync(
+    new URL('../../drizzle/20261023125636_customer-consent-receipts/migration.sql', import.meta.url),
+    'utf-8',
+  );
+  expect(consentSql).toContain("p_receipt::jsonb->'scope'->>'controllerRef' IS DISTINCT FROM p_legal_entity_id::text");
+  expect(consentSql).toContain(
+    "p_receipt::jsonb->'scope'->'privacySubjectRef'->>'tenantId' IS DISTINCT FROM p_tenant_id::text",
+  );
+  const newsletterSql = readFileSync(
+    new URL('../../drizzle/20261026212115_demo-newsletter-choice/migration.sql', import.meta.url),
+    'utf-8',
+  );
+  expect(newsletterSql).toContain('PRIMARY KEY("tenant_id","legal_entity_id","party_id")');
+  expect(newsletterSql).toContain('ON CONFLICT (tenant_id, legal_entity_id, party_id) DO NOTHING');
+  expect(newsletterSql).toContain('AND item.party_id = p_party_id');
+  expect(newsletterSql).toContain('FOR UPDATE');
+  expect(newsletterSql).toContain('AND item.revision = p_expected_revision');
+  expect(newsletterSql).toContain('p_expected_revision = stored.revision - 1');
 });
 
 it('stores purchasing limits as exact decimals and keeps unlimited distinct from zero', () => {

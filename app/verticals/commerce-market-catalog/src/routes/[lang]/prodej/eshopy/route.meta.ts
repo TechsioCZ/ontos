@@ -1,11 +1,20 @@
 import { defineTenantModuleEntrypoint } from '@app/core-runtime/module-entrypoint';
+import { defineRouteMeta } from '@app/core-runtime/route-meta';
 
-const routeMeta = {
+const routeMeta = defineRouteMeta({
+  accessDeclaration: {
+    key: 'commerce.market-catalog.eshops.read',
+    kind: 'read',
+    modes: ['run'],
+    placement: { group: 'markets', level: 'basic' },
+    risk: 'sensitive',
+    selectors: [],
+  },
   canonicalPath: '/prodej/eshopy',
   descriptionKey: 'commerce-market-catalog.pages.eshops.description',
   entrypoint: defineTenantModuleEntrypoint({
     access: 'read',
-    authorization: { kind: 'context_permission', permission: 'module.access' },
+    authorization: { kind: 'protected' },
     entrypointKey: 'commerce.market-catalog.page.eshops',
     moduleKey: 'commerce.market-catalog',
     role: 'page',
@@ -23,7 +32,7 @@ const routeMeta = {
   public: false,
   publicSurface: 'private-app-screen',
   titleKey: 'commerce-market-catalog.pages.eshops.title',
-} as const;
+});
 
 export default routeMeta;
 export { routeMeta };

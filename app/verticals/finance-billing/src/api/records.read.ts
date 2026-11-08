@@ -27,7 +27,7 @@ const financeModuleKey = 'finance.billing';
 
 const recordsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'finance.billing.api.records',
   moduleKey: financeModuleKey,
   role: 'api',
@@ -79,6 +79,14 @@ const makeRecordsServices: ReadServiceFactory<Services> = (transaction, scope) =
 
 export const recordsRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'finance.billing.api-records.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'finance-billing', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: recordsEntrypoint,
     evidencePolicy: {
@@ -88,7 +96,6 @@ export const recordsRead = defineRead(
     inputSchema: RecordsRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: financeModuleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'finance.billing.api.records',
     resultSchema: RecordsResponseSchema,
@@ -151,5 +158,4 @@ export const recordsRead = defineRead(
     ),
   },
   makeRecordsServices,
-  () => ({ kind: 'module', moduleId: financeModuleKey }),
 );

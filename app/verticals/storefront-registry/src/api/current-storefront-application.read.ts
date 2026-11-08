@@ -20,7 +20,7 @@ const moduleKey = 'commerce.storefront-registry';
 
 const currentStorefrontApplicationEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.storefront-registry.api.current-storefront-application',
   moduleKey,
   role: 'api',
@@ -117,6 +117,21 @@ export const handleCurrentStorefrontApplication = Effect.fn('CurrentStorefrontAp
 
 export const currentStorefrontApplicationRead = defineRead(
   {
+    accessActor: {
+      callers: ['commerce-market-catalog', 'commerce-customer-context'],
+      reason:
+        "Market and customer modules check the Current storefront application for a verified requester's channel.",
+      subject: 'identity',
+    },
+    // Routine: a bounded application/channel snapshot without audit actor or administrative reason.
+    accessDeclaration: {
+      key: 'commerce.storefront-registry.storefront-application.read-current',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'storefront-applications', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: currentStorefrontApplicationEntrypoint,
     evidencePolicy: {
@@ -126,14 +141,12 @@ export const currentStorefrontApplicationRead = defineRead(
     inputSchema: CurrentStorefrontApplicationRequestSchema,
     legalEntityScope: 'optional',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.storefront-registry.api.current-storefront-application',
     resultSchema: CurrentStorefrontApplicationResponseSchema,
     schemaVersion: '1',
   },
   { load: handleCurrentStorefrontApplication },
-  (transaction, scope, compositionRevision) =>
-    currentStorefrontApplicationPersistenceForScope(transaction, scope, compositionRevision),
-  () => ({ kind: 'module', moduleId: moduleKey }),
+  (transaction, scope, compositionRevision, listAccess) =>
+    currentStorefrontApplicationPersistenceForScope(transaction, scope, compositionRevision, listAccess),
 );

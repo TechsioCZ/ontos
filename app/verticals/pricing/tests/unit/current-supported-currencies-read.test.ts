@@ -6,6 +6,7 @@ import {
 import { PersistenceFailure } from '@app/core-runtime';
 import { Effect, Exit, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+import { getReadPermissionTargetResolver } from '../../../../packages/core-runtime/src/reads/definition.ts';
 
 import { setSupportedCurrenciesAction } from '../../src/actions/set-supported-currencies.action.ts';
 import {
@@ -64,14 +65,24 @@ describe('Current supported currencies owner read', () => {
     expect(currentSupportedCurrenciesRead.descriptor).toMatchObject({
       entrypoint: {
         access: 'read',
-        authorization: { kind: 'context_permission', permission: 'pricing.currency_support.read' },
+        authorization: { kind: 'protected' },
       },
       legalEntityScope: 'forbidden',
-      permissionTarget: 'module',
     });
-    expect(setSupportedCurrenciesAction.descriptor.entrypoint.authorization).toEqual({
-      kind: 'action_execution',
-      provisioning: 'explicit',
+    // The read decides itself through its own scope-wide declaration (O62): no legacy permission target.
+    expect(currentSupportedCurrenciesRead.descriptor.accessDeclaration).toMatchObject({
+      key: 'commerce.pricing.currency-support.read-current',
+      kind: 'read',
+      selectors: [],
+    });
+    expect(Object.keys(currentSupportedCurrenciesRead.descriptor)).not.toContain('permissionTarget');
+    expect(getReadPermissionTargetResolver(currentSupportedCurrenciesRead)).toBeUndefined();
+    expect(setSupportedCurrenciesAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    // The write's capability is the one authority; it stays in the Tenant context (O7, O67-Q2).
+    expect(setSupportedCurrenciesAction.descriptor.accessDeclaration).toMatchObject({
+      key: 'commerce.pricing.currency-support.set',
+      kind: 'action',
+      selectors: [],
     });
   });
 

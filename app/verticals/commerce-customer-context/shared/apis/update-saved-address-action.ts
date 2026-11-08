@@ -2,12 +2,12 @@
 // @ontos-action-http-owner commerce.customer-context
 // @ontos-action-http-slug update-saved-address
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { UpdateSavedAddressPayloadSchema, UpdateSavedAddressResultSchema } from '../actions/update-saved-address.ts';
 
 export { UpdateSavedAddressPayloadSchema } from '../actions/update-saved-address.ts';
-
 export const UpdateSavedAddressActionInvalidProblemSchema = makeProblemDetailsSchema(
   'UpdateSavedAddressActionInvalidProblem',
   400,
@@ -21,6 +21,7 @@ export const UpdateSavedAddressActionForbiddenProblemSchema = makeProblemDetails
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -149,7 +150,7 @@ export const updateSavedAddressActionGroupDefinition = HttpApiGroup.make('update
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/update-saved-address', {
       error: actionErrors,
       payload: Schema.toEncoded(UpdateSavedAddressPayloadSchema),
-      success: UpdateSavedAddressResultSchema,
+      success: [ActionProposalAcceptedSchema, UpdateSavedAddressResultSchema],
     }),
   )
   .middleware(UpdateSavedAddressActionSchemaErrorMiddleware);

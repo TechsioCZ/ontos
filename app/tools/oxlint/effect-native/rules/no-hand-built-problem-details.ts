@@ -71,6 +71,11 @@
  *   its Schema.Literal and HttpApiSchema.status declarations. Source, imports and use sites
  *   must establish that contract; a Schema suffix alone proves nothing. Raw driver messages
  *   in these arguments remain forbidden.
+ * - A local or sibling exported const schema made by the actual named
+ *   `makeProblemDetailsSchema` or `makeRetryableProblemDetailsSchema` import from
+ *   `@app/shared-contracts/problem-details`, with a literal tag
+ *   and supported status matching its `.make` input. Mutated, escaped, opaque or type-only bindings
+ *   do not establish that factory; raw driver text remains forbidden.
  *
  * Report-only: no fixer, no suggestion. The existing violations are the intended output.
  */
@@ -279,14 +284,18 @@ interface DeclaredProblemModule {
 }
 
 const PROBLEM_SCHEMA_BARRELS = new Set(['@modern-js/bff-effect/effect-client', '@modern-js/bff-effect/effect-edge']);
+const SHARED_PROBLEM_FACTORY_MODULE = '@app/shared-contracts/problem-details';
+const SHARED_PROBLEM_STATUSES = new Set([400, 401, 403, 404, 409, 422, 428, 429, 500, 503, 504]);
 
 /** Sibling public contracts are inspected as source only; missing/opaque declarations fail closed. */
 function declaredProblemModule(context: Context, binding: ESTree.Node): DeclaredProblemModule | null {
   if (binding.type !== 'Identifier') return null;
   const variable = lookupVariable(context, binding);
-  if (variable?.defs.length !== 1 || variable.references.some((reference) => reference.isWrite())) return null;
+  if (variable?.defs.length !== 1 || variable.references.some((reference) => reference.isWrite() && !reference.init))
+    return null;
   if (
     !variable.references.every((reference) => {
+      if (reference.init) return true;
       if (!valueReference(context, reference.identifier))
         return reference.identifier.parent?.type !== 'ExportSpecifier';
       const member = reference.identifier.parent;
@@ -308,6 +317,15 @@ function declaredProblemModule(context: Context, binding: ESTree.Node): Declared
   const definition = variable.defs[0];
   const imported = definition?.node;
   const declaration = definition?.parent;
+  if (
+    definition?.type === 'Variable' &&
+    imported?.type === 'VariableDeclarator' &&
+    declaration?.type === 'VariableDeclaration' &&
+    declaration.kind === 'const'
+  ) {
+    const program = asNode(context.sourceCode.ast);
+    return program === null ? null : { program, schemaName: binding.name };
+  }
   if (
     definition?.type !== 'ImportBinding' ||
     imported?.type !== 'ImportSpecifier' ||
@@ -368,7 +386,11 @@ function problemSourceWritten(module: DeclaredProblemModule): boolean {
   for (const declaration of module.program.body) {
     if (declaration.type !== 'ImportDeclaration') continue;
     for (const specifier of declaration.specifiers) {
-      if (PROBLEM_SCHEMA_BARRELS.has(declaration.source.value) || declaration.source.value.startsWith('effect'))
+      if (
+        PROBLEM_SCHEMA_BARRELS.has(declaration.source.value) ||
+        declaration.source.value === SHARED_PROBLEM_FACTORY_MODULE ||
+        declaration.source.value.startsWith('effect')
+      )
         protectedNames.add(specifier.local.name);
     }
   }
@@ -397,6 +419,48 @@ function problemSourceWritten(module: DeclaredProblemModule): boolean {
   return written;
 }
 
+/** Only the real public factory owns this status. Same-named functions, dynamic calls and type imports prove nothing. */
+function sharedFactoryProblemStatus(module: DeclaredProblemModule, expression: Syntax): number | null {
+  if (
+    expression.type !== 'CallExpression' ||
+    expression.optional ||
+    expression.callee.type !== 'Identifier' ||
+    (expression.arguments.length !== 2 && expression.arguments.length !== 3)
+  )
+    return null;
+  const factoryName = expression.callee.name;
+  const imports = module.program.body
+    .filter((statement: Syntax) => statement.type === 'ImportDeclaration')
+    .flatMap((declaration: Syntax) =>
+      declaration.specifiers
+        .filter((specifier: Syntax) => specifier.local.name === factoryName)
+        .map((specifier: Syntax) => ({ declaration, specifier })),
+    );
+  const imported = imports.length === 1 ? imports[0] : undefined;
+  if (
+    imported === undefined ||
+    imported.declaration.source.value !== SHARED_PROBLEM_FACTORY_MODULE ||
+    imported.declaration.importKind === 'type' ||
+    imported.specifier.type !== 'ImportSpecifier' ||
+    imported.specifier.importKind === 'type' ||
+    imported.specifier.imported.type !== 'Identifier' ||
+    !['makeProblemDetailsSchema', 'makeRetryableProblemDetailsSchema'].includes(imported.specifier.imported.name)
+  )
+    return null;
+  const [tag, status, extensions] = expression.arguments;
+  if (
+    tag?.type !== 'Literal' ||
+    typeof tag.value !== 'string' ||
+    !tag.value.endsWith('Problem') ||
+    status?.type !== 'Literal' ||
+    typeof status.value !== 'number' ||
+    !SHARED_PROBLEM_STATUSES.has(status.value) ||
+    (extensions !== undefined && extensions.type !== 'ObjectExpression')
+  )
+    return null;
+  return status.value;
+}
+
 function declaredProblemStatus(module: DeclaredProblemModule): number | null {
   const declarations = module.program.body.flatMap((statement: Syntax) => {
     const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : null;
@@ -407,13 +471,15 @@ function declaredProblemStatus(module: DeclaredProblemModule): number | null {
       : [];
   });
   const expression = declarations.length === 1 ? declarations[0]?.init : null;
+  if (expression == null || problemSourceWritten(module)) return null;
+  const factoryStatus = sharedFactoryProblemStatus(module, expression);
+  if (factoryStatus !== null) return factoryStatus;
   if (
     expression?.type !== 'CallExpression' ||
     expression.callee.type !== 'MemberExpression' ||
     expression.callee.computed ||
     expression.callee.property.name !== 'pipe' ||
-    expression.arguments.length !== 2 ||
-    problemSourceWritten(module)
+    expression.arguments.length !== 2
   )
     return null;
   const tagged = expression.callee.object;

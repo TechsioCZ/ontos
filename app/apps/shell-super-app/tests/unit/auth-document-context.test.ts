@@ -1,3 +1,5 @@
+import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import {
   ContextAccess,
   LegalEntityContext,
@@ -105,6 +107,10 @@ const context = Layer.mergeAll(
   BetterAuthRuntimeLive,
   hooks,
   Layer.succeed(AuthConfig, authenticationConfig),
+  Layer.succeed(
+    AccessDecisionGate,
+    makeTestAccessDecision({ legalEntityIds: [LegalEntityIdSchema.make(legalEntityId)] }),
+  ),
   Layer.succeed(ContextAccess, makeContextAccessDouble('allowed')),
   Layer.succeed(LegalEntityContext, legalEntityContext),
   Layer.succeed(OAuthAuthenticationAudit, {

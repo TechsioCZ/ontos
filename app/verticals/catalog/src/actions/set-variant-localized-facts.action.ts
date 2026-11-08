@@ -111,6 +111,14 @@ const handleSetVariantLocalizedFacts = Effect.fn('SetVariantLocalizedFactsAction
 
 export const setVariantLocalizedFactsAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.variant-localized-facts.set',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'variant', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.set-variant-localized-facts.access.v1',
@@ -122,7 +130,7 @@ export const setVariantLocalizedFactsAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

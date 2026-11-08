@@ -2,12 +2,7 @@
 // @ontos-action-owner commerce.inventory
 // @ontos-action-slug end-external-stock-correlation
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
 
 import {
@@ -40,7 +35,7 @@ export {
 
 const ACTION_KEY = 'commerce.inventory.end-external-stock-correlation';
 const MODULE_KEY = 'commerce.inventory';
-const MANAGE_PERMISSION = 'inventory.external_stock_correlation.manage';
+
 const domainEvents = {} as const;
 
 export const EndExternalStockCorrelationAuditEvidenceSchema = Schema.Struct({
@@ -136,6 +131,14 @@ export const handleEndExternalStockCorrelation = Effect.fn('EndExternalStockCorr
 
 export const endExternalStockCorrelationAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.inventory.external-stock-correlation.end',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'bindings', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: `${ACTION_KEY}.access.v1`,
@@ -143,23 +146,11 @@ export const endExternalStockCorrelationAction = defineAction(
     actionKey: ACTION_KEY,
     auditEvidenceSchema: EndExternalStockCorrelationAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission<EndExternalStockCorrelationPayload>((payload, scope) => ({
-      permission: MANAGE_PERMISSION,
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: payload.correlationRef.moduleId,
-          resourceId: payload.correlationRef.resourceId,
-          resourceType: payload.correlationRef.resourceType,
-        },
-        tenantId: tenantMismatch(payload, scope.tenantId) ? '' : scope.tenantId,
-      },
-    })),
     domainErrorSchema: EndExternalStockCorrelationErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: MODULE_KEY,
       role: 'action',
@@ -169,10 +160,6 @@ export const endExternalStockCorrelationAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: EndExternalStockCorrelationPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<EndExternalStockCorrelationPayload>((payload) => ({
-      permission: 'write',
-      resource: payload.correlationRef,
-    })),
     resultSchema: EndExternalStockCorrelationResultSchema,
     schemaVersion: '1',
   },

@@ -1,6 +1,8 @@
+import { financeBillingRegistration } from '../../vertical.registration.ts';
+import { makeTestBoundAccessGate } from '@app/core-runtime/testing/access-gate';
 import { NodeCrypto } from '@effect/platform-node';
 import { ContextAccess, CoreSearchProjectionHitSchema, CoreSearchQueryRuntime } from '@app/core-runtime';
-import type { ContextAccessService, OperationalScope } from '@app/core-runtime';
+import type { OperationalScope } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { Context, DateTime, Effect, Exit, Layer, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -74,6 +76,7 @@ interface Scenario {
   readonly company?: string;
   readonly expectedCount?: number;
   readonly expectedTitle?: string;
+  readonly foreignOwnerRow?: boolean;
   readonly includeArchived?: boolean;
   readonly kind: 'document' | 'invoice';
   readonly moduleAllowed?: boolean;
@@ -89,6 +92,7 @@ interface Scenario {
     | 'renumbered'
     | 'renamed-party'
     | 'renamed-file';
+  readonly unavailable?: boolean;
 }
 
 interface SearchHit {
@@ -111,6 +115,37 @@ const checkHits = (hits: readonly SearchHit[]) => {
 const expectedSearchCount = (scenario: Scenario): number =>
   scenario.expectedCount ?? (scenario.company === otherCompanyId || scenario.state !== undefined ? 0 : 1);
 
+const ownerSearchState = (scenario: Scenario): typeof encoded => {
+  if (scenario.state === 'empty') {
+    return { ...encoded, documents: [], invoices: [] };
+  }
+  if (scenario.state === 'voided') {
+    return { ...encoded, invoices: [{ ...invoice, businessState: 'VOIDED' }] };
+  }
+  if (scenario.state === 'withdrawn') {
+    return { ...encoded, documents: [] };
+  }
+  if (scenario.state === 'renumbered') {
+    return { ...encoded, invoices: [{ ...invoice, documentNumber: 'FV-2026-202' }] };
+  }
+  if (scenario.state === 'renamed-party') {
+    return { ...encoded, invoices: [{ ...invoice, counterpartyName: 'Nový zákazník' }] };
+  }
+  if (scenario.state === 'renamed-file') {
+    return {
+      ...encoded,
+      documents: encoded.documents.map((document) => ({ ...document, fileName: 'Aktuální soubor.pdf' })),
+    };
+  }
+  if (scenario.state === 'orphan') {
+    return {
+      ...encoded,
+      documents: encoded.documents.map((document) => ({ ...document, invoiceResourceId: 'missing-invoice' })),
+    };
+  }
+  return encoded;
+};
+
 const governedSearchProgram = Effect.fn('Finance.testSearchReadParity')(function* run(scenario: Scenario) {
   const state = yield* Schema.decodeUnknownEffect(FinanceStateSchema)(encoded);
   const documents = yield* buildSearchDocuments({
@@ -123,55 +158,56 @@ const governedSearchProgram = Effect.fn('Finance.testSearchReadParity')(function
     legalEntityId: scenario.company ?? companyId,
     principalId: scenario.principal ?? scope.principalId,
   };
-  let stored = encoded;
-  if (scenario.state === 'empty') {
-    stored = { ...encoded, documents: [], invoices: [] };
-  } else if (scenario.state === 'voided') {
-    stored = { ...encoded, invoices: [{ ...invoice, businessState: 'VOIDED' }] };
-  } else if (scenario.state === 'withdrawn') {
-    stored = { ...encoded, documents: [] };
-  } else if (scenario.state === 'renumbered') {
-    stored = { ...encoded, invoices: [{ ...invoice, documentNumber: 'FV-2026-202' }] };
-  } else if (scenario.state === 'renamed-party') {
-    stored = { ...encoded, invoices: [{ ...invoice, counterpartyName: 'Nový zákazník' }] };
-  } else if (scenario.state === 'renamed-file') {
-    stored = {
-      ...encoded,
-      documents: encoded.documents.map((document) => ({ ...document, fileName: 'Aktuální soubor.pdf' })),
-    };
-  } else if (scenario.state === 'orphan') {
-    stored = {
-      ...encoded,
-      documents: encoded.documents.map((document) => ({ ...document, invoiceResourceId: 'missing-invoice' })),
-    };
-  }
+  const stored = ownerSearchState(scenario);
+  let { moduleAllowed = true } = scenario;
+  const currentGate = makeTestBoundAccessGate({ defaultAnswer: { outcome: 'ALLOWED' } });
+  const currentDecision = () => {
+    let outcome: 'ALLOWED' | 'DENIED' | 'UNAVAILABLE' = moduleAllowed ? 'ALLOWED' : 'DENIED';
+    if (scenario.unavailable === true) {
+      outcome = 'UNAVAILABLE';
+    }
+    return makeTestBoundAccessGate({
+      answers: {
+        [`finance.billing.search-${scenario.kind === 'invoice' ? 'invoices' : 'documents'}.read`]: { outcome },
+      },
+    });
+  };
+  const accessDecision = {
+    ...currentGate.bound,
+    decide: (input: Parameters<typeof currentGate.bound.decide>[0]) => currentDecision().bound.decide(input),
+    list: (input: Parameters<typeof currentGate.bound.list>[0]) => currentDecision().bound.list(input),
+  };
   const harness = yield* makeReadTestHarness({
+    accessDecision,
     compositionRevision: 'a'.repeat(64),
     executeOwnerQuery: ({ scope: actualScope, sql }) => {
       expect(actualScope).toEqual({ legalEntityId: principal.legalEntityId, tenantId });
       expect(sql).toContain('"finance_billing"."finance_states"');
       return Effect.succeed(
-        scenario.state === 'missing' || principal.legalEntityId !== companyId ? [] : [{ revision: 7, state: stored }],
+        scenario.state === 'missing' || principal.legalEntityId !== companyId
+          ? []
+          : [
+              {
+                legalEntityId: scenario.foreignOwnerRow === true ? otherCompanyId : principal.legalEntityId,
+                revision: 7,
+                state: stored,
+                tenantId,
+              },
+            ],
       );
     },
     operationTime,
     ownerAuthorizationDecision: 'allowed',
+    ownerRegistration: financeBillingRegistration,
     permissionDecision: 'allowed',
     scope: principal,
   });
   const services = yield* Layer.build(harness.layer);
-  let { moduleAllowed = true } = scenario;
-  const permissionChecks: Pick<ContextAccessService, 'modules' | 'resources'> = {
-    modules: ({ moduleIds }) =>
-      Effect.succeed(
-        moduleIds.map((moduleId) => ({
-          decision: moduleAllowed ? ('allowed' as const) : ('denied' as const),
-          key: moduleId,
-        })),
-      ),
-    resources: () => Effect.die('Native finance records do not require generic resource.read'),
-  };
-  Object.assign(Context.get(services, ContextAccess), permissionChecks);
+  Object.assign(Context.get(services, ContextAccess), {
+    contextPermissions: () => Effect.die('Retired permission authority was invoked'),
+    modules: () => Effect.die('Retired module authority was invoked'),
+    resources: () => Effect.die('Retired resource authority was invoked'),
+  });
   let searches = 0;
   const runtime: CoreSearchQueryRuntime['Service'] = {
     search: (query, actualScope) =>
@@ -208,9 +244,9 @@ const governedSearchProgram = Effect.fn('Finance.testSearchReadParity')(function
           .pipe(Effect.map((hits): readonly SearchHit[] => hits))
   ).pipe(Effect.provideService(CoreSearchQueryRuntime, runtime));
   const outcome = yield* Effect.exit(read);
-  if (scenario.moduleAllowed === false) {
+  if (scenario.moduleAllowed === false || scenario.unavailable === true || scenario.foreignOwnerRow === true) {
     expect(Exit.isFailure(outcome)).toBe(true);
-    expect(harness.snapshot().ownerQueries).toEqual([]);
+    expect(harness.snapshot().ownerQueries).toHaveLength(scenario.foreignOwnerRow === true ? 1 : 0);
     expect(searches).toBe(0);
   } else {
     expect(Exit.isSuccess(outcome)).toBe(true);
@@ -239,6 +275,12 @@ it.layer(NodeCrypto.layer)('Finance native search parity', (suite) => {
       Effect.forEach([scope.principalId, '50000000-0000-4000-8000-000000000002'], (principal) =>
         governedSearch({ kind, principal }),
       ),
+    );
+    suite.effect(`${kind}: unavailable canonical authority prevents owner and index observation`, () =>
+      governedSearch({ kind, unavailable: true }),
+    );
+    suite.effect(`${kind}: foreign owner rows fail before index observation`, () =>
+      governedSearch({ foreignOwnerRow: true, kind }),
     );
     suite.effect(`${kind}: absent module permission prevents owner and index work`, () =>
       governedSearch({ kind, moduleAllowed: false }),

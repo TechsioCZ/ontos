@@ -186,6 +186,14 @@ const unpreparedConsentServices: ActionServiceFactory<
 
 export const consentSelfServiceAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.consent.self-service',
+      kind: 'action',
+      modes: ['run', 'propose'],
+      placement: { group: 'consent', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.consent-self-service.access.v1',
@@ -197,7 +205,7 @@ export const consentSelfServiceAction = defineAction(
     domainEvents: privacyConsentDecisionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.consent-self-service',
       moduleKey: MODULE_KEY,
       role: 'action',

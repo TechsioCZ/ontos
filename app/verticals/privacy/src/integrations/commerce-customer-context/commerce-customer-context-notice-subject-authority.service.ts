@@ -113,7 +113,7 @@ const profileProvenance = (provenance: AvailableProfile['provenance'], revision:
 };
 const completePermissions = (binding: AvailableBinding): boolean =>
   binding.completeness === 'FULL' &&
-  binding.permissionsFreshness.sourceModuleId === coreIdentityModule &&
+  binding.permissionsFreshness.sourceModuleId === ownerModule &&
   binding.permissionsFreshness.status === 'CURRENT' &&
   new Set(binding.grantedPermissions).size === binding.grantedPermissions.length;
 const samePermissions = (left: AvailableBinding, right: AvailableBinding): boolean => {
@@ -204,7 +204,7 @@ const verifiedBinding = (value: BindingResponse, principal: BoundPrincipal, scop
 const accessPermissionFreshness = (response: AccessResponse) => {
   const rows = response.provenance.filter((item) => item.projection === 'OWNING_CAPABILITY');
   const [row] = rows;
-  return rows.length === 1 && row?.freshness.status === 'CURRENT' && row.freshness.sourceModuleId === coreIdentityModule
+  return rows.length === 1 && row?.freshness.status === 'CURRENT' && row.freshness.sourceModuleId === ownerModule
     ? row.freshness
     : undefined;
 };
@@ -502,10 +502,12 @@ export const observeNoticeSubjectPreparation = Effect.fn('NoticeSubjectAuthority
     if (compositionRevision !== undefined) {
       Object.assign(authorityScope, { compositionRevision });
     }
-    const evidence = yield* live
-      .forScope(authorityScope)
-      .resolve({ ...target, privacySubjectRef: original.record.subjectRef });
-    return { compositionRevision, evidence, record: original.record, scope, target };
+    const requested: PreparedNoticeSubjectAuthority['target'] = {
+      privacySubjectRef: original.record.subjectRef,
+      retailProfileId: target.retailProfileId,
+    };
+    const evidence = yield* live.forScope(authorityScope).resolve(requested);
+    return { compositionRevision, evidence, record: original.record, scope, target: requested };
   },
 );
 

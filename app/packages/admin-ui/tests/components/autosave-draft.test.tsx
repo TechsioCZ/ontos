@@ -136,4 +136,48 @@ describe('useAutosaveDraft', () => {
       yield* eventually(() => expect(test.expected).toEqual([4, 6, 7]));
     }),
   );
+
+  it.effect('keeps a draft parked for approval on its base revision and never proposes it again', () =>
+    Effect.gen(function* proposed() {
+      const test = harness();
+      const view = render(<NameForm revision={4} server="Akros" test={test} />);
+      fireEvent.change(input(), { target: { value: 'Akros CZ' } });
+      fireEvent.focusOut(input());
+      answer(test, 0, 'proposed');
+      yield* eventually(() =>
+        expect(screen.getByText('Čeká na schválení – změna zatím nebyla provedena')).toBeTruthy(),
+      );
+      expect(screen.queryByRole('button')).toBeNull();
+      fireEvent.focusOut(input());
+      // Live data does not replace the parked draft.
+      view.rerender(<NameForm revision={5} server="Akros" test={test} />);
+      expect(input().value).toBe('Akros CZ');
+      fireEvent.change(input(), { target: { value: 'Akros Praha' } });
+      fireEvent.focusOut(input());
+      yield* eventually(() => expect(test.sent).toEqual(['Akros CZ', 'Akros Praha']));
+      // The proposal saved nothing: the record still has its confirmed version, so the base follows revision 5.
+      expect(test.expected).toEqual([4, 5]);
+      answer(test, 1, 6);
+      yield* eventually(() => expect(screen.getByText('Uloženo')).toBeTruthy());
+    }),
+  );
+
+  it.effect('confirms a parked draft once the approved change reaches the server, without sending it again', () =>
+    Effect.gen(function* approved() {
+      const test = harness();
+      const view = render(<NameForm revision={4} server="Akros" test={test} />);
+      fireEvent.change(input(), { target: { value: 'Akros CZ' } });
+      fireEvent.focusOut(input());
+      answer(test, 0, 'proposed');
+      yield* eventually(() =>
+        expect(screen.getByText('Čeká na schválení – změna zatím nebyla provedena')).toBeTruthy(),
+      );
+      view.rerender(<NameForm revision={5} server="Akros CZ" test={test} />);
+      yield* eventually(() =>
+        expect(screen.queryByText('Čeká na schválení – změna zatím nebyla provedena')).toBeNull(),
+      );
+      view.unmount();
+      expect(test.sent).toEqual(['Akros CZ']);
+    }),
+  );
 });

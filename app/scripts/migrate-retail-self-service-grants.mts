@@ -1,54 +1,28 @@
 #!/usr/bin/env node
-import type { v1 } from '@authzed/authzed-node';
+/**
+ * Retail self-service grant migration: retired.
+ *
+ * The command moved an existing native `business_permission` grant for a Retail profile to the migration baseline.
+ * Authorization v2 retired the business-permission mutation runtime (`ADR-0030`): a capability is a declared
+ * `accessDeclaration`, and use comes from an adopted grant in an assigned Role within one scope. There is no graph
+ * migration or import step, so this command refuses before it opens the engine and names the canonical replacement.
+ */
 import { NodeServices } from '@effect/platform-node';
 import { Console, Effect, Exit, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 
-import { RETAIL_PORTAL_SELF_SERVICE_BASELINE } from '../verticals/commerce-customer-context/shared/domain/profile-contracts.ts';
-import { BusinessPermissionCodeSchema } from '../packages/core-runtime/src/permissions/business-permission.ts';
-import { loadSpiceDbConfig } from '../packages/core-runtime/src/permissions/config.ts';
-import { migrateRetailSelfServiceGrant } from '../packages/core-runtime/src/permissions/business-permission-mutation.ts';
-import { newSpiceDbGrpcClient } from '../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
+export class RetailSelfServiceMigrationError extends Schema.TaggedError<RetailSelfServiceMigrationError>()(
+  'RetailSelfServiceMigrationError',
+  { reason: Schema.String },
+) {}
 
-const migrationScopeSchema = Schema.Struct({
-  legalEntityId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('LegalEntityId')),
-  principalId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrincipalId')),
-  profileId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('RetailProfileId')),
-  tenantId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId')),
-});
+export const RETIRED_RETAIL_SELF_SERVICE_MIGRATION_REMEDIATION =
+  'The legacy business_permission grant migration is retired by ADR-0030 and has no translation. Grant the retail self-service capability through a canonical Role and Assignment for the exact company scope, using the declaration key the module publishes.';
 
-/** One-time graph migration, not an enrollment retry: move only an existing exact native grant. */
-const migrateRetailSelfServiceGrants = Effect.fn('migrateRetailSelfServiceGrants')(
-  function* migrateRetailSelfServiceGrantsEffect(
-    client: v1.ZedClientInterface,
-    scope: typeof migrationScopeSchema.Encoded,
-    apply: boolean,
-  ) {
-    const verified = yield* Schema.decodeEffect(migrationScopeSchema)(scope);
-    let existing = 0;
-    let migrated = 0;
-    for (const code of RETAIL_PORTAL_SELF_SERVICE_BASELINE) {
-      const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)(code);
-      const result = yield* migrateRetailSelfServiceGrant(
-        client.promises,
-        {
-          operation: 'grant',
-          permission,
-          principal: { principalId: verified.principalId, tenantId: verified.tenantId },
-          target: {
-            kind: 'retail_profile',
-            legalEntityId: verified.legalEntityId,
-            profileId: verified.profileId,
-            tenantId: verified.tenantId,
-          },
-        },
-        apply,
-      );
-      existing += result.existing;
-      migrated += result.migrated;
-    }
-    return { existing, migrated };
-  },
+export const refuseRetiredRetailSelfServiceMigration = Effect.fail(
+  new RetailSelfServiceMigrationError({
+    reason: `The legacy retail self-service grant migration cannot run. ${RETIRED_RETAIL_SELF_SERVICE_MIGRATION_REMEDIATION}`,
+  }),
 );
 
 const command = Command.make(
@@ -60,20 +34,13 @@ const command = Command.make(
     profileId: Flag.String('profile-id'),
     tenantId: Flag.String('tenant-id'),
   },
-  ({ apply, ...scope }) =>
-    Effect.scoped(
-      Effect.gen(function* migrate() {
-        const configuration = yield* loadSpiceDbConfig();
-        const client = yield* Effect.acquireRelease(
-          Effect.sync(() => newSpiceDbGrpcClient(configuration)),
-          (resource) => Effect.sync(() => resource.close()),
-        );
-        const result = yield* migrateRetailSelfServiceGrants(client, scope, apply);
-        yield* Console.log(
-          `retail self-service migration: apply=${apply}; existing=${result.existing}; migrated=${result.migrated}`,
-        );
-      }),
-    ),
+  ({ apply }) =>
+    Effect.gen(function* migrate() {
+      yield* Console.error(
+        `retail self-service migration: apply=${String(apply)}; the legacy graph migration is retired.`,
+      );
+      return yield* refuseRetiredRetailSelfServiceMigration;
+    }),
 );
 
 if (import.meta.main) {

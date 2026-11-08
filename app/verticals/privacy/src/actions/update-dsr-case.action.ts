@@ -63,6 +63,14 @@ const handleUpdateDsrCase = Effect.fn('UpdateDsrCaseAction.handle')(function* ha
 
 export const updateDsrCaseAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.dsr-case.update',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'dsr', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.update-dsr-case.access.v1',
@@ -74,7 +82,7 @@ export const updateDsrCaseAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.update-dsr-case',
       moduleKey: 'privacy.core',
       role: 'action',

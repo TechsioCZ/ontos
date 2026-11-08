@@ -26,7 +26,7 @@ import { financeStates, financeRelations } from '../src/database/schema.ts';
 import { demoId, demoLegalEntityId, demoTenantId } from '../../../scripts/demo/fixture-ids.mts';
 import { invoices as plannedInvoices, productByKey, snapshotPriceMinor } from '../../../scripts/demo/sales-plan.mts';
 import type { PlannedInvoice } from '../../../scripts/demo/sales-plan.mts';
-import { salesDemoCustomerCounterpartyId, salesDemoCustomers } from '../../party-registry/scripts/demo-customers.mts';
+import { salesDemoCustomers } from '../../../scripts/demo/data/sales-customers.mts';
 
 const FixtureSchema = Schema.Struct({
   legalEntityId: Schema.Literal('71000000-0000-4000-8000-000000000020'),
@@ -127,7 +127,7 @@ const salesDemoPaymentDelayDays = 7;
 /** Day `offsetDays` from the anchor (negative = past), at noon UTC so every formatter yields the same calendar date. */
 const salesDemoDay = (offsetDays: number) => DateTime.add(salesDemoAnchorDay, { days: offsetDays });
 
-/** IČO of the customer behind a plan key `cNN`, from the party-registry demo customer list. */
+/** IČO of the customer behind a plan key `cNN`, from the sole neutral customer dataset. */
 const salesDemoCustomerIco = (customerKey: string) => salesDemoCustomers[Number(customerKey.slice(1)) - 1]?.ico;
 
 const salesDemoPaidMinor = (payment: PlannedInvoice['payment'], totalMinor: number): number => {
@@ -188,7 +188,7 @@ const salesDemoInvoice = Effect.fn('ResetDemo.salesDemoInvoice')(function* sales
     businessState: planned.state,
     counterpartyRef: {
       moduleId: 'party.registry',
-      resourceId: salesDemoCustomerCounterpartyId(ico),
+      resourceId: demoId('party.counterparty', `ico-${ico}`),
       resourceType: 'party.registry.counterparty',
       tenantId: demoTenantId,
     },

@@ -1,6 +1,6 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
-import { DateTime, Deferred, Effect, Option, Schema } from 'effect';
+import { DateTime, Deferred, Effect, Schema } from 'effect';
 import { moduleChangeEvent, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import { CustomerListForbiddenProblemSchema, CustomerListItemSchema } from '../../shared/apis/customer-list.ts';
 import {
@@ -70,8 +70,11 @@ const customer = Schema.decodeSync(CustomerListItemSchema)({
 });
 const party = Schema.decodeSync(PartySchema)({
   archivedAt: null,
+  businessName: 'Before',
   createdAt: instant,
   displayName: 'Before',
+  firstName: null,
+  lastName: null,
   partyRef,
   partyType: 'ORGANIZATION',
   revision: 1,
@@ -102,7 +105,6 @@ const snapshot: CustomerDetailSnapshot = {
     status: 'ready',
     value: {
       currentFactAssertions: [],
-      factHistory: Option.none(),
       party,
       resolution: { aliasChain: [], canonicalPartyRef: partyRef, kind: 'DIRECT', requestedPartyRef: partyRef },
     },

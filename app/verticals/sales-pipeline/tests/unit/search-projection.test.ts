@@ -4,13 +4,10 @@ import {
   CoreSearchProjectionStore,
   CoreSearchProjectionUnavailable,
   CoreSearchWorkerSnapshot,
-  ResourceContainmentMutationUnavailable,
-  ResourceContainmentRelationshipMutation,
   createCoreSearchQueryRuntime,
   makeCoreSearchIngestion,
   makeInMemoryCoreSearchProjectionStore,
 } from '@app/core-runtime';
-import type { ResourceContainmentRelationshipMutationInput } from '@app/core-runtime';
 import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { buildSearchDocuments, publishSearchSnapshot } from '../../src/services/search-projection.ts';
@@ -47,21 +44,14 @@ it.effect('fails foreign tenants and duplicate identities across companies befor
     expect(Exit.isFailure(duplicate)).toBe(true);
   }),
 );
-it.effect('lifecycle update, archive, deletion and rebuild are version fenced and repair containment', () =>
+it.effect('lifecycle update, archive, deletion and rebuild are version fenced', () =>
   Effect.gen(function* test() {
     const store = makeInMemoryCoreSearchProjectionStore();
     const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
-    const relationships: ResourceContainmentRelationshipMutationInput[] = [];
     const publish = (next: typeof snapshot) =>
       publishSearchSnapshot(context, next).pipe(
         Effect.provideService(CoreSearchProjectionStore, store),
         Effect.provideService(CoreSearchIngestion, makeCoreSearchIngestion(store, searchIngestionRegistrations)),
-        Effect.provideService(ResourceContainmentRelationshipMutation, {
-          touch: (batch) =>
-            Effect.sync(() => {
-              relationships.push(batch);
-            }),
-        }),
       );
     yield* publish(snapshot);
     yield* publish(snapshot);
@@ -78,10 +68,6 @@ it.effect('lifecycle update, archive, deletion and rebuild are version fenced an
         Effect.provideService(CoreSearchQueryRuntime, runtime),
       ),
     ).toEqual([]);
-    expect(relationships[0]?.relationships).toMatchObject([
-      { container: { objectType: 'module_access' }, relation: 'module' },
-    ]);
-    expect(relationships.every((batch) => batch.relationships.every((edge) => edge.relation === 'module'))).toBe(true);
     yield* publish({
       ...snapshot,
       projectionVersion: '2',
@@ -106,7 +92,7 @@ it.effect('lifecycle update, archive, deletion and rebuild are version fenced an
     );
   }),
 );
-it.effect('publishes 201 documents with three bounded containment batches, zero ingests/applies and one replace', () =>
+it.effect('publishes 201 documents with zero ingests/applies and one atomic replace', () =>
   Effect.gen(function* test() {
     const records = yield* Effect.forEach(
       Array.from({ length: 201 }, (_, index) => index + 1),
@@ -120,7 +106,6 @@ it.effect('publishes 201 documents with three bounded containment batches, zero 
     );
     const store = makeInMemoryCoreSearchProjectionStore();
     const operations: string[] = [];
-    const batches: ResourceContainmentRelationshipMutationInput[] = [];
     yield* publishSearchSnapshot(context, { ...snapshot, records }).pipe(
       Effect.provideService(CoreSearchIngestion, {
         ingest: () => Effect.die('Snapshot publication must not ingest individual documents'),
@@ -134,16 +119,8 @@ it.effect('publishes 201 documents with three bounded containment batches, zero 
           return store.replace(replacement, claim);
         },
       }),
-      Effect.provideService(ResourceContainmentRelationshipMutation, {
-        touch: (batch) =>
-          Effect.sync(() => {
-            operations.push('touch');
-            batches.push(batch);
-          }),
-      }),
     );
-    expect(operations).toEqual(['touch', 'touch', 'touch', 'replace']);
-    expect(batches.map((batch) => batch.relationships.length)).toEqual([100, 100, 1]);
+    expect(operations).toEqual(['replace']);
     const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
     const hits = yield* loadSearch(scope, 'nabidka').pipe(Effect.provideService(CoreSearchQueryRuntime, runtime));
     expect(hits).toHaveLength(201);
@@ -152,10 +129,7 @@ it.effect('publishes 201 documents with three bounded containment batches, zero 
 it.effect('returns verified Core relevance v1 scores and never invents one', () =>
   Effect.gen(function* test() {
     const store = makeInMemoryCoreSearchProjectionStore();
-    yield* publishSearchSnapshot(context, snapshot).pipe(
-      Effect.provideService(CoreSearchProjectionStore, store),
-      Effect.provideService(ResourceContainmentRelationshipMutation, { touch: () => Effect.void }),
-    );
+    yield* publishSearchSnapshot(context, snapshot).pipe(Effect.provideService(CoreSearchProjectionStore, store));
     const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
     const exact = yield* loadSearch(scope, ref.resourceId).pipe(Effect.provideService(CoreSearchQueryRuntime, runtime));
     expect(exact[0]?.relevance).toEqual({ score: 1000, version: '1' });
@@ -191,7 +165,6 @@ it.effect('indexes only approved owner fields, not notes, amounts or invented re
     const store = makeInMemoryCoreSearchProjectionStore();
     yield* publishSearchSnapshot(context, { ...snapshot, records: [record] }).pipe(
       Effect.provideService(CoreSearchProjectionStore, store),
-      Effect.provideService(ResourceContainmentRelationshipMutation, { touch: () => Effect.void }),
     );
     const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
     for (const query of [ref.resourceId, '2027-02-28', 'proposal', 'kavy']) {
@@ -206,14 +179,10 @@ it.effect('indexes only approved owner fields, not notes, amounts or invented re
     }
   }),
 );
-it.effect('replacement or containment failure leaves the complete previous projection intact; retry succeeds', () =>
+it.effect('a replacement failure leaves the complete previous projection intact; retry succeeds', () =>
   Effect.gen(function* test() {
     const store = makeInMemoryCoreSearchProjectionStore();
-    const containment = { touch: () => Effect.void };
-    yield* publishSearchSnapshot(context, snapshot).pipe(
-      Effect.provideService(CoreSearchProjectionStore, store),
-      Effect.provideService(ResourceContainmentRelationshipMutation, containment),
-    );
+    yield* publishSearchSnapshot(context, snapshot).pipe(Effect.provideService(CoreSearchProjectionStore, store));
     const next = {
       ...snapshot,
       projectionVersion: '2',
@@ -227,7 +196,6 @@ it.effect('replacement or containment failure leaves the complete previous proje
     const failedReplace = yield* publishSearchSnapshot(context, next).pipe(
       Effect.provideService(CoreSearchProjectionStore, { ...store, replace: () => Effect.fail(unavailable) }),
       Effect.provideService(CoreSearchIngestion, makeCoreSearchIngestion(store, searchIngestionRegistrations)),
-      Effect.provideService(ResourceContainmentRelationshipMutation, containment),
       Effect.exit,
     );
     expect(Exit.isFailure(failedReplace)).toBe(true);
@@ -235,27 +203,7 @@ it.effect('replacement or containment failure leaves the complete previous proje
       yield* loadSearch(scope, 'cerstva').pipe(Effect.provideService(CoreSearchQueryRuntime, runtime)),
     ).toHaveLength(1);
     expect(yield* loadSearch(scope, 'nova').pipe(Effect.provideService(CoreSearchQueryRuntime, runtime))).toEqual([]);
-    const containmentFailure = new ResourceContainmentMutationUnavailable({
-      reason: 'Injected containment failure',
-    });
-    const failedContainment = yield* publishSearchSnapshot(context, next).pipe(
-      Effect.provideService(CoreSearchProjectionStore, {
-        ...store,
-        replace: () => Effect.die('No replace after failed touch'),
-      }),
-      Effect.provideService(ResourceContainmentRelationshipMutation, {
-        touch: () => Effect.fail(containmentFailure),
-      }),
-      Effect.exit,
-    );
-    expect(Exit.isFailure(failedContainment)).toBe(true);
-    expect(
-      yield* loadSearch(scope, 'cerstva').pipe(Effect.provideService(CoreSearchQueryRuntime, runtime)),
-    ).toHaveLength(1);
-    yield* publishSearchSnapshot(context, next).pipe(
-      Effect.provideService(CoreSearchProjectionStore, store),
-      Effect.provideService(ResourceContainmentRelationshipMutation, containment),
-    );
+    yield* publishSearchSnapshot(context, next).pipe(Effect.provideService(CoreSearchProjectionStore, store));
     expect(yield* loadSearch(scope, 'cerstva').pipe(Effect.provideService(CoreSearchQueryRuntime, runtime))).toEqual(
       [],
     );
@@ -268,10 +216,7 @@ it.effect('empty replacement prunes deletions, retains the floor and ignores sta
   Effect.gen(function* test() {
     const store = makeInMemoryCoreSearchProjectionStore();
     const publish = (next: typeof snapshot) =>
-      publishSearchSnapshot(context, next).pipe(
-        Effect.provideService(CoreSearchProjectionStore, store),
-        Effect.provideService(ResourceContainmentRelationshipMutation, { touch: () => Effect.void }),
-      );
+      publishSearchSnapshot(context, next).pipe(Effect.provideService(CoreSearchProjectionStore, store));
     yield* publish(snapshot);
     yield* publish({ ...snapshot, projectionVersion: '3', records: [] });
     const documents = yield* buildSearchDocuments(snapshot);
@@ -302,44 +247,40 @@ it.effect('empty replacement prunes deletions, retains the floor and ignores sta
     ).toHaveLength(1);
   }),
 );
-it.effect(
-  'rejects invalid snapshots and worker identities before containment or replacement, including empty snapshots',
-  () =>
-    Effect.gen(function* test() {
-      const store = makeInMemoryCoreSearchProjectionStore();
-      const invalidSnapshots = [
-        { ...snapshot, tenantId: otherTenant },
-        { ...snapshot, projectionVersion: '0', records: [] },
-        {
-          ...snapshot,
-          records: [...snapshot.records, { archived: false, legalEntityId: otherCompany, ref, title: 'Duplicate' }],
-        },
-        { ...snapshot, records: [{ archived: false, legalEntityId: '', ref, title: 'Invalid company' }] },
-      ];
-      for (const invalid of invalidSnapshots) {
-        const outcome = yield* publishSearchSnapshot(context, invalid).pipe(
-          Effect.provideService(CoreSearchProjectionStore, store),
-          Effect.provideService(ResourceContainmentRelationshipMutation, { touch: () => Effect.die('No containment') }),
-          Effect.exit,
-        );
-        expect(Exit.isFailure(outcome)).toBe(true);
-      }
-      const invalidContexts = [
-        { ...context, producerModuleKey: 'demo.foreign' },
-        { ...context, consumerModuleKey: 'demo.foreign' },
-        { ...context, workerKey: 'demo.foreign.worker' },
-        { ...context, topic: 'demo.foreign.changed.v1' },
-        { ...context, compositionRevision: '' },
-      ];
-      for (const invalid of invalidContexts) {
-        const outcome = yield* publishSearchSnapshot(invalid, { ...snapshot, records: [] }).pipe(
-          Effect.provideService(CoreSearchProjectionStore, store),
-          Effect.provideService(ResourceContainmentRelationshipMutation, { touch: () => Effect.die('No containment') }),
-          Effect.exit,
-        );
-        expect(Exit.isFailure(outcome)).toBe(true);
-      }
-    }),
+it.effect('rejects invalid snapshots and worker identities before replacement, including empty snapshots', () =>
+  Effect.gen(function* test() {
+    const store = makeInMemoryCoreSearchProjectionStore();
+    const invalidSnapshots = [
+      { ...snapshot, tenantId: otherTenant },
+      { ...snapshot, projectionVersion: '0', records: [] },
+      {
+        ...snapshot,
+        records: [...snapshot.records, { archived: false, legalEntityId: otherCompany, ref, title: 'Duplicate' }],
+      },
+      { ...snapshot, records: [{ archived: false, legalEntityId: '', ref, title: 'Invalid company' }] },
+    ];
+    for (const invalid of invalidSnapshots) {
+      const outcome = yield* publishSearchSnapshot(context, invalid).pipe(
+        Effect.provideService(CoreSearchProjectionStore, store),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(outcome)).toBe(true);
+    }
+    const invalidContexts = [
+      { ...context, producerModuleKey: 'demo.foreign' },
+      { ...context, consumerModuleKey: 'demo.foreign' },
+      { ...context, workerKey: 'demo.foreign.worker' },
+      { ...context, topic: 'demo.foreign.changed.v1' },
+      { ...context, compositionRevision: '' },
+    ];
+    for (const invalid of invalidContexts) {
+      const outcome = yield* publishSearchSnapshot(invalid, { ...snapshot, records: [] }).pipe(
+        Effect.provideService(CoreSearchProjectionStore, store),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(outcome)).toBe(true);
+    }
+  }),
 );
 it.effect('rejects a mismatched trusted snapshot before attempting owner SQL', () =>
   Effect.gen(function* test() {

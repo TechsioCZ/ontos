@@ -8,6 +8,7 @@ import { CommitOrderPayloadSchema, CommitOrderResultSchema } from '../../shared/
 import type { CommitOrderPayload } from '../../shared/actions/commit-order.ts';
 import { OrderCommitmentRejected } from '../../shared/domain/order-commitment.ts';
 import { orderCommitmentService } from '../services/order-commitment.service.ts';
+import { frozenPurchaseValueAccessAmount } from '../services/purchase-value-amount.ts';
 import {
   orderCommitmentDomainEvents,
   recordOrderCommitmentOperation,
@@ -32,6 +33,19 @@ const handleCommitOrder = Effect.fn('CommitOrder.handle')(function* handle(
 });
 export const commitOrderAction = defineAction(
   {
+    accessDeclaration: {
+      amountInput: 'derived.purchaseValue',
+      ephemeral: true,
+      key: 'commerce.order.order.commit',
+      kind: 'action',
+      modes: ['run'],
+      placement: { group: 'orders', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
+    // O91: the governed amount is the owner-verified frozen purchase value the payload carries; the
+    // handler re-checks it against the stored Bundle in the same transaction before any write.
+    accessAmount: (payload) => frozenPurchaseValueAccessAmount(payload.purchaseValue),
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'commerce.order.commit-order.access.v1' },
     actionKey: 'commerce.order.commit-order',
     auditProfile: 'standard',
@@ -39,7 +53,7 @@ export const commitOrderAction = defineAction(
     domainEvents: orderCommitmentDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.order.commit-order',
       moduleKey: 'commerce.order',
       role: 'action',

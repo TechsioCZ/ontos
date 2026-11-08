@@ -2,11 +2,13 @@
 // @ontos-action-http-owner demo.crm
 // @ontos-action-http-slug apply-command
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { ApplyCommandPayloadSchema, ApplyCommandResultSchema } from '../actions/apply-command.ts';
 
 export { ApplyCommandPayloadSchema } from '../actions/apply-command.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 const SyncCountSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 /** Post-commit observations, not the committed CRM Action result or an authorization grant. */
@@ -37,6 +39,7 @@ export const ApplyCommandActionForbiddenProblemSchema = makeProblemDetailsSchema
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -162,7 +165,7 @@ export const applyCommandActionGroupDefinition = HttpApiGroup.make('applyCommand
     HttpApiEndpoint.post('execute', '/crm/actions/apply-command', {
       error: actionErrors,
       payload: Schema.toEncoded(ApplyCommandPayloadSchema),
-      success: ApplyCommandResponseSchema,
+      success: [ActionProposalAcceptedSchema, ApplyCommandResponseSchema],
     }),
   )
   .middleware(ApplyCommandActionSchemaErrorMiddleware);

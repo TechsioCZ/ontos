@@ -12,7 +12,7 @@ import {
 import type { PreparedPrivacySubject } from '../../src/persistence/privacy-subject-preparation.ts';
 import { PrivacyOperationPersistenceError } from '../../src/persistence/privacy-operation-persistence-error.ts';
 import { PrivacySubjectRecordSchema } from '../../shared/domain/privacy-subject.ts';
-import { privacySubjectRefForParty } from '../../shared/domain/privacy-subject-identity.ts';
+import { privacySubjectRefForParty } from '@app/consent-authority-contracts';
 import {
   PrivacySubjectPartyCredentials,
   PrivacySubjectPartyOwner,
@@ -139,11 +139,13 @@ const valid = {
       value: 'PERSON',
     },
   ],
-  factHistory: null,
   party: {
     archivedAt: null,
+    businessName: null,
     createdAt: '1960-01-01T00:00:00Z',
     displayName: null,
+    firstName: null,
+    lastName: null,
     partyRef,
     partyType: 'PERSON',
     revision: 3,

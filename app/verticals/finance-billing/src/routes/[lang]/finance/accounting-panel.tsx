@@ -14,7 +14,7 @@ import { SelectTemplate } from '@app/admin-ui/select-template';
 import { DateTime, Effect } from 'effect';
 import { useRef, useState } from 'react';
 import type { AccountingExport, AccountingExportFormat, Invoice } from '../../../../shared/apis/records.ts';
-import { downloadText, outcomeMessage } from './finance-ui.tsx';
+import { downloadText, outcomeNotice } from './finance-ui.tsx';
 import type { FinanceCommandDraft, FinanceViewModel } from './finance-ui.tsx';
 import { customerOf } from './invoice-view.ts';
 import { useInvoiceIssuer } from './use-invoice-issuer.ts';
@@ -84,6 +84,20 @@ const AccountingSetupValue = ({ field, value }: { readonly field: SetupKey; read
 };
 
 /** S08: accounting registry (with ČEKÁ NA VSTUP), versioned handover packages and their history. */
+/** The panel's status line: a confirmed step, a refusal, or a proposal still waiting for approval (neutral). */
+interface PanelMessage {
+  readonly kind: 'default' | 'error' | 'success';
+  readonly text: string;
+}
+
+const panelMessage = (
+  vm: FinanceViewModel,
+  outcome: { readonly feedback: string; readonly ok: false; readonly reason?: string },
+): PanelMessage => {
+  const notice = outcomeNotice(vm, outcome);
+  return { kind: notice.status, text: notice.text };
+};
+
 const accountingPanelSaveSetupProgram = Effect.fn('Finance.saveSetup')(function* accountingPanelSaveSetupProgram(
   context: Pick<ReturnType<typeof useAccountingPanel>, 'form' | 'setEditing' | 'setFormError' | 'setMessage' | 'vm'>,
 ) {
@@ -115,7 +129,7 @@ const accountingPanelSaveSetupProgram = Effect.fn('Finance.saveSetup')(function*
   if (outcome.ok) {
     setEditing(false);
   } else {
-    setMessage({ kind: 'error', text: outcomeMessage(vm, outcome) });
+    setMessage(panelMessage(vm, outcome));
   }
 });
 
@@ -157,13 +171,14 @@ const accountingPanelCreateExportProgram = Effect.fn('Finance.createExport')(
         text: `Balíček je připravený (stav „Připraveno k předání“). Stáhněte soubor, pošlete ho účetní a v historii klikněte na Předat účetní.`,
       });
     } else {
-      setMessage({
-        kind: 'error',
-        text:
-          outcome.feedback === 'unavailable'
-            ? 'Balíček nevznikl: vystavitele nebo údaje partnerů z adresáře se teď nepodařilo ověřit. Nic se neuložilo, zkuste to prosím znovu.'
-            : outcomeMessage(vm, outcome),
-      });
+      setMessage(
+        outcome.feedback === 'unavailable'
+          ? {
+              kind: 'error',
+              text: 'Balíček nevznikl: vystavitele nebo údaje partnerů z adresáře se teď nepodařilo ověřit. Nic se neuložilo, zkuste to prosím znovu.',
+            }
+          : panelMessage(vm, outcome),
+      );
     }
   },
 );
@@ -182,7 +197,7 @@ const accountingPanelHandOverProgram = Effect.fn('Finance.handOver')(function* a
   }
   const outcome = yield* vm.execute(handOverAccountingExportCommand, `Balíček ${entry.batchNumber} předán účetní`);
   if (!outcome.ok) {
-    setMessage({ kind: 'error', text: outcomeMessage(vm, outcome) });
+    setMessage(panelMessage(vm, outcome));
   }
 });
 
@@ -211,7 +226,7 @@ const accountingPanelMarkFailedProgram = Effect.fn('Finance.markFailed')(functio
   setFailTarget(undefined);
   setFailReason('');
   if (!outcome.ok) {
-    setMessage({ kind: 'error', text: outcomeMessage(vm, outcome) });
+    setMessage(panelMessage(vm, outcome));
   }
 });
 
@@ -238,7 +253,7 @@ const accountingPanelConfirmExportProgram = Effect.fn('Finance.confirmExport')(
     setConfirmTarget(undefined);
     setEvidence('');
     if (!outcome.ok) {
-      setMessage({ kind: 'error', text: outcomeMessage(vm, outcome) });
+      setMessage(panelMessage(vm, outcome));
     }
   },
 );
@@ -261,7 +276,7 @@ const useAccountingPanel = (vm: FinanceViewModel) => {
   const [form, setForm] = useState<Partial<Record<FormKey, string>>>({});
   const [formError, setFormError] = useState<string>();
   const issuerName = useInvoiceIssuer();
-  const [message, setMessage] = useState<{ readonly kind: 'error' | 'success'; readonly text: string }>();
+  const [message, setMessage] = useState<PanelMessage>();
   const [confirmTarget, setConfirmTarget] = useState<AccountingExport>();
   const [evidence, setEvidence] = useState('');
   // Blocks a second click in the same render tick, before vm.busy reaches this component.

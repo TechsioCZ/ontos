@@ -10,9 +10,12 @@ import type { ReadLoadContext, ReadPrepareContext, ReadFinishContext } from '../
 import { defineRead } from '../reads/definition.ts';
 import { CoreSearchQueryRuntime } from '../search/query-runtime.ts';
 import { coreSearchTokens, matchesCoreSearchValues } from '../search/search-contract.ts';
-import { PeopleSearchRequestSchema, PeopleSearchResponseSchema } from './people-search-contract.ts';
+import {
+  PeopleSearchRequestSchema,
+  PeopleSearchResponseSchema,
+  peopleSearchUnavailable,
+} from './people-search-contract.ts';
 import { personIdentity, personRef } from './person-identity.ts';
-import { PeopleSearchVisibility, peopleSearchUnavailable } from './people-search-visibility.ts';
 
 const corePeopleModuleId = 'core.identity';
 type Input = typeof PeopleSearchRequestSchema.Type;
@@ -103,13 +106,8 @@ const finish = Effect.fn('PeopleSearch.finish')(function* finish(
   if (scope.legalEntityId === undefined) {
     return yield* peopleSearchUnavailable();
   }
-  const visibility = yield* PeopleSearchVisibility;
-  const visible = yield* visibility.visible(
-    scope.tenantId,
-    context.loaded.map(({ principalId }) => principalId),
-  );
   const result: Result = yield* Effect.forEach(
-    context.loaded.filter(({ principalId }) => visible.has(principalId)),
+    context.loaded,
     Effect.fn(function* row(person) {
       const ref = yield* personRef(scope.tenantId, scope.legalEntityId ?? '', person.principalId).pipe(
         Effect.mapError(peopleSearchUnavailable),
@@ -153,10 +151,20 @@ const factory = (transaction: ScopedTransactionExecutor, scope: OperationalScope
 
 export const peopleSearchRead = defineRead(
   {
+    // The people search provider is a governed read (O62, O72); its hits are the selected company's own
+    // projection rows, revalidated by the owner against current intent.
+    accessDeclaration: {
+      key: 'core.identity.people-search.query',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'search',
     entrypoint: defineSystemModuleEntrypoint({
       access: 'read',
-      authorization: { kind: 'context_permission', permission: 'module.access' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.search.people',
       moduleKey: corePeopleModuleId,
       role: 'search',
@@ -165,7 +173,6 @@ export const peopleSearchRead = defineRead(
     inputSchema: PeopleSearchRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: corePeopleModuleId,
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'core.identity.search.people',
     resultSchema: PeopleSearchResponseSchema,
@@ -173,12 +180,4 @@ export const peopleSearchRead = defineRead(
   },
   { finish, load, prepare },
   factory,
-  () => ({
-    kind: 'any_of',
-    targets: [
-      { kind: 'tenant', permission: 'read_people' },
-      { kind: 'legal_entity', permission: 'read_people' },
-    ],
-  }),
-  (result) => result.map(({ ref }) => ref),
 );

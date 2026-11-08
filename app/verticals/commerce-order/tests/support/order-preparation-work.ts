@@ -1,4 +1,5 @@
 import { QuotationExpiredResponseSchema } from '@app/pricing-contracts/quotation-verification';
+import { NodeCrypto } from '@effect/platform-node';
 import { ConfigProvider, Layer, Schema } from 'effect';
 import type { Effect, Option } from 'effect';
 
@@ -87,11 +88,10 @@ export const orderPreparationWorkerLayer = (
       Layer.mergeAll(
         Layer.mock(ApprovalOwnerGateway, {}),
         Layer.mock(OrderFinalSourceVerification, { prepare }),
+        NodeCrypto.layer,
         ConfigProvider.layer(
           ConfigProvider.fromUnknown({
             ONTOS_ORDER_API_BASE_URL: 'https://order.unit.invalid',
-            ONTOS_ORDER_FINALIZATION_GATEWAY_API_KEY: 'unit-api-key',
-            ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.unit.invalid',
           }),
         ),
       ),
@@ -137,11 +137,10 @@ export const orderProofWorkerLayer = (
       Layer.mergeAll(
         Layer.mock(ApprovalOwnerGateway, { revalidateOutcome }),
         Layer.mock(OrderFinalSourceVerification, { readRetainedQuotationExpiry }),
+        NodeCrypto.layer,
         ConfigProvider.layer(
           ConfigProvider.fromUnknown({
             ONTOS_ORDER_API_BASE_URL: 'https://order.unit.invalid',
-            ONTOS_ORDER_FINALIZATION_GATEWAY_API_KEY: 'unit-api-key',
-            ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.unit.invalid',
           }),
         ),
       ),

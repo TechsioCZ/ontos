@@ -1,5 +1,10 @@
 import { makeEffectDrizzleAuthAdapter } from '@app/better-auth-effect-drizzle/server';
-import { AgentProposalQueueModuleReview, ContextAccess, ReadRuntime } from '@app/core-runtime';
+import {
+  AgentProposalQueueModuleReview,
+  ContextAccess,
+  ReadRuntime,
+  makeDatabaseIdentityEnrollmentLive,
+} from '@app/core-runtime';
 import type { OperationalScopeRequest } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { NodeCrypto } from '@effect/platform-node';
@@ -12,7 +17,9 @@ import { AgentProposalCommandPreparationLive } from '../../../../packages/core-r
 import { ActionAuthority } from '../../../../packages/core-runtime/src/permissions/action-authority.ts';
 import { CoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
-import { OperationalScopeResolverLive } from '../../../../packages/core-runtime/src/operations/context.ts';
+import { administrationScopeLayer } from '../unit/oauth-connections-admin/administration-runtime.fixture.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from './database-identities.ts';
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { scriptedPgClientLayer } from '../../../../packages/core-runtime/src/testing/scripted-pg-client.ts';
 import { testSqlConnection } from '../../../../packages/core-runtime/tests/support/sql-connection.ts';
 import { AuthDatabase } from '../../api/auth/db/client.ts';
@@ -39,9 +46,11 @@ export const nativeDemoAccountTestServices = Effect.fn('NativeDemoAccountTestSer
     const authExecutor = yield* makeWithDefaults({ relations: authRelations }).pipe(Effect.provide(driver));
     const core = Layer.succeed(CoreDatabase, { executor: coreExecutor });
     const access = Layer.succeed(ContextAccess, contextAccess);
-    const resolver = OperationalScopeResolverLive.pipe(Layer.provide(Layer.merge(core, access)));
+    const resolver = administrationScopeLayer({ principal: caller.principal });
+    const identities = makeDatabaseIdentityEnrollmentLive(FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
+    const gate = Layer.succeed(AccessDecisionGate, makeTestAccessDecision());
     const deniedAudit = IdentityAdministrationDeniedAuditLive.pipe(
-      Layer.provide(Layer.mergeAll(core, access, resolver)),
+      Layer.provide(Layer.mergeAll(core, access, resolver, identities, gate)),
     );
     const adapter = yield* makeEffectDrizzleAuthAdapter(authExecutor, authDatabaseSchema);
     const auth = Layer.succeed(AuthDatabase, { adapter, executor: authExecutor });
@@ -58,7 +67,7 @@ export const nativeDemoAccountTestServices = Effect.fn('NativeDemoAccountTestSer
       checkActionProposalPermission: () => Effect.die('Unexpected business proposal authority check'),
     });
     const preparation = AgentProposalCommandPreparationLive.pipe(
-      Layer.provide(Layer.mergeAll(core, access, active, authority)),
+      Layer.provide(Layer.mergeAll(core, access, active, authority, identities)),
     );
     // Lifecycle administration must never use module-private visibility as a permission substitute.
     const review = Layer.succeed(AgentProposalQueueModuleReview, {
@@ -66,6 +75,9 @@ export const nativeDemoAccountTestServices = Effect.fn('NativeDemoAccountTestSer
     });
     return Layer.mergeAll(
       deniedAudit,
+      resolver,
+      identities,
+      gate,
       provider,
       preparation,
       authority,

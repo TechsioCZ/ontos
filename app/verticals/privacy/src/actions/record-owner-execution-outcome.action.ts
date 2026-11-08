@@ -104,6 +104,19 @@ const prepareOwnerOutcomeServices = Effect.fn('RecordOwnerExecutionOutcomeAction
 
 export const recordOwnerExecutionOutcomeAction = defineAction(
   {
+    accessActor: {
+      callers: ['commerce-customer-context', 'party-registry'],
+      reason: 'Owner modules report privacy measure outcomes for a verified originating requester.',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'privacy.core.owner-execution-outcome.record',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'privacy-measures', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.record-owner-execution-outcome.access.v1',
@@ -115,7 +128,7 @@ export const recordOwnerExecutionOutcomeAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.record-owner-execution-outcome',
       moduleKey: 'privacy.core',
       role: 'action',

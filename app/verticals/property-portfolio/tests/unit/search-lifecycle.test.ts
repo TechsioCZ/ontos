@@ -1,4 +1,5 @@
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { propertyPortfolioRegistration } from '../../vertical.registration.ts';
 import { Effect, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -26,7 +27,10 @@ it.effect('governed rebuild needs an explicit Action grant, selected company, an
       registration: requestSearchRebuildAction,
       transport: { correlationId: 'property-search-test', idempotencyKey: 'rebuild-1' },
     };
-    const harness = yield* makeActionTestHarness({ actionPermission: 'allowed', tenantPermission: 'allowed' });
+    const harness = yield* makeActionTestHarness({
+      access: { 'property.portfolio.request-search-rebuild.write': 'allowed' },
+      ownerRegistration: propertyPortfolioRegistration,
+    });
     const first = yield* harness.runtime.runAction(request);
     expect(first.status).toBe('QUEUED');
     expect(
@@ -43,14 +47,17 @@ it.effect('governed rebuild needs an explicit Action grant, selected company, an
         },
       },
     ]);
-    const denied = yield* makeActionTestHarness({ actionPermission: 'denied', tenantPermission: 'allowed' });
+    const denied = yield* makeActionTestHarness({
+      access: { 'property.portfolio.request-search-rebuild.write': 'denied' },
+      ownerRegistration: propertyPortfolioRegistration,
+    });
     expect(
       Predicate.isTagged(yield* denied.runtime.runAction(request).pipe(Effect.flip), 'ActionPermissionDenied'),
     ).toBe(true);
     expect(denied.snapshot().committed).toEqual([]);
     const noTenantAdministration = yield* makeActionTestHarness({
-      actionPermission: 'allowed',
-      tenantPermission: 'denied',
+      access: {},
+      ownerRegistration: propertyPortfolioRegistration,
     });
     expect(
       Predicate.isTagged(
@@ -59,9 +66,11 @@ it.effect('governed rebuild needs an explicit Action grant, selected company, an
       ),
     ).toBe(true);
     expect(noTenantAdministration.snapshot().committed).toEqual([]);
-    expect(requestSearchRebuildAction.descriptor.tenantPermission?.({})).toBe('manage_identity');
+    expect(requestSearchRebuildAction.descriptor.accessDeclaration?.key).toBe(
+      'property.portfolio.request-search-rebuild.write',
+    );
     expect(requestSearchRebuildAction.descriptor.legalEntityScope).toBe('required');
-    expect(requestSearchRebuildAction.descriptor.entrypoint.authorization).toMatchObject({ provisioning: 'explicit' });
+    expect(requestSearchRebuildAction.descriptor.entrypoint.authorization).toMatchObject({ kind: 'protected' });
   }),
 );
 
@@ -75,6 +84,7 @@ it.effect('successful business writes atomically queue projection intent and do 
     } as const;
     const harness = yield* makeActionTestHarness({
       actionPermission: 'allowed',
+      ownerRegistration: propertyPortfolioRegistration,
       services: [
         bindActionTestServices(applyCommandAction, {
           apply: () => Effect.succeed({ resourceRef, revision: 1 }),
@@ -103,8 +113,8 @@ it.effect('successful business writes atomically queue projection intent and do 
 it('registers both candidate-checked providers and both governed owner workers', () => {
   expect(propertiesRead.descriptor.legalEntityScope).toBe('required');
   expect(unitsRead.descriptor.legalEntityScope).toBe('required');
-  expect(propertiesRead.descriptor.permissionTarget).toBe('module');
-  expect(unitsRead.descriptor.permissionTarget).toBe('module');
+  expect(propertiesRead.descriptor.accessDeclaration?.key).toBe('property.portfolio.search-properties.read');
+  expect(unitsRead.descriptor.accessDeclaration?.key).toBe('property.portfolio.search-units.read');
   expect(outboxWorkers.map((worker) => worker.descriptor.workerKey).toSorted()).toEqual([
     'property.portfolio.rebuild-search',
     'property.portfolio.refresh-search',

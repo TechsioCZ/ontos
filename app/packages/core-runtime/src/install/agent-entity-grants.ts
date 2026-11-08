@@ -1,3 +1,4 @@
+import type { ActionProvisioningIntent } from '../authorization/entrypoint-classification.ts';
 /** Administrator selections become explicit company-scoped SpiceDB policy, never principal executor grants. */
 import { v1 } from '@authzed/authzed-node';
 import { Schema } from 'effect';
@@ -7,7 +8,18 @@ import { agentScopedRoleObjectId } from '../permissions/scoped-role.ts';
 import { toSpiceDbActionGrantObjectId } from '../permissions/service.ts';
 import { demoAccountObjectIdParts } from './demo-account-administration.ts';
 import type { DemoAccountRelationship } from './demo-account-administration.ts';
-import type { ActionAuthorizationProvisioningAction } from './action-authorization-provisioning.ts';
+
+/**
+ * Transitional: the retired Action-provisioning shape. Authorization v2 removed the explicit
+ * Action-grant model, so these helpers still describe one legacy Action and must be rehomed onto the
+ * v2 mandate/agent-connection model before they are used for anything but demo replay (ADR-0030).
+ */
+export interface ActionAuthorizationProvisioningAction {
+  readonly actionKey: string;
+  readonly legalEntityScope: 'forbidden' | 'optional' | 'required';
+  readonly owningModuleKey: string;
+  readonly provisioning: ActionProvisioningIntent;
+}
 
 export const AgentGrantAccessSchema = Schema.Literals(['read', 'write']);
 export type AgentGrantAccess = typeof AgentGrantAccessSchema.Type;

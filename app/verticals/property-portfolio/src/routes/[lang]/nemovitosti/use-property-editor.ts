@@ -1,4 +1,6 @@
 import type { RevisionedSaveResult } from '@app/admin-ui';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { DateTime, Effect, Match, Option, Predicate, Random, Schema } from 'effect';
 import type { Employee } from '@app/workforce/contracts/records';
 import { EmployeeIdSchema } from '@app/workforce/resources/employee';
@@ -255,12 +257,14 @@ const sendCommand = (raw: PropertyCommand, expectedRevision: number) =>
 
 /**
  * Autosave of an edited building or unit against the revision its draft builds on. The revision covers the whole
- * register, so a conflict is resent once against a fresh read while `unchanged` holds for it.
+ * register, so a conflict is resent once against a fresh read while `unchanged` holds for it. A change parked for
+ * approval is not saved: the draft stays unconfirmed on its base revision and `onProposal` hears of it.
  */
 export const autosavePropertyEdit = (
   raw: PropertyCommand,
   expectedRevision: number,
   unchanged: (records: RecordsResponse) => boolean,
+  onProposal?: (proposal: ActionProposalAccepted) => void,
 ): Effect.Effect<RevisionedSaveResult> =>
   sendCommand(raw, expectedRevision).pipe(
     Effect.catchTag('ApplyCommandActionConflictProblem', (conflict) =>
@@ -276,7 +280,13 @@ export const autosavePropertyEdit = (
         Predicate.isTagged(error, 'ApplyCommandActionConflictProblem') && error.code === 'property_conflict'
           ? 'conflict'
           : 'failed',
-      onSuccess: ({ revision }): RevisionedSaveResult => revision,
+      onSuccess: (result): RevisionedSaveResult => {
+        if (Schema.is(ActionProposalAcceptedSchema)(result)) {
+          onProposal?.(result);
+          return 'failed';
+        }
+        return result.revision;
+      },
     }),
   );
 
@@ -289,7 +299,14 @@ export const usePropertyEditor = (
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<
-    'alreadyCommitted' | 'commitIndeterminate' | 'conflict' | 'forbidden' | 'saved' | 'unavailable' | 'validation'
+    | 'alreadyCommitted'
+    | 'approvalRequired'
+    | 'commitIndeterminate'
+    | 'conflict'
+    | 'forbidden'
+    | 'saved'
+    | 'unavailable'
+    | 'validation'
   >();
   const blocked = feedback === 'alreadyCommitted' || feedback === 'commitIndeterminate';
   const change = (field: TextField, value: string) =>
@@ -333,6 +350,11 @@ export const usePropertyEditor = (
           },
           onSuccess: (result) => {
             setDraft(undefined);
+            // A change parked for approval is not saved yet: no saved line and no refresh of the register.
+            if (Schema.is(ActionProposalAcceptedSchema)(result)) {
+              setFeedback('approvalRequired');
+              return;
+            }
             setFeedback('saved');
             onSaved(result);
           },
@@ -425,6 +447,8 @@ export const usePropertyEditor = (
     draft,
     feedback,
     fields: visibleFields,
+    /** An autosaved edit was parked for approval instead of being saved. */
+    reportProposal: () => setFeedback('approvalRequired'),
     restoreProperty: (property: Property) => submit({ _tag: 'RestoreProperty', propertyRef: property.propertyRef }),
     restoreUnit: (unit: Unit) => submit({ _tag: 'RestoreUnit', unitRef: unit.unitRef }),
     save,

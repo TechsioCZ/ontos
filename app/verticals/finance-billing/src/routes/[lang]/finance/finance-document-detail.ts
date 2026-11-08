@@ -1,6 +1,7 @@
 import { Schema } from 'effect';
 
 import type { FinanceDocument, Invoice } from '../../../../shared/apis/records.ts';
+import type { FinanceFeedback } from './use-finance-records.ts';
 
 const FinanceDocumentDetailIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('FinanceDocumentDetailId'),
@@ -41,17 +42,6 @@ export const financeRecordDetailConflict = (search: {
   readonly resourceId?: string | undefined;
 }): boolean => search.documentId !== undefined && search.resourceId !== undefined;
 
-export const FinanceDocumentFeedbackSchema = Schema.Literals([
-  'loading',
-  'ready',
-  'saving',
-  'forbidden',
-  'conflict',
-  'validation',
-  'unavailable',
-]);
-export type FinanceDocumentFeedback = typeof FinanceDocumentFeedbackSchema.Type;
-
 export type FinanceDocumentDetailState =
   | {
       readonly state: 'forbidden' | 'invalid' | 'loading' | 'missing' | 'unavailable';
@@ -72,7 +62,7 @@ export const financeDocumentDetailState = ({
 }: {
   readonly documentId?: string | undefined;
   readonly documents?: readonly FinanceDocument[] | undefined;
-  readonly feedback: FinanceDocumentFeedback;
+  readonly feedback: FinanceFeedback;
 }): FinanceDocumentDetailState => {
   if (documentId === undefined || !isFinanceDocumentDetailId(documentId)) {
     return { state: 'invalid' };

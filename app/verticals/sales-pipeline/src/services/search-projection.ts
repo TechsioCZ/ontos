@@ -2,12 +2,10 @@ import {
   CoreSearchProjectionDocumentSchema,
   CoreSearchProjectionReplacementSchema,
   CoreSearchProjectionStore,
-  ResourceContainmentRelationshipMutation,
   isVerifiedOutboxWorkerHandlerContext,
-  ownerResourceModuleContainment,
 } from '@app/core-runtime';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
-import { Array as Arr, Effect, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import type { SearchSnapshot } from './search-source.ts';
 import { loadSearchSnapshot } from './search-source.ts';
 import { searchUnavailable } from './search-read.ts';
@@ -80,23 +78,8 @@ export const publishSearchSnapshot = Effect.fn('DemoSalesPipeline.publishSearch'
     resourceType,
     tenantId: snapshot.tenantId,
   }).pipe(Effect.mapError(searchUnavailable));
-  const containment = yield* ResourceContainmentRelationshipMutation;
-  const relationships = yield* Effect.forEach(
-    documents,
-    (document) => {
-      const relationship = ownerResourceModuleContainment(
-        snapshot.tenantId,
-        document.selectedLegalEntityId ?? '',
-        document.ref,
-      );
-      return relationship === undefined ? Effect.fail(searchUnavailable()) : Effect.succeed(relationship);
-    },
-    { concurrency: 1 },
-  );
-  yield* Effect.forEach(Arr.chunksOf(relationships, 100), (batch) => containment.touch({ relationships: batch }), {
-    concurrency: 1,
-    discard: true,
-  }).pipe(Effect.mapError(searchUnavailable));
+  // Core Search enforces the caller's access list predicate and field projection; the owner writes no
+  // permission-graph containment edge.
   // One atomic owner/type publication: per-document ingestion first would partially change the
   // old projection if replacement failed, and would repeat N writes already performed by replace.
   const store = yield* CoreSearchProjectionStore;

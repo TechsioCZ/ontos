@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.market-catalog
 // @ontos-action-slug suspend-market
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { DateTime, Effect, Match, Schema } from 'effect';
 import {
   MarketCommandRejected,
@@ -103,6 +103,14 @@ const handleSuspendMarket = Effect.fn('SuspendMarketAction.handle')(function* su
 
 export const suspendMarketAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.market-catalog.market.suspend',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'markets', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.market-catalog.suspend-market.access.v1',
@@ -114,7 +122,7 @@ export const suspendMarketAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.market-catalog.suspend-market',
       moduleKey: 'commerce.market-catalog',
       role: 'action',
@@ -124,10 +132,6 @@ export const suspendMarketAction = defineAction(
     owningModuleKey: 'commerce.market-catalog',
     payloadSchema: SuspendMarketPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<SuspendMarketPayload>(({ marketRef }) => ({
-      permission: 'write',
-      resource: marketRef,
-    })),
     resultSchema: SuspendMarketResultSchema,
     schemaVersion: '1',
   },

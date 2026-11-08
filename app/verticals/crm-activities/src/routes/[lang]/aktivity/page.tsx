@@ -1,3 +1,4 @@
+import { committedResult, pendingProposalMessage } from '../../../api/action-result.ts';
 import { selectItem } from '../../../ui/select-item.ts';
 import { ActivityRefSchema } from '../../../../shared/resources/activity.ts';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
@@ -133,10 +134,11 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
           onFailure: (error) => {
             setPending(false);
             setMessage(
-              Match.value(error).pipe(
-                Match.tag('CounterpartiesProviderForbiddenProblem', () => t(`${key}.forbidden`)),
-                Match.orElse(() => t(`${key}.unavailable`)),
-              ),
+              pendingProposalMessage(error) ??
+                Match.value(error).pipe(
+                  Match.tag('CounterpartiesProviderForbiddenProblem', () => t(`${key}.forbidden`)),
+                  Match.orElse(() => t(`${key}.unavailable`)),
+                ),
             );
             setCounterparties([]);
           },
@@ -162,10 +164,11 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
           onFailure: (error) => {
             setPending(false);
             setMessage(
-              Match.value(error).pipe(
-                Match.tag('CounterpartyReadForbiddenProblem', () => t(`${key}.forbidden`)),
-                Match.orElse(() => t(`${key}.unavailable`)),
-              ),
+              pendingProposalMessage(error) ??
+                Match.value(error).pipe(
+                  Match.tag('CounterpartyReadForbiddenProblem', () => t(`${key}.forbidden`)),
+                  Match.orElse(() => t(`${key}.unavailable`)),
+                ),
             );
           },
           onSuccess: (result) => {
@@ -219,15 +222,17 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
             { idempotencyKey: id, referenceCredentials },
           ),
         ),
+        Effect.flatMap(committedResult),
         Effect.andThen(activities.refresh(input)),
         Effect.match({
           onFailure: (error) => {
             setPending(false);
             setMessage(
-              Match.value(error).pipe(
-                Match.tag('ApplyCommandActionForbiddenProblem', () => t(`${key}.forbidden`)),
-                Match.orElse(() => t(`${key}.invalid`)),
-              ),
+              pendingProposalMessage(error) ??
+                Match.value(error).pipe(
+                  Match.tag('ApplyCommandActionForbiddenProblem', () => t(`${key}.forbidden`)),
+                  Match.orElse(() => t(`${key}.invalid`)),
+                ),
             );
           },
           onSuccess: () => {
@@ -239,7 +244,9 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
       ),
     );
   };
-  const partyItems = counterparties.map((item) => selectItem(item.ref.resourceId, item.party.title));
+  const partyItems = counterparties.map((item) =>
+    selectItem(item.ref.resourceId, item.party.title ?? item.ref.resourceId),
+  );
   const taskItems = tasks.map((item) => selectItem(item.ref.resourceId, item.title));
   return {
     card,

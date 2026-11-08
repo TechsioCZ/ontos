@@ -4,6 +4,7 @@ import { Effect, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 import { ApplyCommandActionConflictProblemSchema } from '../../shared/apis/apply-command-action.ts';
+import { SalesPipelineLifecycleConflictProblemSchema } from '../../shared/sales-pipeline-action-problems.ts';
 import { OpportunitySchema } from '../../shared/model/opportunity.ts';
 import {
   draftFrom,
@@ -30,7 +31,7 @@ const opportunity = Schema.decodeUnknownSync(OpportunitySchema)({
   updatedAt: '2026-10-13T08:00:00.000Z',
 });
 const saved = draftFrom(opportunity);
-const conflictProblem = (code: 'sales_pipeline_lifecycle_conflict' | 'sales_pipeline_revision_conflict') =>
+const conflictProblem = (code: 'sales_pipeline_revision_conflict') =>
   Schema.decodeUnknownSync(ApplyCommandActionConflictProblemSchema)({
     _tag: 'ApplyCommandActionConflictProblem',
     code,
@@ -68,9 +69,15 @@ describe('opportunity edit draft', () => {
       expect(yield* opportunityAutosaveResult(Effect.fail(conflictProblem('sales_pipeline_revision_conflict')))).toBe(
         'conflict',
       );
-      expect(yield* opportunityAutosaveResult(Effect.fail(conflictProblem('sales_pipeline_lifecycle_conflict')))).toBe(
-        'failed',
-      );
+      const lifecycle = yield* Schema.decodeUnknownEffect(SalesPipelineLifecycleConflictProblemSchema)({
+        _tag: 'SalesPipelineLifecycleConflictProblem',
+        code: 'sales_pipeline_lifecycle_conflict',
+        detail: 'Příležitost je uzavřená.',
+        status: 409,
+        title: 'Konflikt',
+        type: 'about:blank',
+      });
+      expect(yield* opportunityAutosaveResult(Effect.fail(lifecycle))).toBe('failed');
     }),
   );
 });

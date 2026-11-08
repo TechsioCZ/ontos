@@ -56,7 +56,7 @@ export const projectCustomerAddresses = Effect.fn("N1.projectCustomerAddresses")
         native.defaults.delivery?.resourceId === address.savedAddressRef.resourceId,
       label: address.label,
       location:
-        address.origin.kind === "COMMERCE_ONLY"
+        address.origin.kind === "COMMERCE_ONLY" && address.origin.postalAddress !== undefined
           ? { address: address.origin.postalAddress, state: "available" as const }
           : { state: "unresolved" as const },
       purposes: address.purposes,

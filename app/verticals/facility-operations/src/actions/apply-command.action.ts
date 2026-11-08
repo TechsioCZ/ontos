@@ -8,11 +8,15 @@ import {
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import type {
+  ActionCollectorError,
   ActionHandlerContext,
+  ActionServiceFactory,
+  ActionServicePreparationContext,
   ActionServicePreflight,
   OperationalScope,
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
+import type { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { DateTime, Effect, Schema } from 'effect';
 import {
   ApplyCommandPayloadSchema,
@@ -21,6 +25,7 @@ import {
 } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
 import { withCommandGuard } from '../../shared/actions/command-guard.ts';
+import { facilityOperationsApplyCommandDeclaration } from '../../shared/domain/access-declarations.ts';
 import { facilityOperationsGrants, persistenceService } from '../services/persistence.service.ts';
 
 import {
@@ -33,11 +38,14 @@ import { facilitySearchChanged } from '../services/facility-search-projection.ts
 
 const domainEvents = { [outboxTopic]: OutboxPayloadSchema } as const;
 
-type Services = Effect.Success<ReturnType<typeof persistenceService>>;
+export type FacilityActionServices = Effect.Success<ReturnType<typeof persistenceService>>;
 const handleApplyCommand = Effect.fn('FacilityOperations.applyAndEnqueue')(function* applyAndEnqueue(
   payload: ApplyCommandPayload,
-  context: ActionHandlerContext<typeof domainEvents, Services>,
-) {
+  context: ActionHandlerContext<typeof domainEvents, FacilityActionServices>,
+): Effect.fn.Return<
+  typeof ApplyCommandResultSchema.Type,
+  ActionCollectorError | typeof FacilityOperationsErrorSchema.Type
+> {
   const result = yield* context.services.apply(
     payload.command,
     payload.expectedRevision,
@@ -67,13 +75,15 @@ const handleApplyCommand = Effect.fn('FacilityOperations.applyAndEnqueue')(funct
 const samePrincipal = Schema.toEquivalence(TrustedPrincipalContextSchema);
 
 /** No owner SQL is needed for the permission snapshot. The reducer reloads and CAS-writes its agenda at commit. */
-export const prepareApplyCommandServices: ActionServicePreflight<
-  ApplyCommandPayload,
-  Services,
-  Effect.Error<ReturnType<typeof facilityOperationsGrants>>,
-  Effect.Services<ReturnType<typeof facilityOperationsGrants>>
-> = Effect.fn('FacilityOperations.prepareApplyCommandServices')(
-  function* prepareApplyCommandServices(_payload, context) {
+export const prepareApplyCommandServices = Effect.fn('FacilityOperations.prepareApplyCommandServices')(
+  function* prepareApplyCommandServices(
+    _payload: ApplyCommandPayload,
+    context: ActionServicePreparationContext,
+  ): Effect.fn.Return<
+    ActionServiceFactory<FacilityActionServices>,
+    Effect.Error<ReturnType<typeof facilityOperationsGrants>>,
+    AccessDecisionGate
+  > {
     const grants = yield* facilityOperationsGrants(context.scope);
     const preparedAt = yield* DateTime.now;
     return Effect.fn('FacilityOperations.revalidatePreparedGrants')(function* revalidatePreparedGrants(
@@ -99,10 +109,21 @@ export const prepareApplyCommandServices: ActionServicePreflight<
       return yield* persistenceService(transaction, { preparedGrants: grants, scope });
     });
   },
-);
+) satisfies ActionServicePreflight<
+  ApplyCommandPayload,
+  FacilityActionServices,
+  Effect.Error<ReturnType<typeof facilityOperationsGrants>>,
+  AccessDecisionGate
+>;
+
+export const makeFacilityActionServices: ActionServiceFactory<FacilityActionServices> = (transaction, scope) =>
+  persistenceService(transaction, { scope });
+
+const guardedApplyCommand: typeof handleApplyCommand = withCommandGuard(handleApplyCommand);
 
 export const applyCommandAction = defineAction(
   {
+    accessDeclaration: facilityOperationsApplyCommandDeclaration,
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'facility.operations.apply-command.access.v1',
@@ -113,7 +134,7 @@ export const applyCommandAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'facility.operations.apply-command',
       moduleKey: 'facility.operations',
       role: 'action',
@@ -126,8 +147,8 @@ export const applyCommandAction = defineAction(
     resultSchema: ApplyCommandResultSchema,
     schemaVersion: '1',
   },
-  withCommandGuard(handleApplyCommand),
-  (transaction, scope) => persistenceService(transaction, { scope }),
+  guardedApplyCommand,
+  makeFacilityActionServices,
   { prepareServices: prepareApplyCommandServices },
 );
 

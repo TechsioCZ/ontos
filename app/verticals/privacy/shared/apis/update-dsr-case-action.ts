@@ -2,12 +2,12 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug update-dsr-case
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { UpdateDsrCasePayloadSchema, UpdateDsrCaseResultSchema } from '../actions/update-dsr-case.ts';
 
 export { UpdateDsrCasePayloadSchema } from '../actions/update-dsr-case.ts';
-
 export const UpdateDsrCaseActionInvalidProblemSchema = makeProblemDetailsSchema(
   'UpdateDsrCaseActionInvalidProblem',
   400,
@@ -21,6 +21,7 @@ export const UpdateDsrCaseActionForbiddenProblemSchema = makeProblemDetailsSchem
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -139,7 +140,7 @@ export const updateDsrCaseActionGroupDefinition = HttpApiGroup.make('updateDsrCa
     HttpApiEndpoint.post('execute', '/privacy/actions/update-dsr-case', {
       error: actionErrors,
       payload: Schema.toEncoded(UpdateDsrCasePayloadSchema),
-      success: UpdateDsrCaseResultSchema,
+      success: [ActionProposalAcceptedSchema, UpdateDsrCaseResultSchema],
     }),
   )
   .middleware(UpdateDsrCaseActionSchemaErrorMiddleware);

@@ -2,12 +2,7 @@
 // @ontos-action-owner commerce.inventory
 // @ontos-action-slug release-inventory-reservation
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Crypto, DateTime, Effect, Schema } from 'effect';
 
 import {
@@ -96,26 +91,22 @@ export const handleReleaseInventoryReservation = Effect.fn('ReleaseInventoryRese
 
 export const releaseInventoryReservationAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.inventory.inventory-reservation.release',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'reservations', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: `${ACTION_KEY}.access.v1` },
     actionKey: ACTION_KEY,
     auditProfile: 'standard',
-    businessPermission: defineActionBusinessPermission<ReleaseInventoryReservationPayload>((payload) => ({
-      permission: 'inventory.reservation.release',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: payload.reservationRef.moduleId,
-          resourceId: payload.reservationRef.resourceId,
-          resourceType: payload.reservationRef.resourceType,
-        },
-        tenantId: payload.reservationRef.tenantId,
-      },
-    })),
     domainErrorSchema: ReleaseInventoryReservationErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: MODULE_KEY,
       role: 'action',
@@ -125,10 +116,6 @@ export const releaseInventoryReservationAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: ReleaseInventoryReservationPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<ReleaseInventoryReservationPayload>((payload) => ({
-      permission: 'write',
-      resource: payload.reservationRef,
-    })),
     resultSchema: ReleaseInventoryReservationResultSchema,
     schemaVersion: '1',
   },

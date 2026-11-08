@@ -19,11 +19,11 @@ import {
   AssortmentPolicyTargetInvariant,
 } from '../../shared/domain/policy-errors.ts';
 import {
-  createBoundaryPermissionTarget,
+  createBoundaryCurrentnessTarget,
   boundaryAdmissionEvidence,
   boundaryMeaningFingerprint,
   collectionRevisionRef,
-  replaceBoundaryPermissionTargets,
+  replaceBoundaryCurrentnessTarget,
 } from '../../src/actions/boundary-administration-support.ts';
 import { handleCreateClosedAssortmentBoundary } from '../../src/actions/create-closed-assortment-boundary.action.ts';
 import { handleEndClosedAssortmentBoundary } from '../../src/actions/end-closed-assortment-boundary.action.ts';
@@ -218,8 +218,10 @@ it('derives EMPTY distinctly and canonicalizes admission evidence', () => {
   const empty = boundaryAdmissionEvidence(payload);
   expect(empty.setKind).toStrictEqual('EMPTY');
   expect(empty.memberCount).toStrictEqual(0);
-  expect(createBoundaryPermissionTarget(payload, scope).admissionSet.setKind).toStrictEqual('EMPTY');
-  expect(createBoundaryPermissionTarget(payload, scope).admissionSet.entries).toEqual([]);
+  expect(createBoundaryCurrentnessTarget(payload, scope)).toStrictEqual({
+    kind: 'assortment_boundary',
+    mode: 'create',
+  });
   const foreignLegalEntityPayload = Schema.decodeUnknownSync(CreateClosedAssortmentBoundaryPayloadSchema)({
     admissionSet: payload.admissionSet,
     commercialScope: {
@@ -232,7 +234,7 @@ it('derives EMPTY distinctly and canonicalizes admission evidence', () => {
     reason: payload.reason,
     subject: payload.subject,
   });
-  expect(() => createBoundaryPermissionTarget(foreignLegalEntityPayload, scope)).toThrow(
+  expect(() => createBoundaryCurrentnessTarget(foreignLegalEntityPayload, scope)).toThrow(
     AssortmentPolicyTargetInvariant,
   );
   const allPayload = Schema.decodeUnknownSync(CreateClosedAssortmentBoundaryPayloadSchema)({
@@ -248,7 +250,10 @@ it('derives EMPTY distinctly and canonicalizes admission evidence', () => {
   expect(all.setKind).toStrictEqual('ENTRIES');
   expect(all.memberCount).toStrictEqual(1);
   expect(all.contentHash).not.toStrictEqual(empty.contentHash);
-  expect(createBoundaryPermissionTarget(allPayload, scope).admissionSet.entries).toEqual([{ kind: 'ALL' }]);
+  expect(createBoundaryCurrentnessTarget(allPayload, scope)).toStrictEqual({
+    kind: 'assortment_boundary',
+    mode: 'create',
+  });
   const productRef = ref('commerce.catalog', 'commerce.catalog.product', 'product-a');
   const categoryRef = ref('commerce.catalog', 'commerce.catalog.product-category', 'category-c');
   const exactPayload = Schema.decodeUnknownSync(CreateClosedAssortmentBoundaryPayloadSchema)({
@@ -261,20 +266,10 @@ it('derives EMPTY distinctly and canonicalizes admission evidence', () => {
     },
     effectiveFrom: '2026-09-22T10:00:00.000Z',
   });
-  expect(createBoundaryPermissionTarget(exactPayload, scope).admissionSet.entries).toEqual([
-    {
-      kind: 'CATEGORY',
-      target: {
-        moduleId: 'commerce.catalog',
-        resourceId: 'category-c',
-        resourceType: 'commerce.catalog.product-category',
-      },
-    },
-    {
-      kind: 'PRODUCT',
-      target: { moduleId: 'commerce.catalog', resourceId: 'product-a', resourceType: 'commerce.catalog.product' },
-    },
-  ]);
+  expect(createBoundaryCurrentnessTarget(exactPayload, scope)).toStrictEqual({
+    kind: 'assortment_boundary',
+    mode: 'create',
+  });
   const foreignCatalogPayload = Schema.decodeUnknownSync(CreateClosedAssortmentBoundaryPayloadSchema)({
     ...payload,
     admissionSet: {
@@ -282,9 +277,9 @@ it('derives EMPTY distinctly and canonicalizes admission evidence', () => {
     },
     effectiveFrom: '2026-09-22T10:00:00.000Z',
   });
-  expect(() => createBoundaryPermissionTarget(foreignCatalogPayload, scope)).toThrow(AssortmentPolicyTargetInvariant);
+  expect(() => createBoundaryCurrentnessTarget(foreignCatalogPayload, scope)).toThrow(AssortmentPolicyTargetInvariant);
 });
-it('emits ordered end then create targets for replacement', () => {
+it('asks one conjunctive Current question naming the live Boundary that the replacement ends', () => {
   const existingBoundaryRef = ref(
     'commerce.assortment',
     'commerce.assortment.closed-assortment-boundary',
@@ -302,9 +297,15 @@ it('emits ordered end then create targets for replacement', () => {
     provenanceRef: payload.provenanceRef,
     reason: payload.reason,
   });
-  const targets = replaceBoundaryPermissionTargets(replacement, scope);
-  expect(targets[0]?.permission).toStrictEqual('assortment.boundary.end');
-  expect(targets[1]?.permission).toStrictEqual('assortment.boundary.create');
+  expect(replaceBoundaryCurrentnessTarget(replacement, scope)).toStrictEqual({
+    boundary: {
+      moduleId: 'commerce.assortment',
+      resourceId: existingBoundaryRef.resourceId,
+      resourceType: 'commerce.assortment.closed-assortment-boundary',
+    },
+    kind: 'assortment_boundary',
+    mode: 'replace',
+  });
   expect(() =>
     Schema.decodeUnknownSync(ReplaceClosedAssortmentBoundaryPayloadSchema)({
       ...Schema.encodeSync(ReplaceClosedAssortmentBoundaryPayloadSchema)(replacement),

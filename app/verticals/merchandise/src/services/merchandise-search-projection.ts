@@ -1,11 +1,11 @@
+import type { ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
+import { prepareSearchPredicate, searchReachSql, searchRecordVisible } from './search-record-access.ts';
 import {
   CoreSearchQueryRuntime,
   CoreSearchProjectionDocumentSchema,
   CoreSearchWorkerSnapshot,
   CoreSearchProjectionStore,
   CoreSearchIngestion,
-  ResourceContainmentRelationshipMutation,
-  ownerResourceModuleContainment,
   ReadHandlerUnavailable,
 } from '@app/core-runtime';
 import {
@@ -23,7 +23,7 @@ import type {
   OutboxWorkerHandlerContext,
 } from '@app/core-runtime';
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { Array as Arr, Effect, Match, Result, Schema } from 'effect';
+import { Effect, Match, Result, Schema } from 'effect';
 import { catalogHeads, products, productVariants, orders } from '../database/schema.ts';
 import type { MerchandiseCommand } from '../../shared/actions/apply-command.ts';
 import type { ProductVariant } from '../../shared/domain/merchandise-model.ts';
@@ -190,13 +190,22 @@ const decodeParameters = <Row extends { readonly parameters: unknown }>(row: Row
     Effect.mapError(unavailable),
   );
 
+const currentRowsVisible = (
+  predicate: ListAccessPredicate | undefined,
+  rows: readonly { readonly id: string; readonly legalEntityId: string; readonly tenantId: string }[],
+  scope: { readonly legalEntityId: string; readonly tenantId: string },
+) => predicate === undefined || rows.every((row) => searchRecordVisible(predicate, row, scope));
+
 const readCompanySearch = Effect.fn('Merchandise.readCompanySearch')(function* readCompany(
   db: CoreSearchSnapshotReadExecutor,
   tenantId: string,
   legalEntityId: string,
   target?: RefreshTarget,
   publication: 'snapshot' | 'current' = 'snapshot',
+  predicate?: ListAccessPredicate,
 ) {
+  // Publication workers read an internal snapshot; a current user query must carry Core's admitted predicate.
+  const admitted = publication === 'current' ? yield* prepareSearchPredicate(predicate) : undefined;
   const [head] = yield* db
     .select({ bootstrapCheckpoint: catalogHeads.bootstrapCheckpoint })
     .from(catalogHeads)
@@ -235,6 +244,9 @@ const readCompanySearch = Effect.fn('Merchandise.readCompanySearch')(function* r
               eq(products.tenantId, tenantId),
               eq(products.legalEntityId, legalEntityId),
               full ? undefined : inArray(products.id, target.productIds),
+              admitted === undefined
+                ? undefined
+                : searchReachSql(admitted, sql`${products.legalEntityId} || '.' || ${products.id}`),
             ),
           );
   const variantSelection = {
@@ -284,6 +296,9 @@ const readCompanySearch = Effect.fn('Merchandise.readCompanySearch')(function* r
               eq(orders.tenantId, tenantId),
               eq(orders.legalEntityId, legalEntityId),
               full ? undefined : inArray(orders.id, target.orderIds),
+              admitted === undefined
+                ? undefined
+                : searchReachSql(admitted, sql`${orders.legalEntityId} || '.' || ${orders.id}`),
             ),
           );
   if (
@@ -291,6 +306,9 @@ const readCompanySearch = Effect.fn('Merchandise.readCompanySearch')(function* r
       (row) => row.tenantId !== tenantId || row.legalEntityId !== legalEntityId,
     )
   ) {
+    return yield* unavailable();
+  }
+  if (!currentRowsVisible(admitted, [...productRows, ...orderRows], { legalEntityId, tenantId })) {
     return yield* unavailable();
   }
   return {
@@ -306,6 +324,7 @@ export const loadCurrentMerchandiseSearch = Effect.fn('Merchandise.loadCurrentSe
   scope: OperationalScope,
   resource: 'product' | 'order',
   ids: readonly string[],
+  predicate: ListAccessPredicate,
 ) {
   if (scope.legalEntityId === undefined) {
     return yield* unavailable();
@@ -321,6 +340,7 @@ export const loadCurrentMerchandiseSearch = Effect.fn('Merchandise.loadCurrentSe
       rebuild: false,
     },
     'current',
+    predicate,
   ).pipe(Effect.mapError(unavailable));
 });
 
@@ -522,23 +542,8 @@ export const publishMerchandiseSearch = Effect.fn('Merchandise.publishSearch')(f
   }
   const documents = yield* buildMerchandiseSearchDocuments(snapshot);
   const store = yield* CoreSearchProjectionStore;
-  const containment = yield* ResourceContainmentRelationshipMutation;
-  const relationships = yield* Effect.forEach(
-    documents,
-    (document) => {
-      const relationship = ownerResourceModuleContainment(
-        snapshot.tenantId,
-        document.selectedLegalEntityId ?? '',
-        document.ref,
-      );
-      return relationship === undefined ? Effect.fail(unavailable()) : Effect.succeed(relationship);
-    },
-    { concurrency: 1 },
-  );
-  yield* Effect.forEach(Arr.chunksOf(relationships, 100), (batch) => containment.touch({ relationships: batch }), {
-    concurrency: 1,
-    discard: true,
-  });
+  // Core Search enforces the caller's access list predicate and field projection; the owner writes no
+  // permission-graph containment edge. Snapshot SQL has closed before Core index mutation starts.
   if (target === undefined || target.rebuild) {
     yield* Effect.forEach(
       ['product', 'order'],

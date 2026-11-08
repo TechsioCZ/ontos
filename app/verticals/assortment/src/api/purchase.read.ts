@@ -16,7 +16,7 @@ interface PurchaseServices {
 
 export const purchaseEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.assortment.api.purchase',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -37,6 +37,14 @@ const readPurchase = (
 
 export const purchaseRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.assortment.purchase.evaluate',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'decisions', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: purchaseEntrypoint,
     evidencePolicy: {
@@ -46,7 +54,6 @@ export const purchaseRead = defineRead(
     inputSchema: PurchaseRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.assortment.api.purchase',
     resultSchema: PurchaseResponseSchema,
@@ -57,5 +64,4 @@ export const purchaseRead = defineRead(
     Effect.succeed({
       evaluation: assortmentDecisionEvaluationForScope(transaction, scope),
     }),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

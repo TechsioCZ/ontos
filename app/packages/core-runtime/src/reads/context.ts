@@ -1,5 +1,6 @@
 import { Effect, Predicate, Schema } from 'effect';
 
+import type { ListAccessPredicate } from '../access/decision/list-access.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { OperationalScope } from '../operations/context.ts';
 import type { OperationContextUnavailable } from '../operations/errors.ts';
@@ -28,10 +29,29 @@ export interface ReadEvidenceMetadata {
   };
 }
 
-/** What every owner step of a Read knows: the Read, its Core-verified scope, and the verified composition. */
+/**
+ * What every owner step of a Read knows: the Read, its Core-verified scope, the verified composition,
+ * and the access gate's own answer for this caller's rows and fields.
+ */
 export interface ReadPrepareContext {
-  /** The composition revision the gateway verified, which remote owner calls must carry. */
+  /** The Core-admitted composition revision, which remote owner calls must carry. */
   readonly compositionRevision?: string | undefined;
+  /**
+   * The declared result paths this caller's field grants deny (O17, O25). It is present exactly when
+   * the access gate decided this read, and it is empty when every declared field group is granted, so
+   * an owner can tell a granted answer from a missing one. A row-scoped read applies it to what its
+   * own query matches, orders and reports as well as to the result it returns: a denied surface takes
+   * no part in selecting a candidate, and its rows are still projected out of the payload.
+   */
+  readonly deniedFieldPaths?: readonly (readonly string[])[];
+  /**
+   * The owner's row filter for a list, search or report read (D16, O25). It is present exactly when
+   * this read is row-scoped and answered by the access gate: the owner applies it inside its own
+   * query, so a row the caller may not read never reaches the result. Its absence means the read is
+   * not row-scoped (a detail read) or is not decided by v2 yet. An empty `groups` list means every row
+   * of the scope is visible; the gate never answers an allowed list without a predicate.
+   */
+  readonly listAccess?: ListAccessPredicate;
   readonly readKey: string;
   readonly scope: OperationalScope;
 }
@@ -67,6 +87,10 @@ export interface ReadFinishContext<Prepared, Loaded> extends ReadPrepareContext 
 
 /** What a single-handler Read receives: the Read, its Core-verified scope, and the scoped owner services. */
 export interface ReadHandlerContext<Services> {
+  /** The declared result paths this caller's field grants deny (O17, O25); see {@link ReadPrepareContext}. */
+  readonly deniedFieldPaths?: readonly (readonly string[])[];
+  /** The owner's row filter for this row-scoped read (D16, O25); see {@link ReadPrepareContext}. */
+  readonly listAccess?: ListAccessPredicate;
   readonly readKey: string;
   readonly scope: OperationalScope;
   readonly services: Services;

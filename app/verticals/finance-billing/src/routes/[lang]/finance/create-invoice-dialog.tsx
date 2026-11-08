@@ -330,6 +330,13 @@ const useCreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDialogP
 
   const handleOutcome = (outcome: DraftInvoiceOutcome) => {
     setBusy(false);
+    if (!outcome.ok && outcome.feedback === 'pendingApproval') {
+      // The draft went to an approver, not into the ledger: no invoice to open or prepare, and closing the form keeps
+      // the same draft from being proposed twice.
+      toaster.create({ title: t('finance-billing.demo.feedback.pendingApproval'), type: 'info' });
+      discardAndClose();
+      return;
+    }
     if (!outcome.ok) {
       const message = t(`finance-billing.demo.feedback.${outcome.feedback}`);
       setServerError(message);

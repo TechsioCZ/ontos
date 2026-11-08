@@ -1,7 +1,9 @@
 // Autosave of the lease screen's edit panels: one command against the revision its draft builds on.
 import type { RevisionedSaveResult } from '@app/admin-ui';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
-import { Crypto, Effect, Option, PlatformError, Predicate } from 'effect';
+import { Crypto, Effect, Option, PlatformError, Predicate, Schema } from 'effect';
 import type { OccupancyCommand } from '../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse, RentTerms, TenantContact, TenantDossier } from '../../../../shared/apis/records.ts';
 import { executeApplyCommand } from '../../../api/apply-command-action-client.ts';
@@ -29,11 +31,15 @@ export const newUuid = browserCrypto.randomUUIDv4();
 /** Whether the records still hold the edited record as the draft's base version. */
 export type UnchangedSince = (records: RecordsResponse) => boolean;
 
+/** Told about a change that was parked for approval instead of being saved. */
+export type OnProposal = (proposal: ActionProposalAccepted) => void;
+
 /** Saves one edit of a lease-screen panel against the revision its draft builds on. */
 export type LeasingAutosave = (
   command: OccupancyCommand,
   expectedRevision: number,
   unchanged: UnchangedSince,
+  onProposal?: OnProposal,
 ) => Effect.Effect<RevisionedSaveResult>;
 
 const send = (command: OccupancyCommand, expectedRevision: number) =>
@@ -57,9 +63,13 @@ const send = (command: OccupancyCommand, expectedRevision: number) =>
     ),
   );
 
-/** An autosave outcome: the new revision once saved, `conflict` for the occupancy conflict, else `failed`. */
+/**
+ * An autosave outcome: the new revision once saved, `conflict` for the occupancy conflict, else `failed`. A change
+ * parked for approval is not saved: the draft stays unconfirmed, its base revision stays, and `onProposal` hears of it.
+ */
 export const leasingAutosaveResult = <E>(
-  write: Effect.Effect<{ readonly revision: number }, E>,
+  write: Effect.Effect<{ readonly revision: number } | ActionProposalAccepted, E>,
+  onProposal?: OnProposal,
 ): Effect.Effect<RevisionedSaveResult> =>
   write.pipe(
     Effect.match({
@@ -69,7 +79,13 @@ export const leasingAutosaveResult = <E>(
         error.code === 'occupancy_conflict'
           ? 'conflict'
           : 'failed',
-      onSuccess: ({ revision }): RevisionedSaveResult => revision,
+      onSuccess: (result): RevisionedSaveResult => {
+        if (Schema.is(ActionProposalAcceptedSchema)(result)) {
+          onProposal?.(result);
+          return 'failed';
+        }
+        return result.revision;
+      },
     }),
   );
 
@@ -77,7 +93,7 @@ export const leasingAutosaveResult = <E>(
  * The revision covers every lease and dossier of the company, so a conflict is resent once against a fresh read while
  * `unchanged` holds for it; a change of the edited record itself stays a conflict.
  */
-export const autosaveLeasingCommand: LeasingAutosave = (command, expectedRevision, unchanged) =>
+export const autosaveLeasingCommand: LeasingAutosave = (command, expectedRevision, unchanged, onProposal) =>
   leasingAutosaveResult(
     send(command, expectedRevision).pipe(
       Effect.catchTag('ApplyCommandActionConflictProblem', (conflict) =>
@@ -88,6 +104,7 @@ export const autosaveLeasingCommand: LeasingAutosave = (command, expectedRevisio
           : Effect.fail(conflict),
       ),
     ),
+    onProposal,
   );
 
 // Rent terms of one lease.

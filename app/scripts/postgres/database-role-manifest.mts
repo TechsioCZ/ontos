@@ -13,11 +13,13 @@ import type {
   DatabaseAcceptedFinding,
   DatabaseIdentity,
   DatabaseRoleGrants,
+  DatabaseTableGrant,
 } from '../../packages/core-runtime/src/db/database-identities.ts';
 import {
   PARTY_REGISTRY_REQUEST_DATABASE_GRANTS,
   PARTY_REGISTRY_WORKER_DATABASE_GRANTS,
 } from '../../verticals/party-registry/src/db/database-grants.ts';
+import { SHARED_RUNTIME_TABLE_GRANT_EXCEPTIONS } from './runtime-role-grants.mts';
 
 export { TRUST_ROUTINES } from '../../database/identity-enrollment.ts';
 
@@ -32,6 +34,7 @@ export type DatabaseRoleGrantManifestEntry =
       readonly kind: 'legacy_shared';
       readonly revokedSchemas: readonly string[];
       readonly roleSettings: readonly string[];
+      readonly tableGrantExceptions?: readonly DatabaseTableGrant[];
     }
   | {
       readonly databaseTemporary: false;
@@ -173,6 +176,7 @@ export const DATABASE_ROLE_GRANT_MANIFEST = defineDatabaseRoleGrantManifest(APP_
     kind: 'legacy_shared',
     revokedSchemas: APP_DATABASE_IDENTITY_ENROLLMENT.owners.flatMap(({ schemas }) => schemas),
     roleSettings: [],
+    tableGrantExceptions: SHARED_RUNTIME_TABLE_GRANT_EXCEPTIONS,
   },
   {
     databaseTemporary: false,

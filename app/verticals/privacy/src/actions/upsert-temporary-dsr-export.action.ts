@@ -34,6 +34,14 @@ const handleUpsertTemporaryDsrExport = Effect.fn('UpsertTemporaryDsrExportAction
 });
 export const upsertTemporaryDsrExportAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.temporary-dsr-export.upsert',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'dsr-delivery', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.upsert-temporary-dsr-export.access.v1',
@@ -45,7 +53,7 @@ export const upsertTemporaryDsrExportAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.upsert-temporary-dsr-export',
       moduleKey: 'privacy.core',
       role: 'action',

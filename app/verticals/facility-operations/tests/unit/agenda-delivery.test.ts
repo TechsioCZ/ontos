@@ -1,5 +1,6 @@
-import { ActionPermissionDenied, ContextAccess } from '@app/core-runtime';
-import type { ContextAccessService } from '@app/core-runtime';
+import { ActionPermissionDenied } from '@app/core-runtime';
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
+import { facilityOperationsRegistration } from '../../vertical.registration.ts';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -32,20 +33,22 @@ for (const decision of ['denied', 'unavailable'] as const) {
   it.effect(`the registered Action prepares ${decision} owner permissions before opening SQL`, () =>
     Effect.scoped(
       Effect.gen(function* preparedOwnerPermissions() {
-        const harness = yield* makeActionTestHarness({ actionPermission: 'allowed' });
+        const harness = yield* makeActionTestHarness({
+          access: 'allowed',
+          compositionRevision: 'a'.repeat(64),
+          ownerRegistration: facilityOperationsRegistration,
+        });
         let checks = 0;
-        const access: ContextAccessService = {
-          contextPermissions: ({ targets }) =>
+        const gate = makeTestAccessDecision({
+          defaultAnswer: { outcome: decision === 'denied' ? 'DENIED' : 'UNAVAILABLE' },
+        });
+        const access = {
+          ...gate,
+          decideMany: (questions: Parameters<typeof gate.decideMany>[0]) =>
             Effect.sync(() => {
-              // The real Core Action runtime must not have opened its business transaction yet.
               expect(harness.snapshot().transactionCount).toBe(0);
               checks += 1;
-              return targets.map(({ moduleId, permission }) => ({ decision, key: `${moduleId}:${permission}` }));
-            }),
-          legalEntities: unused,
-          modules: unused,
-          resources: unused,
-          tenants: unused,
+            }).pipe(Effect.andThen(gate.decideMany(questions))),
         };
         const failure = yield* harness.runtime
           .runAction({
@@ -54,7 +57,7 @@ for (const decision of ['denied', 'unavailable'] as const) {
             registration: applyCommandAction,
             transport: { correlationId: 'agenda-delivery', idempotencyKey: `agenda-delivery-${decision}` },
           })
-          .pipe(Effect.provideService(ContextAccess, access), Effect.flip);
+          .pipe(Effect.provideService(AccessDecisionGate, access), Effect.flip);
         expect(
           decision === 'denied'
             ? Schema.is(FacilityOperationsPermissionDenied)(failure)
@@ -71,7 +74,11 @@ for (const decision of ['denied', 'unavailable'] as const) {
 it.effect('Core executor denial never resolves the owner permission adapter', () =>
   Effect.scoped(
     Effect.gen(function* executorDenied() {
-      const harness = yield* makeActionTestHarness({ actionPermission: 'denied' });
+      const harness = yield* makeActionTestHarness({
+        access: 'denied',
+        compositionRevision: 'a'.repeat(64),
+        ownerRegistration: facilityOperationsRegistration,
+      });
       const failure = yield* harness.runtime
         .runAction({
           payload,
@@ -80,13 +87,7 @@ it.effect('Core executor denial never resolves the owner permission adapter', ()
           transport: { correlationId: 'agenda-denied', idempotencyKey: 'agenda-denied' },
         })
         .pipe(
-          Effect.provideService(ContextAccess, {
-            contextPermissions: unused,
-            legalEntities: unused,
-            modules: unused,
-            resources: unused,
-            tenants: unused,
-          }),
+          Effect.provideService(AccessDecisionGate, { ...makeTestAccessDecision(), decideMany: unused }),
           Effect.flip,
         );
       expect(Schema.is(ActionPermissionDenied)(failure)).toBe(true);

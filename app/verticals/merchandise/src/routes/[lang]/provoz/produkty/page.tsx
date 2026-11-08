@@ -1,3 +1,4 @@
+import { pendingProposalMessage } from '../../../../api/action-result.ts';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState, useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import type { RegisteredRouter } from '@tanstack/react-router';
@@ -302,7 +303,13 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
         if (outcome.reason === 'conflict') {
           reload();
         }
-        toaster.create({ title: k(bulkFailureKey(outcome.reason)), type: 'error' });
+        toaster.create({
+          title:
+            outcome.proposal === undefined
+              ? k(bulkFailureKey(outcome.reason))
+              : (pendingProposalMessage(outcome.proposal) ?? 'Awaiting approval. No changes have been applied.'),
+          type: 'error',
+        });
         return;
       }
       setSelection({});

@@ -35,6 +35,14 @@ export const handleRequestSearchRebuild = Effect.fn('DemoSalesPipeline.requestSe
 });
 export const requestSearchRebuildAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'demo.sales-pipeline.request-search-rebuild.write',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'sales-pipeline', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'demo.sales-pipeline.request-search-rebuild.access.v1',
@@ -45,7 +53,7 @@ export const requestSearchRebuildAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'demo.sales-pipeline.request-search-rebuild',
       moduleKey: moduleId,
       role: 'action',

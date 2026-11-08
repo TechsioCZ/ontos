@@ -3,6 +3,8 @@
 // @ontos-module-id commerce.assortment
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { assortmentManifest } from './vertical.manifest.ts';
+import { configurationRead } from './src/api/configuration.read.ts';
+import { decisionExplanationRead } from './src/api/decision-explanation.read.ts';
 // <generated-module-registration-imports>
 import { createApplicabilityBindingAction } from './src/actions/create-applicability-binding.action.ts';
 import { createClosedAssortmentBoundaryAction } from './src/actions/create-closed-assortment-boundary.action.ts';
@@ -36,6 +38,7 @@ export const assortmentRegistration = defineVerticalRuntimeRegistration({
       // <generated-module-registration-apis>
       configuration: () => import('./src/api/configuration-client.ts'),
       'decision-explanation': () => import('./src/api/decision-explanation-client.ts'),
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       purchase: () => import('./src/api/purchase-client.ts'),
       visibility: () => import('./src/api/visibility-client.ts'),
       // </generated-module-registration-apis>
@@ -62,6 +65,7 @@ export const assortmentRegistration = defineVerticalRuntimeRegistration({
     // <generated-module-registration-workers>
     // </generated-module-registration-workers>
   ],
+  reads: [configurationRead, decisionExplanationRead],
 });
 
 // <generated-public-component-registrations>

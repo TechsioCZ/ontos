@@ -1,15 +1,19 @@
+import {
+  historicalOwnerTarget,
+  historicalPermissionKey as toBusinessPermissionAccessKey,
+  historicalPermissionObjectId as toBusinessPermissionAccessObjectId,
+} from '../support/historical-owner-targets.ts';
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
-import { Crypto, Effect, FileSystem, Schema } from 'effect';
+import { Crypto, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { SPICEDB_CHECK_TIMEOUT_MS, createSpiceDbPermissionClient } from '../../src/permissions/client.ts';
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
+import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
 import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
 import {
   makeContextAccess,
-  toBusinessPermissionAccessKey,
-  toBusinessPermissionAccessObjectId,
   toContextPermissionAccessKey,
   toContextPermissionAccessObjectId,
   toLegalEntityAccessObjectId,
@@ -17,11 +21,6 @@ import {
   toResourceAccessObjectId,
 } from '../../src/permissions/context-access.ts';
 import { BusinessPermissionCodeSchema } from '../../src/permissions/business-permission.ts';
-import {
-  BusinessPermissionMutationUnavailable,
-  makeBusinessPermissionRelationshipMutation,
-  migrateRetailSelfServiceGrant,
-} from '../../src/permissions/business-permission-mutation.ts';
 
 const spiceDbEffect = <Value>(operation: PromiseLike<Value>) => Effect.tryPromise(() => operation);
 
@@ -46,26 +45,34 @@ const relationship = (
     }),
   });
 
-const requireBusinessPermissions = (
-  access: ReturnType<typeof makeContextAccess>,
-): NonNullable<ReturnType<typeof makeContextAccess>['businessPermissions']> => {
-  const check = access.businessPermissions;
+const requireBusinessPermissions = (access: ReturnType<typeof makeContextAccess>, selectedLegalEntityId: string) => {
+  const check = access.ownerPermissions;
   if (check === undefined) {
-    throw new Error('Expected business permission access');
+    throw new Error('Expected owner permission access');
   }
-  return check;
+  return (input: {
+    readonly legalEntityId?: string;
+    readonly principal: { readonly principalId: string; readonly tenantId: string };
+    readonly targets: readonly { readonly permission: string; readonly target: object }[];
+    readonly trustedStorefrontId?: string;
+  }) =>
+    check({
+      ...input,
+      legalEntityId: input.legalEntityId ?? selectedLegalEntityId,
+      targets: input.targets.map(({ permission, target }) => ({ target: historicalOwnerTarget(permission, target) })),
+    });
 };
 
 const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
   const configuration = yield* loadSpiceDbConfig();
   const crypto = yield* Crypto.Crypto;
-  const fileSystem = yield* FileSystem.FileSystem;
   const [
     tenantId,
     otherTenantId,
     legalEntityId,
     otherLegalEntityId,
     principalId,
+    otherPrincipalId,
     resourceId,
     pricingCatalogId,
     priceGroupId,
@@ -83,10 +90,10 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
       crypto.randomUUIDv4(),
       crypto.randomUUIDv4(),
       crypto.randomUUIDv4(),
+      crypto.randomUUIDv4(),
     ],
     { concurrency: 'unbounded' },
   );
-  const customerId = yield* crypto.randomUUIDv4();
   const moduleId = 'property.registry';
   const resource = { moduleId, resourceId, resourceType: 'property.unit' };
   const legalObjectId = toLegalEntityAccessObjectId(tenantId, legalEntityId);
@@ -122,6 +129,31 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
       tenantId,
     },
   };
+  // Neutral Core inputs only; owner-factory identities have separate literal fixtures.
+  const additionalOwnerTargets = [
+    {
+      permission: 'retail.profile.read',
+      target: { kind: 'retail_profile', legalEntityId, profileId: 'retail-live', tenantId },
+    },
+    {
+      permission: 'inventory.stock.correct',
+      target: {
+        kind: 'inventory_resource',
+        resource: { moduleId: 'commerce.inventory', resourceId, resourceType: 'commerce.inventory.stock-position' },
+        tenantId,
+      },
+    },
+    { permission: 'tax.rule.manage', target: { kind: 'tax_selling_legal_entity', legalEntityId, tenantId } },
+  ].map(({ permission, target }) => ({ target: historicalOwnerTarget(permission, target) }));
+  const directOwnerTargets = [
+    { target: historicalOwnerTarget(businessPermission, businessTarget.target) },
+    { target: historicalOwnerTarget(pricingPermission, pricingCatalogTarget.target) },
+    ...additionalOwnerTargets,
+  ];
+  const currentOwnerTargets = [
+    ...directOwnerTargets,
+    { target: historicalOwnerTarget(pricingPermission, priceGroupTarget.target) },
+  ];
   const crossTenantPriceGroupTarget = {
     permission: pricingPermission,
     target: {
@@ -157,42 +189,17 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
   ) {
     throw new Error('Expected valid SpiceDB object identifiers');
   }
-  const retailPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('retail.profile.read');
-  const retailTarget = {
-    permission: retailPermission,
-    target: { kind: 'retail_profile' as const, legalEntityId, profileId: resourceId, tenantId },
-  };
-  const retailObjectId = toBusinessPermissionAccessObjectId(retailPermission, retailTarget.target);
-  if (retailObjectId === undefined) {
-    throw new Error('Expected exact retail permission object');
-  }
   const client = newSpiceDbGrpcClient(configuration);
-  const mutation = makeBusinessPermissionRelationshipMutation({
-    writeRelationships: (request) =>
-      spiceDbEffect(client.promises.writeRelationships(request)).pipe(
-        Effect.mapError(
-          (cause) => new BusinessPermissionMutationUnavailable({ cause, reason: 'Native test mutation failed' }),
-        ),
-      ),
-  });
-  const bootstrap = yield* fileSystem.readFileString(new URL('../../spicedb/bootstrap.yaml', import.meta.url).pathname);
-  const bootstrapLines = bootstrap.split('\n');
-  const schemaStart = bootstrapLines.indexOf('schema: |-') + 1;
-  const schemaEnd = bootstrapLines.indexOf('relationships: |-');
-  expect(schemaStart > 0 && schemaEnd > schemaStart).toBeTruthy();
-  const schemaBlock = bootstrapLines
-    .slice(schemaStart, schemaEnd)
-    .map((line) => line.replace(/^ {2}/u, ''))
-    .join('\n');
   yield* spiceDbEffect(
     client.promises.writeSchema(
       v1.WriteSchemaRequest.create({
-        schema: schemaBlock,
+        schema: ONTOS_SPICEDB_SCHEMA,
       }),
     ),
   );
   const relationships = [
     relationship('tenant', tenantId, 'member', 'principal', principalId),
+    relationship('tenant', tenantId, 'member', 'principal', otherPrincipalId),
     relationship('tenant', tenantId, 'identity_admin', 'principal', principalId),
     relationship('tenant', tenantId, 'party_identity_manager', 'principal', principalId),
     relationship('tenant', tenantId, 'party_identity_merger', 'principal', principalId),
@@ -202,6 +209,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
     relationship('tenant', tenantId, 'support', 'principal', principalId),
     relationship('legal_entity', legalObjectId, 'tenant', 'tenant', tenantId),
     relationship('legal_entity', legalObjectId, 'member', 'principal', principalId),
+    relationship('legal_entity', legalObjectId, 'member', 'principal', otherPrincipalId),
     relationship('legal_entity', legalObjectId, 'counterparty_manager', 'principal', principalId),
     relationship('legal_entity', legalObjectId, 'counterparty_reader', 'principal', principalId),
     relationship('module_access', moduleObjectId, 'legal_entity', 'legal_entity', legalObjectId),
@@ -228,6 +236,19 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
       'business_permission',
       pricingCatalogObjectId,
     ),
+    ...additionalOwnerTargets.flatMap(({ target }) => {
+      const scopeType = target.scope.kind;
+      return [
+        relationship(
+          'business_permission',
+          target.objectId,
+          scopeType,
+          scopeType,
+          scopeType === 'tenant' ? tenantId : legalObjectId,
+        ),
+        relationship('business_permission', target.objectId, 'grantee', 'principal', principalId),
+      ];
+    }),
     relationship('context_permission', tenantModuleObjectId, 'tenant', 'tenant', tenantId),
     relationship('context_permission', tenantModuleObjectId, 'grantee', 'principal', principalId),
     relationship('context_permission', contextPermissionObjectId, 'tenant', 'tenant', tenantId),
@@ -310,118 +331,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
       expect(yield* access.resources({ legalEntityId, principalId, resources: [resource], tenantId })).toEqual([
         { decision: 'allowed', key: `${moduleId}:property.unit:${resource.resourceId}` },
       ]);
-      const checkBusinessPermissions = requireBusinessPermissions(access);
-      const customer = { principalId: customerId, tenantId };
-      const customerDecision = (target = retailTarget) =>
-        checkBusinessPermissions({ principal: customer, targets: [target] });
-      expect(yield* customerDecision()).toEqual([
-        { decision: 'denied', key: toBusinessPermissionAccessKey(retailTarget) },
-      ]);
-      yield* mutation.mutate({
-        operation: 'grant',
-        permission: retailPermission,
-        principal: customer,
-        target: retailTarget.target,
-      });
-      expect(yield* customerDecision()).toEqual([
-        { decision: 'allowed', key: toBusinessPermissionAccessKey(retailTarget) },
-      ]);
-      // A self-service grant conveys neither Tenant/company membership nor staff/module access.
-      expect(yield* access.tenants({ permission: 'access', principalId: customerId, tenantIds: [tenantId] })).toEqual([
-        { decision: 'denied', key: tenantId },
-      ]);
-      expect(
-        yield* access.legalEntities({ legalEntityIds: [legalEntityId], principalId: customerId, tenantId }),
-      ).toEqual([{ decision: 'denied', key: legalEntityId }]);
-      expect(
-        yield* access.modules({ legalEntityId, moduleIds: [moduleId], principalId: customerId, tenantId }),
-      ).toEqual([{ decision: 'denied', key: moduleId }]);
-      for (const isolated of [
-        { ...retailTarget, target: { ...retailTarget.target, profileId: otherPriceGroupId } },
-        { ...retailTarget, target: { ...retailTarget.target, legalEntityId: otherLegalEntityId } },
-        { ...retailTarget, target: { ...retailTarget.target, tenantId: otherTenantId } },
-        {
-          ...retailTarget,
-          permission: yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('retail.profile.edit'),
-        },
-      ]) {
-        const principal = { ...customer, tenantId: isolated.target.tenantId };
-        expect(yield* checkBusinessPermissions({ principal, targets: [isolated] })).toEqual([
-          { decision: 'denied', key: toBusinessPermissionAccessKey(isolated) },
-        ]);
-      }
-      expect(
-        yield* checkBusinessPermissions({ principal: { principalId, tenantId }, targets: [retailTarget] }),
-      ).toEqual([{ decision: 'denied', key: toBusinessPermissionAccessKey(retailTarget) }]);
-      yield* mutation.mutate({
-        operation: 'revoke',
-        permission: retailPermission,
-        principal: customer,
-        target: retailTarget.target,
-      });
-      expect(yield* customerDecision()).toEqual([
-        { decision: 'denied', key: toBusinessPermissionAccessKey(retailTarget) },
-      ]);
-      // A one-time graph migration moves only a pre-existing exact grant. No signup or Action replay.
-      yield* spiceDbEffect(
-        client.promises.writeRelationships(
-          v1.WriteRelationshipsRequest.create({
-            updates: [
-              v1.RelationshipUpdate.create({
-                operation: v1.RelationshipUpdate_Operation.TOUCH,
-                relationship: relationship('business_permission', retailObjectId, 'grantee', 'principal', customerId),
-              }),
-            ],
-          }),
-        ),
-      );
-      expect(yield* customerDecision()).toEqual([
-        { decision: 'denied', key: toBusinessPermissionAccessKey(retailTarget) },
-      ]);
-      const migrationInput = {
-        operation: 'grant' as const,
-        permission: retailPermission,
-        principal: customer,
-        target: retailTarget.target,
-      };
-      expect(yield* migrateRetailSelfServiceGrant(client.promises, migrationInput, false)).toEqual({
-        existing: 1,
-        migrated: 0,
-      });
-      expect(yield* customerDecision()).toEqual([
-        { decision: 'denied', key: toBusinessPermissionAccessKey(retailTarget) },
-      ]);
-      expect(
-        yield* migrateRetailSelfServiceGrant(
-          client.promises,
-          { ...migrationInput, principal: { principalId, tenantId } },
-          true,
-        ),
-      ).toEqual({
-        existing: 0,
-        migrated: 0,
-      });
-      expect(yield* migrateRetailSelfServiceGrant(client.promises, migrationInput, true)).toEqual({
-        existing: 1,
-        migrated: 1,
-      });
-      expect(yield* migrateRetailSelfServiceGrant(client.promises, migrationInput, true)).toEqual({
-        existing: 0,
-        migrated: 0,
-      });
-      expect(yield* customerDecision()).toEqual([
-        { decision: 'allowed', key: toBusinessPermissionAccessKey(retailTarget) },
-      ]);
-      yield* mutation.mutate({
-        operation: 'revoke',
-        permission: retailPermission,
-        principal: customer,
-        target: retailTarget.target,
-      });
-      expect(yield* customerDecision()).toEqual([
-        { decision: 'denied', key: toBusinessPermissionAccessKey(retailTarget) },
-      ]);
-
+      const checkBusinessPermissions = requireBusinessPermissions(access, legalEntityId);
       expect(
         yield* checkBusinessPermissions({
           principal: { principalId, tenantId },
@@ -457,6 +367,40 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
           targets: [crossTenantPriceGroupTarget],
         }),
       ).toEqual([{ decision: 'denied', key: toBusinessPermissionAccessKey(crossTenantPriceGroupTarget) }]);
+      const checkOwnerPermissions = access.ownerPermissions;
+      if (checkOwnerPermissions === undefined) {
+        throw new Error('Expected owner permission access');
+      }
+      // Reuse these same frozen target descriptors across independent Current checks.
+      const ownerRequest = {
+        legalEntityId,
+        principal: { principalId, tenantId },
+        targets: currentOwnerTargets,
+        trustedStorefrontId: 'storefront-live',
+      };
+      expect(yield* checkOwnerPermissions(ownerRequest)).toEqual(
+        currentOwnerTargets.map(({ target }) => ({ decision: 'allowed', key: target.key })),
+      );
+      // Q has the same coarse Tenant/Legal Entity membership, but no exact owner grant.
+      expect(
+        yield* checkOwnerPermissions({ ...ownerRequest, principal: { principalId: otherPrincipalId, tenantId } }),
+      ).toEqual(currentOwnerTargets.map(({ target }) => ({ decision: 'denied', key: target.key })));
+      yield* spiceDbEffect(
+        client.promises.writeRelationships(
+          v1.WriteRelationshipsRequest.create({
+            updates: directOwnerTargets.map(({ target }) =>
+              v1.RelationshipUpdate.create({
+                operation: v1.RelationshipUpdate_Operation.DELETE,
+                relationship: relationship('business_permission', target.objectId, 'grantee', 'principal', principalId),
+              }),
+            ),
+          }),
+        ),
+      );
+      // The inherited group loses authority when its catalog grant is revoked too.
+      expect(yield* checkOwnerPermissions(ownerRequest)).toEqual(
+        currentOwnerTargets.map(({ target }) => ({ decision: 'denied', key: target.key })),
+      );
       const checkContextPermissions = access.contextPermissions;
       if (checkContextPermissions === undefined) {
         throw new Error('Expected context permission access');
@@ -497,8 +441,8 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
       Effect.forEach(
         [
           ['context_permission', tenantModuleObjectId],
-          ['business_permission', retailObjectId],
           ['context_permission', contextPermissionObjectId],
+          ...additionalOwnerTargets.map(({ target }) => ['business_permission', target.objectId] as const),
           ['business_permission', crossTenantPriceGroupObjectId],
           ['business_permission', priceGroupObjectId],
           ['business_permission', pricingCatalogObjectId],
@@ -527,7 +471,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
 
 it.layer(NodeServices.layer, { excludeTestServices: true })('context-access', (suite) => {
   suite.effect(
-    'isolates native business and customer self-service permissions without granting membership',
+    'isolates live scope batches and owner grants by Tenant, Principal, and exact revocation',
     () => contextAccessProgram,
   );
 });

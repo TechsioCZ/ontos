@@ -1,11 +1,9 @@
 import { expect, it } from 'effect-rstest';
 import { Predicate, Schema } from 'effect';
 import { PaymentTermDefinitionSnapshotSchema } from '../../shared/domain/payment-term-contracts.ts';
-import { getActionBusinessPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionOwnerFactsResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { changeCustomerPaymentTermsAction } from '../../src/actions/change-customer-payment-terms.action.ts';
 import { removeCustomerPaymentTermAction } from '../../src/actions/remove-customer-payment-term.action.ts';
-import { customerPaymentTermEntitlementReadPermissionTarget } from '../../src/api/customer-payment-term-entitlement-read.read.ts';
-import { paymentTermsResolutionPermissionTarget } from '../../src/api/payment-terms-resolution.read.ts';
 import {
   changeCustomerPaymentTerms,
   projectCustomerPaymentTermsAt,
@@ -91,15 +89,12 @@ it('keeps both Counterparty mutations fail-closed behind the exact settings perm
   for (const action of [changeCustomerPaymentTermsAction, removeCustomerPaymentTermAction]) {
     expect(action.descriptor.idempotency).toBe('required');
     expect(action.descriptor.legalEntityScope).toBe('required');
-    expect(action.descriptor.businessPermission?.kind).toBe('business_permission');
+    expect(action.descriptor.accessOwnerFacts).toBeDefined();
     expect(action.descriptor.auditEvidenceSchema).toBeDefined();
-    expect(action.descriptor.entrypoint.authorization).toEqual({
-      kind: 'action_execution',
-      provisioning: 'explicit',
-    });
+    expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
   }
 
-  const permission = getActionBusinessPermissionTargetResolver(changeCustomerPaymentTermsAction)?.(
+  const ownerFacts = getActionOwnerFactsResolver(changeCustomerPaymentTermsAction)?.(
     {
       changes: [{ _tag: 'CLEAR_PREFERENCE', effectiveAt: '2026-01-01T00:00:00.000Z' }],
       counterpartyRef,
@@ -115,45 +110,9 @@ it('keeps both Counterparty mutations fail-closed behind the exact settings perm
       tenantId,
     },
   );
-  expect(permission).toMatchObject({
-    permission: 'counterparty.settings.payment_terms.manage',
-    target: { counterpartyId: counterpartyRef.resourceId, kind: 'counterparty' },
-  });
-});
-
-it('resolves exact Retail and Counterparty read permissions from the public subject', () => {
-  const scope = {
-    legalEntityId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
-    tenantId,
-  };
-  expect(
-    customerPaymentTermEntitlementReadPermissionTarget(
-      {
-        asOf: '2026-01-01T00:00:00.000Z',
-        authorizationSubject: { kind: 'RETAIL' },
-        includeHistorical: false,
-        profileRef,
-      },
-      scope,
-    ),
-  ).toMatchObject({ businessPermission: { permission: 'retail.profile.read' } });
-  expect(
-    paymentTermsResolutionPermissionTarget(
-      {
-        at: '2026-01-01T00:00:00.000Z',
-        authorizationSubject: { counterpartyRef, kind: 'COUNTERPARTY' },
-        profileRef: counterpartyProfileRef,
-        purchasingContext: {
-          channelId: 'web',
-          contextRevision: 'context-1',
-          marketId: 'cz',
-          sellingLegalEntityId: scope.legalEntityId,
-          storefrontId: 'main',
-        },
-      },
-      scope,
-    ),
-  ).toMatchObject({ businessPermission: { permission: 'counterparty.profile.read' } });
+  // The v2 declaration gates the capability; the owner facts name the counterparty whose own
+  // payment-terms grant the owner overlay then checks (O67-Q1, O70).
+  expect(ownerFacts).toEqual({ counterpartyId: counterpartyRef.resourceId });
 });
 
 it('grants a future entitlement and preference without making either current early', () => {

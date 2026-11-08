@@ -2,11 +2,24 @@
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
-import { MarketRetirementOutcomeSchema } from '../domain/market-retirement-intent.ts';
+import { MarketLifecycleResultSchema } from '../action-contracts.ts';
+import { MarketRetirementSourceInvocationIdSchema } from '../domain/market-retirement-impact.ts';
 import { MarketRefSchema } from '../resources/market.ts';
 import { MarketDefinitionRevisionRefSchema } from '../resources/market-definition-revision.ts';
 
 const positiveRevision = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
+
+/**
+ * The newest native retirement admission of a Market. `result` carries the Market lifecycle result the original
+ * retirement already committed, so a screen can show a committed retirement again after a reload; `PENDING` means
+ * the owner accepted the retirement and its Customer Context settlement is still finishing.
+ */
+export const MarketRetirementAdmissionSchema = Schema.Struct({
+  result: Schema.optionalKey(MarketLifecycleResultSchema),
+  sourceActionInvocationId: MarketRetirementSourceInvocationIdSchema,
+  status: Schema.Literals(['PENDING', 'COMMITTED', 'ABORTED']),
+});
+export type MarketRetirementAdmission = typeof MarketRetirementAdmissionSchema.Type;
 
 /**
  * What the signed-in person may administer, and the owner state the Market Actions expect. Without `marketRef` it
@@ -18,13 +31,13 @@ export const MarketAdministrationRequestSchema = Schema.Struct({
 export type MarketAdministrationRequest = typeof MarketAdministrationRequestSchema.Type;
 
 export const MarketAdministrationStateSchema = Schema.Struct({
-  /** Whether the person may revise, transition, retire and associate this Market (`write` on the Market). */
+  /** Whether every Market-management Action this screen advertises may run in the trusted company. */
   canAdminister: Schema.Boolean,
   /** The current definition revision, the `expectedCurrentDefinitionRevisionRef` of the Market Actions. */
   currentDefinitionRevisionRef: MarketDefinitionRevisionRefSchema,
   marketRef: MarketRefSchema,
-  /** The newest retirement of the Market as `market-retirement-status` reports it; absent when never requested. */
-  retirement: Schema.optionalKey(MarketRetirementOutcomeSchema),
+  /** The newest native retirement admission of the Market; absent when the Market was never retired. */
+  retirement: Schema.optionalKey(MarketRetirementAdmissionSchema),
   /** The Market aggregate revision: `expectedRevision` of activate-, suspend- and retire-market. */
   revision: positiveRevision,
 }).check(
@@ -37,7 +50,7 @@ export const MarketAdministrationStateSchema = Schema.Struct({
 export type MarketAdministrationState = typeof MarketAdministrationStateSchema.Type;
 
 export const MarketAdministrationResponseSchema = Schema.Struct({
-  /** Whether the person may create Markets sold by the trusted company (`write` on its Market catalog root). */
+  /** Whether the create-market Action may run in the trusted company. */
   canCreateMarket: Schema.Boolean,
   market: Schema.optionalKey(MarketAdministrationStateSchema),
 });

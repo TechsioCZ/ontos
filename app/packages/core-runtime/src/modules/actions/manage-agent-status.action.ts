@@ -168,6 +168,15 @@ const handleManageAgentStatus = Effect.fn('ManageAgentStatusAction.handle')(func
 
 export const manageAgentStatusAction = defineAction(
   {
+    // Enabling, disabling or archiving an agent is structural identity administration (O43, O81).
+    accessDeclaration: {
+      key: 'core.identity.agent-status.manage',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'core.identity.manage-agent-status.access.v1' },
     actionKey: 'core.identity.manage-agent-status',
     auditEvidenceSchema: ManageAgentStatusAuditEvidenceSchema,
@@ -176,7 +185,7 @@ export const manageAgentStatusAction = defineAction(
     domainEvents: principalLifecycleDomainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.manage-agent-status',
       moduleKey: 'core.identity',
       role: 'action',

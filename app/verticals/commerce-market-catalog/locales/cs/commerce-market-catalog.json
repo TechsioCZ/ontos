@@ -111,13 +111,16 @@
       "reason": "Založení trhu {{code}} v přehledu e-shopů",
       "created": "Trh {{code}} je založen.",
       "createdWithoutPricing": "Trh {{code}} je založen, ceník se ale nepodařilo uložit. Doplňte ho v detailu trhu.",
+      "createdPricingAwaitingApproval": "Trh {{code}} je založen. Jeho ceník čeká na schválení, zatím nebyl uložen.",
       "openMarket": "Otevřít trh"
     },
+    "approvalRequired": "Návrh čeká na schválení. Změna zatím nebyla provedena.",
     "failures": {
       "conflict": "Trh se mezitím změnil. Údaje se načetly znovu, zkuste to prosím ještě jednou.",
       "forbidden": "K této změně nemáte oprávnění.",
       "invalid": "Údaje nejsou platné. Zkontrolujte prosím formulář.",
       "rejected": "Změnu nelze v současném stavu trhu provést.",
+      "settlementPending": "Trh je už vyřazen, jen se dokončuje rezervace v zákaznickém kontextu. Údaje se načetly znovu; vyřazení neopakujte.",
       "unavailable": "Služba je teď nedostupná. Zkuste to prosím za chvíli."
     },
     "detail": {
@@ -139,24 +142,9 @@
         "reason": "Důvod vyřazení",
         "confirm": "Vyřadit trh",
         "requested": "Vyřazení trhu {{code}} probíhá.",
-        "pending": "Vyřazení trhu probíhá: {{stage}}. Stav se aktualizuje sám.",
+        "pending": "Vyřazení trhu probíhá, zbytek se dokončuje na pozadí. Údaje se obnovují samy.",
         "completed": "Trh je vyřazen.",
-        "failed": "Poslední pokus o vyřazení selhal: {{reason}}.",
-        "stage": {
-          "REQUESTED": "čeká na zpracování",
-          "RESERVATION_REQUESTED": "ověřuje se dopad",
-          "RESERVED": "dopad je ověřen",
-          "COMMIT_PENDING": "dokončuje se",
-          "RELEASE_PENDING": "ruší se rozpracované vyřazení"
-        },
-        "reasons": {
-          "replacement_impact_unresolved": "trh se stále používá jako výchozí trh nebo v otevřených nabídkách",
-          "impact_assessment_stale": "dopad vyřazení se mezitím změnil",
-          "impact_assessment_rejected": "kontrola dopadu vyřazení byla odmítnuta",
-          "impact_assessment_unavailable": "dopad vyřazení nebylo možné ověřit",
-          "revision_conflict": "trh se mezitím změnil",
-          "invalid_lifecycle_transition": "trh v tomto stavu vyřadit nelze"
-        },
+        "aborted": "Vyřazení bylo vráceno a trh vyřazen nebyl.",
         "action": "Vyřadit"
       },
       "purpose": "Název",

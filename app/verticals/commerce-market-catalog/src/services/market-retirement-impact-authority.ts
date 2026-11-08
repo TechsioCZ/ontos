@@ -1,5 +1,7 @@
-import type { ReserveMarketRetirementPayload } from '@app/customer-market-retirement-contracts/reserve-market-retirement';
-import type { DateTime, Effect } from 'effect';
+import type { Effect } from 'effect';
+import type { OperationalScope } from '@app/core-runtime';
+import type { MarketRetirementStoredBasis } from '../../shared/market-retirement-admission.ts';
+import type { RetireMarketPayload } from '../../shared/action-contracts.ts';
 import { Context } from 'effect';
 
 import type {
@@ -7,69 +9,73 @@ import type {
   ReservedMarketRetirementImpactAssessment,
 } from '../../shared/domain/market-retirement-impact.ts';
 import type { MarketRef } from '../../shared/resources/market.ts';
-import type { MarketRetirementImpactFailure } from '../domain/market-retirement-workflow.ts';
+import type { MarketRetirementImpactAssessmentRejected } from '../actions/market-retirement-impact-assessment-rejected.ts';
+import type { MarketRetirementImpactAssessmentStale } from '../actions/market-retirement-impact-assessment-stale.ts';
+import type { MarketRetirementImpactAssessmentUnavailable } from '../actions/market-retirement-impact-assessment-unavailable.ts';
 
-/** Exact owner-call context. Each call obtains its own audience-scoped gateway assertion. */
-export interface MarketRetirementOwnerCallContext {
-  readonly compositionRevision: string;
-  readonly legalEntityId: string;
-  readonly requestCorrelation: string;
-}
+type MarketRetirementImpactFailure =
+  | MarketRetirementImpactAssessmentRejected
+  | MarketRetirementImpactAssessmentStale
+  | MarketRetirementImpactAssessmentUnavailable;
 
-export type MarketRetirementReserveRequest = Extract<ReserveMarketRetirementPayload, { readonly operation: 'RESERVE' }>;
-
-export interface PreparedMarketRetirementReservation {
-  readonly assessment: MarketRetirementImpactAssessment;
-  /** RESERVE request persisted before it is sent, so every replay is byte-identical. */
-  readonly reservationRequest: MarketRetirementReserveRequest;
-}
-
-/**
- * Customer Context retirement-impact authority as seen by the Market owner worker. Every operation is one
- * remote call (plus its own recovery read) and must run outside any SQL transaction.
- */
 export interface MarketRetirementImpactAuthority<Requirements = never> {
-  /** COMMIT is idempotent per key; `action_already_committed` for the same key proves the commit. */
-  readonly commitRetirementImpact: (
-    input: MarketRetirementOwnerCallContext & {
-      readonly assessment: ReservedMarketRetirementImpactAssessment;
-      readonly idempotencyKey: string;
-      readonly reason: string;
-    },
-  ) => Effect.Effect<void, MarketRetirementImpactFailure, Requirements>;
-  /** Reads current affected-use evidence and derives the exact RESERVE request; it reserves nothing. */
-  readonly prepareRetirementReservation: (
-    input: MarketRetirementOwnerCallContext & {
-      readonly effectiveAt: DateTime.Utc;
-      readonly expectedMarketRevision: number;
-      readonly marketRef: MarketRef;
-      readonly reason: string;
-    },
-  ) => Effect.Effect<PreparedMarketRetirementReservation, MarketRetirementImpactFailure, Requirements>;
-  /** RELEASE of a never-committed reservation; idempotent per key like COMMIT. */
-  readonly releaseRetirementImpact: (
-    input: MarketRetirementOwnerCallContext & {
-      readonly assessment: ReservedMarketRetirementImpactAssessment;
-      readonly idempotencyKey: string;
-      readonly reason: string;
-    },
-  ) => Effect.Effect<void, MarketRetirementImpactFailure, Requirements>;
-  /**
-   * Sends the persisted RESERVE request. A replay whose key already committed recovers the reservation through
-   * Customer Context's exact reservation read instead of reserving again.
-   */
-  readonly reserveRetirementImpact: (
-    input: MarketRetirementOwnerCallContext & {
-      readonly assessment: MarketRetirementImpactAssessment;
-      readonly idempotencyKey: string;
-      readonly reservationRequest: MarketRetirementReserveRequest;
-    },
-  ) => Effect.Effect<ReservedMarketRetirementImpactAssessment, MarketRetirementImpactFailure, Requirements>;
+  readonly assessRetirementImpact: (input: {
+    readonly actionInvocationId: string;
+    readonly compositionRevision: string;
+    readonly effectiveAt: string;
+    readonly expectedMarketRevision: number;
+    readonly legalEntityId: string;
+    readonly marketRef: MarketRef;
+  }) => Effect.Effect<MarketRetirementImpactAssessment, MarketRetirementImpactFailure, Requirements>;
+  readonly commitRetirementImpact: (input: {
+    readonly actionInvocationId: string;
+    readonly assessment: ReservedMarketRetirementImpactAssessment;
+    readonly compositionRevision: string;
+    readonly legalEntityId: string;
+    readonly reason: string;
+  }) => Effect.Effect<void, MarketRetirementImpactFailure, Requirements>;
+  readonly releaseRetirementImpact: (input: {
+    readonly actionInvocationId: string;
+    readonly assessment: ReservedMarketRetirementImpactAssessment;
+    readonly compositionRevision: string;
+    readonly legalEntityId: string;
+    readonly reason: string;
+  }) => Effect.Effect<void, MarketRetirementImpactFailure, Requirements>;
+  readonly reserveRetirementImpact: (input: {
+    readonly actionInvocationId: string;
+    readonly compositionRevision: string;
+    readonly effectiveAt: string;
+    readonly expectedMarketRevision: number;
+    readonly legalEntityId: string;
+    readonly marketRef: MarketRef;
+    readonly reason: string;
+  }) => Effect.Effect<ReservedMarketRetirementImpactAssessment, MarketRetirementImpactFailure, Requirements>;
 }
 
-export class MarketRetirementImpactAuthorityService extends Context.Service<
-  MarketRetirementImpactAuthorityService,
-  MarketRetirementImpactAuthority
+export interface MarketRetirementImpactAttempt {
+  readonly basis: MarketRetirementStoredBasis;
+  readonly compositionRevision: string;
+  readonly originalCompositionRevision: string;
+  readonly releaseGuardHash: string;
+  readonly retirement: RetireMarketPayload;
+  readonly scope: OperationalScope;
+  readonly sourceActionInvocationId: string;
+}
+export interface MarketRetirementImpactFactory {
+  readonly forAdmission: (attempt: MarketRetirementImpactAttempt) => MarketRetirementImpactAuthority & {
+    readonly cleanupOriginal: (releaseProof: string) => Effect.Effect<void, MarketRetirementImpactFailure>;
+  };
+
+  readonly prepareBasis: (
+    attempt: Pick<
+      MarketRetirementImpactAttempt,
+      'scope' | 'compositionRevision' | 'retirement' | 'sourceActionInvocationId'
+    >,
+  ) => Effect.Effect<MarketRetirementStoredBasis, MarketRetirementImpactFailure>;
+}
+export class MarketRetirementImpactAuthorityFactory extends Context.Service<
+  MarketRetirementImpactAuthorityFactory,
+  MarketRetirementImpactFactory
 >()(
-  '@app/commerce-market-catalog/services/market-retirement-impact-authority/MarketRetirementImpactAuthorityService',
+  '@app/commerce-market-catalog/services/market-retirement-impact-authority/MarketRetirementImpactAuthorityFactory',
 ) {}

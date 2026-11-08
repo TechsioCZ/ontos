@@ -2,7 +2,8 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug revoke-counterparty-access-invitation
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { reconcileAccessPortalAfterAttempt } from '@app/core-runtime/access/portal';
 import { Effect } from 'effect';
 import {
   RevokeCounterpartyAccessInvitationPayloadSchema,
@@ -17,7 +18,7 @@ import {
 import type { CounterpartyAccessPortService } from '../../shared/domain/access-port.ts';
 import { counterpartyAccessServicesForTransaction } from '../access-services.ts';
 import {
-  accessManagementPermissionTarget,
+  accessManagementOwnerFacts,
   auditEvidence,
   deniedAccessAuditEvidence,
   principalRefFromContext,
@@ -111,14 +112,22 @@ const handle = Effect.fn('RevokeCounterpartyAccessInvitation.handle')(function* 
 
 export const revokeCounterpartyAccessInvitationAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.counterparty-access-invitation.revoke',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'counterparty-access', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.revoke-counterparty-access-invitation.access.v1',
     },
+    accessOwnerFacts: accessManagementOwnerFacts,
     actionKey: 'commerce.customer-context.revoke-counterparty-access-invitation',
     auditEvidenceSchema: AccessAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission(accessManagementPermissionTarget),
     deniedAuditEvidence: {
       resolve: resolveDeniedAuditEvidence,
       schema: AccessDeniedAuditEvidenceSchema,
@@ -127,7 +136,7 @@ export const revokeCounterpartyAccessInvitationAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.revoke-counterparty-access-invitation',
       moduleKey: 'commerce.customer-context',
       role: 'action',
@@ -145,6 +154,9 @@ export const revokeCounterpartyAccessInvitationAction = defineAction(
     counterpartyAccessServicesForTransaction(transaction, scope).pipe(
       Effect.map((port) => ({ revoke: port.revokeInvitation })),
     ),
+  undefined,
+  // The revocation ended the invitee access its proofs admitted; the engine follows once it committed.
+  reconcileAccessPortalAfterAttempt(),
 );
 
 export type { RevokeCounterpartyAccessInvitationPayload } from '../../shared/actions/revoke-counterparty-access-invitation.ts';

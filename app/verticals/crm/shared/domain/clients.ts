@@ -44,7 +44,7 @@ export const ClientSchema = Schema.Struct({
   kind: ClientKindSchema,
   name: ShortTextSchema,
   note: Schema.optionalKey(LongTextSchema),
-  /** Current salesperson; absent = unassigned (visible only to read_all). */
+  /** Current salesperson; absent = unassigned (visible only to a full reader). */
   ownerSalespersonId: Schema.optionalKey(EntityIdSchema),
   partyRef: Schema.optionalKey(PartyRefSchema),
   phone: Schema.optionalKey(ShortTextSchema),

@@ -500,6 +500,14 @@ const handleResolveProfileReconciliation = Effect.fn('ResolveProfileReconciliati
 );
 export const resolveProfileReconciliationAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.profile-reconciliation.resolve',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'customer-profiles', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.resolve-profile-reconciliation.access.v1',
@@ -512,7 +520,7 @@ export const resolveProfileReconciliationAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.resolve-profile-reconciliation',
       moduleKey: MODULE_KEY,
       role: 'action',

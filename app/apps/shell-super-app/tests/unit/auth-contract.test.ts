@@ -1,3 +1,4 @@
+import { DECISION_REASON_CODES } from '@app/core-runtime/access/decision/contract';
 import { DateTime, Effect, Schema, SchemaAST, Predicate, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -7,6 +8,8 @@ import {
   AvailableLegalEntitiesResponseSchema,
   AvailableTenantsResponseSchema,
   ApiKeyLifecycleResponseSchema,
+  ApiKeyListItemSchema,
+  ManagedApiKeyListItemSchema,
   ChangePrincipalStatusPayloadSchema,
   IdentityRequestHeadersSchema,
   SignInPayloadSchema,
@@ -20,6 +23,12 @@ import {
   TenantCapabilityUnavailableProblemSchema,
   shellAuthenticationApiContract,
 } from '../../shared/api.ts';
+import {
+  AccessDecisionReasonCodeSchema,
+  DecideAccessChangesPayloadSchema,
+  PreviewAccessChangesPayloadSchema,
+} from '../../shared/access-admin-api.ts';
+import { LegalEntityDetailResponseSchema } from '../../shared/core-reads/legal-entity-detail.ts';
 
 type TenantEndpoint =
   | typeof ShellAuthenticationApi.groups.tenants.endpoints.availableTenants
@@ -66,6 +75,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     'issueGatewayContext',
     'issueApiKeyGatewayContext',
     'readWithApiKeyGatewayContext',
+    'issueDelegatedGatewayContext',
   ]);
   expect(Object.keys(ShellAuthenticationApi.groups.documentGateway.endpoints)).toEqual([
     'issueDocumentGatewayContexts',
@@ -110,6 +120,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     agentDecide: '/agent-platform/decide',
     agentQueue: '/agent-platform/queue',
     agentRevert: '/agent-platform/revert',
+    assignAccessRole: '/shell/access/people/assign',
     attachMedia: '/shell/resource/media-attachment',
     availableLegalEntities: '/auth/legal-entities',
     availableTenants: '/auth/tenants',
@@ -121,30 +132,45 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     connectDraft: '/auth/oauth-connections/draft',
     connectDraftSummary: '/auth/oauth-connections/draft-summary',
     connectOptions: '/auth/oauth-connections/options',
+    createAccessDelegation: '/shell/access/people/delegate',
+    createAccessRole: '/shell/access/roles/create',
     createNonHumanPrincipal: '/auth/identity/principals',
     currentSession: '/auth/session',
+    decideAccessApproval: '/shell/access/approvals/decide',
+    decideAccessChanges: '/shell/access/changes/decide',
     demoAccountCapability: '/auth/identity/demo-accounts/capability',
     documentContext: '/shell/document-context',
+    executeAccessApproval: '/shell/access/approvals/execute',
     executeLegalEntityDetail: '/core/reads/legal-entity-detail',
+    explainAccess: '/shell/access/explain',
+    getAccessRole: '/shell/access/roles/detail',
     invitePerson: '/auth/identity/people/invite',
     issueApiKeyGatewayContext: '/auth/api-key/gateway-context',
+    issueDelegatedGatewayContext: '/auth/delegated/gateway-context',
     issueDocumentGatewayContexts: '/auth/gateway-contexts',
     issueExternalGatewayContext: '/auth/identity/external/gateway-context',
     issueGatewayContext: '/auth/gateway-context',
     issueManagedApiKey: '/auth/identity/api-keys/managed',
     issueSelfApiKey: '/auth/identity/api-keys/self',
     list: '/email/deliveries',
+    listAccessApprovals: '/shell/access/approvals/list',
+    listAccessAssignments: '/shell/access/people/assignments',
+    listAccessChanges: '/shell/access/changes/list',
+    listAccessPeople: '/shell/access/people/list',
+    listAccessPeopleOptions: '/shell/access/people/options',
+    listAccessRoles: '/shell/access/roles/list',
+    listAccessRoleTemplates: '/shell/access/roles/templates',
     listAgentEntities: '/auth/identity/agent-entities/list',
     listCompanyConnections: '/auth/oauth-connections/admin-list',
     listCompanyPeople: '/auth/identity/people/list',
-    listCompanyRoleCatalog: '/auth/identity/people/role-catalog',
     listManagedApiKeys: '/auth/identity/api-keys/managed/list',
     listMyConnections: '/auth/oauth-connections/mine',
     listOwnAgentProposals: '/agent-platform/proposals/list',
     listSelfApiKeys: '/auth/identity/api-keys/self/list',
     listTenantPeople: '/auth/identity/people/tenant-list',
-    listTenantRoleCatalog: '/auth/identity/people/tenant-role-catalog',
     manageAgentEntity: '/auth/identity/agent-entities',
+    previewAccessChanges: '/shell/access/changes/preview',
+    previewAccessRoleEdit: '/shell/access/roles/preview',
     provider: '/email/provider',
     readPrincipalBinding: '/auth/identity/external/bindings/read',
     readWithApiKeyGatewayContext: '/auth/api-key/gateway-read',
@@ -155,14 +181,16 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     resolveModuleTarget: '/shell/module-target',
     resolveModuleTargets: '/shell/module-targets',
     resourceDetail: '/shell/resource',
+    revokeAccessAssignment: '/shell/access/people/revoke-assignment',
+    revokeAccessDelegation: '/shell/access/people/revoke-delegation',
     revokeConnection: '/auth/oauth-connections/revoke',
     rotateManagedApiKey: '/auth/identity/api-keys/managed/rotate',
     rotateSelfApiKey: '/auth/identity/api-keys/self/rotate',
+    saveAccessRoleEdit: '/shell/access/roles/save',
     search: '/shell/search',
+    setAccessTeamMembership: '/shell/access/people/team-membership',
     setManagedApiKeyStatus: '/auth/identity/api-keys/managed/status',
     setPeopleCompanyMembership: '/auth/identity/people/company-membership',
-    setPeopleCompanyRole: '/auth/identity/people/company-role',
-    setPeopleTenantRole: '/auth/identity/people/tenant-role',
     setSelfApiKeyStatus: '/auth/identity/api-keys/self/status',
     shellComposition: '/shell/composition',
     signIn: '/auth/sign-in',
@@ -173,6 +201,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     switchLegalEntity: '/auth/legal-entity/switch',
     switchTenant: '/auth/tenant/switch',
     switchToTenantContext: '/auth/context/tenant',
+    transferAccessOwnership: '/shell/access/people/transfer-ownership',
     updateConnectionAccess: '/auth/oauth-connections/update',
   });
   expect(shellAuthenticationApiContract).toEqual({
@@ -182,6 +211,55 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     switchToTenantContextPath: '/shell-super-app-api/auth/context/tenant',
   });
   expect([...authenticationEndpoints, ...gatewayEndpoints].join(':')).not.toMatch(/testing|actionKey/u);
+});
+
+it('requires an explicit tenant or company target for every Novinky preview and decision', () => {
+  const base = {
+    catalogSnapshotId: '11111111-1111-4111-8111-111111111111',
+    decision: 'adopt',
+    itemIds: ['22222222-2222-4222-8222-222222222222'],
+  };
+  expect(Schema.is(PreviewAccessChangesPayloadSchema)(base)).toBe(false);
+  expect(Schema.is(PreviewAccessChangesPayloadSchema)({ ...base, legalEntityId: null })).toBe(true);
+  expect(
+    Schema.is(PreviewAccessChangesPayloadSchema)({
+      ...base,
+      legalEntityId: '33333333-3333-4333-8333-333333333333',
+    }),
+  ).toBe(true);
+  expect(Schema.is(DecideAccessChangesPayloadSchema)({ ...base, decision: 'decline' })).toBe(false);
+  expect(Schema.is(DecideAccessChangesPayloadSchema)({ ...base, decision: 'decline', legalEntityId: null })).toBe(true);
+});
+
+it('recognizes every Core decision reason without inventing a browser-only code', () => {
+  for (const code of DECISION_REASON_CODES) {
+    expect(Schema.is(AccessDecisionReasonCodeSchema)(code)).toBe(true);
+  }
+  expect(Schema.is(AccessDecisionReasonCodeSchema)('allow.unpublished')).toBe(false);
+});
+
+it('omits ungranted identity fields without weakening API-key mutation responses', () => {
+  expect(Schema.decodeUnknownSync(ApiKeyListItemSchema)({})).toEqual({});
+  expect(
+    Schema.decodeUnknownSync(ManagedApiKeyListItemSchema)({
+      key: null,
+      kind: 'service',
+      principalId: '11111111-1111-4111-8111-111111111111',
+      principalStatus: 'active',
+    }),
+  ).not.toHaveProperty('displayName');
+  expect(
+    Schema.decodeUnknownSync(LegalEntityDetailResponseSchema)({
+      legalEntityRef: {
+        moduleId: 'core.identity',
+        resourceId: '11111111-1111-4111-8111-111111111111',
+        resourceType: 'core.identity.legal-entity',
+        tenantId: '22222222-2222-4222-8222-222222222222',
+      },
+      status: 'active',
+    }),
+  ).not.toHaveProperty('legalName');
+  expect(() => Schema.decodeUnknownSync(ApiKeyLifecycleResponseSchema)({})).toThrow();
 });
 
 it('preserves migrated Shell Problem Details wire shapes and ordered membership', () => {

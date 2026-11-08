@@ -329,6 +329,8 @@ describe('Party Registry intake (CRM.md §3, C04)', () => {
             ambiguousCaseDecision({ evaluatedEvidence: [{ identifierType: 'ICO' }], lifecycleState: 'OPEN' }),
           ).toBe('review');
           expect(ambiguousCaseDecision({ evaluatedEvidence: [], lifecycleState: 'RESOLVED' })).toBe('review');
+          expect(ambiguousCaseDecision({ evaluatedEvidence: [], lifecycleState: 'OPEN' })).toBe('review');
+          expect(ambiguousCaseDecision({ lifecycleState: 'OPEN' })).toBe('review');
           const verified = new Map([
             [
               'cp-new',

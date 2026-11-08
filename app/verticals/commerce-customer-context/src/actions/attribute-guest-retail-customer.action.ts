@@ -8,7 +8,7 @@ import type {
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint, OperationContextUnavailable } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Crypto, Effect } from 'effect';
 import {
   AttributeGuestRetailCustomerPayloadSchema,
   AttributeGuestRetailCustomerRejected,
@@ -144,11 +144,7 @@ export const prepareGuestAttributionServices = Effect.fn('AttributeGuestRetailCu
     };
     const resolverFactory = yield* PartyRegistryGuestResolverFactory;
     const outcome = yield* resolverFactory
-      .make({
-        legalEntityId,
-        requestCorrelation: scope.correlationId,
-        tenantId: scope.tenantId,
-      })(selector)
+      .make({ crypto: yield* Crypto.Crypto, scope })(selector)
       .pipe(
         Effect.mapError((cause) =>
           Object.defineProperty(
@@ -208,6 +204,14 @@ export const prepareGuestAttributionServices = Effect.fn('AttributeGuestRetailCu
 );
 export const attributeGuestRetailCustomerAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.guest-retail-customer.attribute',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'customer-profiles', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.attribute-guest-retail-customer.access.v1',
@@ -220,7 +224,7 @@ export const attributeGuestRetailCustomerAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.attribute-guest-retail-customer',
       moduleKey: MODULE_KEY,
       role: 'action',

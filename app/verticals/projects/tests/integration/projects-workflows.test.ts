@@ -66,7 +66,7 @@ const workflows = () =>
       expect(Schema.is(Schema.TaggedStruct('not_found', {}))(hidden)).toBe(true);
       yield* scoped(tenantA, (service) => service.transitionLifecycle(root.projectId, 'archived'));
       const blockedUpdate = yield* scoped(tenantA, (service) =>
-        service.update({ name: 'Blocked', owner: values('ROOT').owner, projectId: child.projectId, shortText: null }),
+        service.update({ name: 'Blocked', projectId: child.projectId, shortText: null }),
       ).pipe(Effect.result);
       expect(Result.isFailure(blockedUpdate)).toBe(true);
       const blockedMove = yield* scoped(tenantA, (service) => service.move(child.projectId, null)).pipe(Effect.flip);

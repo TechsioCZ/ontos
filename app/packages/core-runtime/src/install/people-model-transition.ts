@@ -10,9 +10,22 @@ import { buildPrincipalSelfCredentialUpdates } from '../permissions/action-autho
 import { toContextPermissionAccessObjectId, toLegalEntityAccessObjectId } from '../permissions/context-access.ts';
 import { demoAccountObjectIdParts } from './demo-account-administration.ts';
 import type { DemoAccountRelationship } from './demo-account-administration.ts';
-import type { BootstrapRelationship } from './context-bootstrap-shared.ts';
 import { toScopedRoleObjectId } from '../permissions/scoped-role.ts';
 import type { ScopedRoleIdentity } from '../permissions/scoped-role.ts';
+
+/**
+ * The reviewed structural link of a one-time cutover artifact: its own reviewed data shape, never a
+ * runtime graph writer. The retired bootstrap helpers that produced these rows are gone (authorization
+ * v2 projects the graph from PostgreSQL intent), so the shape lives with the reviewed plan that reads it.
+ */
+interface BootstrapRelationship {
+  readonly relation: string;
+  readonly resourceId: string;
+  readonly resourceType: string;
+  readonly subjectId: string;
+  readonly subjectRelation?: string;
+  readonly subjectType: string;
+}
 
 export interface PeopleModelTransitionMembership {
   readonly affiliation: 'employee' | 'external' | null;

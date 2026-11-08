@@ -1,11 +1,5 @@
-import {
-  CoreSearchIngestion,
-  CoreSearchProjectionDocumentSchema,
-  CoreSearchProjectionStore,
-  ResourceContainmentRelationshipMutation,
-} from '@app/core-runtime';
+import { CoreSearchIngestion, CoreSearchProjectionDocumentSchema, CoreSearchProjectionStore } from '@app/core-runtime';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
-import { ownerResourceModuleContainment } from '@app/core-runtime/outbox/worker';
 import { Context, DateTime, Effect, Layer, Schema } from 'effect';
 
 import { MARKET_SEARCH_MAX_QUERY_LENGTH } from '../../shared/apis/markets-search.ts';
@@ -96,7 +90,6 @@ export const makeMarketSearchProjector = Effect.gen(function* makeMarketSearchPr
   const source = yield* MarketSearchSource;
   const ingestion = yield* CoreSearchIngestion;
   const store = yield* CoreSearchProjectionStore;
-  const containment = yield* ResourceContainmentRelationshipMutation;
   return {
     project: Effect.fn('MarketSearchProjector.project')(function* projectMarketSearch(
       context: OutboxWorkerHandlerContext,
@@ -112,22 +105,8 @@ export const makeMarketSearchProjector = Effect.gen(function* makeMarketSearchPr
         return yield* marketSearchUnavailable();
       }
       const documents = yield* buildMarketSearchDocuments(snapshot);
-      // The Core snapshot has closed its SQL transaction before any containment or index write.
-      yield* Effect.forEach(
-        documents,
-        Effect.fn('MarketSearchProjector.placeMarketInCompany')(function* placeMarketInCompany(document) {
-          const company = document.selectedLegalEntityId;
-          const relationship =
-            company === undefined ? undefined : ownerResourceModuleContainment(context.tenantId, company, document.ref);
-          if (relationship === undefined) {
-            return yield* marketSearchUnavailable();
-          }
-          return yield* containment
-            .touch({ relationships: [relationship] })
-            .pipe(Effect.mapError(marketSearchUnavailable));
-        }),
-        { concurrency: 1 },
-      );
+      // The Core snapshot has closed its SQL transaction before any index write. Core Search enforces
+      // the caller's access list predicate and field projection, so no owner containment edge is written.
       if ('rebuild' in target) {
         return yield* store
           .replace(

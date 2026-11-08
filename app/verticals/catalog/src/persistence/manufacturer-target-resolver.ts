@@ -1,10 +1,12 @@
-import { PartyDetailResponseSchema, executePartyDetail } from '@app/party-registry/api/client';
+import { PartyDetailResponseSchema, executePartyDetailWithAuthorization } from '@app/party-registry/api/client';
+import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { PartyDetailResponse } from '@app/party-registry/api/client';
 import { LegalEntityRefSchema } from '@app/core-runtime/resources/legal-entity';
 import type { LegalEntityRef } from '@app/core-runtime/resources/legal-entity';
-import { legalEntityDetailRead } from '@app/core-runtime';
+import { requireModuleOperation, legalEntityDetailRead } from '@app/core-runtime';
 import type { OperationalScope, ReadRuntimeService } from '@app/core-runtime';
 import { Effect, Option, Predicate, Schema } from 'effect';
+import type { Crypto } from 'effect';
 
 import type { ManufacturerTarget } from '../../shared/domain/manufacturer-relation.ts';
 import { ManufacturerTargetAbsent } from './manufacturer-target-absent.ts';
@@ -54,7 +56,7 @@ export interface ManufacturerTargetResolverPorts {
     readonly legalEntityRef: LegalEntityRef;
   }) => Effect.Effect<ManagedLegalEntityDetail, PartyReadFailure>;
   readonly readPartyDetail: (
-    payload: Parameters<typeof executePartyDetail>[0],
+    payload: Parameters<typeof executePartyDetailWithAuthorization>[0],
     requestId: string,
   ) => Effect.Effect<PartyDetailResponse, PartyReadFailure>;
 }
@@ -126,7 +128,9 @@ const managedState = (status: ManagedLegalEntityDetail['status']): 'CURRENT' | '
 
 /** Read-only owner evidence; it never creates an identity or changes the Catalog relation. */
 export const makeManufacturerTargetResolver = (configuredPorts?: ManufacturerTargetResolverPorts) => {
-  const ports: ManufacturerTargetResolverPorts = configuredPorts ?? { readPartyDetail: executePartyDetail };
+  const ports: ManufacturerTargetResolverPorts = configuredPorts ?? {
+    readPartyDetail: () => Effect.fail(new ManufacturerTargetUnavailable()),
+  };
   return {
     resolve: (
       target: ManufacturerTarget,
@@ -189,8 +193,16 @@ export const makeManufacturerTargetResolver = (configuredPorts?: ManufacturerTar
 export const manufacturerTargetResolver = makeManufacturerTargetResolver();
 
 /** Carry the original, provenance-bearing principal into Core's governed Read lifecycle. */
-// oxlint-disable-next-line effect-native/no-dependency-parameters -- Action factory resolves ReadRuntime from Context and binds it here to the target resolver's owner-read port.
-export const manufacturerTargetResolverForCoreRead = (readRuntime: ReadRuntimeService, scope: OperationalScope) =>
+export const manufacturerTargetResolverForCoreRead = (
+  // oxlint-disable-next-line effect-native/no-dependency-parameters -- Action factory resolves ReadRuntime from Context and binds it here to the target resolver's owner-read port.
+  readRuntime: ReadRuntimeService,
+  scope: OperationalScope,
+  crypto: Crypto.Crypto,
+  requirementKey?:
+    | 'commerce.catalog.requirement.set-product-manufacturer-party'
+    | 'commerce.catalog.requirement.change-product-manufacturer-party'
+    | 'commerce.catalog.requirement.manufacturer-current-party',
+) =>
   makeManufacturerTargetResolver({
     readManagedLegalEntity: ({ legalEntityRef }) =>
       readRuntime.runRead({
@@ -199,5 +211,27 @@ export const manufacturerTargetResolverForCoreRead = (readRuntime: ReadRuntimeSe
         registration: legalEntityDetailRead,
         transport: { correlationId: scope.correlationId },
       }),
-    readPartyDetail: executePartyDetail,
+    readPartyDetail: (payload) =>
+      (requirementKey === undefined ? Effect.void : requireModuleOperation(requirementKey)).pipe(
+        Effect.mapError((cause) =>
+          Object.defineProperty(new ManufacturerTargetUnavailable(), 'cause', { configurable: true, value: cause }),
+        ),
+        Effect.flatMap(() =>
+          acquireDelegatedGatewayContext(
+            {
+              audience: 'party-registry',
+              legalEntityScope: 'subject',
+              requestCorrelation: scope.correlationId,
+              subject: { _tag: 'Assertion', scope },
+            },
+            crypto,
+          ),
+        ),
+        Effect.flatMap((issued) =>
+          executePartyDetailWithAuthorization(payload, issued.authorization, scope.correlationId, {
+            baseUrl: issued.apiBaseUrl,
+            compositionRevision: issued.compositionRevision,
+          }),
+        ),
+      ),
   });

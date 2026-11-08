@@ -36,6 +36,16 @@ const handle = Effect.fn('RequestPeopleSearchRebuild.handle')(function* handle(
 });
 export const requestPeopleSearchRebuildAction = defineAction(
   {
+    // Requesting a tenant-wide people-search rebuild is structural maintenance of the tenant's
+    // projection: a human administrator's own capability (O43, O81).
+    accessDeclaration: {
+      key: 'core.identity.people-search.rebuild',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'core.identity.request-people-search-rebuild.access.v1',
@@ -47,7 +57,7 @@ export const requestPeopleSearchRebuildAction = defineAction(
     domainEvents: events,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.request-people-search-rebuild',
       moduleKey: 'core.identity',
       role: 'action',
@@ -59,7 +69,6 @@ export const requestPeopleSearchRebuildAction = defineAction(
     policies: [],
     resultSchema: RequestPeopleSearchRebuildResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_identity',
   },
   handle,
 );

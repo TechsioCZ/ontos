@@ -213,6 +213,8 @@ export const EnrollmentAttemptSnapshotSchema = Schema.Struct({
   lastFailureReason: Schema.optionalKey(EnrollmentBoundedTextSchema),
   lastOwnerInvocationId: Schema.optionalKey(EnrollmentActionInvocationIdSchema),
   lease: Schema.optionalKey(EnrollmentAttemptLeaseSchema),
+  /** The Action invocation that created the Attempt; absent only for Attempts created before it was recorded. */
+  originatorActionInvocationId: Schema.optionalKey(EnrollmentActionInvocationIdSchema),
   portalEnrollmentAttemptId: EnrollmentAttemptIdSchema,
   revision: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
   state: EnrollmentAttemptStateSchema,

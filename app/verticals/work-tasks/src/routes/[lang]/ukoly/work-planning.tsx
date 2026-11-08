@@ -7,7 +7,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
-import { Option, Schema } from 'effect';
+import { DateTime, Option, Schema } from 'effect';
 import { useRef, useState } from 'react';
 import type { WorkCommand } from '../../../../shared/actions/apply-command.ts';
 import { PlanningCommandSchema } from '../../../../shared/actions/apply-command.ts';
@@ -15,6 +15,8 @@ import { ProjectStateSchema } from '../../../../shared/apis/records.ts';
 import type { AssignmentPrincipal, RecordsResponse, WorkProject } from '../../../../shared/apis/records.ts';
 import { formatDueDate, isOpenTask, selectOption, todayIsoDate } from './tasks-model.ts';
 import { ChangeHistory } from './change-history.tsx';
+import { pendingProposal, planAnswer, PlanCommittedSchema, PlanProposedSchema } from './planning-proposal.ts';
+import type { PlanOutcome } from './planning-proposal.ts';
 
 const states = { ACTIVE: 'Aktivní', DONE: 'Dokončený', PAUSED: 'Pozastavený', PLANNED: 'Plánovaný' } as const;
 const hoursFormatter = new Intl.NumberFormat('cs-CZ');
@@ -23,8 +25,19 @@ type Draft = Pick<WorkProject, 'plannedEnd' | 'plannedStart' | 'state' | 'title'
   readonly milestones: readonly MilestoneDraft[];
   readonly responsiblePrincipalRef: string;
 };
-type Outcome = { readonly ok: true } | { readonly message: string; readonly ok: false };
-type Apply = (command: WorkCommand, onDone: (outcome: Outcome) => void) => void;
+type Apply = (command: WorkCommand, onDone: (outcome: PlanOutcome) => void) => void;
+/** A plan of one project (or of the new one) that waits for approval, with the message that says so. */
+interface ProposedPlan {
+  readonly command: typeof PlanningCommandSchema.Type;
+  readonly message: string;
+}
+
+/**
+ * Which proposals a panel sees: those made against this version of the project (or for a new one). Once the project
+ * changes, for example because the proposal was approved, an older proposal no longer holds the plan back.
+ */
+const proposalKey = (project: WorkProject | undefined) =>
+  project === undefined ? 'new' : `${project.id}@${DateTime.toEpochMillis(project.updatedAt)}`;
 
 /** Display identity follows content; identical text rows are distinguished only within their own group. */
 const milestoneDisplayItems = (milestones: WorkProject['milestones']) => {
@@ -61,16 +74,20 @@ const ProjectEditor = ({
   actorName,
   close,
   onApply,
+  onProposed,
   principalNames,
   principals,
   project,
+  proposed,
 }: {
   readonly actorName: (principalId: string, displayName?: string) => string;
   readonly close: () => void;
   readonly onApply: Apply;
+  readonly onProposed: (plan: ProposedPlan) => void;
   readonly principalNames: ReadonlyMap<string, string>;
   readonly principals: readonly AssignmentPrincipal[];
   readonly project: WorkProject | undefined;
+  readonly proposed: Option.Option<ProposedPlan>;
 }) => {
   const { t } = useModernI18n();
   const historyValue = (field: string, value: string | undefined): string => {
@@ -96,7 +113,7 @@ const ProjectEditor = ({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const patch = (value: Partial<Draft>) => setDraft((current) => ({ ...current, ...value }));
-  const save = () => {
+  const planCommand = () => {
     const input = {
       _tag: project === undefined ? 'CreateProject' : 'UpdateProject',
       ...draft,
@@ -111,7 +128,15 @@ const ProjectEditor = ({
     if (project !== undefined) {
       Object.assign(input, { id: project.id });
     }
-    const command = Schema.decodeUnknownOption(PlanningCommandSchema)(input);
+    return Schema.decodeUnknownOption(PlanningCommandSchema)(input);
+  };
+  const command = planCommand();
+  // The exact plan already waits for approval: it is shown as pending and cannot be sent again.
+  const pendingPlan = pendingProposal(proposed, command);
+  const save = () => {
+    if (Option.isSome(pendingPlan)) {
+      return;
+    }
     if (
       Option.isNone(command) ||
       draft.plannedStart > draft.plannedEnd ||
@@ -124,13 +149,19 @@ const ProjectEditor = ({
     }
     setBusy(true);
     setError(undefined);
-    onApply(command.value, (outcome) => {
+    const sent = command.value;
+    onApply(sent, (outcome) => {
       setBusy(false);
-      if (outcome.ok) {
+      const answer = planAnswer(outcome);
+      if (Schema.is(PlanCommittedSchema)(answer)) {
         close();
-      } else {
-        setError(outcome.message);
+        return;
       }
+      if (Schema.is(PlanProposedSchema)(answer)) {
+        onProposed({ command: sent, message: answer.message });
+        return;
+      }
+      setError(answer.message);
     });
   };
   return (
@@ -140,7 +171,7 @@ const ProjectEditor = ({
           <Button disabled={busy} onClick={close} theme="outlined" variant="secondary">
             Zrušit
           </Button>
-          <Button disabled={busy} isLoading={busy} onClick={save} variant="primary">
+          <Button disabled={busy || Option.isSome(pendingPlan)} isLoading={busy} onClick={save} variant="primary">
             Uložit projekt
           </Button>
         </>
@@ -157,6 +188,7 @@ const ProjectEditor = ({
     >
       <div className="flex flex-col gap-200 py-200">
         {error !== undefined && <StatusText status="error">{error}</StatusText>}
+        {Option.isSome(pendingPlan) && <output aria-live="polite">{pendingPlan.value.message}</output>}
         <FormInput
           disabled={busy}
           id="project-title"
@@ -325,6 +357,8 @@ export const WorkPlanning = ({
 }) => {
   const { t } = useModernI18n();
   const [editor, setEditor] = useState<{ readonly project?: WorkProject }>();
+  // Plans parked for approval, by project version; reopening the panel does not offer the same plan again.
+  const [proposals, setProposals] = useState<ReadonlyMap<string, ProposedPlan>>(new Map());
   const [from, setFrom] = useState(`${todayIsoDate().slice(0, 7)}-01`);
   const [to, setTo] = useState(`${todayIsoDate().slice(0, 7)}-31`);
   const projects = records.projects ?? [];
@@ -482,9 +516,11 @@ export const WorkPlanning = ({
           close={() => setEditor(undefined)}
           key={editor.project?.id ?? 'new'}
           onApply={onApply}
+          onProposed={(plan) => setProposals((current) => new Map([...current, [proposalKey(editor.project), plan]]))}
           principalNames={principalNames}
           principals={principals}
           project={editor.project}
+          proposed={Option.fromUndefinedOr(proposals.get(proposalKey(editor.project)))}
         />
       )}
     </div>

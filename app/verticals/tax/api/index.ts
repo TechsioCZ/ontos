@@ -1,3 +1,9 @@
+import {
+  OwnerActionApprovalSchemaErrorLive,
+  makeOwnerActionApprovalApiLive,
+} from '@app/core-runtime/access/approvals/owner-http';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
+import { taxRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
   defineDatabaseIdentityEnrollment,
@@ -5,16 +11,19 @@ import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   TenantModuleStateServiceLive,
   makeActionRuntimeLive,
 } from '@app/core-runtime';
 import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
+  TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
@@ -28,7 +37,10 @@ import { FetchHttpClient } from 'effect/http';
 import { taxApi, taxOperationContexts } from '../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 // <generated-governed-http-handler-support-imports>
-import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
+import {
+  ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive,
+  authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal,
+} from './auth/action-principal.ts';
 import {
   GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
   GatewayAssertionRedemptionDatabaseLive,
@@ -89,8 +101,15 @@ const runtimeObservabilityLive = Layer.mergeAll(
 );
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
+const accessEnforcementLive = AccessDecisionLive.pipe(
+  Layer.provideMerge(AccessEnforcementPortsLive),
+  Layer.provide(TenantIntentLoaderLive),
+  Layer.provide(CorePersistenceLive),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(nodeCryptoLayer),
+);
 const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
-  Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive)),
+  Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive, accessEnforcementLive)),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
 const readRuntimeDependenciesLive = Layer.mergeAll(
@@ -98,22 +117,27 @@ const readRuntimeDependenciesLive = Layer.mergeAll(
   ContextAccessLive,
   moduleEntrypointGatewayLive,
   operationalScopeResolverLive,
+  accessEnforcementLive,
 );
-const readRuntimeLive = ReadRuntimeLive.pipe(
-  Layer.provide(readRuntimeDependenciesLive),
-  Layer.provide(DatabaseConfigLive),
-  Layer.provide(databaseIdentitiesLive),
-);
-/** Read runtime bound by generated governed HTTP handlers mounted in the slot below. */
-export const governedReadRuntimeLive = readRuntimeLive;
 const compositionHttpClientLive = FetchHttpClient.layer.pipe(
   Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
 );
 const compositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(Layer.provide(compositionHttpClientLive));
-const actionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
+  Layer.provide(compositionSourceLive),
+);
+const readRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, taxRegistration).pipe(
+  Layer.provide(readRuntimeDependenciesLive),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(activeApplicationCompositionLive),
+);
+
+/** Read runtime bound by generated governed HTTP handlers mounted in the slot below. */
+export const governedReadRuntimeLive = readRuntimeLive;
+const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(ultramodernDeliveryUnit, taxRegistration).pipe(
   Layer.provide(
     Layer.mergeAll(
-      ActiveApplicationCompositionConfigLive.pipe(Layer.provide(compositionSourceLive)),
+      activeApplicationCompositionLive,
       CorePersistenceLive,
       ActionRepositoryLive,
       ActionPermissionLive,
@@ -121,6 +145,26 @@ const actionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
       moduleStateGateLive,
       moduleEntrypointGatewayLive,
       operationalScopeResolverLive,
+      accessEnforcementLive,
+    ),
+  ),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
+);
+
+const actionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, taxRegistration).pipe(
+  Layer.provideMerge(ownerActionApprovalsLive),
+  Layer.provide(
+    Layer.mergeAll(
+      activeApplicationCompositionLive,
+      CorePersistenceLive,
+      ActionRepositoryLive,
+      ActionPermissionLive,
+      ContextAccessLive,
+      moduleStateGateLive,
+      moduleEntrypointGatewayLive,
+      operationalScopeResolverLive,
+      accessEnforcementLive,
     ),
   ),
   Layer.provide(DatabaseConfigLive),
@@ -131,6 +175,10 @@ export const governedActionRuntimeLive = actionRuntimeLive;
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   taxReadinessLayer,
+  makeOwnerActionApprovalApiLive(taxApi, authenticateOwnerApprovalPrincipal).pipe(
+    GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
+    GovernedReadLayer.provide(governedActionRuntimeLive),
+  ),
   // <generated-governed-http-handler-layers>
   applicableTaxRuleSetReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   correctTaxRuleRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

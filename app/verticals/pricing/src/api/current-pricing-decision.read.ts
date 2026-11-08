@@ -25,6 +25,10 @@ import type { CurrentPricingDecisionRequest } from '../../shared/apis/current-pr
 import { currentPricingDecisionCustomerContextSubjectAuthorityFromEnvironment } from '../integrations/customer-context-subject-authority.ts';
 import { pricingCurrentDecisionPricingOwnerFinalFenceGatewayPerRead } from '../integrations/current-pricing-decision-owner-final-fence.ts';
 import { currentPricingDecisionWholeEvaluationPerRead } from '../integrations/current-pricing-decision-whole-evaluation-adapters.ts';
+import {
+  currentPricingDecisionRequirements,
+  requirePricingSubjectOperation,
+} from '../integrations/pricing-operation-requirements.ts';
 import { CurrentPricingDecisionEvaluationFactory } from '../services/current-pricing-decision-evaluation.service.ts';
 import type { CurrentPricingDecisionEvaluationService } from '../services/current-pricing-decision-evaluation.service.ts';
 import { CurrentPricingDecisionSubjectAuthority } from '../services/current-pricing-decision-subject-authority.service.ts';
@@ -38,7 +42,7 @@ const MODULE_KEY = 'commerce.pricing';
 
 const currentPricingDecisionEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'authenticated_principal' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.pricing.api.current-pricing-decision',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -46,6 +50,7 @@ const currentPricingDecisionEntrypoint = defineTenantModuleEntrypoint({
 
 export interface CurrentPricingDecisionTrustedScope {
   readonly legalEntityId: string;
+  /** The receiving request's own verified context. Owner connections need its gateway provenance, so it is never copied. */
   readonly principal: TrustedPrincipalContext;
 }
 
@@ -182,7 +187,7 @@ export const resolveCurrentPricingDecisionTrustedScope = (
     );
   }
   return Schema.decodeEffect(TrustedPrincipalContextSchema)(scope).pipe(
-    Effect.map((principal): CurrentPricingDecisionTrustedScope => ({ legalEntityId, principal })),
+    Effect.map((): CurrentPricingDecisionTrustedScope => ({ legalEntityId, principal: scope })),
     Effect.mapError((cause) =>
       Object.defineProperty(
         new OperationContextUnavailable({
@@ -225,7 +230,11 @@ export const prepareCurrentPricingDecision = Effect.fn('CurrentPricingDecisionRe
         }),
       ),
     );
-    const verifiedAuthority = yield* verifyCurrentPricingDecisionSubject(input, trustedScope, subjectAuthority.verify);
+    const verifiedAuthority = yield* verifyCurrentPricingDecisionSubject(input, trustedScope, (authorityInput) =>
+      requirePricingSubjectOperation(currentPricingDecisionRequirements.purchaseContext).pipe(
+        Effect.andThen(() => subjectAuthority.verify(authorityInput)),
+      ),
+    );
     return { compositionRevision, trustedScope, verifiedAuthority } satisfies CurrentPricingDecisionPrepared;
   },
 );
@@ -244,10 +253,15 @@ export const makeFinishCurrentPricingDecision = (
     context: ReadFinishContext<CurrentPricingDecisionPrepared, void>,
   ) {
     const { compositionRevision, trustedScope, verifiedAuthority } = context.prepared;
-    const verifiedScope = { ...context.scope, legalEntityId: trustedScope.legalEntityId };
+    const verifiedScope = context.scope;
     const [source, evaluationFactory] = yield* Effect.all(
       [
-        wholeEvaluationPerRead(context.transaction, verifiedScope, compositionRevision),
+        wholeEvaluationPerRead(
+          context.transaction,
+          verifiedScope,
+          compositionRevision,
+          currentPricingDecisionRequirements,
+        ),
         CurrentPricingDecisionEvaluationFactory,
       ],
       { concurrency: 2 },
@@ -256,6 +270,8 @@ export const makeFinishCurrentPricingDecision = (
       source,
       pricingOwnerFinalFencePerRead(context.transaction, verifiedScope, compositionRevision),
       compositionRevision,
+      context.scope,
+      currentPricingDecisionRequirements,
     );
     const result = yield* evaluateCurrentPricingDecision(input, trustedScope, verifiedAuthority, evaluation.evaluate);
     return { evidence: { resultCount: 1 }, result };
@@ -263,6 +279,19 @@ export const makeFinishCurrentPricingDecision = (
 
 export const currentPricingDecisionRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.pricing.decision.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'pricing-decisions', level: 'basic' },
+      // The customer-safe published projection states the money a purchase costs (A1): a price is
+      // financial materiality, so reading a decision is at least sensitive (O21). Audit A1 also
+      // proposed a `financial_amounts` group on `result.total` and the published line amounts; it is
+      // not declared because both are required by the wire contract and redacting a required property
+      // fails the transport encode (O17), so the whole read is the gate until they become optional.
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: currentPricingDecisionEntrypoint,
     evidencePolicy: {
@@ -272,7 +301,6 @@ export const currentPricingDecisionRead = defineRead(
     inputSchema: CurrentPricingDecisionRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.pricing.api.current-pricing-decision',
     resultSchema: CurrentPricingDecisionResponseSchema,
@@ -285,5 +313,4 @@ export const currentPricingDecisionRead = defineRead(
     finish: makeFinishCurrentPricingDecision(),
   },
   () => Effect.succeed({}),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

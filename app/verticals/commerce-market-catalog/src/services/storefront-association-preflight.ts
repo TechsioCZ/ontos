@@ -1,7 +1,12 @@
-import type { ActionServiceFactory, ActionServicePreflight, ActionServicePreparationContext } from '@app/core-runtime';
+import type {
+  ActionServiceFactory,
+  ActionServicePreflight,
+  ActionServicePreparationContext,
+  requireModuleOperation,
+} from '@app/core-runtime';
 import { OperationContextUnavailable, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { StorefrontApplicationIdSchema } from '@app/storefront-registry-contracts';
-import { DateTime, Effect, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Schema } from 'effect';
 import type { CurrentStorefrontApplicationRequest } from '@app/storefront-registry-contracts';
 import type { AssociateStorefrontPayload, ReviseStorefrontAssociationPayload } from '../../shared/action-contracts.ts';
 import type {
@@ -58,51 +63,67 @@ export const preparedStorefrontApplicationAuthority = (
   return { validateCurrent };
 };
 
-export const prepareStorefrontAssociationServices: ActionServicePreflight<
-  AssociateStorefrontPayload | ReviseStorefrontAssociationPayload,
-  AssociateStorefrontServices,
-  StorefrontApplicationValidationFailure
-> = Effect.fn('AssociateStorefrontAction.prepareServices')(function* prepareServices(
-  payload: AssociateStorefrontPayload | ReviseStorefrontAssociationPayload,
-  context: ActionServicePreparationContext,
-) {
-  const request = {
-    effectiveAt: DateTime.formatIso(payload.effectivePeriod.startsAt),
-    requestedChannel: payload.channel,
-    storefrontAppId: yield* Schema.decodeEffect(StorefrontApplicationIdSchema)(payload.storefrontRef.appId).pipe(
+export const prepareStorefrontAssociationServices = <
+  Payload extends AssociateStorefrontPayload | ReviseStorefrontAssociationPayload,
+>(
+  requireCurrentContract: () => ReturnType<typeof requireModuleOperation>,
+) =>
+  Effect.fn('AssociateStorefrontAction.prepareServices')(function* prepareServices(
+    payload: Payload,
+    context: ActionServicePreparationContext,
+  ) {
+    const request = {
+      effectiveAt: DateTime.formatIso(payload.effectivePeriod.startsAt),
+      requestedChannel: payload.channel,
+      storefrontAppId: yield* Schema.decodeEffect(StorefrontApplicationIdSchema)(payload.storefrontRef.appId).pipe(
+        Effect.mapError((cause) =>
+          Object.defineProperty(
+            new StorefrontApplicationValidationUnavailable({
+              code: 'storefront_application_validation_unavailable',
+              reason: 'The Storefront application identifier could not be validated for owner lookup',
+            }),
+            'cause',
+            { value: cause },
+          ),
+        ),
+      ),
+      tenantId: payload.storefrontRef.tenantId,
+    };
+    if (request.tenantId !== context.scope.tenantId) {
+      return yield* new StorefrontApplicationNotCurrent({
+        code: 'storefront_application_not_current',
+        reason: 'The Storefront application must belong to the trusted Tenant',
+      });
+    }
+    const crypto = yield* Crypto.Crypto;
+    const authority = makeServerCurrentStorefrontApplicationAuthority({
+      compositionRevision: context.compositionRevision,
+      crypto,
+      scope: context.scope,
+    });
+    yield* requireCurrentContract().pipe(
       Effect.mapError((cause) =>
         Object.defineProperty(
           new StorefrontApplicationValidationUnavailable({
             code: 'storefront_application_validation_unavailable',
-            reason: 'The Storefront application identifier could not be validated for owner lookup',
+            reason: 'Current Storefront application contract is unavailable',
           }),
           'cause',
-          { value: cause },
+          { configurable: true, value: cause },
         ),
       ),
-    ),
-    tenantId: payload.storefrontRef.tenantId,
-  };
-  if (request.tenantId !== context.scope.tenantId) {
-    return yield* new StorefrontApplicationNotCurrent({
-      code: 'storefront_application_not_current',
-      reason: 'The Storefront application must belong to the trusted Tenant',
-    });
-  }
-  const authority = makeServerCurrentStorefrontApplicationAuthority({
-    compositionRevision: context.compositionRevision,
-    legalEntityId: context.scope.legalEntityId,
-  });
-  const preparedAt = yield* DateTime.now;
-  const evidence = yield* authority.validateCurrent(request, context.scope.correlationId);
-  const { validateCurrent } = preparedStorefrontApplicationAuthority(
-    request,
-    context.scope.correlationId,
-    evidence,
-    preparedAt,
-  );
-  const factory: ActionServiceFactory<AssociateStorefrontServices> = Effect.fn('StorefrontAssociation.commitServices')(
-    function* commitServices(transaction, scope, revision) {
+    );
+    const preparedAt = yield* DateTime.now;
+    const evidence = yield* authority.validateCurrent(request, context.scope.correlationId);
+    const { validateCurrent } = preparedStorefrontApplicationAuthority(
+      request,
+      context.scope.correlationId,
+      evidence,
+      preparedAt,
+    );
+    const factory: ActionServiceFactory<AssociateStorefrontServices> = Effect.fn(
+      'StorefrontAssociation.commitServices',
+    )(function* commitServices(transaction, scope, revision) {
       if (
         scope.tenantId !== context.scope.tenantId ||
         scope.legalEntityId !== context.scope.legalEntityId ||
@@ -115,7 +136,7 @@ export const prepareStorefrontAssociationServices: ActionServicePreflight<
           reason: 'Prepared Storefront evidence belongs to another operation context',
         });
       }
-      const catalog = yield* marketAdministrationService(transaction, scope);
+      const catalog = yield* marketAdministrationService(transaction, scope, revision);
       return {
         ...catalog,
         associateStorefront: (input) =>
@@ -138,7 +159,11 @@ export const prepareStorefrontAssociationServices: ActionServicePreflight<
               ),
         validateCurrent,
       } satisfies AssociateStorefrontServices;
-    },
-  );
-  return factory;
-});
+    });
+    return factory;
+  }) satisfies ActionServicePreflight<
+    Payload,
+    AssociateStorefrontServices,
+    StorefrontApplicationValidationFailure,
+    Crypto.Crypto
+  >;

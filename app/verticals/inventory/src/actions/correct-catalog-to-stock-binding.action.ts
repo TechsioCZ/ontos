@@ -5,7 +5,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import type { ActionHandlerContext, OperationalScope, ReadServiceFactory } from '@app/core-runtime';
-import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Crypto, DateTime, Effect, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
@@ -386,27 +386,23 @@ export const makeCorrectCatalogToStockBindingServices = Effect.fn('CorrectCatalo
 
 export const correctCatalogToStockBindingAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.inventory.catalog-to-stock-binding.correct',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'bindings', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: `${ACTION_KEY}.access.v1` },
     actionKey: ACTION_KEY,
     auditEvidenceSchema: CorrectCatalogToStockBindingAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission<CorrectCatalogToStockBindingPayload>((payload) => ({
-      permission: 'inventory.catalog_to_stock_binding.manage',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: payload.bindingRef.moduleId,
-          resourceId: payload.bindingRef.resourceId,
-          resourceType: payload.bindingRef.resourceType,
-        },
-        tenantId: payload.bindingRef.tenantId,
-      },
-    })),
     domainErrorSchema: CorrectCatalogToStockBindingErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: MODULE_KEY,
       role: 'action',

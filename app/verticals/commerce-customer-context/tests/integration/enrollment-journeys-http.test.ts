@@ -2,10 +2,10 @@ import { createHmac, randomUUID } from 'node:crypto';
 import {
   enrollmentApplicationCompositionLayer,
   enrollmentApplicationCompositionRevision,
+  enrollmentApplicationCompositionSnapshot,
+  enrollmentApplicationCompositionVerificationLayer,
 } from '../support/enrollment-application-composition.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
-
-import { v1 } from '@authzed/authzed-node';
 
 import {
   ActionAuthorizationPreflightDatabaseLive,
@@ -13,10 +13,13 @@ import {
   CorePersistenceLive,
   DatabaseConfigLive,
 } from '@app/core-runtime';
+import { environmentTestAccessTarget, grantTestTenantRoleAccess } from '@app/core-runtime/testing/tenant-access';
 import { ResendEmailDeliveryConfig, ResendEmailDeliveryLive } from '@app/email-delivery/resend';
 import { FetchHttpClient } from 'effect/http';
 import { eq, like, sql } from 'drizzle-orm';
 import { Config, Context, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
+import { layer as nodeServicesLayer } from '@effect/platform-node/NodeServices';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -32,24 +35,10 @@ import {
   evidenceReferences,
   legalEntities,
   principalAuthBindings,
-  principalCompanyMemberships,
   principals,
   tenantModuleStates,
   tenants,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
-import { loadSpiceDbConfig } from '../../../../packages/core-runtime/src/permissions/config.ts';
-import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
-import {
-  BootstrapCompanyMembershipSchema,
-  installBootstrapCompanyMemberships,
-  scopedActionRoleBootstrapRelationships,
-} from '../../../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
-import { toLegalEntityAccessObjectId } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
-import { buildCompanyMembershipUpdates } from '../../../../packages/core-runtime/src/permissions/company-membership.ts';
-import { toScopedRoleObjectId } from '../../../../packages/core-runtime/src/permissions/scoped-role.ts';
-import { startPortalEnrollmentAction } from '../../src/actions/start-portal-enrollment.action.ts';
-import { claimPortalEnrollmentTransitionAction } from '../../src/actions/claim-portal-enrollment-transition.action.ts';
-import { recordPortalEnrollmentOutcomeAction } from '../../src/actions/record-portal-enrollment-outcome.action.ts';
 import {
   commerceCustomerContextActionRuntimeAwaitingOwnerPreparation,
   commercePortalAuthRealmLive,
@@ -224,12 +213,13 @@ const configuredRealmLive = Effect.fnUntraced(function* configuredRealmLive(
 const configuredRuntime = Effect.acquireRelease(
   Effect.gen(function* buildConfiguredRuntime() {
     const realmLive = yield* configuredRealmLive();
+    const snapshot = yield* enrollmentApplicationCompositionSnapshot;
     return makeCommerceCustomerContextApiRuntime(
       productionReadRuntimeLive,
       productionActionRuntimeLive,
       configuredGatewayAssertionRedemptionLive,
       realmLive,
-      Layer.empty,
+      enrollmentApplicationCompositionVerificationLayer(snapshot),
       DatabaseConfigLive,
       ContextAccessLive,
     ).createHandler();
@@ -462,6 +452,7 @@ const continuationLive = Effect.fnUntraced(function* continuationLive(
     ),
   );
   const registryLive = CommerceEnrollmentOwnerEffectRegistryLive.pipe(
+    Layer.provide(nodeCryptoLayer),
     Layer.provide(
       Layer.mergeAll(
         accountLookupLive,
@@ -1600,10 +1591,7 @@ it.live(
         );
         // No Action grants at all: the budget below is spent before any governed Action runs, so
         // this Principal never needs authorization to exhaust it.
-        const realm = yield* makeCounterpartyInvitationRealm(fixture, {
-          recipientActionKeys: [],
-          storefrontActionKeys: [],
-        });
+        const realm = yield* makeCounterpartyInvitationRealm(fixture);
         const capture = makeCapturingCounterpartyInvitationProofDelivery();
         const issued = yield* issueCounterpartyAccessInvitation(
           realm,
@@ -1916,9 +1904,6 @@ it.live(
  * caller, and the Attempt is left carrying no owner transition and no account.
  */
 
-const START_ACTION_KEY = 'commerce.customer-context.start-portal-enrollment';
-const CLAIM_ACTION_KEY = 'commerce.customer-context.claim-portal-enrollment-transition';
-const RECORD_ACTION_KEY = 'commerce.customer-context.record-portal-enrollment-outcome';
 const GOVERNED_START_ISSUER = 'http://gateway.enrollment-start-redemption.test';
 const GOVERNED_START_KEY_ID = 'enrollment-start-redemption';
 
@@ -1932,6 +1917,8 @@ interface GovernedStartSubject {
 /**
  * The Core rows an ordinary governed start reads: the Tenant, the enrolling Principal, the Selling
  * Legal Entity the journey names, the Commerce module state and the Principal's auth binding.
+ * The Tenant, Legal Entity and Principals are retained on close, because the v2 access intent a
+ * scenario grants pins them and Core never removes access intent.
  */
 const seedGovernedStartSubject = Effect.fnUntraced(function* seedGovernedStartSubject(tenantId: string) {
   const connections = yield* loadDatabaseConnectionPair();
@@ -1949,11 +1936,7 @@ const seedGovernedStartSubject = Effect.fnUntraced(function* seedGovernedStartSu
       evidenceReferences,
       actionInvocations,
       principalAuthBindings,
-      principalCompanyMemberships,
       tenantModuleStates,
-      legalEntities,
-      principals,
-      tenants,
     ]) {
       yield* admin.executor.delete(table).where(eq(table.tenantId, subject.tenantId));
     }
@@ -1996,115 +1979,44 @@ const seedGovernedStartSubject = Effect.fnUntraced(function* seedGovernedStartSu
     subjectType: 'user',
     tenantId: subject.tenantId,
   });
-  yield* admin.executor.transaction((transaction) =>
-    installBootstrapCompanyMemberships(transaction, subject.tenantId, [
-      Schema.decodeUnknownSync(BootstrapCompanyMembershipSchema)({
-        affiliation: 'external',
-        legalEntityId: subject.legalEntityId,
-        principalId: subject.principalId,
-      }),
-    ]),
-  );
   return subject;
 });
 
-/** Tenant membership and the execute grant for each governed Action a scenario runs. */
-const seedGovernedStartAuthorization = Effect.fnUntraced(function* seedGovernedStartAuthorization(
-  subject: GovernedStartSubject,
-  actionKeys: readonly string[] = [START_ACTION_KEY, CLAIM_ACTION_KEY],
-) {
-  const configuration = yield* loadSpiceDbConfig();
-  const client = yield* Effect.acquireRelease(
-    Effect.sync(() => newSpiceDbGrpcClient(configuration)),
-    (resource) => Effect.sync(() => resource.close()),
-  );
-  const principalSubject = v1.SubjectReference.create({
-    object: v1.ObjectReference.create({ objectId: subject.principalId, objectType: 'principal' }),
+/** The platform services the v2 access seed reads the catalog and mints its ids with. */
+const tenantAccessServices = Layer.mergeAll(nodeServicesLayer, nodeCryptoLayer);
+
+/**
+ * The governed Actions an enrollment start, its transition claim and its outcome record declare, by
+ * their `accessDeclaration` keys. A portal session that holds no legacy business Permission reaches
+ * them through a v2 tenant role of exactly these capabilities, in every scope of its Tenant and its
+ * company: `start` is `optional` scope so the role in the company scope admits it, and the claim and
+ * the record are admitted by the same role. The storefront workload carrier on `start` belongs to the
+ * shared Storefront client's own visitor start, not to a human portal session, so it is not what
+ * these scenarios exercise.
+ */
+const GOVERNED_START_CAPABILITY_KEYS = [
+  'commerce.customer-context.portal-enrollment.start',
+  'commerce.customer-context.portal-enrollment-transition.claim',
+  'commerce.customer-context.portal-enrollment-outcome.record',
+];
+
+/** Tenant membership and a role of exactly the governed start's capabilities, for each subject. */
+const seedGovernedStartAuthorization = (subject: GovernedStartSubject, ...others: readonly GovernedStartSubject[]) => {
+  const holderOf = ({ principalId }: GovernedStartSubject) => ({
+    capabilityKeys: GOVERNED_START_CAPABILITY_KEYS,
+    principalId,
   });
-  const tenantObject = v1.ObjectReference.create({ objectId: subject.tenantId, objectType: 'tenant' });
-  const relationships = [
-    v1.Relationship.create({ relation: 'member', resource: tenantObject, subject: principalSubject }),
-    v1.Relationship.create({
-      relation: 'tenant',
-      resource: v1.ObjectReference.create({
-        objectId: Schema.decodeUnknownSync(Schema.String)(
-          toLegalEntityAccessObjectId(subject.tenantId, subject.legalEntityId),
-        ),
-        objectType: 'legal_entity',
+  return environmentTestAccessTarget.pipe(
+    Effect.flatMap((target) =>
+      grantTestTenantRoleAccess({
+        ...target,
+        holders: [holderOf(subject), ...others.map(holderOf)],
+        legalEntityIds: [subject.legalEntityId],
+        tenantId: subject.tenantId,
       }),
-      subject: v1.SubjectReference.create({ object: tenantObject }),
-    }),
-    ...buildCompanyMembershipUpdates({
-      affiliation: 'external',
-      companyActive: true,
-      kind: 'human',
-      legalEntityId: subject.legalEntityId,
-      principalId: subject.principalId,
-      principalStatus: 'active',
-      status: 'active',
-      tenantActive: true,
-      tenantId: subject.tenantId,
-    }).map((update) => update.relationship),
-    ...actionKeys.flatMap((actionKey) => {
-      const descriptor = [
-        startPortalEnrollmentAction.descriptor,
-        claimPortalEnrollmentTransitionAction.descriptor,
-        recordPortalEnrollmentOutcomeAction.descriptor,
-      ].find((candidate) => candidate.actionKey === actionKey);
-      if (descriptor === undefined) {
-        throw new Error(`Unsupported enrollment fixture Action: ${actionKey}`);
-      }
-      const roleKey = `enrollment:${subject.principalId}:${actionKey}`;
-      const tenantScope = { roleKey, tenantId: subject.tenantId };
-      const scopes =
-        descriptor.legalEntityScope === 'forbidden'
-          ? [tenantScope]
-          : [tenantScope, { ...tenantScope, legalEntityId: subject.legalEntityId }];
-      return scopes.flatMap((scope) => [
-        ...scopedActionRoleBootstrapRelationships({
-          ...scope,
-          action: {
-            actionKey: descriptor.actionKey,
-            legalEntityScope: descriptor.legalEntityScope,
-            owningModuleKey: descriptor.owningModuleKey,
-            provisioning: 'explicit',
-          },
-        }).map((relationship) =>
-          v1.Relationship.create({
-            relation: relationship.relation,
-            resource: v1.ObjectReference.create({
-              objectId: relationship.resourceId,
-              objectType: relationship.resourceType,
-            }),
-            subject: v1.SubjectReference.create({
-              object: v1.ObjectReference.create({
-                objectId: relationship.subjectId,
-                objectType: relationship.subjectType,
-              }),
-              optionalRelation: relationship.subjectRelation ?? '',
-            }),
-          }),
-        ),
-        v1.Relationship.create({
-          relation: 'member',
-          resource: v1.ObjectReference.create({ objectId: toScopedRoleObjectId(scope), objectType: 'scoped_role' }),
-          subject: principalSubject,
-        }),
-      ]);
-    }),
-  ];
-  const write = (operation: v1.RelationshipUpdate_Operation) =>
-    Effect.promise(
-      async () =>
-        await client.promises.writeRelationships(
-          v1.WriteRelationshipsRequest.create({
-            updates: relationships.map((relationship) => v1.RelationshipUpdate.create({ operation, relationship })),
-          }),
-        ),
-    );
-  yield* write(v1.RelationshipUpdate_Operation.TOUCH);
-  yield* Effect.addFinalizer(() => write(v1.RelationshipUpdate_Operation.DELETE).pipe(Effect.asVoid, Effect.orDie));
-});
+    ),
+  );
+};
 
 /**
  * A second Principal sharing the first's Tenant and Legal Entity, for a scenario where two
@@ -2123,7 +2035,7 @@ const seedSecondGovernedStartPrincipal = Effect.fnUntraced(function* seedSecondG
     principalId: randomUUID(),
     tenantId,
   };
-  // Rows live and die with the Tenant fixture's own cleanup, which removes them in dependency order.
+  // The auth binding is removed with the Tenant fixture's own cleanup; the Principal is retained with it.
   yield* admin.executor.insert(principals).values({
     displayName: 'Enrollment start redemption second customer',
     kind: 'human',
@@ -2141,15 +2053,6 @@ const seedSecondGovernedStartPrincipal = Effect.fnUntraced(function* seedSecondG
     subjectType: 'user',
     tenantId: subject.tenantId,
   });
-  yield* admin.executor.transaction((transaction) =>
-    installBootstrapCompanyMemberships(transaction, subject.tenantId, [
-      Schema.decodeUnknownSync(BootstrapCompanyMembershipSchema)({
-        affiliation: 'external',
-        legalEntityId: subject.legalEntityId,
-        principalId: subject.principalId,
-      }),
-    ]),
-  );
   return subject;
 });
 
@@ -2278,7 +2181,7 @@ it.live(
         expect(refused.status).toBe(400);
         expect(presented).toHaveLength(3);
       }),
-    ),
+    ).pipe(Effect.provide(tenantAccessServices)),
   180_000,
 );
 
@@ -2443,7 +2346,7 @@ it.live(
         // The address' durable budget row, removed again on scope close.
         expect(yield* enrollmentStartBudgetKeys(email)).toHaveLength(1);
       }),
-    ),
+    ).pipe(Effect.provide(tenantAccessServices)),
   180_000,
 );
 
@@ -2466,9 +2369,8 @@ it.live(
           yield* enrollmentApplicationCompositionRevision,
         );
         const first = yield* seedGovernedStartSubject(tenantId);
-        yield* seedGovernedStartAuthorization(first);
         const second = yield* seedSecondGovernedStartPrincipal(tenantId, first.legalEntityId);
-        yield* seedGovernedStartAuthorization(second);
+        yield* seedGovernedStartAuthorization(first, second);
         const gateway = yield* makeAcceptanceGatewayIssuer(GOVERNED_START_ISSUER, GOVERNED_START_KEY_ID);
         const runtime = yield* authenticatedRuntime(
           gateway,
@@ -2535,7 +2437,7 @@ it.live(
           yield* readEnrollmentAcceptanceOperations(fixture, firstStarted.attempt.portalEnrollmentAttemptId),
         ).toHaveLength(1);
       }),
-    ),
+    ).pipe(Effect.provide(tenantAccessServices)),
   180_000,
 );
 
@@ -2637,7 +2539,7 @@ it.live(
         expect(attempt.accountSubject).toBeUndefined();
         expect(attempt.state).toBe('IN_PROGRESS');
       }),
-    ),
+    ).pipe(Effect.provide(tenantAccessServices)),
   180_000,
 );
 
@@ -2660,7 +2562,7 @@ it.live(
           yield* enrollmentApplicationCompositionRevision,
         );
         const subject = yield* seedGovernedStartSubject(tenantId);
-        yield* seedGovernedStartAuthorization(subject, [RECORD_ACTION_KEY]);
+        yield* seedGovernedStartAuthorization(subject);
         let deliveryAvailable = false;
         const deliveryFetch: typeof fetch = () =>
           Promise.resolve(
@@ -2821,7 +2723,7 @@ it.live(
           },
         ]);
       }),
-    ),
+    ).pipe(Effect.provide(tenantAccessServices)),
   180_000,
 );
 

@@ -66,10 +66,7 @@ const recoverCreateControlledAttributeValue = Effect.fn('CreateControlledAttribu
 
 const createControlledAttributeValueRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: {
-    kind: 'context_permission',
-    permission: 'commerce.catalog.read.create-controlled-attribute-value-recovery',
-  },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.create-controlled-attribute-value-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -77,6 +74,14 @@ const createControlledAttributeValueRecoveryEntrypoint = defineTenantModuleEntry
 
 export const createControlledAttributeValueRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.create-controlled-attribute-value-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'controlled-attribute-value', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: createControlledAttributeValueRecoveryEntrypoint,
     evidencePolicy: {
@@ -86,7 +91,6 @@ export const createControlledAttributeValueRecoveryRead = defineRead(
     inputSchema: CreateControlledAttributeValueRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.create-controlled-attribute-value-recovery',
     resultSchema: CreateControlledAttributeValueRecoveryResponseSchema,
@@ -100,5 +104,4 @@ export const createControlledAttributeValueRecoveryRead = defineRead(
   },
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

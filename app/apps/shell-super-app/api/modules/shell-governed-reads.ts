@@ -1,5 +1,4 @@
 import {
-  ContextAccess,
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
   ReadInputValidationError,
@@ -8,10 +7,11 @@ import {
   TenantModuleStateService,
   defineRead,
   defineSystemModuleEntrypoint,
-  withRequestPermissionDecisions,
 } from '@app/core-runtime';
 import { admitPeopleSystemSearch, corePeopleSystemSearchProvider } from '@app/core-runtime/people/search';
 import type { PeopleSystemSearchAccess, PeopleSystemSearchAdmission } from '@app/core-runtime/people/search';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import type { GateInput } from '@app/core-runtime/access/enforcement';
 import type {
   OperationalScope,
   ReadCoreError,
@@ -23,7 +23,7 @@ import type {
   makeTenantModuleStateService,
 } from '@app/core-runtime';
 import { makeLegalEntityNavigationExclusions } from '@app/core-runtime/modules/legal-entity-navigation-exclusions';
-import { Context, Effect, Layer, Option, Result, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
 
 import {
   ResourceRefSchema,
@@ -42,6 +42,7 @@ import type {
 } from '../../shared/api.ts';
 import { capturedShellCatalog } from './captured-shell-catalog.ts';
 import type { ShellInstalledCatalog } from './installed-module-catalog.ts';
+import { ShellGovernedReadDefinitions } from './shell-governed-read-definitions.ts';
 import { ShellCompositionFactory } from './shell-composition.ts';
 import type { ShellModuleTargetResolution, ShellModuleTargetSelector } from './shell-composition.ts';
 import {
@@ -215,41 +216,40 @@ export class ShellGovernedReads extends Context.Service<ShellGovernedReads, Shel
 const emptyInput = Schema.Struct({});
 const compositionEntrypoint = defineSystemModuleEntrypoint({
   access: 'read',
-  // The frame is company-admission metadata; module/page capabilities still filter its contents below.
-  authorization: { kind: 'authenticated_principal' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'core.shell.composition',
   moduleKey: 'core.shell',
   role: 'api',
 });
 const searchEntrypoint = defineSystemModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'core.shell.search',
   moduleKey: 'core.shell',
   role: 'search',
 });
 const moduleTargetEntrypoint = defineSystemModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'core.shell.module-target',
   moduleKey: 'core.shell',
   role: 'api',
 });
 /**
- * Tenant-only counterpart of the module target. Its frame is the authenticated principal; the target page's owning
- * module is gated by a genuine tenant `module.access` context permission in the handler, and the read is
- * `legalEntityScope: 'optional'` so a verified tenant session without a selected company can be admitted.
+ * Tenant-only counterpart of the module target. Its routine routing capability and the target page's own
+ * declaration are checked through the canonical gate. `legalEntityScope: 'optional'` admits a tenant context
+ * without a selected company; a company-scoped page still answers `selection_required`, never an implicit allow.
  */
 const tenantModuleTargetEntrypoint = defineSystemModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'authenticated_principal' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'core.shell.tenant-module-target',
   moduleKey: 'core.shell',
   role: 'api',
 });
 const resourceDetailEntrypoint = defineSystemModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'core.shell.resource-detail-timeline',
   moduleKey: 'core.shell',
   role: 'api',
@@ -344,8 +344,7 @@ type CoreSystemSearchAdmission = PeopleSystemSearchAdmission | 'inapplicable';
 /**
  * The Core people system branch is considered only for a non-OAuth session with a selected company and a real query;
  * otherwise it is `inapplicable` and simply omitted. When it is considered, the Core people read's own coarse
- * principal authorization decides: `module.access` and the directory alternative `read_people` are independent gates,
- * so a definite denial of either is a definite denial. Per-record filtering and the data read stay with the provider.
+ * canonical list capability decides admission. Per-record filtering and the data read stay with the provider.
  */
 const coreSystemSearchAdmission = Effect.fn('ShellGovernedReads.coreSystemSearchAdmission')(function* admittedCore(
   scope: OperationalScope,
@@ -389,15 +388,15 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
     ShellScopedModuleStateFactory,
   ]
 ) {
-  const contextAccess = yield* ContextAccess;
   const systemSearch = yield* Effect.serviceOption(ShellSystemSearch);
+  const access = yield* AccessDecisionGate;
   const moduleStates = yield* TenantModuleStateService;
   const compositionFactory = yield* ShellCompositionFactory;
   const resourceServicesFactory = yield* ShellResourceServicesFactory;
   const dependencies = {
     ...assertionIssuer,
+    access,
     catalog: capturedShellCatalog,
-    contextAccess,
     moduleStates,
   };
   // Catalog and SpiceDB decisions run before and after the governed-read transaction; it holds tenant data only.
@@ -430,6 +429,14 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
   const moduleTargetUnavailable = unavailableBecause('The Shell module target is temporarily unavailable');
   const composition = defineRead(
     {
+      accessDeclaration: {
+        key: 'core.shell.composition.read',
+        kind: 'read',
+        modes: ['run'],
+        placement: { group: 'shell', level: 'basic' },
+        risk: 'routine',
+        selectors: [],
+      },
       accessKind: 'list',
       entrypoint: compositionEntrypoint,
       evidencePolicy: {
@@ -439,7 +446,6 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
       inputSchema: emptyInput,
       legalEntityScope: 'required',
       owningModuleKey: 'core.shell',
-      permissionTarget: 'legal_entity',
       policies: [],
       readKey: 'core.shell.composition',
       resultSchema: ShellCompositionSchema,
@@ -464,10 +470,17 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
       // oxlint-enable perfectionist/sort-objects
     },
     serviceFactory,
-    () => ({ kind: 'legal_entity' }),
   );
   const search = defineRead(
     {
+      accessDeclaration: {
+        key: 'core.shell.resources.search',
+        kind: 'read',
+        modes: ['run'],
+        placement: { group: 'resources', level: 'extended' },
+        risk: 'sensitive',
+        selectors: [],
+      },
       accessKind: 'search',
       entrypoint: searchEntrypoint,
       evidencePolicy: {
@@ -477,7 +490,6 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
       inputSchema: ShellSearchPayloadSchema,
       legalEntityScope: 'optional',
       owningModuleKey: 'core.shell',
-      permissionTarget: 'tenant',
       policies: [],
       readKey: 'core.shell.search',
       resultSchema: ShellSearchResponseSchema,
@@ -532,7 +544,7 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
           const admission = yield* coreSystemSearchAdmission(
             context.scope,
             request,
-            contextAccess,
+            access,
             Option.isSome(systemSearch),
           );
           // An indeterminate People admission fails the whole inventory read before any owner work; a definite denial
@@ -555,7 +567,7 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
           requested === undefined || requested.includes(corePeopleSystemSearchProvider.resource.key);
         const admittedCoreSystem = wantsCoreSystem
           ? yield* resolveCoreSystemSearchBranch(
-              yield* coreSystemSearchAdmission(context.scope, request, contextAccess, Option.isSome(systemSearch)),
+              yield* coreSystemSearchAdmission(context.scope, request, access, Option.isSome(systemSearch)),
             )
           : false;
         const includeSystem = admittedCoreSystem && system !== undefined;
@@ -615,12 +627,17 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
       // oxlint-enable perfectionist/sort-objects
     },
     serviceFactory,
-    // Provider-specific Party tenant and Counterparty resource checks run inside the orchestrator.
-    () => ({ kind: 'tenant', permission: 'access' }),
-    () => [],
   );
   const moduleTarget = defineRead(
     {
+      accessDeclaration: {
+        key: 'core.shell.module-target.resolve',
+        kind: 'read',
+        modes: ['run'],
+        placement: { group: 'shell', level: 'basic' },
+        risk: 'routine',
+        selectors: [],
+      },
       accessKind: 'detail',
       entrypoint: moduleTargetEntrypoint,
       evidencePolicy: {
@@ -630,7 +647,6 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
       inputSchema: GovernedResolveModuleTargetPayloadSchema,
       legalEntityScope: 'required',
       owningModuleKey: 'core.shell',
-      permissionTarget: 'legal_entity',
       policies: [],
       readKey: 'core.shell.module-target',
       resultSchema: GovernedResolvedModuleTargetSchema,
@@ -649,10 +665,17 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
       // oxlint-enable perfectionist/sort-objects
     },
     serviceFactory,
-    () => ({ kind: 'legal_entity' }),
   );
   const tenantModuleTarget = defineRead(
     {
+      accessDeclaration: {
+        key: 'core.shell.tenant-module-target.resolve',
+        kind: 'read',
+        modes: ['run'],
+        placement: { group: 'shell', level: 'basic' },
+        risk: 'routine',
+        selectors: [],
+      },
       accessKind: 'detail',
       entrypoint: tenantModuleTargetEntrypoint,
       evidencePolicy: {
@@ -662,8 +685,6 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
       inputSchema: GovernedResolveModuleTargetPayloadSchema,
       legalEntityScope: 'optional',
       owningModuleKey: 'core.shell',
-      // A tenant-only read has no company target to ask; the handler checks the owning module's tenant permission.
-      permissionTarget: 'tenant',
       policies: [],
       readKey: 'core.shell.tenant-module-target',
       resultSchema: ShellTenantModuleTargetSchema,
@@ -684,10 +705,17 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
       // oxlint-enable perfectionist/sort-objects
     },
     serviceFactory,
-    () => ({ kind: 'tenant', permission: 'access' }),
   );
   const resourceDetail = defineRead(
     {
+      accessDeclaration: {
+        key: 'core.shell.resource-detail.read',
+        kind: 'read',
+        modes: ['run'],
+        placement: { group: 'resources', level: 'extended' },
+        risk: 'sensitive',
+        selectors: [],
+      },
       accessKind: 'detail',
       entrypoint: resourceDetailEntrypoint,
       evidencePolicy: {
@@ -697,9 +725,6 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
       inputSchema: ResourceRefSchema,
       legalEntityScope: 'required',
       owningModuleKey: 'core.shell',
-      // The handler decides module access, then record existence and record access, so an unknown record of
-      // an allowed agenda is "not found" while a denied agenda stays "forbidden".
-      permissionTarget: 'legal_entity',
       policies: [],
       readKey: 'core.shell.resource-detail-timeline',
       resultSchema: ShellResourceResponseSchema,
@@ -740,56 +765,51 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
             reason: 'The requested Shell resource is forbidden',
           });
         }
-        if (resolution.outcome !== 'resolved' && resolution.outcome !== 'detail_not_supported') {
+        if (resolution.outcome !== 'resolved') {
           return yield* new ReadHandlerUnavailable({
             code: 'read_handler_unavailable',
             reason: 'The Shell resource provider is temporarily unavailable',
           });
         }
-        // The real detail gate has admitted this exact owner and record. A tenant search declaration additionally
-        // retains its canonical tenant permission; a selected company does not stand in for that permission.
-        const descriptors = catalog.contracts.flatMap(({ manifest }) =>
-          manifest.module.id === ref.moduleId
-            ? manifest.publicSurface.search.filter(
-                (descriptor) =>
-                  descriptor.owningModuleId === ref.moduleId && descriptor.resourceType === ref.resourceType,
-              )
-            : [],
-        );
+        // Presentation follows each published search carrier, independently of the admitted detail read.
+        const ownerSurface = catalog.getByModuleId(ref.moduleId)?.manifest.publicSurface;
+        const candidates = (ownerSurface?.shellContributions.search ?? []).flatMap((contribution) => {
+          const descriptor = ownerSurface?.search.find(
+            (entry) => entry.key === contribution.searchKey && entry.resourceType === ref.resourceType,
+          );
+          return descriptor === undefined ? [] : [{ contribution, descriptor }];
+        });
+        const now = yield* DateTime.nowAsDate;
         const admitted = yield* Effect.forEach(
-          descriptors,
-          (descriptor) => {
-            const binding = { ownerModuleId: ref.moduleId, resourceType: ref.resourceType, searchKey: descriptor.key };
-            if (descriptor.accessFiltering !== 'tenant_scope') {
-              return Effect.succeed([binding]);
-            }
-            if (descriptor.tenantPermission === undefined) {
-              return Effect.succeed([]);
-            }
-            return dependencies.contextAccess
-              .tenants({
-                permission: descriptor.tenantPermission,
-                principalId: context.scope.principalId,
-                tenantIds: [context.scope.tenantId],
-              })
-              .pipe(
-                Effect.flatMap((decisions) => {
-                  const [decision] = decisions;
-                  if (
-                    decisions.length !== 1 ||
-                    decision?.key !== context.scope.tenantId ||
-                    decision.decision === 'unavailable'
-                  ) {
-                    return Effect.fail(
-                      new ReadHandlerUnavailable({
-                        code: 'read_handler_unavailable',
-                        reason: 'Shell resource tenant admission is unavailable',
-                      }),
-                    );
-                  }
-                  return Effect.succeed(decision.decision === 'allowed' ? [binding] : []);
-                }),
-              );
+          candidates,
+          ({ contribution, descriptor }) => {
+            const question: GateInput = {
+              carrier: { accessDeclaration: contribution.accessDeclaration },
+              legalEntityScope: descriptor.legalEntityScope ?? 'required',
+              now,
+              scope: context.scope,
+            };
+            const answer =
+              (contribution.accessDeclaration?.selectors.length ?? 0) > 0
+                ? access.list(question).pipe(Effect.map(({ decision }) => decision))
+                : access.decide(question);
+            return answer.pipe(
+              Effect.flatMap((decision) => {
+                if (decision.outcome === 'UNAVAILABLE') {
+                  return Effect.fail(
+                    new ReadHandlerUnavailable({
+                      code: 'read_handler_unavailable',
+                      reason: 'Shell resource presentation admission is unavailable',
+                    }),
+                  );
+                }
+                return Effect.succeed(
+                  decision.outcome === 'ALLOWED'
+                    ? [{ ownerModuleId: ref.moduleId, resourceType: ref.resourceType, searchKey: descriptor.key }]
+                    : [],
+                );
+              }),
+            );
           },
           { concurrency: 4 },
         );
@@ -800,12 +820,6 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
             compositionRevision: catalog.composition.revision,
           }),
         ).pipe(Effect.mapError(unavailableBecause('Shell resource presentation is temporarily unavailable')));
-        if (resolution.outcome === 'detail_not_supported') {
-          return {
-            evidence: { resultCount: 0 },
-            result: { outcome: 'detail_not_supported' as const, presentation, ref },
-          };
-        }
         return {
           evidence: { resultCount: 1 },
           result: {
@@ -821,68 +835,38 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
       // oxlint-enable perfectionist/sort-objects
     },
     serviceFactory,
-    () => ({ kind: 'legal_entity' }),
   );
   return {
     composition,
     moduleTarget,
-    prefetchCompositionDecisions: (principal: TrustedPrincipalContext) =>
-      compositionAccess.prefetchCompositionDecisions(
-        principal.legalEntityId === undefined
-          ? { principalId: principal.principalId, tenantId: principal.tenantId }
-          : {
-              legalEntityId: principal.legalEntityId,
-              principalId: principal.principalId,
-              tenantId: principal.tenantId,
-            },
-      ),
-    prefetchModuleTargetDecisions: (principal: TrustedPrincipalContext, selector: MutableModuleTargetSelector) =>
-      compositionAccess.prefetchModuleTargetDecisions(
-        principal.legalEntityId === undefined
-          ? { principalId: principal.principalId, tenantId: principal.tenantId }
-          : {
-              legalEntityId: principal.legalEntityId,
-              principalId: principal.principalId,
-              tenantId: principal.tenantId,
-            },
-        selector,
-        moduleTargetEntrypoint.moduleKey,
-      ),
     resourceDetail,
     search,
     tenantModuleTarget,
   } as const;
 });
 
-export const createShellGovernedReadsLayer = (
+export type ShellGovernedReadRegistrationSet = Effect.Success<ReturnType<typeof makeRegistrations>>;
+
+export const createShellGovernedReadDefinitionsLayer = (
   ...[gateways, assertionIssuer, scopedModuleStateFactory]: readonly [
     ShellResourceGateways,
     ShellProviderAssertionIssuer,
     ShellScopedModuleStateFactory,
   ]
-) =>
+) => Layer.effect(ShellGovernedReadDefinitions, makeRegistrations(gateways, assertionIssuer, scopedModuleStateFactory));
+
+export const createShellGovernedReadsLayer = (registrations: ShellGovernedReadRegistrationSet) =>
   Layer.effect(
     ShellGovernedReads,
-    Effect.gen(function* makeShellGovernedReads() {
-      const runtime = yield* ReadRuntime;
-      const registrations = yield* makeRegistrations(gateways, assertionIssuer, scopedModuleStateFactory);
-      return {
-        // The read's SpiceDB checks join decisions asked for beside it, in one round trip with the read's own start.
+    ReadRuntime.pipe(
+      Effect.map((runtime) => ({
         composition: (request) =>
-          withRequestPermissionDecisions(
-            Effect.all(
-              [
-                registrations.prefetchCompositionDecisions(request.principal),
-                runtime.runRead({
-                  input: {},
-                  principal: request.principal,
-                  registration: registrations.composition,
-                  transport: { correlationId: request.correlationId },
-                }),
-              ],
-              { concurrency: 2 },
-            ).pipe(Effect.map(([, composition]) => composition)),
-          ),
+          runtime.runRead({
+            input: {},
+            principal: request.principal,
+            registration: registrations.composition,
+            transport: { correlationId: request.correlationId },
+          }),
         moduleTarget: (request) => {
           const input: MutableModuleTargetSelector = {};
           if (request.compositionRevision !== undefined) {
@@ -901,20 +885,12 @@ export const createShellGovernedReadsLayer = (
             request.moduleId === undefined
               ? { correlationId: request.correlationId }
               : { correlationId: request.correlationId, targetModuleKey: request.moduleId };
-          return withRequestPermissionDecisions(
-            Effect.all(
-              [
-                registrations.prefetchModuleTargetDecisions(request.principal, input),
-                runtime.runRead({
-                  input,
-                  principal: request.principal,
-                  registration: registrations.moduleTarget,
-                  transport,
-                }),
-              ],
-              { concurrency: 2 },
-            ).pipe(Effect.map(([, target]) => target)),
-          );
+          return runtime.runRead({
+            input,
+            principal: request.principal,
+            registration: registrations.moduleTarget,
+            transport,
+          });
         },
         resourceDetail: (request) =>
           runtime.runRead({
@@ -977,15 +953,13 @@ export const createShellGovernedReadsLayer = (
             request.moduleId === undefined
               ? { correlationId: request.correlationId }
               : { correlationId: request.correlationId, targetModuleKey: request.moduleId };
-          return withRequestPermissionDecisions(
-            runtime.runRead({
-              input,
-              principal: request.principal,
-              registration: registrations.tenantModuleTarget,
-              transport,
-            }),
-          );
+          return runtime.runRead({
+            input,
+            principal: request.principal,
+            registration: registrations.tenantModuleTarget,
+            transport,
+          });
         },
-      };
-    }),
+      })),
+    ),
   );

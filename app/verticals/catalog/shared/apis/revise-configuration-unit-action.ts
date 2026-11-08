@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug revise-configuration-unit
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,6 +11,7 @@ import {
 } from '../actions/revise-configuration-unit.ts';
 
 export { ReviseConfigurationUnitPayloadSchema } from '../actions/revise-configuration-unit.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const ReviseConfigurationUnitActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReviseConfigurationUnitActionInvalidProblem',
@@ -24,6 +26,7 @@ export const ReviseConfigurationUnitActionForbiddenProblemSchema = makeProblemDe
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -133,7 +136,7 @@ export const ReviseConfigurationUnitActionApi = HttpApi.make('ReviseConfiguratio
       HttpApiEndpoint.post('execute', '/catalog/actions/revise-configuration-unit', {
         error: actionErrors,
         payload: Schema.toEncoded(ReviseConfigurationUnitPayloadSchema),
-        success: ReviseConfigurationUnitResultSchema,
+        success: [ActionProposalAcceptedSchema, ReviseConfigurationUnitResultSchema],
       }),
     )
     .middleware(ReviseConfigurationUnitActionSchemaErrorMiddleware),

@@ -26,13 +26,11 @@ const cases = serviceActionPermissionCases(
       actionKey: 'core.identity.reserve',
       legalEntityScope: 'forbidden',
       owningModuleKey: 'core.identity',
-      provisioning: 'explicit',
     },
     {
       actionKey: 'party.registry.create',
       legalEntityScope: 'required',
       owningModuleKey: 'party.registry',
-      provisioning: 'explicit',
     },
   ],
   tenantId,

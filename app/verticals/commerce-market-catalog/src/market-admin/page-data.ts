@@ -1,9 +1,8 @@
 // Page data of the staff E-shop screens (definePageData: prepared before the Shell reveals a page, kept per document,
 // revalidated after writes and live changes) and the one way they run Market Actions and merchandise commands.
-import { executeApplyCommand } from '@app/merchandise/clients/apply-command';
+import { executeManageMarkets } from '@app/merchandise/clients/manage-markets';
 import { executeRecords } from '@app/merchandise/clients/records';
-import { ApplyCommandPayloadSchema } from '@app/merchandise/contracts/apply-command';
-import type { ApplyCommandResult } from '@app/merchandise/contracts/apply-command';
+import { ManageMarketsPayloadSchema } from '@app/merchandise/contracts/manage-markets';
 import type { RecordsRequestEncoded } from '@app/merchandise/contracts/records';
 import { executeStorefrontApplications } from '@app/storefront-registry/api/storefront-applications-client';
 import { definePageData } from '@app/shared-contracts/page-data';
@@ -132,7 +131,14 @@ export const searchProducts = (search: string) =>
   );
 
 /** UI outcome of a write: what to tell the person. Never a raw problem or code. */
-export const WriteFailureSchema = Schema.Literals(['conflict', 'forbidden', 'invalid', 'rejected', 'unavailable']);
+export const WriteFailureSchema = Schema.Literals([
+  'conflict',
+  'forbidden',
+  'invalid',
+  'rejected',
+  'settlementPending',
+  'unavailable',
+]);
 export type WriteFailure = typeof WriteFailureSchema.Type;
 
 interface ProblemLike {
@@ -142,6 +148,12 @@ interface ProblemLike {
 /** Maps any generated Action/command problem onto the few outcomes the screens distinguish. */
 export const writeFailure = (error: ProblemLike): WriteFailure =>
   Match.value(error._tag).pipe(
+    // The retirement committed; only its Customer Context settlement is still finishing. Replaying it with a fresh
+    // key would be wrong, so the screen reports the committed state instead of a generic failure.
+    Match.when(
+      (tag) => tag.endsWith('SettlementPendingProblem'),
+      (): WriteFailure => 'settlementPending',
+    ),
     Match.when(
       (tag) => tag.endsWith('ConflictProblem') || tag.endsWith('AlreadyCommittedProblem'),
       (): WriteFailure => 'conflict',
@@ -161,6 +173,7 @@ export const writeFailure = (error: ProblemLike): WriteFailure =>
     Match.orElse((): WriteFailure => 'unavailable'),
   );
 
+/** `ok` records transport success, not commitment; a successful value can still be a parked proposal. */
 export type WriteOutcome<A> =
   | { readonly ok: true; readonly value: A }
   | { readonly ok: false; readonly reason: WriteFailure };
@@ -191,7 +204,10 @@ export const runMarketAction = <P, A, E extends ProblemLike, D extends ProblemLi
 };
 
 /** A merchandise command in its wire form (the screens build ConfigureMarket and SetProductMarketOffer). */
-export type MarketCommandInput = (typeof ApplyCommandPayloadSchema.Encoded)['command'];
+export type MarketCommandInput = (typeof ManageMarketsPayloadSchema.Encoded)['command'];
+
+/** A committed owner result or its parked 202 proposal receipt. Callers must distinguish them before reporting a write. */
+export type MarketCommandResult = Effect.Success<ReturnType<typeof executeManageMarkets>>;
 
 /**
  * One merchandise market command, validated by the owner's payload schema before it is sent. Market commands do not
@@ -201,26 +217,24 @@ export const merchandiseCommand = (command: MarketCommandInput, revision: number
   Effect.all(
     {
       id: requestId,
-      payload: Schema.decodeUnknownEffect(ApplyCommandPayloadSchema)({ command, expectedRevision: revision }).pipe(
-        Effect.flatMap(Schema.encodeEffect(ApplyCommandPayloadSchema)),
-      ),
+      payload: Schema.decodeUnknownEffect(ManageMarketsPayloadSchema)({ command, expectedRevision: revision }),
     },
     { concurrency: 1 },
   ).pipe(
-    Effect.flatMap(({ id, payload }) => executeApplyCommand(payload, id, { idempotencyKey: id })),
+    Effect.flatMap(({ id, payload }) => executeManageMarkets(payload, id, { idempotencyKey: id })),
     Effect.mapError(writeFailure),
   );
 
 export const runMerchandiseCommand = (
   command: MarketCommandInput,
   revision: number,
-  onOutcome: (outcome: WriteOutcome<ApplyCommandResult>) => void,
+  onOutcome: (outcome: WriteOutcome<MarketCommandResult>) => void,
 ): void => {
   void browserRuntime.runPromise(
     merchandiseCommand(command, revision).pipe(
       Effect.match({
-        onFailure: (reason): WriteOutcome<ApplyCommandResult> => ({ ok: false, reason }),
-        onSuccess: (value): WriteOutcome<ApplyCommandResult> => ({ ok: true, value }),
+        onFailure: (reason): WriteOutcome<MarketCommandResult> => ({ ok: false, reason }),
+        onSuccess: (value): WriteOutcome<MarketCommandResult> => ({ ok: true, value }),
       }),
       Effect.map(onOutcome),
     ),

@@ -284,7 +284,7 @@ export const RecordsResponseSchema = Schema.Struct({
       ),
     }),
   ),
-  /** AI proposals for this company's orders; present for staff principals with read_all. */
+  /** AI proposals for this company's orders; present for staff principals admitted to the registered records read. */
   aiChanges: Schema.optionalKey(MerchandiseAiSliceSchema),
   categories: Schema.optionalKey(Schema.Array(CategoryNodeSchema)),
   productCategories: Schema.optionalKey(Schema.Array(ProductCategoryCountSchema)),

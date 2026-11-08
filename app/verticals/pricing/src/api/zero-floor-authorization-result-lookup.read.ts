@@ -18,7 +18,7 @@ const MODULE_KEY = 'commerce.pricing' as const;
 
 const zeroFloorAuthorizationResultLookupEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'authenticated_principal' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.pricing.api.zero-floor-authorization-result-lookup',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -76,6 +76,14 @@ export const readZeroFloorAuthorizationResult = Effect.fn('ZeroFloorAuthorizatio
 
 export const zeroFloorAuthorizationResultLookupRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.pricing.zero-floor-authorization.read-result',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'pricing-governance', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: zeroFloorAuthorizationResultLookupEntrypoint,
     evidencePolicy: {
@@ -85,7 +93,6 @@ export const zeroFloorAuthorizationResultLookupRead = defineRead(
     inputSchema: ZeroFloorAuthorizationResultLookupRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.pricing.api.zero-floor-authorization-result-lookup',
     resultSchema: ZeroFloorAuthorizationResultLookupResponseSchema,
@@ -105,5 +112,4 @@ export const zeroFloorAuthorizationResultLookupRead = defineRead(
       ),
   },
   (transaction, scope) => zeroFloorAuthorizationAdministrationForScope(transaction, scope),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

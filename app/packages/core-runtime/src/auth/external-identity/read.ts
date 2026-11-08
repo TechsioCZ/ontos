@@ -1,177 +1,57 @@
-import { Effect, Option } from 'effect';
-import type { Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 
 import {
   ExternalIdentityError,
+  AuthenticationNamespaceIdSchema,
+  AuthBindingIdSchema,
+  ExternalAuthenticationSubjectSchema,
+  ResolveExternalSubjectResultSchema,
   ReadPrincipalBindingPayloadSchema,
   ReadPrincipalBindingResultSchema,
 } from '../external-identity-contracts.ts';
-import {
-  authenticationNamespaceRegistration,
-  externalIdentityRepositoryFromTransaction,
-  principalBindingReadResult,
-} from './repository.ts';
-import type {
-  ExternalIdentityBindingRecord,
-  ExternalIdentityRepositoryService,
-  PrincipalBindingLookup,
-} from './repository.ts';
-import { AuthenticationNamespaceRegistry } from './verifier.ts';
-import { externalIdentityFailure } from './errors.ts';
+import { GrantedProvisioningNamespaces, authorizeReadNamespace } from './namespace-authority.ts';
+import { externalIdentityRepositoryFromTransaction, externalIdentitySubjectForBinding } from './repository.ts';
+import { ExternalIdentityAdmission, resolveExternalSubjectFromTransaction } from './resolve.ts';
+import type { ExternalAuthenticationSubject } from '../external-identity-contracts.ts';
 import type { ExternalIdentityFailure } from './errors.ts';
-import { ContextAccess } from '../../permissions/context-access.ts';
+import type { ExternalIdentityAdmissionContext, ExternalIdentityRepositoryService } from './repository.ts';
+import { AuthenticationNamespaceRegistry } from './verifier.ts';
 import { defineSystemModuleEntrypoint } from '../../modules/module-entrypoint.ts';
 import { defineRead } from '../../reads/definition.ts';
-import type { ReadPermissionTargetResolver } from '../../reads/definition.ts';
-import type { ReadFinishContext, ReadPrepareContext } from '../../reads/context.ts';
-import type { OperationalScope } from '../../operations/context.ts';
+import type { ReadHandlerContext } from '../../reads/context.ts';
+
+const CORE_IDENTITY_MODULE_KEY = 'core.identity';
+const IDENTITY_PROVIDER_WORKLOAD = 'core.identity-provider';
 
 export type ReadPrincipalBindingPayload = Schema.Schema.Type<typeof ReadPrincipalBindingPayloadSchema>;
 
 type ReadPrincipalBindingServices = Readonly<{
-  readonly loadForRead: ExternalIdentityRepositoryService['loadForRead'];
+  readonly read: ExternalIdentityRepositoryService['read'];
 }>;
 
-const permissionTargetResolver: ReadPermissionTargetResolver<ReadPrincipalBindingPayload> = () => ({
-  kind: 'tenant',
-  // Namespace provisioners have Tenant access but no administrative lifecycle
-  // permission. The handler performs the exact namespace-or-admin check below.
-  permission: 'access',
-});
-
-const decisionFor = (
-  decisions: readonly { readonly decision: 'allowed' | 'denied' | 'unavailable'; readonly key: string }[],
-  key: string,
-): 'allowed' | 'denied' | 'unavailable' =>
-  decisions.length === 1 && decisions[0]?.key === key ? decisions[0].decision : 'unavailable';
-
-const authorizeReadNamespace = (
-  contextAccess: Option.Option<(typeof ContextAccess)['Service']>,
-  scope: OperationalScope,
-  authenticationNamespaceId: string,
-): Effect.Effect<void, ReturnType<typeof externalIdentityFailure>> => {
-  if (Option.isNone(contextAccess) || contextAccess.value.identityNamespaces === undefined) {
-    return Effect.fail(externalIdentityFailure('identity_unavailable', 'Identity namespace access is unavailable'));
-  }
-  return contextAccess.value
-    .identityNamespaces({
-      authenticationNamespaceIds: [authenticationNamespaceId],
-      principalId: scope.principalId,
-      tenantId: scope.tenantId,
-    })
-    .pipe(
-      Effect.flatMap((namespaceDecisions) => {
-        const namespaceDecision = decisionFor(namespaceDecisions, authenticationNamespaceId);
-        if (namespaceDecision === 'allowed') {
-          return Effect.void;
+const handle = (input: ReadPrincipalBindingPayload, context: ReadHandlerContext<ReadPrincipalBindingServices>) => {
+  const readInput =
+    input.lookup === 'binding'
+      ? {
+          authBindingId: input.authBindingId,
+          lookup: 'binding' as const,
+          tenantId: context.scope.tenantId,
         }
-        return contextAccess.value
-          .tenants({
-            permission: 'manage_identity',
-            principalId: scope.principalId,
-            tenantIds: [scope.tenantId],
-          })
-          .pipe(
-            Effect.flatMap((tenantDecisions) =>
-              decisionFor(tenantDecisions, scope.tenantId) === 'allowed'
-                ? Effect.void
-                : Effect.fail(
-                    externalIdentityFailure(
-                      namespaceDecision === 'denied' ? 'identity_forbidden' : 'identity_unavailable',
-                      'The Actor is not authorized to read this identity namespace',
-                    ),
-                  ),
-            ),
-          );
-      }),
-    );
+      : {
+          authenticationNamespaceId: input.authenticationNamespaceId,
+          lookup: 'subject' as const,
+          providerSubjectId: input.providerSubjectId,
+          subjectType: input.subjectType,
+          tenantId: context.scope.tenantId,
+        };
+  return context.services.read(readInput).pipe(
+    Effect.mapError((failure) => new ExternalIdentityError({ code: failure.code })),
+    Effect.map((result) => ({
+      evidence: { resultCount: result.outcome === 'FOUND' ? 1 : 0 },
+      result,
+    })),
+  );
 };
-
-type ReadNamespaceAuthorization = (authenticationNamespaceId: string) => Effect.Effect<void, ExternalIdentityFailure>;
-
-const namespaceAuthorization = (scope: OperationalScope) =>
-  Effect.map(
-    Effect.serviceOption(ContextAccess),
-    (contextAccess): ReadNamespaceAuthorization =>
-      (authenticationNamespaceId) =>
-        authorizeReadNamespace(contextAccess, scope, authenticationNamespaceId),
-  );
-
-const registryDependencies = Effect.map(Effect.serviceOption(AuthenticationNamespaceRegistry), (registry) =>
-  Option.isSome(registry) ? { registry: registry.value } : {},
-);
-
-const readFailure = (failure: ExternalIdentityFailure) => new ExternalIdentityError({ code: failure.code });
-
-/**
- * Before the transaction: a subject lookup authorizes the supplied namespace first, so a missing subject
- * cannot be told apart from one the caller may not read, and resolves the namespace's trusted provider.
- */
-const prepare = Effect.fn('ReadPrincipalBinding.prepare')(function* preparePrincipalBindingRead(
-  input: ReadPrincipalBindingPayload,
-  context: ReadPrepareContext,
-) {
-  if (input.lookup === 'binding') {
-    return {
-      lookup: { authBindingId: input.authBindingId, lookup: 'binding', tenantId: context.scope.tenantId },
-    } satisfies PreparedLookup;
-  }
-  const authorize = yield* namespaceAuthorization(context.scope);
-  yield* authorize(input.authenticationNamespaceId);
-  const registration = yield* authenticationNamespaceRegistration(
-    yield* registryDependencies,
-    input.authenticationNamespaceId,
-  );
-  return {
-    authorizedNamespaceId: input.authenticationNamespaceId,
-    lookup: {
-      authenticationNamespaceId: input.authenticationNamespaceId,
-      lookup: 'subject',
-      provider: registration.provider,
-      providerSubjectId: input.providerSubjectId,
-      subjectType: input.subjectType,
-      tenantId: context.scope.tenantId,
-    },
-  } satisfies PreparedLookup;
-}, Effect.mapError(readFailure));
-
-interface PreparedLookup {
-  /** The namespace `prepare` already authorized (subject lookups). */
-  readonly authorizedNamespaceId?: string;
-  readonly lookup: PrincipalBindingLookup;
-}
-
-/**
- * After commit: binding identifiers are opaque, so a binding in a namespace the caller may not read is
- * normalized to the same result as an absent one.
- */
-const finish = Effect.fn('ReadPrincipalBinding.finish')(
-  function* finishPrincipalBindingRead(
-    _input: ReadPrincipalBindingPayload,
-    context: ReadFinishContext<PreparedLookup, Option.Option<ExternalIdentityBindingRecord>>,
-  ) {
-    if (Option.isNone(context.loaded)) {
-      return { outcome: 'NOT_FOUND' as const };
-    }
-    const binding = context.loaded.value;
-    if (binding.authenticationNamespaceId !== context.prepared.authorizedNamespaceId) {
-      const authorize = yield* namespaceAuthorization(context.scope);
-      const canRead = yield* authorize(binding.authenticationNamespaceId).pipe(
-        Effect.as(true),
-        Effect.catchIf(
-          (failure) => failure.code === 'identity_forbidden',
-          () => Effect.succeed(false),
-        ),
-      );
-      if (!canRead) {
-        return { outcome: 'NOT_FOUND' as const };
-      }
-    }
-    return yield* principalBindingReadResult(yield* registryDependencies, binding);
-  },
-  Effect.mapError(readFailure),
-  Effect.map((result) => ({ evidence: { resultCount: result.outcome === 'FOUND' ? 1 : 0 }, result })),
-);
 
 export const readPrincipalBinding = defineRead<
   typeof ReadPrincipalBindingPayloadSchema,
@@ -180,21 +60,33 @@ export const readPrincipalBinding = defineRead<
   ReadPrincipalBindingServices,
   ExternalIdentityError,
   never,
-  typeof ExternalIdentityError,
-  PreparedLookup,
-  Option.Option<ExternalIdentityBindingRecord>,
-  ExternalIdentityError,
-  never,
-  ExternalIdentityError
+  typeof ExternalIdentityError
 >(
   {
+    accessDeclaration: {
+      key: 'core.identity.principal-binding.read',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+    // The external identity workload resolves the binding of the subject it is admitting; the
+    // declaration above is the human administrative path and the two never mix (O67-Q4, O72).
+    // The owner still qualifies the namespace of the machine actor (classification: exact namespace
+    // provision OR tenant administration).
     accessKind: 'detail',
+    accessWorkload: {
+      reason:
+        'The external identity workload resolves the binding of the subject it is admitting; a human capability would let any holder look up any binding (O29, O59, O72).',
+      workloads: [IDENTITY_PROVIDER_WORKLOAD],
+    },
     domainErrorSchema: ExternalIdentityError,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'read',
-      authorization: { kind: 'context_permission', permission: 'module.access' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.read-principal-binding',
-      moduleKey: 'core.identity',
+      moduleKey: CORE_IDENTITY_MODULE_KEY,
       role: 'api',
     }),
     evidencePolicy: {
@@ -203,20 +95,179 @@ export const readPrincipalBinding = defineRead<
     },
     inputSchema: ReadPrincipalBindingPayloadSchema,
     legalEntityScope: 'forbidden',
-    owningModuleKey: 'core.identity',
-    permissionTarget: 'tenant',
+    owningModuleKey: CORE_IDENTITY_MODULE_KEY,
     policies: [],
     readKey: 'core.identity.read-principal-binding',
     resultSchema: ReadPrincipalBindingResultSchema,
     schemaVersion: '1',
   },
+  handle,
+  Effect.fn('ReadPrincipalBinding.services')(function* makeServices(transaction, scope) {
+    const registry = yield* Effect.serviceOption(AuthenticationNamespaceRegistry);
+    const granted = yield* Effect.serviceOption(GrantedProvisioningNamespaces);
+    const dependencies = {
+      authorizeReadNamespace: (authenticationNamespaceId: string) =>
+        authorizeReadNamespace({ authenticationNamespaceId, granted, scope }),
+    };
+    if (Option.isSome(registry)) {
+      Object.assign(dependencies, { registry: registry.value });
+    }
+    const repository = externalIdentityRepositoryFromTransaction(transaction, dependencies);
+    return { read: repository.read };
+  }),
+);
+
+const BindingSubjectLookupInputSchema = Schema.Struct({
+  authBindingId: AuthBindingIdSchema,
+  authenticationNamespaceId: AuthenticationNamespaceIdSchema,
+});
+
+type BindingSubjectReadServices = Readonly<{
+  readonly lookup: (input: {
+    readonly authBindingId: Schema.Schema.Type<typeof AuthBindingIdSchema>;
+    readonly authenticationNamespaceId: Schema.Schema.Type<typeof AuthenticationNamespaceIdSchema>;
+    readonly tenantId: string;
+  }) => Effect.Effect<ExternalAuthenticationSubject, ExternalIdentityFailure>;
+}>;
+
+type ResolveExternalSubjectReadResult = Schema.Schema.Type<typeof ResolveExternalSubjectResultSchema>;
+interface ResolveExternalSubjectReadInput {
+  readonly admission: ExternalIdentityAdmissionContext;
+  readonly subject: ExternalAuthenticationSubject;
+  readonly tenantId: string;
+}
+type ResolveExternalSubjectReadServices = Readonly<{
+  readonly resolve: (
+    input: ResolveExternalSubjectReadInput,
+  ) => Effect.Effect<ResolveExternalSubjectReadResult, ExternalIdentityFailure>;
+}>;
+
+export const bindingSubjectRead = defineRead<
+  typeof BindingSubjectLookupInputSchema,
+  typeof ExternalAuthenticationSubjectSchema,
+  'core.identity',
+  BindingSubjectReadServices,
+  ExternalIdentityError,
+  never,
+  typeof ExternalIdentityError
+>(
   {
-    // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
-    prepare,
-    load: (_input, context) => context.services.loadForRead(context.prepared.lookup).pipe(Effect.mapError(readFailure)),
-    finish,
-    // oxlint-enable perfectionist/sort-objects
+    accessDeclaration: {
+      key: 'core.identity.binding-subject.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'external-identity', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+    // The external identity workload reads the subject of the binding it is admitting; the
+    // declaration above is the human administrative path and the two never mix (O67-Q4, O72).
+    accessKind: 'detail',
+    accessWorkload: {
+      reason:
+        'The external identity workload reads the subject of the binding it is admitting; a human capability would let any holder look up any subject (O29, O59, O72).',
+      workloads: [IDENTITY_PROVIDER_WORKLOAD],
+    },
+    domainErrorSchema: ExternalIdentityError,
+    entrypoint: defineSystemModuleEntrypoint({
+      access: 'read',
+      authorization: { kind: 'protected' },
+      entrypointKey: 'core.identity.read-binding-subject',
+      moduleKey: CORE_IDENTITY_MODULE_KEY,
+      role: 'api',
+    }),
+    evidencePolicy: {
+      captureMode: 'metadata_only',
+      policyKey: 'core.identity.read-binding-subject.access.v1',
+    },
+    inputSchema: BindingSubjectLookupInputSchema,
+    legalEntityScope: 'forbidden',
+    owningModuleKey: CORE_IDENTITY_MODULE_KEY,
+    policies: [],
+    readKey: 'core.identity.read-binding-subject',
+    resultSchema: ExternalAuthenticationSubjectSchema,
+    schemaVersion: '1',
   },
-  (transaction) => Effect.succeed({ loadForRead: externalIdentityRepositoryFromTransaction(transaction).loadForRead }),
-  permissionTargetResolver,
+  (input, context) =>
+    context.services
+      .lookup({
+        ...input,
+        tenantId: context.scope.tenantId,
+      })
+      .pipe(
+        Effect.mapError((failure) => new ExternalIdentityError({ code: failure.code })),
+        Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
+      ),
+  (transaction) =>
+    Effect.succeed({
+      lookup: (input: {
+        readonly authBindingId: Schema.Schema.Type<typeof AuthBindingIdSchema>;
+        readonly authenticationNamespaceId: Schema.Schema.Type<typeof AuthenticationNamespaceIdSchema>;
+        readonly tenantId: string;
+      }) => externalIdentitySubjectForBinding(transaction, input),
+    }),
+);
+
+export const resolveExternalSubjectRead = defineRead<
+  typeof ExternalAuthenticationSubjectSchema,
+  typeof ResolveExternalSubjectResultSchema,
+  'core.identity',
+  ResolveExternalSubjectReadServices,
+  ExternalIdentityError,
+  ExternalIdentityAdmission,
+  typeof ExternalIdentityError
+>(
+  {
+    accessDeclaration: {
+      key: 'core.identity.external-subject.resolve',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'external-identity', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+    // The external identity workload resolves the subject it is admitting; the declaration above is
+    // the human administrative path and the two never mix (O67-Q4, O72).
+    accessKind: 'detail',
+    accessWorkload: {
+      reason:
+        'The external identity workload resolves the subject it is admitting; a human capability would let any holder resolve any subject (O29, O59, O72).',
+      workloads: [IDENTITY_PROVIDER_WORKLOAD],
+    },
+    domainErrorSchema: ExternalIdentityError,
+    entrypoint: defineSystemModuleEntrypoint({
+      access: 'read',
+      authorization: { kind: 'protected' },
+      entrypointKey: 'core.identity.resolve-external-subject',
+      moduleKey: CORE_IDENTITY_MODULE_KEY,
+      role: 'api',
+    }),
+    evidencePolicy: {
+      captureMode: 'metadata_only',
+      policyKey: 'core.identity.resolve-external-subject.access.v1',
+    },
+    inputSchema: ExternalAuthenticationSubjectSchema,
+    legalEntityScope: 'forbidden',
+    owningModuleKey: CORE_IDENTITY_MODULE_KEY,
+    policies: [],
+    readKey: 'core.identity.resolve-external-subject',
+    resultSchema: ResolveExternalSubjectResultSchema,
+    schemaVersion: '1',
+  },
+  (subject, context) =>
+    Effect.serviceOption(ExternalIdentityAdmission).pipe(
+      Effect.flatMap((admission) =>
+        Option.isNone(admission)
+          ? Effect.fail(new ExternalIdentityError({ code: 'identity_unavailable' }))
+          : context.services
+              .resolve({
+                admission: admission.value,
+                subject,
+                tenantId: context.scope.tenantId,
+              })
+              .pipe(Effect.mapError((failure) => new ExternalIdentityError({ code: failure.code }))),
+      ),
+      Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
+    ),
+  (transaction) => Effect.succeed({ resolve: resolveExternalSubjectFromTransaction(transaction) }),
 );

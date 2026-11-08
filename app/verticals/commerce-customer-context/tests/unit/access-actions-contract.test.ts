@@ -10,7 +10,7 @@ import { grantCounterpartyCommerceAccessAction } from '../../src/actions/grant-c
 import { resendCounterpartyAccessInvitationAction } from '../../src/actions/resend-counterparty-access-invitation.action.ts';
 import { revokeCounterpartyAccessInvitationAction } from '../../src/actions/revoke-counterparty-access-invitation.action.ts';
 import { revokeCounterpartyCommerceAccessAction } from '../../src/actions/revoke-counterparty-commerce-access.action.ts';
-import { accessManagementPermissionTarget } from '../../src/actions/access-action-support.ts';
+import { accessManagementOwnerFacts } from '../../src/actions/access-action-support.ts';
 import { InvitationClaimRejectionSchema } from '../../shared/domain/access-port.ts';
 
 const actions = [
@@ -31,10 +31,7 @@ describe('Counterparty Commerce Access Actions', () => {
       expect(descriptor.idempotency).toBe('required');
       expect(descriptor.legalEntityScope).toBe('required');
       expect(descriptor.auditProfile).toBe('sensitive');
-      expect(descriptor.entrypoint.authorization).toEqual({
-        kind: 'action_execution',
-        provisioning: 'explicit',
-      });
+      expect(descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
     }
     for (const action of [
       grantCounterpartyCommerceAccessAction,
@@ -43,10 +40,10 @@ describe('Counterparty Commerce Access Actions', () => {
       resendCounterpartyAccessInvitationAction,
       revokeCounterpartyAccessInvitationAction,
     ]) {
-      expect(action.descriptor.businessPermission?.kind).toBe('business_permission');
+      expect(action.descriptor.accessOwnerFacts).toBeDefined();
     }
-    expect(bootstrapCounterpartyAccessAdministratorAction.descriptor.businessPermission).toBe(undefined);
-    expect(claimCounterpartyAccessInvitationAction.descriptor.businessPermission).toBe(undefined);
+    expect(bootstrapCounterpartyAccessAdministratorAction.descriptor.accessOwnerFacts).toBe(undefined);
+    expect(claimCounterpartyAccessInvitationAction.descriptor.accessOwnerFacts).toBe(undefined);
   });
 
   it('accepts only a verified delivery reference and never a raw invitation secret', () => {
@@ -87,7 +84,7 @@ describe('Counterparty Commerce Access Actions', () => {
     ).toBe(false);
   });
 
-  it('forwards only the gateway-verified Storefront identity into Action authorization', () => {
+  it('names the counterparty and its verified Storefront for the owner rule', () => {
     const counterpartyRef = {
       moduleId: 'party.registry' as const,
       resourceId: 'counterparty-1',
@@ -95,22 +92,15 @@ describe('Counterparty Commerce Access Actions', () => {
       tenantId: '10000000-0000-4000-8000-000000000001',
     };
     const storefrontScope = { kind: 'storefront' as const, storefrontKey: 'storefront-1' };
-    const operationalScope = {
-      authMethod: 'system' as const,
-      correlationId: 'access-action-target',
-      legalEntityId: '20000000-0000-4000-8000-000000000002',
-      principalId: '30000000-0000-4000-8000-000000000003',
-      tenantId: counterpartyRef.tenantId,
-    };
 
-    expect(
-      accessManagementPermissionTarget({ counterpartyRef, scope: storefrontScope }, operationalScope),
-    ).not.toHaveProperty('trustedStorefrontId');
-    expect(
-      accessManagementPermissionTarget(
-        { counterpartyRef, scope: storefrontScope },
-        { ...operationalScope, trustedStorefrontId: storefrontScope.storefrontKey },
-      ),
-    ).toHaveProperty('trustedStorefrontId', storefrontScope.storefrontKey);
+    // Both branches name the counterparty; only a Storefront-scoped change carries the Storefront the
+    // overlay compares with the trusted scope before it reads the counterparty's grant (O67-Q1, O70).
+    expect(accessManagementOwnerFacts({ counterpartyRef, scope: { kind: 'counterparty' } })).toEqual({
+      counterpartyId: counterpartyRef.resourceId,
+    });
+    expect(accessManagementOwnerFacts({ counterpartyRef, scope: storefrontScope })).toEqual({
+      counterpartyId: counterpartyRef.resourceId,
+      storefrontId: storefrontScope.storefrontKey,
+    });
   });
 });

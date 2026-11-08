@@ -1,11 +1,20 @@
 import { defineTenantModuleEntrypoint } from '@app/core-runtime/module-entrypoint';
+import { defineRouteMeta } from '@app/core-runtime/route-meta';
 
-const routeMeta = {
+const routeMeta = defineRouteMeta({
+  accessDeclaration: {
+    key: 'work.tasks.page-work-tasks-home.read',
+    kind: 'read',
+    modes: ['run'],
+    placement: { group: 'work-tasks', level: 'basic' },
+    risk: 'routine',
+    selectors: [],
+  },
   canonicalPath: '/',
   descriptionKey: 'work-tasks.seo.description',
   entrypoint: defineTenantModuleEntrypoint({
     access: 'read',
-    authorization: { kind: 'context_permission', permission: 'module.access' },
+    authorization: { kind: 'protected' },
     entrypointKey: 'work.tasks.page.work-tasks-home',
     moduleKey: 'work.tasks',
     role: 'page',
@@ -23,7 +32,7 @@ const routeMeta = {
   public: false,
   publicSurface: 'private-app-screen',
   titleKey: 'work-tasks.title',
-} as const;
+});
 
 export default routeMeta;
 export { routeMeta };

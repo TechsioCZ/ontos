@@ -4,7 +4,6 @@ import {
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
   defineRead,
-  defineReadResourcePermission,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import { Effect, Option } from 'effect';
@@ -23,7 +22,7 @@ const MODULE_KEY = 'payment.term-catalog';
 
 const paymentTermSourceRecordHistoryEntrypoint = defineTenantModuleEntrypoint({
   access: 'historical_read',
-  authorization: { kind: 'context_permission', permission: 'payment.term_catalog.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'payment.term-catalog.api.payment-term-source-record-history',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -56,6 +55,14 @@ export const readPaymentTermSourceRecordHistory = Effect.fn('PaymentTermSourceRe
 
 export const paymentTermSourceRecordHistoryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'payment.term-catalog.source-record.read-history',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'payment-terms', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: paymentTermSourceRecordHistoryEntrypoint,
     evidencePolicy: {
@@ -65,17 +72,8 @@ export const paymentTermSourceRecordHistoryRead = defineRead(
     inputSchema: PaymentTermSourceRecordHistoryRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'payment.term-catalog.api.payment-term-source-record-history',
-    resourcePermission: defineReadResourcePermission((_, scope) => ({
-      permission: 'read',
-      resource: {
-        moduleId: MODULE_KEY,
-        resourceId: scope.legalEntityId ?? '',
-        resourceType: 'payment.term-catalog.payment-term-catalog-root',
-      },
-    })),
     resultSchema: PaymentTermSourceRecordHistoryResponseSchema,
     schemaVersion: '1',
   },
@@ -86,5 +84,4 @@ export const paymentTermSourceRecordHistoryRead = defineRead(
       ),
   },
   (transaction, scope) => paymentTermSourcePersistenceForScope(transaction, scope),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

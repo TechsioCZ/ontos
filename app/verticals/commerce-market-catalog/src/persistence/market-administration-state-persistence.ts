@@ -2,9 +2,10 @@ import type { ReadServiceFactory, ScopedRoutineInvocationError, ScopedRoutineInv
 import { OperationContextUnavailable, defineScopedRoutine } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
 
+import { MarketLifecycleResultSchema } from '../../shared/action-contracts.ts';
+import { MarketRetirementSourceInvocationIdSchema } from '../../shared/domain/market-retirement-impact.ts';
 import type { MarketCatalogReadPersistenceUnavailable } from './market-history-routine.ts';
 import { marketCatalogReadUnavailable as unavailable } from './market-history-routine.ts';
-import { MarketRetirementIntentSnapshotSchema } from './market-retirement-intent-persistence.ts';
 
 const StateRowSchema = Schema.Struct({ payload: Schema.Unknown });
 const UuidSchema = Schema.String.check(Schema.isUUID());
@@ -30,19 +31,25 @@ const readMarketAdministrationStateRoutine = defineScopedRoutine({
   schema: 'commerce_market_catalog',
 });
 
+/**
+ * The newest native retirement admission of one Market, exactly as the owner routine returns it. `result` is the
+ * committed Market lifecycle result the original retirement already produced; it is absent while the admission is
+ * `PENDING` or was `ABORTED`.
+ */
+export const MarketRetirementAdmissionRowSchema = Schema.Struct({
+  result: Schema.optionalKey(MarketLifecycleResultSchema),
+  sourceActionInvocationId: MarketRetirementSourceInvocationIdSchema,
+  status: Schema.Literals(['PENDING', 'COMMITTED', 'ABORTED']),
+});
+export type MarketRetirementAdmissionRow = typeof MarketRetirementAdmissionRowSchema.Type;
+
 /** Owner state of one Market of the trusted company, exactly as the owner routine returns it. */
 export const MarketAdministrationStateRowSchema = Schema.Struct({
   currentDefinitionRevisionId: DefinitionRevisionIdSchema,
   marketId: MarketIdSchema,
-  retirementIntent: Schema.optionalKey(MarketRetirementIntentSnapshotSchema),
+  retirementAdmission: Schema.optionalKey(MarketRetirementAdmissionRowSchema),
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
-}).check(
-  Schema.makeFilter(({ marketId, retirementIntent }) =>
-    retirementIntent === undefined || retirementIntent.marketId === marketId
-      ? undefined
-      : 'The retirement intent must belong to the read Market',
-  ),
-);
+});
 export type MarketAdministrationStateRow = typeof MarketAdministrationStateRowSchema.Type;
 
 export interface MarketAdministrationStatePersistence {

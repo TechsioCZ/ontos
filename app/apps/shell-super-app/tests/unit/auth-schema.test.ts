@@ -41,6 +41,7 @@ test('owns the exact Better Auth model inside the auth schema', () => {
     'oauth_access_token',
     'oauth_consent',
     'oauth_client_assertion',
+    'gateway_relay_exchanges',
   ]);
   expect(expectedAuthTableCatalog).toEqual([
     'auth.user',
@@ -57,6 +58,7 @@ test('owns the exact Better Auth model inside the auth schema', () => {
     'auth.oauth_access_token',
     'auth.oauth_consent',
     'auth.oauth_client_assertion',
+    'auth.gateway_relay_exchanges',
   ]);
 });
 
@@ -177,6 +179,7 @@ test('reports missing and unexpected authentication tables', () => {
   ).toEqual({
     missing: [
       'auth.apikey',
+      'auth.gateway_relay_exchanges',
       'auth.jwks',
       'auth.oauth_access_token',
       'auth.oauth_client',

@@ -13,7 +13,9 @@ export type LegalEntityDetailRequest = typeof LegalEntityDetailRequestSchema.Typ
 const LegalEntityStatusSchema = Schema.Literals(['active', 'suspended', 'archived']);
 export const LegalEntityDetailResponseSchema = Schema.Struct({
   legalEntityRef: LegalEntityRefSchema,
-  legalName: Schema.String,
+  // Governed by the personal-data field group (O17, O84): a caller without the field grant receives
+  // the identity and status without the sole-trader name.
+  legalName: Schema.optionalKey(Schema.String),
   status: LegalEntityStatusSchema,
   /** What the company does, shown on Home; absent when the company provides no text. */
   welcome: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(400))),
@@ -82,10 +84,32 @@ export const legalEntityDetailRead = defineRead<
   never
 >(
   {
+    accessDeclaration: {
+      key: 'core.identity.legal-entity.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+    // A sole trader's registered name is personal data (O38, A1/O84): the parent read decides the
+    // record, and this group governs the name field of its response.
+    accessFieldGroups: [
+      {
+        fieldClass: 'personal_data',
+        fields: ['legalName'],
+        key: 'core.identity.legal-entity.personal.read',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'identity', level: 'extended' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
     accessKind: 'detail',
     entrypoint: defineSystemModuleEntrypoint({
       access: 'read',
-      authorization: { kind: 'authenticated_principal' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.api.legal-entity-detail',
       moduleKey: 'core.identity',
       role: 'api',
@@ -94,7 +118,6 @@ export const legalEntityDetailRead = defineRead<
     inputSchema: LegalEntityDetailRequestSchema,
     legalEntityScope: 'optional',
     owningModuleKey: 'core.identity',
-    permissionTarget: 'legal_entity',
     policies: [],
     readKey: 'core.identity.api.legal-entity-detail',
     resultSchema: LegalEntityDetailResponseSchema,
@@ -111,5 +134,4 @@ export const legalEntityDetailRead = defineRead<
     }),
   },
   (transaction, scope) => Effect.succeed(services(transaction, scope.tenantId)),
-  (input) => ({ kind: 'legal_entity', legalEntityId: input.legalEntityRef.resourceId, permission: 'access' }),
 );

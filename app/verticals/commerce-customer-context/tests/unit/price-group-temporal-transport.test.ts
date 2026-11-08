@@ -3,6 +3,7 @@ import { Crypto, Effect, Fiber, FileSystem, Layer, Option, Schema, Stream } from
 import { Socket } from 'effect/socket';
 import { FetchHttpClient, HttpClient } from 'effect/http';
 import { assert, expect, it } from 'effect-rstest';
+import { OntosModuleDeploymentContractSchema } from '@app/core-runtime';
 import {
   describePriceGroupTemporalOwner,
   openPriceGroupTemporalChannel,
@@ -130,14 +131,34 @@ it.layer(
           expect(bundle.contract.deployment.buildMarker).toBe(bundle.marker.buildMarker);
           const snapshot = yield* makePriceGroupTemporalComposition([bundle]);
           const [module] = snapshot.composition.modules;
-          expect(module?.contractDocument).toBeDefined();
+          const ownerContract = yield* Schema.decodeUnknownEffect(
+            Schema.fromJsonString(OntosModuleDeploymentContractSchema),
+          )(module?.contractDocument);
+          expect(ownerContract).toEqual(bundle.contract);
+          expect(module?.moduleId).toBe(ownerContract.manifest.module.id);
+          expect(module?.deployment).toEqual(ownerContract.deployment);
+          expect(module?.requiredCoreCapabilities).toEqual(
+            bundle.contract.manifest.requirements?.coreCapabilities ?? [],
+          );
+          for (const required of module?.requiredCoreCapabilities ?? []) {
+            expect(snapshot.composition.shell.coreCapabilities).toContainEqual(required);
+          }
+          const crypto = yield* Crypto.Crypto;
+          for (const artifact of [
+            snapshot.composition.shell.runtimeContract,
+            snapshot.composition.shell.federationManifest,
+          ]) {
+            const response = yield* HttpClient.get(artifact.url).pipe(Effect.provide(FetchHttpClient.layer));
+            expect(response.status).toBe(200);
+            const bytes = new Uint8Array(yield* response.arrayBuffer);
+            expect(Buffer.from(yield* crypto.digest('SHA-256', bytes)).toString('hex')).toBe(artifact.sha256);
+          }
           if (module?.federation.execution === 'browser') {
             const response = yield* HttpClient.get(module.federation.manifest.url).pipe(
               Effect.provide(FetchHttpClient.layer),
             );
             const body = yield* response.text;
             expect(response.status).toBe(200);
-            const crypto = yield* Crypto.Crypto;
             const actualDigest = Buffer.from(yield* crypto.digest('SHA-256', new TextEncoder().encode(body))).toString(
               'hex',
             );

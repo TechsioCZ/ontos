@@ -2,6 +2,7 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug enqueue-retention-evaluation
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/enqueue-retention-evaluation.ts';
 
 export { EnqueueRetentionEvaluationPayloadSchema } from '../actions/enqueue-retention-evaluation.ts';
-
 export const EnqueueRetentionEvaluationActionInvalidProblemSchema = makeProblemDetailsSchema(
   'EnqueueRetentionEvaluationActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const EnqueueRetentionEvaluationActionForbiddenProblemSchema = makeProble
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -142,7 +143,7 @@ export const enqueueRetentionEvaluationActionGroupDefinition = HttpApiGroup.make
     HttpApiEndpoint.post('execute', '/privacy/actions/enqueue-retention-evaluation', {
       error: actionErrors,
       payload: Schema.toEncoded(EnqueueRetentionEvaluationPayloadSchema),
-      success: EnqueueRetentionEvaluationResultSchema,
+      success: [ActionProposalAcceptedSchema, EnqueueRetentionEvaluationResultSchema],
     }),
   )
   .middleware(EnqueueRetentionEvaluationActionSchemaErrorMiddleware);

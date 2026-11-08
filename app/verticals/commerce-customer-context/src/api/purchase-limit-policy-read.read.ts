@@ -11,9 +11,10 @@ import {
   PurchaseLimitPolicyReadRequestSchema,
   PurchaseLimitPolicyReadResponseSchema,
 } from '../../shared/apis/purchase-limit-policy-read.ts';
-import type { PurchaseLimitPolicyReadRequest } from '../../shared/apis/purchase-limit-policy-read.ts';
+
 import { PurchaseLimitPolicyServiceFactory } from '../../shared/domain/purchase-limit-policy.ts';
 import type { PurchaseLimitPolicyService } from '../../shared/domain/purchase-limit-policy.ts';
+import { counterpartyRefOwnerFacts } from './read-owner-facts.ts';
 
 const preserveFailureCause = <Failure extends object>(failure: Failure, cause: unknown): Failure => {
   Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
@@ -22,7 +23,7 @@ const preserveFailureCause = <Failure extends object>(failure: Failure, cause: u
 
 const purchaseLimitPolicyReadEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'counterparty.purchase_limit.manage' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.purchase-limit-policy-read',
   moduleKey: 'commerce.customer-context',
   role: 'api',
@@ -30,7 +31,16 @@ const purchaseLimitPolicyReadEntrypoint = defineTenantModuleEntrypoint({
 
 export const purchaseLimitPolicyReadRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.purchase-limit-policy.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'purchase-limits', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
+    accessOwnerFacts: counterpartyRefOwnerFacts,
     entrypoint: purchaseLimitPolicyReadEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',
@@ -39,7 +49,6 @@ export const purchaseLimitPolicyReadRead = defineRead(
     inputSchema: PurchaseLimitPolicyReadRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: 'commerce.customer-context',
-    permissionTarget: 'business_permission',
     policies: [],
     readKey: 'commerce.customer-context.api.purchase-limit-policy-read',
     resultSchema: PurchaseLimitPolicyReadResponseSchema,
@@ -87,16 +96,4 @@ export const purchaseLimitPolicyReadRead = defineRead(
       ),
       Effect.map((policy) => ({ policy })),
     ),
-  (input: PurchaseLimitPolicyReadRequest, scope) => ({
-    businessPermission: {
-      permission: 'counterparty.purchase_limit.manage',
-      target: {
-        counterpartyId: input.counterpartyRef.resourceId,
-        kind: 'counterparty',
-        legalEntityId: scope.legalEntityId ?? '',
-        tenantId: scope.tenantId,
-      },
-    },
-    kind: 'business_permission',
-  }),
 );

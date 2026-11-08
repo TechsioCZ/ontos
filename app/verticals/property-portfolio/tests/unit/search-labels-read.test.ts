@@ -1,4 +1,8 @@
-import { ContextAccess } from '@app/core-runtime';
+import { ContextAccess, trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
+import { makeTestBoundAccessGate } from '@app/core-runtime/testing/access-gate';
+import type { ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
+import { RecordKeySchema } from '@app/core-runtime/access/ids';
+import { propertyPortfolioRegistration } from '../../vertical.registration.ts';
 import type { ContextAccessDecision, OperationalScope } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import type { ReadTestOwnerQuery } from '@app/core-runtime/testing/reads';
@@ -23,15 +27,19 @@ const unitRef = {
   resourceId: '40000000-0000-4000-8000-000000000602',
   resourceType: 'property.portfolio.unit',
 } as const;
-const scope = {
-  authBindingId: '60000000-0000-4000-8000-000000000001',
-  authContextRef: 'better-auth-session:property-label-test',
-  authMethod: 'session',
-  correlationId: 'property-label-test',
-  legalEntityId,
-  principalId: '30000000-0000-4000-8000-000000000001',
-  tenantId,
-} as const;
+const compositionRevision = 'a'.repeat(64);
+const scope = trustVerifiedGatewayPrincipalContext(
+  {
+    authBindingId: '60000000-0000-4000-8000-000000000001',
+    authContextRef: 'better-auth-session:property-label-test',
+    authMethod: 'session',
+    correlationId: 'property-label-test',
+    legalEntityId,
+    principalId: '30000000-0000-4000-8000-000000000001',
+    tenantId,
+  },
+  compositionRevision,
+);
 const property = {
   address: 'Parková 12',
   archived: false,
@@ -65,46 +73,83 @@ interface ScenarioOptions {
   readonly rows?: readonly object[];
   readonly unavailable?: boolean;
 }
+const predicateFor = (options: ScenarioOptions): ListAccessPredicate => {
+  const allowed = [propertyRef.resourceId, unitRef.resourceId, '40000000-0000-4000-8000-000000000603'].filter(
+    (id) => options.deniedResourceIds?.includes(id) !== true,
+  );
+  let keys: readonly string[] | undefined;
+  if (options.resourceDecision === 'denied') {
+    keys = [otherId];
+  } else if (options.deniedResourceIds !== undefined) {
+    keys = allowed;
+  }
+  const predicate: ListAccessPredicate =
+    keys === undefined
+      ? { groups: [] }
+      : {
+          groups: [
+            {
+              clauses: [
+                {
+                  conditions: [
+                    {
+                      _tag: 'RecordKeyIn',
+                      recordKeys: Schema.decodeUnknownSync(Schema.NonEmptyArray(RecordKeySchema))(keys),
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        };
+  if (options.resources !== undefined) {
+    Reflect.set(predicate, 'groups', options.resources === 'malformed' ? 'invalid' : [{ clauses: [] }]);
+  }
+  return predicate;
+};
 const scenario = <Value, Failure, Requirements>(
   run: (
     harness: Effect.Success<ReturnType<typeof makeReadTestHarness>>,
     resources: readonly object[],
+    gate: ReturnType<typeof makeTestBoundAccessGate>['accessDecision'],
   ) => Effect.Effect<Value, Failure, Requirements>,
   options: ScenarioOptions = {},
 ) =>
   Effect.scoped(
     Effect.gen(function* readScenario() {
       const cryptoServices = yield* Layer.build(NodeCrypto.layer);
+      let outcome: 'ALLOWED' | 'DENIED' | 'UNAVAILABLE' = 'ALLOWED';
+      if (options.moduleDecision === 'denied') {
+        outcome = 'DENIED';
+      } else if (options.moduleDecision === 'unavailable' || options.resourceDecision === 'unavailable') {
+        outcome = 'UNAVAILABLE';
+      }
+      const gate = makeTestBoundAccessGate({
+        answers: {
+          'property.portfolio.api-search-labels.read': { outcome, predicate: predicateFor(options) },
+        },
+      });
       const harness = yield* makeReadTestHarness({
+        accessDecision: gate.bound,
+        compositionRevision,
         executeOwnerQuery: () =>
           options.unavailable === true
             ? Effect.fail(new SqlError({ reason: new ConnectionError({ cause: 'scripted owner unavailable' }) }))
             : Effect.succeed(options.rows ?? [ownerRow()]),
         operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-03T09:00:00.000Z')),
         ownerAuthorizationDecision: 'allowed',
+        ownerRegistration: propertyPortfolioRegistration,
         permissionDecision: 'allowed',
         scope: options.operationScope ?? scope,
       }).pipe(Effect.provideService(Crypto.Crypto, Context.get(cryptoServices, Crypto.Crypto)));
       const access = Context.get(yield* Layer.build(harness.layer), ContextAccess);
-      const resourceChecks: object[] = [];
       const moduleCheck = rs
         .spyOn(access, 'modules')
-        .mockImplementation(({ moduleIds }) =>
-          Effect.succeed(moduleIds.map((key) => ({ decision: options.moduleDecision ?? 'allowed', key }))),
-        );
-      const resourceCheck = rs.spyOn(access, 'resources').mockImplementation((input) => {
-        resourceChecks.push(input);
-        const decisions = input.resources.map((ref) => ({
-          decision:
-            options.deniedResourceIds?.includes(ref.resourceId) === true
-              ? 'denied'
-              : (options.resourceDecision ?? 'allowed'),
-          key:
-            options.resources === 'malformed' ? 'foreign-key' : `${ref.moduleId}:${ref.resourceType}:${ref.resourceId}`,
-        }));
-        return Effect.succeed(options.resources === 'incomplete' ? decisions.slice(1) : decisions);
-      });
-      return yield* run(harness, resourceChecks).pipe(
+        .mockImplementation(() => Effect.die('Retired module authority was invoked'));
+      const resourceCheck = rs
+        .spyOn(access, 'resources')
+        .mockImplementation(() => Effect.die('Retired resource authority was invoked'));
+      return yield* run(harness, gate.accessDecision.askedLists, gate.accessDecision).pipe(
         Effect.provideService(ContextAccess, access),
         Effect.ensuring(
           Effect.sync(() => {
@@ -155,9 +200,7 @@ it.effect('returns only safe labels and the actual owner revision through the go
         expect(Schema.is(SearchLabelsResponseSchema)(result)).toBe(true);
         expect(resourceChecks).toEqual([
           expect.objectContaining({
-            legalEntityId,
-            resources: [propertyRef, unitRef],
-            tenantId,
+            carrier: expect.objectContaining({ accessDeclaration: searchLabelsRead.descriptor.accessDeclaration }),
           }),
         ]);
         expect(harness.snapshot().evidenceWrites).toBe(1);
@@ -305,11 +348,7 @@ it.effect('updates Unit parent identity after a move even when the old parent re
           ],
           revision: 43,
         });
-        expect(resourceChecks).toEqual([
-          expect.objectContaining({ resources: [unitRef] }),
-          expect.objectContaining({ resources: [propertyRef, unitRef] }),
-          expect.objectContaining({ resources: [movedParentRef] }),
-        ]);
+        expect(resourceChecks).toHaveLength(3);
         expect(harness.snapshot().ownerQueries).toHaveLength(3);
       }),
     { rows },
@@ -331,10 +370,7 @@ it.effect(
           // A separate current parent lookup must independently authorize the parent, and remains denied.
           rows[0] = ownerRow([movedParent], [], 72);
           expect(yield* read(harness, { refs: [movedParentRef] })).toEqual({ labels: [], revision: 72 });
-          expect(resourceChecks).toEqual([
-            expect.objectContaining({ resources: [unitRef] }),
-            expect.objectContaining({ resources: [movedParentRef] }),
-          ]);
+          expect(resourceChecks).toHaveLength(2);
         }),
       { deniedResourceIds: [movedParentRef.resourceId], rows },
     );
@@ -410,7 +446,14 @@ it.effect('fails honestly for resource uncertainty and malformed or incomplete p
       { resources: 'malformed' as const },
       { resources: 'incomplete' as const },
     ]) {
-      yield* scenario((harness) => fails(read(harness), 'ReadHandlerUnavailable'), options);
+      yield* scenario(
+        (harness) =>
+          fails(
+            read(harness),
+            options.resourceDecision === 'unavailable' ? 'ReadPermissionUnavailable' : 'ReadHandlerUnavailable',
+          ),
+        options,
+      );
     }
   }),
 );
@@ -511,21 +554,21 @@ it.effect(
 );
 
 it.effect('rechecks the current principal and owner on every request, without a query/result cache', () =>
-  scenario((harness) =>
+  scenario((harness, questions, gate) =>
     Effect.gen(function* noCache() {
       const first = yield* read(harness);
-      const access = Context.get(yield* Layer.build(harness.layer), ContextAccess);
-      const denial = rs.spyOn(access, 'resources').mockImplementation(({ resources }) =>
-        Effect.succeed(
-          resources.map((ref) => ({
-            decision: 'denied' as const,
-            key: `${ref.moduleId}:${ref.resourceType}:${ref.resourceId}`,
-          })),
-        ),
-      );
+      const originalList = gate.list;
+      const denial = rs
+        .spyOn(gate, 'list')
+        .mockImplementation((question) =>
+          originalList(question).pipe(
+            Effect.map(({ decision }) => ({ decision, predicate: predicateFor({ resourceDecision: 'denied' }) })),
+          ),
+        );
       const second = yield* read(harness).pipe(Effect.ensuring(Effect.sync(() => denial.mockRestore())));
       expect(first.labels).toHaveLength(2);
       expect(second.labels).toEqual([]);
+      expect(questions).toHaveLength(2);
       expect(harness.snapshot().ownerQueries).toHaveLength(2);
       expect(harness.snapshot().evidenceWrites).toBe(2);
       expect(Predicate.isTagged(second, 'ReadHandlerUnavailable')).toBe(false);

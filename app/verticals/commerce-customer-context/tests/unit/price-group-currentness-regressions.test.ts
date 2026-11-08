@@ -1,3 +1,4 @@
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import type { ActionAccessEvidencePolicy } from '@app/core-runtime';
 import type { DomainEventContractMap } from '../../../../packages/core-runtime/src/actions/events.ts';
 import { PriceGroupCompatibilityDecisionSchema } from '@app/price-group-catalog-contracts';
@@ -6,7 +7,7 @@ import { Effect, Match, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionHandler } from '@app/core-runtime/testing/actions';
 import type {
   CustomerPriceGroupAssignment,
   PriceGroupCompatibilityEvidence,
@@ -321,5 +322,5 @@ it.effect('B2 validates all four scheduled assignment and migration Actions at t
     expect(
       stored.every((input) => input.effectiveFrom === scheduledAt && input.trustedOperationAt === operationAt),
     ).toBe(true);
-  }),
+  }).pipe(Effect.provide(nodeCryptoLayer)),
 );

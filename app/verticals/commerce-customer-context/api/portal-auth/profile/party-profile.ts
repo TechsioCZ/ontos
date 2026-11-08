@@ -1,11 +1,11 @@
 import {
   AddContactPointPayloadSchema,
   PartyCommandConflictProblemSchema,
-  normalizePhone,
   UpdateContactPointPayloadSchema,
   UpdatePartyPayloadSchema,
 } from '@app/party-registry/api';
 import type { PartyContactPointsResponse, PartyDetailResponse } from '@app/party-registry/api';
+import { normalizeContactPhone } from '@app/party-registry/domain/contact-phone-normalization';
 import {
   addContactPointWithAuthorization,
   executePartyContactPointsWithAuthorization,
@@ -16,7 +16,7 @@ import {
 import type { PartyRef } from '@app/party-registry/resources/party';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { Crypto, DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Option, Predicate, Redacted, Result, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 import { acquireRetailPartyGateway } from '../../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
 import type { RetailPartyCandidateOwnerInput } from '../../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
@@ -37,45 +37,63 @@ const sameParty = (left: PartyRef, right: PartyRef) =>
 /** Stable preference selection, not a browser-chosen contact reference. */
 export const selectProfileContact = (items: readonly Contact[], type: 'EMAIL' | 'PHONE') =>
   items
-    .filter((item) => item.current && item.state === 'ACTIVE' && item.value.type === type)
+    .flatMap((item) => {
+      const { value } = item;
+      return item.current &&
+        item.state === 'ACTIVE' &&
+        value !== undefined &&
+        value.type !== 'ADDRESS' &&
+        value.type === type
+        ? [{ ...item, value }]
+        : [];
+    })
     .toSorted(
-      (a, b) =>
-        Number(b.value.type !== 'ADDRESS' && b.value.preferred) -
-          Number(a.value.type !== 'ADDRESS' && a.value.preferred) ||
-        a.contactPointRef.resourceId.localeCompare(b.contactPointRef.resourceId),
+      (left, right) =>
+        Number(right.value.preferred) - Number(left.value.preferred) ||
+        left.contactPointRef.resourceId.localeCompare(right.contactPointRef.resourceId),
     )[0];
-const display = (contact: Contact | undefined) =>
-  contact === undefined || contact.value.type === 'ADDRESS' ? '' : contact.value.displayValue;
+const display = (contact: ReturnType<typeof selectProfileContact>) => contact?.value.displayValue ?? '';
 
 export const projectCustomerOwnProfile = (
   detail: PartyDetailResponse,
   contacts: PartyContactPointsResponse,
-): CustomerOwnProfile => ({
-  contactEmail: display(selectProfileContact(contacts.items, 'EMAIL')),
-  displayName: Option.getOrElse(detail.party.displayName, () => ''),
-  phone: display(selectProfileContact(contacts.items, 'PHONE')),
-  // Includes every returned contact revision: adding/changing the preferred contact invalidates an edit too.
-  version: Hex.encode(
-    sha256(
-      utf8ToBytes(
-        // UUIDs, integer revisions and closed lifecycle literals cannot contain the NUL separator.
-        [
-          detail.party.partyRef.tenantId,
-          detail.party.partyRef.resourceId,
-          String(detail.party.revision),
-          ...contacts.items
-            .toSorted((left, right) => left.contactPointRef.resourceId.localeCompare(right.contactPointRef.resourceId))
-            .flatMap((item) => [
-              item.contactPointRef.resourceId,
-              String(item.revision),
-              String(item.current),
-              item.state,
-            ]),
-        ].join('\0'),
+): Result.Result<CustomerOwnProfile, ReturnType<typeof profileUnavailable>> => {
+  const { displayName } = detail.party;
+  if (
+    displayName === undefined ||
+    contacts.items.some((item) => item.current && item.state === 'ACTIVE' && item.value === undefined)
+  ) {
+    return Result.fail(profileUnavailable());
+  }
+  return Result.succeed({
+    contactEmail: display(selectProfileContact(contacts.items, 'EMAIL')),
+    displayName: Option.getOrElse(displayName, () => ''),
+    phone: display(selectProfileContact(contacts.items, 'PHONE')),
+    // Includes every returned contact revision: adding/changing the preferred contact invalidates an edit too.
+    version: Hex.encode(
+      sha256(
+        utf8ToBytes(
+          // UUIDs, integer revisions and closed lifecycle literals cannot contain the NUL separator.
+          [
+            detail.party.partyRef.tenantId,
+            detail.party.partyRef.resourceId,
+            String(detail.party.revision),
+            ...contacts.items
+              .toSorted((left, right) =>
+                left.contactPointRef.resourceId.localeCompare(right.contactPointRef.resourceId),
+              )
+              .flatMap((item) => [
+                item.contactPointRef.resourceId,
+                String(item.revision),
+                String(item.current),
+                item.state,
+              ]),
+          ].join('\0'),
+        ),
       ),
     ),
-  ),
-});
+  });
+};
 
 /** The account's own Party, read directly. A merge, alias or archive needs owner reconciliation, not a successor. */
 export const readDirectCustomerParty = Effect.fn('CustomerOwnProfile.readDirectParty')(function* readDirectParty(
@@ -97,6 +115,10 @@ export const readDirectCustomerParty = Effect.fn('CustomerOwnProfile.readDirectP
   if (
     !sameParty(detail.party.partyRef, partyRef) ||
     detail.resolution.kind !== 'DIRECT' ||
+    !sameParty(detail.resolution.requestedPartyRef, partyRef) ||
+    !sameParty(detail.resolution.canonicalPartyRef, partyRef) ||
+    detail.resolution.aliasChain.length !== 0 ||
+    detail.party.partyType !== 'PERSON' ||
     Option.isSome(detail.party.archivedAt)
   ) {
     return yield* Effect.fail(profileConflict());
@@ -118,7 +140,21 @@ export const readCustomerPartyProfile = Effect.fn('CustomerOwnProfile.readParty'
   if (contacts.items.some((item) => !sameParty(item.partyRef, partyRef))) {
     return yield* Effect.fail(profileUnavailable());
   }
-  return { contacts, detail, partyRef, profile: projectCustomerOwnProfile(detail, contacts) };
+  const profile = yield* Effect.fromResult(projectCustomerOwnProfile(detail, contacts));
+  return { contacts, detail, partyRef, profile };
+});
+
+/** Party derives the visible name from sparse personal-name facts; omission never clears a surname. */
+export const customerPersonalNameFields = Effect.fn('CustomerOwnProfile.personalNameFields')(function* nameFields(
+  displayName: string,
+  currentLastName: Option.Option<string>,
+) {
+  const [firstName = '', ...rest] = displayName.trim().split(/\s+/u);
+  if (firstName === '' || (rest.length === 0 && Option.isSome(currentLastName))) {
+    // Main's sparse name update cannot erase an existing fact. Refuse before any other profile field commits.
+    return yield* Effect.fail(profileInvalid());
+  }
+  return rest.length === 0 ? { firstName } : { firstName, lastName: rest.join(' ') };
 });
 
 /** Native expected revisions guard edits; each submission is one attempt, never an automatic retry. */
@@ -130,13 +166,25 @@ export const updateCustomerPartyProfile = Effect.fn('CustomerOwnProfile.updatePa
   if (before.profile.version !== input.version) {
     return yield* Effect.fail(profileConflict());
   }
+  let nameFields: Effect.Success<ReturnType<typeof customerPersonalNameFields>> | undefined;
+  if (input.displayName !== before.profile.displayName) {
+    const { lastName } = before.detail.party;
+    if (lastName === undefined) {
+      return yield* Effect.fail(profileUnavailable());
+    }
+    nameFields = yield* customerPersonalNameFields(input.displayName, lastName);
+  }
+  const requestedDisplayName =
+    nameFields === undefined
+      ? input.displayName
+      : [nameFields.firstName, nameFields.lastName].filter((part) => part !== undefined).join(' ');
   // Validate the complete phone intent before any native command can commit a different field.
   // Empty means removal; nonempty values use the owner's exact national/international rules.
   if (input.phone !== '') {
-    yield* Effect.try({
-      catch: profileInvalid,
-      try: () => normalizePhone(input.phone, input.phone.startsWith('+') ? undefined : 'CZ'),
-    });
+    const normalization = normalizeContactPhone(input.phone, input.phone.startsWith('+') ? undefined : 'CZ');
+    if (!normalization.ok) {
+      return yield* Effect.fail(profileInvalid());
+    }
   }
   const validFrom = DateTime.formatIso(yield* DateTime.now);
   const evidenceReference = `commerce.customer-profile:${scope.requestCorrelation}`;
@@ -154,7 +202,7 @@ export const updateCustomerPartyProfile = Effect.fn('CustomerOwnProfile.updatePa
   ) {
     const gateway = yield* acquireRetailPartyGateway(scope).pipe(Effect.mapError(profileUnavailable));
     const crypto = yield* Crypto.Crypto;
-    return yield* execute(gateway.credential, {
+    const result = yield* execute(gateway.credential, {
       ...gateway.options,
       correlationId: scope.requestCorrelation,
       idempotencyKey: yield* crypto.randomUUIDv4().pipe(Effect.mapError(profileUnavailable)),
@@ -163,10 +211,14 @@ export const updateCustomerPartyProfile = Effect.fn('CustomerOwnProfile.updatePa
         Schema.is(PartyCommandConflictProblemSchema)(failure) ? profileConflict() : profileUnavailable(),
       ),
     );
+    if (Predicate.isTagged(result, 'ActionProposalAccepted')) {
+      return yield* Effect.fail(profileUnavailable());
+    }
+    return result;
   });
   if (input.displayName !== before.profile.displayName) {
     const payload = yield* Schema.decodeEffect(UpdatePartyPayloadSchema)({
-      displayName: input.displayName,
+      ...nameFields,
       expectedRevision: before.detail.party.revision,
       partyRef: before.partyRef,
       provenanceMethod: 'DECLARED_BY_PARTY',
@@ -190,7 +242,6 @@ export const updateCustomerPartyProfile = Effect.fn('CustomerOwnProfile.updatePa
         privacyClassification: 'PERSONAL',
         provenance,
         validFrom,
-        verification: { state: 'UNVERIFIED' },
       };
       if (current === undefined) {
         if (value === '') {
@@ -224,7 +275,7 @@ export const updateCustomerPartyProfile = Effect.fn('CustomerOwnProfile.updatePa
   );
   const after = yield* readCustomerPartyProfile(scope);
   if (
-    after.profile.displayName !== input.displayName ||
+    after.profile.displayName !== requestedDisplayName ||
     after.profile.phone !== input.phone ||
     after.profile.contactEmail !== input.contactEmail
   ) {

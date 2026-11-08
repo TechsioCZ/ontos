@@ -68,7 +68,12 @@ describe('Catalog governed Quantity preparation', () => {
         Effect.flip,
       );
       expect(Schema.is(ReadHandlerNotFound)(failure)).toBe(true);
-      expect(quantityPreparationRead.descriptor.permissionTarget).toBe('resource');
+      // v2: the declaration is the only authority identity; a scope-wide read carries no selectors (O62).
+      expect(quantityPreparationRead.descriptor.accessDeclaration?.selectors).toEqual([]);
+      expect(quantityPreparationRead.descriptor.accessActor).toMatchObject({
+        callers: ['commerce-cart', 'commerce-customer-context'],
+        subject: 'identity',
+      });
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

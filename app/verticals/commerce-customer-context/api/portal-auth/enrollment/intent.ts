@@ -1,4 +1,4 @@
-import { normalizePhone } from '@app/party-registry/api';
+import { normalizeContactPhone } from '@app/party-registry/domain/contact-phone-normalization';
 import { Effect, Schema } from 'effect';
 
 import {
@@ -11,7 +11,6 @@ import {
 } from '../../../shared/enrollment-contracts.ts';
 import type { StartPortalEnrollmentPayload } from '../../../shared/actions/start-portal-enrollment.ts';
 import { PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY } from '../../../src/enrollment/journeys/existing-account.ts';
-import { withCause } from '../../../src/enrollment/attempts/errors.ts';
 import { retailSelfEnrollmentEvidenceReference } from '../../../src/enrollment/journeys/retail-self-enrollment-contracts.ts';
 import {
   PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
@@ -25,7 +24,10 @@ class CommercePortalAuthEnrollmentPhoneInvalid extends Schema.TaggedError<Commer
   {},
 ) {}
 
-/** Party owns phone rules. Canonicalize before any budget, Attempt or provider write. */
+/**
+ * Party owns phone rules, and publishes them as its `contact-phone-normalization` contract.
+ * Canonicalize through that one contract before any budget, Attempt or provider write.
+ */
 export const normalizeCommercePortalAuthEnrollmentPhone = (
   input: CommercePortalAuthEnrollmentStartInput,
 ): Effect.Effect<CommercePortalAuthEnrollmentStartInput, CommercePortalAuthEnrollmentPhoneInvalid> => {
@@ -33,10 +35,10 @@ export const normalizeCommercePortalAuthEnrollmentPhone = (
     return Effect.succeed(input);
   }
   const { phone } = input;
-  return Effect.try({
-    catch: (cause) => withCause(new CommercePortalAuthEnrollmentPhoneInvalid({}), cause),
-    try: () => ({ ...input, phone: normalizePhone(phone, phone.startsWith('+') ? undefined : 'CZ').lookupValue }),
-  });
+  const normalization = normalizeContactPhone(phone, phone.startsWith('+') ? undefined : 'CZ');
+  return normalization.ok
+    ? Effect.succeed({ ...input, phone: normalization.normalized.lookupValue })
+    : Effect.fail(new CommercePortalAuthEnrollmentPhoneInvalid({}));
 };
 
 /**

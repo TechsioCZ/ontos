@@ -5,15 +5,13 @@ import {
   CoreSearchProjectionStore,
   CoreSearchQueryRuntime,
   ReadPermissionDenied,
-  ResourceContainmentMutationUnavailable,
-  ResourceContainmentRelationshipMutation,
   createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
 } from '@app/core-runtime';
-import type { ContextAccessService, OperationalScope } from '@app/core-runtime';
+import type { OperationalScope } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
-import { Context, DateTime, Effect, Layer, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { DocumentsProviderRequestSchema, DocumentsProviderResponseSchema } from '../../shared/apis/documents-search.ts';
 import { ContractsProviderResponseSchema } from '../../shared/apis/contracts-search.ts';
@@ -24,9 +22,22 @@ import { documentsRead } from '../../src/search/documents.provider.ts';
 import {
   buildSearchDocuments,
   createSearchProjector,
-  loadCurrentSearchHits,
+  loadCurrentSearchHits as loadAuthorizedCurrentSearchHits,
 } from '../../src/services/search-projection.ts';
 import { SearchSource } from '../../src/services/search-source.ts';
+import { legalAgreementsRegistration } from '../../vertical.registration.ts';
+import { contractsRead } from '../../src/search/contracts.provider.ts';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import { gateAnswer, gateWithList, recordKeys, searchAuthorization, retiredAccess } from '../support/search-access.ts';
+
+const loadCurrentSearchHits = (
+  ...args: [
+    Parameters<typeof loadAuthorizedCurrentSearchHits>[0],
+    Parameters<typeof loadAuthorizedCurrentSearchHits>[1],
+    Parameters<typeof loadAuthorizedCurrentSearchHits>[2],
+    Parameters<typeof loadAuthorizedCurrentSearchHits>[3],
+  ]
+) => loadAuthorizedCurrentSearchHits(...args, searchAuthorization);
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
 const legalEntityId = '30000000-0000-4000-8000-000000000001';
@@ -106,17 +117,7 @@ const encoded = {
   ],
 };
 const makeState = () => Schema.decodeUnknownEffect(AgreementsStateSchema)(encoded);
-const keyFor = (ref: { readonly moduleId: string; readonly resourceId: string; readonly resourceType: string }) =>
-  `${ref.moduleId}:${ref.resourceType}:${ref.resourceId}`;
-const accessWith = (resources: ContextAccessService['resources']): ContextAccessService => ({
-  legalEntities: () => Effect.succeed([]),
-  modules: () => Effect.succeed([]),
-  resources,
-  tenants: () => Effect.succeed([]),
-});
-const allowedAccess = accessWith(({ resources }) =>
-  Effect.succeed(resources.map((resource) => ({ decision: 'allowed', key: keyFor(resource) }))),
-);
+const allowedAccess = gateAnswer();
 const build = (state: AgreementsState, projectionVersion = '1', businessDate = '2026-11-03') =>
   buildSearchDocuments({ companies: [{ legalEntityId, state }], projectionVersion, tenantId }, businessDate);
 const documentsOfType = <Document extends { readonly ref: { readonly resourceType: string } }>(
@@ -149,7 +150,7 @@ const realRuntime = Effect.gen(function* makeRuntime() {
   const search = (state: AgreementsState, query: string, includeArchived = false, includeRelevance = false) =>
     loadCurrentSearchHits(scope, 'legal.agreements.document', { includeArchived, includeRelevance, query }, state).pipe(
       Effect.provideService(CoreSearchQueryRuntime, runtime),
-      Effect.provideService(ContextAccess, allowedAccess),
+      Effect.provideService(AccessDecisionGate, allowedAccess),
     );
   return { publish, runtime, search, store };
 });
@@ -176,13 +177,19 @@ it.effect('generated documents ingress validates normalized query, typed identit
       expect(Schema.is(ContractsProviderResponseSchema)([{ ...result, ref: contractRef, relevance }])).toBe(false);
     }
     expect(documentsRead.descriptor).toMatchObject({
+      accessDeclaration: {
+        key: 'legal.agreements.search-documents.read',
+        kind: 'read',
+        modes: ['run'],
+        placement: { group: 'legal-agreements', level: 'basic' },
+        risk: 'sensitive',
+        selectors: ['all'],
+      },
       accessKind: 'search',
-      entrypoint: { authorization: { kind: 'context_permission', permission: 'module.access' } },
+      entrypoint: { authorization: { kind: 'protected' } },
       legalEntityScope: 'required',
       owningModuleKey: 'legal.agreements',
-      permissionTarget: 'module',
       policies: [],
-      resultAuthorization: { kind: 'search-collection' },
     });
   }),
 );
@@ -362,60 +369,49 @@ it.effect(
     }),
 );
 
-it.effect(
-  'current parent resource permission is scoped, deduplicated and rechecked without remote I/O in the owner transaction',
-  () =>
-    Effect.gen(function* parentAuthorization() {
-      const state = yield* makeState();
-      const multiple = {
-        ...state,
-        documents: [
-          ...state.documents,
-          ...state.documents.map((document) => ({
-            ...document,
-            documentRef: { ...document.documentRef, resourceId: otherDocumentId },
-          })),
-        ],
-      };
-      const candidates = yield* build(multiple);
-      let calls = 0;
-      let allowed = true;
-      const access = accessWith((input) =>
-        Effect.sync(() => {
-          calls += 1;
-          expect(input).toEqual({
-            legalEntityId,
-            permission: 'read',
-            principalId: scope.principalId,
-            resources: [state.contracts[0]?.contractRef],
-            tenantId,
-          });
-          return input.resources.map((ref) => ({
-            decision: allowed ? ('allowed' as const) : ('denied' as const),
-            key: keyFor(ref),
-          }));
-        }),
+it.effect('current parent contract LIST is independent, original, scoped and evaluated once per search', () =>
+  Effect.gen(function* parentAuthorization() {
+    const state = yield* makeState();
+    const multiple = {
+      ...state,
+      documents: [
+        ...state.documents,
+        ...state.documents.map((document) => ({
+          ...document,
+          documentRef: { ...document.documentRef, resourceId: otherDocumentId },
+        })),
+      ],
+    };
+    const candidates = yield* build(multiple);
+    let calls = 0;
+    let allowed = true;
+    const access = gateWithList((input) => {
+      calls += 1;
+      expect(input.scope).toBe(scope);
+      expect(input.carrier.accessDeclaration).toBe(contractsRead.descriptor.accessDeclaration);
+      expect(input.legalEntityScope).toBe('required');
+      return gateAnswer(allowed ? 'ALLOWED' : 'DENIED', recordKeys(contractId)).list(input);
+    });
+    const search = () =>
+      loadCurrentSearchHits(
+        scope,
+        'legal.agreements.document',
+        { includeArchived: true, query: 'predavaci' },
+        multiple,
+      ).pipe(
+        Effect.provideService(AccessDecisionGate, access),
+        Effect.provideService(ContextAccess, retiredAccess),
+        Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed(candidates) }),
       );
-      const search = () =>
-        loadCurrentSearchHits(
-          scope,
-          'legal.agreements.document',
-          { includeArchived: true, query: 'predavaci' },
-          multiple,
-        ).pipe(
-          Effect.provideService(ContextAccess, access),
-          Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed(candidates) }),
-        );
-      expect(yield* search()).toHaveLength(2);
-      allowed = false;
-      expect(yield* search()).toEqual([]);
-      allowed = true;
-      expect(yield* search()).toHaveLength(2);
-      expect(calls).toBe(3);
-    }),
+    expect(yield* search()).toHaveLength(2);
+    allowed = false;
+    expect(yield* search()).toEqual([]);
+    allowed = true;
+    expect(yield* search()).toHaveLength(2);
+    expect(calls).toBe(3);
+  }),
 );
-
-it.effect('denied parents cannot hide readable independent documents and no forbidden metadata is returned', () =>
+it.effect('denied parent contracts cannot hide readable independent documents or disclose linked metadata', () =>
   Effect.gen(function* mixedParents() {
     const state = yield* makeState();
     const mixed = {
@@ -432,12 +428,8 @@ it.effect('denied parents cannot hide readable independent documents and no forb
     };
     const candidates = yield* build(mixed);
     const result = yield* loadCurrentSearchHits(scope, 'legal.agreements.document', { query: 'predavaci' }, mixed).pipe(
-      Effect.provideService(
-        ContextAccess,
-        accessWith(({ resources }) =>
-          Effect.succeed(resources.map((ref) => ({ decision: 'denied', key: keyFor(ref) }))),
-        ),
-      ),
+      Effect.provideService(AccessDecisionGate, gateAnswer('DENIED')),
+      Effect.provideService(ContextAccess, retiredAccess),
       Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed(candidates) }),
     );
     expect(result).toEqual([
@@ -451,40 +443,21 @@ it.effect('denied parents cannot hide readable independent documents and no forb
     expect(serialize(result)).not.toContain('AB42');
   }),
 );
-
-it.effect(
-  'missing, duplicate, unexpected and unavailable parent authorization evidence fails closed rather than returning empty success',
-  () =>
-    Effect.gen(function* uncertainParents() {
-      const state = yield* makeState();
-      const candidates = yield* build(state);
-      const key = keyFor(contractRef);
-      for (const decisions of [
-        [],
-        [{ decision: 'unavailable' as const, key }],
-        [{ decision: 'allowed' as const, key: 'foreign' }],
-        [
-          { decision: 'allowed' as const, key },
-          { decision: 'allowed' as const, key },
-        ],
-        [{ decision: 'allowed' as const, extra: 'unexpected', key }],
-      ]) {
-        const failure = yield* loadCurrentSearchHits(
-          scope,
-          'legal.agreements.document',
-          { includeArchived: true, query: 'predavaci' },
-          state,
-        ).pipe(
-          Effect.provideService(
-            ContextAccess,
-            accessWith(() => Effect.succeed(decisions)),
-          ),
-          Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed(candidates) }),
-          Effect.flip,
-        );
-        expect(Schema.is(SearchProjectionUnavailable)(failure)).toBe(true);
-      }
-    }),
+it.effect('unavailable parent authority fails closed before observing index candidates', () =>
+  Effect.gen(function* uncertainParents() {
+    const state = yield* makeState();
+    const failure = yield* loadCurrentSearchHits(
+      scope,
+      'legal.agreements.document',
+      { includeArchived: true, query: 'predavaci' },
+      state,
+    ).pipe(
+      Effect.provideService(AccessDecisionGate, gateAnswer('UNAVAILABLE')),
+      Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.die('Unavailable parent must not search') }),
+      Effect.flip,
+    );
+    expect(Schema.is(SearchProjectionUnavailable)(failure)).toBe(true);
+  }),
 );
 
 it.effect(
@@ -525,7 +498,7 @@ it.effect(
         expect(
           yield* loadCurrentSearchHits(scope, 'legal.agreements.document', { query: 'predavaci' }, state).pipe(
             Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed(wrong) }),
-            Effect.provideService(ContextAccess, allowedAccess),
+            Effect.provideService(AccessDecisionGate, allowedAccess),
           ),
         ).toEqual([]);
       }
@@ -537,7 +510,7 @@ it.effect(
         state,
       ).pipe(
         Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.die('Unscoped search must not run') }),
-        Effect.provideService(ContextAccess, allowedAccess),
+        Effect.provideService(AccessDecisionGate, allowedAccess),
         Effect.flip,
       );
       expect(Schema.is(SearchProjectionUnavailable)(failure)).toBe(true);
@@ -558,7 +531,7 @@ it.effect('document and contract relevance is opt-in, validated and recomputed/r
       const search = (includeRelevance: boolean) =>
         loadCurrentSearchHits(scope, resourceType, { includeRelevance, query: 'protokol' }, renamed).pipe(
           Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed(candidates) }),
-          Effect.provideService(ContextAccess, allowedAccess),
+          Effect.provideService(AccessDecisionGate, allowedAccess),
         );
       expect(yield* search(false)).toMatchObject([{ title: 'Nový protokol kanceláře' }]);
       expect((yield* search(false))[0]).not.toHaveProperty('relevance');
@@ -591,7 +564,7 @@ it.effect('document and contract relevance is opt-in, validated and recomputed/r
       second,
     ).pipe(
       Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed(indexed) }),
-      Effect.provideService(ContextAccess, allowedAccess),
+      Effect.provideService(AccessDecisionGate, allowedAccess),
     );
     expect(result.map(({ ref }) => ref.resourceId)).toEqual([otherDocumentId, documentId]);
     expect(result).toMatchObject([{ relevance: { score: 900 } }, { relevance: { score: 700 } }]);
@@ -599,15 +572,13 @@ it.effect('document and contract relevance is opt-in, validated and recomputed/r
 );
 
 it.effect(
-  'projector publishes both complete resource-type units only after containment; deletion and stale generations preserve Core floors',
+  'projector publishes both complete resource-type units; deletion and stale generations preserve Core floors',
   () =>
     Effect.gen(function* completeUnits() {
       let state = yield* makeState();
       let version = '1';
       const store = makeInMemoryCoreSearchProjectionStore();
-      let touches = 0;
       const replacements: unknown[] = [];
-      const relationshipCounts: number[] = [];
       const projector = yield* createSearchProjector.pipe(
         Effect.provideService(SearchSource, {
           load: () => Effect.succeed({ companies: [{ legalEntityId, state }], projectionVersion: version, tenantId }),
@@ -616,21 +587,12 @@ it.effect(
           ...store,
           apply: () => Effect.die('Per-record ingestion is forbidden'),
           replace: (replacement, worker) => {
-            expect(touches).toBeGreaterThan(0);
             replacements.push(replacement);
             return store.replace(replacement, worker);
           },
         }),
-        Effect.provideService(ResourceContainmentRelationshipMutation, {
-          touch: ({ relationships }) =>
-            Effect.sync(() => {
-              relationshipCounts.push(relationships.length);
-              touches += 1;
-            }),
-        }),
       );
       yield* projector.project(context);
-      expect(relationshipCounts).toEqual([2]);
       expect(replacements).toMatchObject([
         { documents: [{ ref: contractRef }], rebuildVersion: '1', resourceType: contractRef.resourceType },
         { documents: [{ ref: documentRef }], rebuildVersion: '1', resourceType: documentRef.resourceType },
@@ -656,177 +618,103 @@ it.effect(
           state,
         ).pipe(
           Effect.provideService(CoreSearchQueryRuntime, runtime),
-          Effect.provideService(ContextAccess, allowedAccess),
+          Effect.provideService(AccessDecisionGate, allowedAccess),
         ),
       ).toEqual([]);
     }),
 );
 
-it.effect('containment failure prevents publication of either unit and preserves the existing projection', () =>
-  Effect.gen(function* failedContainment() {
-    const state = yield* makeState();
-    const { publish, search, store } = yield* realRuntime;
-    yield* publish(state, '1');
-    let replacements = 0;
-    const projector = yield* createSearchProjector.pipe(
-      Effect.provideService(SearchSource, {
-        load: () =>
-          Effect.succeed({
-            companies: [{ legalEntityId, state: { ...state, documents: [] } }],
-            projectionVersion: '2',
-            tenantId,
+it.layer(NodeCrypto.layer)('registered Legal document search lifecycle', (suite) => {
+  suite.effect('loads scoped SQL, commits, then checks original parent authority and searches with evidence', () =>
+    Effect.scoped(
+      Effect.gen(function* registeredSearch() {
+        const state = yield* makeState();
+        const candidates = yield* build(state);
+        const harness = yield* makeReadTestHarness({
+          access: 'allowed',
+          executeOwnerQuery: ({ params, scope: actual, sql }) => {
+            expect(sql).toContain('"legal_agreements"."state"');
+            expect(params).toEqual([tenantId, legalEntityId, 1]);
+            expect(actual).toEqual({ legalEntityId, tenantId });
+            return Effect.succeed([{ legalEntityId, revision: 7, snapshot: state, tenantId }]);
+          },
+          operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-03T00:00:00.000Z')),
+          ownerAuthorizationDecision: 'allowed',
+          ownerRegistration: legalAgreementsRegistration,
+          scope,
+        });
+        let parentChecks = 0;
+        const access = gateWithList((input) =>
+          Effect.gen(function* parentAfterCommit() {
+            parentChecks += 1;
+            expect(harness.snapshot().statements).toContain('COMMIT');
+            expect(input.carrier.accessDeclaration).toBe(contractsRead.descriptor.accessDeclaration);
+            expect(input.scope).toMatchObject(scope);
+            expect(harness.snapshot().ownerQueries).toHaveLength(1);
+            return yield* allowedAccess.list(input);
           }),
+        );
+        const result = yield* harness.runtime
+          .runRead({
+            input: { includeRelevance: true, query: 'predavaci' },
+            principal: scope,
+            registration: documentsRead,
+            transport: { correlationId: scope.correlationId },
+          })
+          .pipe(
+            Effect.provideService(ContextAccess, retiredAccess),
+            Effect.provideService(AccessDecisionGate, access),
+            Effect.provideService(CoreSearchQueryRuntime, {
+              search: (_input, _scope, authorization) => {
+                expect(harness.snapshot().ownerQueries).toHaveLength(1);
+                expect(harness.snapshot().statements).toContain('COMMIT');
+                expect(authorization?.listAccess).toBeDefined();
+                return Effect.succeed(candidates);
+              },
+            }),
+          );
+        expect(result).toMatchObject([
+          {
+            ref: documentRef,
+            relevance: { score: 800, version: '1' },
+            selectedLegalEntityId: legalEntityId,
+            title: 'Předávací protokol kanceláře',
+          },
+        ]);
+        expect(parentChecks).toBe(1);
+        expect(harness.snapshot().evidenceWrites).toBe(1);
       }),
-      Effect.provideService(CoreSearchProjectionStore, {
-        ...store,
-        replace: () =>
-          Effect.sync(() => {
-            replacements += 1;
-          }),
-      }),
-      Effect.provideService(ResourceContainmentRelationshipMutation, {
-        touch: () => Effect.fail(new ResourceContainmentMutationUnavailable({ reason: 'Unavailable' })),
-      }),
-    );
-    expect(Schema.is(SearchProjectionUnavailable)(yield* projector.project(context).pipe(Effect.flip))).toBe(true);
-    expect(replacements).toBe(0);
-    expect(yield* search(state, 'predavaci')).toHaveLength(1);
-  }),
-);
-
-it.layer(NodeCrypto.layer)('generated Legal documents governed Read', (suite) => {
-  suite.effect(
-    'original owner factory loads scoped SQL, commits before Core search, and emits safe current results/evidence',
-    () =>
-      Effect.scoped(
-        Effect.gen(function* actualOwnerRead() {
-          const state = yield* makeState();
-          const candidates = yield* build(state);
-          const harness = yield* makeReadTestHarness({
-            compositionRevision: 'a'.repeat(64),
-            executeOwnerQuery: ({ params, scope: actual, sql }) => {
-              expect(sql).toContain('"legal_agreements"."state"');
-              expect(params).toEqual([tenantId, legalEntityId, 1]);
-              expect(actual).toEqual({ legalEntityId, tenantId });
-              return Effect.succeed([{ legalEntityId, revision: 7, snapshot: state, tenantId }]);
-            },
-            operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-03T00:00:00.000Z')),
-            ownerAuthorizationDecision: 'allowed',
-            permissionDecision: 'allowed',
-            scope,
-          });
-          const services = yield* Layer.build(harness.layer);
-          let parentChecks = 0;
-          const access = Context.get(services, ContextAccess);
-          const checkResources = access.resources;
-          Object.assign(access, {
-            resources: (input: Parameters<ContextAccessService['resources']>[0]) => {
-              if (input.resources.some((resource) => resource.resourceType === contractRef.resourceType)) {
-                parentChecks += 1;
-                expect(harness.snapshot().statements.some((sql) => /^commit$/iu.test(sql))).toBe(true);
-              }
-              return checkResources(input);
-            },
-          });
-          const result = yield* harness.runtime
-            .runRead({
-              input: { includeRelevance: true, query: 'predavaci' },
-              principal: scope,
-              registration: documentsRead,
-              transport: { correlationId: scope.correlationId },
-            })
-            .pipe(
-              Effect.provideService(ContextAccess, access),
-              Effect.provideService(CoreSearchQueryRuntime, {
-                search: () => {
-                  expect(harness.snapshot().ownerQueries).toHaveLength(1);
-                  expect(harness.snapshot().statements.some((sql) => /^commit$/iu.test(sql))).toBe(true);
-                  return Effect.succeed(candidates);
-                },
-              }),
-            );
-          expect(result).toMatchObject([
-            {
-              ref: documentRef,
-              relevance: { score: 800, version: '1' },
-              selectedLegalEntityId: legalEntityId,
-              title: 'Předávací protokol kanceláře',
-            },
-          ]);
-          expect(parentChecks).toBe(1);
-          expect(harness.snapshot().evidenceWrites).toBe(1);
-        }),
-      ),
+    ),
   );
-  suite.effect(
-    'missing module permission denies before private SQL or index search; resource denial is not bypassed',
-    () =>
-      Effect.scoped(
-        Effect.gen(function* deniedRead() {
-          const state = yield* makeState();
-          const candidates = yield* build(state);
-          const harness = yield* makeReadTestHarness({
-            executeOwnerQuery: () => Effect.die('Denied entrypoint must not load owner SQL'),
-            operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-03T00:00:00.000Z')),
-            ownerAuthorizationDecision: 'allowed',
-            permissionDecision: 'allowed',
-            scope,
-          });
-          const services = yield* Layer.build(harness.layer);
-          const access = Context.get(services, ContextAccess);
-          Object.assign(access, {
-            modules: ({ moduleIds }: Parameters<ContextAccessService['modules']>[0]) =>
-              Effect.succeed(moduleIds.map((key) => ({ decision: 'denied' as const, key }))),
-          });
-          const denied = yield* harness.runtime
-            .runRead({
-              input: { query: 'predavaci' },
-              principal: scope,
-              registration: documentsRead,
-              transport: { correlationId: scope.correlationId },
-            })
-            .pipe(
-              Effect.provideService(ContextAccess, access),
-              Effect.provideService(CoreSearchQueryRuntime, {
-                search: () => Effect.die('Denied entrypoint must not search'),
-              }),
-              Effect.flip,
-            );
-          expect(Schema.is(ReadPermissionDenied)(denied)).toBe(true);
-          expect(harness.snapshot().ownerQueries).toEqual([]);
-          const resourceHarness = yield* makeReadTestHarness({
-            executeOwnerQuery: () => Effect.succeed([{ legalEntityId, revision: 7, snapshot: state, tenantId }]),
-            operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-03T00:00:00.000Z')),
-            ownerAuthorizationDecision: 'allowed',
-            permissionDecision: 'allowed',
-            scope,
-          });
-          const resourceServices = yield* Layer.build(resourceHarness.layer);
-          const resourceAccess = Context.get(resourceServices, ContextAccess);
-          Object.assign(resourceAccess, {
-            resources: ({ resources }: Parameters<ContextAccessService['resources']>[0]) =>
-              Effect.succeed(
-                resources.map((resource) => ({
-                  decision:
-                    resource.resourceType === documentRef.resourceType ? ('denied' as const) : ('allowed' as const),
-                  key: keyFor(resource),
-                })),
-              ),
-          });
-          const resourceDenied = yield* resourceHarness.runtime
-            .runRead({
-              input: { query: 'predavaci' },
-              principal: scope,
-              registration: documentsRead,
-              transport: { correlationId: scope.correlationId },
-            })
-            .pipe(
-              Effect.provideService(ContextAccess, resourceAccess),
-              Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed(candidates) }),
-            );
-          expect(resourceDenied).toEqual([]);
-          expect(serialize(resourceDenied)).not.toContain(documentId);
-        }),
-      ),
+  suite.effect('canonical search denial occurs before private SQL or index observation', () =>
+    Effect.scoped(
+      Effect.gen(function* deniedRead() {
+        const harness = yield* makeReadTestHarness({
+          access: 'denied',
+          executeOwnerQuery: () => Effect.die('Denied entrypoint must not load owner SQL'),
+          operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-03T00:00:00.000Z')),
+          ownerAuthorizationDecision: 'allowed',
+          ownerRegistration: legalAgreementsRegistration,
+          scope,
+        });
+        const denied = yield* harness.runtime
+          .runRead({
+            input: { query: 'predavaci' },
+            principal: scope,
+            registration: documentsRead,
+            transport: { correlationId: scope.correlationId },
+          })
+          .pipe(
+            Effect.provideService(ContextAccess, retiredAccess),
+            Effect.provideService(AccessDecisionGate, gateAnswer('DENIED')),
+            Effect.provideService(CoreSearchQueryRuntime, {
+              search: () => Effect.die('Denied entrypoint must not search'),
+            }),
+            Effect.flip,
+          );
+        expect(Schema.is(ReadPermissionDenied)(denied)).toBe(true);
+        expect(harness.snapshot().ownerQueries).toEqual([]);
+      }),
+    ),
   );
 });

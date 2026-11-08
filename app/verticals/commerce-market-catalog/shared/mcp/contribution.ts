@@ -20,6 +20,9 @@ export const commerceMarketCatalogMcpContribution = defineOntosMcpContribution({
         en: 'Create a commerce market',
       },
     },
+    // Owner-internal PREPARE/ABORT protocol for retire-market, bound to its original invocation and actor.
+    // Agents use retire-market and its recovery read, never admission management as a standalone tool.
+    'manage-market-retirement-admission': 'hidden',
     'remove-storefront-association': {
       title: {
         cs: 'Odebrat přiřazení e-shopu k trhu',
@@ -31,8 +34,8 @@ export const commerceMarketCatalogMcpContribution = defineOntosMcpContribution({
     },
     'retire-market': {
       description: {
-        cs: 'Požádá o vyřazení trhu. Výsledek je obvykle „pending“: vyřazení dokončí OntOS na pozadí po potvrzení dopadu v zákaznickém kontextu. Konečný stav (completed nebo failed s důvodem) ukáže čtení „Stav vyřazení obchodního trhu“ s vráceným retirementIntentId.',
-        en: 'Requests Market retirement. The result is usually "pending": OntOS completes it in the background after Customer Context confirms the impact. Read "Commerce market retirement status" with the returned retirementIntentId for the final completed or failed (with reason) outcome.',
+        cs: 'Vyřadí trh a vrátí MarketLifecycleResult. Při nevyřízeném vypořádání rezervace v zákaznickém kontextu nese odpověď 503 již potvrzený výsledek v committedResult. Nepoužívejte nový idempotency klíč; zopakujte původní klíč nebo použijte čtení Obnova efektu vyřazení obchodního trhu.',
+        en: 'Retires a Market and returns MarketLifecycleResult. If Customer Context settlement remains pending, HTTP 503 carries the committed result in committedResult. Do not retry with a new idempotency key; replay the original key or use the Commerce market retirement effect recovery read.',
       },
       destructive: true,
       title: {
@@ -89,14 +92,14 @@ export const commerceMarketCatalogMcpContribution = defineOntosMcpContribution({
         en: 'Commerce market history',
       },
     },
-    'market-retirement-status': {
+    'market-retirement-effect-recovery': {
       description: {
-        cs: 'Stav jednoho požadavku na vyřazení trhu: pending (probíhá, s fází), completed (trh je vyřazen) nebo failed (nevyřazen, s typovaným důvodem, např. replacement_impact_unresolved, když na trh stále odkazují živé záznamy).',
-        en: 'State of one retirement request: pending (with stage), completed (the Market is retired) or failed (not retired, with a typed reason such as replacement_impact_unresolved while live records still reference the Market).',
+        cs: 'Obnoví původní efekt vyřazení podle sourceActionInvocationId: NOT_FOUND (žádný efekt), PENDING (přijatý, dosud nevyřízený), ABORTED (vrácený) nebo COMMITTED s uloženým výsledkem trhu. Použijte po neúspěšném vyřazení místo opakování s novým klíčem.',
+        en: 'Recovers the original retirement effect by sourceActionInvocationId: NOT_FOUND (no effect), PENDING (accepted, not yet settled), ABORTED (released) or COMMITTED with the stored Market result. Use it after an indeterminate retire attempt instead of retrying with a fresh key.',
       },
       title: {
-        cs: 'Stav vyřazení obchodního trhu',
-        en: 'Commerce market retirement status',
+        cs: 'Obnova efektu vyřazení obchodního trhu',
+        en: 'Commerce market retirement effect recovery',
       },
     },
     'pricing-current-market-evidence': 'hidden',

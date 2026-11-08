@@ -9,6 +9,7 @@ import { createProjectAction } from '../../src/actions/create-project.action.ts'
 import { moveProjectAction } from '../../src/actions/move-project.action.ts';
 import { unarchiveProjectAction } from '../../src/actions/unarchive-project.action.ts';
 import { updateProjectAction } from '../../src/actions/update-project.action.ts';
+import { projectsRegistration } from '../../vertical.registration.ts';
 import { creatorId, ownerId, projectFixture, projectId, tenantId } from '../support/project.ts';
 
 const principal = {
@@ -33,6 +34,7 @@ it.layer(Layer.succeed(ContextAccess, unusedContextAccess))('Projects search lif
       const project = yield* projectFixture;
       const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
+        ownerRegistration: projectsRegistration,
         services: [
           bindActionTestServices(createProjectAction, {
             create: () => Effect.succeed(project),
@@ -40,7 +42,6 @@ it.layer(Layer.succeed(ContextAccess, unusedContextAccess))('Projects search lif
           }),
           bindActionTestServices(updateProjectAction, {
             findForLifecycleGuard: () => Effect.succeed({ _tag: 'found', value: project }),
-            ownerEligibility: () => Effect.succeed('allowed'),
             update: (values) => Effect.succeed({ ...project, name: values.name }),
           }),
           bindActionTestServices(moveProjectAction, {
@@ -110,10 +111,10 @@ it.layer(Layer.succeed(ContextAccess, unusedContextAccess))('Projects search lif
         const project = yield* projectFixture;
         const harness = yield* makeActionTestHarness({
           actionPermission: 'allowed',
+          ownerRegistration: projectsRegistration,
           services: [
             bindActionTestServices(updateProjectAction, {
               findForLifecycleGuard: () => Effect.succeed({ _tag: 'found', value: project }),
-              ownerEligibility: () => Effect.succeed('allowed'),
               update: () =>
                 Effect.fail(
                   new ProjectPersistenceUnavailable({
@@ -146,6 +147,7 @@ it.layer(Layer.succeed(ContextAccess, unusedContextAccess))('Projects search lif
       for (const actionPermission of ['denied', 'unavailable'] as const) {
         const harness = yield* makeActionTestHarness({
           actionPermission,
+          ownerRegistration: projectsRegistration,
           services: [
             bindActionTestServices(moveProjectAction, {
               move: () => Effect.die('Denied or indeterminate Action must not move a Project'),

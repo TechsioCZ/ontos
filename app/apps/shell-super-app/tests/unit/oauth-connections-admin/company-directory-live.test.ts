@@ -1,7 +1,7 @@
 import { AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
 import { ActionRuntime, ReadRuntime } from '@app/core-runtime';
-import type { ReadRuntimeService } from '@app/core-runtime';
-import { ActionAuthorizationLifecycle } from '@app/core-runtime/outbox/core-system-worker';
+import type { OperationalScope, ReadRuntimeService } from '@app/core-runtime';
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { Effect, Layer, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -16,11 +16,12 @@ import type { CompanyDirectoryRequest } from '../../../api/oauth-connections-adm
 import type { CompanyDirectorySnapshot, ConnectionsCaller } from '../../../api/oauth-connections-admin/ports.ts';
 import { makeCompositionSnapshot } from '../../fixtures/application-composition.ts';
 import { actionSuccess, makeActionRuntimeDouble } from '../../support/action-runtime-double.ts';
+import { administrationProjectionLayer, administrationScopeLayer } from './administration-runtime.fixture.ts';
 
 const principal: ConnectionsCaller['principal'] = {
   authBindingId: '00000000-0000-4000-8000-000000000005',
   authContextRef: 'better-auth-session:directory-test',
-  authenticationNamespaceId: 'test.staff.better-auth.v1',
+  authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
   authMethod: 'session',
   legalEntityId: '00000000-0000-4000-8000-000000000002',
   principalId: '00000000-0000-4000-8000-000000000003',
@@ -60,6 +61,7 @@ const fixture = (confirmed: CompanyDirectorySnapshot, request: CompanyDirectoryR
     const principals: unknown[] = [];
     const transports: unknown[] = [];
     const reconciled: string[] = [];
+    const reconciledScopes: OperationalScope[] = [];
     const reads: ReadRuntimeService = {
       runRead: (input) => {
         principals.push(input.principal);
@@ -71,20 +73,15 @@ const fixture = (confirmed: CompanyDirectorySnapshot, request: CompanyDirectoryR
       Layer.succeed(ReadRuntime, reads),
       Layer.succeed(ActionRuntime, actions.runtime),
       Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
-      Layer.succeed(ActionAuthorizationLifecycle, {
-        reconcilePrincipal: (_tenant, agentId) =>
-          Effect.sync(() => {
-            reconciled.push(agentId);
-          }),
-        reconcileScopedRoleMembership: () => Effect.die('Unexpected role reconciliation'),
-        reconcileTenant: () => Effect.die('Unexpected tenant reconciliation'),
-      }),
+      administrationScopeLayer(request),
+      administrationProjectionLayer(request, reconciled, reconciledScopes),
     );
     return {
       actions,
       directory: yield* CompanyDirectory.pipe(Effect.provide(CompanyDirectoryLive(request).pipe(Layer.provide(layer)))),
       principals,
       reconciled,
+      reconciledScopes,
       transports,
     };
   });
@@ -118,7 +115,8 @@ it.effect('resumes a matching pending native command without a second Action', (
       snapshot: snapshot([], command),
     });
     expect(test.actions.invocationCount()).toBe(0);
-    expect(test.reconciled).toEqual([agentPrincipalId]);
+    expect(test.reconciled).toEqual([principal.tenantId]);
+    expect(test.reconciledScopes[0]).toMatchObject({ ...principal, correlationId: transport.correlationId });
     expect(test.principals[0]).toBe(principal);
     expect(test.transports).toEqual([{ correlationId: transport.correlationId }]);
   }),
@@ -166,7 +164,7 @@ it.effect('does not return success when the committed command has not reached th
     );
     expect(Predicate.isTagged(failure, 'ConnectionsUnavailable')).toBe(true);
     expect(test.actions.invocationCount()).toBe(0);
-    expect(test.reconciled).toEqual([agentPrincipalId]);
+    expect(test.reconciled).toEqual([principal.tenantId]);
   }),
 );
 

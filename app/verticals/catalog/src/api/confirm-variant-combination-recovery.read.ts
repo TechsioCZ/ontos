@@ -67,10 +67,7 @@ const recoverConfirmVariantCombination = Effect.fn('ConfirmVariantCombinationRec
 
 const confirmVariantCombinationRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: {
-    kind: 'context_permission',
-    permission: 'commerce.catalog.read.confirm-variant-combination-recovery',
-  },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.confirm-variant-combination-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -78,6 +75,14 @@ const confirmVariantCombinationRecoveryEntrypoint = defineTenantModuleEntrypoint
 
 export const confirmVariantCombinationRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.confirm-variant-combination-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'variant', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: confirmVariantCombinationRecoveryEntrypoint,
     evidencePolicy: {
@@ -87,7 +92,6 @@ export const confirmVariantCombinationRecoveryRead = defineRead(
     inputSchema: ConfirmVariantCombinationRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.confirm-variant-combination-recovery',
     resultSchema: ConfirmVariantCombinationRecoveryResponseSchema,
@@ -101,5 +105,4 @@ export const confirmVariantCombinationRecoveryRead = defineRead(
   },
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

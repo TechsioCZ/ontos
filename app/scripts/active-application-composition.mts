@@ -22,6 +22,7 @@ import type {
   ObservedApplicationCompositionContract,
   ObservedModuleFederationManifest,
 } from '../packages/core-runtime/src/index.ts';
+import { deriveModuleIntrinsicRequirements } from '../packages/core-runtime/src/modules/module-dependency-contracts.ts';
 import { governedSharedSingletonPackages } from '../module-federation.shared.ts';
 
 /**
@@ -58,6 +59,21 @@ export class ActiveApplicationCompositionPublicationError extends Schema.TaggedE
 export interface ObservedArtifact {
   readonly bytes: Uint8Array;
   readonly url: string;
+}
+
+/** Exact pinned content and declared placement; this input makes no deployment or freshness claim. */
+export interface ApplicationCompositionPinnedArtifacts {
+  readonly environment: string;
+  readonly modules: readonly {
+    readonly appId: string;
+    readonly backend: ApplicationCompositionBackend;
+    readonly contract: { readonly bytes: Uint8Array; readonly url: string };
+    readonly federationManifest?: { readonly bytes: Uint8Array; readonly url: string };
+  }[];
+  readonly shell: {
+    readonly federationManifest: { readonly bytes: Uint8Array; readonly url: string };
+    readonly runtimeContract: { readonly bytes: Uint8Array; readonly url: string };
+  };
 }
 
 export interface ObservedModuleDeployment {
@@ -191,7 +207,7 @@ interface DerivedModule {
 }
 
 const contractEvidence = (
-  observed: ObservedModuleDeployment,
+  observed: ApplicationCompositionPinnedArtifacts['modules'][number],
   contract: ModuleDeploymentContract,
   contractSha256: string,
 ): ObservedApplicationCompositionContract => {
@@ -212,12 +228,18 @@ const contractEvidence = (
     },
     sha256: contractSha256,
   };
+  const declared =
+    contract.manifest.requirements === undefined ? base : { ...base, requirements: contract.manifest.requirements };
+  const withOperations =
+    contract.manifest.publicSurface.operationContracts === undefined
+      ? declared
+      : { ...declared, operationContracts: contract.manifest.publicSurface.operationContracts };
   const [component] = components;
-  return component === undefined ? base : { ...base, mfBoundaryId: component.mfBoundaryId };
+  return component === undefined ? withOperations : { ...withOperations, mfBoundaryId: component.mfBoundaryId };
 };
 
 const deriveModule = Effect.fn('ActiveApplicationComposition.deriveModule')(function* deriveModule(
-  observed: ObservedModuleDeployment,
+  observed: ApplicationCompositionPinnedArtifacts['modules'][number],
 ) {
   const contract = yield* decodeContract(observed.contract);
   if (contract.deployment.appId !== observed.appId) {
@@ -233,11 +255,12 @@ const deriveModule = Effect.fn('ActiveApplicationComposition.deriveModule')(func
     backend: observed.backend,
     contract: { sha256: contractSha256, url: observed.contract.url },
     contractDocument: yield* artifactText(observed.contract, 'deployment contract'),
-    dependencies: [],
+    dependencies: deriveModuleIntrinsicRequirements(contract.manifest.requirements).dependencies,
     deployment: contract.deployment,
     moduleId: evidence.moduleId,
     publicContract: evidence.publicContract,
-    requiredCoreCapabilities: [],
+    requiredCoreCapabilities: deriveModuleIntrinsicRequirements(contract.manifest.requirements)
+      .requiredCoreCapabilities,
     requiredShellAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
   };
   const manifestArtifact = observed.federationManifest;
@@ -285,9 +308,9 @@ const REVISION_PLACEHOLDER = '0'.repeat(64);
 export const applicationCompositionRevision = (composition: ApplicationComposition): string =>
   sha256Hex(canonicalizeApplicationComposition({ ...composition, revision: REVISION_PLACEHOLDER }));
 
-/** Derives, validates, and bounds one active Application Composition snapshot from observed deployments. */
-export const deriveActiveApplicationCompositionSnapshot = Effect.fn('ActiveApplicationComposition.deriveSnapshot')(
-  function* deriveSnapshot(observation: ActiveApplicationCompositionObservation) {
+/** Validates exact pinned content and declared backends without observing deployments or inventing a lease. */
+export const deriveApplicationComposition = Effect.fn('ActiveApplicationComposition.deriveComposition')(
+  function* deriveComposition(observation: ApplicationCompositionPinnedArtifacts) {
     const [shellRuntime, shellManifest, derived] = yield* Effect.all(
       [
         decodeShellRuntime(observation.shell.runtimeContract),
@@ -330,11 +353,19 @@ export const deriveActiveApplicationCompositionSnapshot = Effect.fn('ActiveAppli
       runtime: shell,
     };
     const validated = yield* validateApplicationCompositionCandidate(candidate, evidence).pipe(
-      Effect.mapError(invalidObservation('observed deployments do not form a valid Application Composition')),
+      Effect.mapError(invalidObservation('pinned artifacts do not form a valid Application Composition')),
     );
     const composition = yield* Schema.decodeEffect(CompositionJsonSchema)(
       canonicalizeApplicationComposition(validated),
     ).pipe(Effect.mapError(invalidObservation('canonical Application Composition does not round-trip')));
+    return composition;
+  },
+);
+
+/** Adds freshness only after the caller has independently observed the deployments. */
+export const deriveActiveApplicationCompositionSnapshot = Effect.fn('ActiveApplicationComposition.deriveSnapshot')(
+  function* deriveSnapshot(observation: ActiveApplicationCompositionObservation) {
+    const composition = yield* deriveApplicationComposition(observation);
     const snapshot: ActiveApplicationCompositionSnapshot = {
       composition,
       observedAt: observation.observedAt,

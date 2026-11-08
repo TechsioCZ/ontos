@@ -2,6 +2,7 @@ import { Effect, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { requestSearchRebuildAction } from '../../src/actions/request-search-rebuild.action.ts';
+import { legalAgreementsRegistration } from '../../vertical.registration.ts';
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
 const request = {
@@ -18,13 +19,13 @@ const request = {
 };
 it.effect('explicit operator Action queues one event/outbox pair and replay cannot duplicate it', () =>
   Effect.gen(function* test() {
-    const harness = yield* makeActionTestHarness({ actionPermission: 'allowed' });
+    const harness = yield* makeActionTestHarness({
+      actionPermission: 'allowed',
+      ownerRegistration: legalAgreementsRegistration,
+    });
     const result = yield* harness.runtime.runAction(request);
     expect(result.status).toBe('QUEUED');
-    expect(requestSearchRebuildAction.descriptor.entrypoint.authorization).toEqual({
-      kind: 'action_execution',
-      provisioning: 'explicit',
-    });
+    expect(requestSearchRebuildAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
     const { committed } = harness.snapshot();
     expect(committed).toHaveLength(1);
     expect(committed[0]?.evidence.domainEvents).toHaveLength(1);
@@ -42,7 +43,10 @@ it.effect('explicit operator Action queues one event/outbox pair and replay cann
 );
 it.effect('missing explicit operator permission fails closed without queueing work', () =>
   Effect.gen(function* test() {
-    const harness = yield* makeActionTestHarness({ actionPermission: 'denied' });
+    const harness = yield* makeActionTestHarness({
+      actionPermission: 'denied',
+      ownerRegistration: legalAgreementsRegistration,
+    });
     expect(
       Predicate.isTagged(yield* harness.runtime.runAction(request).pipe(Effect.flip), 'ActionPermissionDenied'),
     ).toBe(true);

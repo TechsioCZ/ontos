@@ -14,7 +14,7 @@ const OWNER_MODULE_KEY = 'property.leasing';
 
 const agentReviewEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'property.leasing.api.agent-review',
   moduleKey: OWNER_MODULE_KEY,
   role: 'api',
@@ -30,6 +30,14 @@ const reviewsLiveProposals = (input: AgentReviewRequest): boolean =>
 
 export const agentReviewRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'property.leasing.api-agent-review.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'property-leasing', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: agentReviewEntrypoint,
     evidencePolicy: {
@@ -39,7 +47,6 @@ export const agentReviewRead = defineRead(
     inputSchema: AgentReviewRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: OWNER_MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'property.leasing.api.agent-review',
     resultSchema: AgentReviewResponseSchema,
@@ -84,5 +91,4 @@ export const agentReviewRead = defineRead(
     }),
   },
   makeRecordsServices,
-  () => ({ kind: 'module', moduleId: OWNER_MODULE_KEY }),
 );

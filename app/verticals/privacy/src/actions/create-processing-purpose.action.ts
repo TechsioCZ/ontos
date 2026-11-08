@@ -65,6 +65,14 @@ export const handleCreateProcessingPurpose = Effect.fn('CreateProcessingPurposeA
 
 export const createProcessingPurposeAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.processing-purpose.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'processing-governance', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.create-processing-purpose.access.v1',
@@ -76,7 +84,7 @@ export const createProcessingPurposeAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.create-processing-purpose',
       moduleKey: MODULE_KEY,
       role: 'action',

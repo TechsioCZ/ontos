@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { NodeRuntime } from '@effect/platform-node';
+import { NodeCrypto, NodeRuntime } from '@effect/platform-node';
 import {
   ActionAuthorizationPreflightDatabase,
   ActionAuthorizationPreflightDatabaseLive,
@@ -10,7 +10,7 @@ import {
 } from '@app/core-runtime';
 import type { ActionAuthorizationPreflightDatabaseService } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
-import { Cause, Config, Console, Context, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Cause, Config, Console, Context, Crypto, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 
 import { CoreDatabase } from '../../../packages/core-runtime/src/db/client.ts';
@@ -106,6 +106,7 @@ export const claimRetailProfileWithAtomicApproval = Effect.fn('RetailProfileReco
 
 const makeRetailProfileRecoveryRuntime = Effect.fn('RetailProfileRecovery.makeRuntime')(
   function* makeRetailProfileRecoveryRuntime(mode: typeof RecoveryModeSchema.Type) {
+    const crypto = yield* Crypto.Crypto;
     // Explicit config parsing never invokes the dotenv-aware default database layer.
     const urls = yield* Config.all({
       DATABASE_ADMIN_URL: Config.Redacted('DATABASE_ADMIN_URL'),
@@ -216,9 +217,9 @@ const makeRetailProfileRecoveryRuntime = Effect.fn('RetailProfileRecovery.makeRu
       return { attempt, core, operation, partyOperation, profile } satisfies RecoveryObservation;
     });
     return {
-      executeProfile: retailCustomerProfileActionExecutor,
+      executeProfile: (input) => retailCustomerProfileActionExecutor(input, crypto),
       observe,
-      resolveCommand: resolveRetailOwnerCommand,
+      resolveCommand: (authority, payload) => resolveRetailOwnerCommand(authority, payload, crypto),
       run: runner.run,
       store: (observation: RecoveryObservation) => {
         const scope = {
@@ -284,7 +285,7 @@ if (import.meta.main) {
                 Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(RecoveryReportSchema))),
                 Effect.flatMap(Console.log),
               ),
-            ).pipe(Layer.provide(runtimeLayer), Layer.provide(FetchHttpClient.layer)),
+            ).pipe(Layer.provide(runtimeLayer), Layer.provide(FetchHttpClient.layer), Layer.provide(NodeCrypto.layer)),
           ),
         ),
         mode,

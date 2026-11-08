@@ -76,6 +76,14 @@ const handle = Effect.fn('SetManagedApiKeyBindingStatusAction.handle')(
 );
 export const setManagedApiKeyBindingStatusAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'core.identity.managed-api-key.change-status',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'core.identity.set-managed-api-key-binding-status.access.v1',
@@ -86,10 +94,7 @@ export const setManagedApiKeyBindingStatusAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'explicit',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.set-managed-api-key-binding-status',
       moduleKey: 'core.identity',
       role: 'action',
@@ -101,7 +106,6 @@ export const setManagedApiKeyBindingStatusAction = defineAction(
     policies: [],
     resultSchema: SetManagedApiKeyBindingStatusResultSchema,
     schemaVersion: '1',
-    tenantPermission: (payload) => (payload.scope === 'tenant-managed' ? 'manage_identity' : undefined),
   },
   handle,
   (transaction, scope) => {

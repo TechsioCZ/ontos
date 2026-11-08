@@ -6,13 +6,11 @@ import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 
 import {
   PreparePurchaseProposalBasisPayloadSchema,
-  PreparePurchaseProposalBasisResultSchema,
+  PurchaseProposalBasisSchema,
   PreparePurchaseProposalBasisRejected,
 } from '../../shared/actions/prepare-purchase-proposal-basis.ts';
-import {
-  purchaseProposalBasisService,
-  preparePurchaseProposalBasisActionServices,
-} from '../services/purchase-proposal-basis.service.ts';
+import { purchaseProposalBasisService } from '../services/purchase-proposal-basis.service.ts';
+import { purchaseValueAccessAmount } from './purchase-value-access-amount.ts';
 import type { ActionHandlerContext } from '@app/core-runtime';
 
 const MODULE_KEY = 'commerce.customer-context' as const;
@@ -39,6 +37,16 @@ const handlePreparePurchaseProposalBasis = Effect.fn('PreparePurchaseProposalBas
 
 export const preparePurchaseProposalBasisAction = defineAction(
   {
+    accessAmount: (payload) => purchaseValueAccessAmount(payload.proposal.purchaseValue.monetaryAmount),
+    accessDeclaration: {
+      amountInput: 'derived.purchaseValue',
+      key: 'commerce.customer-context.purchase-proposal-basis.prepare',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'purchasing-approval', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.prepare-purchase-proposal-basis.access.v1',
@@ -49,10 +57,7 @@ export const preparePurchaseProposalBasisAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'explicit',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.prepare-purchase-proposal-basis',
       moduleKey: MODULE_KEY,
       role: 'action',
@@ -62,12 +67,11 @@ export const preparePurchaseProposalBasisAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: PreparePurchaseProposalBasisPayloadSchema,
     policies: [],
-    resultSchema: PreparePurchaseProposalBasisResultSchema,
+    resultSchema: PurchaseProposalBasisSchema,
     schemaVersion: '1',
   },
   handlePreparePurchaseProposalBasis,
   purchaseProposalBasisService,
-  { prepareServices: preparePurchaseProposalBasisActionServices },
 );
 
 // <generated-outbox-message-exports>

@@ -10,7 +10,7 @@ import { authenticatedShellFixture } from './routes/authenticated-shell-fixture.
 
 const { commands, state } = rstest.hoisted(() => ({
   commands: {
-    catalog: rstest.fn(),
+    access: rstest.fn(),
     list: rstest.fn(),
   },
   state: {
@@ -45,10 +45,10 @@ rstest.mock('../../src/routes/people/invite-person-button.tsx', () => ({
 }));
 rstest.mock('../../src/routes/people/people-client.ts', () => ({
   changeCompanyMembership: rstest.fn(),
-  changeScopedRole: rstest.fn(),
+  changePersonRole: rstest.fn(),
   invitePerson: rstest.fn(),
   loadAllPeople: commands.list,
-  loadRoleCatalog: commands.catalog,
+  loadPeopleAccess: commands.access,
 }));
 
 const companyId = '20000000-0000-4000-8000-000000000001';
@@ -71,9 +71,7 @@ const person = {
   kind: 'human',
   principalRef,
   principalStatus: 'active',
-  roleAssignments: [],
   selectedCompanyMembership: membership,
-  selectedCompanyMembershipProjection: { expectedMember: false, observedMember: false },
 } as const;
 const list = {
   items: [person],
@@ -86,7 +84,31 @@ const model = (): PeoplePageModel => ({ peoplePage: true, shell: authenticatedSh
 afterEach(cleanup);
 beforeEach(() => {
   state.search = {};
-  commands.catalog.mockReturnValue(Effect.succeed({ status: 'ok', value: { items: [] } }));
+  commands.access.mockReturnValue(
+    Effect.succeed({
+      status: 'ok',
+      value: {
+        options: {
+          capabilities: [],
+          managers: [],
+          people: [],
+          revision: 'people-revision-1',
+          roles: [],
+          scopes: [],
+          teams: [],
+          writeAvailability: {
+            canAssign: false,
+            canDelegate: false,
+            canManageTeams: false,
+            canRevokeDelegation: false,
+            canTransferOwnership: false,
+            canUnassign: false,
+          },
+        },
+        people: { items: [], nextCursor: null, revision: 'people-revision-1' },
+      },
+    }),
+  );
   commands.list.mockReturnValue(Effect.succeed({ status: 'ok', value: list }));
 });
 

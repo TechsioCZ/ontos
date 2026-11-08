@@ -1,4 +1,5 @@
 import { scopedRoutineInvokerFromTransaction } from '@app/core-runtime';
+import { NodeCrypto } from '@effect/platform-node';
 import { Cause, ConfigProvider, DateTime, Effect, Exit, Fiber, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
@@ -35,6 +36,10 @@ import {
   retailSelfEnrollmentRequestDigest,
 } from '../../verticals/commerce-customer-context/src/enrollment/journeys/retail-self-enrollment-contracts.ts';
 import type { CommerceEnrollmentOwnerAttemptStore } from '../../verticals/commerce-customer-context/src/enrollment/orchestration/owner-transition-driver.ts';
+import type {
+  RetailCustomerProfileOwnerInput,
+  resolveRetailOwnerCommand,
+} from '../../verticals/commerce-customer-context/src/enrollment/journeys/retail-self-enrollment-profile-owners.ts';
 
 const COMMERCE_OWNER = 'commerce.customer-context';
 const OTHER_OPERATION = 'other-operation';
@@ -96,6 +101,7 @@ const observation = (): RecoveryObservation => ({
     intentKey: 'original-intent',
     journey: 'RETAIL_SELF_ENROLLMENT',
     lease: expired,
+    originatorActionInvocationId: id(12),
     portalEnrollmentAttemptId: request.attemptId,
     revision: request.expectedAttemptRevision,
     state: 'IN_PROGRESS',
@@ -164,9 +170,12 @@ const scenario = () => {
   let commandReads = 0;
   let journalFailure = false;
   let lostResponse = false;
+  let replaceOriginatorDuringCommandRead = false;
   let nativeState: 'RETRYABLE' | 'COMMITTED' | 'RUNNING' | 'NOT_STARTED' = 'RETRYABLE';
   let nativeReceiptId = request.receiptId;
   const payloads: { readonly key: string; readonly payload: EnsureRetailCustomerProfilePayload }[] = [];
+  const ownerInputs: RetailCustomerProfileOwnerInput[] = [];
+  const commandAuthorities: Parameters<typeof resolveRetailOwnerCommand>[0][] = [];
   const store: CommerceEnrollmentOwnerAttemptStore = {
     claimTransition: () =>
       Effect.sync(() => {
@@ -211,29 +220,42 @@ const scenario = () => {
     recordOutcome: () => Effect.die('Operator must never call ordinary recordOutcome'),
   };
   const runtime: typeof AdmittedRetailProfileRecoveryRuntime.Service = {
-    executeProfile: () => (payload, _correlation, options) =>
-      Effect.gen(function* executeOriginalProfile() {
-        dispatches += 1;
-        payloads.push({ key: options.idempotencyKey, payload });
-        current = {
-          ...current,
-          core: { ...current.core, receiptCompleted: true, receiptStatus: 'succeeded' },
-          profile: Option.some(profile),
-        };
-        nativeState = 'COMMITTED';
-        if (lostResponse) {
-          return yield* new CommerceEnrollmentAttemptUnavailable({
-            code: 'attempt_unavailable',
-            reason: 'Fixture lost response',
-            retryable: true,
-          });
-        }
-        return profile;
-      }).pipe(Effect.mapError(() => ownerUnavailable('fixture_unavailable', 'Fixture response unavailable'))),
+    executeProfile: (input) => {
+      ownerInputs.push(input);
+      return (payload, _correlation, options) =>
+        Effect.gen(function* executeOriginalProfile() {
+          dispatches += 1;
+          payloads.push({ key: options.idempotencyKey, payload });
+          current = {
+            ...current,
+            core: { ...current.core, receiptCompleted: true, receiptStatus: 'succeeded' },
+            profile: Option.some(profile),
+          };
+          nativeState = 'COMMITTED';
+          if (lostResponse) {
+            return yield* new CommerceEnrollmentAttemptUnavailable({
+              code: 'attempt_unavailable',
+              reason: 'Fixture lost response',
+              retryable: true,
+            });
+          }
+          return profile;
+        }).pipe(Effect.mapError(() => ownerUnavailable('fixture_unavailable', 'Fixture response unavailable')));
+    },
     observe: () => Effect.sync(() => current),
-    resolveCommand: () =>
+    resolveCommand: (authority) =>
       Effect.sync(() => {
+        commandAuthorities.push(authority);
         commandReads += 1;
+        if (replaceOriginatorDuringCommandRead) {
+          current = {
+            ...current,
+            attempt: Schema.decodeSync(EnrollmentAttemptSnapshotSchema)({
+              ...Schema.encodeSync(EnrollmentAttemptSnapshotSchema)(current.attempt),
+              originatorActionInvocationId: id(99),
+            }),
+          };
+        }
         if (nativeState === 'NOT_STARTED') {
           return { retryCommand: true, state: 'NOT_STARTED' as const };
         }
@@ -268,6 +290,7 @@ const scenario = () => {
     change: (next: RecoveryObservation) => {
       current = next;
     },
+    commandAuthorities,
     counts: () => ({ claims, commandReads, dispatches, ownerReads, settlements }),
     current: () => current,
     failJournal: () => {
@@ -279,9 +302,13 @@ const scenario = () => {
     native: (state: typeof nativeState) => {
       nativeState = state;
     },
+    ownerInputs,
     payloads,
     receipt: (receiptId: typeof nativeReceiptId) => {
       nativeReceiptId = receiptId;
+    },
+    replaceOriginatorDuringCommandRead: () => {
+      replaceOriginatorDuringCommandRead = true;
     },
     runtime,
     store,
@@ -291,6 +318,7 @@ const scenario = () => {
 const checked = (test: ReturnType<typeof scenario>, target: RecoveryRequest = request) =>
   recoverAdmittedRetailProfile({ mode: 'check', request: target, sourceRevision }).pipe(
     Effect.provideService(AdmittedRetailProfileRecoveryRuntime, test.runtime),
+    Effect.provide(NodeCrypto.layer),
   );
 const reconciled = (
   test: ReturnType<typeof scenario>,
@@ -300,6 +328,7 @@ const reconciled = (
 ) =>
   recoverAdmittedRetailProfile({ approvalSha256, mode: 'reconcile', request: target, sourceRevision: source }).pipe(
     Effect.provideService(AdmittedRetailProfileRecoveryRuntime, test.runtime),
+    Effect.provide(NodeCrypto.layer),
   );
 
 it.effect('check performs zero native writes or gateway calls and returns a stable source-bound approval', () =>
@@ -309,7 +338,7 @@ it.effect('check performs zero native writes or gateway calls and returns a stab
     expect(yield* checked(test)).toEqual(first);
     expect(first.status).toBe('checked');
     expect(first.approvalSha256).toMatch(/^[a-f0-9]{64}$/u);
-    expect(first.approvalSha256).toBe('97337aceae75c14655441c7a11c9170add8efa837c5a28b271d150ea724237b5');
+    expect(first.approvalSha256).toBe('c680ef7497d8c78df333febc560e965e8f39dbef9071b9653799351d9d63331d');
     expect(test.counts()).toEqual({ claims: 0, commandReads: 0, dispatches: 0, ownerReads: 0, settlements: 0 });
     const serialized = Schema.encodeSync(Schema.fromJsonString(RecoveryRequestSchema))(request);
     expect(serialized).not.toContain('password');
@@ -337,6 +366,20 @@ it.effect(
       expect(test.counts().claims).toBe(1);
       expect(test.counts().dispatches).toBe(1);
       expect(test.counts().settlements).toBe(1);
+      const originator = {
+        actionInvocationId: test.current().attempt.originatorActionInvocationId,
+        compositionRevision: request.compositionRevision,
+        tenantId: request.tenantId,
+      };
+      expect(test.ownerInputs).toHaveLength(1);
+      expect(test.ownerInputs[0].originator).toEqual(originator);
+      expect(Object.isFrozen(test.ownerInputs[0].originator)).toBe(true);
+      expect(test.commandAuthorities.length).toBeGreaterThan(0);
+      expect(
+        test.commandAuthorities.every((authority) => authority.originator === test.ownerInputs[0].originator),
+      ).toBe(true);
+      expect(originator.actionInvocationId).not.toBe(request.ownerInvocationId);
+      expect(originator.actionInvocationId).not.toBe(request.receiptId);
       expect(test.current().attempt.state).toBe('IN_PROGRESS');
       expect(test.current().operation.status).toBe('SUCCEEDED');
       expect(test.current().core.durablePresent).toBe(false);
@@ -356,6 +399,44 @@ it.effect('COMMITTED reads the actual scoped profile without redispatch', () =>
     expect(test.counts().dispatches).toBe(0);
     expect(test.counts().ownerReads).toBe(1);
     expect(test.counts().settlements).toBe(1);
+  }),
+);
+
+it.effect('refuses a missing stored originator before approval, fencing, or credential acquisition', () =>
+  Effect.gen(function* missingOriginalInvocation() {
+    const test = scenario();
+    const { originatorActionInvocationId, ...attempt } = test.current().attempt;
+    expect(originatorActionInvocationId).toBe(id(12));
+    test.change({ ...test.current(), attempt });
+    expect((yield* checked(test).pipe(Effect.flip)).reason).toBe('scope-mismatch');
+    expect(test.ownerInputs).toHaveLength(0);
+    expect(test.commandAuthorities).toHaveLength(0);
+    expect(test.counts()).toEqual({ claims: 0, commandReads: 0, dispatches: 0, ownerReads: 0, settlements: 0 });
+  }),
+);
+
+it.effect('binds approval and every original retry to the same recorded originator', () =>
+  Effect.gen(function* immutableOriginalInvocation() {
+    for (const phase of ['approval', 'command-read'] as const) {
+      const test = scenario();
+      const approved = yield* checked(test);
+      if (phase === 'approval') {
+        test.change({
+          ...test.current(),
+          attempt: Schema.decodeSync(EnrollmentAttemptSnapshotSchema)({
+            ...Schema.encodeSync(EnrollmentAttemptSnapshotSchema)(test.current().attempt),
+            originatorActionInvocationId: id(99),
+          }),
+        });
+      } else {
+        test.replaceOriginatorDuringCommandRead();
+      }
+      const rejected = yield* reconciled(test, approved.approvalSha256).pipe(Effect.flip);
+      expect(rejected.reason).toBe(phase === 'approval' ? APPROVAL_MISMATCH : 'journal-unsettled');
+      expect(test.counts().dispatches).toBe(0);
+      expect(test.counts().settlements).toBe(0);
+      expect(test.counts().claims).toBe(phase === 'approval' ? 0 : 1);
+    }
   }),
 );
 
@@ -527,7 +608,7 @@ it.effect('command defaults to check, rejects non-stage and never reads dotenv f
         ),
       ),
     ).toBeInstanceOf(AdmittedRetailProfileRecoveryError);
-  }),
+  }).pipe(Effect.provide(NodeCrypto.layer)),
 );
 
 /** SQL rows for the real native routine decoder in the atomic transaction regression below. */
@@ -604,71 +685,74 @@ const operationRow = (current: RecoveryObservation) => ({
   updated_at: at,
 });
 
-it.effect(
-  'production atomic claim rolls back if a concurrent revision advances after the driver read and before native claim',
-  () =>
-    Effect.gen(function* atomicFenceRollback() {
-      for (const defect of ['revision', OTHER_OPERATION, 'none'] as const) {
-        const statements: string[] = [];
-        const initial = observation();
-        let current = initial;
-        const database = yield* makeTestDatabase((statement) => {
-          statements.push(statement);
-          if (statement.includes('as approved')) {
-            return Effect.succeed([{ approved: true }]);
-          }
-          if (statement.includes('read_portal_enrollment_owner_operation')) {
-            return Effect.succeed([operationRow(current)]);
-          }
-          if (statement.includes('read_portal_enrollment_attempt')) {
-            return Effect.succeed([attemptRow(current, 'READ')]);
-          }
-          if (statement.includes('claim_portal_enrollment_transition')) {
-            current = {
-              ...current,
-              attempt: {
-                ...current.attempt,
-                revision: current.attempt.revision + (defect === 'revision' ? 2 : 1),
-                state: RECONCILIATION_REQUIRED,
-              },
-              operation: {
-                ...current.operation,
-                revision: current.operation.revision + (defect === OTHER_OPERATION ? 0 : 1),
-                status: defect === OTHER_OPERATION ? 'IN_PROGRESS' : 'INDETERMINATE',
-              },
-            };
-            return Effect.succeed([attemptRow(current, 'INDETERMINATE')]);
-          }
-          return Effect.succeed([]);
-        });
-        const input = Schema.decodeSync(ClaimEnrollmentTransitionInputSchema)({
-          actorPrincipalId: request.actorPrincipalId,
-          expectedRevision: request.expectedAttemptRevision,
-          leaseDurationMs: 30_000,
-          ownerInvocationId: request.ownerInvocationId,
-          ownerModuleKey: initial.operation.ownerModuleKey,
-          portalEnrollmentAttemptId: request.attemptId,
-          requestDigest: digest,
-          required: true,
-          tenantId: request.tenantId,
-          transitionKey: initial.operation.transitionKey,
-          workerId: 'bounded-profile-recovery',
-        });
-        const result = yield* Effect.exit(
-          database.transaction((transaction) => claimRetailProfileWithAtomicApproval(transaction, initial, input)),
-        );
-        expect(statements[0]).toMatch(/begin/iu);
-        expect(
-          statements.some((statement) => statement.includes('claim_portal_enrollment_transition')),
-          (Exit.isFailure(result) ? Cause.pretty(result.cause) : 'ok') + statements.join('\n'),
-        ).toBe(true);
-        expect(statements.at(-1)).toMatch(defect === 'none' ? /commit/iu : /rollback/iu);
-        if (defect !== 'none') {
-          expect(statements.some((statement) => /^commit/iu.test(statement))).toBe(false);
+it.effect('production atomic claim rolls back if the original identity or revision changes during native claim', () =>
+  Effect.gen(function* atomicFenceRollback() {
+    for (const defect of ['originator', 'revision', OTHER_OPERATION, 'none'] as const) {
+      const statements: string[] = [];
+      const initial = observation();
+      let current = initial;
+      const database = yield* makeTestDatabase((statement) => {
+        statements.push(statement);
+        if (statement.includes('as approved')) {
+          return Effect.succeed([{ approved: true }]);
         }
-        expect(Exit.isSuccess(result)).toBe(defect === 'none');
+        if (statement.includes('read_portal_enrollment_owner_operation')) {
+          return Effect.succeed([operationRow(current)]);
+        }
+        if (statement.includes('read_portal_enrollment_originator')) {
+          return Effect.succeed([{ originator_action_invocation_id: current.attempt.originatorActionInvocationId }]);
+        }
+        if (statement.includes('read_portal_enrollment_attempt')) {
+          return Effect.succeed([attemptRow(current, 'READ')]);
+        }
+        if (statement.includes('claim_portal_enrollment_transition')) {
+          current = {
+            ...current,
+            attempt: {
+              ...current.attempt,
+              originatorActionInvocationId:
+                defect === 'originator' ? request.ownerInvocationId : current.attempt.originatorActionInvocationId,
+              revision: current.attempt.revision + (defect === 'revision' ? 2 : 1),
+              state: RECONCILIATION_REQUIRED,
+            },
+            operation: {
+              ...current.operation,
+              revision: current.operation.revision + (defect === OTHER_OPERATION ? 0 : 1),
+              status: defect === OTHER_OPERATION ? 'IN_PROGRESS' : 'INDETERMINATE',
+            },
+          };
+          return Effect.succeed([attemptRow(current, 'INDETERMINATE')]);
+        }
+        return Effect.succeed([]);
+      });
+      const input = Schema.decodeSync(ClaimEnrollmentTransitionInputSchema)({
+        actorPrincipalId: request.actorPrincipalId,
+        expectedRevision: request.expectedAttemptRevision,
+        leaseDurationMs: 30_000,
+        ownerInvocationId: request.ownerInvocationId,
+        ownerModuleKey: initial.operation.ownerModuleKey,
+        portalEnrollmentAttemptId: request.attemptId,
+        requestDigest: digest,
+        required: true,
+        tenantId: request.tenantId,
+        transitionKey: initial.operation.transitionKey,
+        workerId: 'bounded-profile-recovery',
+      });
+      const result = yield* Effect.exit(
+        database.transaction((transaction) => claimRetailProfileWithAtomicApproval(transaction, initial, input)),
+      );
+      expect(statements[0]).toMatch(/begin/iu);
+      expect(
+        statements.some((statement) => statement.includes('claim_portal_enrollment_transition')),
+        (Exit.isFailure(result) ? Cause.pretty(result.cause) : 'ok') + statements.join('\n'),
+      ).toBe(true);
+      expect(statements.at(-1)).toMatch(defect === 'none' ? /commit/iu : /rollback/iu);
+      if (defect !== 'none') {
+        expect(statements.some((statement) => /^commit/iu.test(statement))).toBe(false);
       }
-    }),
+      expect(Exit.isSuccess(result)).toBe(defect === 'none');
+    }
+  }),
 );
 
 it.effect('approved fence rejects a revision already changed before native claim without invoking the claim', () =>

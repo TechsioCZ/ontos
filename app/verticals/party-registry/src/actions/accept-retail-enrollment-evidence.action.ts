@@ -63,9 +63,15 @@ const handleAcceptRetailEnrollmentEvidence = Effect.fn('AcceptRetailEnrollmentEv
   return result;
 });
 
-/** An explicit workload attestation grant, not identity-review authority. */
+/** Only the admitted Commerce module may attest its original enrollment operation. */
 export const acceptRetailEnrollmentEvidenceAction = defineAction(
   {
+    accessActor: {
+      callers: ['commerce-customer-context'],
+      reason: 'Commerce Customer Context attests verified retail enrollment for its original owned Party command.',
+      subject: 'identity',
+      subjectWorkloads: ['commerce.storefront-client'],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.retail-enrollment-evidence.access.v1',
@@ -76,7 +82,7 @@ export const acceptRetailEnrollmentEvidenceAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.accept-retail-enrollment-evidence',
       moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
@@ -88,7 +94,6 @@ export const acceptRetailEnrollmentEvidenceAction = defineAction(
     policies: [],
     resultSchema: AcceptRetailEnrollmentEvidenceResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_party_identity',
   },
   handleAcceptRetailEnrollmentEvidence,
   Effect.fn('AcceptRetailEnrollmentEvidenceAction.makeServices')(function* makeServices(transaction, scope) {

@@ -4,7 +4,6 @@ import {
   CoreSearchIngestionLive,
   CoreSearchProjectionStoreLive,
   CoreSearchWorkerSnapshotLive,
-  ResourceContainmentRelationshipMutationLive,
 } from '@app/core-runtime';
 import { searchIngestionRegistryLive } from '../services/search-projection.service.ts';
 import { searchSourceLive } from '../services/search-source.service.ts';
@@ -50,7 +49,6 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
     Layer.provide(CoreSearchWorkerSnapshotLive),
     Layer.provide(CoreSearchProjectionStoreLive),
     Layer.provide(searchIngestionRegistryLive),
-    Layer.provide(ResourceContainmentRelationshipMutationLive),
     Layer.provide(outboxWorkerRepositoryLive),
     Layer.provide(outboxWorkerCorePersistenceLive),
     Layer.provide(outboxWorkerDatabaseConfigLive),

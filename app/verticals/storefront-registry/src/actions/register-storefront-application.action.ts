@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.storefront-registry
 // @ontos-action-slug register-storefront-application
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 import {
   StorefrontApplicationCommandRejected,
@@ -120,6 +120,15 @@ export const handleRegisterStorefrontApplication = Effect.fn('RegisterStorefront
 
 export const registerStorefrontApplicationAction = defineAction(
   {
+    // Critical: the same operation can establish an ACTIVE application and its channel eligibility, not only a draft.
+    accessDeclaration: {
+      key: 'commerce.storefront-registry.storefront-application.register',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'storefront-applications', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.storefront-registry.register-storefront-application.access.v1',
@@ -131,7 +140,7 @@ export const registerStorefrontApplicationAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.storefront-registry.register-storefront-application',
       moduleKey: 'commerce.storefront-registry',
       role: 'action',
@@ -141,14 +150,6 @@ export const registerStorefrontApplicationAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: RegisterStorefrontApplicationPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<RegisterStorefrontApplicationPayload>(({ storefrontAppId }) => ({
-      permission: 'write',
-      resource: {
-        moduleId: MODULE_KEY,
-        resourceId: storefrontAppId,
-        resourceType: 'commerce.storefront-registry.storefront-application',
-      },
-    })),
     resultSchema: RegisterStorefrontApplicationResultSchema,
     schemaVersion: '1',
   },

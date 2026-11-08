@@ -67,7 +67,8 @@ export const loadOccupantName = Effect.fn('Occupancy.loadOccupantName')(function
   }
   if (record.guestPartyRef !== null) {
     const guest = yield* executePartyDetail({ partyRef: record.guestPartyRef }, 'property-leasing.guest-detail');
-    return guest.party.displayName;
+    // The name is absent when the reader lacks the Party identity field; no name is shown then, never a fallback.
+    return guest.party.displayName ?? Option.none<string>();
   }
   return Option.none<string>();
 });

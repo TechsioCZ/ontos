@@ -1,3 +1,4 @@
+import { makeTestOperationalScopeAccess } from '../../packages/core-runtime/src/testing/access-gate.ts';
 import {
   DATABASE_IDENTITIES,
   TRUST_ROUTINES,
@@ -551,10 +552,7 @@ const dedicatedIdentityAdmission = Effect.gen(function* dedicatedIdentityAdmissi
   }
   const executor = yield* makeTestDatabaseFromClient(partyPool, coreRelations);
   const repository = makeOperationalScopeRepository({ executor }, APP_DATABASE_IDENTITY_ENROLLMENT);
-  const resolver = yield* makeOperationalScopeResolver(repository, {
-    legalEntities: ({ legalEntityIds }) =>
-      Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
-  });
+  const resolver = yield* makeOperationalScopeResolver(repository, makeTestOperationalScopeAccess());
   const registry = makeAuthenticationNamespaceRegistry([
     {
       allowedAudiences: [partyAudience],

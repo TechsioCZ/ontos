@@ -1,7 +1,6 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
-import type { Exit } from 'effect';
-import { Context, Crypto, Effect, Layer, Option } from 'effect';
+import { Context, Crypto, DateTime, Effect, Layer, Option } from 'effect';
 
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import { recoverSqlTransactionError } from '../actions/repository.ts';
@@ -19,13 +18,15 @@ import {
   readVerifiedGatewayScopeAssertion,
 } from '../auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../db/client.ts';
-import { DatabaseIdentityEnrollmentContext, gatewayScopeGrantRoleForAudience } from '../db/database-identities.ts';
-import type { DatabaseIdentityEnrollment } from '../db/database-identities.ts';
-import { auditEvents, legalEntities, principalAuthBindings, principals, tenants } from '../db/schema.ts';
+import { DatabaseIdentityEnrollmentContext } from '../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../db/database-identity-manifest.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
+import { legalEntities, principalAuthBindings, principals, tenants } from '../db/schema.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
-import type { ContextAccessResult, ContextAccessService } from '../permissions/context-access.ts';
-import { ContextAccess } from '../permissions/context-access.ts';
+import { decodeProtectedAccessDeclaration } from '../authorization/access-declaration.ts';
+import { recordSupportImpersonationAction } from '../modules/actions/record-support-impersonation.action.ts';
+import type { BoundAccessGate } from './access-gate.ts';
+import { bindLiveAccessGate } from './access-gate.ts';
 import type { OperationContextError } from './errors.ts';
 import {
   OperationAuthenticationRequired,
@@ -58,8 +59,13 @@ export interface OperationalScopeRequest {
 
 export interface OperationalScope extends Readonly<TrustedPrincipalContext>, Readonly<OperationalScopeRequest> {}
 
-export type LegalEntityScopeAccess = Pick<ContextAccessService, 'legalEntities'> &
-  Partial<Pick<ContextAccessService, 'tenants'>>;
+/**
+ * The two authority questions a scope resolution asks (O28): is this administrator still allowed to
+ * impersonate, and may this person select the selected company. Both are the one access gate's
+ * questions, bound to this composition's enforcement ports so a scope resolution carries no service
+ * requirement of its own (CUTOVER-PLAN §3.1).
+ */
+export type OperationalScopeAccess = Pick<BoundAccessGate, 'decide' | 'selectableLegalEntities'>;
 
 export interface ResolveOperationalScopeInput extends Readonly<OperationalScopeRequest> {
   readonly legalEntityScope: LegalEntityScope;
@@ -90,8 +96,9 @@ const operationContextUnavailable = (cause?: unknown) => {
 };
 
 /**
- * Verified gateway lookups run inside an installed scope. Manifest-enrolled audiences use the
- * database-derived gateway scope; the other owners retain their declared session-setting authority.
+ * A verified gateway principal resolves through a request role whose Core identity rows are
+ * tenant-bound by row-level security. Its lookup runs after the database derives the scope from the
+ * redeemed assertion, so it can read only the assertion's own tenant.
  */
 const selectPersistedScope = <Row, E>(
   database: { readonly executor: Pick<CoreDatabaseExecutor, 'select' | 'transaction'> },
@@ -118,18 +125,9 @@ export const makeOperationalScopeRepository = (
   load: (principal) =>
     selectPersistedScope(database, principal, enrollment, (executor) => {
       const impersonators = alias(principals, 'impersonators');
-      const bindingAudit = alias(auditEvents, 'binding_creation_audit');
-      const assertion = readVerifiedGatewayScopeAssertion(principal);
-      const gatewayScoped =
-        assertion !== undefined && Option.isSome(gatewayScopeGrantRoleForAudience(enrollment, assertion.audience));
-      const query = executor
+      return executor
         .select({
           bindingAuthenticationNamespaceId: principalAuthBindings.authenticationNamespaceId,
-          bindingIssuingLegalEntityId: gatewayScoped
-            ? sql<
-                string | null
-              >`trust.auth_binding_issuing_legal_entity(${principal.authBindingId ?? null}::uuid, ${principal.principalId}::uuid)`
-            : bindingAudit.legalEntityId,
           bindingPrincipalId: principalAuthBindings.principalId,
           bindingRevision: principalAuthBindings.bindingRevision,
           bindingRevokedAt: principalAuthBindings.revokedAt,
@@ -140,7 +138,6 @@ export const makeOperationalScopeRepository = (
           impersonatorTenantId: impersonators.tenantId,
           legalEntityStatus: legalEntities.status,
           legalEntityTenantId: legalEntities.tenantId,
-          principalKind: principals.kind,
           principalStatus: principals.status,
           principalTenantId: principals.tenantId,
           tenantStatus: tenants.status,
@@ -167,24 +164,7 @@ export const makeOperationalScopeRepository = (
                 eq(principalAuthBindings.tenantId, principal.tenantId),
                 eq(principalAuthBindings.principalAuthBindingId, principal.authBindingId),
               ),
-        );
-      // The dedicated request role cannot read binding-creation audit evidence. Its hardened
-      // attestation returns only the issuing company within the sealed tenant and company scope.
-      const attestedQuery = gatewayScoped
-        ? query.$dynamic()
-        : query
-            .$dynamic()
-            .leftJoin(
-              bindingAudit,
-              and(
-                eq(bindingAudit.tenantId, principalAuthBindings.tenantId),
-                eq(bindingAudit.actionInvocationId, principalAuthBindings.createdByInvocationId),
-                eq(bindingAudit.eventType, 'action.executed'),
-                eq(bindingAudit.outcome, 'succeeded'),
-                sql`${bindingAudit.evidenceJson}->>'actionKey' = 'core.identity.bind-managed-api-key'`,
-              ),
-            );
-      return attestedQuery
+        )
         .leftJoin(
           legalEntities,
           principal.legalEntityId === undefined
@@ -203,7 +183,6 @@ export const makeOperationalScopeRepository = (
         ([record]) =>
           record ?? {
             bindingAuthenticationNamespaceId: null,
-            bindingIssuingLegalEntityId: null,
             bindingPrincipalId: null,
             bindingRevision: null,
             bindingRevokedAt: null,
@@ -214,7 +193,6 @@ export const makeOperationalScopeRepository = (
             impersonatorTenantId: null,
             legalEntityStatus: null,
             legalEntityTenantId: null,
-            principalKind: null,
             principalStatus: null,
             principalTenantId: null,
             tenantStatus: null,
@@ -284,11 +262,11 @@ const subjectTypeForPrincipal = (
   if (principal.authMethod === 'api_key') {
     return 'api_key';
   }
-  if (principal.authMethod === 'session' || principal.authMethod === 'support_impersonation') {
-    return 'user';
-  }
   if (principal.authMethod === 'oauth_connection') {
     return 'oauth_grant';
+  }
+  if (principal.authMethod === 'session' || principal.authMethod === 'support_impersonation') {
+    return 'user';
   }
   return undefined;
 };
@@ -314,20 +292,6 @@ const validatePersistedPrincipal = (
       reason: 'The authenticated principal binding is no longer valid',
     });
   }
-  // The binding's successful creation audit, never the caller's requested scope or
-  // the principal's other roles, owns a company-issued agent key's boundary.
-  if (
-    principal.authMethod === 'api_key' &&
-    persisted.principalKind === 'agent' &&
-    (persisted.bindingIssuingLegalEntityId === null ||
-      persisted.bindingIssuingLegalEntityId === undefined ||
-      principal.legalEntityId !== persisted.bindingIssuingLegalEntityId)
-  ) {
-    return new OperationContextDenied({
-      code: 'operation_context_denied',
-      reason: 'The agent key requires its issuing company context',
-    });
-  }
   const expectedSubjectType = subjectTypeForPrincipal(principal);
   if (
     expectedSubjectType !== undefined &&
@@ -343,17 +307,45 @@ const validatePersistedPrincipal = (
   return undefined;
 };
 
+/**
+ * The support administrator's own authority, asked as the impersonation capability's declaration asks
+ * it: the capability is the `record-support-impersonation` Action's own declaration (single source of
+ * truth), and the question runs in the tenant context as an `admin` capability does (O28, O35).
+ */
+/** Decoded once, at load: the Action's own carrier is the single source of truth for the capability. */
+const SUPPORT_IMPERSONATION_DECLARATION = decodeProtectedAccessDeclaration(
+  recordSupportImpersonationAction.descriptor.accessDeclaration,
+  recordSupportImpersonationAction.descriptor.entrypoint,
+);
+
+/** The administrator as an actor: the effective principal of the request is the impersonated person. */
+const impersonatorScopeOf = (
+  principal: TrustedPrincipalContext,
+  request: OperationalScopeRequest,
+  impersonatorPrincipalId: string,
+): OperationalScope => {
+  const { impersonatedByPrincipalId: _impersonatedByPrincipalId, legalEntityId: _legalEntityId, ...rest } = principal;
+  return Object.freeze({
+    ...rest,
+    authMethod: 'session' as const,
+    correlationId: request.correlationId,
+    principalId: impersonatorPrincipalId,
+  });
+};
+
 const validateSupportImpersonation = Effect.fn('OperationalScopeResolver.validateSupportImpersonation')(
   function* validateSupportImpersonationEffect(
-    contextAccess: LegalEntityScopeAccess,
+    access: OperationalScopeAccess,
     principal: TrustedPrincipalContext,
     persisted: PersistedScopeRecord,
+    request: OperationalScopeRequest,
   ) {
     if (principal.authMethod !== 'support_impersonation') {
       return yield* Effect.void;
     }
+    const impersonatorPrincipalId = principal.impersonatedByPrincipalId;
     if (
-      principal.impersonatedByPrincipalId === undefined ||
+      impersonatorPrincipalId === undefined ||
       persisted.impersonatorStatus !== 'active' ||
       persisted.impersonatorTenantId !== principal.tenantId
     ) {
@@ -363,56 +355,39 @@ const validateSupportImpersonation = Effect.fn('OperationalScopeResolver.validat
       });
     }
 
-    if (contextAccess.tenants === undefined) {
+    const now = yield* DateTime.nowAsDate;
+    const decision = yield* access.decide({
+      carrier: { accessDeclaration: SUPPORT_IMPERSONATION_DECLARATION },
+      legalEntityScope: 'optional',
+      now,
+      scope: impersonatorScopeOf(principal, request, impersonatorPrincipalId),
+    });
+    if (decision.outcome === 'UNAVAILABLE') {
       return yield* new OperationContextUnavailable({
         code: 'operation_context_unavailable',
         reason: 'Support authorization is temporarily unavailable',
       });
     }
-    const [supportDecision] = yield* contextAccess.tenants({
-      permission: 'impersonate',
-      principalId: principal.impersonatedByPrincipalId,
-      tenantIds: [principal.tenantId],
-    });
-    if (supportDecision?.decision === 'denied') {
+    if (decision.outcome !== 'ALLOWED') {
+      // A supported impersonation never waits for an approval: it either holds now or is refused (O35).
       return yield* new OperationContextDenied({
         code: 'operation_context_denied',
         reason: 'Support impersonation permission was revoked',
-      });
-    }
-    if (supportDecision?.decision !== 'allowed') {
-      return yield* new OperationContextUnavailable({
-        code: 'operation_context_unavailable',
-        reason: 'Support authorization is temporarily unavailable',
       });
     }
     return yield* Effect.void;
   },
 );
 
-/**
- * The Legal Entity access check reads no persisted state, so it may start beside the persisted load. The
- * caller holds its outcome and reads it only in {@link validateLegalEntity}, after the persisted Legal Entity
- * gate: a denial from persisted state keeps its precedence, and a remote failure is never observed earlier.
- */
-const startLegalEntityAccess = (contextAccess: LegalEntityScopeAccess, principal: TrustedPrincipalContext) =>
-  principal.legalEntityId === undefined
-    ? Effect.undefined
-    : contextAccess
-        .legalEntities({
-          legalEntityIds: [principal.legalEntityId],
-          principalId: principal.principalId,
-          tenantId: principal.tenantId,
-        })
-        .pipe(Effect.map(([decision]) => decision));
-
 const validateLegalEntity = Effect.fn('OperationalScopeResolver.validateLegalEntity')(
   function* validateLegalEntityEffect(
+    access: OperationalScopeAccess,
     principal: TrustedPrincipalContext,
     persisted: PersistedScopeRecord,
-    legalEntityAccess: Exit.Exit<ContextAccessResult | undefined>,
+    request: OperationalScopeRequest,
   ) {
-    if (principal.legalEntityId === undefined) {
+    const { legalEntityId } = principal;
+    if (legalEntityId === undefined) {
       return yield* Effect.void;
     }
     if (persisted.legalEntityStatus !== 'active' || persisted.legalEntityTenantId !== principal.tenantId) {
@@ -422,33 +397,40 @@ const validateLegalEntity = Effect.fn('OperationalScopeResolver.validateLegalEnt
       });
     }
 
-    const decision = yield* legalEntityAccess;
-    if (decision?.decision === 'denied') {
-      return yield* new OperationContextDenied({
-        code: 'operation_context_denied',
-        reason: 'The principal cannot access the selected legal entity',
-      });
-    }
-    if (decision?.decision !== 'allowed') {
+    const now = yield* DateTime.nowAsDate;
+    // Selectable = access + administer in one scope (O28); the engine answers for the whole company
+    // list, so a company this person may not select is refused exactly like a revoked one. The scope
+    // keeps the principal's provenance: a gateway-grant identity reads Core only through the scope
+    // its redeemed assertion establishes.
+    const selectable = yield* Effect.option(
+      access.selectableLegalEntities({
+        now,
+        scope: preserveSystemPrincipalContextTrust(
+          principal,
+          Object.freeze({ ...principal, correlationId: request.correlationId }),
+        ),
+      }),
+    );
+    if (Option.isNone(selectable)) {
       return yield* new OperationContextUnavailable({
         code: 'operation_context_unavailable',
         reason: 'Legal-entity authorization is temporarily unavailable',
+      });
+    }
+    if (!selectable.value.some((candidate) => candidate === legalEntityId)) {
+      return yield* new OperationContextDenied({
+        code: 'operation_context_denied',
+        reason: 'The principal cannot access the selected legal entity',
       });
     }
     return yield* Effect.void;
   },
 );
 
-type OperationalScopeResolverConstruction = readonly [
-  repository: Pick<OperationalScopeRepository, 'load'>,
-  contextAccess: LegalEntityScopeAccess,
-  recordInactiveDenial?: (input: ResolveOperationalScopeInput) => Effect.Effect<void>,
-];
-
 export const makeOperationalScopeResolver = Effect.fnUntraced(function* makeOperationalScopeResolver(
-  ...construction: OperationalScopeResolverConstruction
+  repository: Pick<OperationalScopeRepository, 'load'>,
+  access: OperationalScopeAccess,
 ): Effect.fn.Return<OperationalScopeResolverService, never, Crypto.Crypto> {
-  const [repository, contextAccess, recordInactiveDenial] = construction;
   const crypto = yield* Crypto.Crypto;
   const prepareExternalAdmission = Effect.fn('OperationalScopeResolver.prepareExternalAdmission')(
     function* prepareExternalAdmissionEffect(input: ResolveOperationalScopeInput) {
@@ -554,19 +536,11 @@ export const makeOperationalScopeResolver = Effect.fnUntraced(function* makeOper
     const externalAdmission = yield* prepareExternalAdmission(input);
 
     // P must complete before C so provider HTTP never shares the Core load's transaction.
-    // The Legal Entity access check needs no persisted state, so it runs beside C and is consumed only after
-    // the persisted gates pass (see startLegalEntityAccess).
-    const [persisted, legalEntityAccess] = yield* Effect.all(
-      [repository.load(principal), Effect.exit(startLegalEntityAccess(contextAccess, principal))],
-      { concurrency: 2 },
-    );
+    // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- Admission ordering is the security contract.
+    const persisted = yield* repository.load(principal);
     const supportRecovery = isTrustedSupportRecoveryPrincipalContext(principal);
     const persistedFailure = validatePersistedPrincipal(principal, persisted, supportRecovery);
     if (persistedFailure !== undefined) {
-      // Cached gateway credentials bypass the session principal resolver. Audit this admission independently.
-      if (persisted.principalStatus === 'disabled' && persisted.principalTenantId === principal.tenantId) {
-        yield* recordInactiveDenial?.(input) ?? Effect.void;
-      }
       return yield* persistedFailure;
     }
 
@@ -595,8 +569,8 @@ export const makeOperationalScopeResolver = Effect.fnUntraced(function* makeOper
       );
     }
 
-    yield* validateSupportImpersonation(contextAccess, principal, persisted);
-    yield* validateLegalEntity(principal, persisted, legalEntityAccess);
+    yield* validateSupportImpersonation(access, principal, persisted, input);
+    yield* validateLegalEntity(access, principal, persisted, input);
     return preserveSystemPrincipalContextTrust(
       principal,
       Object.freeze(
@@ -617,52 +591,9 @@ export const makeOperationalScopeResolver = Effect.fnUntraced(function* makeOper
   return { resolve: resolveOperationalScope };
 });
 
-const inactiveOperationDenial =
-  (
-    database: { readonly executor: Pick<CoreDatabaseExecutor, 'transaction'> },
-    enrollment: DatabaseIdentityEnrollment,
-  ) =>
-  (input: ResolveOperationalScopeInput): Effect.Effect<void> =>
-    database.executor
-      .transaction((transaction) =>
-        installOperationalScope(
-          transaction,
-          preserveSystemPrincipalContextTrust(input.principal, {
-            ...input.principal,
-            correlationId: input.correlationId,
-          }),
-          enrollment,
-        ).pipe(
-          Effect.andThen(() =>
-            transaction.insert(auditEvents).values({
-              auditProfile: 'sensitive',
-              authBindingId: input.principal.authBindingId,
-              authMethod: input.principal.authMethod,
-              eventType: 'authn.rejected',
-              evidenceJson: {
-                audience: input.audience ?? null,
-                correlationId: input.correlationId,
-                reason: 'principal_disabled',
-                source: 'operational_scope',
-              },
-              legalEntityId: input.principal.legalEntityId,
-              outcome: 'denied',
-              outcomeCode: 'principal_inactive',
-              outcomeStage: 'authn',
-              principalId: input.principal.principalId,
-              targetModuleKey: 'core.identity',
-              targetResourceId: input.principal.principalId,
-              targetResourceType: 'principal',
-              tenantId: input.principal.tenantId,
-            }),
-          ),
-        ),
-      )
-      .pipe(recoverSqlTransactionError, Effect.ignore);
-
 export const OperationalScopeRepositoryLive = Layer.effect(
   OperationalScopeRepositoryContext,
-  Effect.gen(function* makeOperationalScopeRepositoryService() {
+  Effect.gen(function* createOperationalScopeRepositoryService() {
     const database = yield* CoreDatabase;
     const enrollment = yield* DatabaseIdentityEnrollmentContext;
     return makeOperationalScopeRepository(database, enrollment);
@@ -673,14 +604,8 @@ export const OperationalScopeResolverFromRepositoryLive = Layer.effect(
   OperationalScopeResolver,
   Effect.gen(function* createOperationalScopeResolverService() {
     const repository = yield* OperationalScopeRepositoryContext;
-    const contextAccess = yield* ContextAccess;
-    const database = yield* Effect.serviceOption(CoreDatabase);
-    const enrollment = yield* DatabaseIdentityEnrollmentContext;
-    return yield* makeOperationalScopeResolver(
-      repository,
-      contextAccess,
-      Option.isSome(database) ? inactiveOperationDenial(database.value, enrollment) : undefined,
-    );
+    const access = yield* bindLiveAccessGate;
+    return yield* makeOperationalScopeResolver(repository, access);
   }),
 );
 
@@ -689,11 +614,7 @@ export const OperationalScopeResolverLive = Layer.effect(
   Effect.gen(function* createLiveOperationalScopeResolverService() {
     const database = yield* CoreDatabase;
     const enrollment = yield* DatabaseIdentityEnrollmentContext;
-    const contextAccess = yield* ContextAccess;
-    return yield* makeOperationalScopeResolver(
-      makeOperationalScopeRepository(database, enrollment),
-      contextAccess,
-      inactiveOperationDenial(database, enrollment),
-    );
+    const access = yield* bindLiveAccessGate;
+    return yield* makeOperationalScopeResolver(makeOperationalScopeRepository(database, enrollment), access);
   }),
 );

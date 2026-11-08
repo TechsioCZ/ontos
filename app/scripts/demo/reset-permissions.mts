@@ -20,7 +20,7 @@
  */
 import { randomUUID } from 'node:crypto';
 
-import { NodeHttpClient, NodeServices } from '@effect/platform-node';
+import { NodeServices } from '@effect/platform-node';
 import { hashPassword } from 'better-auth/crypto';
 import {
   additionalDemoCompanies,
@@ -42,6 +42,7 @@ import {
   Option,
   Path,
   Redacted,
+  Result,
   Schema,
 } from 'effect';
 import { Command, Flag } from 'effect/cli';
@@ -49,18 +50,16 @@ import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResp
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import { DatabaseConfig, parseDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
-import { legalEntities, principals, tenantModuleStates, tenants } from '../../packages/core-runtime/src/db/schema.ts';
+import { legalEntities, principals, tenants } from '../../packages/core-runtime/src/db/schema.ts';
+import type { AccessCatalogModule } from '@app/core-runtime';
+import { AccessCatalogModulesSchema } from '@app/core-runtime/access/catalog';
 import { AuthDatabase, AuthDatabaseFromDatabaseConfigLive } from '../../apps/shell-super-app/api/auth/db/client.ts';
 import { account, apikey, user } from '../../apps/shell-super-app/api/auth/db/schema.ts';
-import {
-  ActiveApplicationCompositionConfigLive,
-  ActiveApplicationCompositionService,
-} from '../../packages/core-runtime/src/modules/active-application-composition.ts';
-import { ActiveApplicationCompositionSourceLive } from '../../packages/core-runtime/src/modules/active-application-composition-source.node.ts';
-import { BootstrapCompanyMembershipSchema } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
-import { discoverCurrentActions } from '../provision-current-action-authorization.mts';
+import { readAccessCatalogArtifact } from '../authorization-catalog-artifact.mts';
 import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } from '../siampark/reset-configuration.mts';
 import type { DemoResetChildEnvironment } from '../siampark/reset-configuration.mts';
+import { policyReleaseEntries, policyRoleCellRows, policyRoleMemberships } from './access-policy.mts';
+import type { PolicyMembershipRow } from './access-policy.mts';
 import { verificationAccount, verificationContext } from './verification-context.mts';
 import { demoId, demoLegalEntityId, demoTenantId, eshopDemoLegalEntityId } from './fixture-ids.mts';
 import {
@@ -69,11 +68,14 @@ import {
   companyHumanAccounts,
   demoCompanyMemberships,
   demoHumanAccounts,
-  demoPermissionRelationships,
+  demoLegalEntityIds,
+  demoModuleIds,
+  demoTenantMemberships,
+  reviewedDemoAssignments,
+  reviewedMachinePrincipals,
+  reviewedWorkloadBindings,
   storefrontPrincipal,
 } from './permissions.mts';
-import type { DemoAction, DemoPermissionInstallation } from './permissions.mts';
-import { warmupAccounts } from './warmup-accounts.mts';
 
 class DemoPermissionsError extends Schema.TaggedError<DemoPermissionsError>()('DemoPermissionsError', {
   reason: Schema.String,
@@ -87,7 +89,7 @@ const BOT_KEY_AUDIENCE = 'work-tasks';
 /** The storefront BFF exchanges its key for merchandise gateway assertions in the e-shop company. */
 const STOREFRONT_KEY_AUDIENCE = 'merchandise';
 /** Every human account: the Obchodní firma / Nájempark accounts plus the CRM and e-shop company personas. */
-const allHumanAccounts = [...demoHumanAccounts, ...companyHumanAccounts, ...warmupAccounts] as const;
+const allHumanAccounts = [...demoHumanAccounts, ...companyHumanAccounts] as const;
 /** Membership targets must exist before bootstrap; the audited company Action runs only after its grants exist. */
 export const demoBootstrapCompanyRows = [
   { ...rentalDemoCompany, registrationNumber: 'DEMO-NAJEMPARK-RENTAL' },
@@ -108,6 +110,20 @@ const privacyModuleState = {
   moduleId: 'privacy.core',
   stateId: demoId('core.tenant-module-state', 'privacy.core'),
 } as const;
+/**
+ * The module states the sales demo installs: every module the demo's reviewed Roles name, so the release
+ * the seed publishes declares every capability they grant. The three named states keep their fixed ids and
+ * the rest derive theirs from the module key, so a re-run resumes the row it wrote instead of adding one.
+ */
+const namedModuleStates: ReadonlyMap<string, string> = new Map([
+  [crmModuleState.moduleId, crmModuleState.stateId],
+  [facilityOperationsModuleState.moduleId, facilityOperationsModuleState.stateId],
+  [privacyModuleState.moduleId, privacyModuleState.stateId],
+]);
+const demoModuleStates = demoModuleIds.map((moduleId) => ({
+  moduleId,
+  stateId: namedModuleStates.get(moduleId) ?? demoId('core.tenant-module-state', moduleId),
+}));
 /** Managed API keys that run unlimited (each request exchanges the key for a single-use gateway assertion). */
 const unlimitedKeyNames = [
   agentBotPrincipal.displayName,
@@ -166,36 +182,21 @@ const upsertIdentityRows = Effect.gen(function* upsertIdentityRows() {
           })
           .onConflictDoUpdate({ set: { password, updatedAt: now }, target: account.id });
       }
-      yield* transaction
-        .insert(principals)
-        .values({
-          displayName: agentBotPrincipal.displayName,
-          kind: agentBotPrincipal.kind,
-          principalId: agentBotPrincipal.principalId,
-          status: 'active',
-          tenantId: demoTenantId,
-        })
-        .onConflictDoUpdate({ set: { status: 'active' }, target: principals.principalId });
-      yield* transaction
-        .insert(principals)
-        .values({
-          displayName: storefrontPrincipal.displayName,
-          kind: storefrontPrincipal.kind,
-          principalId: storefrontPrincipal.principalId,
-          status: 'active',
-          tenantId: demoTenantId,
-        })
-        .onConflictDoUpdate({ set: { status: 'active' }, target: principals.principalId });
-      yield* transaction
-        .insert(principals)
-        .values({
-          displayName: akrosStorefrontPrincipal.displayName,
-          kind: akrosStorefrontPrincipal.kind,
-          principalId: akrosStorefrontPrincipal.principalId,
-          status: 'active',
-          tenantId: demoTenantId,
-        })
-        .onConflictDoUpdate({ set: { status: 'active' }, target: principals.principalId });
+      // Every reviewed machine identity gets its own principal row; only the ones a carrier admits get a
+      // workload binding. The row is identity, never authority: a principal without a binding or a Role
+      // reaches nothing.
+      for (const machine of reviewedMachinePrincipals) {
+        yield* transaction
+          .insert(principals)
+          .values({
+            displayName: machine.displayName,
+            kind: machine.kind,
+            principalId: machine.principalId,
+            status: 'active',
+            tenantId: demoTenantId,
+          })
+          .onConflictDoUpdate({ set: { status: 'active' }, target: principals.principalId });
+      }
     }),
   );
 });
@@ -222,6 +223,45 @@ const TenantIdSchema = Schema.toEncoded(Text.pipe(Schema.brand('DemoTenantId')))
 const LegalEntityIdSchema = Schema.toEncoded(Text.pipe(Schema.brand('DemoLegalEntityId')));
 /** Wire contract of `packages/core-runtime/scripts/bootstrap-development-context.mts --fixture`. */
 const ContextFixtureSchema = Schema.Struct({
+  access: Schema.Struct({
+    assignments: Schema.Array(
+      Schema.Struct({
+        legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
+        principalId: PrincipalIdSchema,
+        roleKey: Schema.toEncoded(Text.pipe(Schema.brand('DemoRoleKey'))),
+      }),
+    ),
+    legalEntityIds: Schema.Array(LegalEntityIdSchema),
+    memberships: Schema.Array(
+      Schema.Struct({
+        kind: Schema.Literals(['member', 'owner', 'access_admin']),
+        legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
+        principalId: PrincipalIdSchema,
+      }),
+    ),
+    /** The pinned catalog declarations; Core decodes them, so this port carries them through as data. */
+    modules: Schema.toEncoded(AccessCatalogModulesSchema),
+    roles: Schema.Array(
+      Schema.Struct({
+        cells: Schema.Array(
+          Schema.Struct({
+            capabilityKey: Schema.toEncoded(Text.pipe(Schema.brand('CapabilityKey'))),
+            mode: Schema.Literals(['run', 'propose', 'approve']),
+            selector: Schema.Literals(['all', 'assigned', 'entrusted', 'team']),
+          }),
+        ),
+        key: Text,
+        label: Text,
+        legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
+      }),
+    ),
+    workloads: Schema.Array(
+      Schema.Struct({
+        principalId: PrincipalIdSchema,
+        workloadKey: Schema.toEncoded(Text.pipe(Schema.brand('WorkloadKey'))),
+      }),
+    ),
+  }),
   accounts: Schema.Array(
     Schema.Struct({
       authBindingId: Schema.toEncoded(Text.pipe(Schema.brand('DemoAuthBindingId'))),
@@ -230,7 +270,15 @@ const ContextFixtureSchema = Schema.Struct({
       principalId: PrincipalIdSchema,
     }),
   ),
-  companyMemberships: Schema.optionalKey(Schema.Array(Schema.toEncoded(BootstrapCompanyMembershipSchema))),
+  companyMemberships: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        affiliation: Schema.Literals(['employee', 'external']),
+        legalEntityId: LegalEntityIdSchema,
+        principalId: PrincipalIdSchema,
+      }),
+    ),
+  ),
   legalEntity: Schema.Struct({
     legalEntityId: LegalEntityIdSchema,
     legalName: Text,
@@ -243,28 +291,112 @@ const ContextFixtureSchema = Schema.Struct({
       stateId: Schema.toEncoded(Text.pipe(Schema.brand('DemoStateId'))),
     }),
   ),
-  relationships: Schema.Array(
-    Schema.Struct({
-      relation: Text,
-      resourceId: Schema.toEncoded(Text.pipe(Schema.brand('DemoResourceId'))),
-      resourceType: Text,
-      subjectId: Schema.toEncoded(Text.pipe(Schema.brand('DemoSubjectId'))),
-      subjectRelation: Schema.optionalKey(Text),
-      subjectType: Text,
-    }),
-  ),
   tenant: Schema.Struct({ defaultLocale: Text, displayName: Text, slug: Text, tenantId: TenantIdSchema }),
 });
 
-/** Install through Core first; only a subsequent persisted read is evidence for Action topology. */
+/**
+ * The reviewed demo policy as the canonical fixture block (ADR-0030). Each Role carries the exact cells the
+ * reviewed matrix grants, compiled here against the pinned catalog artifact; each Assignment names the
+ * company its Role belongs to; and a membership is the reviewed affiliation — a Role assignment never
+ * creates one. The seed port applies the cells and names no capability of its own.
+ *
+ * A cell the artifact does not declare, or a Role that names a module the composition omits, fails here
+ * with that exact key instead of publishing a Role that grants less than the reviewed policy says.
+ */
+const membershipKey = Schema.encodeResult(
+  Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.NullOr(Schema.String), Schema.String])),
+);
+
+const reviewedDemoAccess = (
+  accessModules: readonly AccessCatalogModule[],
+): Result.Result<(typeof ContextFixtureSchema.Type)['access'], string> => {
+  const entries = policyReleaseEntries(accessModules, [...demoModuleIds]);
+  if (Result.isFailure(entries)) {
+    return Result.fail(`The demo release could not be built: ${entries.failure}`);
+  }
+  const wireModules = Schema.decodeUnknownResult(Schema.toEncoded(AccessCatalogModulesSchema))(accessModules);
+  if (Result.isFailure(wireModules)) {
+    return Result.fail(wireModules.failure.message);
+  }
+  const assignments = reviewedDemoAssignments();
+  const reviewed = new Map<string, (typeof assignments)[number]>();
+  for (const entry of assignments) {
+    if (!reviewed.has(entry.roleKey)) {
+      reviewed.set(entry.roleKey, entry);
+    }
+  }
+  const roles: (typeof ContextFixtureSchema.Type)['access']['roles'][number][] = [];
+  const managementMemberships = [];
+  for (const { legalEntityId, role, roleKey } of reviewed.values()) {
+    const cells = policyRoleCellRows(role, entries.success, role.actorKind ?? 'human');
+    if (Result.isFailure(cells)) {
+      return Result.fail(cells.failure);
+    }
+    const roleRow: (typeof roles)[number] = {
+      cells: [...cells.success],
+      key: roleKey,
+      label: role.label,
+    };
+    if (legalEntityId !== undefined) {
+      Object.assign(roleRow, { legalEntityId });
+    }
+    roles.push(roleRow);
+    managementMemberships.push(
+      ...policyRoleMemberships({
+        legalEntityId,
+        principalIds: assignments
+          .filter((assignment) => assignment.roleKey === roleKey)
+          .map((assignment) => assignment.principalId),
+        role,
+      }),
+    );
+  }
+  const reviewedMemberships: readonly PolicyMembershipRow[] = [
+    ...demoCompanyMemberships.map(({ legalEntityId, principalId }) => ({
+      kind: 'member' as const,
+      legalEntityId,
+      principalId,
+    })),
+    ...demoTenantMemberships,
+    ...managementMemberships,
+  ];
+  const membershipsByKey = new Map<string, PolicyMembershipRow>();
+  for (const membership of reviewedMemberships) {
+    const key = membershipKey([membership.kind, membership.legalEntityId ?? null, membership.principalId]);
+    if (Result.isFailure(key)) {
+      return Result.fail(key.failure.message);
+    }
+    membershipsByKey.set(key.success, membership);
+  }
+  const memberships = [...membershipsByKey.values()];
+  return Result.succeed({
+    assignments: assignments.map(({ legalEntityId, principalId, roleKey }) => ({
+      legalEntityId,
+      principalId,
+      roleKey,
+    })),
+    legalEntityIds: [...demoLegalEntityIds],
+    memberships,
+    modules: wireModules.success,
+    roles,
+    // The reviewed machine workloads (O73): a service principal is admitted only on a carrier that declares
+    // one of these keys, and only while this binding is active. Nothing else is bound.
+    workloads: [...reviewedWorkloadBindings()],
+  });
+};
+
+/** One canonical bootstrap of the demo tenant's identities, memberships and reviewed access. */
 export const bootstrapDemoPermissionContexts = Effect.fn('DemoPermissions.contexts')(
-  function* bootstrapDemoPermissionContexts<E, R, E2, R2>(
-    actions: readonly DemoAction[],
-    publishedModuleKeys: readonly string[],
-    installation: Effect.Effect<Omit<DemoPermissionInstallation, 'publishedModuleKeys'>, E, R>,
-    bootstrap: (context: typeof ContextFixtureSchema.Type) => Effect.Effect<void, E2, R2>,
+  function* bootstrapDemoPermissionContexts<E, R>(
+    accessModules: readonly AccessCatalogModule[],
+    bootstrap: (context: typeof ContextFixtureSchema.Type) => Effect.Effect<void, E, R>,
   ) {
+    const access = reviewedDemoAccess(accessModules);
+    if (Result.isFailure(access)) {
+      return yield* fail(access.failure);
+    }
     const demoContext = {
+      access: access.success,
       accounts: allHumanAccounts.map(({ authBindingId, authUserId, displayName, principalId }) => ({
         authBindingId,
         authUserId,
@@ -278,52 +410,30 @@ export const bootstrapDemoPermissionContexts = Effect.fn('DemoPermissions.contex
         registrationCountry: 'CZ',
         registrationNumber: 'DEMO-NAJEMPARK',
       },
-      modules: [crmModuleState, facilityOperationsModuleState, privacyModuleState],
+      // Every module the sales demo serves is installed in the demo tenant, so the release the reviewed
+      // Roles compile against declares every capability they name. The three named states keep their fixed
+      // ids; the rest are derived from the module key, so a re-run resumes the row it wrote.
+      modules: demoModuleStates,
       tenant: { defaultLocale: 'cs', displayName: 'OntOS DEMO', slug: 'siampark-demo', tenantId: demoTenantId },
     };
-    // Core commits identity and insert-only activation before the authorization producer reads installation.
-    yield* bootstrap({ ...demoContext, relationships: [] });
-    const persisted = yield* installation;
-    const relationships = yield* Effect.try({
-      catch: () => fail('Published scoped demo authorization policy is invalid'),
-      try: () => demoPermissionRelationships(actions, { ...persisted, publishedModuleKeys }),
-    });
-    yield* bootstrap({ ...demoContext, modules: [], relationships });
-    yield* bootstrap(yield* verificationContext(actions));
-    return relationships;
+    yield* bootstrap(demoContext);
+    yield* bootstrap(yield* verificationContext(accessModules));
+    return access.success;
   },
 );
 
-/** Principals, auth bindings and SpiceDB relationships through the core development bootstrap port. */
+/**
+ * Principals, auth bindings and canonical v2 access through the core development bootstrap port. The
+ * declarations come from the pinned catalog artifact (O69): Core never scans source code, so the port
+ * reads the artifact as data and a release that omits a demo module fails the seed with the exact module.
+ */
 const runBootstrapPort = Effect.fn('DemoPermissions.bootstrap')(function* runBootstrapPort(
   root: string,
   environment: DemoResetChildEnvironment,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const source = yield* ActiveApplicationCompositionService;
-  const snapshot = yield* source.load;
-  const actions = yield* discoverCurrentActions(snapshot);
-  const { executor } = yield* AuthDatabase;
-  const installation = Effect.gen(function* readPersistedInstallation() {
-    const moduleStates = yield* executor
-      .select({
-        moduleKey: tenantModuleStates.moduleKey,
-        state: tenantModuleStates.state,
-        tenantId: tenantModuleStates.tenantId,
-      })
-      .from(tenantModuleStates)
-      .where(eq(tenantModuleStates.tenantId, demoTenantId));
-    const companies = yield* executor
-      .select({
-        legalEntityId: legalEntities.legalEntityId,
-        status: legalEntities.status,
-        tenantId: legalEntities.tenantId,
-      })
-      .from(legalEntities)
-      .where(eq(legalEntities.tenantId, demoTenantId));
-    return { companies, moduleStates };
-  });
+  const accessModules = yield* readAccessCatalogArtifact(root);
   const bootstrap = Effect.fn('DemoPermissions.bootstrapContext')(function* bootstrapContext(
     context: typeof ContextFixtureSchema.Type,
   ) {
@@ -349,14 +459,9 @@ const runBootstrapPort = Effect.fn('DemoPermissions.bootstrap')(function* runBoo
       yield* fail('Core development bootstrap port failed');
     }
   });
-  const relationships = yield* bootstrapDemoPermissionContexts(
-    actions,
-    snapshot.composition.modules.map(({ moduleId }) => moduleId),
-    installation,
-    bootstrap,
-  );
+  const access = yield* bootstrapDemoPermissionContexts(accessModules, bootstrap);
   return yield* Console.log(
-    `sales-demo permissions: ${allHumanAccounts.length} accounts + agent-bot + storefront, ${relationships.length} relationships over ${actions.length} Actions`,
+    `sales-demo permissions: ${allHumanAccounts.length} accounts + agent-bot + storefront, ${access.roles.length} reviewed roles, ${access.assignments.length} assignments`,
   );
 });
 
@@ -685,10 +790,6 @@ const adminDatabaseConfigLive = Layer.effect(
 const servicesLive = Layer.mergeAll(
   AuthDatabaseFromDatabaseConfigLive.pipe(Layer.provide(adminDatabaseConfigLive)),
   FetchHttpClient.layer,
-  ActiveApplicationCompositionConfigLive.pipe(
-    Layer.provide(ActiveApplicationCompositionSourceLive),
-    Layer.provide(NodeHttpClient.layerUndici),
-  ),
 );
 
 const DemoPermissionReset = Context.Service<{ readonly keys: Effect.Success<ReturnType<typeof main>> }>(

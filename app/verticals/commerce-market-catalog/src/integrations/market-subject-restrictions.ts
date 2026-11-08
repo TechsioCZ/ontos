@@ -1,37 +1,18 @@
+import type { OperationalScope, ReadPrepareContext } from '@app/core-runtime';
 import { MarketSubjectRestrictionsCurrentRequestSchema } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';
 import type { MarketSubjectRestrictionsCurrentResponse } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';
 import { executeMarketSubjectRestrictionsCurrentWithAuthorization } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current/client';
-import { GatewayContextResponseSchema } from '@app/shared-contracts';
-import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
-import type { ReadPrepareContext } from '@app/core-runtime';
-import { Config, Effect, Schema } from 'effect';
 import type { Option } from 'effect';
+import { Crypto, Effect, Schema } from 'effect';
 
 import type { PurchasingSubjectRefSchema } from '../../shared/market-contracts.ts';
-import { ownerGatewayApiKey } from './owner-gateway-api-key.ts';
+import { acquireMarketOwnerDelegation } from './market-owner-delegation.ts';
 
 type PurchasingSubject = typeof PurchasingSubjectRefSchema.Type;
 type OwnerCurrentRestrictions = Extract<
   MarketSubjectRestrictionsCurrentResponse,
   { readonly outcome: 'SUBJECT_RESTRICTIONS_CURRENT' }
 >;
-
-const httpUrl = Schema.URLFromString.check(
-  Schema.makeFilter((url) =>
-    (url.protocol === 'http:' || url.protocol === 'https:') &&
-    url.username.length === 0 &&
-    url.password.length === 0 &&
-    url.search.length === 0 &&
-    url.hash.length === 0
-      ? undefined
-      : 'Service URL must be an HTTP(S) URL without credentials, query, or fragment',
-  ),
-);
-const configuration = (legalEntityId: string) =>
-  Config.all({
-    apiKey: ownerGatewayApiKey(legalEntityId),
-    shellBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
-  });
 
 export class MarketSubjectRestrictionsUnavailable extends Schema.TaggedError<MarketSubjectRestrictionsUnavailable>()(
   'MarketSubjectRestrictionsUnavailable',
@@ -100,43 +81,49 @@ const toSnapshot = (
   );
 };
 
+/**
+ * Reads the purchasing subject's restrictions from Customer Context for the requester this scope
+ * carries: the subject is the verified requester, this Market owner is the actor.
+ */
 export const makeServerMarketSubjectRestrictionsReader = ({
   compositionRevision,
-  legalEntityId,
+  crypto,
+  scope,
 }: {
   readonly compositionRevision: string | undefined;
-  readonly legalEntityId: string | undefined;
+  readonly crypto: Crypto.Crypto;
+  readonly scope: OperationalScope;
 }): MarketSubjectRestrictionsReader => ({
   current: Effect.fn('MarketSubjectRestrictionsReader.current')(function* current(
     subject: Parameters<MarketSubjectRestrictionsReader['current']>[0],
     requestCorrelation: string,
   ) {
-    if (compositionRevision === undefined) {
-      return yield* unavailable('Cross-owner subject restrictions require the original verified composition revision');
-    }
-    if (legalEntityId === undefined) {
+    if (scope.legalEntityId === undefined) {
       return yield* unavailable('Cross-owner subject restrictions require the original verified Legal Entity');
+    }
+    if (compositionRevision === undefined) {
+      return yield* unavailable('Cross-owner subject restrictions require the admitted composition revision');
+    }
+    if (subject.profileRef.tenantId !== scope.tenantId || requestCorrelation !== scope.correlationId) {
+      return yield* unavailable('Subject restrictions require the original trusted Tenant and request correlation');
     }
     const payload = yield* Schema.decodeEffect(MarketSubjectRestrictionsCurrentRequestSchema)({ subject }).pipe(
       Effect.mapError(unavailable),
     );
     const response = yield* Effect.gen(function* executeCustomerOwnerRead() {
-      const configured = yield* configuration(legalEntityId);
-      const issued = yield* issueApiKeyGatewayContext(
-        { audience: 'commerce-customer-context', compositionRevision, legalEntityId },
-        { apiKey: configured.apiKey, baseUrl: configured.shellBaseUrl, requestCorrelation },
+      const admitted = yield* acquireMarketOwnerDelegation(
+        scope,
+        crypto,
+        'commerce-customer-context',
+        compositionRevision,
       );
-      const admitted = yield* Schema.decodeEffect(GatewayContextResponseSchema)(issued);
-      if (admitted.compositionRevision !== compositionRevision) {
-        return yield* unavailable('Customer Context gateway returned a different composition revision');
-      }
       return yield* executeMarketSubjectRestrictionsCurrentWithAuthorization(
         payload,
-        `Bearer ${admitted.token}`,
+        admitted.authorization,
         requestCorrelation,
         {
-          baseUrl: new URL(admitted.apiBaseUrl, configured.shellBaseUrl),
-          compositionRevision,
+          baseUrl: new URL(admitted.apiBaseUrl),
+          compositionRevision: admitted.compositionRevision,
         },
       );
     }).pipe(Effect.mapError(unavailable));
@@ -145,13 +132,16 @@ export const makeServerMarketSubjectRestrictionsReader = ({
 });
 
 /** Production reader for a Read's `prepare` step: the verified composition and Legal Entity of that Read. */
-export const serverMarketSubjectRestrictionsReaderFor = (
-  context: ReadPrepareContext,
-): MarketSubjectRestrictionsReader =>
-  makeServerMarketSubjectRestrictionsReader({
-    compositionRevision: context.compositionRevision,
-    legalEntityId: context.scope.legalEntityId,
-  });
+export const serverMarketSubjectRestrictionsReaderFor = Effect.fn('MarketSubjectRestrictions.captureReader')(
+  function* captureSubjectRestrictionsReader(context: ReadPrepareContext) {
+    const crypto = yield* Crypto.Crypto;
+    return makeServerMarketSubjectRestrictionsReader({
+      compositionRevision: context.compositionRevision,
+      crypto,
+      scope: context.scope,
+    });
+  },
+);
 
 /**
  * The purchasing subject's current restrictions from Customer Context, read in `prepare` so the remote round trip

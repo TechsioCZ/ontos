@@ -3,7 +3,7 @@ import type { I18nInstance } from '@modern-js/plugin-i18n/runtime';
 import { ModernI18nProvider } from '@modern-js/plugin-i18n/runtime/consumer';
 import { cleanup, render as renderView, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import type { PropsWithChildren, ReactElement } from 'react';
 import { useState } from 'react';
@@ -11,7 +11,11 @@ import { useState } from 'react';
 import csResource from '../../locales/cs/shell.json';
 import enResource from '../../locales/en/shell.json';
 
-import type { PeopleRoleCatalog, Person } from '../../shared/people-api.ts';
+import {
+  ListAccessPeopleOptionsResponseSchema,
+  ListAccessPeopleResponseSchema,
+} from '../../shared/access-admin-api.ts';
+import type { Person } from '../../shared/people-api.ts';
 import {
   defaultPeopleFilters,
   filterPeople,
@@ -19,7 +23,7 @@ import {
   personStatusKey,
   personStatusPresentation,
 } from '../../src/routes/people/people-model.ts';
-import type { PeopleFilters } from '../../src/routes/people/people-model.ts';
+import type { PeopleAccessView, PeopleFilters } from '../../src/routes/people/people-model.ts';
 import {
   PeopleTable,
   PeopleToolbar,
@@ -51,16 +55,68 @@ const render = (ui: ReactElement) => renderView(ui, { wrapper: I18nProvider });
 
 const tenantId = '00000000-0000-4000-8000-000000000001';
 const companyId = '00000000-0000-4000-8000-000000000002';
-const scope = { _tag: 'company', legalEntityId: companyId } as const;
-const role = (roleKey: string) => ({ roleKey, scope, tenantId });
-const catalog: PeopleRoleCatalog = {
-  items: [
-    { description: '', name: 'Obchodník', roleKey: 'crm-sales', scope },
-    { description: '', name: 'Správce firmy', roleKey: 'admin', scope },
-    { description: '', name: 'Účetní', roleKey: 'accounting', scope },
-    { description: '', name: 'Vedení', roleKey: 'management', scope },
-  ],
-};
+const companyScope = { kind: 'company', legalEntityId: companyId } as const;
+const accessRevision = 'people-revision-1';
+const roleRevisionId = '00000000-0000-4000-8000-0000000000b1';
+/** The released canonical roles of the scope: a role is named and identified, never addressed by a key. */
+const allRoles = [
+  { name: 'Obchodník', roleId: '00000000-0000-4000-8000-0000000000a1' },
+  { name: 'Správce firmy', roleId: '00000000-0000-4000-8000-0000000000a2' },
+  { name: 'Účetní', roleId: '00000000-0000-4000-8000-0000000000a3' },
+  { name: 'Vedení', roleId: '00000000-0000-4000-8000-0000000000a4' },
+] as const;
+const roleIdOf = (name: string) => allRoles.find((role) => role.name === name)?.roleId ?? allRoles[0].roleId;
+/** The canonical assignments of each principal, keyed by principal id, as the access read reports them. */
+const assignedRoleNames = new Map<string, readonly string[]>();
+const accessViewFor = (people: readonly Person[]): PeopleAccessView => ({
+  options: Schema.decodeUnknownSync(ListAccessPeopleOptionsResponseSchema)({
+    capabilities: [],
+    managers: [],
+    people: [],
+    revision: accessRevision,
+    roles: allRoles.map((role) => ({
+      capabilityKeys: [],
+      latestRevisionId: roleRevisionId,
+      name: role.name,
+      risk: 'sensitive' as const,
+      roleId: role.roleId,
+      scope: companyScope,
+    })),
+    scopes: [{ label: 'Firma', scope: companyScope }],
+    teams: [],
+    writeAvailability: {
+      canAssign: true,
+      canDelegate: false,
+      canManageTeams: false,
+      canRevokeDelegation: false,
+      canTransferOwnership: false,
+      canUnassign: true,
+    },
+  }),
+  people: Schema.decodeUnknownSync(ListAccessPeopleResponseSchema)({
+    items: people.map((person) => ({
+      assignments: (assignedRoleNames.get(person.principalRef.principalId) ?? []).map((name, index) => ({
+        incarnationId: `00000000-0000-4000-8000-0000000000${String(index + 1).padStart(2, '0')}`,
+        principalId: person.principalRef.principalId,
+        roleId: roleIdOf(name),
+        roleName: name,
+        scope: companyScope,
+        status: 'active' as const,
+        validFrom: '2026-01-01T00:00:00.000Z',
+        validUntil: null,
+      })),
+      delegations: [],
+      displayName: person.displayName,
+      memberships: [],
+      ownership: { administersScopes: [], soleAdministratorScopes: [] },
+      principalId: person.principalRef.principalId,
+      suspended: false,
+      teams: [],
+    })),
+    nextCursor: null,
+    revision: accessRevision,
+  }),
+});
 let next = 10;
 const person = (
   displayName: string,
@@ -74,13 +130,13 @@ const person = (
 ): Person => {
   next += 1;
   const principalRef = { principalId: `00000000-0000-4000-8000-0000000000${next}`, tenantId };
+  assignedRoleNames.set(principalRef.principalId, overrides.roles ?? []);
   return {
     displayName,
     invitationDelivery: null,
     kind: overrides.kind ?? 'human',
     principalRef,
     principalStatus: overrides.principalStatus ?? 'active',
-    roleAssignments: (overrides.roles ?? []).map(role),
     selectedCompanyMembership: {
       affiliation: overrides.kind === 'agent' ? null : (overrides.affiliation ?? 'employee'),
       legalEntityId: companyId,
@@ -88,27 +144,28 @@ const person = (
       revision: 1,
       status: overrides.status ?? 'active',
     },
-    selectedCompanyMembershipProjection: { expectedMember: true, observedMember: true },
   };
 };
 
-const jana = person('Jana Nováková', { roles: ['crm-sales'] });
-const petr = person('Petr Dvořák', { affiliation: 'external', roles: ['accounting'], status: 'invited' });
+const jana = person('Jana Nováková', { roles: ['Obchodník'] });
+const petr = person('Petr Dvořák', { affiliation: 'external', roles: ['Účetní'], status: 'invited' });
 const agent = person('Asistent provozu', { kind: 'agent' });
 const blocked = person('Karel Blokovaný', { principalStatus: 'disabled' });
 const departed = person('Eva Odešlá', { status: 'departed' });
 const people = [jana, petr, agent, blocked, departed];
 
 const names = (filters: Partial<PeopleFilters>) =>
-  filterPeople(people, { ...defaultPeopleFilters, ...filters }, catalog).map(({ displayName }) => displayName);
+  filterPeople(people, { ...defaultPeopleFilters, ...filters }, accessViewFor(people)).map(
+    ({ displayName }) => displayName,
+  );
 
 const Harness = () => {
   const [filters, setFilters] = useState(defaultPeopleFilters);
   return (
     <>
       <PeopleToolbar
+        access={accessViewFor(people)}
         actions={null}
-        catalog={catalog}
         companyAvailable
         filters={filters}
         onFiltersChange={setFilters}
@@ -116,7 +173,7 @@ const Harness = () => {
         scope="company"
       />
       <PeopleTable
-        catalog={catalog}
+        access={accessViewFor(people)}
         filters={filters}
         loading={false}
         onEdit={() => {}}
@@ -217,7 +274,7 @@ describe('translations', () => {
       rstest.spyOn(globalThis, 'matchMedia').mockReturnValue(media);
       const table = render(
         <PeopleTable
-          catalog={catalog}
+          access={accessViewFor(people)}
           filters={defaultPeopleFilters}
           loading
           onEdit={() => {}}
@@ -230,7 +287,7 @@ describe('translations', () => {
       expect(screen.getByRole('status').textContent).toBe(copy.loading);
       table.rerender(
         <PeopleTable
-          catalog={catalog}
+          access={accessViewFor(people)}
           filters={defaultPeopleFilters}
           loading={false}
           onEdit={() => {}}
@@ -243,7 +300,7 @@ describe('translations', () => {
       expect(screen.getByText(copy.noMemberships)).toBeDefined();
       table.rerender(
         <PeopleTable
-          catalog={catalog}
+          access={accessViewFor(people)}
           filters={defaultPeopleFilters}
           loading={false}
           onEdit={() => {}}
@@ -269,7 +326,7 @@ describe('translations', () => {
         <>
           <RoleChips names={['Obchodník', 'Správce firmy', 'Účetní', 'Vedení']} />
           <PeopleTable
-            catalog={catalog}
+            access={accessViewFor(people)}
             filters={defaultPeopleFilters}
             loading={false}
             onEdit={(kind, edited) => {
@@ -300,7 +357,7 @@ describe('row action menu', () => {
       const onOpen = rstest.fn();
       render(
         <PeopleTable
-          catalog={catalog}
+          access={accessViewFor(people)}
           filters={defaultPeopleFilters}
           loading={false}
           onEdit={(kind, edited) => {
@@ -349,13 +406,15 @@ describe('filters', () => {
       selectedCompanyMembership: null,
     };
     const tenantBlocked = {
-      ...person('Blokovaný s rolí', { principalStatus: 'disabled', roles: ['crm-sales'] }),
+      ...person('Blokovaný s rolí', { principalStatus: 'disabled', roles: ['Obchodník'] }),
       selectedCompanyMembership: null,
     };
     const visible = (status: PeopleFilters['status']) =>
-      filterPeople([blocked, retired, tenantRetired, tenantBlocked], { ...defaultPeopleFilters, status }, catalog).map(
-        ({ displayName }) => displayName,
-      );
+      filterPeople(
+        [blocked, retired, tenantRetired, tenantBlocked],
+        { ...defaultPeopleFilters, status },
+        accessViewFor([blocked, retired, tenantRetired, tenantBlocked]),
+      ).map(({ displayName }) => displayName);
     expect(visible('current')).toEqual(['Karel Blokovaný', 'Blokovaný s rolí']);
     expect(visible('all')).toEqual(['Karel Blokovaný', 'Bývalý účet', 'Bývalý účet firmy', 'Blokovaný s rolí']);
     expect(visible('blocked')).toEqual(['Karel Blokovaný', 'Bývalý účet', 'Bývalý účet firmy', 'Blokovaný s rolí']);
@@ -364,7 +423,7 @@ describe('filters', () => {
   it('filters by type, role and status, and searches names, types and role names without diacritics', () => {
     expect(names({ kind: 'agent' })).toEqual(['Asistent provozu']);
     expect(names({ kind: 'external' })).toEqual(['Petr Dvořák']);
-    expect(names({ roleKey: 'crm-sales' })).toEqual(['Jana Nováková']);
+    expect(names({ roleId: roleIdOf('Obchodník') })).toEqual(['Jana Nováková']);
     expect(names({ status: 'blocked' })).toEqual(['Karel Blokovaný']);
     expect(names({ query: 'novakova' })).toEqual(['Jana Nováková']);
     expect(names({ query: 'ucetni' })).toEqual(['Petr Dvořák']);

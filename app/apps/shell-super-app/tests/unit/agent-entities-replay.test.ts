@@ -1,7 +1,9 @@
+import { administrationProjectionLayer } from './oauth-connections-admin/administration-runtime.fixture.ts';
 import { AgentModuleKeySchema, AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
 import { Effect, Layer, Schema } from 'effect' with { rstest: 'importActual' };
 import {
   ActionRuntime,
+  ActionAuthorizationPreflight,
   ActiveApplicationCompositionService,
   ContextAccess,
   manageAgentStatusAction,
@@ -9,7 +11,6 @@ import {
   ReadRuntime,
 } from '@app/core-runtime';
 import type { ActionRuntimeService, ReadRuntimeService, withPostgresSessionAdvisoryLock } from '@app/core-runtime';
-import { ActionAuthorizationLifecycle } from '@app/core-runtime/outbox/core-system-worker';
 import {
   AgentAccessClientIdSchema,
   ConnectionSummarySchema,
@@ -39,7 +40,6 @@ import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.t
 import { SHARED_RUNTIME_IDENTITY } from '../../../../packages/core-runtime/src/db/database-identity-manifest.ts';
 import { DatabaseIdentityEnrollmentContext } from '../../../../packages/core-runtime/src/db/database-identities.ts';
 import { ActionAuthority } from '../../../../packages/core-runtime/src/permissions/action-authority.ts';
-import { ActionAuthorizationPreflight } from '../../../../packages/core-runtime/src/permissions/action-authorization-preflight.ts';
 import {
   operationTime,
   proposalRow,
@@ -47,7 +47,7 @@ import {
 } from '../../../../packages/core-runtime/tests/support/agent-proposal-command-fixture.ts';
 import type { Proposal } from '../../../../packages/core-runtime/tests/support/agent-proposal-command-fixture.ts';
 import { installOperationalScopeAt } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
-import { ActionAuthorizationLifecycleError } from '../../../../packages/core-runtime/src/permissions/action-authorization-lifecycle-error.ts';
+import { intentUnavailable } from '../../../../packages/core-runtime/src/access/intent/errors.ts';
 import { scriptedPgClientLayer } from '../../../../packages/core-runtime/src/testing/scripted-pg-client.ts';
 import { testSqlConnection } from '../../../../packages/core-runtime/tests/support/sql-connection.ts';
 import { AgentActionRequestIdentity } from '../../api/auth/agent-action-request-identity.ts';
@@ -89,7 +89,7 @@ const external = rs.hoisted(() => {
   };
   return state;
 });
-const lifecycleFailure = () => new ActionAuthorizationLifecycleError({ reason: 'Interrupted projection' });
+const lifecycleFailure = () => intentUnavailable('Interrupted projection');
 const step = (name: string) =>
   Effect.suspend(() => {
     external.events.push(name);
@@ -480,15 +480,13 @@ const fixture = (options: ReplayOptions = {}) =>
             throw new Error('Unexpected authentication database IO');
           },
         }),
-        Effect.provideService(ActionAuthorizationLifecycle, {
-          reconcilePrincipal: (tenantId, principalId) => {
-            expect(tenantId).toBe(principal.tenantId);
-            expect(principalId).toBe(agentId);
+        Effect.provide(
+          administrationProjectionLayer({ principal }, [], [], (scope) => {
+            expect(scope.tenantId).toBe(principal.tenantId);
+            expect(scope.principalId).toBe(principal.principalId);
             return step('projection').pipe(Effect.mapError(lifecycleFailure));
-          },
-          reconcileScopedRoleMembership: () => Effect.die('Unexpected role reconciliation'),
-          reconcileTenant: () => Effect.die('Unexpected tenant reconciliation'),
-        }),
+          }),
+        ),
         Effect.provideService(AuthConfig, {
           baseUrl: 'https://example.invalid',
           connectionString: 'postgresql://unused.invalid/test',

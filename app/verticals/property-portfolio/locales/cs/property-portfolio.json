@@ -184,6 +184,7 @@
           "tooLong": "Nejvýše 300 znaků.",
           "duplicateCode": "Tento kód už používá jiný záznam.",
           "alreadyCommitted": "Změna už byla uložena. Obnovte záznamy a zkontrolujte výsledek před další úpravou.",
+          "approvalRequired": "Návrh čeká na schválení. Změna zatím nebyla provedena.",
           "commitIndeterminate": "Výsledek uložení zatím nelze potvrdit. Neopakujte uložení, nejprve ověřte výsledek."
         },
         "unitStory": {

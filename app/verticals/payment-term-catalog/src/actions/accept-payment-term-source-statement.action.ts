@@ -2,7 +2,7 @@
 // @ontos-action-owner payment.term-catalog
 // @ontos-action-slug accept-payment-term-source-statement
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Predicate, Schema } from 'effect';
 import { CreatePaymentTermResultSchema } from '../../shared/actions/create-payment-term.ts';
 import { createCreatePaymentTermPaymentTermCatalogPaymentTermCreatedV1OutboxMessage } from './create-payment-term.payment-term-catalog-payment-term-created-v1.outbox-message.ts';
@@ -84,6 +84,14 @@ export const handleAcceptPaymentTermSourceStatement = Effect.fn('AcceptPaymentTe
 );
 export const acceptPaymentTermSourceStatementAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'payment.term-catalog.source-statement.accept',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'payment-terms', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'payment.term-catalog.accept-payment-term-source-statement.access.v1',
@@ -95,7 +103,7 @@ export const acceptPaymentTermSourceStatementAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'payment.term-catalog.accept-payment-term-source-statement',
       moduleKey: MODULE_KEY,
       role: 'action',
@@ -105,14 +113,6 @@ export const acceptPaymentTermSourceStatementAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: AcceptPaymentTermSourceStatementPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<AcceptPaymentTermSourceStatementPayload>((_payload, scope) => ({
-      permission: 'write',
-      resource: {
-        moduleId: MODULE_KEY,
-        resourceId: scope.legalEntityId ?? '',
-        resourceType: ROOT_RESOURCE_TYPE,
-      },
-    })),
     resultSchema: AcceptPaymentTermSourceStatementResultSchema,
     schemaVersion: '1',
   },

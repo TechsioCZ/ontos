@@ -11,13 +11,15 @@ import {
 } from '../modules/active-application-composition.ts';
 import { buildApplicationCompositionCatalog } from '../modules/application-composition-catalog.ts';
 import type { OperationalScope } from '../operations/context.ts';
-import { ActionAuthority } from '../permissions/action-authority.ts';
+// The pure tag, not the catalog-backed implementation: this module is reached from the Core Action
+// catalog (via `mutate-agent-proposals.action.ts`), so importing the implementation would cycle.
+import { ActionAuthority } from '../permissions/action-authority-contract.ts';
 import { ContextAccess } from '../permissions/context-access.ts';
-import { ActionAuthorizationPreflight } from '../permissions/action-authorization-preflight.ts';
+import { ActionAuthorizationPreflight } from '../actions/owner-proof-preflight.ts';
 import type {
   ActionAuthorizationPreflightInput,
   ActionAuthorizationPreflightService,
-} from '../permissions/action-authorization-preflight.ts';
+} from '../actions/owner-proof-preflight.ts';
 import {
   agentProposalCommandActionKey,
   AgentProposalCommandPayloadSchema,
@@ -224,8 +226,10 @@ export const AgentProposalCommandPreparationLive = Layer.effect(
           return { outcome: 'denied' as const };
         }
         const actions = [...new Set(resolved.map((target) => target.actionKey))];
+        // One gate question per proposed Action in the acting request's own scope (O66): `insert` needs
+        // the Action's own propose answer, every other operation its execute answer.
         const permissions = yield* authority
-          .checkActionAuthorities(actions.map((actionKey) => ({ actionKey, legalEntityId, principalId, tenantId })))
+          .checkActionAuthorities({ actionKeys: actions, scope: input.scope })
           .pipe(Effect.mapError(preflightUnavailable));
         if (
           permissions.length !== actions.length ||
@@ -241,15 +245,13 @@ export const AgentProposalCommandPreparationLive = Layer.effect(
           ) {
             return { outcome: 'denied' as const };
           }
+          // The same question asked of the proposer: the recorded proposal is only claimable when its
+          // proposer could still propose it, decided in the proposer's own identity within this tenant.
           const proposer = yield* authority
-            .checkActionAuthorities(
-              actions.map((actionKey) => ({
-                actionKey,
-                legalEntityId,
-                principalId: snapshot.proposer.principalId,
-                tenantId,
-              })),
-            )
+            .checkActionAuthorities({
+              actionKeys: actions,
+              scope: { ...input.scope, principalId: snapshot.proposer.principalId },
+            })
             .pipe(Effect.mapError(preflightUnavailable));
           if (proposer.length !== actions.length || proposer.some((decision) => decision.propose !== 'allowed')) {
             return { outcome: 'denied' as const };

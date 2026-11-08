@@ -44,6 +44,14 @@ const handleRequestSearchRebuild = Effect.fn('ProjectsSearch.requestRebuild')(fu
 
 export const requestSearchRebuildAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'projects.core.search-index.rebuild',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'maintenance', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'projects.core.request-search-rebuild.access.v1',
@@ -54,7 +62,7 @@ export const requestSearchRebuildAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'projects.core.request-search-rebuild',
       moduleKey: projectModuleKey,
       role: 'action',

@@ -1,4 +1,5 @@
-import { BusinessPermissionRelationshipMutationLive, PrincipalEligibilityLive } from '@app/core-runtime';
+import { PrincipalEligibilityLive } from '@app/core-runtime';
+import type { Crypto } from 'effect';
 import { Layer } from 'effect';
 
 import {
@@ -11,14 +12,9 @@ import {
 } from '../shared/domain/purchase-currency-context-port.ts';
 import { profileReactivationEligibilityEvaluatorFactoryLive } from '../src/integrations/profile-reactivation-eligibility.ts';
 import { profileCounterpartyRoleEligibilityResolverFactoryLive } from '../src/profile-counterparty-role-eligibility.ts';
-import { profileRetailPermissionReaderFactoryLive } from '../src/integrations/retail-permission-reader.ts';
 import { partyRegistryGuestResolverFactoryLive } from '../src/integrations/party-registry-guest-resolver.ts';
 import { partyRegistryRetailPartyResolverFactoryLive } from '../src/integrations/party-registry-retail-party-resolver.ts';
 import { unavailableHistoryActionOwnerPorts, RepeatCartOwner } from '../shared/domain/history-action-ports.ts';
-import { paymentTermCatalogGatewayCredentialLive } from './payment-term-catalog-gateway-credential.ts';
-import { priceGroupCatalogGatewayCredentialLive } from './price-group-catalog-gateway-credential.ts';
-import { catalogQuantityGatewayCredentialLive } from './catalog-quantity-gateway-credential.ts';
-import { purchaseCurrencyPricingGatewayCredentialLive } from './purchase-currency-pricing-gateway-credential.ts';
 import { applicationCompositionMarketReferenceOwnerDeploymentStateAuthorityLive } from './application-composition-market-reference-owner-authority.ts';
 import {
   pricingPurchaseContextOwnerAuthorityUnavailableLive,
@@ -26,18 +22,16 @@ import {
 } from '../src/services/pricing-purchase-context-owner-authority.ts';
 
 type CommerceCustomerContextOwnerRuntimeServices =
-  | Layer.Success<typeof BusinessPermissionRelationshipMutationLive>
   | Layer.Success<typeof PrincipalEligibilityLive>
   | Layer.Success<typeof profileCounterpartyRoleEligibilityResolverFactoryLive>
-  | Layer.Success<typeof profileRetailPermissionReaderFactoryLive>
   | Layer.Success<typeof profileReactivationEligibilityEvaluatorFactoryLive>
   | Layer.Success<typeof partyRegistryGuestResolverFactoryLive>
   | Layer.Success<typeof partyRegistryRetailPartyResolverFactoryLive>
   | Layer.Success<typeof pricingPurchaseContextVerificationLive>;
 
 type CommerceCustomerContextOwnerRuntimeDependencies =
+  | Crypto.Crypto
   | Layer.Services<typeof PrincipalEligibilityLive>
-  | Layer.Services<typeof profileRetailPermissionReaderFactoryLive>
   | Layer.Services<typeof profileReactivationEligibilityEvaluatorFactoryLive>
   | Layer.Services<typeof pricingPurchaseContextVerificationLive>;
 
@@ -47,10 +41,8 @@ export const commerceCustomerContextOwnerRuntimeServicesLive: Layer.Layer<
   never,
   CommerceCustomerContextOwnerRuntimeDependencies
 > = Layer.mergeAll(
-  BusinessPermissionRelationshipMutationLive,
   PrincipalEligibilityLive,
   profileCounterpartyRoleEligibilityResolverFactoryLive,
-  profileRetailPermissionReaderFactoryLive,
   profileReactivationEligibilityEvaluatorFactoryLive,
   partyRegistryGuestResolverFactoryLive,
   partyRegistryRetailPartyResolverFactoryLive,
@@ -71,18 +63,12 @@ const unavailableHistoryActionOwners = unavailableHistoryActionOwnerPorts();
 const unavailableRepeatCartOwnerLive = Layer.succeed(RepeatCartOwner, unavailableHistoryActionOwners.carts);
 
 /**
- * Production owner composition. External owner issuers are server-owned gateway credentials;
- * their configuration layers fail closed when a deployment has not supplied the corresponding
- * secret or gateway URL. They are intentionally composed next to the other external owner ports
- * so no request/session credential can be substituted by a caller.
+ * Production owner composition. External owner ports acquire their module-to-module context from the
+ * shared delegated client, which fails closed when this deployment's module credential is not configured.
  */
 export const commerceCustomerContextProductionExternalPortsLive = Layer.mergeAll(
   unavailableCounterpartyInvitationProofDeliveryLive,
   unavailablePurchaseCurrencyPurchasingContextPortLive,
-  purchaseCurrencyPricingGatewayCredentialLive,
-  paymentTermCatalogGatewayCredentialLive,
-  priceGroupCatalogGatewayCredentialLive,
-  catalogQuantityGatewayCredentialLive,
   unavailableRepeatCartOwnerLive,
   applicationCompositionMarketReferenceOwnerDeploymentStateAuthorityLive,
   pricingPurchaseContextOwnerAuthorityUnavailableLive,

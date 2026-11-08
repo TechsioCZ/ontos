@@ -219,6 +219,7 @@
           "bulkChanged": "Changed {{changed}}, skipped {{skipped}}"
         },
         "errors": {
+          "approvalRequired": "The change is awaiting approval. It has not been applied.",
           "closed": "The opportunity is closed. Its stage, details and assignment cannot be changed. Bulk changes leave closed opportunities unchanged.",
           "conflict": "Someone else changed the record in the meantime. Reload it and repeat your change.",
           "forbidden": "You are not allowed to do this.",

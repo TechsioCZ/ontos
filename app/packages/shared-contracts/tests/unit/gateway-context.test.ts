@@ -11,11 +11,13 @@ import {
   GatewayContextProtectedHeaderSchema,
   GatewayContextRequestSchema,
   GatewayContextResponseSchema,
+  GatewayContextV3ClaimsSchema,
   GatewayRateLimitedProblemSchema,
   GatewayReloadRequiredProblemSchema,
   GatewayTrustedPrincipalContextSchema,
   GatewayUnavailableProblemSchema,
   decodeGatewayContextClaims,
+  decodeSupportedGatewayContextClaims,
   gatewayContextAuthorizationEntrypoints,
   shellGatewayContextContract,
 } from '../../src/gateway-context.ts';
@@ -277,6 +279,11 @@ it('classifies every Shell token-issuing endpoint as a capability issuer with it
     })),
   ).toEqual([
     {
+      credential: 'api_key',
+      entrypointKey: 'shell.gateway-context.issue.delegated',
+      path: '/shell-super-app-api/auth/delegated/gateway-context',
+    },
+    {
       credential: 'session',
       entrypointKey: 'shell.gateway-context.issue.session',
       path: '/shell-super-app-api/auth/gateway-context',
@@ -313,6 +320,19 @@ it('classifies every Shell token-issuing endpoint as a capability issuer with it
 it('publishes the exact API-key credential boundary and failure statuses', () => {
   expect(Object.keys(ApiKeyGatewayHeadersSchema.fields)).toEqual(['x-api-key']);
   expect(endpointStatuses(GatewayContextApiGroup.endpoints.issueApiKeyGatewayContext)).toEqual([
+    400, 401, 403, 409, 429, 500, 503,
+  ]);
+});
+
+it('declares the delegated module-to-module issuer beside the session, API-key and whole-body read endpoints', () => {
+  expect(Object.keys(GatewayContextApiGroup.endpoints).toSorted()).toEqual([
+    'issueApiKeyGatewayContext',
+    'issueDelegatedGatewayContext',
+    'issueGatewayContext',
+    'readWithApiKeyGatewayContext',
+  ]);
+  expect(GatewayContextApiGroup.endpoints.issueDelegatedGatewayContext.path).toBe('/auth/delegated/gateway-context');
+  expect(endpointStatuses(GatewayContextApiGroup.endpoints.issueDelegatedGatewayContext)).toEqual([
     400, 401, 403, 409, 429, 500, 503,
   ]);
 });
@@ -480,5 +500,58 @@ it.effect('isolates API-key transport options between concurrent requests', () =
       expect(request?.headers.get('cookie')).toBeNull();
       expect(request?.headers.get('authorization')).toBeNull();
     }
+  }),
+);
+const delegatedPrincipal = { ...principal, authenticationNamespaceId: 'test.third-provider.realm' };
+const actor = {
+  appId: 'commerce-market-catalog',
+  buildMarker: 'market-release-2026-11-04',
+  principalId: '90000000-0000-4000-8000-000000000001',
+};
+const delegatedClaims = {
+  ...claims,
+  act: actor,
+  aud: 'party-registry',
+  principal: delegatedPrincipal,
+  ver: 3 as const,
+};
+
+it.effect('decodes version 3 claims that name the calling module as act beside the subject', () =>
+  Effect.gen(function* delegatedClaimsContractTest() {
+    expect(
+      yield* Schema.decodeUnknownEffect(GatewayContextV3ClaimsSchema, { onExcessProperty: 'error' })(delegatedClaims),
+    ).toEqual(delegatedClaims);
+    expect(yield* decodeSupportedGatewayContextClaims(delegatedClaims)).toEqual(delegatedClaims);
+  }),
+);
+
+it.effect('rejects version 3 claims whose actor is the subject, malformed, missing, or extended', () =>
+  Effect.gen(function* delegatedActorContractTest() {
+    const invalidClaims: readonly unknown[] = [
+      { ...delegatedClaims, act: { ...actor, principalId: principal.principalId } },
+      { ...delegatedClaims, act: { ...actor, appId: 'Commerce Market' } },
+      { ...delegatedClaims, act: { ...actor, buildMarker: '' } },
+      { ...delegatedClaims, act: { ...actor, buildMarker: ' market-release ' } },
+      { ...delegatedClaims, act: { ...actor, principalId: 'not-a-uuid' } },
+      { ...delegatedClaims, act: { ...actor, displayName: 'must-not-pass' } },
+      Struct.omit(delegatedClaims, ['act']),
+      { ...delegatedClaims, principal },
+      { ...delegatedClaims, operationKey: 'party.registry.api.party-detail' },
+      { ...delegatedClaims, sub: '60000000-0000-4000-8000-000000000001' },
+      { ...delegatedClaims, exp: claims.iat + 301 },
+    ];
+    for (const invalid of invalidClaims) {
+      expect(yield* Effect.flip(decodeSupportedGatewayContextClaims(invalid))).toBeDefined();
+    }
+  }),
+);
+
+it.effect('keeps version 1 and version 2 assertions decodable and refuses an actor on them', () =>
+  Effect.gen(function* supportedVersionsContractTest() {
+    const external = { ...claims, principal: delegatedPrincipal, ver: 2 as const };
+    expect(yield* decodeSupportedGatewayContextClaims(claims)).toEqual(claims);
+    expect(yield* decodeSupportedGatewayContextClaims(external)).toEqual(external);
+    expect(yield* Effect.flip(decodeSupportedGatewayContextClaims({ ...claims, act: actor }))).toBeDefined();
+    expect(yield* Effect.flip(decodeSupportedGatewayContextClaims({ ...external, act: actor }))).toBeDefined();
   }),
 );

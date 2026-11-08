@@ -1,106 +1,16 @@
-import {
-  akrosDemoLegalEntityId,
-  crmDemoLegalEntityId,
-  demoId,
-  demoLegalEntityId,
-  eshopDemoLegalEntityId,
-  rentalDemoLegalEntityId,
-} from './fixture-ids.mts';
-import type { DemoRole } from './permissions.mts';
+/**
+ * Operational browser warmup reuses reviewed demo people. It creates no Principal, membership,
+ * auth binding or Role. The runner's request guard permits reads and session setup only, but the
+ * person's actual authority is still exactly the Role assigned by the canonical demo seed.
+ *
+ * Old synthetic warmup people are no longer seed intent. Removing existing live rows is a separate
+ * operator action, not a source cutover or a reason to hide principals by Role key.
+ */
+import { demoLegalEntityId, rentalDemoLegalEntityId } from './fixture-ids.mts';
+import { companyHumanAccounts, demoHumanAccounts, siamparkRentalPersonas } from './permissions.mts';
 
-const sharedSalesReads = {
-  'commerce.customer-context': 'read',
-  'demo.sales-insights': 'read',
-  'demo.sales-pipeline': 'read',
-  'demo.tagging': 'read',
-  'demo.workforce': 'read',
-  'finance.billing': 'read',
-  'legal.agreements': 'read',
-  'party.registry': 'read',
-  'work.tasks': 'read',
-} as const;
-const privacyReads = [
-  'privacy.processing_catalog.read',
-  'privacy.notice.read',
-  'privacy.subjects.read',
-  'privacy.consent.read',
+export const warmupAccounts = [
+  { ...demoHumanAccounts[0], company: 'obchod', legalEntityId: demoLegalEntityId },
+  { ...siamparkRentalPersonas[1], company: 'najempark', legalEntityId: rentalDemoLegalEntityId },
+  ...companyHumanAccounts.filter(({ role }) => ['crmManager', 'eshopAdmin', 'akrosAdmin'].includes(role)),
 ];
-
-/** Independent read-only roles. Never copy administrator membership or Action grants to a warm-up identity. */
-export const warmupProfiles = [
-  {
-    company: 'obchod',
-    legalEntityId: demoLegalEntityId,
-    role: {
-      label: 'Warm-up sales reader',
-      modules: {
-        ...sharedSalesReads,
-        'crm.activities': 'read',
-        'demo.merchandise': 'read',
-        'property.leasing': 'read',
-        'property.portfolio': 'read',
-      },
-    },
-  },
-  {
-    company: 'najempark',
-    legalEntityId: rentalDemoLegalEntityId,
-    role: {
-      contextPermissions: { 'demo.crm': ['demo.crm.read_all'] },
-      label: 'Warm-up rental reader',
-      modules: {
-        ...sharedSalesReads,
-        'demo.crm': 'read',
-        'facility.operations': 'read',
-        'property.leasing': 'read',
-        'property.portfolio': 'read',
-      },
-    },
-  },
-  {
-    company: 'hanak',
-    legalEntityId: crmDemoLegalEntityId,
-    role: {
-      contextPermissions: { 'demo.crm': ['demo.crm.read_all'] },
-      label: 'Warm-up CRM reader',
-      modules: {
-        'commerce.customer-context': 'read',
-        'demo.crm': 'read',
-        'demo.tagging': 'read',
-        'demo.workforce': 'read',
-        'party.registry': 'read',
-        'work.tasks': 'read',
-      },
-    },
-  },
-  ...[
-    { company: 'kavarna', legalEntityId: eshopDemoLegalEntityId },
-    { company: 'sroubarna', legalEntityId: akrosDemoLegalEntityId },
-  ].map((company) => ({
-    ...company,
-    role: {
-      contextPermissions: { 'privacy.core': privacyReads },
-      label: 'Warm-up commerce reader',
-      modules: {
-        'commerce.customer-context': 'read',
-        'demo.merchandise': 'read',
-        'demo.tagging': 'read',
-        'demo.workforce': 'read',
-        'party.registry': 'read',
-        'privacy.core': 'read',
-        'work.tasks': 'read',
-      },
-    } satisfies DemoRole,
-  })),
-] as const satisfies readonly { readonly company: string; readonly legalEntityId: string; readonly role: DemoRole }[];
-
-/** Fixed synthetic seed accounts. Each has membership in exactly one existing demo company. */
-export const warmupAccounts = warmupProfiles.map((profile) => ({
-  ...profile,
-  authBindingId: demoId('core.auth-binding', `warmup-${profile.company}`),
-  authUserId: `demo-warmup-${profile.company}`,
-  displayName: `Stage warm-up (read only) · ${profile.company}`,
-  email: `warmup@${profile.company}.demo`,
-  principalId: demoId('core.principal', `warmup-${profile.company}`),
-  roleKey: `warmup-${profile.company}-reader`,
-}));

@@ -24,6 +24,7 @@
     "vertical.registration.ts"
   ],
   "references": [
+    { "path": "../../apps/shell-super-app" },
     { "path": "../catalog" },
     { "path": "../commerce-customer-context" },
     { "path": "../commerce-market-catalog" },
@@ -34,7 +35,6 @@
     { "path": "../../packages/price-group-catalog-contracts" },
     { "path": "../../packages/party-registry-identity-contracts" },
     { "path": "../../packages/pricing-contracts" },
-    { "path": "../../packages/shared-contracts" },
-    { "path": "../../packages/shared-design-tokens" }
+    { "path": "../../packages/shared-contracts" }
   ]
 }

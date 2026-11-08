@@ -1,9 +1,18 @@
 import { v1 } from '@authzed/authzed-node';
 import { Effect, Schema, Struct } from 'effect';
 
-import type { ActionAuthorizationProvisioningAction } from '../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import type { SpiceDbRpc } from '../packages/core-runtime/src/permissions/spicedb-rpc.ts';
 import { toSpiceDbActionObjectId } from '../packages/core-runtime/src/permissions/service.ts';
+
+/**
+ * The Action facts a service-permission comparison names. The published composition supplies them; the retired
+ * provisioning module that used to own this shape is gone (`ADR-0030`), so the reader keeps the minimal contract.
+ */
+export interface ServicePermissionAction {
+  readonly actionKey: string;
+  readonly legalEntityScope: string;
+  readonly owningModuleKey: string;
+}
 
 export const ServicePrincipalInventorySchema = Schema.Struct({
   principals: Schema.Array(
@@ -48,7 +57,7 @@ export interface ServicePermissionCase {
 
 /** Tenant Actions once; company Actions in every exact archived admission, never an inferred company. */
 export const serviceActionPermissionCases = (
-  actions: readonly ActionAuthorizationProvisioningAction[],
+  actions: readonly ServicePermissionAction[],
   tenantId: string,
   legalEntityIds: readonly string[],
 ) =>

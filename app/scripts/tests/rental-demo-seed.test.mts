@@ -1,3 +1,5 @@
+import type { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
+import { ApplyCommandPayloadSchema as CaseCommand } from '../../verticals/sales-pipeline/shared/actions/apply-command.ts';
 import { cancelStageQaOrder } from '../demo/cancel-stage-qa-order.mts';
 import { MerchandiseCommandSchema } from '../../verticals/merchandise/shared/actions/apply-command.ts';
 import {
@@ -26,8 +28,6 @@ import {
 import { NodeServices } from '@effect/platform-node';
 import { CounterpartyRefSchema } from '../../verticals/party-registry/shared/resources/counterparty.ts';
 import { PartyRefSchema } from '../../verticals/party-registry/shared/resources/party.ts';
-import { PartyIdSchema } from '../../verticals/sales-pipeline/shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
-import { EmployeeIdSchema } from '../../verticals/workforce/shared/resources/employee.ts';
 import { Array as EffectArray, DateTime, Effect, FileSystem, Match, Order, Redacted, Schema } from 'effect';
 import { HttpClient, HttpClientResponse } from 'effect/http';
 import { expect, it } from 'effect-rstest';
@@ -36,7 +36,7 @@ import { demoId } from '../demo/fixture-ids.mts';
 import { rentalCrmOrderPlan, seedRentalCrmOrders } from '../demo/rental-crm-orders.mts';
 import { seedCheckpointDirectory, seedWriteCheckpoint } from '../demo/seed-checkpoint.mts';
 import { ensureSeedCustomer, existingSeedCustomer } from '../demo/rental-seed-customer.mts';
-import { seedSiamparkCaseRecords } from '../demo/seed-siampark-cases.mts';
+import { seedSiamparkCaseRecords, siamparkCaseEntrustedPrincipalRef } from '../demo/seed-siampark-cases.mts';
 import {
   ensureInvoice,
   rentalInvoicePlan,
@@ -337,21 +337,19 @@ const caseClients = [
 const caseOwners = { external: demoId('seed.employee', 'external'), management: demoId('seed.employee', 'management') };
 const CaseCandidate = Schema.Struct({
   candidate: Schema.Struct({
-    displayName: Schema.String,
+    businessName: Schema.optionalKey(Schema.String),
+    firstName: Schema.optionalKey(Schema.String),
+    lastName: Schema.optionalKey(Schema.String),
     partyType: Schema.Literals(['ORGANIZATION', 'PERSON']),
     subjectEvidence: Schema.Array(Schema.Struct({ observedSubject: Schema.String })),
   }),
 });
+const caseCandidateName = (candidate: typeof CaseCandidate.Type.candidate) =>
+  candidate.partyType === 'ORGANIZATION'
+    ? (candidate.businessName ?? '')
+    : [candidate.firstName, candidate.lastName].filter((part) => part !== undefined).join(' ');
 const CasePartyRef = Schema.toEncoded(PartyRefSchema);
 const CaseCounterpartyRef = Schema.toEncoded(CounterpartyRefSchema);
-const CaseCommand = Schema.Struct({
-  command: Schema.Struct({
-    ownerEmployeeId: Schema.toEncoded(EmployeeIdSchema),
-    partyId: Schema.toEncoded(PartyIdSchema),
-    title: Schema.String,
-  }),
-  expectedRevision: Schema.Int,
-});
 const decodeSeedBody = <A, E>(schema: Schema.Codec<A, E>, body: string): A =>
   Schema.decodeUnknownSync(Schema.fromJsonString(schema))(body);
 const expectReferenceAudiences = (encoded: string | undefined, audiences: readonly string[]) =>
@@ -369,12 +367,14 @@ const caseFixture = (options: { readonly failOnboardingOnce?: boolean; readonly 
   const parties: { readonly candidate: typeof CaseCandidate.Type.candidate; readonly ref: typeof CasePartyRef.Type }[] =
     [];
   const items: {
+    readonly entrustedPrincipalRef?: Schema.Codec.Encoded<typeof PrincipalRefSchema>;
     readonly id: string;
     readonly ownerEmployeeId: string;
     readonly partyId: string;
     readonly title: string;
   }[] = [];
   let onboards = 0;
+  let revision = 0;
   const http = HttpClient.make((request, url) => {
     const body = Match.value(request.body).pipe(
       Match.tag('Uint8Array', ({ body: bytes }) => new TextDecoder().decode(bytes)),
@@ -398,7 +398,7 @@ const caseFixture = (options: { readonly failOnboardingOnce?: boolean; readonly 
       const { candidate } = decodeSeedBody(CaseCandidate, body);
       const ref: typeof CasePartyRef.Type = {
         moduleId: partyModule,
-        resourceId: demoId('seed.case.party', candidate.displayName),
+        resourceId: demoId('seed.case.party', caseCandidateName(candidate)),
         resourceType: partyResource,
         tenantId: target.tenantId,
       };
@@ -419,7 +419,7 @@ const caseFixture = (options: { readonly failOnboardingOnce?: boolean; readonly 
       } else {
         customers.push({
           counterpartyRef,
-          displayName: party?.candidate.displayName ?? '',
+          displayName: party === undefined ? '' : caseCandidateName(party.candidate),
           partyRef,
           status: 'ACTIVE',
         });
@@ -442,12 +442,27 @@ const caseFixture = (options: { readonly failOnboardingOnce?: boolean; readonly 
       }
     } else if (url.pathname.endsWith(applyCommandPath)) {
       const { command, expectedRevision } = decodeSeedBody(CaseCommand, body);
-      expect(customers.some(({ partyRef }) => partyRef.resourceId === command.partyId)).toBe(true);
-      expect(expectedRevision).toBe(items.length);
-      items.push({ ...command, id: demoId('seed.case', command.title) });
-      response = Response.json({ revision: items.length });
+      expect(expectedRevision).toBe(revision);
+      if (command._tag === 'CreateOpportunity') {
+        expect(customers.some(({ partyRef }) => partyRef.resourceId === command.partyId)).toBe(true);
+        if (command.ownerEmployeeId === undefined) {
+          return Effect.die('Reviewed case fixture needs an employee display owner');
+        }
+        items.push({ ...command, id: demoId('seed.case', command.title), ownerEmployeeId: command.ownerEmployeeId });
+      } else if (command._tag === 'UpdateOpportunity') {
+        const index = items.findIndex(({ id }) => id === command.id);
+        const current = items[index];
+        if (current === undefined) {
+          return Effect.die('Reviewed case update target missing');
+        }
+        items[index] = { ...current, ...command.patch };
+      } else {
+        return Effect.die('Unexpected seed case command');
+      }
+      revision += 1;
+      response = Response.json({ revision });
     } else if (url.pathname.endsWith('/sales-pipeline/reads/records')) {
-      response = Response.json({ items, revision: items.length });
+      response = Response.json({ items, revision });
     } else {
       response = sessionResponse(url.pathname);
     }
@@ -466,6 +481,18 @@ it.effect('a clean CRM-only bootstrap creates all four native customers before c
       const first = yield* seedSiamparkCaseRecords(client, target, caseOwners, directory);
       expect(first.items).toHaveLength(4);
       expect(first.items.filter(({ ownerEmployeeId }) => ownerEmployeeId === caseOwners.external)).toHaveLength(3);
+      const entrusted = first.items.filter(({ entrustedPrincipalRef }) => entrustedPrincipalRef !== undefined);
+      expect(entrusted).toHaveLength(3);
+      expect(
+        entrusted.every(
+          ({ entrustedPrincipalRef }) =>
+            entrustedPrincipalRef?.tenantId === target.tenantId &&
+            entrustedPrincipalRef.principalId === siamparkCaseEntrustedPrincipalRef.principalId,
+        ),
+      ).toBe(true);
+      expect(
+        entrusted.some(({ entrustedPrincipalRef }) => entrustedPrincipalRef?.principalId === caseOwners.external),
+      ).toBe(false);
       expect((yield* seedSiamparkCaseRecords(client, target, caseOwners, directory)).items).toEqual(first.items);
     }).pipe(Effect.provideService(HttpClient.HttpClient, fixture.http));
     expect(fixture.customers).toHaveLength(4);
@@ -1003,3 +1030,45 @@ it('does not fabricate signatures or signed-document evidence for rental contrac
     }
   }
 });
+
+it.effect('refuses a foreign case entrustment tenant before any owner reads or writes', () =>
+  Effect.gen(function* foreignCaseTarget() {
+    const fixture = caseFixture();
+    const client = yield* connect().pipe(Effect.provideService(HttpClient.HttpClient, fixture.http));
+    const failure = yield* seedSiamparkCaseRecords(
+      client,
+      { ...target, tenantId: '70000000-0000-4000-8000-000000000099' },
+      caseOwners,
+      'unused-checkpoint',
+    ).pipe(Effect.flip, Effect.provideService(HttpClient.HttpClient, fixture.http));
+    expect(failure).toMatchObject({ _tag: 'DemoSeedError' });
+    expect(fixture.items).toEqual([]);
+    expect(fixture.parties).toEqual([]);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('repairs a pre-cutover case through the native Update field gate without duplicating it', () =>
+  Effect.gen(function* nativeEntrustmentRepair() {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'siampark-case-entrust-' });
+    const fixture = caseFixture();
+    yield* Effect.gen(function* repairCase() {
+      const client = yield* connect();
+      yield* seedSiamparkCaseRecords(client, target, caseOwners, directory);
+      const [first] = fixture.items;
+      if (first === undefined) {
+        yield* Effect.die('Expected the reviewed external opportunity fixture');
+        return;
+      }
+      fixture.items[0] = {
+        id: first.id,
+        ownerEmployeeId: first.ownerEmployeeId,
+        partyId: first.partyId,
+        title: first.title,
+      };
+      const repaired = yield* seedSiamparkCaseRecords(client, target, caseOwners, directory);
+      expect(repaired.items).toHaveLength(4);
+      expect(repaired.items[0]?.entrustedPrincipalRef).toEqual(siamparkCaseEntrustedPrincipalRef);
+    }).pipe(Effect.provideService(HttpClient.HttpClient, fixture.http));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

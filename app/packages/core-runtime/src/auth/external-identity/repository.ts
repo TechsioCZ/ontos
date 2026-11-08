@@ -8,11 +8,14 @@ import { Hex } from 'effect/encoding';
 
 import {
   AuthBindingStatusSchema,
+  AuthBindingIdSchema,
   AuthenticationNamespaceIdSchema,
-  AuthenticationNamespaceRegistrationSchema,
+  BindingRevisionSchema,
   ExternalAuthenticationSubjectSchema,
+  PrincipalIdSchema,
   ReadPrincipalBindingResultSchema,
   ResolveExternalSubjectResultSchema,
+  TenantIdSchema,
 } from '../external-identity-contracts.ts';
 import type {
   AuthenticationNamespaceRegistration,
@@ -35,6 +38,9 @@ import type {
 } from './verifier.ts';
 import { externalIdentityFailure } from './errors.ts';
 import type { ExternalIdentityFailure } from './errors.ts';
+import { ExternalIdentityBindingCurrentnessError } from './binding-currentness-error.ts';
+
+export { ExternalIdentityBindingCurrentnessError } from './binding-currentness-error.ts';
 
 export type ExternalUserSubject = ExternalAuthenticationSubject;
 type ReadPrincipalBindingResult = Schema.Schema.Type<typeof ReadPrincipalBindingResultSchema>;
@@ -87,8 +93,8 @@ export interface ExternalIdentityBindingRecord {
 export interface ExternalIdentityRepositoryDependencies {
   /** Action-level exact Tenant/namespace provisioning check. */
   readonly authorizeNamespace?: (authenticationNamespaceId: string) => Effect.Effect<void, ExternalIdentityFailure>;
-  /** Invocation-local deployment data observed before SQL, bound by the Action's preparation. */
-  readonly preparedRegistration?: AuthenticationNamespaceRegistration;
+  /** Read-level exact Tenant/namespace provisioning or administrative check. */
+  readonly authorizeReadNamespace?: (authenticationNamespaceId: string) => Effect.Effect<void, ExternalIdentityFailure>;
   /** Trusted deployment registration. It is never read from request payloads. */
   readonly registry?: AuthenticationNamespaceRegistryService;
 }
@@ -159,17 +165,14 @@ export interface ChangeExternalIdentityStatusResult {
   readonly transitionRef: string;
 }
 
-/** The binding a principal-binding Read loads: by its opaque id, or by its provider subject. */
-export type PrincipalBindingLookup =
-  | { readonly authBindingId: string; readonly lookup: 'binding'; readonly tenantId: string }
-  | {
-      readonly authenticationNamespaceId: string;
-      readonly lookup: 'subject';
-      readonly provider: string;
-      readonly providerSubjectId: string;
-      readonly subjectType: ExternalAuthenticationSubject['subjectType'];
-      readonly tenantId: string;
-    };
+interface ReadPrincipalBindingInput {
+  readonly authBindingId?: string;
+  readonly authenticationNamespaceId?: string;
+  readonly lookup: 'binding' | 'subject';
+  readonly providerSubjectId?: string;
+  readonly subjectType?: ExternalAuthenticationSubject['subjectType'];
+  readonly tenantId: string;
+}
 
 export interface ExternalIdentityRepositoryService {
   readonly activate: (
@@ -178,13 +181,12 @@ export interface ExternalIdentityRepositoryService {
   readonly changeStatus: (
     input: ChangeExternalIdentityStatusInput,
   ) => Effect.Effect<ChangeExternalIdentityStatusResult, ExternalIdentityFailure>;
-  /** Database only: the namespace authorization of a Read runs before and after its transaction. */
-  readonly loadForRead: (
-    input: PrincipalBindingLookup,
-  ) => Effect.Effect<Option.Option<ExternalIdentityBindingRecord>, ExternalIdentityFailure>;
   readonly prepare: (
     input: PrepareExternalIdentityInput,
   ) => Effect.Effect<PrepareExternalIdentityResult, ExternalIdentityFailure>;
+  readonly read: (
+    input: ReadPrincipalBindingInput,
+  ) => Effect.Effect<ReadPrincipalBindingResult, ExternalIdentityFailure>;
   readonly resolve: (input: {
     readonly admission: ExternalIdentityAdmissionContext;
     readonly subject: ExternalUserSubject;
@@ -299,19 +301,8 @@ const lookupRegisteredNamespace = (
 const registrationFrom = (
   dependencies: ExternalIdentityRepositoryDependencies,
   authenticationNamespaceId: string,
-): Effect.Effect<AuthenticationNamespaceRegistration, ExternalIdentityFailure> => {
-  if (dependencies.preparedRegistration !== undefined) {
-    return dependencies.preparedRegistration.authenticationNamespaceId === authenticationNamespaceId
-      ? Schema.decodeEffect(Schema.toType(AuthenticationNamespaceRegistrationSchema))(
-          dependencies.preparedRegistration,
-        ).pipe(
-          Effect.mapError((cause) =>
-            persistenceFailure('The prepared authentication namespace registration is malformed', cause),
-          ),
-        )
-      : Effect.fail(invalid('The prepared authentication namespace does not match the binding'));
-  }
-  return Schema.decodeEffect(AuthenticationNamespaceIdSchema)(authenticationNamespaceId).pipe(
+): Effect.Effect<AuthenticationNamespaceRegistration, ExternalIdentityFailure> =>
+  Schema.decodeEffect(AuthenticationNamespaceIdSchema)(authenticationNamespaceId).pipe(
     Effect.mapError((cause) => Object.assign(invalid('The authentication namespace is malformed'), { cause })),
     Effect.flatMap((decodedNamespaceId) => {
       if (dependencies.registry !== undefined) {
@@ -330,7 +321,6 @@ const registrationFrom = (
       );
     }),
   );
-};
 
 const authorizeNamespace = (
   dependencies: ExternalIdentityRepositoryDependencies,
@@ -339,6 +329,14 @@ const authorizeNamespace = (
   dependencies.authorizeNamespace === undefined
     ? Effect.void
     : dependencies.authorizeNamespace(authenticationNamespaceId);
+
+const authorizeReadNamespace = (
+  dependencies: ExternalIdentityRepositoryDependencies,
+  authenticationNamespaceId: string,
+): Effect.Effect<void, ExternalIdentityFailure> =>
+  dependencies.authorizeReadNamespace === undefined
+    ? Effect.void
+    : dependencies.authorizeReadNamespace(authenticationNamespaceId);
 
 const validateRegistration = (
   record: ExternalIdentityBindingRecord,
@@ -785,33 +783,55 @@ const toReadResult = (binding: ExternalIdentityBindingRecord) => ({
   tenantStatus: binding.tenantStatus,
 });
 
-const loadForRead =
-  (transaction: ScopedTransactionExecutor): ExternalIdentityRepositoryService['loadForRead'] =>
-  (input) =>
-    input.lookup === 'binding'
-      ? loadByBinding(transaction, { authBindingId: input.authBindingId, tenantId: input.tenantId })
-      : loadBySubject(transaction, input);
-
-/** The decoded Read result for a loaded binding whose namespace the caller may read. */
-export const principalBindingReadResult = (
-  dependencies: Pick<ExternalIdentityRepositoryDependencies, 'registry'>,
-  binding: ExternalIdentityBindingRecord,
-): Effect.Effect<ReadPrincipalBindingResult, ExternalIdentityFailure> =>
-  registrationFrom(dependencies, binding.authenticationNamespaceId).pipe(
-    Effect.flatMap((registration) => validateRegistration(binding, registration)),
-    Effect.flatMap(() =>
-      Schema.decodeUnknownEffect(ReadPrincipalBindingResultSchema)(toReadResult(binding)).pipe(
-        Effect.mapError((cause) => persistenceFailure('The external identity binding result is malformed', cause)),
+const read = (
+  transaction: ScopedTransactionExecutor,
+  dependencies: ExternalIdentityRepositoryDependencies,
+): ExternalIdentityRepositoryService['read'] =>
+  Effect.fn('ExternalIdentityRepository.read')(function* readPrincipalBinding(input: ReadPrincipalBindingInput) {
+    let binding: Option.Option<ExternalIdentityBindingRecord>;
+    if (input.lookup === 'binding') {
+      binding = yield* loadByBinding(transaction, {
+        authBindingId: input.authBindingId ?? '',
+        tenantId: input.tenantId,
+      });
+    } else {
+      const namespaceId = input.authenticationNamespaceId ?? '';
+      // Authorize the caller against the supplied namespace before querying the
+      // subject tuple. Otherwise a missing subject leaks a different result
+      // from an existing subject that the caller cannot read.
+      yield* authorizeReadNamespace(dependencies, namespaceId);
+      const registration = yield* registrationFrom(dependencies, namespaceId);
+      const subjectType = input.subjectType ?? 'user';
+      binding = yield* loadBySubject(transaction, {
+        authenticationNamespaceId: namespaceId,
+        provider: registration.provider,
+        providerSubjectId: input.providerSubjectId ?? '',
+        subjectType,
+        tenantId: input.tenantId,
+      });
+    }
+    if (Option.isNone(binding)) {
+      return { outcome: 'NOT_FOUND' as const };
+    }
+    // Binding identifiers are opaque. Normalize an inaccessible binding to
+    // the same result as an absent one so the lookup cannot disclose whether
+    // another namespace owns that identifier.
+    const canReadBinding = yield* authorizeReadNamespace(dependencies, binding.value.authenticationNamespaceId).pipe(
+      Effect.as(true),
+      Effect.catchIf(
+        (failure) => failure.code === 'identity_forbidden',
+        () => Effect.succeed(false),
       ),
-    ),
-  );
-
-/** The trusted deployment registration of a namespace (provider, subject rules); never request-derived. */
-export const authenticationNamespaceRegistration = (
-  dependencies: Pick<ExternalIdentityRepositoryDependencies, 'registry'>,
-  authenticationNamespaceId: string,
-): Effect.Effect<AuthenticationNamespaceRegistration, ExternalIdentityFailure> =>
-  registrationFrom(dependencies, authenticationNamespaceId);
+    );
+    if (!canReadBinding) {
+      return { outcome: 'NOT_FOUND' as const };
+    }
+    const registration = yield* registrationFrom(dependencies, binding.value.authenticationNamespaceId);
+    yield* validateRegistration(binding.value, registration);
+    return yield* Schema.decodeUnknownEffect(ReadPrincipalBindingResultSchema)(toReadResult(binding.value)).pipe(
+      Effect.mapError((cause) => persistenceFailure('The external identity binding result is malformed', cause)),
+    );
+  });
 
 const resolve = (
   transaction: ScopedTransactionExecutor,
@@ -872,8 +892,8 @@ export const externalIdentityRepositoryFromTransaction = (
   Object.freeze({
     activate: activate(transaction, dependencies),
     changeStatus: changeStatus(transaction, dependencies),
-    loadForRead: loadForRead(transaction),
     prepare: prepare(transaction, dependencies),
+    read: read(transaction, dependencies),
     resolve: resolve(transaction, dependencies),
   });
 
@@ -911,5 +931,85 @@ export const externalIdentitySubjectForBinding = Effect.fn('Repository.externalI
       providerSubjectId: loaded.value.providerSubjectId,
       subjectType: loaded.value.subjectType,
     }).pipe(Effect.mapError((cause) => persistenceFailure('The binding subject is malformed', cause)));
+  },
+);
+
+/**
+ * A comparison snapshot, not authentication or an authorization capability. Identity and revision
+ * use the very same schemas as the published binding Read; subject fields come from its subject
+ * lookup. The receiving owner retains responsibility for its actor, operation journal and CAS.
+ */
+export const CurrentExternalIdentityBindingSchema = Schema.Struct({
+  ...ExternalAuthenticationSubjectSchema.fields,
+  authBindingId: AuthBindingIdSchema,
+  bindingRevision: BindingRevisionSchema,
+  principalId: PrincipalIdSchema,
+  tenantId: TenantIdSchema,
+});
+export type CurrentExternalIdentityBinding = typeof CurrentExternalIdentityBindingSchema.Type;
+
+const bindingCurrentnessFailure = (
+  code: ExternalIdentityBindingCurrentnessError['code'],
+  cause?: unknown,
+): ExternalIdentityBindingCurrentnessError => {
+  const failure = new ExternalIdentityBindingCurrentnessError({ code });
+  return cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
+};
+
+/**
+ * Rechecks a previously governed Read in the receiving owner's genuine transaction. The joined
+ * FOR UPDATE locks the binding, principal and tenant until that owner commits or rolls back.
+ * This is SQL-only currentness, not a second namespace authorization or authentication path.
+ * Namespace permission/registration were checked by the published Read outside this transaction.
+ */
+export const assertCurrentExternalIdentityBinding = Effect.fn('ExternalIdentity.assertCurrentBinding')(
+  function* assertCurrentExternalIdentityBindingEffect(
+    transaction: ScopedTransactionExecutor,
+    expected: CurrentExternalIdentityBinding,
+  ): Effect.fn.Return<void, ExternalIdentityBindingCurrentnessError> {
+    const snapshot = yield* Schema.decodeUnknownEffect(CurrentExternalIdentityBindingSchema, {
+      onExcessProperty: 'error',
+    })(expected).pipe(Effect.mapError((cause) => bindingCurrentnessFailure('identity_forbidden', cause)));
+    if (snapshot.tenantId !== transaction.scope.tenantId) {
+      return yield* bindingCurrentnessFailure('identity_forbidden');
+    }
+    const loaded = yield* loadByBinding(transaction, {
+      authBindingId: snapshot.authBindingId,
+      forUpdate: true,
+      tenantId: transaction.scope.tenantId,
+    }).pipe(
+      Effect.mapError((cause) =>
+        bindingCurrentnessFailure(
+          cause.code === 'identity_unavailable' ? 'identity_unavailable' : 'identity_forbidden',
+          cause,
+        ),
+      ),
+    );
+    if (Option.isNone(loaded)) {
+      return yield* bindingCurrentnessFailure('identity_forbidden');
+    }
+    const binding = loaded.value;
+    yield* validateCurrentBinding(binding).pipe(
+      Effect.mapError((cause) => bindingCurrentnessFailure('identity_forbidden', cause)),
+    );
+    // Keep the revision a persisted Core fact, exactly as the registered Read projects it. A
+    // malformed persisted row is unavailable, never an invented revision or an eligibility pass.
+    const current = yield* Schema.decodeUnknownEffect(ReadPrincipalBindingResultSchema)(toReadResult(binding)).pipe(
+      Effect.mapError((cause) => bindingCurrentnessFailure('identity_unavailable', cause)),
+    );
+    if (
+      current.outcome !== 'FOUND' ||
+      current.authBindingId !== snapshot.authBindingId ||
+      current.authenticationNamespaceId !== snapshot.authenticationNamespaceId ||
+      current.bindingRevision !== snapshot.bindingRevision ||
+      current.principalId !== snapshot.principalId ||
+      binding.tenantId !== snapshot.tenantId ||
+      binding.providerSubjectId !== snapshot.providerSubjectId ||
+      binding.subjectType !== snapshot.subjectType ||
+      binding.principalKind !== 'human'
+    ) {
+      return yield* bindingCurrentnessFailure('identity_forbidden');
+    }
+    return yield* Effect.void;
   },
 );

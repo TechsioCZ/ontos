@@ -2,28 +2,20 @@
 // @ontos-action-owner demo.sales-insights
 // @ontos-action-slug apply-command
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import type { ActionHandlerContext } from '@app/core-runtime';
-import type { Effect } from 'effect';
+import { applyCommandDeclaration } from '../../shared/access-declarations.ts';
 import {
   ApplyCommandPayloadSchema,
   ApplyCommandResultSchema,
   SalesInsightsErrorSchema,
 } from '../../shared/actions/apply-command.ts';
-import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
+import { handleApplyCommand, prepareApplyCommandServices } from './command-execution.ts';
 import { persistenceService } from '../services/persistence.service.ts';
 
-type Services = Effect.Success<ReturnType<typeof persistenceService>>;
-const handleApplyCommand = (
-  payload: ApplyCommandPayload,
-  context: ActionHandlerContext<Readonly<Record<string, never>>, Services>,
-): Effect.Effect<
-  Effect.Success<ReturnType<Services['apply']>>,
-  Effect.Error<ReturnType<Services['apply']>>,
-  Effect.Services<ReturnType<typeof persistenceService>>
-> => context.services.apply(payload.command, payload.expectedRevision, context.actionInvocationId);
+export { prepareApplyCommandServices } from './command-execution.ts';
 
 export const applyCommandAction = defineAction(
   {
+    accessDeclaration: applyCommandDeclaration,
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'demo.sales-insights.apply-command.access.v1',
@@ -34,7 +26,7 @@ export const applyCommandAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'demo.sales-insights.apply-command',
       moduleKey: 'demo.sales-insights',
       role: 'action',
@@ -48,7 +40,8 @@ export const applyCommandAction = defineAction(
     schemaVersion: '1',
   },
   handleApplyCommand,
-  persistenceService,
+  (transaction, scope) => persistenceService(transaction, { scope }),
+  { prepareServices: prepareApplyCommandServices },
 );
 
 // <generated-outbox-message-exports>

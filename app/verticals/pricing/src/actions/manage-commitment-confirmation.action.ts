@@ -6,6 +6,8 @@ import type {
   OperationalScope,
   ScopedTransactionExecutor,
   ActionServicePreparationContext,
+  ActionServiceFactory,
+  OperationContextUnavailable,
 } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type {
@@ -19,6 +21,7 @@ import { PricingInstantSchema } from '@app/pricing-contracts/domain/currency-sup
 import type { PricingQuotationIssued } from '@app/pricing-contracts/domain/quotation';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
+import type { Crypto } from 'effect';
 import { DateTime, Effect, Function as EffectFunction, Match, Option, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 import { PricingCommitmentConfirmationProduction } from '../integrations/commitment-confirmation-production.ts';
@@ -725,12 +728,24 @@ export const handleManageCommitmentConfirmation = Effect.fn('ManageCommitmentCon
   },
 );
 
+type ManageCommitmentConfirmationRequirements =
+  | Crypto.Crypto
+  | Effect.Services<ReturnType<(typeof PricingCommitmentConfirmationProduction)['Service']['forScope']>>
+  | PricingCurrentBackedConfirmationIssuance
+  | PricingQuotationBackedConfirmationIssuance
+  | PricingCommitmentConfirmationRenewal
+  | PricingCommitmentConfirmationVerification;
+
 const actionServicesForScope = Effect.fn('ManageCommitmentConfirmationAction.actionServicesForScope')(
   function* actionServicesForScope(
     transaction: ScopedTransactionExecutor,
     scope: OperationalScope,
     compositionRevision: string,
-  ) {
+  ): Effect.fn.Return<
+    ManageCommitmentConfirmationActionServices,
+    OperationContextUnavailable,
+    ManageCommitmentConfirmationRequirements
+  > {
     const production = yield* Effect.serviceOption(PricingCommitmentConfirmationProduction);
     if (Option.isSome(production)) {
       return yield* production.value.forScope(transaction, scope, compositionRevision);
@@ -755,6 +770,19 @@ const actionServicesForScope = Effect.fn('ManageCommitmentConfirmationAction.act
 
 export const manageCommitmentConfirmationAction = defineAction(
   {
+    accessActor: {
+      callers: ['commerce-order'],
+      reason: 'Order finalization records the commitment confirmation for the buyer it acts for.',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.pricing.commitment-confirmation.manage',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'commercial-commitments', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.pricing.manage-commitment-confirmation.access.v1',
@@ -771,7 +799,7 @@ export const manageCommitmentConfirmationAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.pricing.manage-commitment-confirmation',
       moduleKey: MODULE_KEY,
       role: 'action',
@@ -790,7 +818,10 @@ export const manageCommitmentConfirmationAction = defineAction(
     prepareServices: Effect.fn('ManageCommitmentConfirmationAction.prepareServices')(function* prepareServices(
       payload: ManageCommitmentConfirmationPayload,
       context: ActionServicePreparationContext,
-    ) {
+    ): Effect.fn.Return<
+      ActionServiceFactory<ManageCommitmentConfirmationActionServices, ManageCommitmentConfirmationRequirements>,
+      OperationContextUnavailable
+    > {
       const production = yield* Effect.serviceOption(PricingCommitmentConfirmationProduction);
       // Non-production test seams keep their typed owner services; deployed HTTP composition always prepares.
       if (Option.isNone(production) || production.value.prepareServices === undefined) {

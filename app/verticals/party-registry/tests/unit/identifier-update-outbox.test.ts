@@ -6,7 +6,7 @@ import { getActionHandler } from '../../../../packages/core-runtime/src/actions/
 import { PrincipalIdSchema, TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { UpdatePartyOfficialIdentifierResultSchema } from '../../shared/actions/update-party-official-identifier.ts';
 import type { UpdatePartyOfficialIdentifierPayload } from '../../shared/actions/update-party-official-identifier.ts';
-import { OfficialIdentifierClaimConflict } from '../../shared/domain/identifier-contracts.ts';
+import { PartyPersistenceUnavailable } from '../../shared/domain/identity-contracts.ts';
 import { OutboxPayloadSchema } from '../../shared/outbox/party-registry-official-identifier-updated-v1.ts';
 import { updatePartyOfficialIdentifierAction } from '../../src/actions/update-party-official-identifier.action.ts';
 
@@ -27,20 +27,9 @@ const officialIdentifierRef = {
 const before = {
   state: 'ACTIVE',
   validTo: null,
-  verification: 'UNVERIFIED',
-  verifiedAt: null,
-  verifiedByPrincipalId: null,
 } as const;
 const changes: readonly UpdatePartyOfficialIdentifierPayload['change'][] = [
-  {
-    expectedVerification: 'UNVERIFIED',
-    type: 'SET_VERIFICATION',
-    verification: 'VERIFIED',
-  },
-  {
-    type: 'END_VALIDITY',
-    validTo: DateTime.makeUnsafe('2026-01-02T00:00:00.000Z'),
-  },
+  { type: 'END_VALIDITY', validTo: DateTime.makeUnsafe('2026-01-02T00:00:00.000Z') },
 ];
 
 for (const change of changes) {
@@ -56,25 +45,12 @@ for (const change of changes) {
         change.type === 'END_VALIDITY'
           ? yield* Schema.encodeEffect(Schema.DateTimeUtcFromString)(change.validTo)
           : null;
-      const after =
-        change.type === 'SET_VERIFICATION'
-          ? {
-              ...before,
-              verification: 'VERIFIED' as const,
-              verifiedAt: '2026-01-02T00:00:00.000Z',
-              verifiedByPrincipalId: '40000000-0000-4000-8000-000000000001',
-            }
-          : {
-              ...before,
-              state: 'ENDED' as const,
-              validTo: encodedValidTo,
-            };
+      const after = { ...before, state: 'ENDED' as const, validTo: encodedValidTo };
       const result = {
         officialIdentifierRef,
         partyRef,
         state: after.state,
         validTo: change.type === 'END_VALIDITY' ? Option.some(change.validTo) : Option.none(),
-        verification: after.verification,
       };
       yield* handler(
         {
@@ -133,16 +109,15 @@ it.effect('rejected identifier updates publish neither Domain Event nor outbox m
       'party.registry',
       updatePartyOfficialIdentifierAction.descriptor.accessEvidencePolicy,
     );
-    const failure = new OfficialIdentifierClaimConflict({
-      code: 'party_identifier_claim_conflict',
-      reason: 'Already claimed by another Party',
+    const failure = new PartyPersistenceUnavailable({
+      code: 'party_persistence_unavailable',
+      reason: 'Identifier storage is unavailable',
     });
     const error = yield* getActionHandler(updatePartyOfficialIdentifierAction)(
       {
         change: {
-          expectedVerification: 'UNVERIFIED',
-          type: 'SET_VERIFICATION',
-          verification: 'VERIFIED',
+          type: 'END_VALIDITY',
+          validTo: DateTime.makeUnsafe('2026-01-02T00:00:00.000Z'),
         },
         evidenceRefs: ['evidence:identifier-update'],
         officialIdentifierRef,
@@ -191,7 +166,6 @@ it.effect('identifier update results keep DateTime and Option internally with nu
       partyRef,
       state: 'ENDED',
       validTo: '2026-01-02T00:00:00.000Z',
-      verification: 'VERIFIED',
     } as const;
     const decoded = yield* Schema.decodeEffect(UpdatePartyOfficialIdentifierResultSchema)(wire);
     expect(Option.isSome(decoded.validTo)).toBe(true);

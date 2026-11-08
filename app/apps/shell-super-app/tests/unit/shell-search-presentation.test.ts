@@ -1,4 +1,4 @@
-import type { ContextAccessService } from '@app/core-runtime';
+import { makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -19,7 +19,7 @@ const metadata = {
 };
 const entrypoint = (role: 'page' | 'search', key: string) => ({
   access: 'read',
-  authorization: { kind: 'authenticated_principal' },
+  authorization: { kind: 'protected' },
   entrypointKey: key,
   moduleKey: ownerModuleId,
   role,
@@ -68,6 +68,7 @@ const contract = (tenant = false) => ({
           ? {
               accessFiltering: 'tenant_scope',
               key: searchKey,
+              legalEntityScope: 'optional',
               owningModuleId: ownerModuleId,
               resourceType,
               tenantPermission: 'access',
@@ -79,6 +80,14 @@ const contract = (tenant = false) => ({
         navigation: [],
         pages: [
           {
+            accessDeclaration: {
+              key: 'sample.owner.page.read',
+              kind: 'read',
+              modes: ['run'],
+              placement: { group: 'records', level: 'basic' },
+              risk: 'routine',
+              selectors: [],
+            },
             componentKey: 'sample.owner.record-page',
             contributionKey: pageKey,
             entrypoint: entrypoint('page', pageKey),
@@ -91,6 +100,14 @@ const contract = (tenant = false) => ({
         resourceDetails: [],
         search: [
           {
+            accessDeclaration: {
+              key: 'sample.owner.records.read',
+              kind: 'read',
+              modes: ['run'],
+              placement: { group: 'records', level: 'basic' },
+              risk: 'routine',
+              selectors: [],
+            },
             contributionKey: 'sample.owner.search.records',
             entrypoint: entrypoint('search', searchKey),
             presentation: {
@@ -117,23 +134,11 @@ const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
 const principalId = '30000000-0000-4000-8000-000000000001';
 const tenantContext = { authMethod: 'system', correlationId: 'presentation-test', principalId, tenantId } as const;
-const contextAccess = (allowed = true): ContextAccessService => ({
-  legalEntities: () => Effect.succeed([]),
-  modules: ({ moduleIds }) =>
-    Effect.succeed(moduleIds.map((key) => ({ decision: allowed ? 'allowed' : 'denied', key }))),
-  resources: ({ resources }) =>
-    Effect.succeed(
-      resources.map((ref) => ({
-        decision: allowed ? 'allowed' : 'denied',
-        key: `${ref.moduleId}:${ref.resourceType}:${ref.resourceId}`,
-      })),
-    ),
-  tenants: ({ tenantIds }) =>
-    Effect.succeed(tenantIds.map((key) => ({ decision: allowed ? 'allowed' : 'denied', key }))),
-});
 const dependencies = (tenant = false, allowed = true) => ({
+  access: makeTestAccessDecision({
+    answers: { 'sample.owner.records.read': { outcome: allowed ? 'ALLOWED' : 'DENIED' } },
+  }),
   catalog: installed(tenant),
-  contextAccess: contextAccess(allowed),
   issueAssertion: () => Effect.succeed('Bearer test-admitted-owner'),
   moduleStates: {
     getTenantModuleStates: (_tenantId: string, moduleIds: readonly string[]) =>

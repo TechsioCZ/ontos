@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.customer-context
 // @ontos-action-http-slug reactivate-customer-profile
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/reactivate-customer-profile.ts';
 
 export { ReactivateCustomerProfilePayloadSchema } from '../actions/reactivate-customer-profile.ts';
-
 export const ReactivateCustomerProfileActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReactivateCustomerProfileActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const ReactivateCustomerProfileActionForbiddenProblemSchema = makeProblem
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -149,7 +150,7 @@ export const reactivateCustomerProfileActionGroupDefinition = HttpApiGroup.make(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/reactivate-customer-profile', {
       error: actionErrors,
       payload: Schema.toEncoded(ReactivateCustomerProfilePayloadSchema),
-      success: ReactivateCustomerProfileResultSchema,
+      success: [ActionProposalAcceptedSchema, ReactivateCustomerProfileResultSchema],
     }),
   )
   .middleware(ReactivateCustomerProfileActionSchemaErrorMiddleware);

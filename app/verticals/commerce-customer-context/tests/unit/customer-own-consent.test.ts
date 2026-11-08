@@ -1,6 +1,9 @@
-import { privacySubjectRefForParty } from '@app/privacy/domain/privacy-subject-identity';
 import { CreatePrivacySubjectPayloadSchema } from '@app/privacy/api';
-import { ConsentSelfServiceRequestSchema, RecordNoticeProvisionPayloadSchema } from '@app/consent-authority-contracts';
+import {
+  privacySubjectRefForParty,
+  ConsentSelfServiceRequestSchema,
+  RecordNoticeProvisionPayloadSchema,
+} from '@app/consent-authority-contracts';
 import type { ConsentSelfServiceRequest } from '@app/consent-authority-contracts';
 import { Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';

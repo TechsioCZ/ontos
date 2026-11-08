@@ -3,7 +3,7 @@
 // @ontos-action-http-slug request-search-rebuild
 import type { ActionCoreError } from '@app/core-runtime';
 import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
-import { Match, Schema } from 'effect';
+import { Match } from 'effect';
 import {
   RequestSearchRebuildActionAlreadyCommittedProblemSchema,
   RequestSearchRebuildActionAuthenticationProblemSchema,
@@ -19,9 +19,7 @@ import {
   RequestSearchRebuildActionUnavailableProblemSchema,
 } from '../shared/apis/request-search-rebuild-action.ts';
 import type { RequestSearchRebuildActionProblem } from '../shared/apis/request-search-rebuild-action.ts';
-import { requestSearchRebuildAction } from '../src/actions/request-search-rebuild.action.ts';
 
-type DomainError = typeof requestSearchRebuildAction.descriptor.domainErrorSchema.Type;
 type ProblemOf<Tag extends RequestSearchRebuildActionProblem['_tag']> = Extract<
   RequestSearchRebuildActionProblem,
   { readonly _tag: Tag }
@@ -123,9 +121,6 @@ export const requestSearchRebuildActionProblem = {
     }),
 } as const;
 
-const mapDomainProblem = (error: DomainError): RequestSearchRebuildActionProblem =>
-  Match.value(error).pipe(Match.tags({}), Match.exhaustive);
-
 const mapCoreProblem = (error: ActionCoreError): RequestSearchRebuildActionProblem =>
   Match.value(error).pipe(
     Match.tags({
@@ -175,9 +170,7 @@ const mapCoreProblem = (error: ActionCoreError): RequestSearchRebuildActionProbl
     Match.exhaustive,
   );
 
-const isDomainError = Schema.is(requestSearchRebuildAction.descriptor.domainErrorSchema);
-export const mapRequestSearchRebuildActionProblem = (error: ActionCoreError): RequestSearchRebuildActionProblem =>
-  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
+export const mapRequestSearchRebuildActionProblem = mapCoreProblem;
 
 export const requestSearchRebuildActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   RequestSearchRebuildActionSchemaErrorMiddleware,

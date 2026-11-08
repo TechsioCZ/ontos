@@ -10,6 +10,8 @@ import { completeOrderPreparationAction } from '../../src/actions/complete-order
 import { recordOrderProofSetAction } from '../../src/actions/record-order-proof-set.action.ts';
 import { completeOrderApprovalConsumptionAction } from '../../src/actions/complete-order-approval-consumption.action.ts';
 
+import { commerceOrderRegistration } from '../../vertical.registration.ts';
+
 const principal = {
   authBindingId: '10000000-0000-4000-8000-000000000001',
   authContextRef: 'better-auth-session:order-stage-authorization',
@@ -18,6 +20,8 @@ const principal = {
   principalId: '20000000-0000-4000-8000-000000000001',
   tenantId: '40000000-0000-4000-8000-000000000001',
 } as const;
+// The delivering invocation the completion acts for; the denial gates run before any owner work.
+const originatorActionInvocationId = '80000000-0000-4000-8000-0000000000c1';
 const ref = (kind: string) => ({
   moduleId: 'commerce.order',
   resourceId: 'original-intent',
@@ -45,7 +49,10 @@ const completions: readonly Completion[] = [
   {
     label: 'preparation',
     run: (harness, transport) =>
-      Schema.decodeUnknownEffect(CompleteOrderPreparationPayloadSchema)({ intentRef: ref('finalization-intent') }).pipe(
+      Schema.decodeUnknownEffect(CompleteOrderPreparationPayloadSchema)({
+        intentRef: ref('finalization-intent'),
+        originatorActionInvocationId,
+      }).pipe(
         Effect.flatMap((payload) =>
           harness.runtime.runAction({ payload, principal, registration: completeOrderPreparationAction, transport }),
         ),
@@ -56,6 +63,7 @@ const completions: readonly Completion[] = [
     run: (harness, transport) =>
       Schema.decodeUnknownEffect(RecordOrderProofSetPayloadSchema)({
         intentRef: ref('proof-request'),
+        originatorActionInvocationId,
         outcome: 'APPROVAL_REQUEST_TERMINAL',
       }).pipe(
         Effect.flatMap((payload) =>
@@ -66,7 +74,10 @@ const completions: readonly Completion[] = [
   {
     label: 'consumption',
     run: (harness, transport) =>
-      Schema.decodeUnknownEffect(CompleteOrderApprovalConsumptionPayloadSchema)({ intentRef: ref('order') }).pipe(
+      Schema.decodeUnknownEffect(CompleteOrderApprovalConsumptionPayloadSchema)({
+        intentRef: ref('order'),
+        originatorActionInvocationId,
+      }).pipe(
         Effect.flatMap((payload) =>
           harness.runtime.runAction({
             payload,
@@ -85,7 +96,10 @@ describe('Order restricted stage completions', () => {
   for (const completion of completions) {
     it.effect(`denies a buyer without executor permission before ${completion.label} owner work`, () =>
       Effect.gen(function* denyWithoutExecutorPermission() {
-        const harness = yield* makeActionTestHarness({ actionPermission: 'denied', tenantPermission: 'allowed' });
+        const harness = yield* makeActionTestHarness({
+          access: 'denied',
+          ownerRegistration: commerceOrderRegistration,
+        });
         const failure = yield* completion
           .run(harness, { correlationId: 'order-stage-denied', idempotencyKey: `denied:${completion.label}` })
           .pipe(Effect.flip);
@@ -98,9 +112,9 @@ describe('Order restricted stage completions', () => {
     it.effect(`stops ${completion.label} when the Tenant module is suspended`, () =>
       Effect.gen(function* stopWhenModuleSuspended() {
         const harness = yield* makeActionTestHarness({
-          actionPermission: 'allowed',
+          access: 'allowed',
           moduleState: 'suspended',
-          tenantPermission: 'allowed',
+          ownerRegistration: commerceOrderRegistration,
         });
         const failure = yield* completion
           .run(harness, { correlationId: 'order-stage-suspended', idempotencyKey: `suspended:${completion.label}` })
@@ -112,7 +126,10 @@ describe('Order restricted stage completions', () => {
     );
     it.effect(`requires a stable completion key before ${completion.label} invocation`, () =>
       Effect.gen(function* requireStableCompletionKey() {
-        const harness = yield* makeActionTestHarness({ actionPermission: 'allowed', tenantPermission: 'allowed' });
+        const harness = yield* makeActionTestHarness({
+          access: 'allowed',
+          ownerRegistration: commerceOrderRegistration,
+        });
         const failure = yield* completion.run(harness, { correlationId: 'order-stage-missing-key' }).pipe(Effect.flip);
         expect(Predicate.isTagged(failure, 'ActionIdempotencyKeyRequired')).toBe(true);
         expect(harness.snapshot().invocations).toHaveLength(0);

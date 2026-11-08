@@ -123,6 +123,20 @@ it.effect(
     }),
 );
 
+it.effect(
+  "keeps a withheld commerce postal field unresolved rather than inventing an available address",
+  () =>
+    Effect.gen(function* withheldPostalProjection() {
+      const decoded = yield* Schema.decodeUnknownEffect(CustomerOwnAddressBookSchema)({
+        ...native,
+        addresses: [{ ...address, origin: { kind: "COMMERCE_ONLY" } }],
+      });
+      const result = yield* projectCustomerAddresses(decoded, viewer);
+      expect(result.addresses[0]?.location).toEqual({ state: "unresolved" });
+      expect(JSON.stringify(result)).not.toContain(postalAddress.addressLine1);
+    }),
+);
+
 it.effect("distinguishes a real empty address book from malformed or foreign-tenant data", () =>
   Effect.gen(function* emptyAndFailure() {
     const empty = yield* Schema.decodeUnknownEffect(CustomerOwnAddressBookSchema)({

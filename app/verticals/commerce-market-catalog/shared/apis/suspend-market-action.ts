@@ -2,11 +2,14 @@
 // @ontos-action-http-owner commerce.market-catalog
 // @ontos-action-http-slug suspend-market
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { SuspendMarketPayloadSchema, SuspendMarketResultSchema } from '../actions/suspend-market.ts';
 
 export { SuspendMarketPayloadSchema } from '../actions/suspend-market.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const SuspendMarketActionInvalidProblemSchema = makeProblemDetailsSchema(
   'SuspendMarketActionInvalidProblem',
@@ -21,6 +24,7 @@ export const SuspendMarketActionForbiddenProblemSchema = makeProblemDetailsSchem
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -154,7 +158,7 @@ export const suspendMarketActionGroupDefinition = HttpApiGroup.make('suspendMark
     HttpApiEndpoint.post('execute', '/commerce-market-catalog/actions/suspend-market', {
       error: actionErrors,
       payload: Schema.toEncoded(SuspendMarketPayloadSchema),
-      success: SuspendMarketResultSchema,
+      success: [ActionProposalAcceptedSchema, SuspendMarketResultSchema],
     }),
   )
   .middleware(SuspendMarketActionSchemaErrorMiddleware);

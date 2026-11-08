@@ -3,7 +3,7 @@
 // @ontos-action-slug migrate-counterparty-price-group
 /* eslint-disable effect-native/no-imperative-loop-in-effect-gen, effect-native/no-manual-tag-comparison, sonarjs/no-duplicate-string -- A bounded Counterparty migration validates association/conflicts sequentially before one atomic routine call; expires: 2027-03-01. */
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import {
   CounterpartyPriceGroupMigrationEventSchema,
@@ -36,8 +36,8 @@ import type {
 } from '../../shared/domain/price-group-ports.ts';
 import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain/price-group-ports.ts';
 import { createMigrateCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupMigratedV1OutboxMessage } from './migrate-counterparty-price-group.commerce-customer-context-counterparty-price-group-migrated-v1.outbox-message.ts';
-import { priceGroupActionServicesForTransaction } from './price-group-action-services.ts';
-import { preparePriceGroupActionServices } from './price-group-action-preparation.ts';
+import { migrateCounterpartyPriceGroupServicesForTransaction } from './price-group-action-services.ts';
+import { counterpartyOwnerFacts } from './owner-access-facts.ts';
 
 const MigrateCounterpartyPriceGroupErrorSchema = Schema.Union([
   CustomerPriceGroupCatalogRejected,
@@ -331,28 +331,28 @@ export const handleMigrateCounterpartyPriceGroup = Effect.fn(
 
 export const migrateCounterpartyPriceGroupAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.counterparty-price-group.migrate',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'customer-pricing', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.migrate-counterparty-price-group.access.v1',
     },
+    accessOwnerFacts: (payload) => counterpartyOwnerFacts(payload.counterpartyRef.resourceId),
     actionKey: 'commerce.customer-context.migrate-counterparty-price-group',
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission<MigrateCounterpartyPriceGroupPayload>((payload, scope) => ({
-      permission: 'counterparty.settings.price_group.manage',
-      target: {
-        counterpartyId: payload.counterpartyRef.resourceId,
-        kind: 'counterparty',
-        legalEntityId: scope.legalEntityId ?? '',
-        tenantId: scope.tenantId,
-      },
-    })),
     domainErrorSchema: MigrateCounterpartyPriceGroupErrorSchema,
     domainEvents: {
       'commerce.customer-context.counterparty-price-group-migrated.v1': CounterpartyPriceGroupMigrationEventSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.migrate-counterparty-price-group',
       moduleKey: 'commerce.customer-context',
       role: 'action',
@@ -366,6 +366,5 @@ export const migrateCounterpartyPriceGroupAction = defineAction(
     schemaVersion: '1',
   },
   handleMigrateCounterpartyPriceGroup,
-  priceGroupActionServicesForTransaction,
-  { prepareServices: preparePriceGroupActionServices },
+  migrateCounterpartyPriceGroupServicesForTransaction,
 );

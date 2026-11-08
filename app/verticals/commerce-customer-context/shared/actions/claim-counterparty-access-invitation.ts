@@ -11,7 +11,6 @@ import {
   VerifiedInvitationClaimAttestationSchema,
 } from '../domain/invitation-contract.ts';
 import { CounterpartyAccessInvitationRefSchema } from '../resources/counterparty-access-invitation.ts';
-import { InvitationClaimAuthorizationMutationEvidenceSchema } from '../domain/access-authorization-mutation.ts';
 
 export const ClaimCounterpartyAccessInvitationPayloadSchema = Schema.Struct({
   claimant: PrincipalRefSchema,
@@ -28,12 +27,6 @@ export const ClaimCounterpartyAccessInvitationResultSchema = Schema.Union([
     attestation: VerifiedInvitationClaimAttestationSchema,
     invitation: CounterpartyAccessInvitationSchema,
     outcome: Schema.Literal('CLAIMED'),
-  }),
-  Schema.Struct({
-    attestation: VerifiedInvitationClaimAttestationSchema,
-    invitation: CounterpartyAccessInvitationSchema,
-    outcome: Schema.Literal('RECONCILIATION_REQUIRED'),
-    reconciliation: InvitationClaimAuthorizationMutationEvidenceSchema,
   }),
   Schema.Struct({
     invitation: CounterpartyAccessInvitationSchema,

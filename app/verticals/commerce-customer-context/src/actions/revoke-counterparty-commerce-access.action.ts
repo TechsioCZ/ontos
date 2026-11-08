@@ -2,7 +2,8 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug revoke-counterparty-commerce-access
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { reconcileAccessPortalAfterAttempt } from '@app/core-runtime/access/portal';
 import { Effect } from 'effect';
 import {
   RevokeCounterpartyCommerceAccessPayloadSchema,
@@ -10,13 +11,14 @@ import {
 } from '../../shared/actions/revoke-counterparty-commerce-access.ts';
 import type { RevokeCounterpartyCommerceAccessPayload } from '../../shared/actions/revoke-counterparty-commerce-access.ts';
 import { AccessAuditEvidenceSchema, AccessDeniedAuditEvidenceSchema } from '../../shared/domain/access-contract.ts';
-import { CounterpartyAccessDomainErrorSchema } from '../../shared/domain/access-port.ts';
+import { CounterpartyAccessDomainErrorSchema, CounterpartyAccessUnavailable } from '../../shared/domain/access-port.ts';
 import type { CounterpartyAccessPortService } from '../../shared/domain/access-port.ts';
 import { counterpartyAccessServicesForTransaction } from '../access-services.ts';
 import {
-  accessAuthorizationMutationEventPayload,
+  accessGrantEventFields,
+  accessGrantEventSubject,
+  accessManagementOwnerFacts,
   auditEvidence,
-  accessManagementPermissionTarget,
   deniedAccessAuditEvidence,
   principalRefFromContext,
   recordAccessRead,
@@ -24,13 +26,12 @@ import {
   requireAccessScope,
 } from './access-action-support.ts';
 import {
-  RevokeCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessRevokeAuthorizationMutationRequestedV1OutboxPayloadSchema as AuthorizationMutationRequestedEventSchema,
-  createRevokeCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessRevokeAuthorizationMutationRequestedV1OutboxMessage as createAuthorizationMutationRequestedOutboxMessage,
-} from './revoke-counterparty-commerce-access.commerce-customer-context-counterparty-access-revoke-authorization-mutation-requested-v1.outbox-message.ts';
+  RevokeCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessRevokedV1OutboxPayloadSchema as AccessRevokedEventSchema,
+  createRevokeCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessRevokedV1OutboxMessage as createAccessRevokedOutboxMessage,
+} from './revoke-counterparty-commerce-access.commerce-customer-context-counterparty-access-revoked-v1.outbox-message.ts';
 
 const domainEvents = {
-  'commerce.customer-context.counterparty-access-revoke-authorization-mutation-requested.v1':
-    AuthorizationMutationRequestedEventSchema,
+  'commerce.customer-context.counterparty-access-revoked.v1': AccessRevokedEventSchema,
 } as const;
 
 interface Services {
@@ -75,31 +76,43 @@ const handle = Effect.fn('RevokeCounterpartyCommerceAccess.handle')(function* ha
       target: payload.recipient,
     }),
   );
-  if (result.outcome === 'RECONCILIATION_REQUIRED' && result.reconciliation.staged) {
-    const eventPayload = accessAuthorizationMutationEventPayload(result.grant, result.reconciliation, legalEntityId);
+  if (result.outcome === 'REVOKED') {
+    const { grant } = result;
+    if (grant.revokedAt === undefined || grant.revokedBy === undefined) {
+      return yield* new CounterpartyAccessUnavailable({
+        code: 'counterparty_access_unavailable',
+        reason: 'The revoked grant does not record when and by whom it was revoked',
+      });
+    }
+    const eventPayload = { ...accessGrantEventFields(grant), revokedAt: grant.revokedAt, revokedBy: grant.revokedBy };
     const event = yield* context.addDomainEvent({
-      eventType: 'commerce.customer-context.counterparty-access-revoke-authorization-mutation-requested.v1',
+      ...accessGrantEventSubject(grant),
+      eventType: 'commerce.customer-context.counterparty-access-revoked.v1',
       payloadJson: eventPayload,
-      producerModuleKey: result.grant.grantRef.moduleId,
-      subjectModuleKey: result.grant.grantRef.moduleId,
-      subjectResourceId: result.grant.grantRef.resourceId,
-      subjectResourceType: result.grant.grantRef.resourceType,
     });
-    yield* context.addOutboxMessage(event, createAuthorizationMutationRequestedOutboxMessage(eventPayload));
+    yield* context.addOutboxMessage(event, createAccessRevokedOutboxMessage(eventPayload));
   }
   return result;
 });
 
 export const revokeCounterpartyCommerceAccessAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.counterparty-commerce-access.revoke',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'counterparty-access', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.revoke-counterparty-commerce-access.access.v1',
     },
+    accessOwnerFacts: accessManagementOwnerFacts,
     actionKey: 'commerce.customer-context.revoke-counterparty-commerce-access',
     auditEvidenceSchema: AccessAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission(accessManagementPermissionTarget),
     deniedAuditEvidence: {
       resolve: (payload, scope) =>
         deniedAccessAuditEvidence({
@@ -116,7 +129,7 @@ export const revokeCounterpartyCommerceAccessAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.revoke-counterparty-commerce-access',
       moduleKey: 'commerce.customer-context',
       role: 'action',
@@ -132,4 +145,7 @@ export const revokeCounterpartyCommerceAccessAction = defineAction(
   handle,
   (transaction, scope) =>
     counterpartyAccessServicesForTransaction(transaction, scope).pipe(Effect.map((port) => ({ revoke: port.revoke }))),
+  undefined,
+  // The revocation ended the grantee's portal access at its commit; the engine follows once it committed.
+  reconcileAccessPortalAfterAttempt(),
 );

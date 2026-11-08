@@ -1,17 +1,13 @@
-import { ActiveApplicationCompositionService, ActionPermissionDenied, ContextAccess } from '@app/core-runtime';
+import { ActivityReferenceVerifier, prepareActivityCommand } from '../../src/services/persistence.service.ts';
+import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { Effect, Layer, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+import { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
+import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
+import { crmActivitiesRegistration } from '../../vertical.registration.ts';
+import { ActiveApplicationCompositionService } from '@app/core-runtime';
 import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
 import { HttpServerRequest } from 'effect/http';
-import { Layer, Effect, Schema } from 'effect';
-import type { ContextAccessService } from '@app/core-runtime';
-import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
-
-import { expect, it } from 'effect-rstest';
-import {
-  ApplyCommandPayloadSchema,
-  ActivityPermissionDenied,
-  ActivityReferenceUnavailable,
-} from '../../shared/actions/apply-command.ts';
-import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
 
 const unusedReference = () => Effect.die('Unexpected reference boundary access');
 const referenceBoundary = Layer.mergeAll(
@@ -47,79 +43,45 @@ const payload = Schema.decodeSync(ApplyCommandPayloadSchema)({
   },
   expectedRevision: 0,
 });
-const unused = () => Effect.die('Unexpected permission adapter');
 
-const accessFor = (decision: 'denied' | 'unavailable', assertOutsideSql: () => void): ContextAccessService => ({
-  contextPermissions: ({ targets }) =>
-    Effect.sync(() => {
-      assertOutsideSql();
-      return targets.map(({ moduleId, permission }) => ({ decision, key: `${moduleId}:${permission}` }));
-    }),
-  legalEntities: unused,
-  modules: unused,
-  resources: unused,
-  tenants: unused,
-});
-
-const preparedPermissionTest = (decision: 'denied' | 'unavailable') =>
-  Effect.scoped(
-    Effect.gen(function* preparedPermissions() {
-      const harness = yield* makeActionTestHarness({ actionPermission: 'allowed' });
-      let checks = 0;
-      const access = accessFor(decision, () => {
-        expect(harness.snapshot().transactionCount).toBe(0);
-        checks += 1;
-      });
-      const failure = yield* harness.runtime
-        .runAction({
-          payload: Schema.encodeSync(ApplyCommandPayloadSchema)(payload),
-          principal,
-          registration: applyCommandAction,
-          transport: { correlationId: 'activities-command', idempotencyKey: `activities-command-${decision}` },
-        })
-        .pipe(Effect.provideService(ContextAccess, access), Effect.flip);
-      expect(
-        decision === 'denied'
-          ? Schema.is(ActivityPermissionDenied)(failure)
-          : Schema.is(ActivityReferenceUnavailable)(failure),
-      ).toBe(true);
-      expect(checks).toBe(1);
-      expect(harness.snapshot().committed).toEqual([]);
-      expect(harness.snapshot().transactionCount).toBe(0);
-    }),
-  );
-
-it.layer(referenceBoundary)('reference boundary is unused on denial', (suite) => {
-  for (const decision of ['denied', 'unavailable'] as const) {
-    suite.effect(`the registered activities Action prepares ${decision} permissions before SQL`, () =>
-      preparedPermissionTest(decision),
+const commands = [payload];
+for (const [index, command] of commands.entries()) {
+  for (const access of ['denied', 'unavailable'] as const) {
+    it.effect(`registered crm-activities command ${index} refuses ${access} before owner SQL`, () =>
+      Effect.scoped(
+        Effect.gen(function* refusesBeforeSql() {
+          const harness = yield* makeActionTestHarness({ access, ownerRegistration: crmActivitiesRegistration });
+          const failure = yield* harness.runtime
+            .runAction({
+              payload: Schema.encodeSync(ApplyCommandPayloadSchema)(command),
+              principal,
+              registration: applyCommandAction,
+              transport: {
+                correlationId: 'crm-activities-command',
+                idempotencyKey: `crm-activities-${index}-${access}`,
+              },
+            })
+            .pipe(Effect.flip);
+          expect(failure._tag).toBe(access === 'denied' ? 'ActionPermissionDenied' : 'ActionPermissionCheckError');
+          expect(harness.snapshot().transactionCount).toBe(0);
+          expect(harness.snapshot().committed).toEqual([]);
+        }),
+      ).pipe(Effect.provide(referenceBoundary)),
     );
   }
+}
 
-  suite.effect('Core executor denial never reaches activities permission preparation', () =>
-    Effect.scoped(
-      Effect.gen(function* executorDenied() {
-        const harness = yield* makeActionTestHarness({ actionPermission: 'denied' });
-        const failure = yield* harness.runtime
-          .runAction({
-            payload: Schema.encodeSync(ApplyCommandPayloadSchema)(payload),
-            principal,
-            registration: applyCommandAction,
-            transport: { correlationId: 'work-denied', idempotencyKey: 'work-denied' },
-          })
-          .pipe(
-            Effect.provideService(ContextAccess, {
-              contextPermissions: unused,
-              legalEntities: unused,
-              modules: unused,
-              resources: unused,
-              tenants: unused,
-            }),
-            Effect.flip,
-          );
-        expect(Schema.is(ActionPermissionDenied)(failure)).toBe(true);
-        expect(harness.snapshot().transactionCount).toBe(0);
-      }),
-    ),
-  );
-});
+it.effect('owner reference preparation does not re-decide run after Core admits an approval', () =>
+  Effect.gen(function* test() {
+    const { partyRef } = payload.command;
+    if (partyRef === undefined) {
+      return yield* Effect.die('Fixture must identify its Party');
+    }
+    const canonical = yield* prepareActivityCommand(payload.command, {
+      ...principal,
+      correlationId: 'approved-activity',
+    }).pipe(Effect.provideService(ActivityReferenceVerifier, { verify: () => Effect.succeed({ partyRef }) }));
+    expect(canonical.partyRef).toEqual(partyRef);
+    return canonical;
+  }).pipe(Effect.provide(referenceBoundary)),
+);

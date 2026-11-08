@@ -12,12 +12,20 @@ import {
   PricingMaterialEvidenceOwnerFinalFence,
   verifyPricingMaterialEvidenceOwnerFence,
 } from '../../src/services/material-evidence-final-validation.service.ts';
+import { verifiedTestScope } from '../support/owner-gateway-connection.fixture.ts';
 import type {
   PricingMaterialEvidenceFenceExpectation,
   PricingMaterialEvidenceFenceSourceObservation,
   PricingMaterialEvidenceOwnerFencePort,
 } from '../../src/services/material-evidence-final-validation.service.ts';
 
+const principalId = '44444444-4444-4444-8444-444444444441';
+const scope = verifiedTestScope({
+  correlationId: 'material-evidence-final-fence-786',
+  legalEntityId: '33333333-3333-4333-8333-333333333331',
+  principalId,
+  tenantId: '22222222-2222-4222-8222-222222222221',
+});
 const evidenceObservedAt = '2026-09-28T12:00:00.100Z';
 const laterCallerRevalidatedAt = '2026-09-28T12:00:10.000Z';
 const finalOwnerObservedAt = '2026-09-28T12:00:10.100Z';
@@ -284,7 +292,7 @@ describe('Pricing material-evidence final owner fence #786', () => {
         },
       };
 
-      const result = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', [
+      const result = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', scope, [
         sourceAtRevisionA,
         sourceAtRevisionA,
       ]).pipe(Effect.provideService(PricingMaterialEvidenceOwnerFinalFence, fence));
@@ -313,7 +321,7 @@ describe('Pricing material-evidence final owner fence #786', () => {
         },
       };
 
-      const failure = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', [
+      const failure = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', scope, [
         sourceAtRevisionA,
         conflictingSource,
       ]).pipe(Effect.provideService(PricingMaterialEvidenceOwnerFinalFence, fence), Effect.flip);
@@ -326,7 +334,7 @@ describe('Pricing material-evidence final owner fence #786', () => {
 
   it.effect('accepts ordinary owner latency and does not special-case a generalized currency', () =>
     Effect.gen(function* acceptsOwnerLatency() {
-      const result = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', [sourceAtRevisionA]).pipe(
+      const result = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', scope, [sourceAtRevisionA]).pipe(
         Effect.provideService(PricingMaterialEvidenceOwnerFinalFence, ownerFence(unchangedObservation)),
       );
 
@@ -383,7 +391,7 @@ describe('Pricing material-evidence final owner fence #786', () => {
           }),
       };
 
-      const result = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', sources).pipe(
+      const result = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', scope, sources).pipe(
         Effect.provideService(PricingMaterialEvidenceOwnerFinalFence, fence),
       );
 
@@ -400,7 +408,7 @@ describe('Pricing material-evidence final owner fence #786', () => {
   it.effect('rejects revision A after B is inserted even when a caller supplies a later revalidatedAt', () =>
     Effect.gen(function* rejectsInterveningMutation() {
       expect(laterCallerRevalidatedAt > evidenceObservedAt).toBe(true);
-      const failure = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', [sourceAtRevisionA]).pipe(
+      const failure = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', scope, [sourceAtRevisionA]).pipe(
         Effect.provideService(
           PricingMaterialEvidenceOwnerFinalFence,
           ownerFence((expectation) => ({
@@ -434,9 +442,9 @@ describe('Verified-empty Counterparty Discount boundary at the final owner fence
   it.effect('authorizes the unchanged empty set while the final fence completes before its boundary', () =>
     Effect.gen(function* beforeBoundary() {
       const fenceObservedAt = '2026-09-28T12:00:09.999Z';
-      const result = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', [scheduledDiscountAbsence]).pipe(
-        Effect.provideService(PricingMaterialEvidenceOwnerFinalFence, unchangedFenceAt(fenceObservedAt)),
-      );
+      const result = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', scope, [
+        scheduledDiscountAbsence,
+      ]).pipe(Effect.provideService(PricingMaterialEvidenceOwnerFinalFence, unchangedFenceAt(fenceObservedAt)));
 
       expect(result.observedAt).toBe(fenceObservedAt);
       expect(result.sources.map(({ family }) => family)).toEqual(['DISCOUNT']);
@@ -446,7 +454,7 @@ describe('Verified-empty Counterparty Discount boundary at the final owner fence
   it.effect('rejects the unchanged empty set once the final fence observes its boundary', () =>
     Effect.gen(function* atBoundary() {
       for (const fenceObservedAt of [discountAbsenceBoundary, '2026-09-28T12:00:10.001Z']) {
-        const failure = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', [
+        const failure = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', scope, [
           scheduledDiscountAbsence,
         ]).pipe(
           Effect.provideService(PricingMaterialEvidenceOwnerFinalFence, unchangedFenceAt(fenceObservedAt)),
@@ -482,7 +490,7 @@ it.effect('keeps raw proof-reference conflicts across Catalog and another owner 
         return Effect.die('A cross-owner proof collision must fail before replay');
       },
     };
-    const failure = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', [
+    const failure = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', scope, [
       sourceAtRevisionA,
       colliding,
     ]).pipe(Effect.provideService(PricingMaterialEvidenceOwnerFinalFence, fence), Effect.flip);
@@ -510,9 +518,10 @@ it.effect('keeps legacy no-typed Catalog proof deduplication unchanged #1225', (
         });
       },
     };
-    const result = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', [catalogSource, catalogSource]).pipe(
-      Effect.provideService(PricingMaterialEvidenceOwnerFinalFence, fence),
-    );
+    const result = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', scope, [
+      catalogSource,
+      catalogSource,
+    ]).pipe(Effect.provideService(PricingMaterialEvidenceOwnerFinalFence, fence));
     expect(count).toBe(1);
     expect(result.sources).toHaveLength(1);
   }),

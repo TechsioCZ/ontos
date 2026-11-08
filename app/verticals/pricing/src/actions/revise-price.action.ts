@@ -421,6 +421,17 @@ export const handleRevisePrice = Effect.fn('RevisePriceAction.handle')(function*
 
 export const revisePriceAction = defineAction(
   {
+    // O18: this payload is a union whose RETIRE branch states no money value, so the declaration
+    // names no governed amount. Under an amount ceiling the gate refuses `deny.amount_required`
+    // rather than trusting a caller-supplied total; a per-branch amount needs a contract change.
+    accessDeclaration: {
+      key: 'commerce.pricing.price.revise',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'prices', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'commerce.pricing.revise-price.access.v1' },
     actionKey: 'commerce.pricing.revise-price',
     auditEvidenceSchema: Schema.Struct({
@@ -441,7 +452,7 @@ export const revisePriceAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.pricing.revise-price',
       moduleKey: MODULE_KEY,
       role: 'action',

@@ -1,10 +1,10 @@
-import { sha256 } from '@noble/hashes/sha2.js';
-import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { createHash } from 'node:crypto';
 
 import {
   ApplicationCompositionSchema,
   canonicalizeApplicationComposition,
   OntosModuleDeploymentContractSchema,
+  OntosShellRuntimeContractSchema,
   ONTOS_APPLICATION_COMPOSITION_SCHEMA_VERSION,
   ONTOS_SHELL_CONTRIBUTION_ABI,
   ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
@@ -16,17 +16,15 @@ import type {
   OntosModuleDeploymentContract,
 } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
-import { Hex } from 'effect/encoding';
 
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 
-export const contentDigest = (document: string): string => Hex.encode(sha256(utf8ToBytes(document)));
+export const contentDigest = (document: string): string => createHash('sha256').update(document, 'utf-8').digest('hex');
 
 const shellDeployment = {
   appId: ultramodernDeliveryUnit.appId,
   buildMarker: ultramodernDeliveryUnit.buildMarker,
 };
-const shellReleaseUrl = `https://${shellDeployment.appId}.example.test/releases/${shellDeployment.buildMarker}/`;
 const shellFederationManifestDocument = JSON.stringify({ exposes: [], name: 'shellSuperApp', shared: [] });
 const shellRuntimeContractDocument = JSON.stringify({
   contributionAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
@@ -35,7 +33,7 @@ const shellRuntimeContractDocument = JSON.stringify({
   schemaVersion: '2',
 });
 
-/** Test fixtures hash the exact bytes independently of the production verification code. */
+/** Test fixtures use native hashing independently of the production verification code. */
 export const sealComposition = (composition: ApplicationComposition): ApplicationComposition => ({
   ...composition,
   revision: contentDigest(canonicalizeApplicationComposition({ ...composition, revision: '0'.repeat(64) })),
@@ -43,9 +41,8 @@ export const sealComposition = (composition: ApplicationComposition): Applicatio
 
 const compositionModule = (
   contract: OntosModuleDeploymentContract,
-  backendBaseUrl?: string,
+  contractDocument: string,
 ): ApplicationCompositionModule => {
-  const contractDocument = JSON.stringify(contract);
   const digest = contentDigest(contractDocument);
   const { components, shellContributions } = contract.manifest.publicSurface;
   const [component] = components;
@@ -53,16 +50,13 @@ const compositionModule = (
     allowedContributions: Object.values(shellContributions).flatMap((items) =>
       items.map(({ contributionKey }) => contributionKey),
     ),
-    backend: {
-      baseUrl: backendBaseUrl ?? `https://${contract.deployment.appId}.example.test/`,
-      transport: 'node-http',
-    },
+    backend: { baseUrl: `https://${contract.deployment.appId}.example.test/`, transport: 'node-http' },
     contract: {
       sha256: digest,
       url: `https://${contract.deployment.appId}.example.test/.well-known/ontos-module-manifest.json`,
     },
     contractDocument,
-    dependencies: [],
+    dependencies: (contract.manifest.requirements?.intrinsic ?? []).map(({ moduleId }) => moduleId).toSorted(),
     deployment: contract.deployment,
     federation:
       component === undefined
@@ -78,7 +72,7 @@ const compositionModule = (
           },
     moduleId: contract.manifest.module.id,
     publicContract: { id: contract.manifest.module.id, sha256: digest, version: contract.schemaVersion },
-    requiredCoreCapabilities: [],
+    requiredCoreCapabilities: contract.manifest.requirements?.coreCapabilities ?? [],
     requiredShellAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
     sharedSingletons: [],
   };
@@ -87,34 +81,49 @@ const compositionModule = (
 export const makeCompositionSnapshot = (
   contractInputs: readonly unknown[],
   validityMs = 60_000,
-  backendBaseUrl?: string,
+  publishedShellRuntime?: {
+    readonly document: string;
+    readonly receiverDeployment: ApplicationComposition['shell']['deployment'];
+  },
 ): Effect.Effect<ActiveApplicationCompositionSnapshot> =>
   Effect.gen(function* makeSnapshot() {
-    const contracts = yield* Effect.forEach(
-      contractInputs,
-      (input) => Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)(input),
-      { concurrency: 1 },
-    ).pipe(Effect.orDie);
+    const modules = contractInputs.map((input) => {
+      const document = Schema.is(Schema.String)(input) ? input : JSON.stringify(input);
+      const contract = Schema.decodeUnknownSync(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(document);
+      return compositionModule(contract, document);
+    });
+    const receiverDeployment = publishedShellRuntime?.receiverDeployment ?? shellDeployment;
+    const receiverReleaseUrl = `https://${receiverDeployment.appId}.example.test/releases/${receiverDeployment.buildMarker}/`;
+    const runtimeDocument = publishedShellRuntime?.document ?? shellRuntimeContractDocument;
+    const runtimeContract = Schema.decodeUnknownSync(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
+      runtimeDocument,
+    );
+    if (
+      runtimeContract.deployment.appId !== receiverDeployment.appId ||
+      runtimeContract.deployment.buildMarker !== receiverDeployment.buildMarker
+    ) {
+      throw new Error('The actual Shell runtime document must match the compiled fixture receiver');
+    }
     const composition = sealComposition(
-      yield* Schema.decodeUnknownEffect(ApplicationCompositionSchema)({
-        modules: contracts.map((contract) => compositionModule(contract, backendBaseUrl)),
+      Schema.decodeUnknownSync(ApplicationCompositionSchema)({
+        modules,
         revision: '0'.repeat(64),
         schemaVersion: ONTOS_APPLICATION_COMPOSITION_SCHEMA_VERSION,
         shell: {
           contributionAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
-          coreCapabilities: [],
-          deployment: shellDeployment,
+          coreCapabilities: runtimeContract.coreCapabilities,
+          deployment: receiverDeployment,
           federationManifest: {
             sha256: contentDigest(shellFederationManifestDocument),
-            url: new URL('mf-manifest.json', shellReleaseUrl).href,
+            url: new URL('mf-manifest.json', receiverReleaseUrl).href,
           },
           runtimeContract: {
-            sha256: contentDigest(shellRuntimeContractDocument),
-            url: new URL(ONTOS_SHELL_RUNTIME_CONTRACT_PATH.slice(1), shellReleaseUrl).href,
+            sha256: contentDigest(runtimeDocument),
+            url: new URL(ONTOS_SHELL_RUNTIME_CONTRACT_PATH.slice(1), receiverReleaseUrl).href,
           },
           sharedSingletons: [],
         },
-      }).pipe(Effect.orDie),
+      }),
     );
     const observedAt = yield* DateTime.now;
     return { composition, observedAt, validUntil: DateTime.add(observedAt, { milliseconds: validityMs }) };

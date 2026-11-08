@@ -66,6 +66,18 @@ const handleSetCompanyMembership = Effect.fn('SetCompanyMembershipAction.handle'
 /** Company administrators and tenant superadmins execute this exact Action through SpiceDB. */
 export const setCompanyMembershipAction = defineAction(
   {
+    // This Action records a person's company relationship (affiliation and membership status) as organisation
+    // data. It never grants or removes authority: a role, an assignment and a management membership are written
+    // only by the canonical access-intent commands (AccessPeopleCommands), and the graph is projected from that
+    // intent alone. A company relationship that reads as access is therefore never this Action's outcome.
+    accessDeclaration: {
+      key: 'core.identity.company-membership.set',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'core.identity.set-company-membership.access.v1' },
     actionKey: 'core.identity.set-company-membership',
     auditEvidenceSchema: MembershipAuditEvidenceSchema,
@@ -74,7 +86,7 @@ export const setCompanyMembershipAction = defineAction(
     domainEvents: principalLifecycleDomainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.set-company-membership',
       moduleKey: 'core.identity',
       role: 'action',

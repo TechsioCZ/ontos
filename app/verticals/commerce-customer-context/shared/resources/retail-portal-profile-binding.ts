@@ -9,7 +9,6 @@ import {
   ProfileInstantSchema,
   ProfileRevisionSchema,
   RetailPortalBindingAuthorizationOperationSchema,
-  RetailPortalBindingAuthorizationStateSchema,
   RetailPortalBindingStateSchema,
   SellingLegalEntityRefSchema,
 } from '../domain/profile-contracts.ts';
@@ -42,7 +41,7 @@ export type RetailPortalPrincipalRef = typeof RetailPortalPrincipalRefSchema.Typ
  * profile lifecycle are intentionally absent and must be evaluated independently. */
 export const RetailPortalProfileBindingSchema = Schema.Struct({
   authorizationOperation: Schema.optionalKey(RetailPortalBindingAuthorizationOperationSchema),
-  authorizationState: Schema.optionalKey(RetailPortalBindingAuthorizationStateSchema),
+  authorizationState: Schema.optionalKey(RetailPortalBindingStateSchema),
   bindingRef: RetailPortalProfileBindingRefSchema,
   createdAt: ProfileInstantSchema,
   enrollmentAuthorityGroup: Schema.Literal('RETAIL_PORTAL_SELF_SERVICE'),

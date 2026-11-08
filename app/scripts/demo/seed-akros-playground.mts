@@ -18,7 +18,8 @@ import {
   StorefrontAssociationResultSchema,
 } from '../../verticals/commerce-market-catalog/shared/action-contracts.ts';
 import {
-  ApplyCommandPayloadSchema,
+  ChangeProductImagesPayloadSchema,
+  ManageMarketsPayloadSchema,
   ApplyCommandResultSchema,
 } from '../../verticals/merchandise/shared/actions/apply-command.ts';
 import {
@@ -62,7 +63,9 @@ import { bootstrapFrozenCatalog } from './akros-playground-bootstrap.mts';
 type CopyClient = Pick<SeedClient, 'call'>;
 
 const reason = 'Copy approved frozen AKROS catalog into its isolated playground';
-const Payload = Schema.toEncoded(ApplyCommandPayloadSchema);
+const ImagePayload = Schema.toEncoded(ChangeProductImagesPayloadSchema);
+const MarketPayload = Schema.toEncoded(ManageMarketsPayloadSchema);
+const Payload = Schema.Union([ImagePayload, MarketPayload]);
 const Result = Schema.toEncoded(ApplyCommandResultSchema);
 const marketAudience = 'commerce-market-catalog';
 const registryAudience = 'storefront-registry';
@@ -186,18 +189,29 @@ export const checkCopyBootstrap = (client: CopyClient, snapshot: CopySnapshot) =
   });
 
 const writeCommand = (client: CopyClient, command: (typeof Payload.Type)['command']) =>
-  readCopyRecords(client, { limit: 0, ordersLimit: 0, summary: true }).pipe(
-    Effect.flatMap(({ revision }) =>
-      client.call(
+  Effect.gen(function* writeFrozenCommand() {
+    const { revision } = yield* readCopyRecords(client, { limit: 0, ordersLimit: 0, summary: true });
+    const payload = { command, expectedRevision: revision };
+    if (Schema.is(ImagePayload)(payload)) {
+      return yield* client.call(
         'merchandise',
-        '/merchandise/actions/apply-command',
-        Payload,
-        { command, expectedRevision: revision },
+        '/merchandise/actions/change-product-images',
+        ImagePayload,
+        payload,
         Result,
         true,
-      ),
-    ),
-  );
+      );
+    }
+    const marketPayload = yield* Schema.decodeUnknownEffect(MarketPayload)(payload);
+    return yield* client.call(
+      'merchandise',
+      '/merchandise/actions/manage-markets',
+      MarketPayload,
+      marketPayload,
+      Result,
+      true,
+    );
+  });
 const compareMarket = (market: CopySnapshot['catalog']['markets'][number]) => ({
   channels: market.channels,
   effectivePeriod: market.effectivePeriod,
@@ -379,7 +393,7 @@ const uploadCopyImage = (client: CopyClient, productId: string, media: CopySnaps
   Effect.gen(function* uploadFrozenGalleryImage() {
     const filename = `${media.full.contentSha256}.${media.full.mimeType === 'image/jpeg' ? 'jpg' : media.full.mimeType.slice(6)}`;
     const image: Types.Mutable<
-      Extract<(typeof Payload.Type)['command'], { readonly _tag: 'ChangeProductImages' }>['change'] & {
+      (typeof ImagePayload.Type)['command']['change'] & {
         readonly _tag: 'Upload';
       }
     >['image'] = { filename, full: { contentBase64: media.full.contentBase64 } };

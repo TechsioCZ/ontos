@@ -18,6 +18,14 @@ import { engagementLifecycleRegistration } from './engagement-lifecycle-registra
 
 export const unarchivePersonEngagementAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.person-engagement.unarchive',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'engagements', level: 'manage' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
     ...engagementLifecycleRegistration<PersonEngagementLifecyclePayload>('party.registry.unarchive-person-engagement'),
     payloadSchema: PersonEngagementLifecyclePayloadSchema,
     resultSchema: PersonEngagementProfileSchema,

@@ -5,19 +5,31 @@ import { Effect, FileSystem, Redacted } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { parseSpiceDbDatabaseBootstrapConfig } from '../../src/install/spicedb-database-config.ts';
-import { toModuleAccessObjectId } from '../../src/permissions/context-access.ts';
+import { spicedbBootstrapYaml } from '../../src/install/spicedb-bootstrap-schema.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
 
-const extractSchema = (source: string): string =>
-  source
-    .slice(
-      'schema: |-\n'.length,
-      source.includes('\nrelationships: |-') ? source.indexOf('\nrelationships: |-') : source.length,
-    )
-    .trimEnd()
+/*
+ * The engine an environment starts from is a file this repository ships, and it must be exactly the
+ * schema Core serves (CUTOVER-PLAN §3.6, O62.3). Both bootstrap files are generated from the constant, so
+ * these cases are the drift check: a hand edit, a stale file after a schema change, or a returned
+ * `relationships:` block all fail here instead of at a stage promotion.
+ */
+
+const bootstrapFiles = ['bootstrap.yaml', 'stage-bootstrap.yaml'] as const;
+
+/** The schema a bootstrap file carries, read back out of its YAML block. */
+const schemaOf = (source: string): string => {
+  const start = source.indexOf('schema: |-\n');
+  if (start === -1) {
+    return '';
+  }
+  return source
+    .slice(start + 'schema: |-\n'.length)
     .split('\n')
-    .map((line) => line.replace(/^ {2}/u, ''))
-    .join('\n');
+    .map((line) => (line.startsWith('  ') ? line.slice(2) : line))
+    .join('\n')
+    .trimEnd();
+};
 
 it('bootstraps the fixed SpiceDB role and database with the exact configured password', () => {
   expect(
@@ -45,79 +57,68 @@ it('rejects unsafe SpiceDB database bootstrap configuration', () => {
   }
 });
 
+it('generates a schema-only bootstrap file and never a grant', () => {
+  const generated = spicedbBootstrapYaml('definition access_human {}\n');
+  expect(generated).toBe(
+    [
+      '# Generated from ONTOS_SPICEDB_SCHEMA (packages/core-runtime/src/permissions/schema.ts).',
+      '# Do not edit by hand: change the schema constant and regenerate (see',
+      '# src/install/spicedb-bootstrap-schema.ts, pinned by tests/unit/spicedb-database-bootstrap.test.ts).',
+      '#',
+      '# Schema only. Core projects every relationship from PostgreSQL intent, so a bootstrap file never',
+      '# carries development or stage grants, and the engine reads this file only when its datastore is empty.',
+      'schema: |-',
+      '  definition access_human {}',
+      '',
+    ].join('\n'),
+  );
+  // A bootstrap file is the schema and nothing else: a relationship block would be a grant nobody recorded.
+  expect(generated).not.toMatch(/relationships:|assertions:/u);
+  expect(schemaOf(generated)).toBe('definition access_human {}');
+});
+
 it.layer(NodeFileSystem.layer)('SpiceDB bootstrap sources', (suite) => {
-  suite.effect('keeps the stage bootstrap schema aligned without development relationships', () =>
-    Effect.gen(function* testScenario1() {
+  suite.effect('pins both bootstrap files to the schema Core serves', () =>
+    Effect.gen(function* pinsBootstrapFiles() {
+      const fs = yield* FileSystem.FileSystem;
+      for (const name of bootstrapFiles) {
+        const source = yield* fs.readFileString(fileURLToPath(new URL(`../../spicedb/${name}`, import.meta.url)));
+        // Byte for byte: the file is the generator's output, so an edit or a stale file fails here.
+        expect(source).toBe(spicedbBootstrapYaml());
+        expect(source).not.toMatch(/relationships:|assertions:/u);
+        expect(schemaOf(source)).toBe(ONTOS_SPICEDB_SCHEMA.trimEnd());
+      }
+    }),
+  );
+
+  suite.effect('reports a hand-edited bootstrap file as drift', () =>
+    Effect.gen(function* reportsDrift() {
       const fs = yield* FileSystem.FileSystem;
       const development = yield* fs.readFileString(
         fileURLToPath(new URL('../../spicedb/bootstrap.yaml', import.meta.url)),
       );
+      // The negative control: the same file with one added grant is no longer the generated file, which
+      // is exactly what the pin above compares.
+      const edited = `${development}relationships: |-\n  tenant:t#member@principal:p\n`;
+      expect(edited).not.toBe(spicedbBootstrapYaml());
+      expect(edited).toMatch(/relationships:/u);
+    }),
+  );
+
+  suite.effect('carries the v2 definitions the engine decides on', () =>
+    Effect.gen(function* carriesV2Definitions() {
+      const fs = yield* FileSystem.FileSystem;
       const stage = yield* fs.readFileString(
         fileURLToPath(new URL('../../spicedb/stage-bootstrap.yaml', import.meta.url)),
       );
-      expect(extractSchema(development)).toBe(ONTOS_SPICEDB_SCHEMA);
-      expect(extractSchema(stage)).toBe(ONTOS_SPICEDB_SCHEMA);
-      expect(stage).not.toMatch(/relationships:|assertions:/u);
-      expect(development).toMatch(/#role@scoped_role:test-executor#member/u);
-      expect(development).toMatch(/scoped_role:test-executor#member@principal:allowed-principal/u);
-      expect(development).not.toMatch(/#executor@|#restriction@|is_restricted/u);
-      expect(development).toMatch(/relation containing_catalog: business_permission/u);
-      expect(development).toMatch(/relation self_service_grantee: principal/u);
-      expect(development).toMatch(/relation role_grantee: scoped_role#member/u);
-      expect(development).toMatch(/relation read_scope: tenant \| legal_entity/u);
-      expect(development).toMatch(/relation write_scope: tenant \| legal_entity/u);
-      expect(development).toMatch(
-        /permission direct_use = \(grantee \+ role_use \+ read_scope->read_all \+ write_scope->write_all\) & \(tenant->access \+ legal_entity->access\)/u,
-      );
-      expect(development).toMatch(
-        /permission use = self_service_grantee \+ direct_use \+ \(tenant->access & containing_catalog->direct_use\)/u,
-      );
-    }),
-  );
-
-  suite.effect('grants fresh development module access only to Contacts', () =>
-    Effect.gen(function* testScenario2() {
-      const fs = yield* FileSystem.FileSystem;
-      const development = yield* fs.readFileString(
-        fileURLToPath(new URL('../../spicedb/bootstrap.yaml', import.meta.url)),
-      );
-      const tenantId = '50000000-0000-4000-8000-000000000001';
-      const legalEntityId = '55000000-0000-4000-8000-000000000001';
-      const contactsObjectId = toModuleAccessObjectId(tenantId, legalEntityId, 'contacts.core');
-      expect(contactsObjectId !== undefined && contactsObjectId.length > 0).toBe(true);
-      expect(
-        development.match(/^ {2}module_access:\S+#accessor@principal:60000000-0000-4000-8000-000000000001$/gmu),
-      ).toEqual([`  module_access:${contactsObjectId}#accessor@principal:60000000-0000-4000-8000-000000000001`]);
-    }),
-  );
-
-  suite.effect('declares the complete Party tenant permission vocabulary', () =>
-    Effect.gen(function* testScenario3() {
-      const fs = yield* FileSystem.FileSystem;
-      const development = yield* fs.readFileString(
-        fileURLToPath(new URL('../../spicedb/bootstrap.yaml', import.meta.url)),
-      );
-      for (const permission of [
-        'manage_party_identity',
-        'manage_party_relationships',
-        'merge_party_identity',
-        'read_party_identity',
-        'review_party_identity',
-      ]) {
-        expect(development).toMatch(new RegExp(`permission ${permission} =`, 'u'));
+      for (const definition of ['access_human', 'agent', 'access_scope', 'access_assignment', 'access_record']) {
+        expect(stage).toMatch(new RegExp(`definition ${definition} \\{`, 'u'));
       }
-    }),
-  );
-
-  suite.effect('declares the Counterparty Legal Entity permission vocabulary', () =>
-    Effect.gen(function* testScenario4() {
-      const fs = yield* FileSystem.FileSystem;
-      const development = yield* fs.readFileString(
-        fileURLToPath(new URL('../../spicedb/bootstrap.yaml', import.meta.url)),
-      );
-      for (const permission of ['manage_counterparty', 'read_counterparty']) {
-        expect(development).toMatch(new RegExp(`permission ${permission} =`, 'u'));
+      for (const caveat of ['amount_ceiling', 'target_set', 'bounded_target_set']) {
+        expect(stage).toMatch(new RegExp(`caveat ${caveat}\\(`, 'u'));
       }
+      // The v2 relations accept a verified human and an agent, never an arbitrary principal (O46).
+      expect(stage).toMatch(/relation member: access_human \|/u);
     }),
   );
 });

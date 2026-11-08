@@ -1,11 +1,20 @@
 import { defineTenantModuleEntrypoint } from '@app/core-runtime/module-entrypoint';
+import { defineRouteMeta } from '@app/core-runtime/route-meta';
 
-const routeMeta = {
+const routeMeta = defineRouteMeta({
+  accessDeclaration: {
+    key: 'demo.merchandise.page-orders.read',
+    kind: 'read',
+    modes: ['run'],
+    placement: { group: 'merchandise', level: 'basic' },
+    risk: 'routine',
+    selectors: [],
+  },
   canonicalPath: '/prodej/objednavky',
   descriptionKey: 'merchandise.pages.orders.description',
   entrypoint: defineTenantModuleEntrypoint({
     access: 'read',
-    authorization: { kind: 'context_permission', permission: 'module.access' },
+    authorization: { kind: 'protected' },
     entrypointKey: 'demo.merchandise.page.orders',
     moduleKey: 'demo.merchandise',
     role: 'page',
@@ -23,7 +32,7 @@ const routeMeta = {
   public: false,
   publicSurface: 'private-app-screen',
   titleKey: 'merchandise.pages.orders.title',
-} as const;
+});
 
 export default routeMeta;
 export { routeMeta };

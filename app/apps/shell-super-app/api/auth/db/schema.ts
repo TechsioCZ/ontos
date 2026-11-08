@@ -28,6 +28,7 @@ export const AUTH_TABLE_INVENTORY = [
   'oauth_access_token',
   'oauth_consent',
   'oauth_client_assertion',
+  'gateway_relay_exchanges',
 ] as const;
 
 export const authSchema = pgSchema(AUTH_SCHEMA_NAME);
@@ -366,9 +367,25 @@ export const oauthClientAssertion = authSchema.table('oauth_client_assertion', {
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
 });
 
+export const gatewayRelayExchanges = authSchema.table(
+  'gateway_relay_exchanges',
+  {
+    sourceJti: uuid('source_jti').notNull(),
+    exchangeId: uuid('exchange_id').notNull(),
+    requestFingerprint: text('request_fingerprint').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('auth_gateway_relay_source_exchange_uk').on(table.sourceJti, table.exchangeId),
+    index('auth_gateway_relay_expires_at_idx').on(table.expiresAt),
+  ],
+);
+
 export const authDatabaseSchema = {
   account,
   apikey,
+  gatewayRelayExchanges,
   jwks,
   oauthAccessToken,
   oauthClient,
@@ -431,4 +448,5 @@ export const AUTH_TABLES = [
   oauthAccessToken,
   oauthConsent,
   oauthClientAssertion,
+  gatewayRelayExchanges,
 ] as const;

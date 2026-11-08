@@ -19,6 +19,7 @@ import {
   TenantModuleStateServiceLive,
   loadDatabaseConnectionPair,
   makeDatabaseIdentityEnrollmentLive,
+  LegalEntityContextLive,
 } from '@app/core-runtime';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
@@ -27,6 +28,7 @@ import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/module
 import { NodeHttpServer, NodeRuntime, NodeServices, NodeCrypto, NodeSocket } from '@effect/platform-node';
 import {
   Config,
+  ConfigProvider,
   Context,
   Crypto,
   FileSystem,
@@ -51,6 +53,7 @@ import { shellAuthenticationFrameworkLive } from './shell-authentication.ts';
 import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
 import { GatewayIssuerLive } from '../../api/auth/gateway-issuer.ts';
 import { StaffAuthenticationNamespaceRegistryLive } from '../../api/auth/authentication-namespace-registry.ts';
+import { GatewayModuleBindingSchema } from '../../api/auth/gateway-delegation-policy.ts';
 import { ShellInstalledModuleCatalogLive } from '../../api/modules/installed-module-catalog.ts';
 import { AuthPersistenceLive } from '../../api/auth/runtime-infrastructure.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
@@ -61,7 +64,11 @@ import {
   ShellNativeChildCommandSchema,
   ShellNativeChildReadySchema,
   ShellNativeChildResponseSchema,
+  ShellNativeRelaySourceSchema,
+  ShellNativeRelaySourceIssueCommandSchema,
+  ShellNativeRelaySourceBoundCommandSchema,
 } from '../fixtures/api-key-gateway-native.ts';
+import { nativeShellAccessGateLive } from './native-shell-access-gate.ts';
 
 class ShellNativeChildUnavailable extends Schema.TaggedError<ShellNativeChildUnavailable>()(
   'ShellNativeChildUnavailable',
@@ -73,6 +80,7 @@ const unavailable = (cause?: unknown) =>
     reason: 'The owned Shell child is unavailable',
   });
 const bounded = Effect.timeoutOrElse({ duration: Duration.seconds(20), orElse: () => Effect.fail(unavailable()) });
+
 const sendPrivate = Effect.fn('ShellNativeChild.sendPrivate')(function* sendPrivate(
   writer: Socket.Writer,
   response: typeof ShellNativeChildResponseSchema.Encoded,
@@ -141,12 +149,34 @@ const serve = Effect.scoped(
     const email = `native-${suffix}@fixture.invalid`;
     const password = Redacted.make(`${yield* crypto.randomUUIDv4()}${yield* crypto.randomUUIDv4()}`);
     const providerUserId = yield* authentication.createFixtureUser(email, 'Owned native gateway fixture', password);
+    const relaySource = yield* Config.schema(
+      Schema.fromJsonString(Schema.OptionFromNullOr(ShellNativeRelaySourceSchema)),
+      'ONTOS_SHELL_NATIVE_RELAY_SOURCE',
+    ).pipe(Config.withDefault(Option.none()), Effect.mapError(unavailable));
+    const relaySourceUser = yield* Effect.gen(function* createRelaySourceUser() {
+      if (Option.isNone(relaySource)) {
+        return Option.none();
+      }
+      const sourceEmail = `native-source-${suffix}@fixture.invalid`;
+      const sourcePassword = Redacted.make(`${yield* crypto.randomUUIDv4()}${yield* crypto.randomUUIDv4()}`);
+      return Option.some({
+        email: sourceEmail,
+        password: sourcePassword,
+        providerUserId: yield* authentication.createFixtureUser(
+          sourceEmail,
+          'Owned native relay source fixture',
+          sourcePassword,
+        ),
+      });
+    });
     const keys = yield* makeApiKeyService().pipe(
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, database),
     );
     const issuedKey = yield* Ref.make(Option.none<string>());
     const issueAttempted = yield* Ref.make(false);
+    const sourceIssueAttempted = yield* Ref.make(false);
+    const issuedSourceKey = yield* Ref.make(Option.none<string>());
     const sessionCookie = yield* Ref.make(Option.none<string>());
     const sessionPrincipal = yield* Ref.make(
       Option.none<{ readonly principalId: string; readonly tenantId: string }>(),
@@ -176,6 +206,11 @@ const serve = Effect.scoped(
       // The Shell's production enrollment: Party Registry gateway grants target its dedicated identity.
       Layer.provide(makeDatabaseIdentityEnrollmentLive(SHELL_DATABASE_IDENTITY_ENROLLMENT)),
     );
+    // The child scripts one access gate for the fixture's own manager journey: a scripted ALLOW, and the
+    // tenant's own companies for the company question.
+    const accessGate = nativeShellAccessGateLive.pipe(
+      Layer.provide(LegalEntityContextLive.pipe(Layer.provide(runtimeCore))),
+    );
     const runtime = makeShellAuthenticationApiRuntime(
       runtimeAuthentication,
       issuer,
@@ -184,34 +219,63 @@ const serve = Effect.scoped(
       false,
       // Production context access: gateway issuance revalidates the staff principal through its namespace registry.
       Layer.mergeAll(ContextAccessLive, StaffAuthenticationNamespaceRegistryLive),
-    );
-    const handler = yield* Effect.acquireRelease(
-      Effect.promise(resolveEffectBffModuleHandler.bind(undefined, { default: runtime }, {})).pipe(
-        Effect.flatMap((value) => (value === null ? Effect.fail(unavailable()) : Effect.succeed(value))),
-      ),
-      (value) => (value.dispose === undefined ? Effect.void : Effect.promise(value.dispose).pipe(Effect.orDie)),
+      undefined,
+      undefined,
+      undefined,
+      accessGate,
     );
     const server = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
     if (!Schema.is(Schema.Struct({ port: Schema.Int }))(server.address)) {
       return yield* unavailable();
     }
-    yield* server.serve(
-      Effect.gen(function* forwardActualShellRequest() {
-        const request = yield* HttpServerRequest.toWeb(yield* HttpServerRequest.HttpServerRequest);
-        const response = yield* Effect.tryPromise({
-          catch: unavailable,
-          try: dispatchEffectBffRequest.bind(
-            undefined,
-            handler.handler,
-            request,
-            new URL(request.url).pathname.startsWith(`${shellAuthenticationApiContract.apiPrefix}/`)
-              ? { prefix: shellAuthenticationApiContract.apiPrefix }
-              : {},
-          ),
-        }).pipe(bounded);
-        return HttpServerResponse.fromWeb(response);
-      }),
-    );
+    const originalProvider = yield* ConfigProvider.ConfigProvider;
+    const mounted = yield* Ref.make(false);
+    const mountRuntime = Effect.fn('ShellNativeChild.mountRuntime')(function* mountRuntime(bindings?: string) {
+      if (yield* Ref.getAndSet(mounted, true)) {
+        return yield* unavailable();
+      }
+      const module =
+        bindings === undefined
+          ? { default: runtime }
+          : {
+              api: runtime.api,
+              layer: runtime.layer.pipe(
+                Layer.provideMerge(
+                  ConfigProvider.layer(
+                    ConfigProvider.fromEnvRecord({ ONTOS_GATEWAY_MODULE_BINDINGS: bindings }).pipe(
+                      ConfigProvider.orElse(originalProvider),
+                    ),
+                  ),
+                ),
+              ),
+            };
+      const handler = yield* Effect.acquireRelease(
+        Effect.promise(resolveEffectBffModuleHandler.bind(undefined, module, {})).pipe(
+          Effect.flatMap((value) => (value === null ? Effect.fail(unavailable()) : Effect.succeed(value))),
+        ),
+        (value) => (value.dispose === undefined ? Effect.void : Effect.promise(value.dispose).pipe(Effect.orDie)),
+      );
+      return yield* server.serve(
+        Effect.gen(function* forwardActualShellRequest() {
+          const request = yield* HttpServerRequest.toWeb(yield* HttpServerRequest.HttpServerRequest);
+          const response = yield* Effect.tryPromise({
+            catch: unavailable,
+            try: dispatchEffectBffRequest.bind(
+              undefined,
+              handler.handler,
+              request,
+              new URL(request.url).pathname.startsWith(`${shellAuthenticationApiContract.apiPrefix}/`)
+                ? { prefix: shellAuthenticationApiContract.apiPrefix }
+                : {},
+            ),
+          }).pipe(bounded);
+          return HttpServerResponse.fromWeb(response);
+        }),
+      );
+    });
+    if (Option.isNone(relaySource)) {
+      yield* mountRuntime();
+    }
     const baseUrl = `http://127.0.0.1:${server.address.port}`;
     const sessionGateway = Effect.fn('ShellNativeChild.sessionGateway')(function* sessionGateway(
       request: typeof GatewayContextRequestSchema.Type,
@@ -277,10 +341,12 @@ const serve = Effect.scoped(
       }).pipe(Effect.provide(FetchHttpClient.layer));
       return yield* sendPrivate(writer, { _tag: 'session-gateway', gateway });
     });
-    const encoded = yield* Schema.decodeUnknownEffect(ShellNativeChildReadySchema)({
-      baseUrl,
-      providerUserId,
-    }).pipe(Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(ShellNativeChildReadySchema))));
+    const readiness = Option.isNone(relaySourceUser)
+      ? { baseUrl, providerUserId }
+      : { baseUrl, providerUserId, relaySourceProviderUserId: relaySourceUser.value.providerUserId };
+    const encoded = yield* Schema.decodeUnknownEffect(ShellNativeChildReadySchema)(readiness).pipe(
+      Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(ShellNativeChildReadySchema))),
+    );
     yield* Effect.sync(() => process.stdout.write(`${encoded}\n`));
     // Consuming this stream acquires the reader/open latch before any response is written.
     const commands = Socket.toStream(socket).pipe(Stream.decodeText(), Stream.splitLines);
@@ -334,6 +400,57 @@ const serve = Effect.scoped(
           }
           if (Schema.is(ShellNativeSessionGatewayCommandSchema)(command)) {
             return yield* sessionGateway(command.request);
+          }
+          if (Schema.is(ShellNativeRelaySourceIssueCommandSchema)(command)) {
+            const actor = yield* Ref.get(sessionPrincipal);
+            if (
+              Option.isNone(relaySourceUser) ||
+              Option.isNone(actor) ||
+              actor.value.principalId === command.principalId ||
+              actor.value.tenantId !== command.tenantId ||
+              (yield* Ref.getAndSet(sourceIssueAttempted, true))
+            ) {
+              return yield* unavailable();
+            }
+            const session = yield* authentication.signIn(
+              relaySourceUser.value.email,
+              relaySourceUser.value.password,
+              new Headers({ origin: configuration.baseUrl }),
+            );
+            if (
+              session.identity.principalId !== command.principalId ||
+              session.identity.tenantId !== command.tenantId
+            ) {
+              return yield* unavailable();
+            }
+            const cookie = session.setCookieHeaders.map((value) => value.split(';')[0]).join('; ');
+            const issued = yield* keys.issue(new Headers({ cookie, origin: configuration.baseUrl }), {
+              issuerPrincipalId: command.principalId,
+              lifecycleOperationId: yield* crypto.randomUUIDv4(),
+              name: 'Owned Market relay source proof',
+              tenantId: command.tenantId,
+            });
+            yield* Ref.set(issuedSourceKey, Option.some(issued.providerKeyId));
+            return yield* sendPrivate(writer, {
+              _tag: 'issued',
+              providerKeyId: issued.providerKeyId,
+              secret: Redacted.value(issued.secret),
+            });
+          }
+          if (Schema.is(ShellNativeRelaySourceBoundCommandSchema)(command)) {
+            const sourceKey = yield* Ref.get(issuedSourceKey);
+            if (Option.isNone(relaySource) || Option.isNone(sourceKey)) {
+              return yield* unavailable();
+            }
+            const bindings = yield* Schema.decodeEffect(Schema.Array(GatewayModuleBindingSchema))([
+              { ...relaySource.value, providerKeyId: sourceKey.value },
+            ]).pipe(
+              Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(Schema.Array(GatewayModuleBindingSchema)))),
+              Effect.mapError(unavailable),
+            );
+            yield* keys.clearPendingCleanup(sourceKey.value);
+            yield* mountRuntime(bindings);
+            return yield* sendPrivate(writer, { _tag: 'ack' });
           }
           const key = yield* Ref.get(issuedKey);
           if (Option.isNone(key)) {

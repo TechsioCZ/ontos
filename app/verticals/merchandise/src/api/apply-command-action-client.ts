@@ -4,7 +4,7 @@
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { Effect, Redacted, Schema } from 'effect';
 import { ApplyCommandActionApi, ApplyCommandPayloadSchema } from '../../shared/apis/apply-command-action.ts';
-import type { ApplyCommandPayloadEncoded } from '../../shared/actions/apply-command.ts';
+import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
 import { operationGateway } from './action-gateway.ts';
 
 const traceIdOption = 'traceId' as const;
@@ -14,6 +14,11 @@ export interface ApplyCommandActionClientOptions {
   readonly compositionRevision?: string;
   readonly gateway?: Parameters<typeof operationGateway.invoke>[1];
   readonly idempotencyKey: string;
+  /**
+   * O80: ask for a parked proposal instead of an immediate write. Omitted means the ordinary run, so a
+   * refusal is never turned into a proposal on the caller's behalf.
+   */
+  readonly intent?: 'propose';
   readonly referenceCredentials?: Redacted.Redacted;
   readonly [traceIdOption]?: string;
 }
@@ -38,17 +43,17 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
       credential,
       defaultApiPrefix: '/merchandise-api',
       idempotencyKey: options.idempotencyKey,
+      intent: options.intent,
       requestCorrelation,
     },
     options,
   );
 
 export const executeApplyCommandWithAuthorization = (
-  payload: ApplyCommandPayloadEncoded,
+  payload: ApplyCommandPayload,
   ...[credential, requestCorrelation, options]: AuthorizedInvocation
 ) =>
-  Schema.decodeEffect(ApplyCommandPayloadSchema)(payload).pipe(
-    Effect.flatMap(Schema.encodeEffect(ApplyCommandPayloadSchema)),
+  Schema.encodeUnknownEffect(ApplyCommandPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
         Effect.flatMap((client) => client.applyCommandAction.execute({ payload: encoded })),
@@ -57,7 +62,7 @@ export const executeApplyCommandWithAuthorization = (
   );
 
 export const executeApplyCommand = (
-  payload: ApplyCommandPayloadEncoded,
+  payload: ApplyCommandPayload,
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(

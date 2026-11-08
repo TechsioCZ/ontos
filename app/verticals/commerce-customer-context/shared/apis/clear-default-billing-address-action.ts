@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.customer-context
 // @ontos-action-http-slug clear-default-billing-address
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/clear-default-billing-address.ts';
 
 export { ClearDefaultBillingAddressPayloadSchema } from '../actions/clear-default-billing-address.ts';
-
 export const ClearDefaultBillingAddressActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ClearDefaultBillingAddressActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const ClearDefaultBillingAddressActionForbiddenProblemSchema = makeProble
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -152,7 +153,7 @@ export const clearDefaultBillingAddressActionGroupDefinition = HttpApiGroup.make
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/clear-default-billing-address', {
       error: actionErrors,
       payload: Schema.toEncoded(ClearDefaultBillingAddressPayloadSchema),
-      success: ClearDefaultBillingAddressResultSchema,
+      success: [ActionProposalAcceptedSchema, ClearDefaultBillingAddressResultSchema],
     }),
   )
   .middleware(ClearDefaultBillingAddressActionSchemaErrorMiddleware);

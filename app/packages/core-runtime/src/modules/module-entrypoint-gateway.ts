@@ -33,10 +33,12 @@ export interface ModuleEntrypointGatewayService {
   readonly prepareSnapshot: (
     context: Readonly<TrustedPrincipalContext>,
     entrypoints: readonly ModuleEntrypointDescriptor[],
+    intrinsicDependencies?: ReadonlyMap<string, readonly string[]>,
   ) => Effect.Effect<ModuleStateSnapshot, ModuleStateCheckUnavailableError>;
   readonly prepareSnapshotInput: <Input>(
     context: Input,
     entrypoints: readonly ModuleEntrypointDescriptor[],
+    intrinsicDependencies?: ReadonlyMap<string, readonly string[]>,
   ) => Effect.Effect<ModuleStateSnapshot, ModuleStateCheckUnavailableError>;
   readonly run: <Value, AuthorizationError, LoadError, Requirements>(
     input: RunGatedModuleEntrypointInput<Value, AuthorizationError, LoadError, Requirements>,
@@ -46,10 +48,16 @@ export interface ModuleEntrypointGatewayService {
 export const makeModuleEntrypointGateway = <Gate extends ModuleStateGateService>(
   gate: Gate,
 ): ModuleEntrypointGatewayService => {
-  const prepareSnapshotInput = <Input>(context: Input, entrypoints: readonly ModuleEntrypointDescriptor[]) =>
+  const prepareSnapshotInput = <Input>(
+    context: Input,
+    entrypoints: readonly ModuleEntrypointDescriptor[],
+    intrinsicDependencies?: ReadonlyMap<string, readonly string[]>,
+  ) =>
     decodeTrustedPrincipalContext(context).pipe(
       Effect.mapError(unavailable),
-      Effect.flatMap((trustedContext) => gate.prepareSnapshot(trustedContext.tenantId, entrypoints)),
+      Effect.flatMap((trustedContext) =>
+        gate.prepareSnapshot(trustedContext.tenantId, entrypoints, intrinsicDependencies),
+      ),
     );
   return {
     check: gate.check,

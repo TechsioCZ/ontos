@@ -1,4 +1,4 @@
-import { Cause, DateTime, Effect, Exit, Schema } from 'effect';
+import { Cause, Crypto, DateTime, Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -15,10 +15,7 @@ import { CommerceEnrollmentOwnerEffectUnavailable } from '../../src/enrollment/o
 import type { RetailPortalBindingOwnerExecutors } from '../../src/enrollment/journeys/retail-self-enrollment-profile-owners.ts';
 import { CommerceEnrollmentOwnerTransitionSchema } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
 import { RetailPortalBindingResultSchema } from '../../shared/actions/bind-retail-portal-profile.ts';
-import {
-  RETAIL_PORTAL_SELF_SERVICE_BASELINE,
-  SellingLegalEntityRefSchema,
-} from '../../shared/domain/profile-contracts.ts';
+import { SellingLegalEntityRefSchema } from '../../shared/domain/profile-contracts.ts';
 import { RetailCustomerProfileRefSchema } from '../../shared/resources/retail-customer-profile.ts';
 import { RetailPortalPrincipalRefSchema } from '../../shared/resources/retail-portal-profile-binding.ts';
 
@@ -45,10 +42,20 @@ const sellingLegalEntityRef = Schema.decodeSync(SellingLegalEntityRefSchema)({
   resourceType: 'core.identity.legal-entity',
   tenantId,
 });
+const ownerCrypto = Crypto.make({
+  digest: () => Effect.succeed(new Uint8Array()),
+  randomBytes: (size) => new Uint8Array(size).fill(1),
+});
 const input = {
   compositionRevision: 'a'.repeat(64),
+  crypto: ownerCrypto,
   effectiveAt: DateTime.makeUnsafe(at),
   enrollmentEvidenceRef: '60000000-0000-4000-8000-000000000032',
+  originator: {
+    actionInvocationId: '70000000-0000-4000-8000-000000000032',
+    compositionRevision: 'a'.repeat(64),
+    tenantId,
+  },
   principalRef,
   profileRef,
   reason: 'Current baseline unit scenario',
@@ -174,20 +181,12 @@ it.effect('preserves Current read interruption', () =>
   }),
 );
 
-it.effect('requires the exact reviewed intent set even when a Current reader allows', () =>
-  Effect.gen(function* partialIntents() {
-    const partial = {
-      ...active,
-      permissionMutations: RETAIL_PORTAL_SELF_SERVICE_BASELINE.slice(1).map((permission, index) => ({
-        mutationId: `80000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
-        operation: 'grant' as const,
-        permission,
-        staged: true,
-      })),
-    };
+it.effect('requires the binding to carry its own ACTIVE grant even when a Current reader allows', () =>
+  Effect.gen(function* missingAuthorization() {
+    const { authorizationOperation: _operation, authorizationState: _state, ...unauthorized } = active;
     const outcome = yield* retailPortalBindingOwnerEffect(input, {
       ...executors(() => Effect.succeed(true)),
-      bindProfile: () => Effect.succeed(partial),
+      bindProfile: () => Effect.succeed(unauthorized),
     }).dispatch(transition);
     expect(outcome.status).toBe('FAILED');
   }),
@@ -197,7 +196,6 @@ const currentProjection = {
   outcome: 'BINDING_AVAILABLE',
   payload: {
     actionInvocationId: transition.ownerInvocationId,
-    authorizationMutationId: transition.ownerInvocationId,
     authorizationOperation: 'grant',
     authorizationState: 'ACTIVE',
     bindingId,
@@ -224,18 +222,11 @@ for (const projection of [currentProjection, reconciliationProjection]) {
         invoke: (routine) =>
           Schema.decodeUnknownEffect(Schema.Array(routine.resultSchema))([projection]).pipe(Effect.orDie),
       };
-      const services = profilePersistenceServicesForTransaction(
-        transaction,
-        {
-          legalEntityId: sellingLegalEntityRef.resourceId,
-          principalId,
-          tenantId,
-        },
-        {
-          readRetailPermissions: () =>
-            Effect.succeed({ observedAt: at, permissions: RETAIL_PORTAL_SELF_SERVICE_BASELINE, revision: '1' }),
-        },
-      );
+      const services = profilePersistenceServicesForTransaction(transaction, {
+        legalEntityId: sellingLegalEntityRef.resourceId,
+        principalId,
+        tenantId,
+      });
       const response = yield* services.retailPortalProfileBindingRead.readBinding(
         { bindingRef: active.bindingRef, profileRef },
         principalId,
@@ -259,12 +250,8 @@ for (const control of [
   'different-profile',
   'different-principal',
   'different-evidence',
-  'pending-authorization',
   'revoked-binding',
   'revoke-operation',
-  'partial-permissions',
-  'duplicate-permissions',
-  'absent-permissions',
 ] as const) {
   it.effect(`observes only the exact original Retail enrollment binding: ${control}`, () =>
     Effect.gen(function* exactRetailCurrentReader() {
@@ -280,9 +267,6 @@ for (const control of [
       }
       if (control === 'different-evidence') {
         payload.enrollmentEvidenceRef = transition.ownerInvocationId;
-      }
-      if (control === 'pending-authorization') {
-        payload.authorizationState = 'PENDING_GRANT';
       }
       if (control === 'revoked-binding') {
         payload.state = 'REVOKED';
@@ -315,23 +299,6 @@ for (const control of [
           tenantId,
         },
         { bindingId, enrollmentEvidenceRef: input.enrollmentEvidenceRef, profileId },
-        (scope) => {
-          expect(scope.tenantId).toBe(tenantId);
-          expect(scope.legalEntityId).toBe(sellingLegalEntityRef.resourceId);
-          expect(scope.profileId).toBe(profileId);
-          let permissions: readonly (typeof RETAIL_PORTAL_SELF_SERVICE_BASELINE)[number][] =
-            RETAIL_PORTAL_SELF_SERVICE_BASELINE;
-          if (control === 'partial-permissions') {
-            permissions = RETAIL_PORTAL_SELF_SERVICE_BASELINE.slice(1);
-          }
-          if (control === 'duplicate-permissions') {
-            permissions = [...RETAIL_PORTAL_SELF_SERVICE_BASELINE, ...RETAIL_PORTAL_SELF_SERVICE_BASELINE];
-          }
-          if (control === 'absent-permissions') {
-            permissions = [];
-          }
-          return Effect.succeed({ observedAt: at, permissions, revision: '1' });
-        },
       );
       expect(current).toBe(control === 'valid');
     }),

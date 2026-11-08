@@ -1,3 +1,4 @@
+import { subjectInspectionFixture } from '../oauth-connections-admin/subject-inspection.fixture.ts';
 // @rstest-environment node
 import {
   ContextAccess,
@@ -16,6 +17,8 @@ import {
   TenantModuleStateReadUnavailableError,
 } from '@app/core-runtime';
 import type { ContextAccessService, OAuthGrantRecord, ReadCoreError, TenantModuleStateRecord } from '@app/core-runtime';
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
+import type { GateInput } from '@app/core-runtime/access/enforcement';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
 import { staffAuthenticationNamespaceRegistryLayer } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
@@ -48,8 +51,13 @@ import {
   ShellInstalledModuleCatalog,
 } from '../../../api/modules/installed-module-catalog.ts';
 import type { ShellInstalledCatalog } from '../../../api/modules/installed-module-catalog.ts';
-import { ShellGovernedReads, createShellGovernedReadsLayer } from '../../../api/modules/shell-governed-reads.ts';
+import {
+  ShellGovernedReads,
+  createShellGovernedReadDefinitionsLayer,
+  createShellGovernedReadsLayer,
+} from '../../../api/modules/shell-governed-reads.ts';
 import { ShellCompositionFactoryLive } from '../../../api/modules/shell-composition.ts';
+import { ShellGovernedReadDefinitions } from '../../../api/modules/shell-governed-read-definitions.ts';
 import type { ShellGovernedReadsService } from '../../../api/modules/shell-governed-reads.ts';
 import { makeShellSearch, ShellResourceServicesFactoryLive } from '../../../api/modules/shell-resources.ts';
 import { ConnectionUnauthorized } from '../../../api/oauth-connections/errors.ts';
@@ -129,10 +137,18 @@ const contract = (moduleId: string, appId: string, resourceTypes: readonly strin
         reports: [],
         resourceDetails: [],
         search: resourceTypes.map((_type, index) => ({
+          accessDeclaration: {
+            key: `${moduleId}.search${index}.read`,
+            kind: 'read',
+            modes: ['run'],
+            placement: { group: 'search', level: 'basic' },
+            risk: 'routine',
+            selectors: [],
+          },
           contributionKey: `${moduleId}.search${index}.contribution`,
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: { kind: 'protected' },
             entrypointKey: `${moduleId}.search${index}`,
             moduleKey: moduleId,
             role: 'search',
@@ -148,22 +164,20 @@ const contract = (moduleId: string, appId: string, resourceTypes: readonly strin
   schemaVersion: '2',
 });
 
-const installedCatalog = (types: readonly string[] = [alphaType]) =>
-  makeInstalledModuleCatalogLoader(
-    makeCompositionSnapshot([
-      contract(alphaModule, 'fixture-notes', types),
-      contract(betaModule, 'fixture-other', [betaType]),
-    ]),
-  );
+const approvedComposition = (types: readonly string[] = [alphaType]) =>
+  makeCompositionSnapshot([
+    contract(alphaModule, 'fixture-notes', types),
+    contract(betaModule, 'fixture-other', [betaType]),
+  ]);
 
 type SearchRequest = Parameters<ShellGovernedReadsService['search']>[0];
 interface Controls {
   authorityUnavailable: boolean;
   currentGrant: OAuthGrantRecord | null;
   deniedModules: readonly string[];
+  gateDecisions?: (typeof AccessDecisionGate)['Service']['decideMany'];
   grantReads: number;
   installed: Effect.Effect<ShellInstalledCatalog, InstalledModuleCatalogUnavailableError>;
-  moduleDecisions?: ContextAccessService['modules'];
   onGrantRead?: (count: number) => void;
   search: ShellGovernedReadsService['search'];
   searches: SearchRequest[];
@@ -176,7 +190,11 @@ const setup = Effect.fn('recordSearchTest.setup')(function* setup(
   types: readonly string[] = [alphaType],
   requestCorrelationId: string = correlationId,
 ) {
-  const installed = yield* installedCatalog(types);
+  const snapshot = yield* approvedComposition(types);
+  const installed = yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
+  expect(installed.contracts.flatMap(({ manifest }) => manifest.publicSurface.shellContributions.search)).toHaveLength(
+    types.length + 1,
+  );
   const description = connectionDescription({
     acting: { displayName: 'Jana Testerová', kind: 'human', principalId: grant.actingPrincipalId },
     client: {
@@ -211,15 +229,7 @@ const setup = Effect.fn('recordSearchTest.setup')(function* setup(
   };
   const access: ContextAccessService = {
     legalEntities: ({ legalEntityIds }) => Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed', key }))),
-    modules: (input) =>
-      controls.moduleDecisions === undefined
-        ? Effect.succeed(
-            input.moduleIds.map((key) => ({
-              decision: controls.deniedModules.includes(key) ? 'denied' : 'allowed',
-              key,
-            })),
-          )
-        : controls.moduleDecisions(input),
+    modules: () => Effect.die('Legacy module authority must not be consulted'),
     resources: ({ resources }) =>
       Effect.succeed(
         resources.map((ref) => ({ decision: 'allowed', key: `${ref.moduleId}:${ref.resourceType}:${ref.resourceId}` })),
@@ -242,7 +252,41 @@ const setup = Effect.fn('recordSearchTest.setup')(function* setup(
     prmUrl: 'https://ontos.test/metadata',
     publicOrigin: 'https://ontos.test',
   });
+  const gateFor = (question: GateInput) =>
+    makeTestAccessDecision({
+      defaultAnswer: {
+        outcome: controls.deniedModules.some(
+          (moduleId) => question.carrier.accessDeclaration?.key.startsWith(`${moduleId}.`) === true,
+        )
+          ? 'DENIED'
+          : 'ALLOWED',
+      },
+    });
+  const gate = {
+    ...makeTestAccessDecision(),
+    decide: (question: GateInput) => gateFor(question).decide(question),
+    decideMany: (questions: readonly GateInput[]) =>
+      controls.gateDecisions === undefined
+        ? Effect.forEach((question: GateInput) => gateFor(question).decide(question))(questions)
+        : controls.gateDecisions(questions),
+    list: (question: GateInput) => gateFor(question).list(question),
+  };
+  const inspection = subjectInspectionFixture({
+    get capabilities() {
+      const declarations = installed.contracts
+        .filter(({ manifest }) => !controls.deniedModules.includes(manifest.module.id))
+        .flatMap(({ manifest }) =>
+          manifest.publicSurface.shellContributions.search.flatMap(({ accessDeclaration }) =>
+            accessDeclaration === undefined ? [] : [accessDeclaration],
+          ),
+        );
+      return declarations.map(({ key, modes }) => ({ key, modes: modes.filter((mode) => mode !== 'approve') }));
+    },
+    snapshot,
+    subjects: [{ legalEntityId: grant.legalEntityId, principalId: grant.userPrincipalId, tenantId: grant.tenantId }],
+  });
   const authority = Layer.mergeAll(
+    inspection.layer,
     Layer.succeed(CapturedShellCompositionCatalog, installed),
     // Credential-verifier port only: no token issuance or forged signed credential. All live connection checks and
     // connectionPrincipalContext run unmocked against the retained-grant/graph service fixtures below.
@@ -278,6 +322,7 @@ const setup = Effect.fn('recordSearchTest.setup')(function* setup(
         Effect.succeed(Option.some({ banned: false, emailVerified: true, name: 'Jana Testerová' })),
     }),
     Layer.succeed(ContextAccess, access),
+    Layer.succeed(AccessDecisionGate, gate),
     Layer.mock(ActionAuthority, { checkActionAuthorities: () => Effect.succeed([]) }),
     Layer.mock(OAuthConnectionCompanies, {
       names: () => Effect.succeed(new Map([[grant.legalEntityId, 'Testovací firma']])),
@@ -328,7 +373,7 @@ const setup = Effect.fn('recordSearchTest.setup')(function* setup(
     }),
   ).pipe(Layer.provideMerge(services));
   const search = yield* Effect.fromNullishOr(tools.find(({ name }) => name === 'ontos_search'));
-  return { access, authority, catalog, controls, description, installed, layer, search, tools };
+  return { access, authority, catalog, controls, description, gate, installed, layer, search, snapshot, tools };
 });
 
 const hit = (resourceId: string, title = 'Kotel K-200') =>
@@ -351,24 +396,16 @@ interface NativeCounts {
 const runNativeSearch = Effect.fn('McpRecordSearchTest.nativeSearch')(
   function* runNativeSearch(
     request: SearchRequest,
-    fixture: Pick<Effect.Success<ReturnType<typeof setup>>, 'access' | 'controls' | 'installed'>,
+    fixture: Pick<Effect.Success<ReturnType<typeof setup>>, 'access' | 'controls' | 'gate' | 'installed' | 'snapshot'>,
     counts: NativeCounts,
   ): Effect.fn.Return<ShellSearchResponse, ReadCoreError, Crypto.Crypto | Scope.Scope> {
-    const harness = yield* makeReadTestHarness({
-      compositionRevision: request.compositionRevision,
-      executeOwnerQuery: neverCalled,
-      operationTime: new Date('2026-11-03T12:00:00Z'),
-      ownerAuthorizationDecision: 'allowed',
-      permissionDecision: 'allowed',
-      scope: { ...request.principal, correlationId: request.correlationId },
-    });
     const states = {
       getTenantModuleStates: (_tenantId: string, moduleIds: readonly string[]) =>
         Effect.succeed(fixture.controls.states.filter(({ moduleKey }) => moduleIds.includes(moduleKey))),
       listActiveTenantModules: neverCalled,
       listTenantModuleStates: neverCalled,
     };
-    const shellLayer = createShellGovernedReadsLayer(
+    const definitionsLayer = createShellGovernedReadDefinitionsLayer(
       {
         resource: { detail: neverCalled, timeline: neverCalled },
         search: {
@@ -395,13 +432,28 @@ const runNativeSearch = Effect.fn('McpRecordSearchTest.nativeSearch')(
     ).pipe(
       Layer.provide(
         Layer.mergeAll(
-          Layer.succeed(ReadRuntime, harness.runtime),
+          Layer.succeed(AccessDecisionGate, fixture.gate),
           Layer.succeed(ContextAccess, fixture.access),
           Layer.succeed(TenantModuleStateService, states),
           ShellCompositionFactoryLive,
           ShellResourceServicesFactoryLive,
         ),
       ),
+    );
+    const registrations = yield* ShellGovernedReadDefinitions.pipe(Effect.provide(definitionsLayer));
+    const harness = yield* makeReadTestHarness({
+      access: 'allowed',
+      applicationComposition: { load: Effect.succeed(fixture.snapshot) },
+      compositionRevision: request.compositionRevision,
+      executeOwnerQuery: neverCalled,
+      expectedDeployment: fixture.installed.composition.shell.deployment,
+      operationTime: new Date('2026-11-03T12:00:00Z'),
+      ownerAuthorizationDecision: 'allowed',
+      scope: { ...request.principal, correlationId: request.correlationId },
+      shellSystemReads: registrations,
+    });
+    const shellLayer = createShellGovernedReadsLayer(registrations).pipe(
+      Layer.provide(Layer.succeed(ReadRuntime, harness.runtime)),
     );
     const actual = yield* ShellGovernedReads.pipe(Effect.provide(shellLayer), Effect.orDie);
     const result = yield* actual
@@ -688,27 +740,38 @@ describe('MCP governed record search', () => {
 
   it.effect('live module denial and unavailable permission evidence never dispatch', () =>
     Effect.gen(function* deniedGraph() {
-      const { controls, layer, search } = yield* setup();
+      const f = yield* setup();
+      const { controls, layer, search } = f;
+      const counts: NativeCounts = { assertions: 0, evidence: 0, providers: 0 };
+      controls.search = (request) => runNativeSearch(request, f, counts);
       controls.deniedModules = [alphaModule];
       expect((yield* invoke(search).pipe(Effect.provide(layer))).structuredContent).toEqual({
         partial: false,
         results: [],
       });
-      controls.moduleDecisions = ({ moduleIds }) =>
-        Effect.succeed(moduleIds.map((key) => ({ decision: 'unavailable', key })));
+      controls.deniedModules = [];
+      controls.gateDecisions = (questions) => makeTestAccessDecision({ unavailable: true }).decideMany(questions);
       expect((yield* invoke(search).pipe(Effect.provide(layer))).isError).toBe(true);
-      expect(controls.searches).toEqual([]);
+      expect(counts.providers).toBe(0);
     }),
   );
 
-  it.effect('truncated, duplicate and wrong-key graph responses are unavailable rather than silently narrowed', () =>
-    Effect.gen(function* incompleteGraph() {
-      const { controls, layer, search } = yield* setup();
-      for (const keys of [[alphaModule], [alphaModule, alphaModule], [alphaModule, 'not.composed']]) {
-        controls.moduleDecisions = () => Effect.succeed(keys.map((key) => ({ decision: 'allowed', key })));
-        expect((yield* invoke(search).pipe(Effect.provide(layer))).isError).toBe(true);
-      }
-      expect(controls.searches).toEqual([]);
+  it.effect('truncated, excess and unavailable gate responses fail closed rather than silently narrowing', () =>
+    Effect.gen(function* incompleteGate() {
+      const f = yield* setup();
+      const { controls, layer, search } = f;
+      const counts: NativeCounts = { assertions: 0, evidence: 0, providers: 0 };
+      controls.search = (request) => runNativeSearch(request, f, counts);
+      controls.gateDecisions = (questions) =>
+        makeTestAccessDecision({ defaultAnswer: { outcome: 'ALLOWED' } }).decideMany(questions.slice(1));
+      expect((yield* invoke(search).pipe(Effect.provide(layer))).isError).toBe(true);
+      controls.gateDecisions = (questions) =>
+        makeTestAccessDecision({ defaultAnswer: { outcome: 'ALLOWED' } }).decideMany([...questions, ...questions]);
+      expect((yield* invoke(search).pipe(Effect.provide(layer))).isError).toBe(true);
+      controls.deniedModules = [];
+      controls.gateDecisions = (questions) => makeTestAccessDecision({ unavailable: true }).decideMany(questions);
+      expect((yield* invoke(search).pipe(Effect.provide(layer))).isError).toBe(true);
+      expect(counts.providers).toBe(0);
     }),
   );
 
@@ -853,7 +916,7 @@ describe('MCP governed record search', () => {
     'the real Shell orchestrator dispatches only the granted type and retains current-owner authorization/relevance',
     () =>
       Effect.gen(function* ownerSearch() {
-        const { access, controls, installed, layer, search } = yield* setup();
+        const { controls, gate, installed, layer, search } = yield* setup();
         const owners: string[] = [];
         const presentation = {
           business: { compositionRevision: installed.composition.revision, entries: [], schemaVersion: '1' },
@@ -862,17 +925,8 @@ describe('MCP governed record search', () => {
         let resourceAllowed = true;
         const orchestrator = makeShellSearch(
           {
+            access: gate,
             catalog: Effect.succeed(installed),
-            contextAccess: {
-              ...access,
-              resources: ({ resources }) =>
-                Effect.succeed(
-                  resources.map((ref) => ({
-                    decision: resourceAllowed ? 'allowed' : 'denied',
-                    key: `${ref.moduleId}:${ref.resourceType}:${ref.resourceId}`,
-                  })),
-                ),
-            },
             issueAssertion: () => Effect.succeed('assertion-port-fixture'),
             moduleStates: {
               getTenantModuleStates: (_tenantId, moduleIds) =>
@@ -883,7 +937,7 @@ describe('MCP governed record search', () => {
             search: (request) => {
               owners.push(request.appId);
               const { kind: _kind, ...wire } = hit('current-record');
-              return Effect.succeed([wire]);
+              return Effect.succeed(resourceAllowed ? [wire] : []);
             },
           },
         );

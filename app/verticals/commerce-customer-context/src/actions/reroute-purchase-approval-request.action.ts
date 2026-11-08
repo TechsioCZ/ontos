@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug reroute-purchase-approval-request
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import {
   ReroutePurchaseApprovalRequestPayloadSchema,
@@ -16,8 +16,8 @@ import type {
 import type { PurchasingApprovalWorkflowService } from '../persistence/purchasing-approval-persistence.ts';
 import { purchasingApprovalWorkflowForScope } from '../persistence/purchasing-approval-persistence.ts';
 import {
+  purchasingApprovalOwnerFacts,
   recordPurchasingApprovalResourceAccess,
-  purchasingApprovalPermissionTarget,
   trustedPurchasingContext,
 } from './purchasing-approval-action-support.ts';
 import { purchasingApprovalPolicy } from '../policies/purchasing-approval.policy.ts';
@@ -117,28 +117,30 @@ const handleReroutePurchaseApprovalRequest = Effect.fn('ReroutePurchaseApprovalR
 
 export const reroutePurchaseApprovalRequestAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.purchase-approval-request.reroute',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'purchasing-approval', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.reroute-purchase-approval-request.access.v1',
     },
+    accessOwnerFacts: (payload) =>
+      purchasingApprovalOwnerFacts({ counterpartyRef: payload.counterpartyRef, storefrontId: payload.storefrontId }),
     actionKey: 'commerce.customer-context.reroute-purchase-approval-request',
     auditEvidenceSchema: ReroutePurchaseApprovalRequestAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission((payload: ReroutePurchaseApprovalRequestPayload, scope) =>
-      purchasingApprovalPermissionTarget({
-        counterpartyRef: payload.counterpartyRef,
-        permission: 'counterparty.approval.request.manage',
-        scope,
-        storefrontId: payload.storefrontId,
-      }),
-    ),
     domainErrorSchema: ReroutePurchaseApprovalRequestRejected,
     domainEvents: {
       'commerce.customer-context.approval-route-rerouted.v1': ApprovalRouteReroutedEventSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.reroute-purchase-approval-request',
       moduleKey: MODULE_KEY,
       role: 'action',

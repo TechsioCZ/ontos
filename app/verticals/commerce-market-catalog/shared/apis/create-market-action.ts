@@ -2,11 +2,14 @@
 // @ontos-action-http-owner commerce.market-catalog
 // @ontos-action-http-slug create-market
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { CreateMarketPayloadSchema, CreateMarketResultSchema } from '../actions/create-market.ts';
 
 export { CreateMarketPayloadSchema } from '../actions/create-market.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const CreateMarketActionInvalidProblemSchema = makeProblemDetailsSchema('CreateMarketActionInvalidProblem', 400);
 export const CreateMarketActionAuthenticationProblemSchema = makeProblemDetailsSchema(
@@ -18,6 +21,7 @@ export const CreateMarketActionForbiddenProblemSchema = makeProblemDetailsSchema
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -151,7 +155,7 @@ export const createMarketActionGroupDefinition = HttpApiGroup.make('createMarket
     HttpApiEndpoint.post('execute', '/commerce-market-catalog/actions/create-market', {
       error: actionErrors,
       payload: Schema.toEncoded(CreateMarketPayloadSchema),
-      success: CreateMarketResultSchema,
+      success: [ActionProposalAcceptedSchema, CreateMarketResultSchema],
     }),
   )
   .middleware(CreateMarketActionSchemaErrorMiddleware);

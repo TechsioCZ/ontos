@@ -2,7 +2,9 @@
 // @ontos-action-owner commerce.assortment
 // @ontos-action-slug end-applicability-binding
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionAssortmentPermissions, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { assortmentCurrentnessFacts } from '../services/assortment-currentness.ts';
+import { endBindingCurrentnessTarget } from './policy-administration-support.ts';
 import { Effect, Schema } from 'effect';
 import {
   EndApplicabilityBindingPayloadSchema,
@@ -19,7 +21,7 @@ import {
 } from '../../shared/domain/policy-errors.ts';
 import type { AssortmentPolicyPersistence } from '../services/policy-administration.service.ts';
 import { assortmentPolicyServiceFactory } from '../services/policy-administration.service.ts';
-import { endBindingPermissionTarget } from './policy-administration-support.ts';
+
 import {
   EndApplicabilityBindingCommerceAssortmentBindingEndedV1OutboxPayloadSchema,
   createEndApplicabilityBindingCommerceAssortmentBindingEndedV1OutboxMessage,
@@ -115,21 +117,27 @@ export const handleEndApplicabilityBinding = Effect.fn('EndApplicabilityBindingA
 
 export const endApplicabilityBindingAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.assortment.applicability-binding.end',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'bindings', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.assortment.end-applicability-binding.access.v1',
     },
+    accessOwnerFacts: (payload, scope) => assortmentCurrentnessFacts(endBindingCurrentnessTarget(payload, scope)),
     actionKey: 'commerce.assortment.end-applicability-binding',
-    assortmentPermissions: defineActionAssortmentPermissions<EndApplicabilityBindingPayload>((payload, scope) => [
-      endBindingPermissionTarget(payload, scope),
-    ]),
     auditEvidenceSchema: AssortmentPolicyAuditEvidenceSchema,
     auditProfile: 'sensitive',
     domainErrorSchema: ActionErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.assortment.end-applicability-binding',
       moduleKey: 'commerce.assortment',
       role: 'action',

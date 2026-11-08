@@ -1,6 +1,8 @@
 import type { CrmCommand } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandResponse } from '../../shared/apis/apply-command-action.ts';
-import { Predicate } from 'effect';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
+import { Predicate, Schema } from 'effect';
 
 export interface CrmCommandOutcome {
   readonly entityIds: readonly string[];
@@ -11,9 +13,16 @@ export interface CrmCommandOutcome {
 /** Transport/Action success alone does not prove the post-commit registry writes. */
 export const commandResultOutcome = (
   command: CrmCommand,
-  result: ApplyCommandResponse,
+  result: ApplyCommandResponse | ActionProposalAccepted,
   translate: (key: string, values: { readonly linked: number; readonly remaining: number }) => string,
 ): CrmCommandOutcome => {
+  if (Schema.is(ActionProposalAcceptedSchema)(result)) {
+    return {
+      entityIds: [],
+      message: translate('crm.common.approvalRequired', { linked: 0, remaining: 0 }),
+      ok: false,
+    };
+  }
   if (!Predicate.isTagged(command, 'SyncClientParties')) {
     return { entityIds: result.entityIds, ok: true };
   }

@@ -3,7 +3,7 @@
 // Opportunity proposals live in this module, order proposals in merchandise; both use the same approval engine
 // (@app/shared-contracts/ai-approvals). Every decision is an audited Core Action of the approving person.
 import { EmptyState, PageHeader, SectionCard, formatDateTime } from '@app/admin-ui';
-import { executeApplyCommand as executeMerchandiseCommand } from '@app/merchandise/clients/apply-command';
+import { sendOrderReview } from './order-review-command.ts';
 import { executeRecords as executeMerchandiseRecords } from '@app/merchandise/clients/records';
 import { aiLogActionLabel, aiRiskLabel, aiStatusLabel } from '@app/shared-contracts/ai-approvals';
 import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
@@ -162,7 +162,7 @@ const RefusalDetailSchema = Schema.Struct({ detail: Schema.optional(Schema.Strin
 const refusal = (
   error:
     | Effect.Error<ReturnType<typeof applyPipelineCommand>>
-    | Effect.Error<ReturnType<typeof sendOrders>>
+    | Effect.Error<ReturnType<typeof sendOrderReview>>
     | Effect.Error<ReturnType<typeof decodeHumanAiCommand>>,
 ): string => {
   const detail = Schema.decodeUnknownOption(RefusalDetailSchema)(error).pipe(
@@ -174,23 +174,6 @@ const refusal = (
     : 'Záznam se mezitím změnil nebo k akci nemáte oprávnění.';
 };
 
-const sendOrders = Effect.fn('SalesPipeline.sendAiOrderCommand')(
-  function* sendOrders(command: AiCommand) {
-    const key = yield* correlation('orders-command');
-    const { revision } = yield* executeMerchandiseRecords({ view: { limit: 0, ordersLimit: 0 } }, `${key}:revision`);
-    return yield* executeMerchandiseCommand({ command, expectedRevision: revision }, key, { idempotencyKey: key });
-  },
-  // Storefront orders bump the merchandise revision at any time: re-read once and send again.
-  Effect.retry({
-    times: 1,
-    while: (error) =>
-      Match.value(error).pipe(
-        Match.tag('ApplyCommandActionConflictProblem', (problem) => problem.code === 'merchandise_revision_conflict'),
-        Match.orElse(() => false),
-      ),
-  }),
-);
-
 /** Failure is the readable reason shown to the approver. */
 const sendCommand = (module: ModuleKey, command: AiCommand, revision: number): Effect.Effect<void, string> =>
   decodeHumanAiCommand(command).pipe(
@@ -198,7 +181,7 @@ const sendCommand = (module: ModuleKey, command: AiCommand, revision: number): E
     Effect.flatMap((parsed) =>
       module === 'opportunities'
         ? applyPipelineCommand(parsed, revision).pipe(Effect.asVoid, Effect.mapError(refusal))
-        : sendOrders(parsed).pipe(Effect.asVoid, Effect.mapError(refusal)),
+        : sendOrderReview(parsed).pipe(Effect.mapError(refusal)),
     ),
   );
 

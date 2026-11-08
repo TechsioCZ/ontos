@@ -1,6 +1,5 @@
 import {
   ActiveApplicationCompositionService,
-  ContextAccess,
   OperationContextUnavailable,
   TrustedPrincipalContextSchema,
   defineDatabaseIdentityEnrollment,
@@ -11,7 +10,7 @@ import { HttpServerRequest } from 'effect/http';
 import { Layer, Crypto, Effect, Redacted, Schema } from 'effect';
 import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import type { ActionServicePreparationContext, ContextAccessService, OperationalScope } from '@app/core-runtime';
+import type { ActionServicePreparationContext, OperationalScope } from '@app/core-runtime';
 import { installOperationalScope } from '@app/core-runtime/testing/actions';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 
@@ -64,22 +63,6 @@ const nativeActivityCommands = Effect.scoped(
       transaction: () => Effect.die('Command permission checks need no SQL snapshot'),
     };
     let insideTransaction = false;
-    let permissionChecks = 0;
-    const access: ContextAccessService = {
-      contextPermissions: ({ targets }) =>
-        Effect.sync(() => {
-          expect(insideTransaction).toBe(false);
-          permissionChecks += 1;
-          return targets.map(({ moduleId, permission }) => ({
-            decision: 'allowed' as const,
-            key: `${moduleId}:${permission}`,
-          }));
-        }),
-      legalEntities: () => Effect.succeed([]),
-      modules: () => Effect.succeed([]),
-      resources: () => Effect.die('Company writer needs no per-task check'),
-      tenants: () => Effect.succeed([]),
-    };
     const payload = yield* Schema.decodeEffect(ApplyCommandPayloadSchema)({
       command: {
         _tag: 'RecordActivity',
@@ -98,7 +81,6 @@ const nativeActivityCommands = Effect.scoped(
     });
     let referenceChecks = 0;
     const factory = yield* prepareApplyCommandServices(payload, context).pipe(
-      Effect.provideService(ContextAccess, access),
       Effect.provideService(ActivityReferenceVerifier, {
         verify: (command) =>
           Effect.sync(() => {
@@ -111,7 +93,7 @@ const nativeActivityCommands = Effect.scoped(
           }),
       }),
     );
-    expect(permissionChecks).toBe(1);
+
     expect(referenceChecks).toBe(1);
     const result = yield* database
       .transaction(
@@ -141,7 +123,7 @@ const nativeActivityCommands = Effect.scoped(
               ).pipe(Effect.flip),
             ),
           ).toBe(true);
-          expect(permissionChecks).toBe(1);
+
           expect(referenceChecks).toBe(1);
           return yield* Effect.fail('fixture-rollback' as const);
         }),

@@ -22,7 +22,7 @@ const MODULE_KEY = 'commerce.inventory';
 
 const inventorySourceConflictDetailEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'authenticated_principal' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.inventory.api.inventory-source-conflict-detail',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -30,6 +30,18 @@ const inventorySourceConflictDetailEntrypoint = defineTenantModuleEntrypoint({
 
 export const inventorySourceConflictDetailRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.inventory.source-conflict.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'source-conflicts', level: 'extended' },
+      // Resolving a source conflict picks the authoritative source: a critical write (O33). Reading the
+      // conflict and who resolved it is sensitive authority evidence (A1). A1 also proposed an
+      // `authority_metadata` group on `conflict.resolution.principalId`; it is not declared because that
+      // path is required inside the RESOLVED member and redacting it fails the transport encode (O17).
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     domainErrorSchema: InventorySourceConflictUnavailable,
     entrypoint: inventorySourceConflictDetailEntrypoint,
@@ -40,7 +52,6 @@ export const inventorySourceConflictDetailRead = defineRead(
     inputSchema: InventorySourceConflictDetailRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.inventory.api.inventory-source-conflict-detail',
     resultSchema: InventorySourceConflictDetailResponseSchema,
@@ -75,5 +86,4 @@ export const inventorySourceConflictDetailRead = defineRead(
         positions: stockPositionPersistenceForScope(transaction, scope),
       }),
     ),
-  () => ({ kind: 'tenant' as const, permission: 'access' as const }),
 );

@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug create-counterparty-access-invitation
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect } from 'effect';
 import {
   CreateCounterpartyAccessInvitationPayloadSchema,
@@ -14,8 +14,8 @@ import { CounterpartyAccessDomainErrorSchema } from '../../shared/domain/access-
 import type { CounterpartyAccessPortService } from '../../shared/domain/access-port.ts';
 import { counterpartyAccessServicesForTransaction } from '../access-services.ts';
 import {
+  accessManagementOwnerFacts,
   auditEvidence,
-  accessManagementPermissionTarget,
   deniedAccessAuditEvidence,
   principalRefFromContext,
   recordAccessRead,
@@ -110,14 +110,22 @@ const handle = Effect.fn('CreateCounterpartyAccessInvitation.handle')(function* 
 
 export const createCounterpartyAccessInvitationAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.counterparty-access-invitation.create',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'counterparty-access', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.create-counterparty-access-invitation.access.v1',
     },
+    accessOwnerFacts: accessManagementOwnerFacts,
     actionKey: 'commerce.customer-context.create-counterparty-access-invitation',
     auditEvidenceSchema: AccessAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission(accessManagementPermissionTarget),
     deniedAuditEvidence: {
       resolve: (payload, scope) =>
         deniedAccessAuditEvidence({
@@ -134,7 +142,7 @@ export const createCounterpartyAccessInvitationAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.create-counterparty-access-invitation',
       moduleKey: 'commerce.customer-context',
       role: 'action',

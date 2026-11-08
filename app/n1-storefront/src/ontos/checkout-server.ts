@@ -1,16 +1,14 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { cache } from "react";
-import { DateTime, Effect, Match, Schema, Struct } from "effect";
-import { executeApplyCommandWithAuthorization } from "@app/merchandise/clients/apply-command";
+import { DateTime, Effect, Match, Predicate, Schema, Struct } from "effect";
+import { executePlaceStorefrontOrderWithAuthorization } from "@app/merchandise/clients/place-storefront-order";
+import { PlaceStorefrontOrderPayloadSchema } from "@app/merchandise/contracts/place-storefront-order";
 import {
   StorefrontOrderLineRequestSchema,
   StorefrontOrderResultSchema,
 } from "@app/merchandise/contracts/apply-command";
-import type {
-  ApplyCommandPayloadEncoded,
-  ApplyCommandResult,
-} from "@app/merchandise/contracts/apply-command";
+import type { ApplyCommandResult } from "@app/merchandise/contracts/apply-command";
 import { OrderContactSchema, OrderSchema } from "@app/merchandise/domain/merchandise-model";
 import {
   CheckoutProductPresentationSchema,
@@ -85,10 +83,7 @@ const scopedContext = (config: StorefrontConfiguration, locale: string, scope: C
   });
 
 type NativeCheckoutOrder = typeof StorefrontOrderResultSchema.Type;
-type GuestCommand = Extract<
-  ApplyCommandPayloadEncoded["command"],
-  { readonly _tag: "PlaceStorefrontOrder" }
->;
+type GuestCommand = (typeof PlaceStorefrontOrderPayloadSchema.Encoded)["command"];
 type MutableGuestCommand = { -readonly [Key in keyof GuestCommand]: GuestCommand[Key] };
 
 const buyerFailure = (
@@ -418,13 +413,13 @@ export const submitCheckoutWithConfiguration = (
         phone: request.contact.phone,
       };
     }
-    const payload: ApplyCommandPayloadEncoded = {
+    const payload = yield* Schema.decodeUnknownEffect(PlaceStorefrontOrderPayloadSchema)({
       command,
       // This native command explicitly ignores the aggregate revision under the head lock.
       // Keep the Core request hash stable across duplicate submissions; no browser revision is trusted.
       expectedRevision: request.mode === "place" ? 0 : context.revision,
-    };
-    const result = yield* executeApplyCommandWithAuthorization(
+    }).pipe(Effect.mapError(() => new CheckoutFailure({ state: "invalid" })));
+    const result = yield* executePlaceStorefrontOrderWithAuthorization(
       payload,
       `Bearer ${assertion.token}`,
       randomUUID(),
@@ -438,10 +433,10 @@ export const submitCheckoutWithConfiguration = (
       Effect.timeout("20 seconds"),
       Effect.catch((error) =>
         Match.value(error).pipe(
-          Match.tag("ApplyCommandActionForbiddenProblem", () =>
+          Match.tag("PlaceStorefrontOrderActionForbiddenProblem", () =>
             Effect.fail(new CheckoutFailure({ state: "forbidden" })),
           ),
-          Match.tag("ApplyCommandActionInvalidProblem", () =>
+          Match.tag("PlaceStorefrontOrderActionInvalidProblem", () =>
             Effect.fail(new CheckoutFailure({ state: "invalid" })),
           ),
           Match.orElse(() =>
@@ -454,6 +449,9 @@ export const submitCheckoutWithConfiguration = (
         ),
       ),
     );
+    if (Predicate.isTagged(result, "ActionProposalAccepted")) {
+      return yield* new CheckoutFailure({ state: "unavailable" });
+    }
     // Return commit evidence immediately. Canonical receipt enrichment is a separate read-only status call,
     // so its timeout cannot turn an already confirmed placement into an uncertain submission.
     return yield* confirmCheckoutResult(request, result);

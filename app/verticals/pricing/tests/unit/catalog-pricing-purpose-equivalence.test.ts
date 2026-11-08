@@ -5,8 +5,10 @@ import { Effect, Redacted, Schema } from 'effect';
 import { HttpClientError, HttpClientRequest } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
-import { CatalogSelectionGatewayCredentialService } from '../../shared/domain/catalog-selection-gateway-credential.ts';
-import { catalogPricingPurposeEquivalencePortFromEnvironment } from '../../src/integrations/catalog-pricing-purpose-equivalence.ts';
+import { makeCatalogPricingPurposeEquivalencePort } from '../../src/integrations/catalog-pricing-purpose-equivalence.ts';
+import { OwnerGatewayConnectionError } from '../../src/integrations/owner-gateway-connection.ts';
+import type { OwnerGatewayConnectionAcquire } from '../../src/integrations/owner-gateway-connection.ts';
+import { ownerConnectionStub, verifiedTestScope } from '../support/owner-gateway-connection.fixture.ts';
 
 const compositionRevision = 'a'.repeat(64);
 
@@ -241,19 +243,45 @@ const confirmedResponse = {
   },
 };
 
-const gateway = {
-  issue: () =>
-    Effect.succeed({
-      baseUrl: new URL('https://catalog.example.test'),
-      credential: Redacted.make('Bearer catalog-owner-assertion'),
+type CatalogExecute = Parameters<typeof makeCatalogPricingPurposeEquivalencePort>[0]['execute'];
+const principalId = '55555555-5555-4555-8555-555555555555';
+const catalogOwner = ownerConnectionStub('Bearer catalog-owner-assertion', 'https://catalog.example.test');
+const unavailableOwner: OwnerGatewayConnectionAcquire = () =>
+  Effect.fail(new OwnerGatewayConnectionError({ reason: 'Owner gateway is unavailable' }));
+const neverTransported: CatalogExecute = () => Effect.die('Owner transport must not run without an owner connection');
+
+/** Builds the port from a provenance-bearing verified scope, the way the receiving request does. */
+const portFromEnvironment = (
+  context: {
+    readonly compositionRevision: string;
+    readonly legalEntityId: string;
+    readonly requestCorrelation: string;
+    readonly tenantId: string;
+  },
+  execute: CatalogExecute = neverTransported,
+  acquire: OwnerGatewayConnectionAcquire = catalogOwner,
+) =>
+  Effect.succeed(
+    makeCatalogPricingPurposeEquivalencePort({
+      acquire,
+      context: {
+        ...context,
+        scope: verifiedTestScope({
+          correlationId: context.requestCorrelation,
+          legalEntityId: context.legalEntityId,
+          principalId,
+          tenantId: context.tenantId,
+        }),
+      },
+      execute,
     }),
-};
+  );
 
 describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
   it.effect('uses the generated owner client and preserves effective and later observation times', () =>
     Effect.gen(function* ownerConfirmed() {
       const calls: unknown[] = [];
-      const port = yield* catalogPricingPurposeEquivalencePortFromEnvironment(
+      const port = yield* portFromEnvironment(
         { compositionRevision, legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
         (payload, credential, requestCorrelation, options) =>
           Effect.sync(() => {
@@ -282,7 +310,7 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
       ]);
       expect(calls[0]).not.toHaveProperty('currencyCode');
       expect(calls[0]).not.toHaveProperty('storefrontId');
-    }).pipe(Effect.provideService(CatalogSelectionGatewayCredentialService, gateway)),
+    }),
   );
 
   it.effect('projects every non-confirmed observed owner outcome to typed unverifiable', () =>
@@ -294,7 +322,7 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
         ['CATALOG_EQUIVALENCE_UNVERIFIABLE', 'UNVERIFIABLE'],
       ] as const;
       for (const [outcome, status] of outcomes) {
-        const port = yield* catalogPricingPurposeEquivalencePortFromEnvironment(
+        const port = yield* portFromEnvironment(
           { compositionRevision, legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
           () =>
             Effect.succeed({
@@ -310,12 +338,12 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
           outcome: 'CATALOG_EQUIVALENCE_UNVERIFIABLE',
         });
       }
-    }).pipe(Effect.provideService(CatalogSelectionGatewayCredentialService, gateway)),
+    }),
   );
 
   it.effect('preserves Catalog unavailable without fabricating equivalence evidence', () =>
     Effect.gen(function* typedUnavailable() {
-      const port = yield* catalogPricingPurposeEquivalencePortFromEnvironment(
+      const port = yield* portFromEnvironment(
         { compositionRevision, legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
         () =>
           Effect.succeed({
@@ -326,7 +354,7 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
           }),
       );
       expect(yield* port.resolve(attempt)).toEqual({ outcome: 'CATALOG_EQUIVALENCE_UNAVAILABLE' });
-    }).pipe(Effect.provideService(CatalogSelectionGatewayCredentialService, gateway)),
+    }),
   );
 
   it.effect('rejects owner evidence that substitutes an exact Unit rule revision', () =>
@@ -336,7 +364,7 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
         quantity: { ...currentHandoff.quantity, unitRuleRevision: 8 },
         quantityBasis: { ...currentHandoff.quantityBasis, unitRuleRevision: 8 },
       };
-      const port = yield* catalogPricingPurposeEquivalencePortFromEnvironment(
+      const port = yield* portFromEnvironment(
         { compositionRevision, legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
         () =>
           Effect.succeed({
@@ -356,7 +384,7 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
         ...currentHandoff,
         unitRef: catalogRef('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'commerce.catalog.product-unit'),
       };
-      const unitIdentityPort = yield* catalogPricingPurposeEquivalencePortFromEnvironment(
+      const unitIdentityPort = yield* portFromEnvironment(
         { compositionRevision, legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
         () =>
           Effect.succeed({
@@ -381,7 +409,7 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
         completeness: boundarylessCompleteness,
         evidence: boundarylessEvidence,
       };
-      const mixedValidityPort = yield* catalogPricingPurposeEquivalencePortFromEnvironment(
+      const mixedValidityPort = yield* portFromEnvironment(
         { compositionRevision, legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
         () =>
           Effect.succeed({
@@ -396,7 +424,7 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
         code: 'pricing_catalog_selection_unavailable',
         retryable: true,
       });
-    }).pipe(Effect.provideService(CatalogSelectionGatewayCredentialService, gateway)),
+    }),
   );
 
   it.effect('accepts a fresh owner attestation when material facts remain the same', () =>
@@ -406,7 +434,7 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
         completeness: { ...currentHandoff.completeness, ownerRevision: 'catalog-quantity:18' },
         ownerRevision: 'catalog-quantity:18',
       };
-      const port = yield* catalogPricingPurposeEquivalencePortFromEnvironment(
+      const port = yield* portFromEnvironment(
         { compositionRevision, legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
         () =>
           Effect.succeed({
@@ -420,7 +448,7 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
       expect(yield* port.resolve(attempt)).toMatchObject({
         outcome: 'CATALOG_EQUIVALENCE_CONFIRMED',
       });
-    }).pipe(Effect.provideService(CatalogSelectionGatewayCredentialService, gateway)),
+    }),
   );
 
   it.effect('rejects a Price for a different Market before calling Catalog', () =>
@@ -445,7 +473,7 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
         })),
       });
       let transported = false;
-      const port = yield* catalogPricingPurposeEquivalencePortFromEnvironment(
+      const port = yield* portFromEnvironment(
         { compositionRevision, legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
         () =>
           Effect.sync(() => {
@@ -459,17 +487,16 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
         retryable: true,
       });
       expect(transported).toBe(false);
-    }).pipe(Effect.provideService(CatalogSelectionGatewayCredentialService, gateway)),
+    }),
   );
 
   it.effect('fails typed unavailable for missing credentials and generated-client transport failure', () =>
     Effect.gen(function* unavailableBoundaries() {
-      const missingCredentialPort = yield* catalogPricingPurposeEquivalencePortFromEnvironment({
-        compositionRevision,
-        legalEntityId,
-        requestCorrelation: 'pricing-purpose-equivalence',
-        tenantId,
-      });
+      const missingCredentialPort = yield* portFromEnvironment(
+        { compositionRevision, legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
+        neverTransported,
+        unavailableOwner,
+      );
       expect(yield* missingCredentialPort.resolve(attempt).pipe(Effect.flip)).toMatchObject({
         code: 'pricing_catalog_selection_unavailable',
         retryable: true,
@@ -486,7 +513,7 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
             }),
           }),
         );
-      const transportPort = yield* catalogPricingPurposeEquivalencePortFromEnvironment(
+      const transportPort = yield* portFromEnvironment(
         { compositionRevision, legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
         execute,
       );
@@ -494,7 +521,7 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
         code: 'pricing_catalog_selection_unavailable',
         retryable: true,
       });
-    }).pipe(Effect.provideService(CatalogSelectionGatewayCredentialService, gateway)),
+    }),
   );
 
   it.effect('rejects an untrusted Tenant or Selling Legal Entity before owner transport', () =>
@@ -514,7 +541,7 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
         },
       ]) {
         let transported = false;
-        const port = yield* catalogPricingPurposeEquivalencePortFromEnvironment(context, () =>
+        const port = yield* portFromEnvironment(context, () =>
           Effect.sync(() => {
             transported = true;
             return confirmedResponse;
@@ -526,6 +553,6 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
         });
         expect(transported).toBe(false);
       }
-    }).pipe(Effect.provideService(CatalogSelectionGatewayCredentialService, gateway)),
+    }),
   );
 });

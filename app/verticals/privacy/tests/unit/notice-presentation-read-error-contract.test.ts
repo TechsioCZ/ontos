@@ -4,6 +4,7 @@ import {
   ReadPermissionDenied,
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
+  ReadRuntime,
   TrustedPrincipalContextSchema,
   trustVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime';
@@ -51,6 +52,8 @@ import {
   makePrivacyNoticePresentationService,
   PrivacyNoticePresentationService,
 } from '../../src/services/privacy-notice-presentation.service.ts';
+
+import { privacyRegistration } from '../../vertical.registration.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const compositionRevision = 'a'.repeat(64);
@@ -130,17 +133,35 @@ const cases = [
 ] as const;
 
 it.layer(Layer.mergeAll(NodeCrypto.layer, namespaceLive))('Notice read declared handler failures', (suite) => {
+  suite.effect('is a v2 protected read decided by its own sensitive declaration (A1)', () =>
+    Effect.sync(() => {
+      // A1 classified this read PROTECT: the one access gate decides it, no legacy permission target or
+      // SpiceDB resource tuple is consulted, and the scope-wide declaration carries no record selectors.
+      // The subject binding stays the owner's own policy (the request still names its exact subject).
+      expect(noticePresentationRead.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+      expect(noticePresentationRead.descriptor.accessDeclaration).toMatchObject({
+        key: 'privacy.core.notice.presentation.read',
+        kind: 'read',
+        modes: ['run'],
+        placement: { group: 'notices', level: 'basic' },
+        risk: 'sensitive',
+        selectors: [],
+      });
+    }),
+  );
+
   for (const testCase of cases) {
     suite.effect(
       `preserves ${testCase.schema.name} through the real Read lifecycle and maps HTTP ${testCase.status}`,
       () =>
         Effect.gen(function* registeredNoticeFailure() {
           const harness = yield* makeReadTestHarness({
+            access: 'allowed',
             compositionRevision,
             executeOwnerQuery: executeSnapshotQuery,
             operationTime: new Date('2026-10-20T12:00:00.000Z'),
             ownerAuthorizationDecision: 'allowed',
-            permissionDecision: 'allowed',
+            ownerRegistration: privacyRegistration,
             scope: { ...principal, correlationId: 'notice-read-contract' },
           });
           const integrity = yield* makePrivacyNoticePresentationService({
@@ -197,10 +218,9 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, namespaceLive))('Notice read declared 
           expect(authorityCalls).toBe(2);
           expect(harness.snapshot().ownerQueries).toHaveLength(4);
           expect(harness.snapshot().evidenceWrites).toBe(testCase.status === 403 ? 2 : 0);
-          expect(harness.snapshot().statements.at(-1)).toBe(
-            // The immutable SQL load commits before the remote finish. No protected result is released.
-            'COMMIT',
-          );
+          // Owner load commits before finish calls authority. An outage cannot roll back that read;
+          // it still releases no result or success evidence.
+          expect(harness.snapshot().statements.at(-1)).toBe('COMMIT');
         }),
     );
   }
@@ -238,11 +258,12 @@ it.live('GET decodes exact targets, trusts only the verified Tenant and redeems 
           .sign(privateKey),
       );
       const harness = yield* makeReadTestHarness({
+        access: 'allowed',
         compositionRevision: composition.composition.revision,
         executeOwnerQuery: executeSnapshotQuery,
         operationTime: new Date('2026-10-20T12:00:00.000Z'),
         ownerAuthorizationDecision: 'allowed',
-        permissionDecision: 'allowed',
+        ownerRegistration: privacyRegistration,
         scope: { ...principal, correlationId: 'notice-get-contract' },
       });
       const integrity = yield* makePrivacyNoticePresentationService({
@@ -251,6 +272,12 @@ it.live('GET decodes exact targets, trusts only the verified Tenant and redeems 
       });
       let redemptions = 0;
       let ownerCalls = 0;
+      let nativeReads = 0;
+      const runRead: typeof harness.runtime.runRead = (input) => {
+        expect(input.input).toEqual(target);
+        nativeReads += 1;
+        return harness.runtime.runRead(input);
+      };
       const admittedJtis = new Set<string>();
       const compositionDocument = yield* Schema.encodeEffect(
         Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
@@ -277,7 +304,10 @@ it.live('GET decodes exact targets, trusts only the verified Tenant and redeems 
               expect(scope.tenantId).toBe(tenantId);
               expect(scope.principalId).toBe(principal.principalId);
               expect(scope.legalEntityId).toBe(principal.legalEntityId);
-              expect(observedTarget).toEqual(target);
+              expect(observedTarget).toEqual({
+                privacySubjectRef: target.privacySubjectRef,
+                retailProfileId: target.retailProfileId,
+              });
               return Effect.fail(
                 new PrivacyNoticeAcknowledgementError({
                   code: 'privacy_notice_acknowledgement_conflict',
@@ -309,7 +339,14 @@ it.live('GET decodes exact targets, trusts only the verified Tenant and redeems 
               Layer.provide(noticePresentationReadApiLive),
               Layer.provideMerge(RequestSchemaProblemLive),
               Layer.provideMerge(ActionPrincipalVerifierLive.pipe(Layer.provide(configuration))),
-              Layer.provideMerge(Layer.mergeAll(harness.layer, ports, NodeCrypto.layer, HttpServer.layerServices)),
+              Layer.provideMerge(
+                Layer.mergeAll(
+                  Layer.succeed(ReadRuntime, { ...harness.runtime, runRead }),
+                  privacyNoticeInformationStepLive.pipe(Layer.provideMerge(ports), Layer.provide(NodeCrypto.layer)),
+                  NodeCrypto.layer,
+                  HttpServer.layerServices,
+                ),
+              ),
             ),
             { disableLogger: true },
           ),
@@ -352,11 +389,13 @@ it.live('GET decodes exact targets, trusts only the verified Tenant and redeems 
       expect(presented.headers.get('cache-control')).toBe('no-store');
       expect(redemptions).toBe(1);
       expect(ownerCalls).toBe(1);
+      expect(nativeReads).toBe(1);
       const replayed = yield* request(`${path}?${query}`, `Bearer ${token}`);
       expect(replayed.status).toBe(401);
       expect(replayed.headers.get('www-authenticate')).toBe('Bearer');
       expect(redemptions).toBe(2);
       expect(ownerCalls).toBe(1);
+      expect(nativeReads).toBe(1);
       expect(harness.snapshot().ownerQueries).toHaveLength(2);
       expect(harness.snapshot().evidenceWrites).toBe(0);
     }),

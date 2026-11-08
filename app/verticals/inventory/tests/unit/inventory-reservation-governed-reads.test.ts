@@ -1,13 +1,14 @@
+import { inventoryRegistration } from '../../vertical.registration.ts';
 import type { OperationalScope } from '@app/core-runtime';
 import {
   ReadHandlerNotFound,
   ReadPermissionDenied,
   allowOwnerAuthorizationOverlay,
-  toBusinessPermissionAccessKey,
+  defineDatabaseIdentityEnrollment,
 } from '@app/core-runtime';
 import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
 import { expect, it } from 'effect-rstest';
-import { Effect, Option, Predicate, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 
 import { mapInventoryReservationDetailDomainError } from '../../api/inventory-reservation-detail-read-server.ts';
 import { mapReservationConfirmationVerificationDomainError } from '../../api/reservation-confirmation-verification-read-server.ts';
@@ -48,9 +49,7 @@ import { getReadPermissionTargetResolver } from '../../../../packages/core-runti
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
-import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
-
-const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
+import { makeTestBoundAccessGate } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const reservationId = '22222222-2222-4222-8222-222222222222';
@@ -227,61 +226,24 @@ const confirmationFor = (reservation: ProvisionalInventoryReservation) =>
     revision: 1,
   });
 
-it('binds both reads to inventory.resource.read for the exact requested ResourceRef', () => {
-  const reservationInput = Schema.decodeUnknownSync(InventoryReservationDetailRequestSchema)({ reservationRef });
-  const confirmationInput = Schema.decodeUnknownSync(ReservationConfirmationVerificationRequestSchema)({
-    attemptId,
-    confirmationRef: {
-      moduleId: 'commerce.inventory',
-      resourceId: confirmationId,
-      resourceType: 'commerce.inventory.reservation-confirmation',
-      tenantId,
-    },
-    evaluatedAt: '2026-09-24T10:05:00.000Z',
-    reservationRef,
+it('decides both reads through their own declarations, with no legacy permission target', () => {
+  // The one gate decides each read's own scope-wide capability (O62); the legacy positional
+  // resolver that used to bind `inventory.resource.read` is gone from both reads.
+  expect(inventoryReservationDetailRead.descriptor.accessDeclaration).toMatchObject({
+    key: 'commerce.inventory.inventory-reservation.read',
+    kind: 'read',
+    selectors: [],
   });
+  expect(Object.keys(inventoryReservationDetailRead.descriptor)).not.toContain('permissionTarget');
+  expect(getReadPermissionTargetResolver(inventoryReservationDetailRead)).toBeUndefined();
 
-  expect(inventoryReservationDetailRead.descriptor.permissionTarget).toBe('business_permission');
-  const reservationResolver = getReadPermissionTargetResolver(inventoryReservationDetailRead);
-  expect(Predicate.isFunction(reservationResolver)).toBe(true);
-  if (Predicate.isFunction(reservationResolver)) {
-    expect(reservationResolver(reservationInput, scope)).toEqual({
-      businessPermission: {
-        permission: 'inventory.resource.read',
-        target: {
-          kind: 'inventory_resource',
-          resource: {
-            moduleId: reservationRef.moduleId,
-            resourceId: reservationRef.resourceId,
-            resourceType: reservationRef.resourceType,
-          },
-          tenantId,
-        },
-      },
-      kind: 'business_permission',
-    });
-  }
-
-  expect(reservationConfirmationVerificationRead.descriptor.permissionTarget).toBe('business_permission');
-  const confirmationResolver = getReadPermissionTargetResolver(reservationConfirmationVerificationRead);
-  expect(Predicate.isFunction(confirmationResolver)).toBe(true);
-  if (Predicate.isFunction(confirmationResolver)) {
-    expect(confirmationResolver(confirmationInput, scope)).toEqual({
-      businessPermission: {
-        permission: 'inventory.resource.read',
-        target: {
-          kind: 'inventory_resource',
-          resource: {
-            moduleId: confirmationInput.confirmationRef.moduleId,
-            resourceId: confirmationInput.confirmationRef.resourceId,
-            resourceType: confirmationInput.confirmationRef.resourceType,
-          },
-          tenantId,
-        },
-      },
-      kind: 'business_permission',
-    });
-  }
+  expect(reservationConfirmationVerificationRead.descriptor.accessDeclaration).toMatchObject({
+    key: 'commerce.inventory.reservation-confirmation.verify',
+    kind: 'read',
+    selectors: [],
+  });
+  expect(Object.keys(reservationConfirmationVerificationRead.descriptor)).not.toContain('permissionTarget');
+  expect(getReadPermissionTargetResolver(reservationConfirmationVerificationRead)).toBeUndefined();
 });
 
 it.effect('reads the exact Reservation with bounded evidence and returns typed not found', () =>
@@ -317,37 +279,29 @@ it.effect('denies the exact Inventory Resource before opening owner persistence 
         return Effect.succeed([]);
       }),
     };
+    const gate = makeTestBoundAccessGate();
     const runtime = makeReadRuntime(
       database,
       openModuleEntrypointGateway,
       { resolve: () => Effect.succeed(scope) },
       {
-        businessPermissions: ({ targets }) =>
-          Effect.succeed(
-            targets.map((target) => ({
-              decision: 'denied' as const,
-              key: toBusinessPermissionAccessKey(target),
-            })),
-          ),
+        // The gate is the only authority: the retired target checks are never consulted (O62).
         legalEntities: ({ legalEntityIds }) =>
           Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
         modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
-        resources: ({ resources }) =>
-          Effect.succeed(
-            resources.map((resource) => ({
-              decision: 'allowed' as const,
-              key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
-            })),
-          ),
+        ownerPermissions: () => Effect.die('The gate decides; no legacy owner target is checked'),
+        resources: () => Effect.die('The gate decides; no legacy resource target is checked'),
         tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision: 'allowed' as const, key }))),
       },
       {
-        databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+        accessDecision: gate.bound,
+        databaseIdentities: defineDatabaseIdentityEnrollment([]),
         onStage: (stage) => {
           stages.push(stage);
         },
 
         ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
+        ownerRegistration: inventoryRegistration,
       },
     );
     const input = Schema.decodeUnknownSync(InventoryReservationDetailRequestSchema)({ reservationRef });
@@ -361,13 +315,10 @@ it.effect('denies the exact Inventory Resource before opening owner persistence 
       .pipe(Effect.flip);
 
     expect(Schema.is(ReadPermissionDenied)(failure)).toBe(true);
-    // The only database work is Core's denial evidence, in its own transaction; no Inventory table is touched.
-    expect(statements).toHaveLength(5);
-    expect(statements[0]).toBe('BEGIN');
-    expect(statements[1]).toContain("set_config('ontos.tenant_id'");
-    expect(statements[2]).toContain('current_user::text as role');
-    expect(statements[3]).toMatch(/^insert into "core"\."data_access_events"/u);
-    expect(statements[4]).toBe('COMMIT');
+    expect(gate.accessDecision.askedDecisions[0]?.carrier.accessDeclaration?.key).toBe(
+      'commerce.inventory.inventory-reservation.read',
+    );
+    expect(statements.some((statement) => statement.includes('"inventory".'))).toBe(false);
     expect(stages).toEqual(['input_decoded', 'scope_validated', 'module_state_checked', 'permission_checked']);
   }),
 );

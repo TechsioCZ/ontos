@@ -6,19 +6,31 @@ import { getActionHandler } from '../../src/actions/definition.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { expect, it } from 'effect-rstest';
 import { requestPeopleSearchRebuildAction } from '../../src/modules/actions/request-people-search-rebuild.action.ts';
+import { peopleSearchRead } from '../../src/people/people-search.ts';
 import { OutboxPayloadSchema } from '../../src/outbox/core-identity-people-search-rebuild-requested-v1.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
 
 it('rebuild is an explicit audited tenant-only Action, not a direct search or SQL mutation endpoint', () => {
   const { descriptor } = requestPeopleSearchRebuildAction;
   expect(descriptor.entrypoint).toMatchObject({
-    authorization: { kind: 'action_execution', provisioning: 'explicit' },
+    authorization: { kind: 'protected' },
     moduleKey: 'core.identity',
     scope: 'system',
   });
+  // The v2 carrier is the Action's own declaration (O43): administration of the projection is a
+  // human-only, run-only capability, and the gate decides it instead of a legacy provisioning mode.
+  expect(descriptor.accessDeclaration).toMatchObject({
+    key: 'core.identity.people-search.rebuild',
+    kind: 'admin',
+    modes: ['run'],
+    risk: 'sensitive',
+  });
+  // O7, O67-Q3: `forbidden` legal-entity scope means the gate decides this Action in the tenant
+  // context, so only the tenant's own identity administration may request a rebuild. The per-Action
+  // legacy `tenantPermission` override is gone with the v1 engine, not shadowed by a second one.
   expect(descriptor.legalEntityScope).toBe('forbidden');
   expect(descriptor.idempotency).toBe('required');
-  expect(descriptor.tenantPermission?.({ reason: 'Repair projection' })).toBe('manage_identity');
+  expect('tenantPermission' in descriptor).toBe(false);
   expect(Object.keys(descriptor.domainEvents)).toEqual(['core.identity.people-search-rebuild-requested.v1']);
   const decode = Schema.decodeUnknownSync(descriptor.payloadSchema, { onExcessProperty: 'error' });
   expect(decode({ reason: 'Repair projection' })).toEqual({ reason: 'Repair projection' });
@@ -37,12 +49,19 @@ it('rebuild is an explicit audited tenant-only Action, not a direct search or SQ
     Schema.decodeUnknownSync(OutboxPayloadSchema, { onExcessProperty: 'error' })({ data: { tenantId: 'foreign' } }),
   ).toThrow();
 });
-it('people row access inherits the same tenant OR company directory permission without reader/accessor grants', () => {
-  expect(ONTOS_SPICEDB_SCHEMA).toContain('relation people_company: legal_entity');
-  expect(ONTOS_SPICEDB_SCHEMA).toContain('relation people_tenant: tenant');
-  expect(ONTOS_SPICEDB_SCHEMA).toContain(
-    '((people_company->read_people + people_tenant->read_people) & people_company->access)',
-  );
+it('people row access is decided by the v2 gate in the exact company scope, never by a broad grant', () => {
+  // The v1 containment relations (`people_company`/`people_tenant` over `read_all`) are retired with
+  // the legacy schema, so no broad allow role survives; the read's own declaration and the gate's
+  // list predicate decide rows in the named company (O25, O28).
+  expect(ONTOS_SPICEDB_SCHEMA).not.toContain('read_all');
+  expect(ONTOS_SPICEDB_SCHEMA).not.toContain('write_all');
+  expect(peopleSearchRead.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+  expect(peopleSearchRead.descriptor.legalEntityScope).toBe('required');
+  expect(peopleSearchRead.descriptor.accessDeclaration).toMatchObject({
+    key: 'core.identity.people-search.query',
+    kind: 'read',
+    modes: ['run'],
+  });
 });
 
 it('the native Core Action catalog classifies rebuild as hidden, with no business MCP endpoint', () => {

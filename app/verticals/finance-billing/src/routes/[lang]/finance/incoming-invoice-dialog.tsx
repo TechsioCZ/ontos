@@ -20,8 +20,8 @@ import type { DraftLine } from '../../../../shared/domain/invoice-draft.ts';
 import { InvoiceLineEditor } from './invoice-line-editor.tsx';
 import { emptyObjectSelection, objectAnchors, ObjectFields } from './object-fields.tsx';
 import type { ObjectSelection } from './object-fields.tsx';
-import { ACCEPTED_DOCUMENT_TYPES, formatBytes, MAX_UPLOAD_BYTES, outcomeMessage, readUpload } from './finance-ui.tsx';
-import type { FinanceCommandDraft, FinanceViewModel, PreparedUpload } from './finance-ui.tsx';
+import { ACCEPTED_DOCUMENT_TYPES, formatBytes, MAX_UPLOAD_BYTES, outcomeNotice, readUpload } from './finance-ui.tsx';
+import type { FinanceCommandDraft, FinanceNotice, FinanceViewModel, PreparedUpload } from './finance-ui.tsx';
 
 export const BUDGET_CATEGORIES = [
   'Energie',
@@ -78,16 +78,16 @@ const incomingInvoiceDialogPickFileProgram = Effect.fn('Finance.pickFile')(
       return;
     }
     if (!ACCEPTED_DOCUMENT_TYPES.some((mimeType) => mimeType === picked.type)) {
-      setError('Podporované jsou soubory PDF, PNG, JPEG a WebP.');
+      setError({ status: 'error', text: 'Podporované jsou soubory PDF, PNG, JPEG a WebP.' });
       return;
     }
     if (picked.size > MAX_UPLOAD_BYTES) {
-      setError('Soubor je příliš velký (nejvýše 3 MB).');
+      setError({ status: 'error', text: 'Soubor je příliš velký (nejvýše 3 MB).' });
       return;
     }
     const uploaded = yield* Effect.result(readUpload(picked));
     if (Result.isFailure(uploaded)) {
-      setError('Obsah dokladu se nepodařilo načíst.');
+      setError({ status: 'error', text: 'Obsah dokladu se nepodařilo načíst.' });
       return;
     }
     setFile({ size: picked.size, upload: uploaded.success });
@@ -102,20 +102,20 @@ const incomingInvoiceDialogSubmitProgram = Effect.fn('Finance.submit')(function*
 ) {
   const { close, draft, file, setError, setSaving, setSubmitted, totals, vm } = context;
   if (draft.supplierName.trim() === '' || draft.documentNumber.trim() === '') {
-    setError('Vyplňte dodavatele a číslo dokladu.');
+    setError({ status: 'error', text: 'Vyplňte dodavatele a číslo dokladu.' });
     return;
   }
   setSubmitted(true);
   if (draft.lines.some((line) => lineIssue(line) !== undefined)) {
-    setError('Doplňte u každé položky popis, množství, cenu bez DPH a sazbu DPH.');
+    setError({ status: 'error', text: 'Doplňte u každé položky popis, množství, cenu bez DPH a sazbu DPH.' });
     return;
   }
   if (totals === undefined || totals.totalMinor === 0) {
-    setError('Součet položek musí být kladná částka.');
+    setError({ status: 'error', text: 'Součet položek musí být kladná částka.' });
     return;
   }
   if (draft.dueDate < draft.issueDate) {
-    setError('Splatnost nesmí být dřív než datum vystavení.');
+    setError({ status: 'error', text: 'Splatnost nesmí být dřív než datum vystavení.' });
     return;
   }
   setSaving(true);
@@ -150,7 +150,8 @@ const incomingInvoiceDialogSubmitProgram = Effect.fn('Finance.submit')(function*
       vm.openDetail(outcome.invoice.ref.resourceId);
     }
   } else {
-    setError(outcomeMessage(vm, outcome));
+    // A proposal waiting for approval recorded nothing yet: a neutral note, no detail to open.
+    setError(outcomeNotice(vm, outcome));
   }
 });
 
@@ -165,7 +166,7 @@ const useIncomingInvoiceDialog = ({ onOpenChange, open, vm }: IncomingInvoiceDia
   const today = vm.referenceDate === '' ? fallbackToday : vm.referenceDate;
   const [draft, setDraft] = useState<IncomingDraft>(() => emptyDraft(today));
   const [file, setFile] = useState<{ readonly size: number; readonly upload: PreparedUpload }>();
-  const [error, setError] = useState<string>();
+  const [error, setError] = useState<FinanceNotice>();
   const [saving, setSaving] = useState(false);
   const set = (patch: Partial<IncomingDraft>) => setDraft((current) => ({ ...current, ...patch }));
   const [submitted, setSubmitted] = useState(false);
@@ -288,8 +289,8 @@ export const IncomingInvoiceDialog = (props: IncomingInvoiceDialogProps) => {
         }}
       >
         {error !== undefined && (
-          <StatusText showIcon size="sm" status="error">
-            {error}
+          <StatusText showIcon size="sm" status={error.status}>
+            {error.text}
           </StatusText>
         )}
         <div className="grid grid-cols-1 gap-200 md:grid-cols-[2fr_1fr]">

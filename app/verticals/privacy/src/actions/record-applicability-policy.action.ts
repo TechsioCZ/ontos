@@ -39,6 +39,14 @@ const handleRecordApplicabilityPolicy = Effect.fn('RecordApplicabilityPolicyActi
 });
 export const recordApplicabilityPolicyAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.applicability-policy.record',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'processing-governance', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.record-applicability-policy.access.v1',
@@ -50,7 +58,7 @@ export const recordApplicabilityPolicyAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.record-applicability-policy',
       moduleKey: 'privacy.core',
       role: 'action',

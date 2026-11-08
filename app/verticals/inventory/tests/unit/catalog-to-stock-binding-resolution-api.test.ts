@@ -1,6 +1,6 @@
 import { ReadHandlerNotFound } from '@app/core-runtime';
 import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
-import { Effect, Option, Predicate, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { mapCatalogToStockBindingResolutionDomainError } from '../../api/catalog-to-stock-binding-resolution-read-server.ts';
@@ -19,10 +19,7 @@ import {
 } from '../../shared/domain/catalog-to-stock-binding.ts';
 import { InventoryBackendConfigurationSchema } from '../../shared/domain/inventory-backend-configuration.ts';
 import { StockItemSchema } from '../../shared/domain/stock-item.ts';
-import {
-  catalogToStockBindingResolutionPermissionTarget,
-  catalogToStockBindingResolutionRead,
-} from '../../src/api/catalog-to-stock-binding-resolution.read.ts';
+import { catalogToStockBindingResolutionRead } from '../../src/api/catalog-to-stock-binding-resolution.read.ts';
 import {
   runReadOwnerSteps,
   getReadPermissionTargetResolver,
@@ -116,30 +113,26 @@ const scope = {
   tenantId,
 };
 
-it('binds the read permission to the requested exact Selection under trusted Tenant scope', () => {
-  expect(catalogToStockBindingResolutionRead.descriptor).toMatchObject({
-    legalEntityScope: 'forbidden',
-    permissionTarget: 'business_permission',
-  });
-  const resolver = getReadPermissionTargetResolver(catalogToStockBindingResolutionRead);
-  expect(Predicate.isFunction(resolver)).toBe(true);
-  expect(catalogToStockBindingResolutionPermissionTarget(input, scope)).toEqual({
-    businessPermission: {
-      permission: 'inventory.resource.read',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: 'commerce.inventory',
-          resourceId: productId,
-          resourceType: 'commerce.inventory.catalog-to-stock-binding',
-        },
-        tenantId,
+it.effect('decides the read through its own declaration and refuses a foreign-Tenant Selection in the handler', () =>
+  Effect.gen(function* refuseForeignTenantSelection() {
+    // The one gate decides the read's own scope-wide capability (O62); the legacy positional
+    // permission target is gone, so the trusted Tenant is proven by the handler itself.
+    expect(catalogToStockBindingResolutionRead.descriptor).toMatchObject({
+      accessDeclaration: {
+        key: 'commerce.inventory.catalog-to-stock-binding.resolve',
+        kind: 'read',
+        selectors: [],
       },
-    },
-    kind: 'business_permission',
-  });
-  expect(
-    catalogToStockBindingResolutionPermissionTarget(
+      legalEntityScope: 'forbidden',
+    });
+    expect(Object.keys(catalogToStockBindingResolutionRead.descriptor)).not.toContain('permissionTarget');
+    expect(getReadPermissionTargetResolver(catalogToStockBindingResolutionRead)).toBeUndefined();
+
+    // Negative control: a Selection from another Tenant never reaches the owner's configuration
+    // read, exactly what the removed target resolver refused by emptying its Tenant.
+    let configurationReads = 0;
+    const failure = yield* runReadOwnerSteps(
+      catalogToStockBindingResolutionRead,
       Schema.decodeUnknownSync(CatalogToStockBindingResolutionRequestSchema)({
         ...input,
         demand: {
@@ -152,10 +145,23 @@ it('binds the read permission to the requested exact Selection under trusted Ten
           unitRef: { ...unitRef, tenantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
         },
       }),
-      scope,
-    ),
-  ).toMatchObject({ businessPermission: { target: { tenantId: '' } } });
-});
+      {
+        readKey: catalogToStockBindingResolutionRead.descriptor.readKey,
+        scope,
+        services: {
+          findCurrentConfiguration: () => {
+            configurationReads += 1;
+            return Effect.succeed(Option.some(configuration));
+          },
+          resolve: () => Effect.die('a foreign-Tenant Selection must never be resolved'),
+        },
+      },
+    ).pipe(Effect.flip);
+
+    expect(Schema.is(ReadHandlerNotFound)(failure)).toBe(true);
+    expect(configurationReads).toBe(0);
+  }),
+);
 
 it.effect('resolves through the trusted configuration and returns metadata evidence with the exact demand', () =>
   Effect.gen(function* resolveGovernedBinding() {

@@ -421,7 +421,7 @@ const LinesTable = ({ order }: { readonly order: ImportedOrder }) => {
   );
 };
 
-/** Read-only detail of an imported order with its state history; decision forms for read_all + write_all. */
+/** Read-only detail of an imported order with its state history; decision forms for a full reader. */
 const UnpairButton = ({
   busy,
   order,

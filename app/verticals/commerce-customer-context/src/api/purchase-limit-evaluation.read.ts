@@ -5,30 +5,19 @@ import {
   OperationContextUnavailable,
   ReadHandlerUnavailable,
 } from '@app/core-runtime';
-import type {
-  OperationalScope,
-  ReadFinishContext,
-  ReadLoadContext,
-  ScopedTransactionExecutor,
-} from '@app/core-runtime';
-import { DateTime, Effect } from 'effect';
+import type { ReadHandlerContext } from '@app/core-runtime';
+import { Effect } from 'effect';
 import {
   PurchaseLimitEvaluationRequestSchema,
   PurchaseLimitEvaluationResponseSchema,
 } from '../../shared/apis/purchase-limit-evaluation.ts';
-import type { PurchaseLimitEvaluationRequest } from '../../shared/apis/purchase-limit-evaluation.ts';
-import { evaluatePurchaseLimit } from '../../shared/domain/purchase-limit-evaluation.ts';
+
 import {
-  purchaseProposalBasisService,
-  finishPurchaseProposalBasisRead,
-  purchaseProposalBasisReadSnapshotMatches,
-  basisCurrentnessMatchesClaim,
-} from '../services/purchase-proposal-basis.service.ts';
-import {
-  finishPurchaseLimitEvaluationSnapshot,
-  readCurrentPurchaseLimitPolicyState,
-} from '../persistence/purchase-limit-persistence.ts';
-import { stableRevision } from '../integrations/order-finalization-pricing-context.ts';
+  evaluatePurchaseLimit,
+  PurchaseLimitEvaluationSourceFactory,
+} from '../../shared/domain/purchase-limit-evaluation.ts';
+import type { PurchaseLimitEvaluationSourceService } from '../../shared/domain/purchase-limit-evaluation.ts';
+import { counterpartyStorefrontOwnerFacts } from './read-owner-facts.ts';
 
 const preserveFailureCause = <Failure extends object>(failure: Failure, cause: unknown): Failure => {
   Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
@@ -37,65 +26,24 @@ const preserveFailureCause = <Failure extends object>(failure: Failure, cause: u
 
 const purchaseLimitEvaluationEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'counterparty.purchase.submit' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.purchase-limit-evaluation',
   moduleKey: 'commerce.customer-context',
   role: 'api',
 });
 
-const loadLimitSnapshot = Effect.fn('PurchaseLimitEvaluationRead.loadSnapshot')(function* loadSnapshot(
-  transaction: ScopedTransactionExecutor,
-  scope: OperationalScope,
-  compositionRevision: string | undefined,
-  input: PurchaseLimitEvaluationRequest,
-  at?: string,
-) {
-  if (
-    scope.legalEntityId === undefined ||
-    scope.trustedStorefrontId === undefined ||
-    compositionRevision === undefined ||
-    input.counterpartyRef.tenantId !== scope.tenantId ||
-    input.storefrontId !== scope.trustedStorefrontId
-  ) {
-    return yield* new OperationContextUnavailable({
-      code: 'operation_context_unavailable',
-      reason: 'The Purchase Limit query does not match the trusted operation scope',
-    });
-  }
-  const owner = yield* purchaseProposalBasisService(transaction, scope, compositionRevision);
-  const [basis, policy] = yield* Effect.all(
-    [
-      owner.loadRead(
-        {
-          operation: 'CURRENT',
-          sourceRef: input.purchaseValue.sourceRef,
-          sourceRevision: input.purchaseValue.sourceRevision,
-        },
-        at,
-      ),
-      readCurrentPurchaseLimitPolicyState(transaction, {
-        counterpartyRef: input.counterpartyRef,
-        principalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
-        tenantId: scope.tenantId,
-      }),
-    ],
-    { concurrency: 1 },
-  );
-  return { basis, policy };
-});
-type LimitSnapshot = Effect.Success<ReturnType<typeof loadLimitSnapshot>>;
-const unavailable = (cause?: unknown) =>
-  preserveFailureCause(
-    new ReadHandlerUnavailable({
-      code: 'read_handler_unavailable',
-      reason: 'Current Purchase Limit evaluation inputs are temporarily unavailable',
-    }),
-    cause,
-  );
-
 export const purchaseLimitEvaluationRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.purchase-limit.evaluate',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'purchase-limits', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
+    accessOwnerFacts: counterpartyStorefrontOwnerFacts,
     entrypoint: purchaseLimitEvaluationEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',
@@ -104,106 +52,42 @@ export const purchaseLimitEvaluationRead = defineRead(
     inputSchema: PurchaseLimitEvaluationRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: 'commerce.customer-context',
-    permissionTarget: 'business_permission',
     policies: [],
     readKey: 'commerce.customer-context.api.purchase-limit-evaluation',
     resultSchema: PurchaseLimitEvaluationResponseSchema,
     schemaVersion: '1',
   },
-  {
-    load: (
-      input: PurchaseLimitEvaluationRequest,
-      context: ReadLoadContext<{
-        readonly load: (input: PurchaseLimitEvaluationRequest) => ReturnType<typeof loadLimitSnapshot>;
-      }>,
-    ) => context.services.load(input).pipe(Effect.mapError(unavailable)),
-    finish: Effect.fn('PurchaseLimitEvaluationRead.finish')(function* finish(
-      input: PurchaseLimitEvaluationRequest,
-      context: ReadFinishContext<undefined, LimitSnapshot>,
-    ) {
-      const { legalEntityId, trustedStorefrontId } = context.scope;
-      const { compositionRevision } = context;
-      if (legalEntityId === undefined || trustedStorefrontId === undefined || compositionRevision === undefined) {
-        return yield* unavailable();
-      }
-      const observation = yield* finishPurchaseProposalBasisRead(
-        {
-          operation: 'CURRENT',
-          sourceRef: input.purchaseValue.sourceRef,
-          sourceRevision: input.purchaseValue.sourceRevision,
-        },
-        context.scope,
-        compositionRevision,
-        context.loaded.basis,
-        Effect.void,
-      ).pipe(Effect.mapError(unavailable));
-      const claim = {
-        claimedPurchaseValue: input.purchaseValue,
-        counterpartyRef: input.counterpartyRef,
-        expectedSourceRevisions: input.expectedSourceRevisions,
-        observedAt: DateTime.makeUnsafe(context.loaded.basis.operationTime),
-        scope: {
-          legalEntityId,
-          principalId: context.scope.principalId,
-          storefrontId: trustedStorefrontId,
-          tenantId: context.scope.tenantId,
-        },
-      };
-      if (observation.facts === null || !basisCurrentnessMatchesClaim(observation, claim, context.scope)) {
-        return yield* unavailable();
-      }
-      const evaluation = yield* finishPurchaseLimitEvaluationSnapshot(
-        input,
-        {
-          legalEntityId,
-          principalId: context.scope.principalId,
-          storefrontId: trustedStorefrontId,
-          tenantId: context.scope.tenantId,
-        },
-        context.loaded.policy,
-        observation.facts,
-        claim.observedAt,
-      ).pipe(Effect.mapError(unavailable));
-      yield* context.transaction((transaction) =>
-        loadLimitSnapshot(
-          transaction,
-          context.scope,
-          compositionRevision,
-          input,
-          context.loaded.basis.operationTime,
-        ).pipe(
-          Effect.flatMap((current) =>
-            purchaseProposalBasisReadSnapshotMatches(context.loaded.basis, current.basis) &&
-            stableRevision(context.loaded.policy) === stableRevision(current.policy)
-              ? Effect.void
-              : Effect.fail(unavailable('The Purchase Limit owner state changed during dependency resolution')),
-          ),
+  (
+    input,
+    context: ReadHandlerContext<{
+      readonly source: PurchaseLimitEvaluationSourceService;
+    }>,
+  ) =>
+    context.services.source.loadCurrent({ principalId: context.scope.principalId, query: input }).pipe(
+      Effect.mapError((cause) =>
+        preserveFailureCause(
+          new ReadHandlerUnavailable({
+            code: 'read_handler_unavailable',
+            reason: 'Current Purchase Limit evaluation inputs are temporarily unavailable',
+          }),
+          cause,
         ),
-      );
-      return { evidence: { resultCount: 1 }, result: evaluatePurchaseLimit(evaluation) };
-    }),
-  },
-  (transaction, scope, compositionRevision) =>
-    Effect.succeed({
-      load: (input: PurchaseLimitEvaluationRequest) =>
-        loadLimitSnapshot(transaction, scope, compositionRevision, input),
-    }),
-  (input: PurchaseLimitEvaluationRequest, scope) => {
-    const target = {
-      businessPermission: {
-        permission: 'counterparty.purchase.submit',
-        target: {
-          counterpartyId: input.counterpartyRef.resourceId,
-          kind: 'counterparty_storefront',
-          legalEntityId: scope.legalEntityId ?? '',
-          storefrontId: input.storefrontId,
-          tenantId: scope.tenantId,
-        },
-      },
-      kind: 'business_permission',
-    } as const;
-    return scope.trustedStorefrontId === undefined
-      ? target
-      : { ...target, trustedStorefrontId: scope.trustedStorefrontId };
-  },
+      ),
+      Effect.map(evaluatePurchaseLimit),
+      Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
+    ),
+  (transaction, scope) =>
+    PurchaseLimitEvaluationSourceFactory.pipe(
+      Effect.flatMap((factory) => factory.make(transaction, scope)),
+      Effect.mapError((cause) =>
+        preserveFailureCause(
+          new OperationContextUnavailable({
+            code: 'operation_context_unavailable',
+            reason: 'Purchase Limit evaluation source is temporarily unavailable',
+          }),
+          cause,
+        ),
+      ),
+      Effect.map((source) => ({ source })),
+    ),
 );

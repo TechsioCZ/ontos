@@ -2,7 +2,8 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug resend-counterparty-access-invitation
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { reconcileAccessPortalAfterAttempt } from '@app/core-runtime/access/portal';
 import { Effect } from 'effect';
 import {
   ResendCounterpartyAccessInvitationPayloadSchema,
@@ -17,7 +18,7 @@ import {
 import type { CounterpartyAccessPortService } from '../../shared/domain/access-port.ts';
 import { counterpartyAccessServicesForTransaction } from '../access-services.ts';
 import {
-  accessManagementPermissionTarget,
+  accessManagementOwnerFacts,
   auditEvidence,
   deniedAccessAuditEvidence,
   principalRefFromContext,
@@ -101,14 +102,22 @@ const handle = Effect.fn('ResendCounterpartyAccessInvitation.handle')(function* 
 
 export const resendCounterpartyAccessInvitationAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.counterparty-access-invitation.resend',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'counterparty-access', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.resend-counterparty-access-invitation.access.v1',
     },
+    accessOwnerFacts: accessManagementOwnerFacts,
     actionKey: 'commerce.customer-context.resend-counterparty-access-invitation',
     auditEvidenceSchema: AccessAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission(accessManagementPermissionTarget),
     deniedAuditEvidence: {
       resolve: (payload, scope) =>
         deniedAccessAuditEvidence({
@@ -125,7 +134,7 @@ export const resendCounterpartyAccessInvitationAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.resend-counterparty-access-invitation',
       moduleKey: 'commerce.customer-context',
       role: 'action',
@@ -143,4 +152,7 @@ export const resendCounterpartyAccessInvitationAction = defineAction(
     counterpartyAccessServicesForTransaction(transaction, scope).pipe(
       Effect.map((port) => ({ resend: port.resendInvitation })),
     ),
+  undefined,
+  // The resend ended the invitee access its earlier proof admitted; the engine follows once it committed.
+  reconcileAccessPortalAfterAttempt(),
 );

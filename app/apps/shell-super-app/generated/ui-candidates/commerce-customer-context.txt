@@ -4,6 +4,7 @@ filter
 fixed
 hidden
 lowercase
+rounded
 running
 shadow
 table

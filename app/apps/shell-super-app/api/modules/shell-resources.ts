@@ -1,12 +1,11 @@
 import type {
+  AccessDeclaration,
   ApplicationCompositionModule,
-  ContextAccessResult,
-  ContextAccessService,
   InstalledModuleCatalog,
+  OperationalScope,
   TenantModuleState,
   TenantModuleStateRecord,
   TenantModuleStateServiceContract,
-  TrustedPrincipalContext,
 } from '@app/core-runtime';
 import {
   decideModuleStateAccess,
@@ -16,6 +15,7 @@ import {
   ReadPermissionDenied,
   TenantModuleStateRecordSchema,
 } from '@app/core-runtime';
+import type { GateInput } from '@app/core-runtime/access/enforcement';
 import { corePeopleSystemSearchProvider } from '@app/core-runtime/people/search';
 import { Context, DateTime, Effect, Exit, Layer, Option, Schema } from 'effect';
 
@@ -28,6 +28,8 @@ import {
   ShellTimelineEntrySchema as SharedShellTimelineEntrySchema,
 } from '../../shared/api.ts';
 import type { ShellSearchResult as SharedShellSearchResult } from '../../shared/api.ts';
+import type { ShellAccessDecision, ShellAccessGate } from './shell-access-decisions.ts';
+import { shellAccessOutcome } from './shell-access-decisions.ts';
 import type { InstalledModuleCatalogError, ShellInstalledCatalog } from './installed-module-catalog.ts';
 import { withShellSearchRequestBudget } from './shell-governed-search.ts';
 import { observeShellSearchProvider } from './shell-search-diagnostics.ts';
@@ -72,7 +74,8 @@ const PartyShellSearchResultSchema = Schema.Struct({
     ),
   ),
   relevance: Schema.optionalKey(ShellSearchRelevanceSchema),
-  title: stableKey,
+  // The Party name is a governed field: a caller without it receives the row without its title (O17, O58).
+  title: Schema.optionalKey(stableKey),
 });
 const CounterpartyShellSearchResultSchema = Schema.Struct({
   collision: Schema.optionalKey(
@@ -90,7 +93,7 @@ const CounterpartyShellSearchResultSchema = Schema.Struct({
     archived: Schema.Boolean,
     matchedViaAlias: Schema.Boolean,
     ref: ResourceRefSchema,
-    title: stableKey,
+    title: Schema.optionalKey(stableKey),
   }),
   ref: ResourceRefSchema.pipe(
     Schema.check(
@@ -147,11 +150,8 @@ export class ShellProviderUnavailableError extends Schema.TaggedError<ShellProvi
   { cause: Schema.optionalKey(ProviderFailureCauseSchema) },
 ) {}
 
-interface ShellResourceRequest extends TrustedPrincipalContext {
-  readonly correlationId: string;
-  readonly legalEntityId?: string;
-}
-export type ShellResourceContext = ShellResourceRequest;
+/** Every Shell resource question is asked of the trusted request scope, never of loose ids (O66). */
+export type ShellResourceContext = OperationalScope;
 
 export interface ShellProviderAssertionIssuer {
   readonly issueAssertion: (input: {
@@ -187,7 +187,7 @@ interface ShellResourceProviderRequest<ApiKey extends string = string, Authoriza
   readonly ref: ResourceRef;
 }
 
-interface ShellResourceProviderHandler {
+export interface ShellResourceProviderHandler {
   readonly detail: (input: ShellResourceProviderRequest) => Effect.Effect<unknown, ShellProviderUnavailableError>;
   readonly timeline: (input: ShellResourceProviderRequest) => Effect.Effect<
     {
@@ -204,8 +204,8 @@ export interface ShellResourceGateways {
 }
 
 interface ShellResourceDependencies extends ShellProviderAssertionIssuer {
+  readonly access: ShellAccessGate;
   readonly catalog: Effect.Effect<ShellInstalledCatalog, InstalledModuleCatalogError>;
-  readonly contextAccess: ContextAccessService;
   readonly moduleStates: Pick<TenantModuleStateServiceContract, 'getTenantModuleStates'>;
 }
 
@@ -213,16 +213,6 @@ type LoadStateArguments = readonly [
   dependencies: ShellResourceDependencies,
   context: ShellResourceContext,
   moduleId: string,
-];
-type ModuleDecisionArguments = readonly [
-  dependencies: ShellResourceDependencies,
-  context: ShellResourceContext,
-  moduleId: string,
-];
-type ResourceDecisionArguments = readonly [
-  dependencies: ShellResourceDependencies,
-  context: ShellResourceContext,
-  ref: ResourceRef,
 ];
 
 type ProviderFailureCause = Schema.Schema.Type<typeof ProviderFailureCauseSchema>;
@@ -262,6 +252,26 @@ const captureSearch = <A, E, R>(program: Effect.Effect<A, E, R>) =>
 const resourceKey = ({ moduleId, resourceId, resourceType }: ResourceRef): string =>
   `${moduleId}:${resourceType}:${resourceId}`;
 
+/**
+ * One contribution's own declaration as the one gate question (one entrypoint, one capability).
+ * Every answer stays the gate's: ALLOWED, NEEDS_APPROVAL, DENIED or UNAVAILABLE — the Shell never
+ * turns a missing declaration into an allow (O62).
+ */
+const contributionGate = (input: {
+  readonly contribution: { readonly accessDeclaration?: AccessDeclaration };
+  readonly legalEntityScope: GateInput['legalEntityScope'];
+  readonly now: Date;
+  readonly scope: ShellResourceContext;
+}): GateInput => ({
+  carrier: { accessDeclaration: input.contribution.accessDeclaration },
+  legalEntityScope: input.legalEntityScope,
+  now: input.now,
+  scope: input.scope,
+});
+
+/** A resource surface is company-owned data, so a company must be selected before it is decided. */
+const RESOURCE_LEGAL_ENTITY_SCOPE = 'required' as const;
+
 const loadState = (
   ...[dependencies, context, moduleId]: LoadStateArguments
 ): Effect.Effect<Option.Option<TenantModuleState>, ShellProviderUnavailableError> =>
@@ -277,26 +287,6 @@ const loadState = (
         : Effect.fail(unavailable());
     }),
   );
-
-const moduleDecision = (...[dependencies, context, moduleId]: ModuleDecisionArguments) =>
-  context.legalEntityId === undefined
-    ? Effect.succeed([{ decision: 'unavailable' as const, key: moduleId }])
-    : dependencies.contextAccess.modules({
-        legalEntityId: context.legalEntityId,
-        moduleIds: [moduleId],
-        principalId: context.principalId,
-        tenantId: context.tenantId,
-      });
-
-const resourceDecision = (...[dependencies, context, ref]: ResourceDecisionArguments) =>
-  context.legalEntityId === undefined
-    ? Effect.succeed([{ decision: 'unavailable' as const, key: resourceKey(ref) }])
-    : dependencies.contextAccess.resources({
-        legalEntityId: context.legalEntityId,
-        principalId: context.principalId,
-        resources: [ref],
-        tenantId: context.tenantId,
-      });
 
 type SearchProviderIdentity = Pick<SearchProvider, 'contribution' | 'descriptor' | 'moduleId'>;
 
@@ -335,11 +325,7 @@ const resultBelongsToProvider = (
     return false;
   }
   if (result.kind === 'party') {
-    return (
-      provider.descriptor.accessFiltering === 'tenant_scope' &&
-      provider.descriptor.tenantPermission !== undefined &&
-      result.ref.tenantId === context.tenantId
-    );
+    return provider.descriptor.accessFiltering === 'tenant_scope' && result.ref.tenantId === context.tenantId;
   }
   if (result.kind === 'resource') {
     if (
@@ -350,7 +336,7 @@ const resultBelongsToProvider = (
       return false;
     }
     if (provider.descriptor.accessFiltering === 'tenant_scope') {
-      return provider.descriptor.tenantPermission !== undefined && result.selectedLegalEntityId === undefined;
+      return result.selectedLegalEntityId === undefined;
     }
     return context.legalEntityId !== undefined && result.selectedLegalEntityId === context.legalEntityId;
   }
@@ -359,14 +345,15 @@ const resultBelongsToProvider = (
 
 const normalizeProviderResult = (value: Schema.Schema.Type<typeof RawShellSearchResultSchema>): ShellSearchResult => {
   if (Schema.is(CounterpartyShellSearchResultSchema)(value)) {
-    return {
+    const { title } = value.party;
+    const counterparty = {
       ...value,
-      kind: 'counterparty',
+      kind: 'counterparty' as const,
       legalEntity: value.legalEntity,
       party: value.party,
       ref: value.ref,
-      title: value.party.title,
     };
+    return title === undefined ? counterparty : { ...counterparty, title };
   }
   if (Schema.is(PartyShellSearchResultSchema)(value)) {
     return { ...value, kind: 'party' };
@@ -560,7 +547,8 @@ const compareSearchText = (left: string, right: string): number => {
   }
   return left < right ? -1 : 1;
 };
-const normalizedSearchTitle = (title: string): string => normalizeCoreSearchText(title).trim().split(/\s+/u).join(' ');
+const normalizedSearchTitle = (title: string | undefined): string =>
+  title === undefined ? '' : normalizeCoreSearchText(title).trim().split(/\s+/u).join(' ');
 const searchScore = (result: ShellSearchResult): number => result.relevance?.score ?? 0;
 
 /**
@@ -570,6 +558,8 @@ const searchScore = (result: ShellSearchResult): number => result.relevance?.sco
  */
 export const compareShellSearchResults = (left: ShellSearchResult, right: ShellSearchResult): number =>
   searchScore(right) - searchScore(left) ||
+  // A row whose governed name is not visible sorts after every named row (O17, O58).
+  Number(left.title === undefined) - Number(right.title === undefined) ||
   compareSearchText(normalizedSearchTitle(left.title), normalizedSearchTitle(right.title)) ||
   compareSearchText(left.ref.tenantId ?? '', right.ref.tenantId ?? '') ||
   compareSearchText(left.ref.moduleId, right.ref.moduleId) ||
@@ -579,53 +569,14 @@ export const compareShellSearchResults = (left: ShellSearchResult, right: ShellS
 export const sortShellSearchResults = (results: readonly ShellSearchResult[]): readonly ShellSearchResult[] =>
   results.toSorted(compareShellSearchResults);
 
-interface SearchCandidate {
-  readonly provider: ReturnType<typeof searchProviders>[number];
-  readonly value: ShellSearchResult;
-}
-
-const authorizeSearchCandidates = Effect.fn('ShellSearch.authorizeCandidates')(function* authorizeSearchCandidates(
-  ...[dependencies, context, uniqueCandidates]: readonly [
-    ShellResourceDependencies,
-    ShellResourceContext,
-    readonly SearchCandidate[],
-  ]
-) {
-  const resourceCandidates = uniqueCandidates.filter(
-    ({ provider }) => provider.descriptor.accessFiltering === 'resource_permission',
-  );
-  const candidateResourceRefs = resourceCandidates.flatMap(({ value }) => [
-    value.ref,
-    ...(value.kind === 'counterparty' ? (value.collision?.counterpartyRefs ?? []) : []),
-  ]);
-  const resourcesToAuthorize = [...new Map(candidateResourceRefs.map((ref) => [resourceKey(ref), ref])).values()];
-  let resourcePermissions: readonly ContextAccessResult[] = [];
-  if (resourceCandidates.length > 0) {
-    const { legalEntityId } = context;
-    if (legalEntityId === undefined) {
-      return yield* unavailable();
-    }
-    resourcePermissions = yield* dependencies.contextAccess.resources({
-      legalEntityId,
-      principalId: context.principalId,
-      resources: resourcesToAuthorize,
-      tenantId: context.tenantId,
-    });
-  }
-  if (
-    resourcePermissions.length !== resourcesToAuthorize.length ||
-    resourcePermissions.some(({ decision, key }, index) => {
-      const candidate = resourcesToAuthorize[index];
-      return candidate === undefined || key !== resourceKey(candidate) || decision === 'unavailable';
-    })
-  ) {
-    return yield* unavailable();
-  }
-  const allowedKeys = new Set(
-    resourcePermissions.flatMap(({ decision, key }) => (decision === 'allowed' ? [key] : [])),
-  );
-  return allowedKeys;
-});
+/**
+ * The scope a provider is decided in (O7, O12, O78). The search descriptor states it directly as
+ * `legalEntityScope`, the same vocabulary as the provider read's own declaration, so the Shell never
+ * infers a scope from a coarse filter. A descriptor that has not been migrated yet is company-owned
+ * business data, exactly as it was before the coarse filter was retired.
+ */
+const providerLegalEntityScope = (provider: SearchProvider): GateInput['legalEntityScope'] =>
+  provider.descriptor.legalEntityScope ?? 'required';
 
 /** The same request without a caller selector; used only to read the connection's granted inventory. */
 const withoutResourceTypes = ({ resourceTypes: _resourceTypes, ...request }: ShellSearchRequest): ShellSearchRequest =>
@@ -706,75 +657,64 @@ const admitSearchProviders = Effect.fn('ShellSearch.admitProviders')(function* a
     // A selected company does not remove canonical tenant access; tenant rows retain tenant ownership only.
     return state !== undefined && decideModuleStateAccess(state, contribution.entrypoint.access) === 'allow';
   });
-  const companyModuleIds = [
-    ...new Set(
-      stateEligible.flatMap(({ descriptor, moduleId }) =>
-        descriptor.accessFiltering === 'tenant_scope' ? [] : [moduleId],
-      ),
+  const now = yield* DateTime.nowAsDate;
+  // A provider that names record selectors is admitted through the LIST gate (R5b-4): the engine
+  // answers a predicate instead of refusing `deny.target_required`, and the owner read applies its
+  // own list gate to the rows. A scope-wide provider keeps the one batched engine snapshot (E-BATCH).
+  const scopeWide: { readonly index: number; readonly provider: SearchProvider }[] = [];
+  const recordScoped: { readonly index: number; readonly provider: SearchProvider }[] = [];
+  for (const [index, provider] of stateEligible.entries()) {
+    const target = (provider.contribution.accessDeclaration?.selectors.length ?? 0) === 0 ? scopeWide : recordScoped;
+    target.push({ index, provider });
+  }
+  const batched = yield* dependencies.access.decideMany(
+    scopeWide.map(({ provider }) =>
+      contributionGate({
+        contribution: provider.contribution,
+        legalEntityScope: providerLegalEntityScope(provider),
+        now,
+        scope: context,
+      }),
     ),
-  ].toSorted();
-  const companyPermissions =
-    context.legalEntityId === undefined || companyModuleIds.length === 0
-      ? []
-      : yield* dependencies.contextAccess.modules({
-          legalEntityId: context.legalEntityId,
-          moduleIds: companyModuleIds,
-          principalId: context.principalId,
-          tenantId: context.tenantId,
-        });
-  const companyPermissionByModule = new Map(companyPermissions.map(({ decision, key }) => [key, decision]));
+  );
+  if (batched.length !== scopeWide.length) {
+    return yield* unavailable();
+  }
+  const listed = yield* Effect.forEach(
+    recordScoped,
+    ({ provider }) =>
+      dependencies.access
+        .list(
+          contributionGate({
+            contribution: provider.contribution,
+            legalEntityScope: providerLegalEntityScope(provider),
+            now,
+            scope: context,
+          }),
+        )
+        .pipe(Effect.map(({ decision }) => decision)),
+    { concurrency: 1 },
+  );
+  const decisionByIndex = new Map<number, ShellAccessDecision>();
+  for (const [position, { index }] of scopeWide.entries()) {
+    const decision = batched[position];
+    if (decision !== undefined) {
+      decisionByIndex.set(index, decision);
+    }
+  }
+  for (const [position, { index }] of recordScoped.entries()) {
+    const decision = listed[position];
+    if (decision !== undefined) {
+      decisionByIndex.set(index, decision);
+    }
+  }
   if (
-    context.legalEntityId !== undefined &&
-    (companyPermissions.length !== companyModuleIds.length ||
-      companyPermissionByModule.size !== companyModuleIds.length ||
-      companyModuleIds.some(
-        (moduleId) =>
-          !companyPermissionByModule.has(moduleId) || companyPermissionByModule.get(moduleId) === 'unavailable',
-      ))
+    decisionByIndex.size !== stateEligible.length ||
+    [...decisionByIndex.values()].some(({ outcome }) => outcome === 'UNAVAILABLE')
   ) {
     return yield* unavailable();
   }
-  const permissionOutcomes = yield* Effect.forEach(
-    stateEligible,
-    (provider) => {
-      if (provider.descriptor.accessFiltering === 'tenant_scope') {
-        const permission = provider.descriptor.tenantPermission;
-        if (permission === undefined) {
-          return Effect.succeed({
-            decision: 'unavailable' as const,
-            provider,
-          });
-        }
-        return dependencies.contextAccess
-          .tenants({
-            permission,
-            principalId: context.principalId,
-            tenantIds: [context.tenantId],
-          })
-          .pipe(
-            Effect.map((decisions) => ({
-              decision:
-                decisions.length === 1 && decisions[0]?.key === context.tenantId
-                  ? decisions[0].decision
-                  : ('unavailable' as const),
-              provider,
-            })),
-          );
-      }
-      if (context.legalEntityId === undefined) {
-        return Effect.succeed({ decision: 'denied' as const, provider });
-      }
-      return Effect.succeed({
-        decision: companyPermissionByModule.get(provider.moduleId) ?? ('unavailable' as const),
-        provider,
-      });
-    },
-    { concurrency: SHELL_SEARCH_OWNER_CONCURRENCY },
-  );
-  if (permissionOutcomes.some(({ decision }) => decision === 'unavailable')) {
-    return yield* unavailable();
-  }
-  const eligible = permissionOutcomes.flatMap(({ decision, provider }) => (decision === 'allowed' ? [provider] : []));
+  const eligible = stateEligible.filter((_provider, index) => decisionByIndex.get(index)?.outcome === 'ALLOWED');
   const presentation = yield* Effect.fromResult(
     compileShellSearchPresentation({
       admitted: eligible.map(({ contribution, descriptor, moduleId }) => ({
@@ -936,30 +876,9 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
           results: [],
         } as const;
       }
-      const allowedKeys = yield* authorizeSearchCandidates(dependencies, context, uniqueCandidates);
-      const results = sortShellSearchResults(
-        uniqueCandidates.flatMap<ShellSearchResult>(({ provider, value }) => {
-          if (
-            provider.descriptor.accessFiltering === 'resource_permission' &&
-            !allowedKeys.has(resourceKey(value.ref))
-          ) {
-            return [];
-          }
-          if (value.kind !== 'counterparty' || value.collision === undefined) {
-            return [value];
-          }
-          const { collision, ...visible } = value;
-          const counterpartyRefs = collision.counterpartyRefs.filter((ref) => allowedKeys.has(resourceKey(ref)));
-          return [
-            counterpartyRefs.length < 2
-              ? visible
-              : {
-                  ...visible,
-                  collision: { ...collision, counterpartyRefs },
-                },
-          ];
-        }),
-      );
+      // Every provider filters its own rows through the list predicate of its search read (O25), so a
+      // result that reached the Shell is already the caller's to read: the Shell never re-checks rows.
+      const results = sortShellSearchResults(uniqueCandidates.map(({ value }) => value));
       return {
         partial,
         presentation,
@@ -987,26 +906,6 @@ const mediaAffordance = (state: TenantModuleState, attachable: boolean): MediaAf
 const hasMediaBinding = <Binding>(attachable: boolean, binding: Binding | undefined): boolean =>
   attachable && binding !== undefined;
 
-const accessOutcome = (decisions: readonly ContextAccessResult[], expectedKey: string) => {
-  const [decision, ...unexpected] = decisions;
-  if (unexpected.length > 0 || decision?.key !== expectedKey || decision.decision === 'unavailable') {
-    return { outcome: 'unavailable' } as const;
-  }
-  return decision.decision === 'denied' ? ({ outcome: 'forbidden' } as const) : ({ outcome: 'allowed' } as const);
-};
-
-const moduleAccessOutcome = Effect.fn('ShellResourceDetail.moduleAccessOutcome')(function* moduleAccessOutcome(
-  ...[dependencies, context, ref]: ResourceDecisionArguments
-) {
-  return accessOutcome(yield* moduleDecision(dependencies, context, ref.moduleId), ref.moduleId);
-});
-
-const resourceAccessOutcome = Effect.fn('ShellResourceDetail.accessOutcome')(function* resourceAccessOutcome(
-  ...[dependencies, context, ref]: ResourceDecisionArguments
-) {
-  return accessOutcome(yield* resourceDecision(dependencies, context, ref), resourceKey(ref));
-});
-
 type ShellResourceDetailArguments = readonly [
   dependencies: ShellResourceDependencies,
   gateway: ShellResourceProviderHandler,
@@ -1030,14 +929,11 @@ export const makeShellResourceDetail = (...[dependencies, gateway]: ShellResourc
     if (resourceType === undefined) {
       return { outcome: 'not_found' } as const;
     }
-    // An agenda the principal may not open stays "forbidden" whether or not the record exists, so a denied
-    // principal learns nothing about its records. Only past this point can a record be "not found".
-    const moduleAccess = yield* moduleAccessOutcome(dependencies, context, ref);
-    if (moduleAccess.outcome !== 'allowed') {
-      return moduleAccess;
-    }
     const contributions = contract.manifest.publicSurface.shellContributions;
     const detailBinding = contributions.resourceDetails.find(({ resourceType: key }) => key === ref.resourceType);
+    if (detailBinding === undefined) {
+      return { outcome: 'not_found' } as const;
+    }
     const stateResult = yield* capture(loadState(dependencies, context, ref.moduleId));
     if (!stateResult.ok) {
       return { outcome: 'unavailable' } as const;
@@ -1048,14 +944,27 @@ export const makeShellResourceDetail = (...[dependencies, gateway]: ShellResourc
     ) {
       return { outcome: 'not_found' } as const;
     }
-    const access = yield* resourceAccessOutcome(dependencies, context, ref);
-    if (access.outcome !== 'allowed') {
-      return access;
+    const now = yield* DateTime.nowAsDate;
+    const outcome = shellAccessOutcome(
+      yield* dependencies.access.decide(
+        contributionGate({
+          contribution: detailBinding,
+          legalEntityScope: RESOURCE_LEGAL_ENTITY_SCOPE,
+          now,
+          scope: context,
+        }),
+      ),
+    );
+    if (outcome === 'forbidden') {
+      return { outcome: 'forbidden' } as const;
     }
-    // An absent catalog binding says nothing about record existence. Return only public support metadata,
-    // after the same state and resource gates, so the Shell can open an exact owner page without inventing details.
-    if (detailBinding === undefined) {
-      return { outcome: 'detail_not_supported' } as const;
+    if (outcome === 'unavailable') {
+      return { outcome: 'unavailable' } as const;
+    }
+    if (outcome !== 'allowed') {
+      // `selection_required`: the resource read is company-scoped, so a missing company is an
+      // unavailable surface here rather than a new page outcome.
+      return { outcome: 'unavailable' } as const;
     }
     const mediaBinding = contributions.mediaAttachments.find(({ resourceType: key }) => key === ref.resourceType);
     const timelineBinding = contributions.timelines.find(({ resourceType: key }) => key === ref.resourceType);
@@ -1063,13 +972,32 @@ export const makeShellResourceDetail = (...[dependencies, gateway]: ShellResourc
       stateResult.value.value,
       hasMediaBinding(resourceType.capabilities.mediaAttachable, mediaBinding),
     );
+    // The timeline is its own protected contribution (O62): its provider runs only when its own
+    // declaration allows, so a module can govern the timeline separately from the record detail. An
+    // unreadable timeline authority is retryable, never a silent omission (O48b).
+    const timelineOutcome =
+      timelineBinding === undefined || !resourceType.capabilities.timelineVisible
+        ? ('absent' as const)
+        : shellAccessOutcome(
+            yield* dependencies.access.decide(
+              contributionGate({
+                contribution: timelineBinding,
+                legalEntityScope: RESOURCE_LEGAL_ENTITY_SCOPE,
+                now,
+                scope: context,
+              }),
+            ),
+          );
+    if (timelineOutcome === 'unavailable') {
+      return { outcome: 'unavailable' } as const;
+    }
     return {
       appId: contract.deployment.appId,
       compositionRevision: catalogResult.value.composition.revision,
       detailApiKey: detailBinding.apiKey,
       media,
       outcome: 'allowed',
-      timelineApiKey: timelineBinding?.apiKey,
+      timelineApiKey: timelineOutcome === 'allowed' ? timelineBinding?.apiKey : undefined,
       timelineVisible: resourceType.capabilities.timelineVisible,
     } as const;
   });
@@ -1088,9 +1016,6 @@ export const makeShellResourceDetail = (...[dependencies, gateway]: ShellResourc
       }
       if (gate.outcome === 'unavailable') {
         return { outcome: 'unavailable' } as const;
-      }
-      if (gate.outcome === 'detail_not_supported') {
-        return { outcome: 'detail_not_supported' } as const;
       }
       const decodedDetail = yield* capture(
         dependencies.issueAssertion({ appId: gate.appId, compositionRevision: gate.compositionRevision, context }).pipe(

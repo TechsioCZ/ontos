@@ -3,7 +3,6 @@ import {
   CoreSearchProjectionHitSchema,
   CoreSearchProjectionStore,
   CoreSearchQueryRuntime,
-  ResourceContainmentRelationshipMutation,
   createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
 } from '@app/core-runtime';
@@ -19,10 +18,12 @@ import { SearchSource } from '../../src/services/search-source.ts';
 import {
   buildSearchDocuments,
   createSearchProjector,
-  loadCurrentSearchHits,
-  loadSearchHits,
+  loadCurrentSearchHits as loadAuthorizedCurrentSearchHits,
+  loadSearchHits as loadAuthorizedSearchHits,
 } from '../../src/services/search-projection.ts';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { contractsRead } from '../../src/search/contracts.provider.ts';
+import { gateAnswer, searchAuthorization, retiredAccess } from '../support/search-access.ts';
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
 const legalEntityId = '30000000-0000-4000-8000-000000000001';
@@ -43,18 +44,24 @@ const scope: OperationalScope = {
   principalId: '50000000-0000-4000-8000-000000000001',
   tenantId,
 };
-const allowAllAccess: (typeof ContextAccess)['Service'] = {
-  legalEntities: () => Effect.succeed([]),
-  modules: () => Effect.succeed([]),
-  resources: ({ resources }) =>
-    Effect.succeed(
-      resources.map((resource) => ({
-        decision: 'allowed' as const,
-        key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
-      })),
-    ),
-  tenants: () => Effect.succeed([]),
-};
+const loadSearchHits = (
+  ...args: [
+    Parameters<typeof loadAuthorizedSearchHits>[0],
+    Parameters<typeof loadAuthorizedSearchHits>[1],
+    Parameters<typeof loadAuthorizedSearchHits>[2],
+  ]
+) => loadAuthorizedSearchHits(...args, searchAuthorization);
+const loadCurrentSearchHits = (
+  ...args: [
+    Parameters<typeof loadAuthorizedCurrentSearchHits>[0],
+    Parameters<typeof loadAuthorizedCurrentSearchHits>[1],
+    Parameters<typeof loadAuthorizedCurrentSearchHits>[2],
+    Parameters<typeof loadAuthorizedCurrentSearchHits>[3],
+  ]
+) =>
+  loadAuthorizedCurrentSearchHits(...args, searchAuthorization).pipe(
+    Effect.provideService(AccessDecisionGate, gateAnswer()),
+  );
 const context = attestOutboxWorkerHandlerContext({
   attemptNumber: 1,
   claimId: 'claim',
@@ -125,8 +132,8 @@ it.effect('indexes only approved subject, kind, dates and own ID in the trusted 
     });
     expect(Schema.is(ContractsProviderResponseSchema)([{ ref, title: 'Smlouva' }])).toBe(false);
     expect(contractsRead.descriptor.legalEntityScope).toBe('required');
-    expect(contractsRead.descriptor.permissionTarget).toBe('module');
-    expect(contractsRead.descriptor.resultAuthorization).toMatchObject({ kind: 'search-collection' });
+    expect(contractsRead.descriptor.accessDeclaration?.key).toBe('legal.agreements.search-contracts.read');
+    expect(contractsRead.descriptor.accessDeclaration?.selectors).toEqual(['all']);
   }),
 );
 it.effect('ended contracts remain archived and cross-tenant canonical refs fail closed', () =>
@@ -381,7 +388,7 @@ it.effect('current rematch rejects stale subject, kind and date evidence and fol
     const searchCurrent = (visible: typeof active, query: string, includeArchived = false) =>
       loadCurrentSearchHits(scope, 'legal.agreements.contract', { includeArchived, query }, visible).pipe(
         Effect.provideService(CoreSearchQueryRuntime, runtime),
-        Effect.provideService(ContextAccess, allowAllAccess),
+        Effect.provideService(ContextAccess, retiredAccess),
       );
 
     yield* publish(changed);
@@ -411,13 +418,12 @@ it.effect('current rematch rejects stale subject, kind and date evidence and fol
     );
   }),
 );
-it.effect('post-commit containment is scoped and full replacements converge on update and deletion', () =>
+it.effect('full replacements converge on update and deletion after the snapshot closes', () =>
   Effect.gen(function* test() {
     let state = yield* makeState();
     let projectionVersion = '1';
     let snapshotClosed = false;
     const replacements: unknown[] = [];
-    const touched: unknown[] = [];
     const projector = yield* createSearchProjector.pipe(
       Effect.provideService(SearchSource, {
         load: () =>
@@ -435,20 +441,8 @@ it.effect('post-commit containment is scoped and full replacements converge on u
           return Effect.void;
         },
       }),
-      Effect.provideService(ResourceContainmentRelationshipMutation, {
-        touch: (relationships) => {
-          expect(snapshotClosed).toBe(true);
-          touched.push(relationships);
-          return Effect.void;
-        },
-      }),
     );
     yield* projector.project(context);
-    expect(touched[0]).toMatchObject({
-      relationships: [
-        { container: { objectType: 'module_access' }, relation: 'module', resource: { objectType: 'resource' } },
-      ],
-    });
     state = { ...state, contracts: state.contracts.map((contract) => ({ ...contract, subject: 'Nová smlouva' })) };
     projectionVersion = '2';
     snapshotClosed = false;

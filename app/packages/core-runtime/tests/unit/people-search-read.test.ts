@@ -1,9 +1,12 @@
+import type { AccessDecision } from '../../src/access/decision/contract.ts';
 import { NodeCrypto } from '@effect/platform-node';
-import { Context, DateTime, Effect, Layer, Predicate, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { ContextAccess } from '../../src/permissions/context-access.ts';
-import type { ContextAccessDecision, ContextAccessService } from '../../src/permissions/context-access.ts';
+import type { OperationalScope } from '../../src/operations/context.ts';
+import { makeScriptedBoundAccessGate } from '../../src/testing/access-gate.ts';
+import type { TestAccessOutcome } from '../../src/testing/access-gate.ts';
 import { ReadPermissionUnavailable, ReadHandlerUnavailable } from '../../src/reads/errors.ts';
 import { getReadPermissionTargetResolver, getReadResultPermissionTargetResolver } from '../../src/reads/definition.ts';
 import { makeReadTestHarness } from '../../src/testing/reads.ts';
@@ -16,14 +19,8 @@ import {
 import { CoreSearchProjectionStore } from '../../src/search/projection-store.ts';
 import { attestOutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
 import { buildPeopleSearchDocuments } from '../../src/people/people-search-projection.ts';
-import { PeopleSearchVisibility } from '../../src/people/people-search-visibility.ts';
 import { peopleSearchRead } from '../../src/people/people-search.ts';
-import {
-  admitPeopleSystemSearch,
-  peopleAdmissionDecisionOf,
-  runPeopleSearch,
-} from '../../src/people/system-search-provider.ts';
-import { PersonRefSchema } from '../../src/resources/person.ts';
+import { admitPeopleSystemSearch, runPeopleSearch } from '../../src/people/system-search-provider.ts';
 import { personResourceId } from '../../src/people/person-identity.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -53,30 +50,23 @@ const hit = Schema.decodeUnknownSync(CoreSearchProjectionHitSchema)({
   selectedLegalEntityId: companyId,
   title: 'Žofie Nováková',
 });
-const expectedRef = Schema.decodeUnknownSync(PersonRefSchema)(hit.ref);
-const visibility = Layer.succeed(PeopleSearchVisibility, { visible: (_tenantId, ids) => Effect.succeed(new Set(ids)) });
 const operationTime = DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-02T12:00:00.000Z'));
 const request = { input: { query: 'Žofie' }, principal: scope, transport: { correlationId: scope.correlationId } };
-it('retains the exact directory permission alternative and required selected-company scope plus row gate', () => {
-  expect(peopleSearchRead.descriptor.entrypoint.scope).toBe('system');
-  expect(peopleSearchRead.descriptor.legalEntityScope).toBe('required');
-  const resolver = getReadPermissionTargetResolver(peopleSearchRead);
-  expect(Predicate.isFunction(resolver)).toBe(true);
-  if (Predicate.isFunction(resolver)) {
-    expect(resolver({ query: 'Žofie' }, scope)).toEqual({
-      kind: 'any_of',
-      targets: [
-        { kind: 'tenant', permission: 'read_people' },
-        { kind: 'legal_entity', permission: 'read_people' },
-      ],
-    });
-  }
-  expect(
-    getReadResultPermissionTargetResolver(peopleSearchRead)?.(
-      [{ ref: expectedRef, selectedLegalEntityId: companyId, title: hit.title }],
-      scope,
-    ),
-  ).toEqual([hit.ref]);
+it('declares canonical company-scoped People search without legacy permission resolvers', () => {
+  const { descriptor } = peopleSearchRead;
+  expect(descriptor.entrypoint.scope).toBe('system');
+  expect(descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+  expect(descriptor.legalEntityScope).toBe('required');
+  expect(descriptor.accessKind).toBe('search');
+  expect(descriptor.accessDeclaration).toMatchObject({
+    key: 'core.identity.people-search.query',
+    kind: 'read',
+    modes: ['run'],
+    risk: 'sensitive',
+    selectors: [],
+  });
+  expect(getReadPermissionTargetResolver(peopleSearchRead)).toBeUndefined();
+  expect(getReadResultPermissionTargetResolver(peopleSearchRead)).toBeUndefined();
 });
 interface CandidatePerson {
   readonly displayName: string;
@@ -86,10 +76,9 @@ interface CandidatePerson {
 const searchCurrentCandidates = Effect.fn(function* searchCurrentCandidates(
   candidates: readonly CandidatePerson[],
   deniedId: string,
-  hiddenId: string,
-  serviceId: string,
 ) {
   const harness = yield* makeReadTestHarness({
+    access: 'allowed',
     executeOwnerQuery: (query) => {
       // Model only bound predicates; this scripted transport does not prove native SQL/RLS.
       const kinds = [...query.sql.matchAll(/"kind" = \$(?<position>\d+)/gu)].map(
@@ -104,7 +93,6 @@ const searchCurrentCandidates = Effect.fn(function* searchCurrentCandidates(
     },
     operationTime,
     ownerAuthorizationDecision: 'allowed',
-    permissionDecision: 'allowed',
     scope,
   });
   const hits = yield* Schema.decodeUnknownEffect(Schema.Array(CoreSearchProjectionHitSchema))(
@@ -114,17 +102,7 @@ const searchCurrentCandidates = Effect.fn(function* searchCurrentCandidates(
     })),
   );
   const environment = yield* Layer.build(
-    Layer.mergeAll(
-      harness.layer,
-      Layer.succeed(PeopleSearchVisibility, {
-        visible: (observedTenant, ids) => {
-          expect(observedTenant).toBe(tenantId);
-          expect(ids).not.toContain(serviceId);
-          return Effect.succeed(new Set(ids.filter((id) => id !== hiddenId)));
-        },
-      }),
-      Layer.succeed(CoreSearchQueryRuntime, { search: () => Effect.succeed(hits) }),
-    ),
+    Layer.mergeAll(harness.layer, Layer.succeed(CoreSearchQueryRuntime, { search: () => Effect.succeed(hits) })),
   );
   const access = Context.get(environment, ContextAccess);
   const checked = Context.add(environment, ContextAccess, {
@@ -149,6 +127,7 @@ it.layer(NodeCrypto.layer)('people search governed read', (suite) => {
     () =>
       Effect.gen(function* readPeople() {
         const harness = yield* makeReadTestHarness({
+          access: 'allowed',
           executeOwnerQuery: (query) => {
             expect(query.scope).toEqual({ legalEntityId: companyId, tenantId });
             expect(query.sql).toContain('"core"."principal_company_memberships"');
@@ -160,13 +139,11 @@ it.layer(NodeCrypto.layer)('people search governed read', (suite) => {
           },
           operationTime,
           ownerAuthorizationDecision: 'allowed',
-          permissionDecision: 'allowed',
           scope,
         });
         const environment = yield* Layer.build(
           Layer.mergeAll(
             harness.layer,
-            visibility,
             Layer.succeed(CoreSearchQueryRuntime, {
               search: (input, observed) => {
                 expect(input).toMatchObject({ selectedLegalEntityId: companyId, tenantId });
@@ -222,17 +199,17 @@ it.layer(NodeCrypto.layer)('people search governed read', (suite) => {
         yield* projectName('Žofie Nováková', '1');
         let currentName = 'Božena Nováková';
         const harness = yield* makeReadTestHarness({
+          access: 'allowed',
           executeOwnerQuery: () => Effect.succeed([{ display_name: currentName, principal_id: target }]),
           operationTime,
           ownerAuthorizationDecision: 'allowed',
-          permissionDecision: 'allowed',
           scope,
         });
         const runtime = yield* createCoreSearchQueryRuntime.pipe(
           Effect.provideService(CoreSearchProjectionStore, store),
         );
         const environment = yield* Layer.build(
-          Layer.mergeAll(harness.layer, visibility, Layer.succeed(CoreSearchQueryRuntime, runtime)),
+          Layer.mergeAll(harness.layer, Layer.succeed(CoreSearchQueryRuntime, runtime)),
         );
         let resourceDecision: 'allowed' | 'denied' | 'unavailable' = 'allowed';
         const access = Context.get(environment, ContextAccess);
@@ -272,7 +249,7 @@ it.layer(NodeCrypto.layer)('people search governed read', (suite) => {
         expect(harness.snapshot().ownerQueries).toHaveLength(beforeRename + 1);
       }),
   );
-  suite.effect('mixed People batches equal independent current-evidence checks without leaking service accounts', () =>
+  suite.effect('mixed People batches equal independent current-evidence checks over people kinds only', () =>
     Effect.gen(function* batchEquivalence() {
       const people = [
         { displayName: 'Božena Nováková', kind: 'human', principalId: target },
@@ -285,10 +262,11 @@ it.layer(NodeCrypto.layer)('people search governed read', (suite) => {
         { displayName: 'Žofie Systém', kind: 'system', principalId: '30000000-0000-4000-8000-000000000009' },
       ];
       const deniedId = '30000000-0000-4000-8000-000000000005';
-      const hiddenId = '30000000-0000-4000-8000-000000000006';
-      const serviceId = '30000000-0000-4000-8000-000000000007';
+      // Service, integration and system principals are excluded by their principal kind in the owner query,
+      // never by a role key: the retired warm-up role heuristic is gone, so a human or agent row is decided
+      // only by the live resource decision below.
       const searchCandidates = (candidates: readonly CandidatePerson[]) =>
-        searchCurrentCandidates(candidates, deniedId, hiddenId, serviceId);
+        searchCurrentCandidates(candidates, deniedId);
       const batched = yield* searchCandidates(people);
       const independent = yield* Effect.forEach(people, (person) => searchCandidates([person]), { concurrency: 1 });
       expect(batched).toEqual(
@@ -310,6 +288,11 @@ it.layer(NodeCrypto.layer)('people search governed read', (suite) => {
           selectedLegalEntityId: companyId,
           title: 'Žofie Nováková',
         },
+        {
+          ref: { ...hit.ref, resourceId: personResourceId(companyId, '30000000-0000-4000-8000-000000000006') },
+          selectedLegalEntityId: companyId,
+          title: 'Žofie Systémová',
+        },
       ]);
       expect(yield* searchCandidates([])).toEqual([]);
     }),
@@ -318,18 +301,18 @@ it.layer(NodeCrypto.layer)('people search governed read', (suite) => {
     suite.effect(`${decision} people permission never queries the index or owner SQL`, () =>
       Effect.gen(function* deniedPeople() {
         const harness = yield* makeReadTestHarness({
+          access: decision,
           executeOwnerQuery: () => Effect.die('Unauthorized SQL'),
-          legalEntityPermissionDecisions: { read_people: decision },
+          legalEntityPermissionDecisions: { read_people: 'allowed' },
           operationTime,
           ownerAuthorizationDecision: 'allowed',
           permissionDecision: 'allowed',
           scope,
-          tenantPermissionDecisions: { read_people: decision },
+          tenantPermissionDecisions: { read_people: 'allowed' },
         });
         const environment = yield* Layer.build(
           Layer.mergeAll(
             harness.layer,
-            visibility,
             Layer.succeed(CoreSearchQueryRuntime, { search: () => Effect.die('Unauthorized projection query') }),
           ),
         );
@@ -343,13 +326,35 @@ it.layer(NodeCrypto.layer)('people search governed read', (suite) => {
       }),
     );
   }
+  suite.effect('canonical People permission does not require retired tenant or company grants', () =>
+    Effect.gen(function* canonicalWithoutLegacyGrants() {
+      const harness = yield* makeReadTestHarness({
+        access: 'allowed',
+        executeOwnerQuery: () => Effect.succeed([{ display_name: 'Žofie Nováková', principal_id: target }]),
+        legalEntityPermissionDecisions: { read_people: 'denied' },
+        operationTime,
+        ownerAuthorizationDecision: 'allowed',
+        permissionDecision: 'denied',
+        scope,
+        tenantPermissionDecisions: { read_people: 'denied' },
+      });
+      const environment = yield* Layer.build(
+        Layer.mergeAll(harness.layer, Layer.succeed(CoreSearchQueryRuntime, { search: () => Effect.succeed([hit]) })),
+      );
+      expect(yield* runPeopleSearch(request).pipe(Effect.provideContext(environment))).toEqual([
+        { ref: hit.ref, selectedLegalEntityId: companyId, title: 'Žofie Nováková' },
+      ]);
+      expect(harness.snapshot().ownerQueries).toHaveLength(1);
+      expect(harness.snapshot().evidenceWrites).toBe(1);
+    }),
+  );
   suite.effect('drops cross-company, wrong-tenant, and wrong-owner hits before owner SQL', () =>
     Effect.gen(function* forgedCandidates() {
       const harness = yield* makeReadTestHarness({
+        access: 'allowed',
         executeOwnerQuery: () => Effect.die('Foreign candidate reached SQL'),
         operationTime,
         ownerAuthorizationDecision: 'allowed',
-        permissionDecision: 'allowed',
         scope,
       });
       const bad = yield* Schema.decodeUnknownEffect(Schema.Array(CoreSearchProjectionHitSchema))([
@@ -357,11 +362,7 @@ it.layer(NodeCrypto.layer)('people search governed read', (suite) => {
         { ...hit, ref: { ...hit.ref, tenantId: '10000000-0000-4000-8000-000000000002' } },
       ]);
       const environment = yield* Layer.build(
-        Layer.mergeAll(
-          harness.layer,
-          visibility,
-          Layer.succeed(CoreSearchQueryRuntime, { search: () => Effect.succeed(bad) }),
-        ),
+        Layer.mergeAll(harness.layer, Layer.succeed(CoreSearchQueryRuntime, { search: () => Effect.succeed(bad) })),
       );
       const result = yield* runPeopleSearch(request).pipe(Effect.provideContext(environment));
       expect(result).toEqual([]);
@@ -371,82 +372,74 @@ it.layer(NodeCrypto.layer)('people search governed read', (suite) => {
   suite.effect('a stale deleted/departed membership is not returned even while its document remains indexed', () =>
     Effect.gen(function* removedMember() {
       const harness = yield* makeReadTestHarness({
+        access: 'allowed',
         executeOwnerQuery: () => Effect.succeed([]),
         operationTime,
         ownerAuthorizationDecision: 'allowed',
-        permissionDecision: 'allowed',
         scope,
       });
       const environment = yield* Layer.build(
-        Layer.mergeAll(
-          harness.layer,
-          visibility,
-          Layer.succeed(CoreSearchQueryRuntime, { search: () => Effect.succeed([hit]) }),
-        ),
+        Layer.mergeAll(harness.layer, Layer.succeed(CoreSearchQueryRuntime, { search: () => Effect.succeed([hit]) })),
       );
       const result = yield* runPeopleSearch(request).pipe(Effect.provideContext(environment));
       expect(result).toEqual([]);
     }),
   );
-  for (const tenantAllowed of [true, false]) {
-    suite.effect(
-      `directory permission alternative ${tenantAllowed ? 'tenant' : 'company'} works without the other grant`,
-      () =>
-        Effect.gen(function* permissionAlternative() {
-          const harness = yield* makeReadTestHarness({
-            executeOwnerQuery: () => Effect.succeed([{ display_name: 'Žofie Nováková', principal_id: target }]),
-            legalEntityPermissionDecisions: { read_people: tenantAllowed ? 'denied' : 'allowed' },
-            operationTime,
-            ownerAuthorizationDecision: 'allowed',
-            permissionDecision: 'allowed',
-            scope,
-            tenantPermissionDecisions: { read_people: tenantAllowed ? 'allowed' : 'denied' },
-          });
-          const environment = yield* Layer.build(
-            Layer.mergeAll(
-              harness.layer,
-              visibility,
-              Layer.succeed(CoreSearchQueryRuntime, { search: () => Effect.succeed([hit]) }),
-            ),
-          );
-          const result = yield* runPeopleSearch(request).pipe(Effect.provideContext(environment));
-          expect(result).toHaveLength(1);
-        }),
+  for (const legacyGranted of ['tenant', 'company'] as const) {
+    suite.effect(`a legacy ${legacyGranted} grant cannot override canonical People denial`, () =>
+      Effect.gen(function* permissionAlternative() {
+        const harness = yield* makeReadTestHarness({
+          access: 'denied',
+          executeOwnerQuery: () => Effect.die('A legacy grant must not admit owner SQL'),
+          legalEntityPermissionDecisions: { read_people: legacyGranted === 'company' ? 'allowed' : 'denied' },
+          operationTime,
+          ownerAuthorizationDecision: 'allowed',
+          scope,
+          tenantPermissionDecisions: { read_people: legacyGranted === 'tenant' ? 'allowed' : 'denied' },
+        });
+        const environment = yield* Layer.build(
+          Layer.mergeAll(
+            harness.layer,
+            Layer.succeed(CoreSearchQueryRuntime, {
+              search: () => Effect.die('A legacy grant must not query the index'),
+            }),
+          ),
+        );
+        const result = yield* runPeopleSearch(request).pipe(Effect.provideContext(environment));
+        expect(result).toEqual([]);
+        expect(harness.snapshot().ownerQueries).toEqual([]);
+        expect(harness.snapshot().evidenceWrites).toBe(1);
+      }),
     );
   }
   for (const displayName of ['Žofie Nováková', 'Božena Dvořáková']) {
-    for (const outcome of ['denied', 'unavailable', 'hidden'] as const) {
-      suite.effect(`${outcome} current result ${displayName} retains live visibility/resource decisions`, () =>
+    for (const outcome of ['denied', 'unavailable'] as const) {
+      suite.effect(`${outcome} current result ${displayName} retains the live resource decision`, () =>
         Effect.gen(function* resultPermission() {
           const harness = yield* makeReadTestHarness({
+            access: 'allowed',
             executeOwnerQuery: () => Effect.succeed([{ display_name: displayName, principal_id: target }]),
             operationTime,
             ownerAuthorizationDecision: 'allowed',
-            permissionDecision: 'allowed',
             scope,
           });
           const environment = yield* Layer.build(
             Layer.mergeAll(
               harness.layer,
-              visibility,
               Layer.succeed(CoreSearchQueryRuntime, { search: () => Effect.succeed([hit]) }),
             ),
           );
           const access = Context.get(environment, ContextAccess);
-          const scoped = Context.add(
-            Context.add(environment, ContextAccess, {
-              ...access,
-              resources: ({ resources }) =>
-                Effect.succeed(
-                  resources.map((ref) => ({
-                    decision: outcome === 'hidden' ? ('allowed' as const) : outcome,
-                    key: `${ref.moduleId}:${ref.resourceType}:${ref.resourceId}`,
-                  })),
-                ),
-            }),
-            PeopleSearchVisibility,
-            { visible: (_tenantId, ids) => Effect.succeed(new Set(outcome === 'hidden' ? [] : ids)) },
-          );
+          const scoped = Context.add(environment, ContextAccess, {
+            ...access,
+            resources: ({ resources }) =>
+              Effect.succeed(
+                resources.map((ref) => ({
+                  decision: outcome,
+                  key: `${ref.moduleId}:${ref.resourceType}:${ref.resourceId}`,
+                })),
+              ),
+          });
           const effect = runPeopleSearch(request).pipe(Effect.provideContext(scoped));
           if (outcome === 'unavailable') {
             expect(Schema.is(ReadHandlerUnavailable)(yield* effect.pipe(Effect.flip))).toBe(true);
@@ -458,102 +451,83 @@ it.layer(NodeCrypto.layer)('people search governed read', (suite) => {
     }
   }
 });
+type DecisionPropertyValue = AccessDecision[keyof AccessDecision] | 'granted';
+const malformedDecisionOutcome = (decision: AccessDecision, key: PropertyKey): DecisionPropertyValue =>
+  new Map<PropertyKey, DecisionPropertyValue>([
+    ['admissionDeadline', decision.admissionDeadline],
+    ['evidence', decision.evidence],
+    ['outcome', 'granted'],
+    ['reasons', decision.reasons],
+    ['selectors', decision.selectors],
+    ['structuralEvidence', decision.structuralEvidence],
+  ]).get(key);
+
 interface AdmissionControls {
-  readonly legalEntity: ContextAccessDecision;
-  readonly malformedModules?: boolean;
-  readonly module: ContextAccessDecision;
-  readonly tenant: ContextAccessDecision;
+  readonly access: TestAccessOutcome;
+  readonly malformedOutcome?: boolean;
+  readonly noPredicate?: boolean;
 }
-/** Coarse admission only: no owner query, no data provider, no issuer may run. */
-const runAdmission = (controls: AdmissionControls) =>
+
+/** Coarse admission uses only the bound list gate, with no index, SQL or legacy permission adapter. */
+const runAdmission = (controls: AdmissionControls, selectedScope: OperationalScope = scope) =>
   Effect.gen(function* run() {
-    const harness = yield* makeReadTestHarness({
-      executeOwnerQuery: () => Effect.die('people inventory admission must not run an owner query'),
-      operationTime,
-      ownerAuthorizationDecision: 'allowed',
-      permissionDecision: 'allowed',
-      scope,
+    const scripted = makeScriptedBoundAccessGate(controls.access).bound;
+    let calls = 0;
+    const decision = yield* admitPeopleSystemSearch(selectedScope, {
+      list: (question) =>
+        Effect.gen(function* listPeople() {
+          calls += 1;
+          expect(question.carrier.accessDeclaration).toBe(peopleSearchRead.descriptor.accessDeclaration);
+          expect(question.legalEntityScope).toBe(peopleSearchRead.descriptor.legalEntityScope);
+          expect(question.scope).toBe(selectedScope);
+          expect(Schema.is(Schema.Date)(question.now)).toBe(true);
+          const listing = yield* scripted.list(question);
+          if (controls.malformedOutcome === true) {
+            return {
+              ...listing,
+              decision: new Proxy(listing.decision, {
+                get: malformedDecisionOutcome,
+              }),
+            };
+          }
+          return controls.noPredicate === true ? { decision: listing.decision } : listing;
+        }),
     });
-    // Build the harness environment once and read its native service, so no library-level `Effect.provide` is needed.
-    const environment = yield* Layer.build(harness.layer);
-    const native = Context.get(environment, ContextAccess);
-    const access: ContextAccessService = {
-      ...native,
-      legalEntities: ({ legalEntityIds }) =>
-        Effect.succeed(legalEntityIds.map((key) => ({ decision: controls.legalEntity, key }))),
-      modules: ({ moduleIds }) =>
-        Effect.succeed(
-          controls.malformedModules === true
-            ? [{ decision: controls.module, key: 'wrong.module' }]
-            : moduleIds.map((key) => ({ decision: controls.module, key })),
-        ),
-      tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision: controls.tenant, key }))),
-    };
-    const decision = yield* admitPeopleSystemSearch(scope, access);
-    expect(harness.snapshot().ownerQueries).toEqual([]);
+    expect(calls).toBe(selectedScope.legalEntityId === undefined ? 0 : 1);
     return decision;
   });
 
 it.layer(NodeCrypto.layer)('people search inventory admission', (suite) => {
-  suite.effect('requires both the module gate and an allowed directory alternative', () =>
+  suite.effect('admits the canonical People list capability with its row predicate', () =>
     Effect.gen(function* allowedAdmission() {
-      expect(yield* runAdmission({ legalEntity: 'denied', module: 'allowed', tenant: 'allowed' })).toBe('allowed');
-      expect(yield* runAdmission({ legalEntity: 'allowed', module: 'allowed', tenant: 'denied' })).toBe('allowed');
-      expect(yield* runAdmission({ legalEntity: 'allowed', module: 'allowed', tenant: 'allowed' })).toBe('allowed');
-      // The directory alternative is an OR: one allowed target satisfies it even when the other is indeterminate.
-      expect(yield* runAdmission({ legalEntity: 'allowed', module: 'allowed', tenant: 'unavailable' })).toBe('allowed');
-      expect(yield* runAdmission({ legalEntity: 'unavailable', module: 'allowed', tenant: 'allowed' })).toBe('allowed');
+      expect(yield* runAdmission({ access: 'allowed' })).toBe('allowed');
     }),
   );
 
-  suite.effect('denies only on a definite denial of the module gate or the whole directory alternative', () =>
+  suite.effect('treats canonical denial and approval-only access as definite omission', () =>
     Effect.gen(function* deniedAdmission() {
-      expect(yield* runAdmission({ legalEntity: 'allowed', module: 'denied', tenant: 'allowed' })).toBe('denied');
-      expect(yield* runAdmission({ legalEntity: 'denied', module: 'allowed', tenant: 'denied' })).toBe('denied');
+      expect(yield* runAdmission({ access: 'denied' })).toBe('denied');
+      expect(yield* runAdmission({ access: 'needs_approval' })).toBe('denied');
     }),
   );
 
-  suite.effect('fails closed as unavailable on indeterminate or malformed decisions', () =>
-    Effect.gen(function* indeterminateAdmission() {
-      expect(yield* runAdmission({ legalEntity: 'unavailable', module: 'allowed', tenant: 'unavailable' })).toBe(
-        'unavailable',
-      );
-      expect(yield* runAdmission({ legalEntity: 'allowed', module: 'unavailable', tenant: 'allowed' })).toBe(
-        'unavailable',
-      );
-      expect(
-        yield* runAdmission({ legalEntity: 'allowed', malformedModules: true, module: 'allowed', tenant: 'allowed' }),
-      ).toBe('unavailable');
-      // A definite module denial still wins over an indeterminate directory alternative.
-      expect(yield* runAdmission({ legalEntity: 'unavailable', module: 'denied', tenant: 'unavailable' })).toBe(
-        'denied',
-      );
+  suite.effect('keeps unavailable or malformed canonical outcomes distinct from a definite denial', () =>
+    Effect.gen(function* unavailableAdmission() {
+      expect(yield* runAdmission({ access: 'unavailable' })).toBe('unavailable');
+      expect(yield* runAdmission({ access: 'allowed', malformedOutcome: true })).toBe('unavailable');
     }),
   );
 
-  suite.effect(
-    'the decision reader rejects any literal outside the closed vocabulary, a wrong key or a bad count',
-    () =>
-      Effect.sync(() => {
-        const allowed = [{ decision: 'allowed', key: 'core.identity' }] as const;
-        expect(peopleAdmissionDecisionOf(allowed, 'core.identity')).toBe('allowed');
-        expect(peopleAdmissionDecisionOf([{ decision: 'granted', key: 'core.identity' }], 'core.identity')).toBe(
-          'unavailable',
-        );
-        expect(peopleAdmissionDecisionOf([{ decision: '', key: 'core.identity' }], 'core.identity')).toBe(
-          'unavailable',
-        );
-        expect(peopleAdmissionDecisionOf(allowed, 'other.module')).toBe('unavailable');
-        expect(
-          peopleAdmissionDecisionOf(
-            [
-              { decision: 'allowed', key: 'core.identity' },
-              { decision: 'allowed', key: 'core.identity' },
-            ],
-            'core.identity',
-          ),
-        ).toBe('unavailable');
-        expect(peopleAdmissionDecisionOf([], 'core.identity')).toBe('unavailable');
-      }),
+  suite.effect('never widens an allowed list decision without a row predicate', () =>
+    Effect.gen(function* missingPredicateAdmission() {
+      expect(yield* runAdmission({ access: 'allowed', noPredicate: true })).toBe('denied');
+    }),
+  );
+
+  suite.effect('requires the original selected company before asking the gate', () =>
+    Effect.gen(function* companyRequiredAdmission() {
+      const { legalEntityId: _selectedCompany, ...withoutCompany } = scope;
+      expect(yield* runAdmission({ access: 'allowed' }, withoutCompany)).toBe('denied');
+    }),
   );
 });

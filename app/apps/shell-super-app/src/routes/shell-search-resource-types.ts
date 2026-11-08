@@ -307,7 +307,7 @@ export const recordAgendaPaths = (
 export const shellSearchLinkTarget = (
   index: ShellSearchPresentationIndex | undefined,
   ref: SearchRef,
-  title: string,
+  title: string | undefined,
   selectedLegalEntityId: string | undefined,
 ): ShellSearchLinkTarget =>
   shellSearchRecordTarget(index, ref, selectedLegalEntityId) ?? {

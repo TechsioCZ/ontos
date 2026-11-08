@@ -1,6 +1,7 @@
 import { beforeEach, expect, it, rstest } from 'effect-rstest';
 import { Effect, Redacted, Schema } from 'effect';
 import { ApplyCommandResultSchema } from '@app/work-tasks/contracts/apply-command';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { RecordsResponseSchema } from '@app/work-tasks/contracts/records';
 
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
@@ -88,7 +89,7 @@ beforeEach(() => {
 it.effect('passes the property owner credential and preserves the structured reference', () =>
   Effect.gen(function* serviceTaskReference() {
     const created = yield* createServiceTask(draft, device, tenantId);
-    expect(created.ok).toBe(true);
+    expect(created.status).toBe('created');
     expect(makeReferenceGatewayCredentials).toHaveBeenCalledWith(['property-portfolio']);
     const [call] = rstest.mocked(executeApplyCommand).mock.calls;
     if (call === undefined) {
@@ -124,7 +125,7 @@ it.effect('never retries an unavailable owner by dropping contextRefs', () =>
       { readonly _tag: 'ApplyCommandActionUnavailableProblem' }
     >;
     rstest.mocked(executeApplyCommand).mockReturnValue(Effect.fail(unavailable));
-    expect(yield* createServiceTask(draft, device, tenantId)).toEqual({ ok: false });
+    expect(yield* createServiceTask(draft, device, tenantId)).toEqual({ status: 'failed' });
     expect(executeApplyCommand).toHaveBeenCalledTimes(1);
     expect(rstest.mocked(executeApplyCommand).mock.calls[0]?.[0].command).toHaveProperty('contextRefs');
   }),
@@ -149,11 +150,28 @@ it.effect('retries only one revision conflict, still carrying the unit link and 
       location: { id: propertyId, kind: 'unit', label: 'Rezidence Parková' },
     } satisfies typeof device;
     const created = yield* createServiceTask(draft, unit, tenantId);
-    expect(created.ok).toBe(true);
+    expect(created.status).toBe('created');
     expect(executeApplyCommand).toHaveBeenCalledTimes(2);
     for (const [payload, , options] of rstest.mocked(executeApplyCommand).mock.calls) {
       expect(payload.command).toMatchObject({ contextRefs: [{ resourceType: 'property.portfolio.unit' }] });
       expect(options.referenceCredentials).toBe(credentials);
     }
+  }),
+);
+
+it.effect('reports a parked proposal as pending approval without a task and never resubmits it', () =>
+  Effect.gen(function* serviceTaskReference() {
+    rstest.mocked(executeApplyCommand).mockReturnValue(
+      Effect.succeed(
+        Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
+          _tag: 'ActionProposalAccepted',
+          expiresAt: '2026-10-27T08:00:00Z',
+          proposalId: '73000000-0000-4000-8000-000000000022',
+        }),
+      ),
+    );
+    expect(yield* createServiceTask(draft, device, tenantId)).toEqual({ status: 'pending_approval' });
+    expect(executeApplyCommand).toHaveBeenCalledTimes(1);
+    expect(rstest.mocked(executeApplyCommand).mock.calls[0]?.[2].referenceCredentials).toBe(credentials);
   }),
 );

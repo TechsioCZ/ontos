@@ -2,6 +2,8 @@
 // @ontos-action-http-owner commerce.storefront-registry
 // @ontos-action-http-slug register-storefront-application
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,6 +12,7 @@ import {
 } from '../actions/register-storefront-application.ts';
 
 export { RegisterStorefrontApplicationPayloadSchema } from '../actions/register-storefront-application.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const RegisterStorefrontApplicationActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RegisterStorefrontApplicationActionInvalidProblem',
@@ -24,6 +27,7 @@ export const RegisterStorefrontApplicationActionForbiddenProblemSchema = makePro
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -149,7 +153,7 @@ export const registerStorefrontApplicationActionGroupDefinition = HttpApiGroup.m
     HttpApiEndpoint.post('execute', '/storefront-registry/actions/register-storefront-application', {
       error: actionErrors,
       payload: Schema.toEncoded(RegisterStorefrontApplicationPayloadSchema),
-      success: RegisterStorefrontApplicationResultSchema,
+      success: [ActionProposalAcceptedSchema, RegisterStorefrontApplicationResultSchema],
     }),
   )
   .middleware(RegisterStorefrontApplicationActionSchemaErrorMiddleware);

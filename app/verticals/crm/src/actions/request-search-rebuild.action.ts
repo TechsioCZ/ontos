@@ -35,6 +35,14 @@ const handleRequestSearchRebuild = Effect.fn('Crm.requestSearchRebuild')(functio
 
 export const requestSearchRebuildAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'demo.crm.request-search-rebuild.write',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'crm', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'demo.crm.request-search-rebuild.access.v1',
@@ -45,7 +53,7 @@ export const requestSearchRebuildAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'demo.crm.request-search-rebuild',
       moduleKey: 'demo.crm',
       role: 'action',

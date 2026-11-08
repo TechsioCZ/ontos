@@ -3,14 +3,14 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
-import { PartyContactPointSchema } from '../domain/contact-point.ts';
+import { PartyContactPointViewSchema } from '../domain/contact-point.ts';
 import { PartyContactPointRefSchema } from '../resources/party-contact-point.ts';
 
 export const PartyContactPointDetailRequestSchema = Schema.Struct({
   contactPointRef: PartyContactPointRefSchema,
 });
 export type PartyContactPointDetailRequest = typeof PartyContactPointDetailRequestSchema.Type;
-export const PartyContactPointDetailResponseSchema = PartyContactPointSchema;
+export const PartyContactPointDetailResponseSchema = PartyContactPointViewSchema;
 export type PartyContactPointDetailResponse = typeof PartyContactPointDetailResponseSchema.Type;
 
 export const PartyContactPointDetailAuthenticationProblemSchema = makeProblemDetailsSchema(

@@ -14,6 +14,7 @@ import { AgentActionRequestIdentity } from '../auth/agent-action-request-identit
 import { AgentReadRequestIdentity } from '../auth/agent-request-identity.ts';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import { CapturedShellCompositionCatalog } from '../modules/captured-shell-catalog.ts';
+import { connectionScopeOf } from '../oauth-connections/connection-service.ts';
 import { loadOAuthServerConfig } from '../oauth-connections/server-config.ts';
 import { loadMcpCatalog } from './catalog.ts';
 import { authenticateMcpRequest, connectionPrincipalContext } from './connection.ts';
@@ -117,7 +118,13 @@ const authenticate = Effect.fn('Mcp.authenticateRequest')(function* authenticate
   }
   const { catalog, installed, live } = outcome;
   const principal = connectionPrincipalContext(live);
-  const caller: AgentPlatformCaller = { legalName: live.description.legalName, principal };
+  // The caller's own resolved scope: the persisted grant's acting principal, never a scalar identity
+  // rebuilt at the call site, so every gate question of this MCP request runs in one trusted scope (O66).
+  const caller: AgentPlatformCaller = {
+    legalName: live.description.legalName,
+    principal,
+    scope: connectionScopeOf(live.grant),
+  };
   const endpoint = yield* endpointConfig;
   const crypto = yield* Crypto.Crypto;
   // Capture at the HTTP/SDK boundary, not in a native service implementation. Nothing survives this request.

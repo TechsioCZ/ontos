@@ -35,6 +35,12 @@ interface PageContextProps {
   readonly context: ModulePageProps['context'];
 }
 
+/** What the person is told once a market exists, by what happened to its price list. */
+const createdMessage = {
+  awaitingApproval: 'create.createdPricingAwaitingApproval',
+  notSaved: 'create.createdWithoutPricing',
+  saved: 'create.created',
+} as const;
 const legalEntityOf = (context: ModulePageProps['context']) => context?.legalEntityId ?? '';
 
 /** The Shell prepares the market catalog, the e-shop list and the price lists before it reveals the page. */
@@ -184,11 +190,11 @@ const EshopsPageContent = ({ context }: PageContextProps) => {
           legalEntityId={legalEntityId}
           merchandiseRevision={settingsValue?.revision ?? 0}
           onClose={() => setCreating(false)}
-          onCreated={({ code, marketId, priced }) => {
+          onCreated={({ code, marketId, pricing }) => {
             setCreating(false);
             toaster.create({
-              title: text(priced ? 'create.created' : 'create.createdWithoutPricing', { code }),
-              type: priced ? 'success' : 'warning',
+              title: text(createdMessage[pricing], { code }),
+              type: pricing === 'saved' ? 'success' : 'warning',
             });
             reload();
             openMarket(marketId);

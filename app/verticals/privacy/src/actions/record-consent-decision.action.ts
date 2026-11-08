@@ -65,6 +65,14 @@ export const handleRecordConsentDecision = Effect.fn('RecordConsentDecisionActio
 
 export const recordConsentDecisionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.consent-decision.record',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'consent', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.record-consent-decision.access.v1',
@@ -76,7 +84,7 @@ export const recordConsentDecisionAction = defineAction(
     domainEvents: privacyConsentDecisionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.record-consent-decision',
       moduleKey: MODULE_KEY,
       role: 'action',

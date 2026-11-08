@@ -4,6 +4,7 @@
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { Effect, Redacted, Schema } from 'effect';
 import type { HttpApiClient } from 'effect/http-api';
+import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import {
   CompleteOrderApprovalConsumptionActionApi,
   CompleteOrderApprovalConsumptionPayloadSchema,
@@ -19,6 +20,11 @@ export interface CompleteOrderApprovalConsumptionActionClientOptions {
   readonly compositionRevision?: string;
   readonly gateway?: Parameters<typeof operationGateway.invoke>[1];
   readonly idempotencyKey: string;
+  /**
+   * O80: ask for a parked proposal instead of an immediate write. Omitted means the ordinary run, so a
+   * refusal is never turned into a proposal on the caller's behalf.
+   */
+  readonly intent?: 'propose';
   readonly [traceIdOption]?: string;
 }
 
@@ -45,6 +51,7 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
       credential,
       defaultApiPrefix: '/commerce-order-api',
       idempotencyKey: options.idempotencyKey,
+      intent: options.intent,
       requestCorrelation,
     },
     options,
@@ -55,7 +62,8 @@ type EndpointResult = ReturnType<
     typeof CompleteOrderApprovalConsumptionActionApi
   >['completeOrderApprovalConsumptionAction']['execute']
 >;
-type AuthorizedResult = Effect.Effect<OrderCommitmentState, Effect.Error<EndpointResult> | Schema.SchemaError>;
+type ClientResult = OrderCommitmentState | ActionProposalAccepted;
+type AuthorizedResult = Effect.Effect<ClientResult, Effect.Error<EndpointResult> | Schema.SchemaError>;
 
 export const executeCompleteOrderApprovalConsumptionWithAuthorization = (
   payload: CompleteOrderApprovalConsumptionPayload,
@@ -72,7 +80,7 @@ export const executeCompleteOrderApprovalConsumptionWithAuthorization = (
 export const executeCompleteOrderApprovalConsumption = (
   payload: CompleteOrderApprovalConsumptionPayload,
   ...[requestCorrelation, options]: OperationInvocation
-): ReturnType<typeof operationGateway.invoke<OrderCommitmentState, Effect.Error<AuthorizedResult>>> =>
+): ReturnType<typeof operationGateway.invoke<ClientResult, Effect.Error<AuthorizedResult>>> =>
   operationGateway.invoke(
     (credential, { apiBaseUrl, compositionRevision }) =>
       executeCompleteOrderApprovalConsumptionWithAuthorization(payload, credential, requestCorrelation, {

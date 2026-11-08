@@ -66,10 +66,7 @@ const recoverAddProductCategoryAssignment = Effect.fn('AddProductCategoryAssignm
 
 const addProductCategoryAssignmentRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: {
-    kind: 'context_permission',
-    permission: 'commerce.catalog.read.add-product-category-assignment-recovery',
-  },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.add-product-category-assignment-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -77,6 +74,14 @@ const addProductCategoryAssignmentRecoveryEntrypoint = defineTenantModuleEntrypo
 
 export const addProductCategoryAssignmentRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.add-product-category-assignment-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: addProductCategoryAssignmentRecoveryEntrypoint,
     evidencePolicy: {
@@ -86,7 +91,6 @@ export const addProductCategoryAssignmentRecoveryRead = defineRead(
     inputSchema: AddProductCategoryAssignmentRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.add-product-category-assignment-recovery',
     resultSchema: AddProductCategoryAssignmentRecoveryResponseSchema,
@@ -100,5 +104,4 @@ export const addProductCategoryAssignmentRecoveryRead = defineRead(
   },
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

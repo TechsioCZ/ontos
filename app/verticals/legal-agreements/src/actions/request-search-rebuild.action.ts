@@ -38,6 +38,14 @@ const handleRequestSearchRebuild = Effect.fn('Agreements.requestSearchRebuild')(
 
 export const requestSearchRebuildAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'legal.agreements.request-search-rebuild.write',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'legal-agreements', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'legal.agreements.request-search-rebuild.access.v1',
@@ -48,7 +56,7 @@ export const requestSearchRebuildAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: actionKey,
       moduleKey: moduleId,
       role: 'action',

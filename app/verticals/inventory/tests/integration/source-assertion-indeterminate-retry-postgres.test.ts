@@ -1,3 +1,4 @@
+import { inventoryRegistration } from '../../vertical.registration.ts';
 import { Reactivity } from 'effect/reactivity';
 import { PgClient } from '@effect/sql-pg';
 import { generateKeyPairSync, sign } from 'node:crypto';
@@ -7,10 +8,6 @@ import {
   GatewayAssertionReplayError,
   findPostgresFailure,
   loadDatabaseConnectionPair,
-  makeBusinessPermissionRelationshipMutationLive,
-  makeContextAccessLive,
-  toBusinessPermissionAccessKey,
-  makeContextPermissionRelationshipMutationLive,
 } from '@app/core-runtime';
 import type { OwnerAuthorizationInput } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
@@ -52,6 +49,8 @@ import { StockLocationSchema } from '../../shared/domain/stock-location.ts';
 import { StockPositionSchema } from '../../shared/domain/stock-position.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { importSourceAssertionAction } from '../../src/actions/import-source-assertion.action.ts';
+import { ImportSourceAssertionResultSchema } from '../../shared/actions/import-source-assertion.ts';
+import { requireExecutionResult } from '../support/action-execution-result.ts';
 import { executeImportSourceAssertionWithAuthorization } from '../../src/api/import-source-assertion-action-client.ts';
 import {
   inventorySourceAssertions,
@@ -67,7 +66,7 @@ import { makeDrizzleStockItemRepository } from '../../src/persistence/stock-item
 import { stockLocationPersistenceForScope } from '../../src/persistence/stock-location-repository.ts';
 import { stockPositionPersistenceForScope } from '../../src/persistence/stock-position-repository.ts';
 import {
-  authorizeImportSourceAssertionOwner,
+  importSourceAssertionOwnerAuthorizationOverlay,
   importSourceAssertionOwnerAuthorizationOverlayLive,
 } from '../../src/persistence/import-source-assertion-owner-authorization.ts';
 
@@ -88,12 +87,14 @@ it.live(
       const now = Math.floor(DateTime.toEpochMillis(composition.observedAt) / 1000);
       const fixture = yield* Effect.acquireRelease(
         makeLiveOperationFixture({
+          access: 'allowed',
           actionKeys: [importSourceAssertionAction.descriptor.actionKey],
           adminConnectionString: Redacted.make(connections.admin.connectionString),
           allowedAudiences: ['inventory'],
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: composition.composition.revision,
           moduleKeys: ['commerce.inventory'],
+          ownerRegistration: inventoryRegistration,
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         }),
         (value) => value.close().pipe(Effect.orDie),
@@ -322,166 +323,95 @@ it.live(
       yield* fixture
         .prepareOwner((transaction, scope) =>
           Effect.gen(function* verifyImportOwnerBoundary() {
+            // The owner rule is about one Position (O70): Core resolves these facts from the decoded
+            // payload, the overlay locks that row and checks its on-hand authority (O20/O31).
+            const positionFacts = {
+              inventoryPositionModuleId: 'commerce.inventory',
+              inventoryPositionResourceId: positionId,
+              inventoryPositionResourceType: 'commerce.inventory.stock-position',
+              inventoryPositionTenantId: tenantId,
+            } as const;
             const input: OwnerAuthorizationInput = {
+              capabilityKey: 'commerce.inventory.source-assertion.import',
               operation: 'action',
               operationAt: composition.observedAt,
               operationKey: importSourceAssertionAction.descriptor.actionKey,
+              ownerFacts: positionFacts,
               owningModuleKey: 'commerce.inventory',
               scope,
-              targets: [
-                {
-                  kind: 'business_permission',
-                  permission: 'inventory.migration.manage',
-                  target: {
-                    kind: 'inventory_resource',
-                    resource: {
-                      moduleId: 'commerce.inventory',
-                      resourceId: positionId,
-                      resourceType: 'commerce.inventory.stock-position',
-                    },
-                    tenantId,
-                  },
-                },
-              ],
+              targets: [],
             };
-            expect(yield* authorizeImportSourceAssertionOwner(transaction, input)).toBe('allowed');
+            expect(yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, input)).toBe('allowed');
+            // Another capability, another entrypoint and a read are all outside this owner rule.
             expect(
-              yield* authorizeImportSourceAssertionOwner(transaction, {
+              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
                 ...input,
-                operationKey: 'commerce.inventory.stock-issue',
-              }),
-            ).toBe('unavailable');
-            expect(yield* authorizeImportSourceAssertionOwner(transaction, { ...input, targets: [] })).toBe(
-              'unavailable',
-            );
-            expect(
-              yield* authorizeImportSourceAssertionOwner(transaction, {
-                ...input,
-                operationKey: 'commerce.inventory.core-neutral-control',
-                targets: [],
+                capabilityKey: 'commerce.inventory.stock-position.correct',
               }),
             ).toBe('allowed');
             expect(
-              yield* authorizeImportSourceAssertionOwner(transaction, {
+              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
                 ...input,
                 operation: 'read',
-                operationKey: 'commerce.inventory.core-neutral-control',
-                targets: [{ kind: 'module', moduleId: 'commerce.inventory' }],
               }),
             ).toBe('allowed');
             expect(
-              yield* authorizeImportSourceAssertionOwner(transaction, {
+              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
                 ...input,
-                operationKey: 'commerce.inventory.core-neutral-control',
-                targets: [{ kind: 'tenant', permission: 'access', tenantId }],
+                owningModuleKey: 'pricing.price-group-catalog',
               }),
             ).toBe('allowed');
+            // The facts name the record; without them the owner cannot admit the import.
+            const { ownerFacts: _positionFacts, ...factslessInput } = input;
+            expect(yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, factslessInput)).toBe(
+              'unavailable',
+            );
+            // Pricing's own business rule never applies here: a legacy target fails closed.
             expect(
-              yield* authorizeImportSourceAssertionOwner(transaction, {
+              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
+                ...input,
+                targets: [
+                  {
+                    kind: 'module',
+                    moduleId: 'commerce.inventory',
+                  },
+                ],
+              }),
+            ).toBe('allowed');
+            // A Company scope is not this Tenant-global ingest authority.
+            expect(
+              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
                 ...input,
                 scope: { ...scope, legalEntityId: fixture.legalEntityId },
               }),
-            ).toBe('denied');
-            expect(
-              yield* authorizeImportSourceAssertionOwner(transaction, {
-                ...input,
-                targets: [...input.targets, ...input.targets],
-              }),
             ).toBe('unavailable');
+            // Facts of another Tenant are refused, never re-read as the trusted Tenant.
             expect(
-              yield* authorizeImportSourceAssertionOwner(transaction, {
+              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
                 ...input,
-                targets: [{ kind: 'module', moduleId: 'commerce.inventory' }],
-              }),
-            ).toBe('unavailable');
-            const [target] = input.targets;
-            assert(
-              target !== undefined &&
-                target.kind === 'business_permission' &&
-                target.target.kind === 'inventory_resource',
-            );
-            expect(
-              yield* authorizeImportSourceAssertionOwner(transaction, {
-                ...input,
-                targets: [{ ...target, permission: 'inventory.stock.issue' }],
+                ownerFacts: { ...positionFacts, inventoryPositionTenantId: yield* nextId },
               }),
             ).toBe('denied');
+            // A malformed Position reference cannot be decoded, so it is refused.
             expect(
-              yield* authorizeImportSourceAssertionOwner(transaction, {
+              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
                 ...input,
-                targets: [{ ...target, target: { ...target.target, tenantId: yield* nextId } }],
+                ownerFacts: { ...positionFacts, inventoryPositionResourceType: 'commerce.inventory.stock-item' },
               }),
             ).toBe('denied');
+            // An unknown Position has no owner row to lock.
             expect(
-              yield* authorizeImportSourceAssertionOwner(transaction, {
+              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
                 ...input,
-                targets: [
-                  {
-                    ...target,
-                    target: {
-                      ...target.target,
-                      resource: { ...target.target.resource, resourceType: 'commerce.inventory.stock-item' },
-                    },
-                  },
-                ],
-              }),
-            ).toBe('denied');
-            expect(
-              yield* authorizeImportSourceAssertionOwner(transaction, {
-                ...input,
-                targets: [
-                  {
-                    ...target,
-                    target: { ...target.target, resource: { ...target.target.resource, resourceId: yield* nextId } },
-                  },
-                ],
+                ownerFacts: { ...positionFacts, inventoryPositionResourceId: yield* nextId },
               }),
             ).toBe('unavailable');
           }),
         )
         .pipe(Effect.provide(ownerRuntimeLayer));
 
-      const businessPermissions = yield* makeBusinessPermissionRelationshipMutationLive();
-      const contextPermissions = yield* makeContextPermissionRelationshipMutationLive();
-      const principal = { principalId: fixture.manager.principalId, tenantId };
-      const businessTarget = {
-        kind: 'inventory_resource' as const,
-        resource: {
-          moduleId: 'commerce.inventory' as const,
-          resourceId: positionId,
-          resourceType: 'commerce.inventory.stock-position',
-        },
-        tenantId,
-      };
-      const moduleTarget = { moduleId: 'commerce.inventory', permission: 'module.access' as const };
-      yield* businessPermissions.mutate({
-        operation: 'grant',
-        permission: 'inventory.migration.manage',
-        principal,
-        target: businessTarget,
-      });
-      yield* contextPermissions.mutate({ operation: 'grant', principal, target: moduleTarget, tenantId });
-      yield* Effect.addFinalizer(() =>
-        Effect.all(
-          [
-            businessPermissions.mutate({
-              operation: 'revoke',
-              permission: 'inventory.migration.manage',
-              principal,
-              target: businessTarget,
-            }),
-            contextPermissions.mutate({ operation: 'revoke', principal, target: moduleTarget, tenantId }),
-          ],
-          { concurrency: 1 },
-        ).pipe(Effect.asVoid, Effect.orDie),
-      );
-
-      const contextAccess = yield* makeContextAccessLive();
-      assert(contextAccess.businessPermissions !== undefined);
-      const businessTargetCheck = { permission: 'inventory.migration.manage' as const, target: businessTarget };
-      expect(yield* contextAccess.businessPermissions({ principal, targets: [businessTargetCheck] })).toEqual([
-        { decision: 'allowed', key: toBusinessPermissionAccessKey(businessTargetCheck) },
-      ]);
+      // v2 asks the one access gate, not a legacy SpiceDB tuple: the Import capability is decided
+      // by the read/Action carrier in the trusted scope (CUTOVER-PLAN §3.2).
       const keyPair = yield* Effect.sync(() => generateKeyPairSync('ed25519'));
       const kid = 'inventory-source-retry';
       const tokenIssuer = 'https://disposable-shell.ontos.test';
@@ -569,16 +499,19 @@ it.live(
         key?: string,
         fetcher?: typeof fetch,
       ) {
-        return yield* executeImportSourceAssertionWithAuthorization(
-          { authorizationTargetRef: items[0]?.positionRef ?? positionRef, items },
-          yield* authorization(),
-          yield* nextId,
-          {
-            baseUrl: 'https://inventory.ontos.test',
-            compositionRevision: composition.composition.revision,
-            idempotencyKey: key ?? (yield* nextId),
-          },
-        ).pipe(Effect.provideService(FetchHttpClient.Fetch, fetcher ?? nativeFetch));
+        return yield* requireExecutionResult(
+          ImportSourceAssertionResultSchema,
+          executeImportSourceAssertionWithAuthorization(
+            { authorizationTargetRef: items[0]?.positionRef ?? positionRef, items },
+            yield* authorization(),
+            yield* nextId,
+            {
+              baseUrl: 'https://inventory.ontos.test',
+              compositionRevision: composition.composition.revision,
+              idempotencyKey: key ?? (yield* nextId),
+            },
+          ).pipe(Effect.provideService(FetchHttpClient.Fetch, fetcher ?? nativeFetch)),
+        );
       });
       const observe = () =>
         fixture
@@ -655,15 +588,14 @@ it.live(
             const duplicate = yield* assertions.append(stored.value).pipe(Effect.flip);
             expect(Option.isSome(findPostgresFailure(duplicate, ({ code }) => code === '23505'))).toBe(true);
             expect(
-              yield* authorizeImportSourceAssertionOwner(transaction, {
+              yield* importSourceAssertionOwnerAuthorizationOverlay.authorize(transaction, {
+                capabilityKey: 'commerce.inventory.source-assertion.import',
                 operation: 'action',
                 operationAt: composition.observedAt,
                 operationKey: importSourceAssertionAction.descriptor.actionKey,
                 owningModuleKey: 'commerce.inventory',
                 scope,
-                targets: [
-                  { kind: 'business_permission', permission: 'inventory.migration.manage', target: businessTarget },
-                ],
+                targets: [],
               }),
             ).toBe('unavailable');
 

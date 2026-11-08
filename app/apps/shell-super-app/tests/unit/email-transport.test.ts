@@ -1,3 +1,4 @@
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 // @rstest-environment node
 import { ContextAccess, LegalEntityContext, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { EmailDeliveryView } from '@app/email-delivery/contract';
@@ -105,6 +106,7 @@ const makeReceiptServer = (
                 dispatch: Effect.die('Receipt reads must not dispatch an email'),
                 list: (requestQuery) => list(requestQuery).pipe(Effect.map((deliveries) => [...deliveries])),
               }),
+              Layer.succeed(AccessDecisionGate, makeTestAccessDecision()),
               Layer.succeed(ContextAccess, makeContextAccessDouble('allowed')),
               Layer.succeed(LegalEntityContext, {
                 listActiveForTenant: unexpectedAuthentication,

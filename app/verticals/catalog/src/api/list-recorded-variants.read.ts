@@ -88,7 +88,7 @@ export const readListRecordedVariants = Effect.fn('ListRecordedVariantsRead.read
 
 const listRecordedVariantsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.list-recorded-variants' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.list-recorded-variants',
   moduleKey: catalogueModule,
   role: 'api',
@@ -96,6 +96,14 @@ const listRecordedVariantsEntrypoint = defineTenantModuleEntrypoint({
 
 export const listRecordedVariantsRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.list-recorded-variants.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: listRecordedVariantsEntrypoint,
     evidencePolicy: {
@@ -105,7 +113,6 @@ export const listRecordedVariantsRead = defineRead(
     inputSchema: ListRecordedVariantsRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: catalogueModule,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.catalog.api.list-recorded-variants',
     resultSchema: ListRecordedVariantsResponseSchema,
@@ -118,5 +125,4 @@ export const listRecordedVariantsRead = defineRead(
       ),
   },
   (transaction, scope) => Effect.succeed(variantAxisPersistenceForScope(transaction, scope)),
-  () => ({ kind: 'module', moduleId: catalogueModule }),
 );

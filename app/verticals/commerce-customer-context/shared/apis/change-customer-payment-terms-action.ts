@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.customer-context
 // @ontos-action-http-slug change-customer-payment-terms
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/change-customer-payment-terms.ts';
 
 export { ChangeCustomerPaymentTermsPayloadSchema } from '../actions/change-customer-payment-terms.ts';
-
 export const ChangeCustomerPaymentTermsActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ChangeCustomerPaymentTermsActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const ChangeCustomerPaymentTermsActionForbiddenProblemSchema = makeProble
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -167,7 +168,7 @@ export const changeCustomerPaymentTermsActionGroupDefinition = HttpApiGroup.make
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/change-customer-payment-terms', {
       error: actionErrors,
       payload: Schema.toEncoded(ChangeCustomerPaymentTermsPayloadSchema),
-      success: ChangeCustomerPaymentTermsResultSchema,
+      success: [ActionProposalAcceptedSchema, ChangeCustomerPaymentTermsResultSchema],
     }),
   )
   .middleware(ChangeCustomerPaymentTermsActionSchemaErrorMiddleware);

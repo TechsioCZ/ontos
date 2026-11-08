@@ -1,12 +1,14 @@
 import {
   ApiKeyGatewayContextRequestSchema,
   GatewayContextApi,
+  GatewayDelegatedContextRequestSchema,
   shellGatewayContextContract,
 } from './gateway-context.ts';
 import type {
   ApiKeyGatewayContextRequest,
   GatewayContextClientError,
   GatewayContextResponse,
+  GatewayDelegatedContextRequest,
 } from './gateway-context.ts';
 import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import { Context, Effect, Option, Redacted, Schema } from 'effect';
@@ -48,6 +50,12 @@ const apiKeyGatewayContextClient = makeEffectHttpApiClient(GatewayContextApi, {
   ),
 });
 
+/** One request-scoped transport seam shared by the two API-key-authenticated issuer operations. */
+const withApiKeyGatewayContextTransport =
+  (options: ApiKeyGatewayContextTransportOptions) =>
+  <Success, Failure, Requirements>(effect: Effect.Effect<Success, Failure, Requirements>) =>
+    effect.pipe(Effect.updateService(ApiKeyGatewayContextTransport, () => Option.some(options)));
+
 /**
  * Server-only client for Shell-owned API-key capability issuance.
  *
@@ -69,12 +77,29 @@ export const issueApiKeyGatewayContext = (
         ),
       ),
     ),
-    Effect.updateService(ApiKeyGatewayContextTransport, () =>
-      Option.some({
-        baseUrl: options.baseUrl,
-        requestCorrelation: options.requestCorrelation,
-      }),
-    ),
+    withApiKeyGatewayContextTransport(options),
   );
 
 export const defaultShellGatewayApiBaseUrl = shellGatewayContextContract.apiPrefix;
+
+/**
+ * The module credential authenticates only the calling deployment. Shell takes the subject from the
+ * payload and derives the calling module (the actor) from that credential's binding.
+ */
+export const issueDelegatedGatewayContext = (
+  payload: GatewayDelegatedContextRequest,
+  options: ApiKeyGatewayContextClientOptions,
+): Effect.Effect<GatewayContextResponse, GatewayContextClientError> =>
+  Schema.decodeEffect(GatewayDelegatedContextRequestSchema)(payload).pipe(
+    Effect.flatMap((decodedPayload) =>
+      apiKeyGatewayContextClient.pipe(
+        Effect.flatMap((client) =>
+          client.gatewayContext.issueDelegatedGatewayContext({
+            headers: { 'x-api-key': Redacted.value(options.apiKey) },
+            payload: decodedPayload,
+          }),
+        ),
+      ),
+    ),
+    withApiKeyGatewayContextTransport(options),
+  );

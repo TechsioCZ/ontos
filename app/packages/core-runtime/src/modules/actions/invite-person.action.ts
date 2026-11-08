@@ -50,6 +50,16 @@ const handleInvitePerson = Effect.fn('InvitePersonAction.handle')(function* invi
 
 export const invitePersonAction = defineAction(
   {
+    // Inviting a person issues an identity and a company membership: human administration, never an
+    // agent capability (O43, O81).
+    accessDeclaration: {
+      key: 'core.identity.person.invite',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'core.identity.invite-person.access.v1' },
     actionKey: 'core.identity.invite-person',
     auditEvidenceSchema: InvitePersonAuditEvidenceSchema,
@@ -58,7 +68,7 @@ export const invitePersonAction = defineAction(
     domainEvents: principalLifecycleDomainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.invite-person',
       moduleKey: 'core.identity',
       role: 'action',

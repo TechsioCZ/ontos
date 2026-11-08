@@ -63,7 +63,7 @@ const recoverRetireProductCategory = Effect.fn('RetireProductCategoryRecoveryRea
 
 const retireProductCategoryRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.retire-product-category-recovery' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.retire-product-category-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -71,6 +71,14 @@ const retireProductCategoryRecoveryEntrypoint = defineTenantModuleEntrypoint({
 
 export const retireProductCategoryRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.retire-product-category-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product-category', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: retireProductCategoryRecoveryEntrypoint,
     evidencePolicy: {
@@ -80,7 +88,6 @@ export const retireProductCategoryRecoveryRead = defineRead(
     inputSchema: RetireProductCategoryRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.retire-product-category-recovery',
     resultSchema: RetireProductCategoryRecoveryResponseSchema,
@@ -94,5 +101,4 @@ export const retireProductCategoryRecoveryRead = defineRead(
   },
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

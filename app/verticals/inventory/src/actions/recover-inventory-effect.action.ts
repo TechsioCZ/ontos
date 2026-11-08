@@ -6,7 +6,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import type { ActionCollectorError, ActionHandlerContext, ActionRegistration } from '@app/core-runtime';
-import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { Effect as EffectType } from 'effect';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
@@ -232,29 +232,25 @@ export const recoverInventoryEffectAction: ActionRegistration<
   RecoverInventoryEffectServices
 > = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.inventory.inventory-effect.recover',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'recovery', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: `${ACTION_KEY}.access.v1`,
     },
     actionKey: ACTION_KEY,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission<RecoverInventoryEffectPayload>((payload, scope) => ({
-      permission: 'inventory.recovery.execute',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: payload.targetRef.moduleId,
-          resourceId: payload.targetRef.resourceId,
-          resourceType: payload.targetRef.resourceType,
-        },
-        tenantId: payload.targetRef.tenantId === scope.tenantId ? scope.tenantId : '',
-      },
-    })),
     domainErrorSchema: RecoverInventoryEffectErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: MODULE_KEY,
       role: 'action',

@@ -22,7 +22,7 @@ export const ActionPrincipalVerifierLive: Layer.Layer<
 
 const principalVerifier = bindGatewayPrincipalVerifier(ACTION_GATEWAY_AUDIENCE, ultramodernApiMarker);
 
-const verifyOperationPrincipal = (authorization: Redacted.Redacted<string | undefined>) =>
+export const verifyOperationPrincipal = (authorization: Redacted.Redacted<string | undefined>) =>
   GatewayAssertionRedemptionService.pipe(
     Effect.flatMap((redemption) => principalVerifier.verifyAndRedeem(authorization, { redemption })),
   );

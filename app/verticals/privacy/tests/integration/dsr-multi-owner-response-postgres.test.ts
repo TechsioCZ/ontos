@@ -1,25 +1,24 @@
+import { privacyRegistration } from '../../vertical.registration.ts';
 import { Reactivity } from 'effect/reactivity';
 import { PgClient } from '@effect/sql-pg';
 import {
   ActionAlreadyCommitted,
+  ActiveApplicationCompositionService,
   ActiveApplicationCompositionSnapshotSchema,
   GatewayAssertionRedemptionService,
   GatewayAssertionReplayError,
   GatewayAssertionRedemptionUnavailableError,
   ReadRuntime,
   TrustedPrincipalContextSchema,
-  canonicalizeApplicationComposition,
   makeContextPermissionRelationshipMutationLive,
-  OntosModuleDeploymentContractSchema,
   runAction,
-  validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { createPrivacyDeniedAccess } from '../support/live-access-authority.ts';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
-import { createHash } from 'node:crypto';
 import {
   ConfigProvider,
   Context,
@@ -39,7 +38,11 @@ import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
 import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import { makePrivacyApiRuntime } from '../../api/index.ts';
-import { dsrTestStorageGuards, makeDsrObligationNative } from '../support/dsr-obligation-native.ts';
+import {
+  dsrTestStorageGuards,
+  makeDsrObligationNative,
+  makePrivacyDsrCompositionSnapshot,
+} from '../support/dsr-obligation-native.ts';
 import { executeDsrCasesWithAuthorization } from '../../src/api/dsr-cases-client.ts';
 import { executeRecordDsrResponseWithAuthorization } from '../../src/api/record-dsr-response-action-client.ts';
 
@@ -51,7 +54,7 @@ import {
   DsrOwnerTaskAuthorityResultSchema,
   DsrSubstantiveDecisionAuthorityResultSchema,
 } from '../../shared/domain/privacy-dsr.ts';
-import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { createDsrCaseAction, DsrIntakeReceiptAuthority } from '../../src/actions/create-dsr-case.action.ts';
 import { DsrDeliveryAccessAuthority } from '../../src/actions/dsr-delivery-access-authority.ts';
 import { issueDsrDeliveryAccessAction } from '../../src/actions/issue-dsr-delivery-access.action.ts';
@@ -70,46 +73,13 @@ import { dsrCasesRead } from '../../src/api/dsr-cases.read.ts';
 import { PrivacyOperationPersistenceError } from '../../src/persistence/privacy-operation-repository.ts';
 
 const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
-const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
 );
 
 const makeDsrIsolation = Effect.fn('DsrMultiOwner.makeIsolation')(function* makeDsrIsolation() {
-  const base = yield* makeApplicationCompositionSnapshotFixture(
-    [ultramodernApiMarker.appId],
-    ultramodernApiMarker.buildMarker,
-  );
-  const modules = yield* Effect.forEach(
-    base.composition.modules,
-    Effect.fn('DsrMultiOwner.module')(function* module(entry) {
-      const contract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
-        entry.contractDocument,
-      );
-      const contractDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))({
-        ...contract,
-        manifest: { ...contract.manifest, module: { ...contract.manifest.module, id: 'privacy.core' } },
-      });
-      const sha256 = digest(contractDocument);
-      return {
-        ...entry,
-        contract: { ...entry.contract, sha256 },
-        contractDocument,
-        moduleId: 'privacy.core',
-        publicContract: { ...entry.publicContract, id: 'privacy.core', sha256 },
-      };
-    }),
-    { concurrency: 1 },
-  );
-  const composition = { ...base.composition, modules };
-  const snapshot = yield* validateActiveApplicationCompositionSnapshot({
-    ...base,
-    composition: {
-      ...composition,
-      revision: digest(canonicalizeApplicationComposition({ ...composition, revision: '0'.repeat(64) })),
-    },
-  });
+  const snapshot = yield* makePrivacyDsrCompositionSnapshot();
   const owned = yield* makeDsrObligationNative(snapshot);
   return { ...owned, snapshot };
 });
@@ -140,13 +110,17 @@ const makeDsrNative = Effect.fn('DsrMultiOwner.makeNative')(function* makeDsrNat
   const { isolated, makeRedemption, snapshot } = yield* makeDsrIsolation();
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
+      access: 'allowed',
       actionExecutor: 'manager-only',
       actionKeys,
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
+      applicationComposition: { load: Effect.succeed(snapshot) },
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: snapshot.composition.revision,
+      expectedDeployment: ultramodernDeliveryUnit,
       moduleAccess: 'configured-modules',
       moduleKeys: ['privacy.core'],
+      ownerRegistration: privacyRegistration,
       runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     }),
     (value) => value.close().pipe(Effect.orDie),
@@ -371,7 +345,12 @@ const makeDsrNative = Effect.fn('DsrMultiOwner.makeNative')(function* makeDsrNat
       }),
     }),
   );
-  const context = yield* Layer.build(Layer.mergeAll(fixture.layer, authorities, NodeCrypto.layer));
+  // The one access gate this suite scripts (the native database carries no v2 access intent and
+  // reaches no engine), plus the per-principal refusals it names (see `live-access-authority`).
+  const deniedAccess = createPrivacyDeniedAccess();
+  const context = yield* Layer.build(
+    Layer.mergeAll(fixture.layer.pipe(Layer.provide(deniedAccess.layer)), authorities, NodeCrypto.layer),
+  );
   // Deferred native factories and HTTP requests use this exported context, not setup's ambient services.
   const exportedContextCrypto = Context.get(context, Crypto.Crypto);
   const exportedContextId = yield* exportedContextCrypto.randomUUIDv4();
@@ -512,6 +491,7 @@ const makeDsrNative = Effect.fn('DsrMultiOwner.makeNative')(function* makeDsrNat
     decide,
     deliver,
     deliveredAt,
+    deniedAccess,
     evidenceRef,
     fixture,
     inventoryMode,
@@ -557,9 +537,17 @@ const makeDsrHttp = Effect.fn('DsrMultiOwner.makeHttp')(function* makeDsrHttp(
     }),
   );
   const redemption = yield* native.makeRedemption();
+  const ownerApprovals = makeOwnerActionApprovalsLive(ultramodernDeliveryUnit, privacyRegistration).pipe(
+    Layer.provide(
+      Layer.merge(
+        Layer.succeedContext(native.context),
+        Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(native.snapshot) }),
+      ),
+    ),
+  );
   const runtime = makePrivacyApiRuntime(
     Layer.succeed(ReadRuntime, Context.get(native.context, ReadRuntime)),
-    Layer.succeedContext(native.context),
+    Layer.merge(Layer.succeedContext(native.context), ownerApprovals),
     redemption,
   );
   const handler = yield* Effect.acquireRelease(
@@ -797,6 +785,9 @@ it.live(
         yield* native.recordTask(testOwnerB, 'competing-task');
         const competing = yield* native.respond(false, yield* nextId).pipe(Effect.flip);
         expect(competing).toMatchObject({ code: 'privacy_operation_conflict' });
+        // v2: the one access gate decides this Action (O62); a principal without the executor
+        // assignment is refused by the gate, named on the fixture's own per-request owner seam.
+        native.deniedAccess.deny(native.fixture.legalEntityOnly.principalId, 'privacy.core.dsr-response.record');
         const denied = yield* runAction({
           payload: {
             response: {

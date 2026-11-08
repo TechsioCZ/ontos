@@ -2,12 +2,7 @@
 // @ontos-action-owner commerce.inventory
 // @ontos-action-slug establish-external-stock-correlation
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 
 import {
@@ -37,7 +32,7 @@ export {
 
 const ACTION_KEY = 'commerce.inventory.establish-external-stock-correlation';
 const MODULE_KEY = 'commerce.inventory';
-const MANAGE_PERMISSION = 'inventory.external_stock_correlation.manage';
+
 const domainEvents = {} as const;
 
 export const EstablishExternalStockCorrelationAuditEvidenceSchema = Schema.Struct({
@@ -109,6 +104,14 @@ export const handleEstablishExternalStockCorrelation = Effect.fn('EstablishExter
 
 export const establishExternalStockCorrelationAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.inventory.external-stock-correlation.establish',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'bindings', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: `${ACTION_KEY}.access.v1`,
@@ -116,23 +119,11 @@ export const establishExternalStockCorrelationAction = defineAction(
     actionKey: ACTION_KEY,
     auditEvidenceSchema: EstablishExternalStockCorrelationAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission<EstablishExternalStockCorrelationPayload>((payload, scope) => ({
-      permission: MANAGE_PERMISSION,
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: payload.correlationRef.moduleId,
-          resourceId: payload.correlationRef.resourceId,
-          resourceType: payload.correlationRef.resourceType,
-        },
-        tenantId: tenantMismatch(payload, scope.tenantId) ? '' : scope.tenantId,
-      },
-    })),
     domainErrorSchema: EstablishExternalStockCorrelationErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: MODULE_KEY,
       role: 'action',
@@ -142,10 +133,6 @@ export const establishExternalStockCorrelationAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: EstablishExternalStockCorrelationPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<EstablishExternalStockCorrelationPayload>((payload) => ({
-      permission: 'write',
-      resource: payload.correlationRef,
-    })),
     resultSchema: EstablishExternalStockCorrelationResultSchema,
     schemaVersion: '1',
   },

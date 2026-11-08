@@ -45,9 +45,11 @@ On every start, the host does the following.
 
 1. Runs the migrations with `scripts/run-zerops-migrator.mjs` (`MIGRATOR_ONCE=true`) while it waits for every unit to serve its contract. Each unit has five minutes.
 2. Observes the running artifacts over loopback, and derives the snapshot using the public artifact URLs.
-3. Publishes the snapshot with `publishApplicationCompositionAuthoritySnapshot`. The result is one active revision in the PostgreSQL table `core.application_composition_authority`.
-4. Runs `scripts/demo/reconcile-stage-service-grants.mts --apply` for the SpiceDB schema and the stage service grants. A failure is logged and does not stop the release.
+3. Proves the release against the live engine, read-only (`scripts/zerops/release-access-verification.mts`): the live SpiceDB schema must equal the canonical v2 schema, and every active Tenant must carry its scopes, its owner membership and a SpiceDB projection equal to PostgreSQL intent. The proof never writes, revokes or re-grants, and a Tenant or engine it cannot prove stops the release here with the exact Tenant and the remediation instead of publishing a release that locks its people out.
+4. Publishes the snapshot with `publishApplicationCompositionAuthoritySnapshot`. The result is one active revision in the PostgreSQL table `core.application_composition_authority`.
 5. Serves the snapshot bytes at `/_host/composition`, a loopback-only path. Every hosted process reads it through `ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL`. The host serves a revision only while the database still names it.
+
+The release writes no authorization relationship and installs no schema. Authorization v2 (ADR-0030) projects every tuple from PostgreSQL intent through the one Core writer, so the retired `scoped_role`/`action`/`context_permission` reconciliation has no place in a release. The deployment's SpiceDB bootstrap file is read **only when the datastore is empty** (`scripts/run-zerops-spicedb.sh` gates it on `namespace_config`), so a live engine keeps whatever schema it was given: bringing a live engine to the canonical v2 schema, and retiring its old relationships, are each a separately approved operation that must complete **before** the read-only release verification. A live Tenant's people, Roles and workloads are seeded by the operator-gated stage bootstrap (`apps/shell-super-app/scripts/bootstrap-stage-accounts.mts`).
 
 The host renews the lease itself every 6 hours. Validity is 24 hours. A failed renewal is logged, and if renewals keep failing the lease expires. There is no KV namespace, no workers.dev route and no scheduled refresh workflow.
 
@@ -264,7 +266,7 @@ The fail-closed Action authorization rollout uses an explicit expand/provision/v
 
 1. prepare the candidate application/release artifact for the operator command while the previous runtime remains active; this is separate from the PostgreSQL migration artifact;
 2. ensure the fixed stage contexts and their Tenant membership relationships already exist;
-3. run `mise exec -- pnpm authorization:provision-current-actions` in the stage-gated artifact. It publishes the compatible schema and membership-set executor grants for every `tenant_membership_default` Action across the fixed stage Tenants. For every `explicit` Action it writes direct executor grants for the accounts whose `grants.explicitActions` in the operator stage accounts file name it ([ADR-0028](../../../docs/adr/0028-stage-accounts-from-operator-data.md)); set `ONTOS_STAGE_ACCOUNTS_FILE` for the run;
+3. provision the stage Action grants from the canonical access catalog (`pnpm authorization:catalog:artifact` / `pnpm authorization:catalog:report`) in the stage-gated artifact. It publishes the compatible schema and membership-set executor grants for every `tenant_membership_default` Action across the fixed stage Tenants. For every `explicit` Action it writes direct executor grants for the accounts whose `grants.explicitActions` in the operator stage accounts file name it ([ADR-0028](../../../docs/adr/0028-stage-accounts-from-operator-data.md)); set `ONTOS_STAGE_ACCOUNTS_FILE` for the run;
 4. verify every default Action for the fixed stage Principals and the non-member denial. Verify every explicit Action as allowed for its grantees and denied for every other fixed account and the non-member. Verify that no fixed Principal can access the other fixed Tenant;
 5. only then deploy the runtime that treats missing `action#execute` permission as denial;
 6. smoke one provisioned Action and one deliberately unconfigured Action denial.
@@ -295,7 +297,6 @@ The operator supplies every stage Tenant, account, and grant in a JSON file outs
       "slug": "<lowercase-slug>",
       "displayName": "<name>",
       "defaultLocale": "<locale>",
-      "moduleKey": "<module the Tenant activates, e.g. party.registry>",
       "moduleStateId": "<uuid>",
       "legalEntity": {
         "legalEntityId": "<uuid>",
@@ -311,25 +312,27 @@ The operator supplies every stage Tenant, account, and grant in a JSON file outs
           "password": "<at least 8 characters>",
           "displayName": "<name>",
           "grants": {
-            "tenantRelations": ["<tenant relation from the SpiceDB schema>"],
-            "explicitActions": ["<explicit Action key>"]
+            "owner": true,
+            "roles": ["full_access"]
           }
         }
-      ]
+      ],
+      "workloads": [{ "principalId": "<uuid of an account of this Tenant>", "workloadKey": "<declared workload key>" }]
     }
   ],
-  "retiredTenants": [
-    { "tenantId": "<uuid>", "legalEntityId": "<uuid>", "moduleKey": "<module>", "principalIds": ["<uuid>"] }
-  ],
+  "retiredTenants": [{ "tenantId": "<uuid>", "legalEntityId": "<uuid>", "principalIds": ["<uuid>"] }],
   "retiredAccountEmails": ["<email>"]
 }
 ```
 
 - Every Tenant, slug, legal entity, module state, Principal, binding, and email must be unique; unknown keys are rejected.
-- `tenantRelations` may name any Principal relation on `tenant` in the SpiceDB schema except `member`, which every account gets. `explicitActions` is a list of `explicit` Action keys or `"all"`. `authorization:provision-current-actions` reads the same file, so grants and their assertions cannot drift apart.
-- `retiredTenants` (may be empty) lists former stage Tenants. The bootstrap revokes their bindings, archives their rows, and deletes every SpiceDB relationship it can have written for them.
+- `grants.owner` names the one account that owns the Tenant: `bootstrapTenantAccess` creates the Tenant's scopes, its owner's memberships and the "Plný přístup" role assigned to it in every scope. `grants.roles` lists what a further account holds beside its membership; `full_access` is the only role the file may name today. Nothing assigns rights by account kind, and no account receives a blanket grant: a capability a module ships later arrives through Novinky and an explicit adoption, never by rebuilding the release a role is pinned to.
+- `workloads` (optional) registers the trusted machine workloads of one Tenant (O73): each entry names a Principal of that Tenant and one `<module>.<workload-name>` key a carrier declares with `accessWorkload`. A workload that is not registered is refused, so a service principal never acts on the strength of its kind.
+- `retiredTenants` (may be empty) lists former stage Tenants. The bootstrap revokes their bindings, archives their rows, and reconciles the intent that carried their authority, so the projection of it goes with it.
 - `retiredAccountEmails` (may be empty) lists former stage accounts. The bootstrap bans each one, ends its sessions and removes its password credential. Retired data must not overlap an active Tenant, Principal, or email.
-- Keep the file mode `600`. Rerunning with a changed password resets that account's password and ends its sessions. Both tools only add relationships; removing a grant from the file does not revoke it.
+- Keep the file mode `600`. Rerunning with a changed password resets that account's password and ends its sessions. The bootstrap is insert-only: it never revives a membership, an assignment or a role an administrator ended, and removing a grant from the file does not revoke it.
+
+The bootstrap connects with the runtime identity (`DATABASE_URL`), not the administrative one: every scope it installs is a session-setting scope its enrollment must name, and the identity rows it writes are the shared runtime's own. `DATABASE_ADMIN_URL` stays with the migrator and the Better Auth store.
 
 Every later canonical state change uses a typed Action.
 
@@ -515,9 +518,9 @@ Git history and regression tests own the detailed rollout-failure record. When a
 
 ## Fail-closed authorization promotion
 
-Authorization changes deploy schema and data expansion first: the Contacts assertion-redemption migration and SpiceDB policy precede every provider and the Shell. Run the inventory check, collect sanitized report-only evidence for one source revision and inventory hash, reduce it with `pnpm authorization:impact:report`, and validate fixed-context evidence with `pnpm authorization:readiness:check -- stage`. The command accepts only a fixed environment name; it loads `topology/authorization-contexts/<environment>.json` and the fixed inventory, impact, observation, and negative-smoke report names. The resulting artifact binds the environment, source revision, inventory and context hashes, schema/data versions, replay migration, impact report, smoke evidence, observation bounds, and approval reference.
+Authorization changes deploy schema and data expansion first: the Contacts assertion-redemption migration and SpiceDB policy precede every provider and the Shell. Run the source-owned inventory check (`pnpm authorization:inventory:check`) and the catalog report (`pnpm authorization:catalog:report`) over one source revision. The catalog report is review evidence, not runtime policy: it lists every declaration, field group and review finding the installed modules carry, and a missing or invalid declaration fails the check. The canonical catalog artifact under `topology/` is the promotion record; keep it regenerated from the installed modules before any promotion.
 
-Pass `--authorization-environment <environment>` to `pnpm deployment-impact:plan --` for a promotion plan. `report_only` is valid only before its declared expiry and never in production. `enforced` has no expiry; `expiresAt` bounds only a report-only window. In production, `enforced` requires matching zero-impact, readiness, and negative-smoke artifacts from the exact build. Development and stage may enforce without those artifacts only while the compatibility baseline is empty, because enforcing then withdraws no allowance; the plan records status `enforced` instead of `ready`. Any present artifact must still match, and a non-empty baseline needs the full evidence. Stage enforces since 2026-10-01. Abort on an expired window, mixed build evidence, unresolved impact, missing policy/module/worker/issuer/replay data, or a failed negative smoke.
+`report_only` is valid only before its declared expiry and never in production. `enforced` has no expiry; `expiresAt` bounds only a report-only window. In production, `enforced` requires matching zero-impact, readiness, and negative-smoke evidence from the exact build. Development and stage may enforce without that evidence only while the compatibility baseline is empty, because enforcing then withdraws no allowance. Any present evidence must still match, and a non-empty baseline needs the full set. Stage enforces since 2026-10-01. Abort on an expired window, mixed build evidence, unresolved impact, missing policy/module/worker/issuer/replay data, or a failed negative smoke.
 
 Production remains blocked while no approved source-controlled production context exists; the development/stage provisioner must continue rejecting production and arbitrary tenant or Action arguments. Issue #173 owns technical implementation and readiness; issue #369 owns the separate production-promotion approval gate. Issue #169 is broader review context, not approval. Their current records—not this playbook—determine whether the gates are satisfied. An implementation override never records Petr/Jiří approval or permits production enforcement. The checked-in stage context remains `pending`; code-only override is not approval. Rollback restores the prior application mode only after preserving the exact evidence and must not remove the expanded schema or durable redemption rows while old/new consumers overlap.
 

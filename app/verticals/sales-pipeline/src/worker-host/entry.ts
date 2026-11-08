@@ -10,7 +10,6 @@ import { NodeCrypto } from '@effect/platform-node';
 import { Layer } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import {
-  ResourceContainmentRelationshipMutationLive,
   ActiveApplicationCompositionConfigLive,
   defineOutboxWorkerEntry,
   extractOutboxWorkerSubscriptions,
@@ -44,7 +43,6 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
     ),
     Layer.mergeAll(
       outboxWorkerDefinitionLayer,
-      ResourceContainmentRelationshipMutationLive,
       CoreSearchIngestionLive.pipe(Layer.provide(SearchIngestionRegistryLive)),
       CoreSearchWorkerSnapshotLive.pipe(Layer.provide(SearchIngestionRegistryLive)),
     ).pipe(Layer.provideMerge(CoreSearchProjectionStoreLive)),

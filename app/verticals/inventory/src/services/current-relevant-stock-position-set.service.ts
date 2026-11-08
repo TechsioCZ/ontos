@@ -2,7 +2,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 
-import type { OperationalScope, ReadPermissionDenied, ReadPermissionUnavailable } from '@app/core-runtime';
+import type { OperationalScope } from '@app/core-runtime';
 import type {
   PricingPurchaseContextVerificationRequest,
   PricingPurchaseContextVerificationResponse,
@@ -209,15 +209,6 @@ export const evaluateRelevantStockPositionSet = Effect.fn('PositionSet.evaluate'
   }),
 );
 
-type PositionRefsAuthorization = (
-  refs: readonly {
-    readonly moduleId: 'commerce.inventory';
-    readonly resourceId: string;
-    readonly resourceType: string;
-    readonly tenantId: string;
-  }[],
-) => Effect.Effect<void, RelevantStockPositionSetUnavailable | ReadPermissionDenied | ReadPermissionUnavailable>;
-
 type RelevantStockPositionSetResult = Effect.Success<ReturnType<typeof evaluateRelevantStockPositionSet>>;
 
 /**
@@ -286,15 +277,14 @@ export const prepareRelevantStockPositionSet = Effect.fn('CurrentRelevantStockPo
 });
 
 /**
- * After commit: evaluates the observation (inside the Commerce verification window, if any) and
- * authorizes every Position it returns through SpiceDB.
+ * After commit: evaluates the owner observation inside the verified Commerce window. The Read's
+ * canonical scope-wide capability admits this complete set; no second resource authority is consulted.
  */
 export const finishRelevantStockPositionSet = Effect.fn('CurrentRelevantStockPositionSet.finish')(function* finish(
   input: RelevantStockPositionSetRequest,
   prepared: RelevantStockPositionSetPrepared,
   loaded: Option.Option<RelevantStockPositionSetObservation>,
   scope: OperationalScope,
-  authorizePositions: PositionRefsAuthorization,
 ) {
   if (prepared.kind === 'RESULT') {
     return prepared.result;
@@ -312,9 +302,5 @@ export const finishRelevantStockPositionSet = Effect.fn('CurrentRelevantStockPos
   ) {
     return unproven('COMMERCE_CONTEXT_UNVERIFIABLE');
   }
-  const result = yield* evaluateRelevantStockPositionSet(input, observation, scope);
-  if (result.outcome === 'COMPLETE') {
-    yield* authorizePositions(result.positionRefs);
-  }
-  return result;
+  return yield* evaluateRelevantStockPositionSet(input, observation, scope);
 });

@@ -31,6 +31,8 @@
         "tools/oxlint/effect-native/report.mts",
         "tools/oxlint/effect-native/repository-policy.mts",
         "scripts/run-zerops-migrator.mjs",
+        "scripts/integration/fixtures/scoped-migration-recovery/drizzle.config.ts",
+        "scripts/integration/fixtures/scoped-migration-recovery/schema.ts",
         "scripts/api-contract-schema-rules.mts",
         "scripts/outbox-worker-host.generated.mts",
         "tools/oxlint/effect-native/tests/fixture-plugin.ts",
@@ -52,7 +54,6 @@
         "scripts/demo/prove-sales-demo.mts",
         "scripts/demo/provision-actions.mts",
         "scripts/fonts/subset-fonts.mjs",
-        "scripts/demo/publish-people-search-schema.mts",
         "scripts/demo/search-stage-dead-delivery.mts"
       ],
       "project": [
@@ -196,7 +197,7 @@
         "tests/support/market-revision-native-child.ts",
         "tests/support/privacy-completion-worker.ts",
         "tests/support/official-identifier-correction-reuse.rstest.config.ts",
-        "tests/support/dsr-legacy-owner.fixture.ts"
+        "tests/integration/registered-postal-factory-native-probe.mts"
       ],
       "drizzle": {
         "config": []

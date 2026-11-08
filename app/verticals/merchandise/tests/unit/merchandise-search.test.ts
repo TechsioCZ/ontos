@@ -3,18 +3,12 @@ import {
   CoreSearchWorkerSnapshot,
   CoreSearchProjectionStore,
   CoreSearchIngestion,
-  ResourceContainmentRelationshipMutation,
   createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
   makeCoreSearchIngestion,
   CoreSearchProjectionHitSchema,
-  toModuleAccessObjectId,
 } from '@app/core-runtime';
-import type {
-  CoreSearchQueryRuntimeService,
-  OperationalScope,
-  ResourceContainmentRelationshipMutationInput,
-} from '@app/core-runtime';
+import type { CoreSearchQueryRuntimeService, OperationalScope } from '@app/core-runtime';
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
 import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -153,7 +147,6 @@ it.effect('indexes only approved product/active-variant parameter labels and val
         CoreSearchIngestion,
         makeCoreSearchIngestion(store, merchandiseSearchIngestionRegistrations),
       ),
-      Effect.provideService(ResourceContainmentRelationshipMutation, { touch: () => Effect.void }),
     );
     const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
     for (const query of ['material zinek', 'prumer 180', 'ＫＡＶＡ-５００']) {
@@ -331,7 +324,6 @@ it.effect('rebuild, SKU updates, removals, replay and company-isolated queries u
   Effect.gen(function* test() {
     const store = makeInMemoryCoreSearchProjectionStore();
     const query = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
-    const touches: ResourceContainmentRelationshipMutationInput[] = [];
     const publish = (source: MerchandiseSearchSnapshot, target?: Parameters<typeof publishMerchandiseSearch>[2]) =>
       publishMerchandiseSearch(context(target === undefined ? 'rebuild' : 'refresh'), source, target).pipe(
         Effect.provideService(CoreSearchProjectionStore, store),
@@ -339,20 +331,11 @@ it.effect('rebuild, SKU updates, removals, replay and company-isolated queries u
           CoreSearchIngestion,
           makeCoreSearchIngestion(store, merchandiseSearchIngestionRegistrations),
         ),
-        Effect.provideService(ResourceContainmentRelationshipMutation, {
-          touch: (input) =>
-            Effect.sync(() => {
-              touches.push(input);
-            }),
-        }),
       );
     const search = (text: string) => loadMerchandiseSearch(query, scope, 'product', text, ProductRefSchema);
     yield* publish(snapshot);
     expect((yield* search('kava-500')).length).toBe(1);
     expect((yield* search('cerstva')).length).toBe(1);
-    expect(touches[0]?.relationships[0]?.container.objectId).toBe(
-      toModuleAccessObjectId(tenantId, company, 'demo.merchandise'),
-    );
     expect(
       yield* loadMerchandiseSearch(
         query,

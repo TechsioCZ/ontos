@@ -1,30 +1,28 @@
-import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from './database-identities.ts';
-import type { ActionRuntimeService } from '@app/core-runtime';
-import type { Issue } from 'effect/SchemaIssue';
-import { makeGatewayScopeGrantRegistrar } from '@app/core-runtime/testing/actions';
-import { Socket } from 'effect/socket';
-import { NodeSocket, NodeCrypto, NodeHttpServer, NodeRuntime, NodeServices } from '@effect/platform-node';
-import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
+  DatabaseIdentityEnrollmentContext,
   ContextAccessLive,
-  ActiveApplicationCompositionService,
   findPostgresFailure,
   CorePersistenceLive,
   DatabaseConfig,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   ReadRuntime,
   ReadResultValidationError,
   ReadEvidenceValidationError,
   ReadHandlerExecutionError,
   TenantModuleStateServiceLive,
-  defineDatabaseIdentityEnrollment,
   makeActionRuntimeLive,
-  ActionRuntime,
-  ActionAuthorizationPreflight,
-  makeDatabaseIdentityEnrollmentLive,
   parseDatabaseConnectionPair,
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
+import type { RetailPartyResolutionExecutor } from '../../src/integrations/retail-party-detail-executor.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from './database-identities.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
+import type { Issue } from 'effect/SchemaIssue';
+import { makeGatewayScopeGrantRegistrar } from '@app/core-runtime/testing/actions';
+import { allowedAccessLayers } from './access-gate.ts';
+import { Socket } from 'effect/socket';
+import { NodeSocket, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   ActionPermissionLive,
   ActionRepositoryLive,
@@ -52,7 +50,7 @@ import {
   executePartyDetailWithAuthorization,
   executeCounterpartyReadWithAuthorization,
 } from '@app/party-registry/api/client';
-import type { executePartyDetail, executeCounterpartyRead } from '@app/party-registry/api/client';
+import type { executeCounterpartyRead } from '@app/party-registry/api/client';
 import { partyRegistryApiContract } from '@app/party-registry/api';
 import {
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
@@ -67,6 +65,7 @@ import {
   Brand,
   Cause,
   Config,
+  ConfigProvider,
   Context,
   Crypto,
   DateTime,
@@ -101,19 +100,17 @@ import { customerPriceGroupResolutionReadApiLive } from '../../api/customer-pric
 import { customerPriceGroupAssignmentReadReadApiLive } from '../../api/customer-price-group-assignment-read-read-server.ts';
 import { commerceCustomerContextApi } from '../../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
-import { CustomerPriceGroupCatalogUnavailable } from '../../shared/domain/price-group-errors.ts';
-import { PriceGroupCatalogGatewayCredentialService } from '../../shared/domain/price-group-catalog-gateway-credential.ts';
 import {
-  PartyRegistryRetailPartyResolverFactory,
-  preparedRetailPartyResolution,
-} from '../../src/integrations/party-registry-retail-party-resolver.ts';
-import { RetailPartyDetailExecutor } from '../../src/integrations/retail-party-detail-executor.ts';
+  delegatedGatewayConfiguration,
+  delegatedGatewayRoute,
+  serveDelegatedGatewayContext,
+} from './delegated-gateway-shell.fixture.ts';
+import type { PartyRegistryRetailPartyResolverFactory } from '../../src/integrations/party-registry-retail-party-resolver.ts';
 import {
   ProfileCounterpartyRoleEligibilityResolverFactory,
   profileCounterpartyRoleEligibilityResolverFactoryLive,
 } from '../../src/profile-counterparty-role-eligibility.ts';
 import { partyRegistryGuestResolverFactoryLive } from '../../src/integrations/party-registry-guest-resolver.ts';
-import { profileRetailPermissionReaderFactoryLive } from '../../src/integrations/retail-permission-reader.ts';
 import {
   profileReactivationEligibilityEvaluatorFactoryLive,
   profileReconfirmationPolicyUnavailableLive,
@@ -139,15 +136,6 @@ import {
   strict,
   failure,
   requireCondition,
-} from './price-group-temporal-protocol.ts';
-
-export {
-  PriceGroupOwnedDatabaseCertificateSchema,
-  PriceGroupTemporalBootstrapSchema,
-  PriceGroupTemporalResponseSchema,
-  guardPriceGroupOwnedDatabase,
-  priceGroupTemporalClosedEnvironment,
-  priceGroupTemporalProtocol,
 } from './price-group-temporal-protocol.ts';
 
 const RequestIdSchema = Schema.String.check(Schema.isUUID()).pipe(
@@ -197,6 +185,11 @@ const CatalogResponseSchema = Schema.Union([
       ]),
     ),
     stage: Schema.Literals([
+      'BOOTSTRAP_OWNED_DATABASE',
+      'BOOTSTRAP_CONFIGURATION',
+      'BOOTSTRAP_MIGRATION',
+      'BOOTSTRAP_RUNTIME',
+      'BOOTSTRAP_OTHER',
       'CREATE_INVALID',
       'CREATE_AUTHENTICATION',
       'CREATE_FORBIDDEN',
@@ -231,6 +224,13 @@ const CatalogResponseSchema = Schema.Union([
     version: Schema.Literal(catalogProtocol),
   }),
   Schema.Struct({ type: Schema.Literal('STOPPED'), version: Schema.Literal(catalogProtocol) }),
+]);
+const ChildBootstrapDiagnosticStageSchema = Schema.Literals([
+  'BOOTSTRAP_OWNED_DATABASE',
+  'BOOTSTRAP_CONFIGURATION',
+  'BOOTSTRAP_MIGRATION',
+  'BOOTSTRAP_RUNTIME',
+  'BOOTSTRAP_OTHER',
 ]);
 const ChildDiagnosticStageSchema = Schema.Literals([
   'C_SOCKET_CONNECTED',
@@ -270,7 +270,9 @@ const ChildDiagnosticStageSchema = Schema.Literals([
   'READ_RESULT_RESOLUTION_SHAPE',
   'READ_RESULT_UNCLASSIFIED',
 ]);
-const diagnosticStage = (stage: typeof ChildDiagnosticStageSchema.Type) =>
+const diagnosticStage = (
+  stage: typeof ChildDiagnosticStageSchema.Type | typeof ChildBootstrapDiagnosticStageSchema.Type,
+) =>
   Effect.sync(() => {
     process.stdout.write(`${stage}\n`);
   });
@@ -464,9 +466,12 @@ const migrateOwner = Effect.fn('PriceGroupTemporal.migrateOwner')(function* migr
   const directory = path.join(appRoot, 'verticals', owner === 'ccc' ? commerceAppId : partyAppId);
   const migrationCommand = 'node_modules/drizzle-kit/bin.cjs';
   if (owner === 'party') {
-    // Follow Party's source-owned db:migrate: its Contacts and Party lineages converge through the reviewed
-    // equivalence plan, which plain `drizzle-kit migrate` runs would replay twice.
-    const steps = [['../../scripts/migration-convergence-cli.mts', 'party']];
+    // Follow Party's source-owned db:migrate gateway: prepare Contacts, migrate Contacts, then Party.
+    const steps = [
+      ['scripts/prepare-contacts-migration.mts'],
+      [migrationCommand, 'migrate', '--config', 'drizzle.contacts.config.ts'],
+      [migrationCommand, 'migrate', '--config', 'drizzle.config.ts'],
+    ];
     for (const args of steps) {
       const child = yield* ChildProcess.make(process.execPath, args, {
         cwd: directory,
@@ -652,6 +657,7 @@ const makeChildAuthority = Effect.fn('PriceGroupTemporal.makeChildAuthority')(fu
       );
     });
     return {
+      assertion,
       authorization: `Bearer ${Redacted.value(assertion)}`,
       confirmRegistered,
       refuseUnregistered,
@@ -666,7 +672,16 @@ const makeChildAuthority = Effect.fn('PriceGroupTemporal.makeChildAuthority')(fu
     yield* prepared.register;
     return prepared.authorization;
   });
-  return { issue, issuer, jwks, prepare };
+  /** The registered assertion itself, as the Shell's delegated route returns it: the client adds the scheme. */
+  const issueAssertion = Effect.fn('PriceGroupTemporal.issueChildAssertionToken')(function* issueChildAssertionToken(
+    audience: typeof catalogAppId | typeof partyAppId,
+    buildMarker: string,
+  ) {
+    const prepared = yield* prepare(audience, buildMarker);
+    yield* prepared.register;
+    return Redacted.value(prepared.assertion);
+  });
+  return { issue, issueAssertion, issuer, jwks, prepare };
 });
 
 const preparedOwner = Effect.fn('PriceGroupTemporal.preparedOwner')(function* preparedOwner(
@@ -813,22 +828,30 @@ const startCatalog = Effect.fn('PriceGroupTemporal.startCatalog')(function* star
     Schema.encodeEffect(Schema.fromJsonString(Schema.Json))(command).pipe(Effect.flatMap(channel.send));
   const { legalEntityId: _selectedLegalEntity, ...tenantActor } = bootstrap.actor;
   const encodedBootstrap = yield* Schema.encodeEffect(PriceGroupTemporalBootstrapSchema)(bootstrap);
+  const bootstrapLine = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))({
+    actor: tenantActor,
+    composition: encodedBootstrap.composition,
+    database: projectPriceGroupCatalogDatabaseCertificate(encodedBootstrap.database),
+    deniedCapabilityKeys: encodedBootstrap.catalogDeniedCapabilityKeys,
+    issuer: authority.issuer,
+    jwks: authority.jwks,
+    spiceDb: encodedBootstrap.spiceDb,
+    type: 'bootstrap',
+    version: catalogProtocol,
+  });
+  const bootstrapByteLength = new TextEncoder().encode(`${bootstrapLine}\n`).byteLength;
+  yield* Effect.logInfo('PriceGroup catalog bootstrap byte count', { byteLength: bootstrapByteLength });
+  yield* requireCondition(bootstrapByteLength <= 262_144, 'catalog-bootstrap-byte-budget');
   yield* diagnosticStage('C_CATALOG_BOOTSTRAP_SEND_BEGIN');
-  yield* Effect.raceFirst(
-    send({
-      actor: tenantActor,
-      composition: encodedBootstrap.composition,
-      database: projectPriceGroupCatalogDatabaseCertificate(encodedBootstrap.database),
-      issuer: authority.issuer,
-      jwks: authority.jwks,
-      spiceDb: encodedBootstrap.spiceDb,
-      type: 'bootstrap',
-      version: catalogProtocol,
-    }),
-    exited,
-  );
+  yield* Effect.raceFirst(channel.send(bootstrapLine), exited);
   yield* diagnosticStage('C_CATALOG_BOOTSTRAP_SEND_DONE');
   const ready = yield* receive;
+  if (ready.type === 'FAILED') {
+    if (Schema.is(ChildBootstrapDiagnosticStageSchema)(ready.stage)) {
+      yield* diagnosticStage(ready.stage);
+    }
+    return yield* failure(`catalog-bootstrap-${ready.stage}`);
+  }
   if (ready.type !== 'BOOTED') {
     return yield* failure('catalog-ready-order');
   }
@@ -858,11 +881,33 @@ const startCatalog = Effect.fn('PriceGroupTemporal.startCatalog')(function* star
   };
 });
 
+type RetailResolverLayerFor = (
+  execute: RetailPartyResolutionExecutor,
+) => Layer.Layer<PartyRegistryRetailPartyResolverFactory>;
+
+const catalogOwnerPath = '/price-group-catalog-owner';
+
+/** The owner base path the Shell names for the catalog: requests are forwarded to the catalog process. */
+const forwardToCatalog = Effect.fn('PriceGroupTemporal.forwardToCatalog')(function* forwardToCatalog(catalogBase: URL) {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const web = yield* HttpServerRequest.toWeb(request);
+  const incoming = new URL(request.url, 'https://fixture.invalid');
+  const target = new URL(`${incoming.pathname.slice(catalogOwnerPath.length)}${incoming.search}`, catalogBase);
+  const body =
+    web.method === 'GET' || web.method === 'HEAD' ? null : yield* Effect.promise(async () => await web.arrayBuffer());
+  const response = yield* Effect.tryPromise({
+    catch: () => failure('catalog-forward'),
+    try: async () => await fetch(target, { body, headers: web.headers, method: web.method }),
+  });
+  return HttpServerResponse.fromWeb(response);
+});
+
 const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* serveCommerce(
   bootstrap: typeof PriceGroupTemporalBootstrapSchema.Type,
   authority: Effect.Success<ReturnType<typeof makeChildAuthority>>,
   party: Effect.Success<ReturnType<typeof startParty>>,
   catalog: Effect.Success<ReturnType<typeof startCatalog>>,
+  retailResolverLayerFor: RetailResolverLayerFor,
 ) {
   const pair = yield* parseDatabaseConnectionPair({
     DATABASE_ADMIN_URL: Redacted.value(bootstrap.database.adminUrl),
@@ -870,7 +915,7 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
   });
   const compositionRevision = bootstrap.composition.composition.revision;
   const authorityContext = yield* Effect.context<Crypto.Crypto>();
-  const readParty = (request: Parameters<typeof executePartyDetail>[0], correlation: string) =>
+  const readParty: RetailPartyResolutionExecutor = (request, correlation) =>
     authority.issue(partyAppId, party.buildMarker).pipe(
       Effect.provideContext(authorityContext),
       Effect.orDie,
@@ -894,48 +939,31 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
     );
   const factories = yield* Layer.build(profileCounterpartyRoleEligibilityResolverFactoryLive);
   const counterpartyFactory = Context.get(factories, ProfileCounterpartyRoleEligibilityResolverFactory);
-  const profileReader = profileRetailPermissionReaderFactoryLive.pipe(Layer.provide(ContextAccessLive));
   const ownerServices = Layer.mergeAll(
+    retailResolverLayerFor(readParty),
     Layer.succeed(ProfileCounterpartyRoleEligibilityResolverFactory, {
       make: (input) => counterpartyFactory.make(input, readCounterparty),
     }),
     partyRegistryGuestResolverFactoryLive,
-    profileReader,
     profileReactivationEligibilityEvaluatorFactoryLive.pipe(Layer.provide(profileReconfirmationPolicyUnavailableLive)),
-    commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(
-      Layer.provide(profileReader),
-      Layer.provide(ContextAccessLive),
-    ),
-    Layer.succeed(PriceGroupCatalogGatewayCredentialService, {
-      issue: (request) =>
-        requireCondition(
-          request.audience === catalogAppId && request.compositionRevision === compositionRevision,
-          'catalog-credential-scope',
-        ).pipe(
-          Effect.andThen(authority.issue(catalogAppId, catalog.buildMarker)),
-          Effect.provideContext(authorityContext),
-          Effect.map((token) => ({ baseUrl: catalog.baseUrl, credential: Redacted.make(token) })),
-          Effect.mapError(
-            () =>
-              new CustomerPriceGroupCatalogUnavailable({
-                code: 'customer_price_group_catalog_unavailable',
-                reason: 'The fixed TEST owner issuer is unavailable',
-              }),
-          ),
-        ),
-    }),
+    commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(Layer.provide(ContextAccessLive)),
   );
   const databaseConfig = Layer.succeed(DatabaseConfig, pair.runtime);
   const persistence = CorePersistenceLive.pipe(Layer.provide(databaseConfig));
   const states = TenantModuleStateServiceLive.pipe(Layer.provide(persistence));
   const stateGate = ModuleStateGateLive.pipe(Layer.provide(states));
   const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(stateGate));
-  const resolver = OperationalScopeResolverLive.pipe(Layer.provide(Layer.mergeAll(persistence, ContextAccessLive)));
+  const accessGate = allowedAccessLayers({
+    legalEntityIds: bootstrap.actor.legalEntityId === undefined ? [] : [bootstrap.actor.legalEntityId],
+  });
+  const resolver = OperationalScopeResolverLive.pipe(
+    Layer.provide(Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT)),
+    Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, accessGate)),
+  );
   const namespace = staffAuthenticationNamespaceRegistryLayer([commerceAppId]);
   const composition = makeActiveApplicationCompositionLayer(Effect.succeed(bootstrap.composition));
-  // The Commerce API composes no dedicated database identities.
-  const databaseIdentities = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
   const common = Layer.mergeAll(
+    Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
     persistence,
     ContextAccessLive,
     stateGate,
@@ -943,44 +971,10 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
     resolver,
     namespace,
     composition,
-    ownerServices,
-  ).pipe(Layer.provideMerge(databaseIdentities));
-  const baseActions = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
-    Layer.provide(Layer.mergeAll(common, ActionRepositoryLive, ActionPermissionLive)),
-    Layer.provide(NodeCrypto.layer),
-    Layer.provideMerge(ownerServices),
+    ownerServices.pipe(Layer.provide(accessGate)),
+    accessGate,
   );
-  // Match the native API's invocation scope. Party HTTP runs in preflight and only
-  // its single-use prepared result reaches transaction-scoped profile persistence.
-  const actions = Layer.effect(
-    ActionRuntime,
-    Effect.gen(function* preparedActionRuntime() {
-      const existing = yield* ActionRuntime;
-      const dependencies = yield* Effect.context<Layer.Services<ReturnType<typeof makeActionRuntimeLive>>>();
-      const compositions = yield* ActiveApplicationCompositionService;
-      const runAction: ActionRuntimeService['runAction'] = (input) =>
-        Effect.scoped(
-          Effect.gen(function* runPreparedAction() {
-            const scope = yield* Effect.scope;
-            const retail = yield* preparedRetailPartyResolution.pipe(
-              Effect.provideService(RetailPartyDetailExecutor, { execute: readParty }),
-              Effect.provideService(ActiveApplicationCompositionService, compositions),
-            );
-            const runtime = yield* Layer.buildWithScope(makeActionRuntimeLive(ultramodernDeliveryUnit), scope).pipe(
-              Effect.provideContext(Context.add(dependencies, ActionAuthorizationPreflight, retail.preflight)),
-            );
-            return yield* Context.get(runtime, ActionRuntime)
-              .runAction(input)
-              .pipe(
-                Effect.provideService(PartyRegistryRetailPartyResolverFactory, retail.factory),
-                Effect.provideService(RetailPartyDetailExecutor, { execute: readParty }),
-              );
-          }),
-        );
-      return { ...existing, runAction };
-    }),
-  ).pipe(
-    Layer.provide(baseActions),
+  const actions = makeActionRuntimeLive(ultramodernDeliveryUnit, commerceCustomerContextRegistration).pipe(
     Layer.provide(Layer.mergeAll(common, ActionRepositoryLive, ActionPermissionLive)),
     Layer.provide(NodeCrypto.layer),
     Layer.provideMerge(ownerServices),
@@ -1004,7 +998,14 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
       };
       return observed;
     }),
-  ).pipe(Layer.provide(ReadRuntimeLive.pipe(Layer.provide(common), Layer.provide(NodeCrypto.layer))));
+  ).pipe(
+    Layer.provide(
+      makeReadRuntimeLive(ultramodernDeliveryUnit, commerceCustomerContextRegistration).pipe(
+        Layer.provide(common),
+        Layer.provide(NodeCrypto.layer),
+      ),
+    ),
+  );
   const encodedComposition = yield* Schema.encodeEffect(
     Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
   )(bootstrap.composition);
@@ -1027,7 +1028,17 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
   ).pipe(
     Layer.provide(ActionPrincipalVerifierLive.pipe(Layer.provide(actions))),
     Layer.provide(
-      Layer.mergeAll(actions, reads, namespace, redemption, source, databaseIdentities, RequestSchemaProblemLive),
+      Layer.mergeAll(
+        actions,
+        reads,
+        namespace,
+        redemption,
+        source,
+        RequestSchemaProblemLive,
+        allowedAccessLayers({
+          legalEntityIds: bootstrap.actor.legalEntityId === undefined ? [] : [bootstrap.actor.legalEntityId],
+        }),
+      ),
     ),
   );
   const app = yield* Effect.acquireRelease(
@@ -1056,16 +1067,45 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
     ),
     (handler) => Effect.promise(async () => await handler.dispose()).pipe(Effect.orDie),
   );
+  const catalogGrant = {
+    apiBaseUrl: catalogOwnerPath,
+    audience: catalogAppId,
+    compositionRevision,
+    token: authority
+      .issueAssertion(catalogAppId, catalog.buildMarker)
+      .pipe(Effect.provideContext(authorityContext), Effect.orDie),
+  };
+  const shellContext = yield* Layer.build(NodeHttpServer.layerTest);
+  const shell = Context.get(shellContext, HttpServer.HttpServer);
+  const shellAddress = yield* Schema.decodeUnknownEffect(Schema.Struct({ port: positive }))(shell.address);
+  const shellOrigin = new URL(`http://127.0.0.1:${shellAddress.port}`);
+  yield* shell.serve(
+    Effect.gen(function* shellRequest() {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const { pathname } = new URL(request.url, shellOrigin);
+      if (pathname === delegatedGatewayRoute) {
+        return yield* serveDelegatedGatewayContext(catalogGrant);
+      }
+      if (pathname === catalogOwnerPath || pathname.startsWith(`${catalogOwnerPath}/`)) {
+        return yield* forwardToCatalog(catalog.baseUrl);
+      }
+      return HttpServerResponse.text('Not found', { status: 404 });
+    }),
+  );
   const context = yield* Layer.build(NodeHttpServer.layerTest);
   const server = Context.get(context, HttpServer.HttpServer);
-  const empty = Context.makeUnsafe<unknown>(new Map());
+  const requestContext = Context.add(
+    Context.makeUnsafe<unknown>(new Map()),
+    ConfigProvider.ConfigProvider,
+    delegatedGatewayConfiguration(shellOrigin),
+  );
   yield* server.serve(
     Effect.gen(function* commerceRequest() {
       const request = yield* HttpServerRequest.HttpServerRequest;
       const web = yield* HttpServerRequest.toWeb(request);
       const response = yield* Effect.tryPromise({
         catch: () => failure('commerce-http'),
-        try: async () => await app.handler(web, empty),
+        try: async () => await app.handler(web, requestContext),
       });
       return HttpServerResponse.fromWeb(response);
     }),
@@ -1082,9 +1122,9 @@ const createParty = Effect.fn('PriceGroupTemporal.createParty')(function* create
   requestId: string,
 ) {
   const subjects = {
-    counterparty: { displayName: 'Temporal Counterparty owner', ico: '45274649' },
-    retail: { displayName: 'Temporal Retail owner', ico: '27074358' },
-    'second-counterparty': { displayName: 'Temporal second Counterparty owner', ico: '12345679' },
+    counterparty: { businessName: 'Temporal Counterparty owner', ico: '45274649' },
+    retail: { businessName: 'Temporal Retail owner', ico: '27074358' },
+    'second-counterparty': { businessName: 'Temporal second Counterparty owner', ico: '12345679' },
   };
   const subject = subjects[purpose];
   const subjectKey = Brand.nominal<
@@ -1094,9 +1134,9 @@ const createParty = Effect.fn('PriceGroupTemporal.createParty')(function* create
   >()(yield* nextId);
   const payload: Parameters<typeof createPartyWithAuthorization>[0] = {
     candidate: {
-      displayName: subject.displayName,
+      businessName: subject.businessName,
       evidenceRefs: [`test:1248:reviewed-${requestId}`],
-      officialIdentifiers: [{ identifierType: 'ICO', value: subject.ico, verification: 'VERIFIED' }],
+      officialIdentifiers: [{ identifierType: 'ICO', value: subject.ico }],
       partyType: 'ORGANIZATION',
       provenance: { method: 'REVIEWED_DOCUMENT', source: 'stabilization-1248' },
       subjectEvidence: [
@@ -1129,7 +1169,6 @@ const createParty = Effect.fn('PriceGroupTemporal.createParty')(function* create
     yield* prepared.confirmRegistered;
   }
   const result = yield* createPartyWithAuthorization(payload, prepared.authorization, options);
-  yield* requireCondition(result.outcome === 'CREATED', 'party-created');
   if (result.outcome !== 'CREATED') {
     return yield* failure('party-create-outcome');
   }
@@ -1255,7 +1294,9 @@ const validateBootstrap = Effect.fn('PriceGroupTemporal.validateBootstrap')(func
   yield* checkFixedEnvironment(bootstrap);
 });
 
-const runReceiver = Effect.gen(function* runPriceGroupCurrentReceiver() {
+export const runReceiver = Effect.fn('PriceGroupTemporal.runReceiver')(function* runPriceGroupCurrentReceiver(
+  retailResolverLayerFor: RetailResolverLayerFor,
+) {
   const { next, sendParent } = yield* connectParent;
   yield* diagnosticStage('C_SOCKET_CONNECTED');
   const first = yield* next;
@@ -1283,7 +1324,7 @@ const runReceiver = Effect.gen(function* runPriceGroupCurrentReceiver() {
   yield* diagnosticStage('C_PARTY_HTTP_READY');
   const catalog = yield* startCatalog(bootstrap, authority);
   yield* diagnosticStage('C_CATALOG_HTTP_READY');
-  const receiver = yield* serveCommerce(bootstrap, authority, party, catalog);
+  const receiver = yield* serveCommerce(bootstrap, authority, party, catalog, retailResolverLayerFor);
   yield* diagnosticStage('C_COMMERCE_READY');
   yield* sendParent({ ...receiver, type: 'BOOTED', version: priceGroupTemporalProtocol });
   yield* diagnosticStage('C_BOOTED_SENT');
@@ -1375,14 +1416,18 @@ const runReceiver = Effect.gen(function* runPriceGroupCurrentReceiver() {
       if (result.type === 'BOOTED' || result.type === 'STOPPED') {
         return yield* failure('catalog-mutation-order');
       }
-      yield* sendParent({ ...result, version: priceGroupTemporalProtocol });
+      if (result.type === 'FAILED' && Schema.is(ChildBootstrapDiagnosticStageSchema)(result.stage)) {
+        yield* diagnosticStage(result.stage);
+        return yield* failure(`catalog-command-bootstrap-${result.stage}`);
+      }
+      const businessResponse = yield* Schema.decodeUnknownEffect(Schema.toType(PriceGroupTemporalResponseSchema))({
+        ...result,
+        version: priceGroupTemporalProtocol,
+      });
+      yield* sendParent(businessResponse);
     }
   }
 });
-const receiverServices = NodeServices.layer.pipe(
-  Layer.provideMerge(NodeCrypto.layer),
-  Layer.provideMerge(FetchHttpClient.layer),
-);
 const DescriptionSchema = Schema.Struct({
   actionKeys: Schema.Array(ActionKeySchema),
   appId: Schema.Literal(commerceAppId),
@@ -1390,7 +1435,7 @@ const DescriptionSchema = Schema.Struct({
   type: Schema.Literal('description'),
   version: Schema.Literal(priceGroupTemporalProtocol),
 });
-const describeReceiver = Schema.encodeEffect(Schema.fromJsonString(DescriptionSchema))({
+export const describeReceiver = Schema.encodeEffect(Schema.fromJsonString(DescriptionSchema))({
   actionKeys: [
     'commerce.customer-context.ensure-retail-customer-profile',
     'commerce.customer-context.create-counterparty-purchasing-profile',
@@ -1409,20 +1454,3 @@ const describeReceiver = Schema.encodeEffect(Schema.fromJsonString(DescriptionSc
   type: 'description',
   version: priceGroupTemporalProtocol,
 }).pipe(Effect.flatMap((line) => Effect.sync(() => process.stdout.write(`${line}\n`))));
-if (process.argv.includes('--describe-price-group-current')) {
-  NodeRuntime.runMain(
-    describeReceiver.pipe(
-      Effect.mapError(() => failure('fixture-unavailable')),
-      Effect.asVoid,
-      Effect.provide(receiverServices),
-    ),
-  );
-}
-if (process.argv.includes('--serve-price-group-current')) {
-  NodeRuntime.runMain(
-    Effect.scoped(runReceiver).pipe(
-      Effect.mapError(() => failure('fixture-unavailable')),
-      Effect.provide(receiverServices),
-    ),
-  );
-}

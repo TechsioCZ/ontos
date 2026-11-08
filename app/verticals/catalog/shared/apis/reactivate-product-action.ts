@@ -2,11 +2,13 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug reactivate-product
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { ReactivateProductPayloadSchema, ReactivateProductResultSchema } from '../actions/reactivate-product.ts';
 
 export { ReactivateProductPayloadSchema } from '../actions/reactivate-product.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const ReactivateProductActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReactivateProductActionInvalidProblem',
@@ -21,6 +23,7 @@ export const ReactivateProductActionForbiddenProblemSchema = makeProblemDetailsS
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -133,7 +136,7 @@ export const ReactivateProductActionApi = HttpApi.make('ReactivateProductActionA
       HttpApiEndpoint.post('execute', '/catalog/actions/reactivate-product', {
         error: actionErrors,
         payload: Schema.toEncoded(ReactivateProductPayloadSchema),
-        success: ReactivateProductResultSchema,
+        success: [ActionProposalAcceptedSchema, ReactivateProductResultSchema],
       }),
     )
     .middleware(ReactivateProductActionSchemaErrorMiddleware),

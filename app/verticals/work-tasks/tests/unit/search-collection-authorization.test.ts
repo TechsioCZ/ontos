@@ -1,107 +1,141 @@
-import { ContextAccess, CoreSearchProjectionHitSchema, CoreSearchQueryRuntime } from '@app/core-runtime';
+import {
+  failClosedOwnerAuthorizationDecision,
+  CoreSearchProjectionStore,
+  CoreSearchQueryRuntime,
+  createCoreSearchQueryRuntime,
+  makeInMemoryCoreSearchProjectionStore,
+} from '@app/core-runtime';
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
+import { PrincipalIdSchema, RecordKeySchema } from '@app/core-runtime/access/ids';
+import type { ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { NodeCrypto } from '@effect/platform-node';
-import { Context, Crypto, DateTime, Effect, Layer, Schema } from 'effect';
-import { expect, it, rs } from 'effect-rstest';
-
+import { Effect, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { tasksRead } from '../../src/search/tasks.provider.ts';
+import { workTasksRegistration } from '../../vertical.registration.ts';
+import { buildSearchDocuments } from '../../src/services/search-projection.ts';
+import { loadSearch, prepareTaskSearch } from '../../src/services/search-read.ts';
 import { TaskRefSchema } from '../../shared/resources/task.ts';
-import { company, ref, scope } from './search-fixtures.ts';
+import { company, context, ref, scope } from './search-fixtures.ts';
 
 const runtimeScope = {
   ...scope,
   authBindingId: '60000000-0000-4000-8000-000000000001',
-  authContextRef: 'better-auth-session:task-search-collection-test',
+  authContextRef: 'session:search-owner',
   authMethod: 'session',
 } as const;
-const allowedRef = ref;
-const deniedRef = Schema.decodeSync(TaskRefSchema)({
-  ...ref,
-  resourceId: '40000000-0000-4000-8000-000000000002',
-});
-const hit = (candidate: typeof ref, title: string) =>
-  Schema.decodeUnknownEffect(CoreSearchProjectionHitSchema)({
-    archived: false,
-    facets: [],
-    metadata: [],
-    ref: candidate,
-    selectedLegalEntityId: company,
-    title,
-  });
-
-const runScenario = (allow: (resourceId: string) => boolean) =>
-  Effect.scoped(
-    Effect.gen(function* taskSearchScenario() {
-      const cryptoServices = yield* Layer.build(NodeCrypto.layer);
-      const harness = yield* makeReadTestHarness({
-        executeOwnerQuery: () => Effect.succeed([]),
-        operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-01T09:00:00.000Z')),
-        ownerAuthorizationDecision: 'allowed',
-        permissionDecision: 'allowed',
-        scope: runtimeScope,
-      }).pipe(Effect.provideService(Crypto.Crypto, Context.get(cryptoServices, Crypto.Crypto)));
-      const services = yield* Layer.build(harness.layer);
-      const access = Context.get(services, ContextAccess);
-      const checked: unknown[] = [];
-      const check = rs.spyOn(access, 'resources').mockImplementation((input) => {
-        checked.push(input);
-        return Effect.succeed(
-          input.resources.map((resource) => ({
-            decision: allow(resource.resourceId) ? ('allowed' as const) : ('denied' as const),
-            key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
-          })),
-        );
-      });
-      const hits = yield* Effect.all([hit(allowedRef, 'Povolený úkol'), hit(deniedRef, 'Zakázaný úkol')]);
-      const result = yield* harness.runtime
-        .runRead({
-          input: { query: 'úkol' },
-          principal: runtimeScope,
-          registration: tasksRead,
-          transport: { correlationId: runtimeScope.correlationId },
-        })
-        .pipe(
-          Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed(hits) }),
-          Effect.ensuring(Effect.sync(() => check.mockRestore())),
-        );
-      return { checked, result, snapshot: harness.snapshot() };
-    }),
-  );
-
-it.effect('returns only admitted task rows after checking every candidate resource', () =>
-  Effect.gen(function* mixedTaskRows() {
-    const outcome = yield* runScenario((resourceId) => resourceId === allowedRef.resourceId);
-    expect(outcome.result.map(({ ref: resultRef }) => resultRef.resourceId)).toEqual([allowedRef.resourceId]);
-    expect(outcome.checked).toEqual([
+const foreignRef = Schema.decodeSync(TaskRefSchema)({ ...ref, resourceId: '40000000-0000-4000-8000-000000000002' });
+const assigned: ListAccessPredicate = {
+  groups: [
+    {
+      clauses: [
+        {
+          conditions: [
+            {
+              _tag: 'AssignedTo',
+              holder: { _tag: 'Principal', principalId: PrincipalIdSchema.make(scope.principalId) },
+            },
+          ],
+        },
+      ],
+    },
+  ],
+};
+const setup = Effect.gen(function* setup() {
+  const store = makeInMemoryCoreSearchProjectionStore();
+  const documents = yield* buildSearchDocuments({
+    projectionVersion: '1',
+    records: [
       {
-        legalEntityId: runtimeScope.legalEntityId,
-        permission: 'read',
-        principalId: runtimeScope.principalId,
-        resources: [
-          { moduleId: allowedRef.moduleId, resourceId: allowedRef.resourceId, resourceType: allowedRef.resourceType },
-          { moduleId: deniedRef.moduleId, resourceId: deniedRef.resourceId, resourceType: deniedRef.resourceType },
-        ],
-        tenantId: runtimeScope.tenantId,
+        archived: false,
+        legalEntityId: company,
+        ownerPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
+        ref,
+        title: 'Povolený úkol',
       },
-    ]);
-    expect(outcome.snapshot.ownerQueries).toEqual([]);
-  }),
-);
-
-it.effect('returns an empty collection when every task candidate is denied', () =>
-  Effect.gen(function* deniedTaskRows() {
-    const outcome = yield* runScenario(() => false);
-    expect(outcome.result).toEqual([]);
-    expect(outcome.checked.length).toBe(1);
-  }),
-);
-
-it.effect('returns every task row when all candidates are explicitly allowed', () =>
-  Effect.gen(function* allowedTaskRows() {
-    const outcome = yield* runScenario(() => true);
-    expect(outcome.result.map(({ ref: resultRef }) => resultRef.resourceId)).toEqual([
-      allowedRef.resourceId,
-      deniedRef.resourceId,
-    ]);
+      {
+        archived: false,
+        legalEntityId: company,
+        ownerPrincipalRef: { principalId: runtimeScope.authBindingId, tenantId: scope.tenantId },
+        ref: foreignRef,
+        title: 'Zakázaný úkol',
+      },
+    ],
+    tenantId: scope.tenantId,
+  });
+  yield* store.replace(
+    {
+      documents,
+      moduleId: ref.moduleId,
+      rebuildVersion: '1',
+      resourceType: ref.resourceType,
+      tenantId: scope.tenantId,
+    },
+    context,
+  );
+  return yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
+});
+for (const [name, predicate, expected] of [
+  ['assigned', assigned, [ref.resourceId]],
+  ['all', { groups: [] }, [ref.resourceId, foreignRef.resourceId]],
+] as const) {
+  it.effect(`registered task search uses canonical ${name} authority, never retired resource checks`, () =>
+    Effect.scoped(
+      Effect.gen(function* test() {
+        const runtime = yield* setup;
+        const harness = yield* makeReadTestHarness({
+          access: 'allowed',
+          executeOwnerQuery: () => Effect.die('No owner SQL for indexed search'),
+          onOwnerAuthorization: failClosedOwnerAuthorizationDecision,
+          operationTime: new Date('2026-11-01T09:00:00Z'),
+          ownerRegistration: workTasksRegistration,
+          scope: runtimeScope,
+        });
+        const gate = makeTestAccessDecision({ defaultAnswer: { outcome: 'ALLOWED', predicate } });
+        const result = yield* harness.runtime
+          .runRead({
+            input: { query: 'úkol' },
+            principal: runtimeScope,
+            registration: tasksRead,
+            transport: { correlationId: scope.correlationId },
+          })
+          .pipe(
+            Effect.provideService(CoreSearchQueryRuntime, runtime),
+            Effect.provideService(AccessDecisionGate, gate),
+          );
+        expect(result.map(({ ref: row }) => row.resourceId).toSorted()).toEqual([...expected].toSorted());
+        expect(gate.askedLists[0]?.carrier.accessDeclaration?.key).toBe('work.tasks.api-records.read');
+      }),
+    ).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+}
+it.effect('search intersects its explicit target ceiling with the actual records predicate before text matching', () =>
+  Effect.gen(function* test() {
+    const runtime = yield* setup;
+    const gate = makeTestAccessDecision({ defaultAnswer: { outcome: 'ALLOWED', predicate: assigned } });
+    const target: ListAccessPredicate = {
+      groups: [
+        {
+          clauses: [
+            { conditions: [{ _tag: 'RecordKeyIn', recordKeys: [RecordKeySchema.make(foreignRef.resourceId)] }] },
+          ],
+        },
+      ],
+    };
+    const predicate = yield* prepareTaskSearch(runtimeScope, target).pipe(
+      Effect.provideService(AccessDecisionGate, gate),
+    );
+    const result = yield* loadSearch(runtimeScope, 'úkol', predicate).pipe(
+      Effect.provideService(CoreSearchQueryRuntime, runtime),
+      Effect.provideService(AccessDecisionGate, gate),
+    );
+    expect(result).toEqual([]);
+    expect(
+      yield* loadSearch(runtimeScope, 'zakazany', assigned).pipe(
+        Effect.provideService(CoreSearchQueryRuntime, runtime),
+        Effect.provideService(AccessDecisionGate, gate),
+      ),
+    ).toEqual([]);
   }),
 );

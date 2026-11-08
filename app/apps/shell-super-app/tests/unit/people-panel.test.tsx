@@ -4,13 +4,18 @@ import { ModernI18nProvider } from '@modern-js/plugin-i18n/runtime/consumer';
 import { cleanup, render as renderView, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 import { afterEach, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
 import type { PropsWithChildren, ReactElement } from 'react';
 
 import csResource from '../../locales/cs/shell.json';
+import {
+  ListAccessPeopleOptionsResponseSchema,
+  ListAccessPeopleResponseSchema,
+} from '../../shared/access-admin-api.ts';
 import { InvitePersonButton } from '../../src/routes/people/invite-person-button.tsx';
 import { PeoplePanel } from '../../src/routes/people/people-panel.tsx';
+import type { PeopleAccessView } from '../../src/routes/people/people-model.ts';
 
 let i18nInstance: I18nInstance;
 beforeAll(async () => {
@@ -30,7 +35,7 @@ const render = (ui: ReactElement) => renderView(ui, { wrapper: I18nProvider });
 
 const { commands } = rstest.hoisted(() => ({
   commands: {
-    catalog: rstest.fn(),
+    access: rstest.fn(),
     invite: rstest.fn(),
     list: rstest.fn(),
     membership: rstest.fn(),
@@ -39,15 +44,20 @@ const { commands } = rstest.hoisted(() => ({
 }));
 rstest.mock('../../src/routes/people/people-client.ts', () => ({
   changeCompanyMembership: commands.membership,
-  changeScopedRole: commands.role,
+  changePersonRole: commands.role,
   invitePerson: commands.invite,
   loadAllPeople: commands.list,
-  loadRoleCatalog: commands.catalog,
+  loadPeopleAccess: commands.access,
 }));
 
 const tenantId = '00000000-0000-4000-8000-000000000001';
 const companyId = '00000000-0000-4000-8000-000000000002';
-const principalRef = { principalId: '00000000-0000-4000-8000-000000000003', tenantId };
+const principalId = '00000000-0000-4000-8000-000000000003';
+const principalRef = { principalId, tenantId };
+const roleId = '00000000-0000-4000-8000-0000000000a1';
+const roleRevisionId = '00000000-0000-4000-8000-0000000000b1';
+const revision = 'people-revision-1';
+const companyScope = { kind: 'company', legalEntityId: companyId } as const;
 const membership = {
   affiliation: 'external',
   legalEntityId: companyId,
@@ -55,15 +65,14 @@ const membership = {
   revision: 1,
   status: 'invited',
 } as const;
+/** Organisation data of the directory read: no role assignment and no trailing membership projection. */
 const person = {
   displayName: 'Jana Nováková',
   invitationDelivery: null,
   kind: 'human',
   principalRef,
   principalStatus: 'active',
-  roleAssignments: [],
   selectedCompanyMembership: membership,
-  selectedCompanyMembershipProjection: { expectedMember: false, observedMember: false },
 } as const;
 const list = {
   items: [person],
@@ -71,18 +80,55 @@ const list = {
   scope: { _tag: 'company', legalEntityId: companyId },
   tenantId,
 } as const;
+
+/** The canonical access view: the released role choices and the assignments of the same person. */
+const accessRole = {
+  capabilityKeys: [],
+  latestRevisionId: roleRevisionId,
+  name: 'Obchodník',
+  risk: 'sensitive',
+  roleId,
+  scope: companyScope,
+} as const;
+type EncodedAssignments = (typeof ListAccessPeopleResponseSchema.Encoded)['items'][number]['assignments'];
+const accessPerson = (assignments: EncodedAssignments) => ({
+  assignments,
+  delegations: [],
+  displayName: person.displayName,
+  memberships: [],
+  ownership: { administersScopes: [], soleAdministratorScopes: [] },
+  principalId,
+  suspended: false,
+  teams: [],
+});
+const accessView = (assignments: EncodedAssignments): PeopleAccessView => ({
+  options: Schema.decodeUnknownSync(ListAccessPeopleOptionsResponseSchema)({
+    capabilities: [],
+    managers: [],
+    people: [],
+    revision,
+    roles: [accessRole],
+    scopes: [{ label: 'Firma', scope: companyScope }],
+    teams: [],
+    writeAvailability: {
+      canAssign: true,
+      canDelegate: false,
+      canManageTeams: false,
+      canRevokeDelegation: false,
+      canTransferOwnership: false,
+      canUnassign: true,
+    },
+  }),
+  people: Schema.decodeUnknownSync(ListAccessPeopleResponseSchema)({
+    items: [accessPerson(assignments)],
+    nextCursor: null,
+    revision,
+  }),
+});
+
 afterEach(cleanup);
 beforeEach(() => {
-  commands.catalog.mockReturnValue(
-    Effect.succeed({
-      status: 'ok',
-      value: {
-        items: [
-          { description: 'Práce s přidělenými klienty.', name: 'Obchodník', roleKey: 'crm-sales', scope: list.scope },
-        ],
-      },
-    }),
-  );
+  commands.access.mockReturnValue(Effect.succeed({ status: 'ok', value: accessView([]) }));
   commands.list.mockReturnValue(Effect.succeed({ status: 'ok', value: list }));
 });
 
@@ -140,12 +186,13 @@ it.live('opens the real person from a governed deep link in the same Shell page'
     render(<PeoplePanel companyId={companyId} linkedPerson={principalRef.principalId} />);
     yield* Effect.promise(() => screen.findByRole('dialog', { name: 'Jana Nováková' }));
     expect(commands.list).toHaveBeenCalledWith('company');
+    expect(commands.access).toHaveBeenCalledWith('company', companyId);
     expect(screen.getByRole('button', { name: 'Spravovat role' })).toBeDefined();
   }),
 );
 
-it.live('keeps committed membership changes processing while the actual projection disagrees', () =>
-  Effect.gen(function* keepMembershipPending() {
+it.live('confirms a committed membership change from the organisation row it reads back', () =>
+  Effect.gen(function* confirmMembership() {
     const user = userEvent.setup();
     const departed = { ...membership, revision: 2, status: 'departed' } as const;
     commands.membership.mockReturnValue(
@@ -158,16 +205,7 @@ it.live('keeps committed membership changes processing while the actual projecti
     commands.list.mockReturnValue(
       Effect.succeed({
         status: 'ok',
-        value: {
-          ...list,
-          items: [
-            {
-              ...person,
-              selectedCompanyMembership: departed,
-              selectedCompanyMembershipProjection: { expectedMember: false, observedMember: true },
-            },
-          ],
-        },
+        value: { ...list, items: [{ ...person, selectedCompanyMembership: departed }] },
       }),
     );
     // The audited membership change saves itself once the reason is filled in: there is no confirm button.
@@ -185,7 +223,8 @@ it.live('keeps committed membership changes processing while the actual projecti
         { timeout: 4000 },
       ),
     );
-    yield* Effect.promise(() => screen.findByText(/Zpracovává se 1 změna\./u));
+    // The row read back is the confirmation, so the change never stays pending.
+    yield* Effect.promise(() => waitFor(() => expect(screen.queryByText(/Zpracovává se/u)).toBeNull()));
     // An ended membership leaves the default view of current members, but stays one filter away.
     yield* Effect.promise(() => screen.findByText('Filtrům nikdo neodpovídá.'));
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Zrušit filtry' })));
@@ -194,50 +233,57 @@ it.live('keeps committed membership changes processing while the actual projecti
   }),
 );
 
-it.live('selects a named role from the governed catalog without exposing identifiers', () =>
+it.live('assigns a named canonical role by its identity, never by a role key', () =>
   Effect.gen(function* assignNamedRole() {
     const user = userEvent.setup();
+    const incarnationId = '00000000-0000-4000-8000-0000000000c1';
     commands.role.mockReturnValue(
       Effect.succeed({
         status: 'ok',
-        value: {
-          operation: 'assign',
-          principalRef,
-          projection: 'pending',
-          role: { roleKey: 'crm-sales', scope: list.scope, tenantId },
-        },
+        value: { change: { incarnationId, present: true, principalId }, kind: 'role' },
       }),
     );
     render(<PeoplePanel companyId={companyId} />);
     yield* chooseRowAction(user, person.displayName, 'Spravovat role');
     expect(screen.queryByLabelText('Klíč role')).toBeNull();
     expect(screen.queryByText(/SpiceDB/u)).toBeNull();
-    yield* Effect.promise(() => user.selectOptions(screen.getByRole('combobox', { name: 'Role' }), 'crm-sales'));
-    expect(screen.getByText('Práce s přidělenými klienty.')).toBeDefined();
+    yield* Effect.promise(() => user.selectOptions(screen.getByRole('combobox', { name: 'Role' }), roleId));
     yield* Effect.promise(() => user.type(screen.getByLabelText(/Důvod změny/u), 'Převzetí klientů'));
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Potvrdit změnu' })));
     yield* Effect.promise(() =>
       waitFor(() =>
-        expect(commands.role).toHaveBeenCalledWith('company', {
+        expect(commands.role).toHaveBeenCalledWith({
           operation: 'assign',
-          principalRef,
-          reason: 'Převzetí klientů',
-          roleKey: 'crm-sales',
+          payload: {
+            expectedRevision: revision,
+            expectedRoleRevisionId: roleRevisionId,
+            principalId,
+            roleId,
+            scope: companyScope,
+          },
         }),
       ),
     );
   }),
 );
 
-it.live('renders role chips with Czech names rather than internal keys', () =>
+it.live('renders role chips from the canonical assignment names rather than internal keys', () =>
   Effect.gen(function* displayRoleNames() {
-    commands.list.mockReturnValue(
+    commands.access.mockReturnValue(
       Effect.succeed({
         status: 'ok',
-        value: {
-          ...list,
-          items: [{ ...person, roleAssignments: [{ roleKey: 'crm-sales', scope: list.scope, tenantId }] }],
-        },
+        value: accessView([
+          {
+            incarnationId: '00000000-0000-4000-8000-0000000000c1',
+            principalId,
+            roleId,
+            roleName: 'Obchodník',
+            scope: companyScope,
+            status: 'active',
+            validFrom: '2026-01-01T00:00:00.000Z',
+            validUntil: null,
+          },
+        ]),
       }),
     );
     render(<PeoplePanel companyId={companyId} />);
@@ -247,26 +293,30 @@ it.live('renders role chips with Czech names rather than internal keys', () =>
   }),
 );
 
-it.live('uses Czech cardinal forms as pending changes accumulate', () =>
+it.live('uses Czech cardinal forms as pending canonical role changes accumulate', () =>
   Effect.gen(function* pendingCounts() {
     const user = userEvent.setup();
-    commands.role.mockReturnValue(
-      Effect.succeed({
+    let incarnation = 0;
+    commands.role.mockImplementation(() => {
+      incarnation += 1;
+      return Effect.succeed({
         status: 'ok',
         value: {
-          operation: 'assign',
-          principalRef,
-          projection: 'pending',
-          role: { roleKey: 'crm-sales', scope: list.scope, tenantId },
+          change: {
+            incarnationId: `00000000-0000-4000-8000-${String(incarnation).padStart(12, '0')}`,
+            present: true,
+            principalId,
+          },
+          kind: 'role',
         },
-      }),
-    );
+      });
+    });
     render(<PeoplePanel companyId={companyId} />);
     yield* Effect.forEach(
       ['1 změna.', '2 změny.', '3 změny.', '4 změny.', '5 změn.'],
       Effect.fn(function* advancePendingCount(expected: string) {
         yield* chooseRowAction(user, person.displayName, 'Spravovat role');
-        yield* Effect.promise(() => user.selectOptions(screen.getByRole('combobox', { name: 'Role' }), 'crm-sales'));
+        yield* Effect.promise(() => user.selectOptions(screen.getByRole('combobox', { name: 'Role' }), roleId));
         yield* Effect.promise(() => user.type(screen.getByLabelText(/Důvod změny/u), 'Převzetí agendy'));
         yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Potvrdit změnu' })));
         const matchesExpectedCount = (text: string) => text.startsWith(`Zpracovává se ${expected}`);
@@ -301,10 +351,7 @@ it.live('updates an open person detail from waiting to the native undeliverable 
     commands.list.mockReturnValue(
       Effect.succeed({
         status: 'ok',
-        value: {
-          ...list,
-          items: [{ ...person, invitationDelivery: { status: 'pending' } }],
-        },
+        value: { ...list, items: [{ ...person, invitationDelivery: { status: 'pending' } }] },
       }),
     );
     render(<PeoplePanel companyId={companyId} />);
@@ -359,10 +406,7 @@ it.live('distinguishes accepted mail from an unconfirmed interrupted delivery', 
         commands.list.mockReturnValue(
           Effect.succeed({
             status: 'ok',
-            value: {
-              ...list,
-              items: [{ ...person, invitationDelivery: delivery }],
-            },
+            value: { ...list, items: [{ ...person, invitationDelivery: delivery }] },
           }),
         );
         render(<PeoplePanel companyId={companyId} linkedPerson={principalRef.principalId} />);

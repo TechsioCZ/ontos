@@ -5,12 +5,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Crypto, DateTime, Effect } from 'effect';
 import { Hex } from 'effect/encoding';
 
@@ -103,29 +98,25 @@ export const handleCreateInventoryReservation = Effect.fn('CreateInventoryReserv
 
 export const createInventoryReservationAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.inventory.inventory-reservation.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'reservations', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: `${ACTION_KEY}.access.v1`,
     },
     actionKey: ACTION_KEY,
     auditProfile: 'standard',
-    businessPermission: defineActionBusinessPermission<CreateInventoryReservationPayload>((payload) => ({
-      permission: 'inventory.reservation.establish',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: payload.reservationRef.moduleId,
-          resourceId: payload.reservationRef.resourceId,
-          resourceType: payload.reservationRef.resourceType,
-        },
-        tenantId: payload.reservationRef.tenantId,
-      },
-    })),
     domainErrorSchema: CreateInventoryReservationErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: MODULE_KEY,
       role: 'action',
@@ -135,10 +126,6 @@ export const createInventoryReservationAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: CreateInventoryReservationPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<CreateInventoryReservationPayload>((payload) => ({
-      permission: 'write',
-      resource: payload.reservationRef,
-    })),
     resultSchema: CreateInventoryReservationResultSchema,
     schemaVersion: '1',
   },

@@ -60,7 +60,7 @@ export const clientsCommandSchemas = [
     contacts: Schema.optionalKey(Schema.Array(NewContactSchema).check(Schema.isMaxLength(20))),
     kind: ClientKindSchema,
     name: ShortTextSchema,
-    /** Defaults to the creating salesperson; only demo.crm.assign may choose someone else. */
+    /** Defaults to the creating salesperson; only the reassignment authority (demo.crm.client-owner.assign) may choose someone else. */
     ownerSalespersonId: Schema.optionalKey(EntityIdSchema),
     /** Party Registry identity created or matched before; verified by the server (CRM.md §3). */
     partyRef: Schema.optionalKey(PartyLinkInputSchema),

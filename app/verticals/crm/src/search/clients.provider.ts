@@ -13,8 +13,10 @@ import { Effect, Schema } from 'effect';
 import { ClientsProviderRequestSchema, ClientsProviderResponseSchema } from '../../shared/apis/clients-search.ts';
 import type { ClientsProviderRequest } from '../../shared/apis/clients-search.ts';
 import { crmSearchQuery } from '../../shared/domain/search-contact-classification.ts';
-import { crmRecordsGrants, finishCrmRecords, persistenceService } from '../services/persistence.service.ts';
-import type { LoadedCrmRecords } from '../services/persistence.service.ts';
+import { prepareCrmSearch, makeCrmSearchServices } from './record-access.ts';
+import type { CrmSearchServices } from './record-access.ts';
+import type { ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
+
 import { searchUnavailable } from './search-unavailable.ts';
 import type { CrmState } from '../../shared/domain/state.ts';
 import { crmClientSearchTerms, crmContactRecordSearchTerms } from '../services/search-source.service.ts';
@@ -116,27 +118,24 @@ export const loadCrmSearch = Effect.fn('Crm.loadSearch')(function* loadSearch(
   return results.flat();
 });
 
-type Services = Effect.Success<ReturnType<typeof persistenceService>>;
-type Grants = Effect.Success<ReturnType<typeof crmRecordsGrants>>;
+type Services = CrmSearchServices;
+type Grants = ListAccessPredicate;
 const prepare = Effect.fn('Crm.clients.prepare')((_input: ClientsProviderRequest, context: ReadPrepareContext) =>
-  crmRecordsGrants(context.scope).pipe(Effect.mapError(searchUnavailable)),
+  prepareCrmSearch(context.scope),
 );
 const load = Effect.fn('Crm.clients.load')(
   (_input: ClientsProviderRequest, context: ReadLoadContext<Services, Grants>) =>
-    context.services.loadRecords().pipe(Effect.mapError(searchUnavailable)),
+    context.services.load(context.prepared).pipe(Effect.mapError(searchUnavailable)),
 );
 const finish = Effect.fn('Crm.clients.finish')(function* finishSearch(
   input: ClientsProviderRequest,
-  context: ReadFinishContext<Grants, LoadedCrmRecords>,
+  context: ReadFinishContext<Grants, CrmState>,
 ) {
-  const visible = yield* finishCrmRecords({}, context.loaded, context.prepared, context.scope).pipe(
-    Effect.mapError(searchUnavailable),
-  );
   const hits = yield* loadCrmSearch(context.scope, {
     includeRelevance: true,
     query: input.query,
     resourceType: 'demo.crm.client',
-    visible: visible.state,
+    visible: context.loaded,
   });
   const result = yield* Schema.decodeUnknownEffect(ClientsProviderResponseSchema)(hits).pipe(
     Effect.mapError(searchUnavailable),
@@ -145,31 +144,32 @@ const finish = Effect.fn('Crm.clients.finish')(function* finishSearch(
 });
 const clientsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'demo.crm.search.clients',
   moduleKey: 'demo.crm',
   role: 'search',
 });
 export const clientsRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'demo.crm.search-clients.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'crm', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'search',
     entrypoint: clientsEntrypoint,
     evidencePolicy: { captureMode: 'metadata_only', policyKey: 'demo.crm.search.clients.evidence.v1' },
     inputSchema: ClientsProviderRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: 'demo.crm',
-    permissionTarget: 'module',
     policies: [],
     readKey: 'demo.crm.search.clients',
-    resultAuthorization: {
-      accessFiltering: 'legal_entity_scope',
-      kind: 'owner-legal-entity-scope',
-      requiredModuleAccess: true,
-    } as const,
     resultSchema: ClientsProviderResponseSchema,
     schemaVersion: '1',
   },
   { finish, load, prepare },
-  (transaction, scope) => persistenceService(transaction, { scope }),
-  () => ({ kind: 'module', moduleId: 'demo.crm' }),
+  makeCrmSearchServices,
 );

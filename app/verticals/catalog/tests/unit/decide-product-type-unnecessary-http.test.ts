@@ -18,6 +18,7 @@ import { makeCatalogApiRuntime } from '../../api/index.ts';
 import { decideProductTypeUnnecessaryAction } from '../../src/actions/decide-product-type-unnecessary.action.ts';
 import { DecideProductTypeUnnecessaryPayloadSchema } from '../../shared/actions/decide-product-type-unnecessary.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { makeRootOwnerApprovals } from '../support/root-owner-approvals.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const principalId = '33333333-3333-4333-8333-333333333333';
@@ -54,6 +55,14 @@ describe('Decide Product Type unnecessary HTTP Action', () => {
       const compositionDocument = yield* Schema.encodeEffect(
         Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
       )(compositionSnapshot);
+      const ownerApprovals = yield* makeRootOwnerApprovals(compositionSnapshot, {
+        authBindingId: '66666666-6666-4666-8666-666666666666',
+        authContextRef: 'better-auth-session:catalog-untyped-action-test',
+        authMethod: 'session',
+        correlationId: 'catalog-untyped-action-test',
+        principalId,
+        tenantId,
+      });
       const issuer = 'https://shell.catalog-untyped-action.test';
       const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
       const publicJwk = {
@@ -109,6 +118,7 @@ describe('Decide Product Type unnecessary HTTP Action', () => {
       const assembled = makeCatalogApiRuntime(
         Layer.succeed(ReadRuntime, readRuntime),
         Layer.mergeAll(
+          Layer.succeedContext(ownerApprovals),
           Layer.succeed(ActionRuntime, actionRuntime),
           Layer.succeed(ActiveApplicationCompositionSource, { load: Effect.succeed(compositionDocument) }),
           ConfigProvider.layer(

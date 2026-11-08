@@ -7,7 +7,8 @@
  * only its own schema with IDs from `scripts/demo/fixture-ids.mts`. Lanes edit their own owner script;
  * only this file decides the order.
  */
-import { NodeServices } from '@effect/platform-node';
+import { NodeCrypto, NodeRuntime, NodeServices } from '@effect/platform-node';
+import { withSalesDemoCustomerHandoff } from './sales-customer-fixture.mts';
 import { ConfigProvider, Console, Effect, Exit, FileSystem, Layer, Path, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
@@ -60,32 +61,49 @@ const main = (validateOnly: boolean) =>
         ChildProcess.make(process.execPath, [path.join(root, script), ...args], {
           cwd: root,
           env: { ...childEnvironment, DEMO_RESET_PROFILE: 'sales', MISE_ARGV0: '' },
+          forceKillAfter: '5 seconds',
           stderr: 'inherit',
           stdin: 'ignore',
           stdout: 'inherit',
         }),
       );
-    for (const owner of SALES_DEMO_OWNERS) {
-      yield* Console.log(`sales-demo reset: ${owner}`);
-      const code = yield* spawner.exitCode(
-        ChildProcess.make(process.execPath, [path.join(root, ownerScript(owner)), '--sales-demo'], {
-          cwd: root,
-          env: { ...childEnvironment, DEMO_RESET_PROFILE: 'sales', MISE_ARGV0: '' },
-          stderr: 'inherit',
-          stdin: 'ignore',
-          stdout: 'inherit',
-        }),
-      );
-      if (code !== ChildProcessSpawner.ExitCode(0)) {
-        return yield* new SalesDemoResetError({ reason: `Owner reset failed: ${ownerScript(owner)}` });
-      }
-      if (owner === PERMISSIONS_AFTER_OWNER) {
-        yield* Console.log('sales-demo reset: accounts, grants and agent bot');
-        if ((yield* runScript(PERMISSIONS_SCRIPT, [])) !== ChildProcessSpawner.ExitCode(0)) {
-          return yield* new SalesDemoResetError({ reason: `Permissions reset failed: ${PERMISSIONS_SCRIPT}` });
+    yield* withSalesDemoCustomerHandoff((handoff) =>
+      Effect.gen(function* resetOwnersWithExplicitHandoff() {
+        for (const owner of SALES_DEMO_OWNERS) {
+          yield* Console.log(`sales-demo reset: ${owner}`);
+          const code = yield* spawner.exitCode(
+            ChildProcess.make(
+              process.execPath,
+              [
+                path.join(root, ownerScript(owner)),
+                '--sales-demo',
+                ...(owner === 'party-registry' || owner === 'commerce-customer-context'
+                  ? ['--fixture', handoff.fixture, '--role-handoff', handoff.roleHandoff]
+                  : []),
+              ],
+              {
+                cwd: root,
+                env: { ...childEnvironment, DEMO_RESET_PROFILE: 'sales', MISE_ARGV0: '' },
+                forceKillAfter: '5 seconds',
+                stderr: 'inherit',
+                stdin: 'ignore',
+                stdout: 'inherit',
+              },
+            ),
+          );
+          if (code !== ChildProcessSpawner.ExitCode(0)) {
+            return yield* new SalesDemoResetError({ reason: `Owner reset failed: ${ownerScript(owner)}` });
+          }
+          if (owner === PERMISSIONS_AFTER_OWNER) {
+            yield* Console.log('sales-demo reset: accounts, grants and agent bot');
+            if ((yield* runScript(PERMISSIONS_SCRIPT, [])) !== ChildProcessSpawner.ExitCode(0)) {
+              return yield* new SalesDemoResetError({ reason: `Permissions reset failed: ${PERMISSIONS_SCRIPT}` });
+            }
+          }
         }
-      }
-    }
+        return yield* Effect.void;
+      }),
+    );
     return yield* Console.log('Sales demo baseline restored.');
   });
 
@@ -99,7 +117,9 @@ const command = Command.make(
     ),
 );
 const runtimeLive = Layer.effectDiscard(Command.run(command, { version: '1.0.0' })).pipe(
-  Layer.provide(NodeServices.layer),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
-const exit = await Effect.runPromiseExit(Effect.scoped(Layer.build(runtimeLive)));
-process.exitCode = Exit.isFailure(exit) ? 1 : 0;
+NodeRuntime.runMain(Effect.scoped(Layer.build(runtimeLive)), {
+  disableErrorReporting: true,
+  teardown: (exit, onExit) => onExit(Exit.isFailure(exit) ? 1 : 0),
+});

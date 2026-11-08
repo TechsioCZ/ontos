@@ -1,8 +1,7 @@
+import { paymentTermCatalogRegistration } from '../../vertical.registration.ts';
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Predicate, Schema } from 'effect';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
-import { getActionResourcePermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
-import { getReadResourcePermissionTargetResolver } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import { CurrentPaymentTermsRequestSchema } from '../../shared/apis/current-payment-terms.ts';
 import {
   CreatePaymentTermPayloadSchema,
@@ -41,15 +40,6 @@ const paymentTermRef = (resourceId: string): PaymentTermRef => ({
 const first = paymentTermRef('22222222-2222-4222-8222-222222222222');
 const second = paymentTermRef('33333333-3333-4333-8333-333333333333');
 const legalEntityId = '44444444-4444-4444-8444-444444444444';
-const scope = {
-  authBindingId: '77777777-7777-4777-8777-777777777777',
-  authContextRef: 'better-auth-session:payment-term-contract',
-  authMethod: 'session' as const,
-  correlationId: 'payment-term-contract',
-  legalEntityId,
-  principalId: '88888888-8888-4888-8888-888888888888',
-  tenantId,
-};
 
 describe('Payment Term mutation contracts', () => {
   it('exposes an idempotent owner entrypoint with independent definition revisions', () => {
@@ -203,87 +193,30 @@ describe('Payment Term mutation contracts', () => {
     ).toThrow();
   });
 
-  it('targets the exact catalog root or Payment Term resource before execution', () => {
-    const createPayload = {
-      activeFrom: '2026-01-01T00:00:00.000Z',
-      code: 'NET_30',
-      description: 'Due in thirty days.',
-      name: 'Net 30',
-      reason: 'Approved catalog definition',
-      semantics: {
-        calculationRuleVersion: 2,
-        calendarRule: 'CALENDAR_DAYS',
-        days: 30,
-        dueDateAnchor: 'INVOICE_ISSUE_DATE',
-        kind: 'NET_DAYS',
-      },
-    } as const;
-    const existingPayload = {
-      description: 'Updated copy.',
-      expectedMetadataRevision: 1,
-      name: 'Net 30',
-      paymentTermRef: first,
-      reason: 'Copy correction',
-    };
-
-    expect(getActionResourcePermissionTargetResolver(createPaymentTermAction)?.(createPayload, scope)).toEqual({
-      permission: 'write',
-      resource: {
-        moduleId: 'payment.term-catalog',
-        resourceId: legalEntityId,
-        resourceType: 'payment.term-catalog.payment-term-catalog-root',
-      },
+  it('carries one scope-wide capability per payment-term operation', () => {
+    // v2 replaced the per-record resource targets with scope-wide capabilities (Q2) whose record
+    // boundary is the owner routine's own tenant and legal-entity scope assertion.
+    for (const [action, key] of [
+      [createPaymentTermAction, 'payment.term-catalog.payment-term.create'],
+      [correctPaymentTermAction, 'payment.term-catalog.payment-term.correct'],
+      [retirePaymentTermAction, 'payment.term-catalog.payment-term.retire'],
+      [reconcilePaymentTermReferenceAction, 'payment.term-catalog.payment-term.reconcile-reference'],
+    ] as const) {
+      expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+      expect(action.descriptor.accessDeclaration).toMatchObject({ key, kind: 'action', selectors: [] });
+    }
+    for (const [read, key] of [
+      [currentPaymentTermsRead, 'payment.term-catalog.payment-term.read-current'],
+      [paymentTermHistoryRead, 'payment.term-catalog.payment-term.read-history'],
+    ] as const) {
+      expect(read.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+      expect(read.descriptor.accessDeclaration).toMatchObject({ key, kind: 'read', selectors: [] });
+    }
+    expect(currentPaymentTermsRead.descriptor.accessActor).toEqual({
+      callers: ['commerce-customer-context', 'commerce-order'],
+      reason: expect.any(String),
+      subject: 'identity',
     });
-    expect(getActionResourcePermissionTargetResolver(correctPaymentTermAction)?.(existingPayload, scope)).toEqual({
-      permission: 'write',
-      resource: first,
-    });
-    expect(
-      getActionResourcePermissionTargetResolver(retirePaymentTermAction)?.(
-        {
-          affectedUseAssessment: {
-            currentCustomerEntitlementCount: 0,
-            evidenceReference: 'commerce-read:abc',
-            observedAt: '2026-09-09T10:00:00.000Z',
-            openPurchaseCount: 0,
-          },
-          affectedUseDisposition: { kind: 'REJECT_IF_IN_USE' },
-          effectiveAt: '2026-10-01T00:00:00.000Z',
-          expectedMetadataRevision: 1,
-          paymentTermRef: first,
-          reason: 'Retire term',
-        },
-        scope,
-      ),
-    ).toEqual({ permission: 'write', resource: first });
-    expect(
-      getActionResourcePermissionTargetResolver(reconcilePaymentTermReferenceAction)?.(
-        {
-          aliasPaymentTermRef: first,
-          canonicalPaymentTermRef: second,
-          expectedAliasMetadataRevision: 1,
-          expectedCanonicalMetadataRevision: 1,
-          reason: 'Equivalent definitions',
-        },
-        scope,
-      ),
-    ).toEqual({ permission: 'write', resource: first });
-    expect(
-      getReadResourcePermissionTargetResolver(currentPaymentTermsRead)?.(
-        { at: '2026-09-09T10:00:00.000Z', limit: 20, references: [] },
-        scope,
-      ),
-    ).toEqual({
-      permission: 'read',
-      resource: {
-        moduleId: 'payment.term-catalog',
-        resourceId: legalEntityId,
-        resourceType: 'payment.term-catalog.payment-term-catalog-root',
-      },
-    });
-    expect(getReadResourcePermissionTargetResolver(paymentTermHistoryRead)?.({ paymentTermRef: first }, scope)).toEqual(
-      { permission: 'read', resource: first },
-    );
   });
 
   it.effect('denies unavailable or refused exact catalog authority before owner execution', () =>
@@ -320,14 +253,11 @@ describe('Payment Term mutation contracts', () => {
         },
       } as const;
 
-      for (const resourcePermission of ['denied', 'unavailable'] as const) {
-        const harness = yield* makeActionTestHarness({
-          actionPermission: 'allowed',
-          resourcePermission,
-        });
+      for (const access of ['denied', 'unavailable'] as const) {
+        const harness = yield* makeActionTestHarness({ access, ownerRegistration: paymentTermCatalogRegistration });
         const failure = yield* harness.runtime.runAction(request).pipe(Effect.flip);
         expect(
-          resourcePermission === 'denied'
+          access === 'denied'
             ? Predicate.isTagged(failure, 'ActionPermissionDenied')
             : Predicate.isTagged(failure, 'ActionPermissionCheckError'),
         ).toBe(true);

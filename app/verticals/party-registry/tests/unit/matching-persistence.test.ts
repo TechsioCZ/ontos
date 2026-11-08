@@ -1,26 +1,21 @@
-import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '@app/party-registry-identity-contracts';
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This harness implements the narrow Drizzle Effect boundary exercised by the owner-local matching service. expires: 2026-12-31. */
-import { ActionRuntime } from '@app/core-runtime';
-import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
-import type { SQL } from 'drizzle-orm';
+import { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
-import { DateTime, Effect, Layer, Schema, Predicate, Result } from 'effect';
+import { DateTime, Effect, Layer, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler, getActionServiceFactory } from '../../../../packages/core-runtime/src/actions/definition.ts';
-import {
-  PrincipalIdSchema,
-  TenantIdSchema,
-} from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
-import { RetailEnrollmentEvidenceSchema } from '../../shared/actions/accept-retail-enrollment-evidence.ts';
+import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { PrincipalIdSchema, TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import type { PartyCandidate } from '../../shared/domain/identity-contracts.ts';
-import { makePartyRef, partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
+import {
+  makePartyRef,
+  PartyCandidateSchema,
+  partySubjectKeyFromString,
+} from '../../shared/domain/identity-contracts.ts';
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
 import { makeDuplicateCandidateCaseRef } from '../../shared/resources/duplicate-candidate-case.ts';
-import { acceptRetailEnrollmentEvidenceAction } from '../../src/actions/accept-retail-enrollment-evidence.action.ts';
-import { createPartyAction } from '../../src/actions/create-party.action.ts';
 import { matchPartyAction } from '../../src/actions/match-party.action.ts';
 import { resolveDuplicateCandidateMatchAction } from '../../src/actions/resolve-duplicate-candidate-match.action.ts';
 import { partyMatchRead } from '../../src/api/party-match.read.ts';
@@ -29,7 +24,6 @@ import {
   duplicateCandidateCases,
   parties,
   partyAliases,
-  partyIdentifierClaims,
   partyMatchDecisions,
   partyOfficialIdentifiers,
 } from '../../src/db/schema.ts';
@@ -37,10 +31,9 @@ import {
   caseEvaluationFingerprint,
   candidateFingerprint,
   createOrMatchParty,
-  acceptRetailEnrollmentEvidence,
-  findPartyCreateContinuation,
-  listDuplicateCandidateCases,
+  findDuplicateCandidateCase,
   matchParty,
+  previewPartyMatch,
   resolveDuplicateCandidateCreate,
   resolveDuplicateCandidateMatch,
 } from '../../src/services/party-matching-persistence.service.ts';
@@ -58,8 +51,8 @@ const instant = '2020-01-01T00:00:00.000Z';
 const candidate = (overrides: Partial<PartyCandidate> = {}): PartyCandidate => ({
   evidenceRefs: ['registry:verified:entry-42'],
   officialIdentifiers: [
-    { identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' },
-    { identifierType: 'CZ_DIC', value: 'CZ27074358', verification: 'VERIFIED' },
+    { identifierType: 'ICO', value: '27074358' },
+    { identifierType: 'CZ_DIC', value: 'CZ27074358' },
   ],
   partyType: 'ORGANIZATION',
   provenance: { method: 'OFFICIAL_RECORD', source: 'verified-register' },
@@ -76,18 +69,29 @@ const candidate = (overrides: Partial<PartyCandidate> = {}): PartyCandidate => (
   validFrom: DateTime.makeUnsafe(instant),
   ...overrides,
 });
+const activePartyRow = (partyId: string) => ({
+  archivedAt: null,
+  createdAt: DateTime.toDateUtc(DateTime.makeUnsafe(instant)),
+  currentDisplayName: null,
+  currentType: 'ORGANIZATION',
+  partyId,
+  revision: 1,
+  tenantId,
+  updatedAt: DateTime.toDateUtc(DateTime.makeUnsafe(instant)),
+});
 const caseRow = () => ({
   candidateCaseId,
   candidateFingerprint: 'a'.repeat(64),
   candidateSnapshot: {
     evidenceArtifactRefs: candidate().evidenceRefs,
-    names: [],
+    firstName: null,
+    lastName: null,
+    businessName: null,
     officialIdentifiers: [
       {
         identifierTypeKey: 'ICO',
         namespace: 'CZ:ICO',
         normalizedValue: '27074358',
-        verificationState: 'VERIFIED',
       },
     ],
     partyType: 'ORGANIZATION',
@@ -108,10 +112,14 @@ type HarnessTable =
   | typeof duplicateCandidateCases
   | typeof parties
   | typeof partyAliases
-  | typeof partyIdentifierClaims
   | typeof partyMatchDecisions
   | typeof partyOfficialIdentifiers;
 type RecordedValues = Row | readonly Row[] | undefined;
+interface MatchingRead {
+  table: unknown;
+  locked: boolean;
+  predicate?: SQL;
+}
 const recordedRow = (values: RecordedValues): Row => {
   expect(values !== undefined && !Array.isArray(values)).toBe(true);
   // SAFETY: the recorded insert was checked to be a present single row rather than a batch.
@@ -124,15 +132,13 @@ const recordedRows = (values: RecordedValues): readonly Row[] => {
 };
 const harness = (queues: ReadonlyMap<unknown, readonly Rows[]> = new Map()) => {
   const results = new Map([...queues].map(([table, rows]) => [table, [...rows]]));
-  const reads: { table: unknown; locked: boolean }[] = [];
-  const queries: SQL[] = [];
-  const limits: number[] = [];
+  const reads: MatchingRead[] = [];
   const inserts: { table: unknown; values: Row | readonly Row[] }[] = [];
   const updates: { table: unknown; values: Row }[] = [];
   const select = () => {
     let selected: unknown;
     let rows: Rows | undefined;
-    const read = { locked: false, table: selected };
+    const read: MatchingRead = { locked: false, table: selected };
     const resolve = () => (rows ??= results.get(selected)?.shift() ?? []);
     const chain = Object.assign(
       Effect.sync(() => resolve()),
@@ -147,14 +153,11 @@ const harness = (queues: ReadonlyMap<unknown, readonly Rows[]> = new Map()) => {
           reads.push(read);
           return chain;
         },
-        limit: (limit: number) => {
-          limits.push(limit);
-          return chain;
-        },
+        limit: () => chain,
         orderBy: () => chain,
-        where: (query?: SQL) => {
-          if (query !== undefined) {
-            queries.push(query);
+        where: (predicate: SQL | undefined) => {
+          if (predicate !== undefined) {
+            read.predicate = predicate;
           }
           return chain;
         },
@@ -173,18 +176,6 @@ const harness = (queues: ReadonlyMap<unknown, readonly Rows[]> = new Map()) => {
       }
       if (table === partyOfficialIdentifiers) {
         return [{ officialIdentifierId, ...values }];
-      }
-      if (table === parties) {
-        return [
-          {
-            partyId: partyA,
-            archivedAt: null,
-            createdAt: DateTime.toDateUtc(DateTime.makeUnsafe(instant)),
-            updatedAt: DateTime.toDateUtc(DateTime.makeUnsafe(instant)),
-            revision: 1,
-            ...values,
-          },
-        ];
       }
       return [];
     };
@@ -214,7 +205,6 @@ const harness = (queues: ReadonlyMap<unknown, readonly Rows[]> = new Map()) => {
               state: 'ACTIVE',
               isCurrent: true,
               validTo: null,
-              verificationState: 'VERIFIED',
               verifiedAt: DateTime.toDateUtc(DateTime.makeUnsafe(instant)),
               verifiedByPrincipalId: principalId,
               ...values,
@@ -232,62 +222,28 @@ const harness = (queues: ReadonlyMap<unknown, readonly Rows[]> = new Map()) => {
   };
   // SAFETY: this test double implements exactly the fluent methods called by the persistence seam.
   const transaction = { insert, select, update } as unknown as Parameters<typeof resolveDuplicateCandidateMatch>[0];
-  return { inserts, limits, queries, reads, transaction, updates };
+  return { inserts, reads, transaction, updates };
 };
 
-it.effect('the pending review queue uses tenant and active-state filters, bounded keyset paging, and no writes', () =>
-  Effect.gen(function* pendingReviewQueue() {
-    const rows = Array.from({ length: 26 }, (_, index) => ({
-      ...caseRow(),
-      candidateCaseId: `30000000-0000-4000-8000-${String(99 - index).padStart(12, '0')}`,
-      lifecycleState: index === 0 ? 'NEEDS_EVIDENCE' : 'OPEN',
-    }));
-    const subject = harness(new Map([[duplicateCandidateCases, [rows]]]));
-    const afterCaseRef = makeDuplicateCandidateCaseRef(tenantId, candidateCaseId);
-    const page = yield* listDuplicateCandidateCases(subject.transaction, tenantId, { afterCaseRef });
-    expect(page.items).toHaveLength(25);
-    expect(page.items[0]?.lifecycleState).toBe('NEEDS_EVIDENCE');
-    expect(page.nextCaseRef?.resourceId).toBe(rows[24]?.candidateCaseId);
-    expect(page.items[0]?.displayName).toBeNull();
-    expect(subject.limits).toEqual([26]);
-    const [query] = subject.queries;
-    expect(query).toBeDefined();
-    if (query !== undefined) {
-      const compiled = new PgDialect().sqlToQuery(query);
-      expect(compiled.params).toEqual([tenantId, 'OPEN', 'NEEDS_EVIDENCE', candidateCaseId]);
-      expect(compiled.sql).toContain('"tenant_id" =');
-      expect(compiled.sql).toContain('"lifecycle_state" in');
-      expect(compiled.sql).toContain('"candidate_case_id" <');
-    }
-    expect(subject.inserts).toEqual([]);
-    expect(subject.updates).toEqual([]);
-  }),
-);
-
-it.effect('an empty or final review page has no continuation cursor', () =>
-  Effect.gen(function* finalReviewPage() {
-    const empty = harness();
-    expect(yield* listDuplicateCandidateCases(empty.transaction, tenantId, {})).toEqual({
-      items: [],
-      nextCaseRef: null,
-    });
-    const final = harness(new Map([[duplicateCandidateCases, [[caseRow()]]]]));
-    const page = yield* listDuplicateCandidateCases(final.transaction, tenantId, {});
-    expect(page.items).toHaveLength(1);
-    expect(page.nextCaseRef).toBeNull();
-  }),
-);
-
-const ambiguousHarness = (existingCase: boolean) =>
+const ambiguousHarness = (existingCase: boolean, nameMatches?: Rows) =>
   harness(
     new Map<unknown, readonly Rows[]>([
-      [partyIdentifierClaims, [[{ partyId: partyA }], [{ partyId: partyB }]]],
+      [partyOfficialIdentifiers, [[{ partyId: partyA }], [{ partyId: partyB }]]],
       [partyAliases, [[], []]],
-      [parties, [[{ partyId: partyA }], [{ partyId: partyB }]]],
+      [parties, [...(nameMatches === undefined ? [] : [nameMatches]), [{ partyId: partyA }], [{ partyId: partyB }]]],
       [duplicateCandidateCases, [existingCase ? [caseRow()] : []]],
       [duplicateCandidateCaseParties, [existingCase ? [{ partyId: partyA }] : []]],
     ]),
   );
+
+it('source-name structure remains distinct when rendered names are equal', () => {
+  const personal = candidate({ partyType: 'UNRESOLVED', firstName: 'Ada', lastName: 'Lovelace' });
+  const business = candidate({ partyType: 'UNRESOLVED', businessName: 'Ada Lovelace' });
+  expect(candidateFingerprint(personal)).not.toBe(candidateFingerprint(business));
+  expect(candidateFingerprint(candidate({ firstName: 'Ada' }))).not.toBe(
+    candidateFingerprint(candidate({ firstName: 'Grace' })),
+  );
+});
 
 it.layer(
   Layer.effectDiscard(TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-01T00:00:00.000Z')))),
@@ -296,10 +252,10 @@ it.layer(
     'durable Party Match commits an ambiguity decision, complete case references, and original evidence without mutating a Party',
     () =>
       Effect.gen(function* durablePartyMatchCommitsAnAmbiguityDecision() {
-        const subject = ambiguousHarness(false);
+        const subject = ambiguousHarness(false, []);
         const result = yield* matchParty(subject.transaction, {
           actionInvocationId,
-          candidate: candidate(),
+          candidate: candidate({ firstName: 'Ada', lastName: 'Lovelace', businessName: 'Analytical Engines' }),
           tenantId,
         });
         expect(result.outcome).toBe('AMBIGUOUS');
@@ -313,7 +269,10 @@ it.layer(
         const caseValues = recordedRow(subject.inserts[0]?.values);
         // SAFETY: this fixture records the concrete candidateSnapshot inserted by the matching service.
         const snapshot = caseValues['candidateSnapshot'] as Row;
-        expect(snapshot['names']).toEqual([]);
+        expect(snapshot['firstName']).toBe('Ada');
+        expect(snapshot['lastName']).toBe('Lovelace');
+        expect(snapshot['businessName']).toBe('Analytical Engines');
+        expect(snapshot['names']).toBe(undefined);
         expect(snapshot['provenance']).toEqual(candidate().provenance);
         expect(snapshot['validFrom']).toBe(instant);
         const linked = recordedRows(subject.inserts[1]?.values);
@@ -323,9 +282,7 @@ it.layer(
         ]);
         expect(recordedRow(subject.inserts[2]?.values)['candidateCaseId']).toBe(candidateCaseId);
         expect(subject.updates.length).toBe(0);
-        expect(subject.reads[0]?.table, 'tenant serialization lock precedes row/claim reads').not.toBe(
-          partyIdentifierClaims,
-        );
+        expect(subject.reads[0]?.table, 'tenant serialization lock precedes canonical lookups').toBeInstanceOf(SQL);
       }),
   );
 
@@ -356,7 +313,6 @@ it.layer(
               {
                 identifierType: 'ICO',
                 value: '27074358',
-                verification: 'VERIFIED',
               },
             ],
             partyType: 'PERSON',
@@ -379,8 +335,28 @@ it.layer(
         expect(durable['committedCreateOutcome']).toBe(null);
         expect(result.candidateParties).toEqual([]);
         expect(subject.inserts.map(({ table }) => table)).toEqual([partyMatchDecisions]);
-        expect(subject.reads.some(({ table }) => table === partyIdentifierClaims)).toBe(false);
+        expect(subject.updates).toEqual([]);
       }),
+  );
+
+  testIt.effect('declared identifiers never select an existing Party without an accepted review decision', () =>
+    Effect.gen(function* declaredIdentifiersNeedIdentityReview() {
+      const subject = harness(
+        new Map<unknown, readonly Rows[]>([
+          [partyOfficialIdentifiers, [[{ partyId: partyA }], [{ partyId: partyA }]]],
+          [partyAliases, [[], []]],
+          [parties, [[activePartyRow(partyA)], [activePartyRow(partyA)], [activePartyRow(partyA)]]],
+        ]),
+      );
+      const result = yield* matchParty(subject.transaction, {
+        actionInvocationId,
+        candidate: candidate(),
+        tenantId,
+      });
+      expect(result.outcome).toBe('AMBIGUOUS');
+      expect(result.candidateParties.map((ref) => ref.resourceId)).toEqual([partyA]);
+      expect(subject.updates).toEqual([]);
+    }),
   );
 
   const resolutionInput = {
@@ -430,16 +406,6 @@ it.layer(
       }),
   );
 
-  const activePartyRow = (partyId: string) => ({
-    archivedAt: null,
-    createdAt: DateTime.toDateUtc(DateTime.makeUnsafe(instant)),
-    currentDisplayName: null,
-    currentType: 'ORGANIZATION',
-    partyId,
-    revision: 1,
-    tenantId,
-    updatedAt: DateTime.toDateUtc(DateTime.makeUnsafe(instant)),
-  });
   const actionScope = {
     authMethod: 'system' as const,
     correlationId: 'matching-events',
@@ -447,134 +413,24 @@ it.layer(
     tenantId,
   };
 
-  testIt.effect(
-    'Create Party matching an existing subject publishes each newly accepted identifier without fabricating Party Created',
-    () =>
-      Effect.gen(function* createPartyMatchingAnExistingSubjectPublishes() {
-        const subject = harness(
-          new Map<unknown, readonly Rows[]>([
-            [partyIdentifierClaims, [[{ partyId: partyA }], []]],
-            [parties, [[activePartyRow(partyA)]]],
-            [partyOfficialIdentifiers, [[]]],
-          ]),
-        );
-        const collector = createActionCollector(
-          createPartyAction.descriptor.domainEvents,
-          'party.registry',
-          createPartyAction.descriptor.accessEvidencePolicy,
-        );
-        const result = yield* getActionHandler(createPartyAction)(
-          { candidate: candidate() },
-          {
-            ...collector,
-            actionInvocationId,
-            compositionRevision: 'a'.repeat(64),
-            scope: actionScope,
-            services: {
-              createOrMatch: (value, invocationId) =>
-                createOrMatchParty(subject.transaction, {
-                  actionInvocationId: invocationId,
-                  candidate: value,
-                  principalId,
-                  tenantId,
-                }),
-            },
-          },
-        );
-        if (!('outcome' in result)) {
-          throw new Error('create-party matching did not return its committed result');
-        }
-        expect(result.outcome).toBe('MATCHED_EXISTING');
-        const durable = recordedRow(subject.inserts.find(({ table }) => table === partyMatchDecisions)?.values);
-        expect(durable['operation']).toBe('CREATE');
-        expect(durable['committedCreateOutcome']).toBe('MATCHED_EXISTING');
-        expect('addedOfficialIdentifierRefs' in result, 'mutation metadata stays private to the Action').toBe(false);
-        const evidence = collector.snapshot();
-        expect(evidence.domainEvents.map((event) => event.eventType)).toEqual([
-          'party.registry.official-identifier-added.v1',
-        ]);
-        expect(evidence.outboxMessages.length).toBe(1);
-        expect(evidence.outboxMessages[0]?.domainEventIndex).toBe(0);
-        expect(evidence.outboxMessages[0]?.message.payloadJson).toEqual({
-          officialIdentifierRef: {
-            moduleId: 'party.registry',
-            resourceId: officialIdentifierId,
-            resourceType: 'party.registry.party-official-identifier',
-            tenantId,
-          },
-          partyRef: makePartyRef(tenantId, partyA),
-        });
-      }),
-  );
-
-  testIt.effect('Create upgrades a same-Party UNVERIFIED identifier and publishes one update event', () =>
-    Effect.gen(function* createUpgradesUnverifiedIdentifier() {
+  testIt.effect('Create with declared matching identifiers requires review without attaching facts', () =>
+    Effect.gen(function* createDeclaredIdentifierReview() {
       const subject = harness(
         new Map<unknown, readonly Rows[]>([
-          [partyIdentifierClaims, [[{ partyId: partyA }], []]],
-          [parties, [[activePartyRow(partyA)], [activePartyRow(partyA)], [activePartyRow(partyA)]]],
-          [
-            partyOfficialIdentifiers,
-            [
-              [
-                {
-                  acceptedByActionInvocationId: 'prior-acceptance',
-                  officialIdentifierId,
-                  partyId: partyA,
-                  state: 'ACTIVE',
-                  isCurrent: true,
-                  validTo: null,
-                  verificationState: 'UNVERIFIED',
-                  verifiedAt: null,
-                  verifiedByPrincipalId: null,
-                },
-              ],
-            ],
-          ],
+          [partyOfficialIdentifiers, [[{ partyId: partyA }], [{ partyId: partyA }]]],
+          [partyAliases, [[], []]],
+          [parties, [[activePartyRow(partyA)]]],
         ]),
       );
-      const collector = createActionCollector(
-        createPartyAction.descriptor.domainEvents,
-        'party.registry',
-        createPartyAction.descriptor.accessEvidencePolicy,
-      );
-      const result = yield* getActionHandler(createPartyAction)(
-        {
-          candidate: candidate({
-            officialIdentifiers: [
-              { identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' },
-              { identifierType: 'CZ_DIC', value: 'CZ27074358', verification: 'VERIFIED' },
-            ],
-          }),
-        },
-        {
-          ...collector,
-          actionInvocationId,
-          compositionRevision: 'a'.repeat(64),
-          scope: actionScope,
-          services: {
-            createOrMatch: (value, invocationId) =>
-              createOrMatchParty(subject.transaction, {
-                actionInvocationId: invocationId,
-                candidate: value,
-                principalId,
-                tenantId,
-              }),
-          },
-        },
-      );
-      if (!('outcome' in result)) {
-        throw new Error('create matching did not return its committed result');
-      }
-      expect(result.outcome).toBe('MATCHED_EXISTING');
-      expect(subject.updates.some(({ values }) => values['verificationState'] === 'VERIFIED')).toBe(true);
-      expect(collector.snapshot().domainEvents.map((event) => event.eventType)).toEqual([
-        'party.registry.official-identifier-updated.v1',
-      ]);
-      expect(collector.snapshot().domainEvents[0]?.subjectResourceType).toBe(
-        'party.registry.party-official-identifier',
-      );
-      expect(collector.snapshot().outboxMessages).toHaveLength(1);
+      const result = yield* createOrMatchParty(subject.transaction, {
+        actionInvocationId,
+        candidate: candidate(),
+        principalId,
+        tenantId,
+      });
+      expect(result.outcome).toBe('AMBIGUOUS');
+      expect(subject.inserts.some(({ table }) => table === parties || table === partyOfficialIdentifiers)).toBe(false);
+      expect(subject.updates).toEqual([]);
     }),
   );
 
@@ -582,14 +438,14 @@ it.layer(
     testIt.effect(`${operation} reuses reviewed matching with Party-only results and separate Case provenance`, () =>
       Effect.gen(function* createReplaysResolvedMatch() {
         const weakCandidate = candidate({
-          officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'UNVERIFIED' }],
+          officialIdentifiers: [{ identifierType: 'ICO', value: '27074358' }],
         });
         const evidenceExplanation = [
           {
             evidenceRefs: [...weakCandidate.evidenceRefs].toSorted(),
             outcome: 'AMBIGUOUS' as const,
             reason:
-              'No qualifying exclusive identifier establishes one existing Party; bounded subject evidence requires the declared rule outcome',
+              'Declared identifiers and exact names nominate review candidates only; they do not establish Party identity',
             ruleKey: 'party-exact-claims.v1',
           },
         ];
@@ -643,14 +499,14 @@ it.layer(
       testIt.effect(`${operation} preserves review rather than reusing a ${boundary} target`, () =>
         Effect.gen(function* rejectedReviewedReuse() {
           const weakCandidate = candidate({
-            officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'UNVERIFIED' }],
+            officialIdentifiers: [{ identifierType: 'ICO', value: '27074358' }],
           });
           const explanation = [
             {
               evidenceRefs: [...weakCandidate.evidenceRefs].toSorted(),
               outcome: 'AMBIGUOUS' as const,
               reason:
-                'No qualifying exclusive identifier establishes one existing Party; bounded subject evidence requires the declared rule outcome',
+                'Declared identifiers and exact names nominate review candidates only; they do not establish Party identity',
               ruleKey: 'party-exact-claims.v1',
             },
           ];
@@ -708,7 +564,7 @@ it.layer(
       const priorId = '30000000-0000-4000-8000-000000000099';
       const subject = harness(
         new Map<unknown, readonly Rows[]>([
-          [partyIdentifierClaims, [[{ partyId: partyA }], [{ partyId: partyB }]]],
+          [partyOfficialIdentifiers, [[{ partyId: partyA }], [{ partyId: partyB }]]],
           [partyAliases, [[], []]],
           [parties, [[{ partyId: partyA }], [{ partyId: partyB }]]],
           [
@@ -785,7 +641,7 @@ it.layer(
             [duplicateCandidateCases, [[caseRow()]]],
             [partyAliases, [[]]],
             [parties, [[activePartyRow(partyC)], [activePartyRow(partyC)]]],
-            [partyIdentifierClaims, [[]]],
+            [partyOfficialIdentifiers, [[]]],
             [partyOfficialIdentifiers, [[]]],
           ]),
         );
@@ -806,127 +662,62 @@ it.layer(
       }),
   );
 
-  testIt.effect('reviewed MATCH_EXISTING upgrades a same-Party UNVERIFIED identifier', () =>
-    Effect.gen(function* reviewedMatchingUpgradesUnverifiedIdentifier() {
+  testIt.effect(
+    'reviewed matching reuses an accepted identifier without changing acceptance or publishing an update',
+    () =>
+      Effect.gen(function* reviewedIdentifierReuse() {
+        const subject = harness(
+          new Map<unknown, readonly Rows[]>([
+            [duplicateCandidateCases, [[caseRow()]]],
+            [partyAliases, [[]]],
+            [parties, [[activePartyRow(partyC)], [activePartyRow(partyC)]]],
+            [
+              partyOfficialIdentifiers,
+              [
+                [
+                  {
+                    acceptedByActionInvocationId: 'prior-acceptance',
+                    officialIdentifierId,
+                    partyId: partyC,
+                    state: 'ACTIVE',
+                    isCurrent: true,
+                    validTo: null,
+                  },
+                ],
+              ],
+            ],
+          ]),
+        );
+        const { collector, result } = yield* invokeReviewedMatch(subject);
+        expect(result).toMatchObject({ outcome: 'MATCH_EXISTING' });
+        expect(subject.updates.some(({ table }) => table === partyOfficialIdentifiers)).toBe(false);
+        expect(collector.snapshot().domainEvents).toEqual([]);
+        expect(collector.snapshot().outboxMessages).toEqual([]);
+      }),
+  );
+
+  testIt.effect('repeated Candidate facts accepted in one reviewed transaction publish one identifier event', () =>
+    Effect.gen(function* reviewedRepeatedCandidateFacts() {
+      const identifier = { identifierTypeKey: 'CZ_DIC', namespace: 'CZ:DIC', normalizedValue: 'CZ27074358' };
+      const original = caseRow();
       const subject = harness(
         new Map<unknown, readonly Rows[]>([
-          [duplicateCandidateCases, [[caseRow()]]],
+          [
+            duplicateCandidateCases,
+            [
+              [
+                {
+                  ...original,
+                  candidateSnapshot: {
+                    ...original.candidateSnapshot,
+                    officialIdentifiers: [identifier, identifier],
+                  },
+                },
+              ],
+            ],
+          ],
           [partyAliases, [[]]],
           [parties, [[activePartyRow(partyC)], [activePartyRow(partyC)]]],
-          [partyIdentifierClaims, [[]]],
-          [
-            partyOfficialIdentifiers,
-            [
-              [
-                {
-                  acceptedByActionInvocationId: 'prior-acceptance',
-                  officialIdentifierId,
-                  partyId: partyC,
-                  state: 'ACTIVE',
-                  isCurrent: true,
-                  validTo: null,
-                  verificationState: 'UNVERIFIED',
-                  verifiedAt: null,
-                  verifiedByPrincipalId: null,
-                },
-              ],
-            ],
-          ],
-        ]),
-      );
-      const { collector, result } = yield* invokeReviewedMatch(subject);
-      if (!('outcome' in result)) {
-        throw new Error('reviewed matching did not return its committed result');
-      }
-      const snapshot = collector.snapshot();
-      expect({
-        eventTypes: snapshot.domainEvents.map((event) => event.eventType),
-        identifierUpgraded: subject.updates.some(({ values }) => values['verificationState'] === 'VERIFIED'),
-        outboxCount: snapshot.outboxMessages.length,
-        outcome: result.outcome,
-      }).toEqual({
-        eventTypes: ['party.registry.official-identifier-updated.v1'],
-        identifierUpgraded: true,
-        outboxCount: 1,
-        outcome: 'MATCH_EXISTING',
-      });
-    }),
-  );
-
-  testIt.effect('matched Create reusing an existing identifier does not republish an acceptance event', () =>
-    Effect.gen(function* matchedCreateReusingAnExistingIdentifierDoes() {
-      const subject = harness(
-        new Map<unknown, readonly Rows[]>([
-          [partyIdentifierClaims, [[{ partyId: partyA }]]],
-          [parties, [[activePartyRow(partyA)]]],
-          [
-            partyOfficialIdentifiers,
-            [
-              [
-                {
-                  acceptedByActionInvocationId: 'prior-acceptance',
-                  officialIdentifierId,
-                  partyId: partyA,
-                },
-              ],
-            ],
-          ],
-        ]),
-      );
-      const collector = createActionCollector(
-        createPartyAction.descriptor.domainEvents,
-        'party.registry',
-        createPartyAction.descriptor.accessEvidencePolicy,
-      );
-      const result = yield* getActionHandler(createPartyAction)(
-        {
-          candidate: candidate({
-            officialIdentifiers: [
-              {
-                identifierType: 'ICO',
-                value: '27074358',
-                verification: 'VERIFIED',
-              },
-              {
-                identifierType: 'CZ_DIC',
-                value: 'CZ27074358',
-                verification: 'UNVERIFIED',
-              },
-            ],
-          }),
-        },
-        {
-          ...collector,
-          actionInvocationId,
-          compositionRevision: 'a'.repeat(64),
-          scope: actionScope,
-          services: {
-            createOrMatch: (value, invocationId) =>
-              createOrMatchParty(subject.transaction, {
-                actionInvocationId: invocationId,
-                candidate: value,
-                principalId,
-                tenantId,
-              }),
-          },
-        },
-      );
-      if (!('outcome' in result)) {
-        throw new Error('create-party matching did not return its committed result');
-      }
-      expect(result.outcome).toBe('MATCHED_EXISTING');
-      expect(collector.snapshot().domainEvents).toEqual([]);
-      expect(collector.snapshot().outboxMessages).toEqual([]);
-      expect(subject.inserts.some(({ table }) => table === partyOfficialIdentifiers)).toBe(false);
-    }),
-  );
-
-  testIt.effect('repeated Candidate facts accepted in one matching transaction publish one identifier event', () =>
-    Effect.gen(function* repeatedCandidateFactsAcceptedInOneMatching() {
-      const subject = harness(
-        new Map<unknown, readonly Rows[]>([
-          [partyIdentifierClaims, [[{ partyId: partyA }]]],
-          [parties, [[activePartyRow(partyA)]]],
           [
             partyOfficialIdentifiers,
             [
@@ -935,76 +726,22 @@ it.layer(
                 {
                   acceptedByActionInvocationId: actionInvocationId,
                   officialIdentifierId,
-                  partyId: partyA,
+                  partyId: partyC,
+                  state: 'ACTIVE',
+                  isCurrent: true,
+                  validTo: null,
                 },
               ],
             ],
           ],
         ]),
       );
-      const identifier = {
-        identifierType: 'CZ_DIC' as const,
-        value: 'CZ27074358',
-        verification: 'UNVERIFIED' as const,
-      };
-      const collector = createActionCollector(
-        createPartyAction.descriptor.domainEvents,
-        'party.registry',
-        createPartyAction.descriptor.accessEvidencePolicy,
-      );
-      yield* getActionHandler(createPartyAction)(
-        {
-          candidate: candidate({
-            officialIdentifiers: [
-              {
-                identifierType: 'ICO',
-                value: '27074358',
-                verification: 'VERIFIED',
-              },
-              identifier,
-              identifier,
-            ],
-          }),
-        },
-        {
-          ...collector,
-          actionInvocationId,
-          compositionRevision: 'a'.repeat(64),
-          scope: actionScope,
-          services: {
-            createOrMatch: (value, invocationId) =>
-              createOrMatchParty(subject.transaction, {
-                actionInvocationId: invocationId,
-                candidate: value,
-                principalId,
-                tenantId,
-              }),
-          },
-        },
-      );
-      expect(subject.inserts.filter(({ table }) => table === partyOfficialIdentifiers).length).toBe(1);
-      expect(collector.snapshot().domainEvents.length).toBe(1);
-      expect(collector.snapshot().outboxMessages.length).toBe(1);
-    }),
-  );
-
-  testIt.effect('reviewed matching with already-owned claims creates no duplicate identifier notifications', () =>
-    Effect.gen(function* reviewedMatchingWithAlreadyOwnedClaimsCreates() {
-      const subject = harness(
-        new Map<unknown, readonly Rows[]>([
-          [duplicateCandidateCases, [[caseRow()]]],
-          [partyAliases, [[], []]],
-          [parties, [[activePartyRow(partyC)], [activePartyRow(partyC)], [activePartyRow(partyC)]]],
-          [partyIdentifierClaims, [[{ officialIdentifierId, partyId: partyC }]]],
-        ]),
-      );
       const { collector, result } = yield* invokeReviewedMatch(subject);
-      if (!('outcome' in result)) {
-        throw new Error('duplicate-candidate resolution did not return its committed result');
-      }
-      expect(result.outcome).toBe('MATCH_EXISTING');
-      expect(collector.snapshot().domainEvents).toEqual([]);
-      expect(collector.snapshot().outboxMessages).toEqual([]);
+      expect(result).toMatchObject({ outcome: 'MATCH_EXISTING' });
+      expect(collector.snapshot().domainEvents.map((event) => event.eventType)).toEqual([
+        'party.registry.official-identifier-added.v1',
+      ]);
+      expect(collector.snapshot().outboxMessages).toHaveLength(1);
     }),
   );
 
@@ -1103,9 +840,17 @@ it.layer(
 
   it('durable matching is an idempotent identity Action and the separate UX preview remains a governed read', () => {
     expect(matchPartyAction.descriptor.idempotency).toBe('required');
-    expect(matchPartyAction.descriptor.tenantPermission?.({ candidate: candidate() })).toBe('manage_party_identity');
+    expect(matchPartyAction.descriptor.accessDeclaration?.key).toBe('party.registry.party-match.record');
     expect(matchPartyAction.descriptor.legalEntityScope).toBe('optional');
     expect(partyMatchRead.descriptor.accessKind).toBe('detail');
+    expect(partyMatchRead.descriptor.accessActor).toEqual(
+      expect.objectContaining({
+        callers: ['commerce-customer-context'],
+        reason: expect.any(String),
+        subject: 'identity',
+        subjectWorkloads: ['commerce.storefront-client'],
+      }),
+    );
   });
 
   testIt.effect('weak exact canonical evidence produces review rather than automatic identity or NO_MATCH', () =>
@@ -1124,7 +869,6 @@ it.layer(
             {
               identifierType: 'ICO',
               value: '27074358',
-              verification: 'UNVERIFIED',
             },
           ],
           partyType: 'PERSON',
@@ -1161,7 +905,7 @@ it.layer(
         const result = yield* createOrMatchParty(subject.transaction, {
           actionInvocationId,
           candidate: candidate({
-            displayName: 'Northwind Workshop',
+            businessName: 'Northwind Workshop',
             evidenceRefs: ['business-record:contract:42'],
             officialIdentifiers: [],
             partyType: 'UNRESOLVED',
@@ -1178,13 +922,101 @@ it.layer(
       }),
   );
 
+  testIt.effect('weak names compare only the exact complete projection and never establish a strong match', () =>
+    Effect.gen(function* wholeDerivedNameSignal() {
+      const subject = harness(
+        new Map<unknown, readonly Rows[]>([
+          [parties, [[{ partyId: partyA }], [{ partyId: partyA }]]],
+          [partyAliases, [[]]],
+        ]),
+      );
+      const result = yield* previewPartyMatch(
+        subject.transaction,
+        tenantId,
+        candidate({
+          firstName: 'Ada',
+          lastName: 'Lovelace',
+          businessName: 'Ignored Company',
+          officialIdentifiers: [],
+          partyType: 'PERSON',
+        }),
+      );
+      expect(result.outcome).toBe('AMBIGUOUS');
+      const nameRead = subject.reads.find((read) => read.table === parties);
+      expect(nameRead?.predicate).toBeDefined();
+      if (nameRead?.predicate === undefined) {
+        throw new Error('The exact name query was not executed');
+      }
+      const query = new PgDialect().sqlToQuery(nameRead.predicate);
+      expect(query.params).toEqual([tenantId, 'Ada Lovelace']);
+      expect(query.sql).toContain('"current_display_name" = $2');
+      expect(query.sql).not.toMatch(/\bor\b|\blike\b|first_name|last_name|business_name/iu);
+    }),
+  );
+
+  testIt.effect('a null derived display produces no name query even when unused source fields exist', () =>
+    Effect.gen(function* absentDerivedNameSignal() {
+      for (const value of [
+        candidate({ partyType: 'PERSON', businessName: 'Not a personal name', officialIdentifiers: [] }),
+        candidate({ partyType: 'ORGANIZATION', firstName: 'Ada', officialIdentifiers: [] }),
+        candidate({ partyType: 'UNRESOLVED', officialIdentifiers: [] }),
+      ]) {
+        const subject = harness();
+        const result = yield* previewPartyMatch(subject.transaction, tenantId, value);
+        expect(result.outcome).toBe('NO_MATCH');
+        expect(subject.reads.some((read) => read.table === parties)).toBe(false);
+      }
+    }),
+  );
+
+  testIt.effect('duplicate-case detail restores all source names including non-rendered fields and omits nulls', () =>
+    Effect.gen(function* structuredCandidateDetailRoundtrip() {
+      for (const names of [
+        { firstName: 'Ada', lastName: 'Lovelace', businessName: 'Analytical Engines' },
+        { firstName: null, lastName: 'Lovelace', businessName: null },
+      ]) {
+        const subject = harness(
+          new Map<unknown, readonly Rows[]>([
+            [
+              duplicateCandidateCases,
+              [
+                [
+                  {
+                    ...caseRow(),
+                    candidateSnapshot: { ...caseRow().candidateSnapshot, ...names },
+                    evaluatedEvidence: [],
+                    priorCandidateCaseId: null,
+                    resolvedAt: null,
+                  },
+                ],
+              ],
+            ],
+            [duplicateCandidateCaseParties, [[]]],
+          ]),
+        );
+        const detail = yield* findDuplicateCandidateCase(subject.transaction, tenantId, candidateCaseId);
+        if (!('value' in detail)) {
+          throw new Error('The retained duplicate case was not found');
+        }
+        expect(detail.value.candidate.firstName ?? null).toBe(names.firstName);
+        expect(detail.value.candidate.lastName ?? null).toBe(names.lastName);
+        expect(detail.value.candidate.businessName ?? null).toBe(names.businessName);
+        if (names.firstName === null) {
+          expect(Object.hasOwn(detail.value.candidate, 'firstName')).toBe(false);
+          expect(Object.hasOwn(detail.value.candidate, 'businessName')).toBe(false);
+        }
+        expect(Object.hasOwn(detail.value.candidate, 'displayName')).toBe(false);
+      }
+    }),
+  );
+
   testIt.effect('a new material evaluation creates a linked successor without rewriting the prior case', () =>
     Effect.gen(function* aNewMaterialEvaluationCreatesALinked() {
       const priorId = '30000000-0000-4000-8000-000000000099';
       const subject = harness(
         new Map<unknown, readonly Rows[]>([
           [
-            partyIdentifierClaims,
+            partyOfficialIdentifiers,
             [
               [
                 {
@@ -1221,11 +1053,10 @@ it.layer(
       const insertedCase = recordedRow(subject.inserts.find(({ table }) => table === duplicateCandidateCases)?.values);
       expect(insertedCase['priorCandidateCaseId']).toBe(priorId);
       expect(String(insertedCase['evaluationFingerprint'])).toMatch(/^[0-9a-f]{64}$/u);
-      expect(result.evidenceExplanation[0]?.officialIdentifierRef?.resourceId).toBe(
-        '70000000-0000-4000-8000-000000000001',
-      );
-      expect(result.evidenceExplanation[0]?.identifierType).toBe('ICO');
-      expect(result.evidenceExplanation[0]?.normalizedValue).toBe('27074358');
+      expect(result.evidenceExplanation[0]?.officialIdentifierRef).toBeUndefined();
+      expect(result.evidenceExplanation[0]?.reason).toContain('review candidates only');
+      expect(result.evidenceExplanation[0]?.identifierType).toBeUndefined();
+      expect(result.evidenceExplanation[0]?.normalizedValue).toBeUndefined();
       expect(subject.updates).toEqual([]);
     }),
   );
@@ -1254,11 +1085,11 @@ it.layer(
 
   it('equivalent Candidate property and evidence ordering has one deterministic fingerprint', () => {
     const original = candidate({
-      displayName: 'Northwind',
+      businessName: 'Northwind',
       evidenceRefs: ['evidence:b', 'evidence:a'],
     });
     const reordered: PartyCandidate = {
-      displayName: 'Northwind',
+      businessName: 'Northwind',
       evidenceRefs: original.evidenceRefs.toReversed(),
       officialIdentifiers: original.officialIdentifiers.toReversed(),
       partyType: original.partyType,
@@ -1331,401 +1162,6 @@ it.layer(
   );
 });
 
-const retailEvidence = Schema.decodeSync(RetailEnrollmentEvidenceSchema)({
-  authenticationNamespaceId: 'ontos.commerce.portal.better-auth.v1' as const,
-  candidateEvidenceRef: '80000000-0000-4000-8000-000000000001',
-  emailOwnership: 'VERIFIED' as const,
-  enrollmentAttemptId: '90000000-0000-4000-8000-000000000001',
-  journey: 'RETAIL_SELF_ENROLLMENT' as const,
-  providerOwnerInvocationId: 'a0000000-0000-4000-8000-000000000001',
-  providerSubjectId: 'provider-retail',
-  sellingLegalEntityId: partyB,
-  tenantId,
-});
-const retailCandidate = candidate({
-  officialIdentifiers: [],
-  partyType: 'PERSON',
-  evidenceRefs: [retailEvidence.candidateEvidenceRef],
-  provenance: { method: 'commerce.portal-enrollment.self-enrollment', source: 'commerce.customer-context' },
-  subjectEvidence: [
-    {
-      basis: 'DIRECT_INTERACTION',
-      evidenceRef: retailEvidence.candidateEvidenceRef,
-      kind: 'ACTOR_ATTESTATION',
-      observedSubject: 'PERSON',
-      statement: 'Exact enrolled subject',
-      subjectKey: partySubjectKeyFromString(retailEvidence.providerSubjectId),
-    },
-  ],
-});
-const retailCase = {
-  ...caseRow(),
-  candidateFingerprint: candidateFingerprint(retailCandidate),
-  candidateSnapshot: {
-    evidenceArtifactRefs: retailCandidate.evidenceRefs,
-    names: [],
-    officialIdentifiers: [],
-    partyType: 'PERSON',
-    provenance: retailCandidate.provenance,
-    subjectEvidence: retailCandidate.subjectEvidence,
-    validFrom: instant,
-  },
-  resolutionActionInvocationId: null,
-  selectedPartyId: null,
-  resolutionOutcome: null,
-};
-const originalCreateDecision = {
-  actionInvocationId,
-  matchDecisionId: decisionId,
-  tenantId,
-  candidateCaseId,
-  partyId: null,
-  operation: 'CREATE',
-  outcome: 'AMBIGUOUS',
-  committedCreateOutcome: 'AMBIGUOUS',
-  decidedAt: DateTime.toDateUtc(DateTime.makeUnsafe(instant)),
-  matchRuleVersion: 'party-exact-claims.v1',
-  evidenceEvaluation: null,
-  evidenceExplanation: [],
-};
-
-it.effect(
-  'retail policy accepts the original zero-candidate case under the canonical lock and records its named basis',
-  () =>
-    Effect.gen(function* policyAccept() {
-      yield* TestClock.setTime(Date.parse('2026-10-01T00:00:00.000Z'));
-      const subject = harness(
-        new Map<unknown, readonly Rows[]>([
-          [partyMatchDecisions, [[originalCreateDecision]]],
-          [duplicateCandidateCases, [[retailCase], [retailCase]]],
-          [duplicateCandidateCaseParties, [[]]],
-        ]),
-      );
-      const result = yield* acceptRetailEnrollmentEvidence(subject.transaction, {
-        actionInvocationId: principalId,
-        originalInvocationId: actionInvocationId,
-        evidence: retailEvidence,
-        legalEntityId: partyB,
-        principalId,
-        tenantId,
-      });
-      expect(result.created).toBe(true);
-      expect(result.result.outcome).toBe('CREATED');
-      expect(subject.inserts.filter(({ table }) => table === parties)).toHaveLength(1);
-      const decision = subject.inserts.find(({ table }) => table === partyMatchDecisions);
-      expect(recordedRow(decision?.values)['evidenceExplanation']).toEqual([
-        expect.objectContaining({ ruleKey: 'party.retail-verified-enrollment.v1', verification: 'VERIFIED' }),
-      ]);
-      expect(subject.updates.find(({ table }) => table === duplicateCandidateCases)?.values).toMatchObject({
-        lifecycleState: 'RESOLVED',
-        resolutionOutcome: 'CREATE_NEW',
-        resolutionReason: 'party.retail-verified-enrollment.v1',
-      });
-    }),
-);
-
-it.effect('linked retail candidates remain in their original review case without inserting a Party', () =>
-  Effect.gen(function* keepReview() {
-    const subject = harness(
-      new Map<unknown, readonly Rows[]>([
-        [partyMatchDecisions, [[originalCreateDecision]]],
-        [duplicateCandidateCases, [[retailCase], [retailCase]]],
-        [duplicateCandidateCaseParties, [[{ partyId: partyA }]]],
-      ]),
-    );
-    const accepted = yield* acceptRetailEnrollmentEvidence(subject.transaction, {
-      actionInvocationId: principalId,
-      originalInvocationId: actionInvocationId,
-      evidence: retailEvidence,
-      legalEntityId: partyB,
-      principalId,
-      tenantId,
-    });
-    expect(accepted.created).toBe(false);
-    expect(accepted.result.outcome).toBe('AMBIGUOUS');
-    expect(subject.inserts).toHaveLength(0);
-    expect(subject.updates).toHaveLength(0);
-  }),
-);
-
-for (const outcome of ['CREATE_NEW', 'MATCH_EXISTING'] as const) {
-  it.effect(`owned invocation recovery follows governed ${outcome} without changing the immutable Create`, () =>
-    Effect.gen(function* reviewContinuation() {
-      const resolutionDecision = {
-        ...originalCreateDecision,
-        actionInvocationId: principalId,
-        candidateCaseId: null,
-        partyId: partyA,
-        operation: outcome === 'CREATE_NEW' ? 'REVIEW_CREATE' : 'REVIEW_MATCH',
-        outcome: outcome === 'CREATE_NEW' ? 'CREATED' : 'MATCHED',
-        committedCreateOutcome: outcome === 'CREATE_NEW' ? 'CREATED' : null,
-      };
-      const subject = harness(
-        new Map<unknown, readonly Rows[]>([
-          [partyMatchDecisions, [[originalCreateDecision], [resolutionDecision]]],
-          [
-            duplicateCandidateCases,
-            [
-              [
-                {
-                  ...retailCase,
-                  lifecycleState: 'RESOLVED',
-                  resolutionOutcome: outcome,
-                  resolutionActionInvocationId: principalId,
-                  selectedPartyId: partyA,
-                },
-              ],
-            ],
-          ],
-        ]),
-      );
-      const result = yield* findPartyCreateContinuation(subject.transaction, tenantId, actionInvocationId);
-      expect(result?.outcome).toBe(outcome === 'CREATE_NEW' ? 'CREATED' : 'MATCHED_EXISTING');
-      expect(subject.inserts).toHaveLength(0);
-      expect(subject.updates).toHaveLength(0);
-    }),
-  );
-}
-
-it.effect(
-  'a current candidate discovered after Create remains linked to the original case, never a stranded successor',
-  () =>
-    Effect.gen(function* currentCandidateReview() {
-      const namedCase = {
-        ...retailCase,
-        candidateSnapshot: { ...retailCase.candidateSnapshot, names: [{ nameKind: 'DISPLAY', value: 'Same Name' }] },
-      };
-      const subject = harness(
-        new Map<unknown, readonly Rows[]>([
-          [partyMatchDecisions, [[originalCreateDecision]]],
-          [duplicateCandidateCases, [[namedCase], [namedCase]]],
-          [duplicateCandidateCaseParties, [[]]],
-          [parties, [[{ partyId: partyA }], [{ partyId: partyA, currentType: 'PERSON' }]]],
-        ]),
-      );
-      const accepted = yield* acceptRetailEnrollmentEvidence(subject.transaction, {
-        actionInvocationId: principalId,
-        originalInvocationId: actionInvocationId,
-        evidence: retailEvidence,
-        legalEntityId: partyB,
-        principalId,
-        tenantId,
-      });
-      expect(accepted.created).toBe(false);
-      expect(accepted.result).toMatchObject({ outcome: 'AMBIGUOUS', caseRef: { resourceId: candidateCaseId } });
-      expect(subject.inserts.map(({ table }) => table)).toEqual([duplicateCandidateCaseParties]);
-      expect(recordedRows(subject.inserts[0]?.values)).toMatchObject([{ candidateCaseId, partyId: partyA }]);
-      expect(subject.updates).toHaveLength(0);
-    }),
-);
-for (const created of [true, false]) {
-  it.effect(
-    `retail acceptance ${created ? 'emits its single real Party event' : 'does not re-emit creation on a recovered resolution'}`,
-    () =>
-      Effect.gen(function* eventOnce() {
-        const native = yield* makeActionTestHarness({
-          databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-        });
-        const collector = createActionCollector(
-          acceptRetailEnrollmentEvidenceAction.descriptor.domainEvents,
-          'party.registry',
-          acceptRetailEnrollmentEvidenceAction.descriptor.accessEvidencePolicy,
-        );
-        const result = yield* getActionHandler(acceptRetailEnrollmentEvidenceAction)(
-          {
-            evidence: retailEvidence,
-            originalInvocationId: (yield* Schema.decodeEffect(RetailEnrollmentEvidenceSchema)(retailEvidence))
-              .providerOwnerInvocationId,
-          },
-          {
-            ...collector,
-            actionInvocationId,
-            compositionRevision: 'a'.repeat(64),
-            scope: {
-              authMethod: 'system',
-              correlationId: 'retail-events',
-              principalId,
-              tenantId,
-              legalEntityId: partyB,
-            },
-            services: {
-              accept: () =>
-                Effect.succeed({
-                  created,
-                  result: {
-                    outcome: 'CREATED',
-                    partyRef: makePartyRef(tenantId, partyA),
-                    decisionRef: {
-                      moduleId: 'party.registry',
-                      resourceId: decisionId,
-                      resourceType: 'party.registry.party-match-decision',
-                      tenantId,
-                    },
-                  },
-                }),
-            },
-          },
-        ).pipe(Effect.provideService(ActionRuntime, native.runtime));
-        expect(result).toMatchObject({ outcome: 'CREATED' });
-        expect(collector.snapshot().domainEvents).toHaveLength(created ? 1 : 0);
-        expect(collector.snapshot().outboxMessages).toHaveLength(created ? 1 : 0);
-      }),
-  );
-}
-
-const retailScope = {
-  authBindingId: actionInvocationId,
-  authContextRef: 'better-auth-session:retail-native-owner',
-  authMethod: 'session' as const,
-  correlationId: 'retail-native-owner',
-  legalEntityId: partyB,
-  principalId,
-  tenantId,
-};
-for (const scenario of [
-  'owned',
-  'wrong-caller',
-  'wrong-tenant',
-  'wrong-company',
-  'wrong-attestation-company',
-  'missing-invocation',
-] as const) {
-  it.effect(`native retail evidence acceptance checks original invocation ownership: ${scenario}`, () =>
-    Effect.gen(function* nativeOwnership() {
-      const native = yield* makeActionTestHarness({
-        databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-        actionPermission: 'allowed',
-        tenantPermission: 'allowed',
-        legalEntityAccess: 'allowed',
-        services: [
-          bindActionTestServices(createPartyAction, {
-            createOrMatch: () =>
-              Effect.succeed({
-                outcome: 'CREATED',
-                partyRef: makePartyRef(tenantId, partyA),
-                decisionRef: {
-                  moduleId: 'party.registry',
-                  resourceId: decisionId,
-                  resourceType: 'party.registry.party-match-decision',
-                  tenantId,
-                },
-              }),
-          }),
-        ],
-      });
-      yield* native.runtime.runAction({
-        registration: createPartyAction,
-        payload: { candidate: { ...retailCandidate, validFrom: DateTime.formatIso(retailCandidate.validFrom) } },
-        principal: retailScope,
-        transport: { correlationId: 'retail-native-owner', idempotencyKey: 'original-retail-create' },
-      });
-      const [invocation] = native.snapshot().invocations;
-      if (invocation === undefined) {
-        throw new Error('Native Create invocation was not recorded');
-      }
-      const scope = { ...retailScope };
-      if (scenario === 'wrong-caller') {
-        scope.principalId = yield* Schema.decodeEffect(PrincipalIdSchema)(partyA);
-      }
-      if (scenario === 'wrong-tenant') {
-        scope.tenantId = yield* Schema.decodeEffect(TenantIdSchema)(partyA);
-      }
-      if (scenario === 'wrong-company') {
-        scope.legalEntityId = partyA;
-      }
-      const subject = harness(
-        new Map<unknown, readonly Rows[]>([
-          [
-            partyMatchDecisions,
-            [
-              [
-                {
-                  ...originalCreateDecision,
-                  committedCreateOutcome: 'CREATED',
-                  outcome: 'CREATED',
-                  candidateCaseId: null,
-                  partyId: partyA,
-                },
-              ],
-            ],
-          ],
-        ]),
-      );
-      // SAFETY: the private factory delegates to the same select/insert/update seam implemented by this harness.
-      const transaction = subject.transaction as Parameters<ReturnType<typeof getActionServiceFactory>>[0];
-      const services = yield* getActionServiceFactory(acceptRetailEnrollmentEvidenceAction)(
-        transaction,
-        scope,
-        'a'.repeat(64),
-      ).pipe(Effect.provideService(ActionRuntime, native.runtime));
-      const result = yield* services
-        .accept(
-          {
-            evidence:
-              scenario === 'wrong-attestation-company'
-                ? { ...retailEvidence, sellingLegalEntityId: partyA }
-                : retailEvidence,
-            originalInvocationId: (yield* Schema.decodeEffect(RetailEnrollmentEvidenceSchema)({
-              ...retailEvidence,
-              providerOwnerInvocationId: scenario === 'missing-invocation' ? decisionId : invocation.actionInvocationId,
-            })).providerOwnerInvocationId,
-          },
-          principalId,
-        )
-        .pipe(Effect.result);
-      expect(Result.isSuccess(result)).toBe(scenario === 'owned');
-      expect(subject.reads.length).toBe(scenario === 'owned' ? 2 : 0);
-      expect(subject.inserts).toHaveLength(0);
-    }),
-  );
-}
-for (const actionPermission of ['allowed', 'denied'] as const) {
-  it.effect(`retail acceptance requires explicit executor and identity permissions: executor ${actionPermission}`, () =>
-    Effect.gen(function* narrowGrant() {
-      let called = false;
-      const native = yield* makeActionTestHarness({
-        databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-        actionPermission,
-        tenantPermission: actionPermission === 'allowed' ? 'denied' : 'allowed',
-        legalEntityAccess: 'allowed',
-        services: [
-          bindActionTestServices(acceptRetailEnrollmentEvidenceAction, {
-            accept: () =>
-              Effect.sync(() => {
-                called = true;
-                return {
-                  created: false,
-                  result: {
-                    caseRef: makeDuplicateCandidateCaseRef(tenantId, candidateCaseId),
-                    decisionRef: {
-                      moduleId: 'party.registry',
-                      resourceId: decisionId,
-                      resourceType: 'party.registry.party-match-decision',
-                      tenantId,
-                    },
-                    outcome: 'AMBIGUOUS' as const,
-                  },
-                };
-              }),
-          }),
-        ],
-      });
-      expect(
-        yield* native.runtime
-          .runAction({
-            registration: acceptRetailEnrollmentEvidenceAction,
-            payload: { evidence: retailEvidence, originalInvocationId: retailEvidence.providerOwnerInvocationId },
-            principal: retailScope,
-            transport: { correlationId: 'retail-permission', idempotencyKey: 'retail-permission' },
-          })
-          .pipe(Effect.isFailure, Effect.provideService(ActionRuntime, native.runtime)),
-      ).toBe(true);
-      expect(called).toBe(false);
-      expect(native.snapshot().committed).toHaveLength(0);
-    }),
-  );
-}
-
 const guestLegalEntityId = '80000000-0000-4000-8000-000000000001';
 const guestCandidate = (): PartyCandidate =>
   candidate({
@@ -1769,6 +1205,63 @@ it.effect('bound Guest evidence cannot enter Create or Match without its exact t
     }
   }),
 );
+
+it('Guest candidate fingerprint survives nested JSON object reordering without accepting changed scope', () => {
+  const original = guestCandidate();
+  const wireCodec = Schema.fromJsonString(PartyCandidateSchema);
+  const wireRoundtrip = Schema.decodeUnknownSync(wireCodec)(Schema.encodeSync(wireCodec)(original));
+  const restored: PartyCandidate = {
+    ...wireRoundtrip,
+    subjectEvidence: (wireRoundtrip.subjectEvidence ?? []).map((evidence) => {
+      const binding = evidence.guestBinding;
+      return binding === undefined
+        ? evidence
+        : {
+            ...evidence,
+            guestBinding: {
+              legalEntityRef: {
+                tenantId: binding.legalEntityRef.tenantId,
+                resourceType: binding.legalEntityRef.resourceType,
+                resourceId: binding.legalEntityRef.resourceId,
+                moduleId: binding.legalEntityRef.moduleId,
+              },
+              correlationRoot: binding.correlationRoot,
+            },
+          };
+    }),
+  };
+  expect(restored).toEqual(original);
+  expect(candidateFingerprint(restored)).toBe(candidateFingerprint(original));
+  for (const field of ['tenantId', 'resourceId'] as const) {
+    const changed = {
+      ...restored,
+      subjectEvidence: (restored.subjectEvidence ?? []).map((evidence) => {
+        const binding = evidence.guestBinding;
+        return binding === undefined
+          ? evidence
+          : {
+              ...evidence,
+              guestBinding: {
+                ...binding,
+                legalEntityRef: { ...binding.legalEntityRef, [field]: '90000000-0000-4000-8000-000000000001' },
+              },
+            };
+      }),
+    };
+    expect(candidateFingerprint(changed)).not.toBe(candidateFingerprint(original));
+  }
+  const changedValue = {
+    ...restored,
+    subjectEvidence: (restored.subjectEvidence ?? []).map((evidence) => ({
+      ...evidence,
+      statement: 'Different accepted subject statement',
+    })),
+  };
+  expect(candidateFingerprint(changedValue)).not.toBe(candidateFingerprint(original));
+  expect(candidateFingerprint({ ...restored, validFrom: DateTime.makeUnsafe('2020-01-02T00:00:00.000Z') })).not.toBe(
+    candidateFingerprint(original),
+  );
+});
 
 it.effect('accepted Guest binding remains in the immutable matching snapshot and decision evaluation', () =>
   Effect.gen(function* retainedGuestBinding() {

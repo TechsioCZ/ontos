@@ -5,7 +5,6 @@ import { outboxWorkerEntry as coreSystemOutboxWorkerEntry } from '@app/shell-sup
 import { outboxWorkerEntry as partyRegistryOutboxWorkerEntry } from '@app/party-registry/outbox-worker-host';
 import { outboxWorkerEntry as commerceCustomerContextOutboxWorkerEntry } from '@app/commerce-customer-context/outbox-worker-host';
 import { outboxWorkerEntry as commerceMarketCatalogOutboxWorkerEntry } from '@app/commerce-market-catalog/outbox-worker-host';
-import { outboxWorkerEntry as priceGroupCatalogOutboxWorkerEntry } from '@app/price-group-catalog/outbox-worker-host';
 import { outboxWorkerEntry as inventoryOutboxWorkerEntry } from '@app/inventory/outbox-worker-host';
 import { outboxWorkerEntry as privacyOutboxWorkerEntry } from '@app/privacy/outbox-worker-host';
 import { outboxWorkerEntry as propertyPortfolioOutboxWorkerEntry } from '@app/property-portfolio/outbox-worker-host';
@@ -27,7 +26,6 @@ startOutboxWorkerHost({
     partyRegistryOutboxWorkerEntry,
     commerceCustomerContextOutboxWorkerEntry,
     commerceMarketCatalogOutboxWorkerEntry,
-    priceGroupCatalogOutboxWorkerEntry,
     inventoryOutboxWorkerEntry,
     privacyOutboxWorkerEntry,
     propertyPortfolioOutboxWorkerEntry,

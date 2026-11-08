@@ -67,9 +67,9 @@ for (const [audience, role, gatewayGrant] of [
         assertion: Redacted.make('verified-audience-test-assertion'),
         audience,
       });
-      const statements: string[] = [];
-      const executor = yield* makeTestDatabase((statement) => {
-        statements.push(statement);
+      const statements: { readonly params: readonly unknown[]; readonly sql: string }[] = [];
+      const executor = yield* makeTestDatabase((statement, params) => {
+        statements.push({ params, sql: statement });
         return Effect.succeed(
           statement.includes('from "core"."tenants"')
             ? []
@@ -79,13 +79,76 @@ for (const [audience, role, gatewayGrant] of [
 
       yield* makeOperationalScopeRepository({ executor }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).load(principal);
 
-      const lookup = statements.find((statement) => statement.includes('from "core"."tenants"'));
+      const [begin, install, verify, lookup, commit] = statements;
       expect(lookup).toBeDefined();
-      expect(lookup?.includes('trust.auth_binding_issuing_legal_entity')).toBe(gatewayGrant);
-      expect(lookup?.includes('binding_creation_audit')).toBe(!gatewayGrant);
-      expect(statements.some((statement) => statement.includes('trust.establish_gateway_scope'))).toBe(gatewayGrant);
+      expect(statements).toHaveLength(5);
+      expect(begin?.sql).toBe('BEGIN');
+      expect(install?.sql).toContain(gatewayGrant ? 'trust.establish_gateway_scope' : 'set_config');
+      expect(install?.params).toEqual(gatewayGrant ? ['verified-audience-test-assertion'] : [principal.tenantId, '']);
+      expect(verify?.sql).toContain('current_user::text as role');
+      expect(verify?.sql).toContain(
+        gatewayGrant ? 'trust.current_tenant_id()' : "current_setting('ontos.tenant_id', true)",
+      );
+      expect(verify?.sql).toContain(
+        gatewayGrant ? 'trust.current_legal_entity_id()' : "current_setting('ontos.legal_entity_id', true)",
+      );
+      expect(lookup?.sql).toContain('from "core"."tenants"');
+      for (const column of [
+        'authentication_namespace_id',
+        'principal_id',
+        'binding_revision',
+        'revoked_at',
+        'status',
+        'subject_type',
+        'tenant_id',
+      ]) {
+        expect(lookup?.sql).toContain(`"principal_auth_bindings"."${column}"`);
+      }
+      expect(lookup?.params).toEqual([
+        principal.principalId,
+        '00000000-0000-0000-0000-000000000000',
+        principal.tenantId,
+        principal.authBindingId,
+        '00000000-0000-0000-0000-000000000000',
+        principal.tenantId,
+        1,
+      ]);
+      expect(commit?.sql).toBe('COMMIT');
     }),
   );
+
+  for (const [refusal, installedRole, installedTenant, installedCompany] of [
+    ['wrong authority role', gatewayGrant ? 'ontos_runtime' : 'party_registry_runtime', scopedPrincipal.tenantId, ''],
+    ['unknown role', 'unknown_runtime', scopedPrincipal.tenantId, ''],
+    ['foreign tenant', role, '20000000-0000-4000-8000-000000000002', ''],
+    ['unexpected company', role, scopedPrincipal.tenantId, '30000000-0000-4000-8000-000000000002'],
+  ] as const) {
+    it.effect(`scope admission refuses ${refusal} before principal lookup for ${audience}`, () =>
+      Effect.gen(function* refuseUnattestedScope() {
+        const principal = trustVerifiedGatewayPrincipalContext(scopedPrincipal, 'a'.repeat(64), {
+          assertion: Redacted.make('verified-audience-test-assertion'),
+          audience,
+        });
+        const statements: string[] = [];
+        const executor = yield* makeTestDatabase((statement) => {
+          statements.push(statement);
+          return Effect.succeed([
+            { legal_entity_id: installedCompany, role: installedRole, tenant_id: installedTenant },
+          ]);
+        });
+        const failure = yield* makeOperationalScopeRepository({ executor }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT)
+          .load(principal)
+          .pipe(Effect.flip);
+        expect(Predicate.isTagged(failure, 'OperationContextUnavailable')).toBe(true);
+        expect(statements).toHaveLength(4);
+        expect(statements[0]).toBe('BEGIN');
+        expect(statements[1]).toContain(gatewayGrant ? 'trust.establish_gateway_scope' : 'set_config');
+        expect(statements[2]).toContain('current_user::text as role');
+        expect(statements[3]).toBe('ROLLBACK');
+        expect(statements.some((statement) => statement.includes('from "core"."tenants"'))).toBe(false);
+      }),
+    );
+  }
 }
 
 for (const boundary of ['context', 'evidence'] as const) {

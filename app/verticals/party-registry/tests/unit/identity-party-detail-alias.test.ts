@@ -21,7 +21,10 @@ const partyRef = (resourceId: string): PartyRef => ({
 const canonicalPartyWire = {
   archivedAt: null,
   createdAt: '2026-09-01T10:00:00.000Z',
+  businessName: 'Canonical Party',
   displayName: 'Canonical Party',
+  firstName: null,
+  lastName: null,
   partyRef: partyRef('party-c'),
   partyType: 'ORGANIZATION',
   revision: 3,
@@ -66,7 +69,6 @@ it.effect('Party Detail reads the final canonical Party after the complete histo
 
     expect(result).toEqual({
       currentFactAssertions: [],
-      factHistory: Option.none(),
       party: canonicalParty,
       resolution: {
         aliasChain: [partyRef('party-b'), partyRef('party-a')],
@@ -78,7 +80,7 @@ it.effect('Party Detail reads the final canonical Party after the complete histo
     expect(lookups).toEqual(['party-c']);
     expect(Schema.is(PartyDetailResponseSchema)(result)).toBe(true);
     const encoded = yield* Schema.encodeEffect(PartyDetailResponseSchema)(result);
-    expect(encoded.factHistory).toBe(null);
+    expect(encoded.factHistory).toBeUndefined();
     expect(encoded.party).toEqual(canonicalPartyWire);
   }),
 );

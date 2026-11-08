@@ -5,7 +5,7 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
-import { CounterpartySearchResultSchema, CurrentCounterpartyRoleSchema } from '../domain/search-result.ts';
+import { CounterpartySearchResultViewSchema, CurrentCounterpartyRoleSchema } from '../domain/search-result.ts';
 
 export const CounterpartiesProviderRequestSchema = Schema.Struct({
   includeArchived: Schema.optionalKey(Schema.Boolean),
@@ -14,7 +14,7 @@ export const CounterpartiesProviderRequestSchema = Schema.Struct({
 });
 export type CounterpartiesProviderRequest = typeof CounterpartiesProviderRequestSchema.Type;
 
-export const CounterpartiesProviderResponseSchema = Schema.Array(CounterpartySearchResultSchema);
+export const CounterpartiesProviderResponseSchema = Schema.Array(CounterpartySearchResultViewSchema);
 export type CounterpartiesProviderResponse = typeof CounterpartiesProviderResponseSchema.Type;
 
 export const CounterpartiesProviderUnavailableProblemSchema = makeRetryableProblemDetailsSchema(

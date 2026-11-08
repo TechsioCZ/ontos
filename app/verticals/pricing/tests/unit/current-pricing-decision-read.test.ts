@@ -1,11 +1,11 @@
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import {
   OperationContextUnavailable,
   ReadHandlerUnavailable,
   ReadPermissionDenied,
   TrustedPrincipalContextSchema,
-  defineRead,
 } from '@app/core-runtime';
-import type { OperationalScope, ReadOwnerTransaction } from '@app/core-runtime';
+import type { OperationalScope, TrustedPrincipalContext } from '@app/core-runtime';
 import { PricingPurchaseContextVerificationEvidenceSchema } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
 import {
   CurrentPricingDecisionRequestSchema,
@@ -13,15 +13,18 @@ import {
   projectCurrentPricingDecisionResponse,
 } from '@app/pricing-contracts/current-pricing-decision';
 import type { CurrentPricingDecisionRequest } from '@app/pricing-contracts/current-pricing-decision';
-import { Effect, Exit, Schema } from 'effect';
-import { describe, expect, it } from 'effect-rstest';
+import { DateTime, Effect, Exit, Layer, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 
-import { runReadOwnerSteps } from '../../../../packages/core-runtime/src/reads/definition.ts';
+import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
+import { refuseInsideDatabaseTransaction } from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
+import { makeCurrentPricingComposition } from '../support/current-pricing-composition.ts';
+import { pricingRegistration } from '../../vertical.registration.ts';
+import { currentPricingDecisionRequirements } from '../../src/integrations/pricing-operation-requirements.ts';
 
 import {
   currentPricingDecisionRead,
   evaluateCurrentPricingDecision,
-  makeFinishCurrentPricingDecision,
   prepareCurrentPricingDecision,
   resolveCurrentPricingDecisionTrustedScope,
   verifyCurrentPricingDecisionSubject,
@@ -50,10 +53,6 @@ import {
   unitPriceFixtureEffectiveAt,
   unitPriceFixtureTenantId,
 } from './support/unit-price-calculation.fixture.ts';
-
-/** The wiring test observes the owner-state adapters, so no short owner transaction is ever opened. */
-const unusedOwnerTransaction: ReadOwnerTransaction = () =>
-  Effect.die('The wiring test evaluates nothing, so it opens no owner transaction');
 
 /** The decision the governed Read makes: subject verification in `prepare`, then the evaluation in `finish`. */
 const resolveCurrentPricingDecision = (
@@ -218,8 +217,8 @@ const retailProfileRequest = (input: CurrentPricingDecisionRequest, profileId: s
     });
   })();
 
-describe('Current Pricing Decision governed read', () => {
-  it.effect('passes the exact request to the evaluator and returns only the customer-safe projection', () =>
+it.layer(Layer.mergeAll(NodeCrypto.layer, NodeServices.layer))('Current Pricing Decision governed read', (suite) => {
+  suite.effect('passes the exact request to the evaluator and returns only the customer-safe projection', () =>
     Effect.gen(function* preservesTypedOutcome() {
       const input = yield* request;
       const trustedScope = trustedScopeFor(input);
@@ -241,7 +240,7 @@ describe('Current Pricing Decision governed read', () => {
     }),
   );
 
-  it.effect('rejects caller Tenant and Legal Entity assertions before evaluation', () =>
+  suite.effect('rejects caller Tenant and Legal Entity assertions before evaluation', () =>
     Effect.gen(function* rejectsUntrustedScope() {
       const input = yield* request;
       let calls = 0;
@@ -278,7 +277,7 @@ describe('Current Pricing Decision governed read', () => {
     }),
   );
 
-  it.effect('maps an evaluator scope rejection into the governed read-permission failure', () =>
+  suite.effect('maps an evaluator scope rejection into the governed read-permission failure', () =>
     Effect.gen(function* mapsScopeViolation() {
       const input = yield* request;
       const failure = yield* resolveCurrentPricingDecision(
@@ -295,7 +294,7 @@ describe('Current Pricing Decision governed read', () => {
     }),
   );
 
-  it.effect('rejects an arbitrary Guest assertion before Pricing evaluation', () =>
+  suite.effect('rejects an arbitrary Guest assertion before Pricing evaluation', () =>
     Effect.gen(function* rejectsArbitraryGuest() {
       const input = yield* request;
       let evaluations = 0;
@@ -316,7 +315,7 @@ describe('Current Pricing Decision governed read', () => {
     }),
   );
 
-  it.effect('fails closed when owner evidence echoes a different Profile binding', () =>
+  suite.effect('fails closed when owner evidence echoes a different Profile binding', () =>
     Effect.gen(function* rejectsCrossProfileEvidence() {
       const guestInput = yield* request;
       const input = retailProfileRequest(guestInput, 'retail-profile:790:a');
@@ -344,7 +343,7 @@ describe('Current Pricing Decision governed read', () => {
     }),
   );
 
-  it.effect('fails closed when owner evidence substitutes the Purchase Context source', () =>
+  suite.effect('fails closed when owner evidence substitutes the Purchase Context source', () =>
     Effect.gen(function* rejectsSubstitutedOwnerSource() {
       const input = yield* request;
       let evaluations = 0;
@@ -371,7 +370,7 @@ describe('Current Pricing Decision governed read', () => {
     }),
   );
 
-  it.effect('fails closed when Profile authority substitutes the customer Principal or Market scope', () =>
+  suite.effect('fails closed when Profile authority substitutes the customer Principal or Market scope', () =>
     Effect.gen(function* rejectsSubstitutedTrustedScope() {
       const guestInput = yield* request;
       const input = retailProfileRequest(guestInput, 'retail-profile:790:a');
@@ -428,23 +427,35 @@ describe('Current Pricing Decision governed read', () => {
     }),
   );
 
-  it('retains the generated read gate and independent Tenant currency-support boundary', () => {
+  suite('retains the generated read gate and independent Tenant currency-support boundary', () => {
     expect(currentPricingDecisionRead.descriptor).toMatchObject({
       entrypoint: {
         access: 'read',
-        authorization: { kind: 'authenticated_principal' },
+        // Audit A1 turned this read into a protected, gated capability: an authenticated principal
+        // alone never reads what a purchase costs.
+        authorization: { kind: 'protected' },
         moduleKey: 'commerce.pricing',
         role: 'api',
       },
       legalEntityScope: 'required',
-      permissionTarget: 'module',
       readKey: 'commerce.pricing.api.current-pricing-decision',
       schemaVersion: '1',
     });
+    // The decision's own capability decides the read (A1). No field group: `result.total` and the
+    // published line amounts are required by the wire contract, and redacting a required property
+    // fails the transport encode, so the whole sensitive read is the gate (O17).
+    expect(currentPricingDecisionRead.descriptor.accessDeclaration).toMatchObject({
+      key: 'commerce.pricing.decision.read',
+      kind: 'read',
+      modes: ['run'],
+      risk: 'sensitive',
+      selectors: [],
+    });
+    expect(Object.keys(currentPricingDecisionRead.descriptor)).not.toContain('permissionTarget');
     expect(currentPricingDecisionRead.descriptor.readKey).not.toBe('commerce.pricing.api.current-supported-currencies');
   });
 
-  it('rejects private Pricing fields from resolved and non-resolved transport responses', () => {
+  suite('rejects private Pricing fields from resolved and non-resolved transport responses', () => {
     const decodeResponse = Schema.decodeUnknownSync(CurrentPricingDecisionResponseSchema, {
       onExcessProperty: 'error',
     });
@@ -482,13 +493,14 @@ describe('Current Pricing Decision governed read', () => {
     ).toThrow();
   });
 
-  it.effect(
+  suite.effect(
     'verifies the subject before the transaction and evaluates after commit over short owner transactions',
     () =>
       Effect.gen(function* preparesThenFinishes() {
         const input = yield* request;
         const legalEntityId = input.decision.commercialScope.sellingLegalEntityId;
-        const compositionRevision = 'a'.repeat(64);
+        const composition = yield* makeCurrentPricingComposition();
+        const compositionRevision = composition.snapshot.composition.revision;
         const scope = {
           ...(yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
             authBindingId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
@@ -500,95 +512,106 @@ describe('Current Pricing Decision governed read', () => {
           })),
           correlationId: 'correlation:790',
         } satisfies OperationalScope;
-        const { readKey } = currentPricingDecisionRead.descriptor;
-        const source = {
-          loadFresh: () => Effect.die('The factory composition test does not evaluate a request'),
-        } satisfies CurrentPricingDecisionWholeEvaluationPort;
-        const gateway = {
-          confirmObservedGenerationsThrough: () => Effect.die('This test stops before owner verification'),
-          verifyOpaqueProofsAgainstCurrentState: () => Effect.die('This test stops before owner verification'),
-        } satisfies PricingOwnerMaterialEvidenceFenceGateway;
-        let observedTransaction: ReadOwnerTransaction | undefined;
-        let observedFenceTransaction: ReadOwnerTransaction | undefined;
         let observedScope: OperationalScope | undefined;
+        let subjectScope: TrustedPrincipalContext | undefined;
         let observedSource: CurrentPricingDecisionWholeEvaluationPort | undefined;
         let observedGateway: PricingOwnerMaterialEvidenceFenceGateway | undefined;
         let observedRevision: string | undefined;
-        // The production pipeline, with the evaluation's owner-state adapters observed instead of built.
-        const read = defineRead(
-          currentPricingDecisionRead.descriptor,
-          {
-            // oxlint-disable perfectionist/sort-objects -- Steps stay in execution order: each step's types infer from the previous one.
-            prepare: prepareCurrentPricingDecision,
-            load: () => Effect.void,
-            finish: makeFinishCurrentPricingDecision(
-              (candidateTransaction, candidateScope) => {
-                observedTransaction = candidateTransaction;
-                observedScope = candidateScope;
-                return Effect.succeed(source);
-              },
-              (candidateTransaction) => {
-                observedFenceTransaction = candidateTransaction;
-                return gateway;
-              },
-            ),
-            // oxlint-enable perfectionist/sort-objects
-          },
-          () => Effect.succeed({}),
-          () => ({ kind: 'module', moduleId: 'commerce.pricing' }),
-        );
-
-        const finished = yield* runReadOwnerSteps(read, input, {
+        let subjectChecks = 0;
+        const harness = yield* makeReadTestHarness({
+          access: 'allowed',
+          applicationComposition: { load: Effect.succeed(composition.snapshot) },
           compositionRevision,
-          readKey,
+          executeOwnerQuery: () => Effect.die('This non-resolved evaluation never queries owner SQL'),
+          expectedDeployment: composition.expectedDeployment,
+          operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(input.decision.operationTime)),
+          ownerAuthorizationDecision: 'allowed',
+          ownerRegistration: pricingRegistration,
           scope,
-          services: {},
-          transaction: unusedOwnerTransaction,
-        }).pipe(
-          Effect.provideService(CurrentPricingDecisionSubjectAuthority, { verify: verifyExactSubjectAuthority }),
-          Effect.provideService(CurrentPricingDecisionEvaluationFactory, {
-            make: (candidateSource, candidateGateway, revision) => {
-              observedSource = candidateSource;
-              observedGateway = candidateGateway;
-              observedRevision = revision;
-              return { evaluate: () => Effect.succeed(nonResolvedEvaluationFor(input)) };
-            },
-          }),
-        );
-
-        expect(observedTransaction).toBe(unusedOwnerTransaction);
-        expect(observedFenceTransaction).toBe(unusedOwnerTransaction);
-        expect(observedScope).toEqual(scope);
-        expect(observedSource).toBe(source);
-        expect(observedGateway).toBe(gateway);
-        expect(observedRevision).toBe(compositionRevision);
-        expect(finished).toEqual({
-          evidence: { resultCount: 1 },
-          result: projectCurrentPricingDecisionResponse(outcomeFor(input)),
         });
-
-        // Without a configured issuer the environment-backed verification is unavailable, before any transaction.
-        const absentIssuerFailure = yield* prepareCurrentPricingDecision(input, {
-          compositionRevision,
-          readKey,
-          scope,
-        }).pipe(Effect.flip);
-        expect(Schema.is(ReadHandlerUnavailable)(absentIssuerFailure)).toBe(true);
-        // Without the captured composition revision nothing remote is attempted.
-        const missingRevision = yield* prepareCurrentPricingDecision(input, { readKey, scope }).pipe(
-          Effect.provideService(CurrentPricingDecisionSubjectAuthority, { verify: verifyExactSubjectAuthority }),
-          Effect.flip,
-        );
-        expect(Schema.is(OperationContextUnavailable)(missingRevision)).toBe(true);
+        const finished = yield* harness.runtime
+          .runRead({
+            input,
+            principal: scope,
+            registration: currentPricingDecisionRead,
+            transport: { correlationId: scope.correlationId },
+          })
+          .pipe(
+            Effect.provideService(CurrentPricingDecisionSubjectAuthority, {
+              verify: (authorityInput) =>
+                refuseInsideDatabaseTransaction('module-transport', 'CustomerContext.subject').pipe(
+                  Effect.andThen(() => {
+                    subjectChecks += 1;
+                    subjectScope = authorityInput.scope.principal;
+                    return verifyExactSubjectAuthority(authorityInput);
+                  }),
+                ),
+            }),
+            Effect.provideService(CurrentPricingDecisionEvaluationFactory, {
+              make: (candidateSource, candidateGateway, revision, candidateScope, requirements) => {
+                observedSource = candidateSource;
+                observedGateway = candidateGateway;
+                observedRevision = revision;
+                observedScope = candidateScope;
+                expect(requirements).toEqual(currentPricingDecisionRequirements);
+                return {
+                  evaluate: () =>
+                    refuseInsideDatabaseTransaction('module-transport', 'Pricing.evaluate').pipe(
+                      Effect.as(nonResolvedEvaluationFor(input)),
+                    ),
+                };
+              },
+            }),
+          );
+        expect(subjectChecks).toBe(1);
+        expect(observedScope).toBe(subjectScope);
+        expect(observedSource).toBeDefined();
+        expect(observedGateway).toBeDefined();
+        expect(observedRevision).toBe(compositionRevision);
+        expect(finished).toEqual(projectCurrentPricingDecisionResponse(outcomeFor(input)));
+        expect(harness.snapshot().ownerQueries).toEqual([]);
+        expect(harness.snapshot().evidenceWrites).toBe(1);
       }).pipe(
         Effect.provideService(
           PricingExternalOwnerEvidenceValidation,
           makePricingExternalOwnerEvidenceValidationService(),
         ),
       ),
+    60_000,
   );
 
-  it.effect('fails closed before source construction when trusted SLE scope is absent', () =>
+  suite.effect('refuses direct preparation without genuine runtime admission before any owner call', () =>
+    Effect.gen(function* noBorrowedRuntimeAdmission() {
+      const input = yield* request;
+      const scope: OperationalScope = {
+        ...principalFor(input.decision.tenantId),
+        correlationId: 'no-admitted-pricing-runtime',
+        legalEntityId: input.decision.commercialScope.sellingLegalEntityId,
+      };
+      const { readKey } = currentPricingDecisionRead.descriptor;
+      let subjectCalls = 0;
+      const authority: CurrentPricingDecisionSubjectAuthorityService = {
+        verify: (authorityInput) => {
+          subjectCalls += 1;
+          return verifyExactSubjectAuthority(authorityInput);
+        },
+      };
+      const failure = yield* prepareCurrentPricingDecision(input, {
+        compositionRevision: 'a'.repeat(64),
+        readKey,
+        scope,
+      }).pipe(Effect.provideService(CurrentPricingDecisionSubjectAuthority, authority), Effect.flip);
+      expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
+      const missingRevision = yield* prepareCurrentPricingDecision(input, { readKey, scope }).pipe(
+        Effect.provideService(CurrentPricingDecisionSubjectAuthority, authority),
+        Effect.flip,
+      );
+      expect(Schema.is(OperationContextUnavailable)(missingRevision)).toBe(true);
+      expect(subjectCalls).toBe(0);
+    }),
+  );
+
+  suite.effect('fails closed before source construction when trusted SLE scope is absent', () =>
     Effect.gen(function* requiresScopedTransactionContext() {
       const principal = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
         authBindingId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',

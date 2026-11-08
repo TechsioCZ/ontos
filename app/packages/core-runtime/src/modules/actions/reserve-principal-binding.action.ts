@@ -9,13 +9,15 @@ import { ExternalIdentityActionAuditEvidenceSchema } from '../../auth/external-i
 import {
   externalIdentityQueryHash,
   externalIdentityRepositoryFromTransaction,
-  authenticationNamespaceRegistration,
 } from '../../auth/external-identity/repository.ts';
 import { ExternalIdentityAdmission } from '../../auth/external-identity/resolve.ts';
-import { prepareIdentityNamespaceAuthorization } from '../../auth/external-identity/namespace-action-preparation.ts';
+import {
+  GrantedProvisioningNamespaces,
+  authorizeProvisioningNamespace,
+} from '../../auth/external-identity/namespace-authority.ts';
+import { AuthenticationNamespaceRegistry } from '../../auth/external-identity/verifier.ts';
 import type {
   ExternalIdentityAdmissionContext,
-  ExternalIdentityRepositoryDependencies,
   ExternalIdentityRepositoryService,
   PrepareExternalIdentityInput,
 } from '../../auth/external-identity/repository.ts';
@@ -28,8 +30,6 @@ import {
   ReservePrincipalBindingPayloadSchema,
   ReservePrincipalBindingResultSchema,
 } from '../../auth/external-identity-contracts.ts';
-import { externalIdentityFailure } from '../../auth/external-identity/errors.ts';
-import { OperationContextUnavailable } from '../../operations/errors.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 import {
   createReservePrincipalBindingCoreIdentityPrincipalBindingReservedV1OutboxMessage,
@@ -125,9 +125,16 @@ const handleReservePrincipalBinding = Effect.fn('ReservePrincipalBindingAction.h
 
 export const reservePrincipalBindingAction = defineAction(
   {
+    // Namespace and binding provisioning is a trusted machine (system-workload) capability checked by the
+    // identity-namespace provisioner and trusted admission; no human or agent holds it as a capability.
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'core.identity.reserve-principal-binding.access.v1',
+    },
+    accessWorkload: {
+      reason:
+        'Reserving a principal binding is a machine provisioning step that the identity-namespace provisioner runs after trusted admission; a human or agent capability would let callers pre-claim identities (O29, O36, O59).',
+      workloads: ['core.identity-provider'],
     },
     actionKey: 'core.identity.reserve-principal-binding',
     auditEvidenceSchema: ExternalIdentityActionAuditEvidenceSchema,
@@ -136,7 +143,7 @@ export const reservePrincipalBindingAction = defineAction(
     domainEvents: principalBindingLifecycleDomainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.reserve-principal-binding',
       moduleKey: 'core.identity',
       role: 'action',
@@ -150,59 +157,24 @@ export const reservePrincipalBindingAction = defineAction(
     schemaVersion: '1',
   },
   handleReservePrincipalBinding,
-  () =>
-    Effect.fail(
-      new OperationContextUnavailable({
-        code: 'operation_context_unavailable',
-        reason: 'Identity reservation requires invocation-local namespace preparation',
-      }),
-    ),
-  {
-    prepareServices: Effect.fn('ReservePrincipalBindingAction.prepareServices')(
-      function* prepareServices(payload, context) {
-        const selector = structuredClone(payload);
-        const samePayload = Schema.toEquivalence(ReservePrincipalBindingPayloadSchema);
-        const registration = yield* authenticationNamespaceRegistration({}, selector.authenticationNamespaceId).pipe(
-          Effect.mapError((failure) => new ExternalIdentityError({ code: failure.code })),
-        );
-        const preparedRegistration = structuredClone(registration);
-        const prepared = yield* prepareIdentityNamespaceAuthorization(selector.authenticationNamespaceId, context).pipe(
-          Effect.mapError((failure) => new ExternalIdentityError({ code: failure.code })),
-        );
-        const admission = yield* Effect.serviceOption(ExternalIdentityAdmission);
-        return Effect.fn('ReservePrincipalBindingAction.preparedServices')(
-          function* preparedServices(transaction, scope, compositionRevision) {
-            yield* prepared.bind(scope, compositionRevision);
-            const dependencies: ExternalIdentityRepositoryDependencies = {
-              authorizeNamespace: prepared.authorizeNamespace,
-              preparedRegistration,
-            };
-            const repository = externalIdentityRepositoryFromTransaction(transaction, dependencies);
-            const prepare: Services['prepare'] = Effect.fn('ReservePrincipalBindingAction.prepareExactSubject')(
-              function* prepareExactSubject(input) {
-                const candidate =
-                  input.displayName === undefined
-                    ? input.subject
-                    : { ...input.subject, displayName: input.displayName };
-                if (
-                  input.invocationId !== context.actionInvocationId ||
-                  input.tenantId !== scope.tenantId ||
-                  !samePayload(selector, candidate)
-                ) {
-                  return yield* externalIdentityFailure(
-                    'identity_unavailable',
-                    'The prepared identity reservation does not match this invocation',
-                  );
-                }
-                const result = yield* repository.prepare(input);
-                yield* prepared.authorizeNamespace(selector.authenticationNamespaceId);
-                return result;
-              },
-            );
-            return { admission, prepare };
-          },
-        );
-      },
-    ),
-  },
+  Effect.fn('ReservePrincipalBindingAction.services')(function* makeServices(transaction, scope) {
+    const registry = yield* Effect.serviceOption(AuthenticationNamespaceRegistry);
+    const granted = yield* Effect.serviceOption(GrantedProvisioningNamespaces);
+    // The namespace qualification of a provisioning workload is not a SpiceDB grant (O29, O36, O59,
+    // O67-Q4): the gate admits only a trusted workload on this `accessWorkload` carrier, which may
+    // provision the namespace it is registered in or the exact namespace its trusted composition
+    // granted it for this request.
+    const dependencies = {
+      authorizeNamespace: (authenticationNamespaceId: string) =>
+        authorizeProvisioningNamespace({ authenticationNamespaceId, granted, scope }),
+    };
+    if (Option.isSome(registry)) {
+      Object.assign(dependencies, { registry: registry.value });
+    }
+    const repository = externalIdentityRepositoryFromTransaction(transaction, dependencies);
+    return {
+      admission: yield* Effect.serviceOption(ExternalIdentityAdmission),
+      prepare: repository.prepare,
+    };
+  }),
 );

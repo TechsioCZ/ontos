@@ -1,4 +1,5 @@
 import { CalendarDateWireSchema as CalendarDateSchema } from '@app/shared-contracts';
+import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { Schema } from 'effect';
 import {
   EmployeeIdSchema,
@@ -49,6 +50,7 @@ export const OpportunitySchema = Schema.Struct({
   closedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   createdAt: Schema.DateTimeUtcFromString,
   currency: OpportunityCurrencySchema,
+  entrustedPrincipalRef: Schema.optionalKey(PrincipalRefSchema),
   expectedCloseDate: CalendarDateSchema,
   id: OpportunityIdSchema,
   lines: OpportunityLinesSchema,

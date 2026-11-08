@@ -70,7 +70,15 @@ it.effect(
       expect(descriptor.legalEntityScope).toBe('required');
       expect(descriptor.auditProfile).toBe('sensitive');
       expect(descriptor.idempotency).toBe('required');
-      expect(descriptor.entrypoint.authorization).toEqual({ kind: 'action_execution', provisioning: 'explicit' });
+      expect(descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+      // Inviting a person is human-only administration (O43), decided by the one gate over this
+      // declaration; the retired `explicit` provisioning mode is gone.
+      expect(descriptor.accessDeclaration).toMatchObject({
+        key: 'core.identity.person.invite',
+        kind: 'admin',
+        modes: ['run'],
+        risk: 'critical',
+      });
       expect(coreActionCatalog.filter((entry) => entry.actionKey === descriptor.actionKey)).toHaveLength(1);
     }),
 );

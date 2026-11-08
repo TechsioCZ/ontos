@@ -68,6 +68,14 @@ export const handleRecordDsrSubstantiveDecision = Effect.fn('RecordDsrSubstantiv
 );
 export const recordDsrSubstantiveDecisionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.dsr-substantive-decision.record',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'dsr', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.record-dsr-substantive-decision.access.v1',
@@ -79,7 +87,7 @@ export const recordDsrSubstantiveDecisionAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.record-dsr-substantive-decision',
       moduleKey: 'privacy.core',
       role: 'action',

@@ -1,6 +1,6 @@
 import { rentalDemoBrandProfiles } from '../../packages/core-runtime/src/install/demo-rental-brand-profiles.ts';
-import { BootstrapCompanyMembershipSchema } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
 import { rentalDemoCompany } from '../../packages/core-runtime/src/install/demo-company-profiles.ts';
+import { AccessCatalogModulesSchema } from '@app/core-runtime/access/catalog';
 import { CoreSearchProjectionDocumentSchema } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { PropertyStateSchema } from '@app/property-portfolio/contracts/records';
@@ -696,18 +696,59 @@ const SeedAccountsSchema = Schema.Array(SeedAccountSchema).check(
   ),
 );
 export const AccountsFixtureSchema = Schema.Struct({ accounts: SeedAccountsSchema });
-export const RelationshipSchema = Schema.Struct({
-  relation: SeedTextSchema,
-  resourceId: Schema.toEncoded(SeedTextSchema.pipe(Schema.brand('AuthorizationResourceId'))),
-  resourceType: SeedTextSchema,
-  subjectId: Schema.toEncoded(SeedTextSchema.pipe(Schema.brand('AuthorizationSubjectId'))),
-  subjectRelation: Schema.optionalKey(SeedTextSchema),
-  subjectType: SeedTextSchema,
+/**
+ * The reviewed access policy as canonical v2 intent (ADR-0030). The seed port hands these to
+ * `bootstrapTenantAccess`, the role writer and the people commands; no SpiceDB tuple is written by hand.
+ */
+export const AccessFixtureSchema = Schema.Struct({
+  assignments: Schema.Array(
+    Schema.Struct({
+      legalEntityId: Schema.optionalKey(Schema.toEncoded(SeedUuidSchema.pipe(Schema.brand('DemoLegalEntityId')))),
+      principalId: Schema.toEncoded(SeedUuidSchema.pipe(Schema.brand('DemoPrincipalId'))),
+      roleKey: Schema.toEncoded(SeedTextSchema.pipe(Schema.brand('DemoRoleKey'))),
+    }),
+  ),
+  legalEntityIds: Schema.Array(Schema.toEncoded(SeedUuidSchema.pipe(Schema.brand('DemoLegalEntityId')))),
+  memberships: Schema.Array(
+    Schema.Struct({
+      kind: Schema.Literals(['member', 'owner', 'access_admin']),
+      legalEntityId: Schema.optionalKey(Schema.toEncoded(SeedUuidSchema.pipe(Schema.brand('DemoLegalEntityId')))),
+      principalId: Schema.toEncoded(SeedUuidSchema.pipe(Schema.brand('DemoPrincipalId'))),
+    }),
+  ),
+  modules: Schema.toEncoded(AccessCatalogModulesSchema),
+  roles: Schema.Array(
+    Schema.Struct({
+      cells: Schema.Array(
+        Schema.Struct({
+          capabilityKey: Schema.toEncoded(SeedTextSchema.pipe(Schema.brand('CapabilityKey'))),
+          mode: Schema.Literals(['run', 'propose', 'approve']),
+          selector: Schema.Literals(['all', 'assigned', 'entrusted', 'team']),
+        }),
+      ),
+      key: SeedTextSchema,
+      label: SeedTextSchema,
+      legalEntityId: Schema.optionalKey(Schema.toEncoded(SeedUuidSchema.pipe(Schema.brand('DemoLegalEntityId')))),
+    }),
+  ),
+  workloads: Schema.Array(
+    Schema.Struct({
+      principalId: Schema.toEncoded(SeedUuidSchema.pipe(Schema.brand('DemoPrincipalId'))),
+      workloadKey: Schema.toEncoded(SeedTextSchema.pipe(Schema.brand('WorkloadKey'))),
+    }),
+  ),
 });
-export type Relationship = typeof RelationshipSchema.Type;
+export type AccessFixture = typeof AccessFixtureSchema.Type;
+/** Explicit reviewed SQL memberships; a role assignment never creates one (D27). */
+export const CompanyMembershipSchema = Schema.Struct({
+  affiliation: Schema.Literals(['employee', 'external']),
+  legalEntityId: Schema.toEncoded(SeedUuidSchema.pipe(Schema.brand('DemoLegalEntityId'))),
+  principalId: Schema.toEncoded(SeedUuidSchema.pipe(Schema.brand('DemoPrincipalId'))),
+});
 export const ContextFixtureSchema = Schema.Struct({
+  access: AccessFixtureSchema,
   accounts: SeedAccountsSchema,
-  companyMemberships: Schema.optionalKey(Schema.Array(Schema.toEncoded(BootstrapCompanyMembershipSchema))),
+  companyMemberships: Schema.optionalKey(Schema.Array(CompanyMembershipSchema)),
   legalEntity: Schema.Struct({
     legalEntityId: Schema.Literal(demoLegalEntityId),
     legalName: SeedTextSchema,
@@ -720,7 +761,6 @@ export const ContextFixtureSchema = Schema.Struct({
       stateId: Schema.toEncoded(SeedUuidSchema.pipe(Schema.brand('DemoStateId'))),
     }),
   ),
-  relationships: Schema.Array(RelationshipSchema),
   searchDocuments: Schema.Array(CoreSearchProjectionDocumentSchema),
   tenant: Schema.Struct({
     defaultLocale: Schema.Literal('cs'),

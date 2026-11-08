@@ -38,6 +38,8 @@ import { SelectTemplate } from '@app/admin-ui/select-template';
 import { Effect, Fiber, Match, Option, Schema } from 'effect';
 import { createContext, use, useEffect, useRef, useState } from 'react';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
+import { executeUpdateEmployee } from '../../../../api/update-employee-action-client.ts';
+import { committedResult, pendingProposalMessage } from '../../../../api/action-result.ts';
 import { executeFreshRecords } from '../../../../api/records-consumer.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { legalEntityOf, usePageData } from '../../../../runtime/use-page-data.ts';
@@ -198,34 +200,45 @@ const EmployeeTagsCell = ({ row }: CellContext<Employee>) => {
 };
 
 /** Maps a failed apply-command call to the outcome the forms show. A duplicate e-mail stays on the field. */
-const outcomeOfFailure = (error: Effect.Error<ReturnType<typeof executeApplyCommand>>): CommitOutcome =>
+const outcomeOfFailure = (error: Effect.Error<ReturnType<typeof execute>>): CommitOutcome =>
   Match.value(error).pipe(
-    Match.tag('ApplyCommandActionConflictProblem', (problem): CommitOutcome =>
+    Match.tag('ApplyCommandActionConflictProblem', 'UpdateEmployeeActionConflictProblem', (problem): CommitOutcome =>
       problem.code === 'workforce_revision_conflict' ? 'conflict' : 'failed',
     ),
-    Match.tag('ApplyCommandActionIneligibleProblem', (problem): CommitOutcome =>
-      problem.code === 'workforce_duplicate_email' ? 'duplicateEmail' : 'failed',
+    Match.tag('WorkforceDuplicateEmailProblem', (): CommitOutcome => 'duplicateEmail'),
+    Match.tag(
+      'ApplyCommandActionForbiddenProblem',
+      'UpdateEmployeeActionForbiddenProblem',
+      (): CommitOutcome => 'forbidden',
     ),
-    Match.tag('ApplyCommandActionForbiddenProblem', (): CommitOutcome => 'forbidden'),
     Match.orElse((): CommitOutcome => 'failed'),
   );
 
 const execute = (command: WorkforceCommand, expectedRevision: number) =>
   newRequestToken.pipe(
-    Effect.flatMap((token) =>
-      executeApplyCommand({ command, expectedRevision }, `workforce:command:${token}`, {
-        idempotencyKey: `workforce:${token}`,
-      }),
-    ),
+    Effect.flatMap((token) => {
+      const correlation = `workforce:command:${token}`;
+      const options = { idempotencyKey: `workforce:${token}` };
+      return Match.value(command).pipe(
+        Match.tag('CreateEmployee', (value) =>
+          executeApplyCommand({ command: value, expectedRevision }, correlation, options),
+        ),
+        Match.tag('UpdateEmployee', 'BulkUpdateEmployees', (value) =>
+          executeUpdateEmployee({ command: value, expectedRevision }, correlation, options),
+        ),
+        Match.exhaustive,
+      );
+    }),
+    Effect.flatMap(committedResult),
   );
 
 /** Autosave of the edit panel: the draft's base revision, no toast; the saved fields show on the row right away. */
 const autosaveCommitOf =
-  (reload: () => void, showSaved: (shown: ShownEdit) => void): AutosaveCommand =>
+  (reload: () => void, showSaved: (shown: ShownEdit) => void, failed: typeof outcomeOfFailure): AutosaveCommand =>
   (command, expectedRevision, shown) =>
     execute(command, expectedRevision).pipe(
       Effect.match({
-        onFailure: outcomeOfFailure,
+        onFailure: failed,
         onSuccess: (response): CommitOutcome | number => response.revision,
       }),
       Effect.tap((result) =>
@@ -835,6 +848,70 @@ const EmployeeBulkOverlays = ({
   </>
 );
 
+const EmployeesEmptyState = ({
+  canWrite,
+  filtered,
+  onClear,
+  onCreate,
+  onRetry,
+  status,
+  tagFilterFailed,
+}: {
+  readonly canWrite: boolean;
+  readonly filtered: boolean;
+  readonly onClear: () => void;
+  readonly onCreate: () => void;
+  readonly onRetry: () => void;
+  readonly status: LoadState['status'];
+  readonly tagFilterFailed: boolean;
+}) => {
+  const { t } = useModernI18n();
+  if (status === 'error') {
+    return (
+      <EmptyState
+        action={
+          <Button onClick={onRetry} size="sm" theme="outlined" variant="secondary">
+            {t(`${key}.errors.retry`)}
+          </Button>
+        }
+        description={t(`${key}.errors.loadDescription`)}
+        title={t(`${key}.errors.load`)}
+      />
+    );
+  }
+  if (status === 'forbidden') {
+    return <EmptyState title={t(`${key}.empty.forbidden`)} />;
+  }
+  if (tagFilterFailed) {
+    return <EmptyState description={t(`${key}.errors.loadDescription`)} title={t(`${key}.errors.load`)} />;
+  }
+  if (filtered) {
+    return (
+      <EmptyState
+        action={
+          <Button onClick={onClear} size="sm" theme="outlined" variant="secondary">
+            {t(`${key}.filters.clear`)}
+          </Button>
+        }
+        title={t(`${key}.empty.noResults`)}
+      />
+    );
+  }
+  return (
+    <EmptyState
+      action={
+        canWrite ? (
+          <Button onClick={onCreate} size="sm" theme="outlined" variant="secondary">
+            {t(`${key}.create`)}
+          </Button>
+        ) : undefined
+      }
+      description={t(`${key}.empty.firstDescription`)}
+      title={t(`${key}.empty.first`)}
+    />
+  );
+};
+
 const EmployeesPageContent = ({
   legalEntityId,
   scope,
@@ -864,7 +941,14 @@ const EmployeesPageContent = ({
   const showSaved = (shown: ShownEdit) => employeesData.update(legalEntityId, (data) => withSavedEdit(data, shown));
 
   /** Sends one command on the revision the page last read. A conflict or a success reloads the list. */
-  const autosaveCommit = autosaveCommitOf(reload, showSaved);
+  const failed: typeof outcomeOfFailure = (error) => {
+    const pending = pendingProposalMessage(error);
+    if (pending !== undefined) {
+      toaster.create({ title: pending, type: 'info' });
+    }
+    return outcomeOfFailure(error);
+  };
+  const autosaveCommit = autosaveCommitOf(reload, showSaved, failed);
 
   const commit: CommitCommand = (build, successKey, shown) => {
     if (state.status !== 'ready') {
@@ -874,7 +958,7 @@ const EmployeesPageContent = ({
     return build.pipe(
       Effect.flatMap((command) => execute(command, revision)),
       Effect.match({
-        onFailure: outcomeOfFailure,
+        onFailure: failed,
         onSuccess: (): CommitOutcome => 'saved',
       }),
       Effect.tap((outcome) =>
@@ -973,52 +1057,17 @@ const EmployeesPageContent = ({
 
   const openCreate = () => setForm({ employee: null });
 
-  const renderEmpty = () => {
-    if (state.status === 'error') {
-      return (
-        <EmptyState
-          action={
-            <Button onClick={reload} size="sm" theme="outlined" variant="secondary">
-              {t(`${key}.errors.retry`)}
-            </Button>
-          }
-          description={t(`${key}.errors.loadDescription`)}
-          title={t(`${key}.errors.load`)}
-        />
-      );
-    }
-    if (state.status === 'forbidden') {
-      return <EmptyState title={t(`${key}.empty.forbidden`)} />;
-    }
-    if (tagFilterFailed) {
-      return <EmptyState description={t(`${key}.errors.loadDescription`)} title={t(`${key}.errors.load`)} />;
-    }
-    if (hasActiveFilters(filters) || tagFilter !== null) {
-      return (
-        <EmptyState
-          action={
-            <Button onClick={clearFilters} size="sm" theme="outlined" variant="secondary">
-              {t(`${key}.filters.clear`)}
-            </Button>
-          }
-          title={t(`${key}.empty.noResults`)}
-        />
-      );
-    }
-    return (
-      <EmptyState
-        action={
-          canWrite ? (
-            <Button onClick={openCreate} size="sm" theme="outlined" variant="secondary">
-              {t(`${key}.create`)}
-            </Button>
-          ) : undefined
-        }
-        description={t(`${key}.empty.firstDescription`)}
-        title={t(`${key}.empty.first`)}
-      />
-    );
-  };
+  const renderEmpty = () => (
+    <EmployeesEmptyState
+      canWrite={canWrite}
+      filtered={hasActiveFilters(filters) || tagFilter !== null}
+      onClear={clearFilters}
+      onCreate={openCreate}
+      onRetry={reload}
+      status={state.status}
+      tagFilterFailed={tagFilterFailed}
+    />
+  );
 
   return (
     <>

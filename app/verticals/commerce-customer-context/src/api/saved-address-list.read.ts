@@ -4,7 +4,7 @@ import type { ReadLoadContext, ReadHandlerUnavailable } from '@app/core-runtime'
 import { Effect } from 'effect';
 import { SavedAddressListRequestSchema, SavedAddressListResponseSchema } from '../../shared/apis/saved-address-list.ts';
 import type { SavedAddressListRequest, SavedAddressListResponse } from '../../shared/apis/saved-address-list.ts';
-import { profileTarget } from './address-read-support.ts';
+import { addressBookProfileOwnerFacts } from './read-owner-facts.ts';
 import { addressReadServicesForTransaction } from '../persistence/address-persistence.ts';
 
 export interface SavedAddressListServices {
@@ -15,14 +15,35 @@ export interface SavedAddressListServices {
 }
 const savedAddressListEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'authenticated_principal' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.saved-address-list',
   moduleKey: 'commerce.customer-context',
   role: 'api',
 });
 export const savedAddressListRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.saved-address.list',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'address-book', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+    accessFieldGroups: [
+      {
+        fieldClass: 'personal_data',
+        fields: ['addresses.label', 'addresses.origin.postalAddress'],
+        key: 'commerce.customer-context.saved-address-list.personal.read',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'sensitive-fields', level: 'extended' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
     accessKind: 'list',
+    accessOwnerFacts: addressBookProfileOwnerFacts,
     entrypoint: savedAddressListEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',
@@ -31,7 +52,6 @@ export const savedAddressListRead = defineRead(
     inputSchema: SavedAddressListRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: 'commerce.customer-context',
-    permissionTarget: 'business_permission',
     policies: [],
     readKey: 'commerce.customer-context.api.saved-address-list',
     resultSchema: SavedAddressListResponseSchema,
@@ -45,5 +65,4 @@ export const savedAddressListRead = defineRead(
   },
   (transaction, scope) =>
     Effect.succeed<SavedAddressListServices>(addressReadServicesForTransaction(transaction, scope)),
-  profileTarget,
 );

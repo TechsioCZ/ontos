@@ -1,3 +1,4 @@
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '@app/party-registry-identity-contracts';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { DateTime, Effect, Option, Schema, Predicate } from 'effect';
@@ -34,7 +35,10 @@ const harnessPrincipal = trustResolvedSystemPrincipalContext({
 const party = Schema.decodeSync(PartySchema)({
   archivedAt: null,
   createdAt: '2026-01-01T00:00:00.000Z',
+  businessName: 'Example organization',
   displayName: 'Example organization',
+  firstName: null,
+  lastName: null,
   partyRef: makePartyRef(tenantId, partyId),
   partyType: 'ORGANIZATION',
   revision: 2,
@@ -62,7 +66,7 @@ it.effect('Update Party records metadata-only invariant evidence with its event 
     );
     yield* getActionHandler(updatePartyAction)(
       {
-        displayName: 'Example organization',
+        businessName: 'Example organization',
         expectedRevision: 1,
         partyRef: party.partyRef,
         provenanceMethod: 'MANUAL',
@@ -148,11 +152,12 @@ it.effect('Unarchive review outcome commits once and replays without an unarchiv
         ...party,
         archivedAt: Option.some(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
       },
-      reasonCode: 'EXACT_CLAIM_CONFLICT' as const,
+      reasonCode: 'OPEN_DUPLICATE_CASE' as const,
     };
     const harness = yield* makeActionTestHarness({
+      access: 'allowed',
       databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-      actionPermission: 'allowed',
+      ownerRegistration: partyRegistryBackendRegistration,
       services: [
         bindActionTestServices(unarchivePartyAction, {
           unarchive: () =>
@@ -162,7 +167,6 @@ it.effect('Unarchive review outcome commits once and replays without an unarchiv
             }),
         }),
       ],
-      tenantPermission: 'allowed',
     });
     const request = {
       payload: {

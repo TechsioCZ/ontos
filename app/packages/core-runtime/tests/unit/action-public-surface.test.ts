@@ -97,6 +97,8 @@ it('publishes only the narrow server Action surface', () => {
   expect('ActionRepositoryLive' in publicSurface).toBe(false);
   expect('createActionCollector' in publicSurface).toBe(false);
   expect('makeActionRepository' in publicSurface).toBe(false);
+  expect('makeActionPreparationProbe' in publicSurface).toBe(false);
+  expect('ActionPreparationObservation' in publicSurface).toBe(false);
   expect('finalizePolicyDenial' in publicSurface).toBe(false);
   expect('isActionPolicy' in publicSurface).toBe(false);
   expect('ActionPermission' in publicSurface).toBe(false);

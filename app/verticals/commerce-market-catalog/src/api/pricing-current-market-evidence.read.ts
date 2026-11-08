@@ -15,7 +15,7 @@ const commerceMarketCatalogModuleKey = 'commerce.market-catalog';
 
 const pricingCurrentMarketEvidenceEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'authenticated_principal' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.market-catalog.api.pricing-current-market-evidence',
   moduleKey: commerceMarketCatalogModuleKey,
   role: 'api',
@@ -57,6 +57,19 @@ export const handlePricingCurrentMarketEvidence = (
 
 export const pricingCurrentMarketEvidenceRead = defineRead(
   {
+    accessActor: {
+      callers: ['pricing'],
+      reason: "Pricing reads current Market evidence while it evaluates a verified requester's prices.",
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.market-catalog.pricing-market-evidence.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'markets', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: pricingCurrentMarketEvidenceEntrypoint,
     evidencePolicy: {
@@ -66,14 +79,12 @@ export const pricingCurrentMarketEvidenceRead = defineRead(
     inputSchema: PricingCurrentMarketEvidenceRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: commerceMarketCatalogModuleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.market-catalog.api.pricing-current-market-evidence',
     resultSchema: PricingCurrentMarketEvidenceResponseSchema,
     schemaVersion: '1',
   },
-  { load: handlePricingCurrentMarketEvidence },
-  (transaction, scope, compositionRevision) =>
-    pricingCurrentMarketEvidencePersistenceForScope(transaction, scope, compositionRevision),
-  () => ({ kind: 'module', moduleId: commerceMarketCatalogModuleKey }),
+  handlePricingCurrentMarketEvidence,
+  (transaction, scope, compositionRevision, listAccess) =>
+    pricingCurrentMarketEvidencePersistenceForScope(transaction, scope, compositionRevision, listAccess),
 );

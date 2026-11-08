@@ -1,9 +1,9 @@
 import type { ActionServicePreparationContext, OperationalScope } from '@app/core-runtime';
 import { OperationContextUnavailable, TrustedPrincipalContextSchema } from '@app/core-runtime';
-import { DateTime, Effect, Result, Schema } from 'effect';
+import { DateTime, Effect, Option, Result, Schema } from 'effect';
 import {
   CartOpenSelectionPopulationUnavailable,
-  cartOpenSelectionPopulationFromEnvironment,
+  cartOpenSelectionPopulationForScope,
   readCartOpenSelectionPopulation,
 } from '../../shared/domain/catalog-open-selection-population.ts';
 import type { CartOpenSelectionPopulationPort } from '../../shared/domain/catalog-open-selection-population.ts';
@@ -11,7 +11,7 @@ import type { CartOpenSelectionPopulationPort } from '../../shared/domain/catalo
 /** Tenant is the entire remote selector. Owner-local candidate/revision checks still run at commit. */
 export const prepareCatalogOpenSelectionPopulation = Effect.fn('CatalogOpenSelections.prepare')(
   function* preparePopulation(context: ActionServicePreparationContext) {
-    const source = yield* cartOpenSelectionPopulationFromEnvironment;
+    const source = Option.getOrUndefined(yield* cartOpenSelectionPopulationForScope(context.scope));
     if (source === undefined) {
       return {
         read: () =>

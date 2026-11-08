@@ -2,7 +2,7 @@
 // @ontos-action-owner pricing.price-group-catalog
 // @ontos-action-slug create-price-group
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 
 import {
@@ -102,6 +102,14 @@ export const handleCreatePriceGroup = Effect.fn('CreatePriceGroupAction.handle')
 
 export const createPriceGroupAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'pricing.price-group-catalog.price-group.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'price-groups', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'pricing.price-group-catalog.create-price-group.access.v1',
@@ -109,19 +117,11 @@ export const createPriceGroupAction = defineAction(
     actionKey: 'pricing.price-group-catalog.create-price-group',
     auditEvidenceSchema: CreatePriceGroupAuditEvidenceSchema,
     auditProfile: 'standard',
-    businessPermission: defineActionBusinessPermission<CreatePriceGroupPayload>((_payload, scope) => ({
-      permission: 'pricing.price_group.create',
-      target: {
-        kind: 'pricing_catalog',
-        pricingCatalogId: scope.tenantId,
-        tenantId: scope.tenantId,
-      },
-    })),
     domainErrorSchema: PriceGroupOwnerFailureSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'pricing.price-group-catalog.create-price-group',
       moduleKey: 'pricing.price-group-catalog',
       role: 'action',

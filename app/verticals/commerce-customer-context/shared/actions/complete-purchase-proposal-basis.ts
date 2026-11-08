@@ -2,6 +2,6 @@
 import type { CompletePurchaseProposalBasisPayloadSchema } from '../apis/purchase-proposal-basis.ts';
 
 export { CompletePurchaseProposalBasisPayloadSchema } from '../apis/purchase-proposal-basis.ts';
-export { CompletePurchaseProposalBasisResultSchema } from '../apis/purchase-proposal-basis.ts';
+export { PurchaseProposalBasisSchema } from '../apis/purchase-proposal-basis.ts';
 export { PurchasingApprovalRejected as CompletePurchaseProposalBasisRejected } from '../domain/purchasing-approval.ts';
 export type CompletePurchaseProposalBasisPayload = typeof CompletePurchaseProposalBasisPayloadSchema.Type;

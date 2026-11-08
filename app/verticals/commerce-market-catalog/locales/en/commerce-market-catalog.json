@@ -111,13 +111,16 @@
       "reason": "Market {{code}} created in the e-shop overview",
       "created": "Market {{code}} has been created.",
       "createdWithoutPricing": "Market {{code}} has been created, but its price list could not be saved. Complete it on the market detail.",
+      "createdPricingAwaitingApproval": "Market {{code}} has been created. Its price list is awaiting approval and has not been saved yet.",
       "openMarket": "Open market"
     },
+    "approvalRequired": "The proposal is awaiting approval. The change has not been applied.",
     "failures": {
       "conflict": "The market changed in the meantime. The data was reloaded, please try again.",
       "forbidden": "You are not allowed to make this change.",
       "invalid": "The data is not valid. Please check the form.",
       "rejected": "This change is not possible in the market's current state.",
+      "settlementPending": "The market is already retired, but the reservation settlement is still finishing. The data was reloaded; do not repeat the retirement.",
       "unavailable": "The service is unavailable right now. Please try again shortly."
     },
     "detail": {
@@ -139,24 +142,9 @@
         "reason": "Reason for the retirement",
         "confirm": "Retire market",
         "requested": "Market {{code}} is being retired.",
-        "pending": "The market is being retired: {{stage}}. The status updates by itself.",
+        "pending": "The market is being retired; the remaining settlement finishes in the background. The data refreshes itself.",
         "completed": "The market is retired.",
-        "failed": "The last retirement attempt failed: {{reason}}.",
-        "stage": {
-          "REQUESTED": "waiting to be processed",
-          "RESERVATION_REQUESTED": "checking the impact",
-          "RESERVED": "impact checked",
-          "COMMIT_PENDING": "finishing",
-          "RELEASE_PENDING": "cancelling the unfinished retirement"
-        },
-        "reasons": {
-          "replacement_impact_unresolved": "the market is still used as a default market or in open proposals",
-          "impact_assessment_stale": "the impact changed in the meantime",
-          "impact_assessment_rejected": "the impact check was rejected",
-          "impact_assessment_unavailable": "the impact could not be checked",
-          "revision_conflict": "the market changed in the meantime",
-          "invalid_lifecycle_transition": "the market cannot be retired in its current state"
-        },
+        "aborted": "The retirement was released and the market was not retired.",
         "action": "Retire"
       },
       "purpose": "Name",

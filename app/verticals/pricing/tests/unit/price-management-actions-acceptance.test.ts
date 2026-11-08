@@ -1,3 +1,5 @@
+import { pricingRegistration } from '../../vertical.registration.ts';
+import { NodeCrypto } from '@effect/platform-node';
 import { ActionAlreadyCommitted, ActionCommitIndeterminate } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { CatalogSelectionOwnerAssessmentResultSchema } from '@app/catalog/domain/catalog-selection-owner-contract';
@@ -7,7 +9,7 @@ import {
   PriceSourceProvenanceSchema,
 } from '@app/pricing-contracts/domain/price-source-provenance';
 import { DateTime, Effect, Predicate, Schema } from 'effect';
-import { describe, expect, it } from 'effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
 
 import { PriceResultLookupRequestSchema } from '../../shared/apis/price-result-lookup.ts';
@@ -367,8 +369,8 @@ const defineServices = (define: DefinePriceActionServices['define']): DefinePric
   loadCurrencySupport: () => Effect.succeed({ _tag: 'current', current: defineCurrencySupport }),
 });
 
-describe('Pricing management Actions acceptance', () => {
-  it('publishes the exact Price and Currency generated Actions with their trusted scope rules', () => {
+it.layer(NodeCrypto.layer)('Pricing management Actions acceptance', (suite) => {
+  suite('publishes the exact Price and Currency generated Actions with their trusted scope rules', () => {
     expect(
       [definePriceAction, revisePriceAction, setSupportedCurrenciesAction].map(({ descriptor }) => ({
         actionKey: descriptor.actionKey,
@@ -402,43 +404,46 @@ describe('Pricing management Actions acceptance', () => {
     ]);
   });
 
-  it('requires an exact Variant and Commerce Market while excluding Product-only and Storefront Price writes', () => {
-    const exact = {
-      effectiveFrom: operationAt,
-      identityKey,
-      monetaryAmount: { amount: '100', currencyCode: 'CZK' },
-      priceRef,
-      reason: 'Create one exact Variant Price',
-      sourceAssertion,
-    };
-    const decode = Schema.decodeUnknownSync(DefinePricePayloadSchema, { onExcessProperty: 'error' });
+  suite(
+    'requires an exact Variant and Commerce Market while excluding Product-only and Storefront Price writes',
+    () => {
+      const exact = {
+        effectiveFrom: operationAt,
+        identityKey,
+        monetaryAmount: { amount: '100', currencyCode: 'CZK' },
+        priceRef,
+        reason: 'Create one exact Variant Price',
+        sourceAssertion,
+      };
+      const decode = Schema.decodeUnknownSync(DefinePricePayloadSchema, { onExcessProperty: 'error' });
 
-    expect(decode(exact).identityKey).toEqual(identityKey);
-    expect(() =>
-      decode({
-        ...exact,
-        identityKey: {
-          ...identityKey,
-          catalogSelection: { productRef },
-        },
-      }),
-    ).toThrow();
-    expect(() =>
-      decode({
-        ...exact,
-        identityKey: {
-          ...identityKey,
-          commercialScope: {
-            channelId: identityKey.commercialScope.channelId,
-            sellingLegalEntityId: legalEntityId,
+      expect(decode(exact).identityKey).toEqual(identityKey);
+      expect(() =>
+        decode({
+          ...exact,
+          identityKey: {
+            ...identityKey,
+            catalogSelection: { productRef },
           },
-        },
-      }),
-    ).toThrow();
-    expect(() => decode({ ...exact, storefrontId: 'storefront-cz' })).toThrow();
-  });
+        }),
+      ).toThrow();
+      expect(() =>
+        decode({
+          ...exact,
+          identityKey: {
+            ...identityKey,
+            commercialScope: {
+              channelId: identityKey.commercialScope.channelId,
+              sellingLegalEntityId: legalEntityId,
+            },
+          },
+        }),
+      ).toThrow();
+      expect(() => decode({ ...exact, storefrontId: 'storefront-cz' })).toThrow();
+    },
+  );
 
-  it.effect('checks stale expected Current state before treating a same-value edit as unchanged', () =>
+  suite.effect('checks stale expected Current state before treating a same-value edit as unchanged', () =>
     Effect.gen(function* staleBeforeNoOp() {
       const failure = yield* applyPriceRevision(
         revisePayload,
@@ -461,7 +466,7 @@ describe('Pricing management Actions acceptance', () => {
     }),
   );
 
-  it.effect(
+  suite.effect(
     'preserves the finite Current end, schedule gap, and exact future revision in the blocking acknowledgement',
     () =>
       Effect.gen(function* preservePresentedSchedule() {
@@ -494,7 +499,7 @@ describe('Pricing management Actions acceptance', () => {
       }),
   );
 
-  it.effect('publishes the exact schedule gap and future evidence needed to construct an acknowledgement', () =>
+  suite.effect('publishes the exact schedule gap and future evidence needed to construct an acknowledgement', () =>
     Effect.gen(function* publicScheduleRead() {
       const schedule = {
         outcome: 'PRICE_SCHEDULE_GAP' as const,
@@ -529,7 +534,7 @@ describe('Pricing management Actions acceptance', () => {
     }),
   );
 
-  it('keeps the exact schedule acknowledgement in the public blocking warning', () => {
+  suite('keeps the exact schedule acknowledgement in the public blocking warning', () => {
     const problem = mapRevisePriceActionProblem(
       new RevisePriceAcknowledgementRequired({
         acknowledgement,
@@ -545,7 +550,7 @@ describe('Pricing management Actions acceptance', () => {
     });
   });
 
-  it.effect('keeps Currency Support Tenant-only and accepts only the Launch set {CZK}', () =>
+  suite.effect('keeps Currency Support Tenant-only and accepts only the Launch set {CZK}', () =>
     Effect.gen(function* tenantCurrencySupport() {
       const commands: unknown[] = [];
       const accepted = yield* applySupportedCurrencies(establishSupport(['CZK']), supportTrusted, (command) => {
@@ -565,7 +570,7 @@ describe('Pricing management Actions acceptance', () => {
     }),
   );
 
-  it.effect('preserves fresh trusted operation time when the same Currency Support invocation is retried', () =>
+  suite.effect('preserves fresh trusted operation time when the same Currency Support invocation is retried', () =>
     Effect.gen(function* freshRetryTime() {
       const commands: SetCurrencySupportCommand[] = [];
       const payload = establishSupport(['CZK']);
@@ -597,11 +602,12 @@ describe('Pricing management Actions acceptance', () => {
     }),
   );
 
-  it.effect('serializes a concurrent first create to one generated Action execution', () =>
+  suite.effect('serializes a concurrent first create to one generated Action execution', () =>
     Effect.gen(function* serializeFirstCreate() {
       let writes = 0;
       const harness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
+        access: 'allowed',
+        ownerRegistration: pricingRegistration,
         services: [
           bindActionTestServices(
             setSupportedCurrenciesAction,
@@ -638,12 +644,13 @@ describe('Pricing management Actions acceptance', () => {
     }),
   );
 
-  it.effect('resolves a lost first-create response by the original invocation without rerunning the write', () =>
+  suite.effect('resolves a lost first-create response by the original invocation without rerunning the write', () =>
     Effect.gen(function* resolveLostResponse() {
       let writes = 0;
       const harness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
+        access: 'allowed',
         commitAcknowledgement: 'indeterminate-once',
+        ownerRegistration: pricingRegistration,
         services: [
           bindActionTestServices(
             setSupportedCurrenciesAction,
@@ -676,13 +683,14 @@ describe('Pricing management Actions acceptance', () => {
     }),
   );
 
-  it.effect('reconciles indeterminate Define and Revise writes before permitting any retry', () =>
+  suite.effect('reconciles indeterminate Define and Revise writes before permitting any retry', () =>
     Effect.gen(function* reconcilePriceUnknownWrites() {
       let defineOwnerResult: DefinePricePersistenceOutcome | undefined;
       let defineWrites = 0;
       const defineHarness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
+        access: 'allowed',
         commitAcknowledgement: 'indeterminate-once',
+        ownerRegistration: pricingRegistration,
         services: [
           bindActionTestServices(
             definePriceAction,
@@ -776,8 +784,9 @@ describe('Pricing management Actions acceptance', () => {
       let reviseOwnerResult: RevisePricePersistenceOutcome | undefined;
       let reviseWrites = 0;
       const reviseHarness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
+        access: 'allowed',
         commitAcknowledgement: 'indeterminate-once',
+        ownerRegistration: pricingRegistration,
         services: [
           bindActionTestServices(revisePriceAction, {
             ...reviseServices((command) => {
@@ -892,34 +901,37 @@ describe('Pricing management Actions acceptance', () => {
     }).pipe(Effect.provideService(ExternalPriceInputBoundaryFactory, { make: makeExternalPriceInputBoundary })),
   );
 
-  it('directs committed retries to governed reads and uncertain commits to result lookup without retrying the command', () => {
-    expect(
-      mapDefinePriceActionProblem(
-        new ActionAlreadyCommitted({
-          code: 'action_already_committed',
-          invocationId: trusted.actionInvocationId,
-          reason: 'The exact intent is already committed',
-        }),
-      ),
-    ).toMatchObject({
-      invocationId: trusted.actionInvocationId,
-      resolution: 'REFRESH_GOVERNED_READS',
-      retryCommand: false,
-      status: 409,
-    });
-    expect(
-      mapDefinePriceActionProblem(
-        new ActionCommitIndeterminate({
-          code: 'action_commit_indeterminate',
-          invocationId: trusted.actionInvocationId,
-          reason: 'Commit acknowledgement was lost',
-        }),
-      ),
-    ).toMatchObject({
-      invocationId: trusted.actionInvocationId,
-      resolution: 'RESOLVE_COMMIT',
-      retryCommand: false,
-      status: 503,
-    });
-  });
+  suite(
+    'directs committed retries to governed reads and uncertain commits to result lookup without retrying the command',
+    () => {
+      expect(
+        mapDefinePriceActionProblem(
+          new ActionAlreadyCommitted({
+            code: 'action_already_committed',
+            invocationId: trusted.actionInvocationId,
+            reason: 'The exact intent is already committed',
+          }),
+        ),
+      ).toMatchObject({
+        invocationId: trusted.actionInvocationId,
+        resolution: 'REFRESH_GOVERNED_READS',
+        retryCommand: false,
+        status: 409,
+      });
+      expect(
+        mapDefinePriceActionProblem(
+          new ActionCommitIndeterminate({
+            code: 'action_commit_indeterminate',
+            invocationId: trusted.actionInvocationId,
+            reason: 'Commit acknowledgement was lost',
+          }),
+        ),
+      ).toMatchObject({
+        invocationId: trusted.actionInvocationId,
+        resolution: 'RESOLVE_COMMIT',
+        retryCommand: false,
+        status: 503,
+      });
+    },
+  );
 });

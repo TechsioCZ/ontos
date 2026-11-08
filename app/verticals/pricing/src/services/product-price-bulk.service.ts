@@ -16,6 +16,7 @@ import type {
   PriceProductTargetSnapshot,
 } from '@app/pricing-contracts/domain/catalog-price-target';
 import { PriceIdentityKeySchema, priceDecimalValuesEqual } from '@app/pricing-contracts/domain/price-definition';
+import type { Crypto } from 'effect';
 import { Context, Effect, Schema } from 'effect';
 
 import type {
@@ -527,11 +528,13 @@ const productPriceBulkServicesWithOwners = Effect.fn('ProductPriceBulkService.wi
         compositionRevision,
         legalEntityId,
         requestCorrelation: scope.correlationId,
+        scope,
       }),
       commercialContext: commercialContextAssessmentPortFromEnvironment({
         compositionRevision,
         legalEntityId,
         requestCorrelation: scope.correlationId,
+        scope,
       }),
       currencySupport: currencySupportPersistenceForScope(transaction, scope, compositionRevision),
       persistence: pricePersistenceForScope(transaction, scope),
@@ -559,7 +562,7 @@ const productPriceBulkServicesWithOwners = Effect.fn('ProductPriceBulkService.wi
 
 export const productPriceBulkServiceForScope: ActionServiceFactory<
   ProductPriceBulkService<ManageProductPriceOperation>,
-  ExternalPriceInputBoundaryFactory
+  Crypto.Crypto | ExternalPriceInputBoundaryFactory
 > = Effect.fn('ProductPriceBulkService.productPriceBulkServiceForScope')(
   function* makeProductPriceBulkServices(transaction, scope, compositionRevision) {
     return yield* productPriceBulkServicesWithOwners(transaction, { compositionRevision, scope });
@@ -570,7 +573,7 @@ export const prepareProductPriceBulkServices: ActionServicePreflight<
   ManageProductPricesBulkPayload,
   ProductPriceBulkService<ManageProductPriceOperation>,
   ProductPriceBulkRejected,
-  ExternalPriceInputBoundaryFactory
+  Crypto.Crypto | ExternalPriceInputBoundaryFactory
 > = Effect.fn('ProductPriceBulkService.prepareServices')(function* prepareServices(
   payload: ManageProductPricesBulkPayload,
   context: ActionServicePreparationContext,
@@ -578,10 +581,14 @@ export const prepareProductPriceBulkServices: ActionServicePreflight<
   const owners = yield* prepareDefinePriceOwnerPorts(
     payload.targetIntents.flatMap(({ operation }) => (operation.kind === 'DEFINE_PRICE' ? [operation.payload] : [])),
     context,
+    {
+      catalog: 'commerce.pricing.requirement.manage-product-prices-bulk-catalog',
+      market: 'commerce.pricing.requirement.manage-product-prices-bulk-market',
+    },
   );
   const factory: ActionServiceFactory<
     ProductPriceBulkService<ManageProductPriceOperation>,
-    ExternalPriceInputBoundaryFactory
+    Crypto.Crypto | ExternalPriceInputBoundaryFactory
   > = (transaction, scope, revision) =>
     assertPreparedPricingScope(context, scope, revision).pipe(
       Effect.andThen(

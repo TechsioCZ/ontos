@@ -1,3 +1,7 @@
+import {
+  UpdateTagActionConflictProblemSchema,
+  UpdateTagActionUnavailableProblemSchema,
+} from '../../shared/apis/update-tag-action.ts';
 import { startAutosave } from '@app/admin-ui';
 import type { AutosaveOutcome } from '@app/admin-ui';
 import { DateTime, Effect, Schema } from 'effect';
@@ -63,7 +67,13 @@ describe('tag edit draft', () => {
   });
 });
 
-const isConflict = { _tag: 'ApplyCommandActionConflictProblem', code: 'tagging_revision_conflict' };
+const isConflict = UpdateTagActionConflictProblemSchema.make({
+  code: 'tagging_revision_conflict',
+  detail: 'The tag changed',
+  status: 409,
+  title: 'Conflict',
+  type: 'urn:ontos:test:tag-revision',
+});
 
 const panel = Effect.fnUntraced(function* panel(write: Effect.Effect<'applied' | 'stale', unknown>) {
   const sent: TagDraft[] = [];
@@ -116,7 +126,18 @@ describe('tag edit panel autosave', () => {
       yield* Effect.yieldNow;
       expect(race.controller.status()).toBe('conflict');
 
-      const failed = yield* panel(Effect.fail({ _tag: 'ApplyCommandActionUnavailableProblem' }));
+      const failed = yield* panel(
+        Effect.fail(
+          UpdateTagActionUnavailableProblemSchema.make({
+            code: 'tagging_persistence_unavailable',
+            detail: 'The owner is unavailable',
+            retryable: true,
+            status: 503,
+            title: 'Unavailable',
+            type: 'urn:ontos:test:tag-unavailable',
+          }),
+        ),
+      );
       failed.controller.change({ ...saved, color: 'blue' });
       failed.controller.flush();
       yield* Effect.yieldNow;

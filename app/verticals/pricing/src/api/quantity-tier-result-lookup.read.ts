@@ -27,7 +27,7 @@ const lookupUnavailable = (cause: unknown): ReadHandlerUnavailable =>
 
 const quantityTierResultLookupEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'authenticated_principal' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.pricing.api.quantity-tier-result-lookup',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -49,6 +49,14 @@ export const readQuantityTierResult = Effect.fn('QuantityTierResultLookupRead.re
 
 export const quantityTierResultLookupRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.pricing.quantity-tier.read-result',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'prices', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: quantityTierResultLookupEntrypoint,
     evidencePolicy: {
@@ -58,7 +66,6 @@ export const quantityTierResultLookupRead = defineRead(
     inputSchema: QuantityTierResultLookupRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.pricing.api.quantity-tier-result-lookup',
     resultSchema: QuantityTierResultLookupResponseSchema,
@@ -74,5 +81,4 @@ export const quantityTierResultLookupRead = defineRead(
       ),
   },
   (transaction, scope) => quantityTierPersistenceForScope(transaction, scope),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

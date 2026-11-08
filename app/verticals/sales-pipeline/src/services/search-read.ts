@@ -1,4 +1,7 @@
-import { CoreSearchQueryRuntime, ReadHandlerUnavailable } from '@app/core-runtime';
+import { matchesCoreSearchValues, parseCoreSearchQuery } from '@app/core-runtime/search-contract';
+import { coreSearchRelevance } from '@app/core-runtime/search-ranking';
+import type { PipelineSearchRecord } from './search-record-access.ts';
+import { CoreSearchQueryRuntime, CoreSearchProjectionHitSchema, ReadHandlerUnavailable } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { OpportunityRefSchema } from '../../shared/resources/opportunity.ts';
@@ -84,4 +87,44 @@ export const loadSearch = Effect.fn('Opportunities.loadSearch')(function* loadSe
     }),
     { concurrency: 1 },
   );
+});
+
+/** Current admitted owner evidence must still match; stale titles, dates and stages cannot disclose a record. */
+export const loadCurrentOpportunitySearch = Effect.fn('Pipeline.search.current')(function* current(
+  scope: OperationalScope,
+  query: string,
+  records: readonly PipelineSearchRecord[],
+) {
+  const parsed = yield* Effect.fromResult(parseCoreSearchQuery(query)).pipe(Effect.mapError(searchUnavailable));
+  const hits = yield* loadSearch(scope, query);
+  const byId = new Map<string, PipelineSearchRecord>(records.map((record) => [record.id, record]));
+  const result = yield* Effect.forEach(
+    hits,
+    Effect.fn('Pipeline.search.qualifyCurrent')(function* qualifyCurrent(hit) {
+      const record = byId.get(hit.ref.resourceId);
+      if (
+        record === undefined ||
+        !matchesCoreSearchValues([record.title, record.id, record.expectedCloseDate, record.stage], parsed.tokens)
+      ) {
+        return [];
+      }
+      const currentHit = yield* Schema.decodeUnknownEffect(CoreSearchProjectionHitSchema)({
+        ...hit,
+        archived: false,
+        facets: [],
+        metadata: [],
+        title: record.title,
+      }).pipe(Effect.mapError(searchUnavailable));
+      return [
+        {
+          ref: hit.ref,
+          relevance: coreSearchRelevance(currentHit, parsed),
+          selectedLegalEntityId: hit.selectedLegalEntityId,
+          title: record.title,
+        },
+      ];
+    }),
+    { concurrency: 1 },
+  );
+  return result.flat();
 });

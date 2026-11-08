@@ -29,9 +29,9 @@ Local only. Nothing here deploys. Run everything from `app/`.
    (`scripts/outbox-worker-host.generated.mts`).
 6. `node scripts/demo/reset-permissions.mts`: all four companies, 14 staff personas, role grants and the
    agent/storefront API keys. The shared tenant is labelled **OntOS DEMO**; each company retains its own name.
-7. `node scripts/demo/accounts-admin-grants.mts`, `node scripts/demo/company-membership-hygiene.mts`
-   (removes only four stale commercial-company memberships of Nájempark staff), and `pnpm demo:ai-profiles`
-   (AI A/B/C principals and keys).
+7. `pnpm demo:ai-profiles` records the AI A/B/C identities and display profiles through native Actions;
+   `setup-agent-operators.mts` records human oversight. Neither command grants agent access or creates consent.
+   A one-off repair of the reviewed human access is `node scripts/demo/local-repair.mts`.
 8. Unless `DEMO_RESET=0`, `pnpm demo:seed:rental --apply` against the running local shell, authenticated as
    `management@najempark.demo`, fixed Nájempark company `…0021`. This uses public reads/Actions, not private DB writes.
 9. Restarts the ŠroubShop storefront on **http://localhost:3070** (`akros-storefront/scripts/demo-restart.sh`). Its
@@ -235,23 +235,28 @@ It holds the explicit tenant superadministrator role and can switch between Obch
 Nájempark, Velkoobchod Hanák, Kavárna Doma and Šroubárna Vysočina s.r.o. (brand ŠroubShop). This does not grant access to other tenants.
 The company-specific personas below keep their restricted roles.
 
-| Login                       | Role                                                                                                    |
-| --------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `management@najempark.demo` | Management: reads all Nájempark modules                                                                 |
-| `operations@najempark.demo` | Operations: can write in the Nájempark modules                                                          |
-| `provoz@najempark.demo`     | Operations (second login): same rights as `operations@`                                                 |
-| `finance@najempark.demo`    | Finance: can write in billing/finance                                                                   |
-| `external@najempark.demo`   | External: reads only CRM contacts entrusted to him (`demo.crm.read_assigned`)                           |
-| `demo@test.com`             | Local Tenant from `local:initialize`. Holds every Action in its own Tenant only.                        |
-| `admin@n1.ontos.demo`       | N1 demo (own tenant, `n1-demo-20261103`): company administrator of N1, signs in to the N1 e-shop admin. |
-| `catalog@n1.ontos.demo`     | N1 demo (own tenant): catalogue manager of N1.                                                          |
+| Login                       | Role                                                                                                          |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `management@najempark.demo` | Management: reads all Nájempark modules                                                                       |
+| `operations@najempark.demo` | Operations: can write in the Nájempark modules                                                                |
+| `provoz@najempark.demo`     | Operations (second login): same rights as `operations@`                                                       |
+| `finance@najempark.demo`    | Finance: can write in billing/finance                                                                         |
+| `external@najempark.demo`   | External: ENTRUSTED CRM and pipeline records; operational facility reads and own personal-agenda updates only |
+| `demo@test.com`             | Local Tenant from `local:initialize`. Holds every Action in its own Tenant only.                              |
+| `admin@n1.ontos.demo`       | N1 demo (own tenant, `n1-demo-20261103`): company administrator of N1, signs in to the N1 e-shop admin.       |
+| `catalog@n1.ontos.demo`     | N1 demo (own tenant): catalogue manager of N1.                                                                |
 
 ### Sales demo permissions
 
-`scripts/demo/permissions.mts` holds the role matrix; `scripts/demo/reset-permissions.mts` writes it. It runs
-at the end of `up.sh` and inside `pnpm demo:reset:sales` (after `workforce`). Re-run it alone at any
-time with `node --env-file=.env scripts/demo/reset-permissions.mts` (`--skip-bot` skips the API key).
-SpiceDB is in-memory, so re-run it after a container restart.
+`scripts/demo/permissions.mts` holds the reviewed role matrix as canonical Authorization v2 source
+(ADR-0030): who takes part in which company, and which declared capability each Role grants. It writes no
+SpiceDB relationship; `scripts/demo/reset-permissions.mts` hands the reviewed Roles, Assignments, memberships
+and workloads to `packages/core-runtime/scripts/bootstrap-development-context.mts`, which seeds them through
+the canonical Core path and lets the one Core writer project them. It runs at the end of `up.sh` and inside
+`pnpm demo:reset:sales` (after `workforce`). Re-run it alone at any time with
+`node --env-file=.env scripts/demo/reset-permissions.mts` (`--skip-bot` skips the API key). SpiceDB is
+in-memory, so re-run it after a container restart. A Role that names a capability the pinned release does not
+declare fails the seed with the exact key instead of silently granting less.
 
 Once the Shell is running, the same operator command calls the restricted
 `core.identity.configure-demo-companies` Action. It renames the fixed commercial demo company to
@@ -266,15 +271,15 @@ retained. Rental example data is added separately with `demo:seed:rental --apply
 | `obchodnik@demo.ontos` | Obchodník       | customers, tagging, opportunities, tasks              | employees, products, statistics, invoices |
 | `ucetni@demo.ontos`    | Účetní          | invoices                                              | customers, statistics                     |
 | `sklad@demo.ontos`     | Skladník        | products, tasks                                       |                                           |
-| `agent-bot` (API key)  | service         | opportunities, tasks, tagging (no tag update/delete)  | all other demo modules                    |
+| `agent-bot` (API key)  | service         | none; no reviewed workload binding                    | none on human declaration carriers        |
 
-Customer writers (`obchod`, `obchodnik`) also hold `party_identity_reviewer`: `create-party` returns AMBIGUOUS for
-every customer without a VERIFIED IČO, and the customer form resolves that case as CREATE_NEW when it lists no
-candidate Party.
+Customer writers (`obchod`, `obchodnik`) receive the reviewed Party capability cells, including
+`party.registry.duplicate-candidate.resolve-create`. These do not include the dedicated
+`party.registry.crm-client-party.create` permission. The customer form still follows the owner's
+duplicate-review lifecycle when creation is ambiguous.
 
-Each demo vertical also has `shared/actions/command-guard.ts`. One apply-command grant covers every
-command, so the guard rejects human-only commands for API-key and system principals: tag update/delete,
-price changes and bulk product edits, employee create/update/bulk edits, and every billing command.
+Owner command guards and field groups can narrow an admitted Action further. An API key is not a
+human Role: a service principal cannot enter a declaration-only Action, even if it has profile metadata.
 
 The bot's managed API key is issued through `/auth/identity/api-keys/managed` as `obchod@demo.ontos`. It is
 written with `ONTOS_SHELL_URL`, `ONTOS_COMPOSITION_REVISION` and `ONTOS_LEGAL_ENTITY_ID` to the gitignored
@@ -291,15 +296,15 @@ The same step creates **Velkoobchod Hanák s.r.o.** (`…0022`, CRM) and **Kavá
 e-shop) and their personas. Each persona is a member of its own company only, so the company switcher shows
 exactly one company and a switch to any other company answers 403.
 
-| Login                    | Name            | Company | Role            | Access                                                                               |
-| ------------------------ | --------------- | ------- | --------------- | ------------------------------------------------------------------------------------ |
-| `spravce@hanak.demo`     | Karel Hanák     | Hanák   | Správce         | CRM `read_all` + `write_all` + `assign`, customers, tasks, employees, identity admin |
-| `vedouci@hanak.demo`     | Lucie Dvořáková | Hanák   | Vedoucí obchodu | CRM `read_all` + `write_all` + `assign`, tasks, employees; customers read            |
-| `obchodnik.a@hanak.demo` | Jan Novák       | Hanák   | Obchodník A     | CRM `read_assigned` + `write_assigned` only, tasks; employees read                   |
-| `obchodnik.b@hanak.demo` | Petra Svobodová | Hanák   | Obchodník B     | same as A                                                                            |
-| `eshop@kavarna.demo`     | Tereza Malá     | Kavárna | Správce e-shopu | products, orders, customers, tasks, employees                                        |
-| `expedice@kavarna.demo`  | Ondřej Kříž     | Kavárna | Expedice        | merchandise only (orders, products)                                                  |
-| `kavarna-storefront`     | service         | Kavárna | Storefront BFF  | merchandise read + `demo.merchandise.apply-command` (managed API key)                |
+| Login                    | Name            | Company | Role            | Access                                                                                                    |
+| ------------------------ | --------------- | ------- | --------------- | --------------------------------------------------------------------------------------------------------- |
+| `spravce@hanak.demo`     | Karel Hanák     | Hanák   | Správce         | CRM ALL records, command writes and owner assignment; customers, tasks, employees, company identity admin |
+| `vedouci@hanak.demo`     | Lucie Dvořáková | Hanák   | Vedoucí obchodu | CRM ALL records, command writes and owner assignment; tasks, employees; customers read                    |
+| `obchodnik.a@hanak.demo` | Jan Novák       | Hanák   | Obchodník A     | CRM ASSIGNED records and command writes, no owner assignment; tasks; employees read                       |
+| `obchodnik.b@hanak.demo` | Petra Svobodová | Hanák   | Obchodník B     | same as A                                                                                                 |
+| `eshop@kavarna.demo`     | Tereza Malá     | Kavárna | Správce e-shopu | products, orders, customers, tasks, employees                                                             |
+| `expedice@kavarna.demo`  | Ondřej Kříž     | Kavárna | Expedice        | merchandise only (orders, products)                                                                       |
+| `kavarna-storefront`     | service         | Kavárna | Storefront BFF  | merchandise read + `demo.merchandise.apply-command` (managed API key)                                     |
 
 The storefront key lands in `app/.env.demo.local` as `ONTOS_STOREFRONT_API_KEY` (with
 `ONTOS_STOREFRONT_PRINCIPAL_ID` and `ONTOS_STOREFRONT_LEGAL_ENTITY_ID`); it is verified against a
@@ -312,10 +317,27 @@ Nájempark company 0021 (`siamparkRentalPersonas`).
 
 `node --env-file=.env scripts/demo/seed-siampark-crm.mts` writes the Nájempark (0021) CRM state once (`--reset`
 replaces it): six prospective tenants, three entrusted by Vedení to `external@najempark.demo` (Martin Krejčí), with
-contacts, calls/meetings and planned contacts. `management@` holds `demo.crm` read_all/write_all/assign and
-`external@` only `demo.crm.read_assigned`, so the crm owner returns just the three entrusted clients to him; finance,
-agreements and occupancy stay closed. On a running demo `node scripts/demo/siampark-crm-permissions.mts` adds the two
-grants without a full permission reset. In Nájempark the sidebar shows only Klienti, K oslovení and Návštěvy of CRM.
+contacts, calls/meetings and planned contacts. Management has `demo.crm.api-records.read` with selector `all`,
+`demo.crm.apply-command.write` and the `demo.crm.client-owner.assign` field-write group. The external
+persona has `demo.crm.api-records.read` with selector `entrusted`, no CRM writes or owner assignment.
+Pipeline reads use the same ENTRUSTED restriction through `demo.sales-pipeline.api-records.read`, with no
+pipeline search or writes. Finance, agreements and occupancy stay closed. The reviewed narrowing is source
+intent, not proof of a deployed owner transport. To reconcile an approved local fixture, re-run
+`node scripts/demo/local-repair.mts` after a change. In Nájempark the sidebar shows only Klienti, K oslovení and
+Návštěvy of CRM.
+
+CRM Party intake is a separate service bound only to `demo.crm.party-intake`. Its CRM carriers are the
+slim `demo.crm.api.pending-client-intake` Read and `demo.crm.intake-client-party` Action. Party accepts
+delegation only from the composed `crm` caller with that bound workload; the generic Party Create caller
+is unchanged. The dedicated `party.registry.api.crm-client-intake-review` Read returns only an outcome
+and revision. Generic duplicate-detail and its identity-review fields have no new workload delegation;
+missing evidence fails closed. Both Party purpose carriers declare `accessActor.subject: 'workload'`,
+caller `crm` and `subjectWorkloads: ['demo.crm.party-intake']`, with no human declaration, workload
+marker or field groups. They contribute no human catalog entries or full-owner cells. The workload key
+belongs to producer module `demo.crm`; topology app ID `crm` is the caller, not a renamed workload
+namespace. No human Role or broad CRM/Party data grant belongs to this service. The bootstrap owner's
+full-access compiler remains unchanged. Owner native negative proofs and final catalog publication
+are still required before claiming activation.
 
 ### Proofs
 
@@ -327,6 +349,21 @@ and the bot creates one task. Agents use the Shell MCP endpoint `http://localhos
 Pages: `/cs/ukoly` (Úkoly) and `/cs/finance` (Faktury a finance). The business
 date is 2026-10-05.
 
+### Agent setup boundary
+
+`ai-profiles.mts`, `replay-agent-profiles.mts` and `setup-agent-operators.mts` authenticate a real operator,
+select each company through that session and preflight the native Action through the canonical gate.
+Profile modules, write policies and operator labels are audited metadata, not authorization. Their results
+explicitly report `authority: not-provisioned`; profile or oversight verification does not prove MCP readiness.
+The profile replay preserves persisted display names, rejects conflicting administrator evidence and uses
+deterministic native idempotency keys. Managed credentials stay in the native `IdentityLifecycle`;
+`agent-api-keys.mts issue` displays a one-time secret only in an interactive terminal.
+
+Full agent setup still needs Core-owned commands for agent role assignments and current connection consent.
+The current People command planners reject Agent holders, and the canonical connection/consent tables have
+no production writer. Do not fill this gap with profile flags, a human role for an agent, direct SQL or
+SpiceDB operator edges. MCP authority must remain bounded by actual roles, current consent and owner limits.
+
 ### Operator acceptance tests
 
 `pnpm test:operator` runs the rstest `operator` project. The workspace gates never run it, because each
@@ -335,13 +372,9 @@ test needs an environment CI does not provision; prepare that environment first:
 - `scripts/integration/siampark-demo-http.test.mts` drives the running stack over HTTP at
   `http://localhost:3020`. Start the stack with `./scripts/demo/up.sh` (or run `pnpm demo:reset` on a running
   stack) immediately before it: the test commits Nájempark changes and expects the reset golden fixture.
-- `scripts/integration/agent-profile-replay.test.mts` replays the reviewed agent profiles. Point
-  `DATABASE_URL` and `DATABASE_ADMIN_URL` at the same freshly migrated scratch database whose name matches
-  `people_model_scratch_20261023_<hex>`, `SPICEDB_ENDPOINT` at a local SpiceDB (`localhost:<port>`), and set
-  `ONTOS_AGENT_REPLAY_PROOF_INPUT` to the reviewed nine-row profile file and `ONTOS_AGENT_REPLAY_PROOF_SHA256`
-  to its SHA-256. The test rewrites that SpiceDB schema and the scratch database.
-
-Run one of them with `pnpm test:operator scripts/integration/<file>`.
+  Run it with `pnpm test:operator scripts/integration/siampark-demo-http.test.mts`.
+  The old `agent-profile-replay.test.mts` is no longer shipped. The focused source tests are
+  `scripts/tests/demo-agent-setup.test.mts`; they do not connect to a live database or authorization engine.
 
 The people-model scratch proofs need the same scratch database and local SpiceDB, and also rewrite its schema:
 `pnpm --filter @app/core-runtime test:operator` runs the company membership and agent profile, operator and status
@@ -390,12 +423,10 @@ ONTOS_AGENT_SETUP_PASSWORD=… node scripts/demo/pseudonymize-akros-catalog.mts 
 --checkpoint .scratch/pseudonym-catalog`, repeat until the summary prints, then `--mode apply` and `--mode verify`
 with `--approved <fingerprint>` (storefront on http://localhost:3070). Only the stage and local demo are accepted.
 
-**Operator rights.** Catalog edits in the demo company need a tenant administrator (merchandise command guard)
-with the company's merchandise rights. `pseudonymize-akros-catalog-grants.mts` (reviewed plan → apply → verify)
-adds exactly that for the tenant superadmin `obchod@demo.ontos`: `demo.merchandise.read_all` + `write_all` in the
-demo company and only the `demo.merchandise.apply-command` Action. Verify proves the grant, that the other
-companies' merchandise rights are unchanged and that nothing opens in the akros-playground tenant. Side effect: the
-superadmin can also edit the ŠroubShop catalog in the staff app (as in every other company).
+**Operator rights.** Catalog edits require the company's reviewed merchandise cells in the canonical
+Role. The retired catalog-grant tuple helper has been removed. Use the reviewed seed and Access
+administration, not direct engine writes or `read_all`/`write_all` aliases. Source changes do not
+provision an operator or authorize an apply.
 
 ### Stage runbook — plan first; apply only after lane T cutover and parent approval
 
@@ -421,8 +452,6 @@ SSH="ssh -o UserKnownHostsFile=$ONTOS_STAGE_KNOWN_HOSTS -o StrictHostKeyChecking
 restore() { [ ! -d "$LOCAL" ] || $SSH test -d /var/www/ontos-pseudonym-catalog-v2 || COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata -C "$LOCAL" -cf - . | $SSH 'mkdir -m 700 -p /var/www/ontos-pseudonym-catalog-v2 && tar -C /var/www/ontos-pseudonym-catalog-v2 -xf -'; }
 backup() { mkdir -m 700 -p "$LOCAL" && $SSH tar -C /var/www/ontos-pseudonym-catalog-v2 -cf - . | tar --no-xattrs -C "$LOCAL" -xf -; }
 # 0. Operator rights (once): plan, review, apply the printed fingerprint (the plan file lives in the container).
-"$REMOTE" scripts/demo/pseudonymize-akros-catalog-grants.mts --mode plan --plan /var/www/catalog-grants-plan.json
-"$REMOTE" scripts/demo/pseudonymize-akros-catalog-grants.mts --mode apply --plan /var/www/catalog-grants-plan.json --reviewed-plan-sha256 <fingerprint>
 # 1. Plan (read-only), repeat until complete=true and the summary JSON is printed:
 restore; "$REMOTE" scripts/demo/pseudonymize-akros-catalog.mts --mode plan; backup
 # Review "$LOCAL/summary.json"; only the lane P parent authorizes apply.
@@ -440,11 +469,15 @@ directory. Deploying this code authorizes no apply.
 
 ## Known issues
 
-- `pnpm authorization:provision-current-actions` requires an owner-only v3 policy file through
-  `ONTOS_STAGE_ACCOUNTS_FILE` in development as well as stage. Its default is a read-only dry run;
-  apply requires the reviewed `ONTOS_AUTHORIZATION_PLAN_SHA256`. It refuses legacy/global policy.
-  The local `up.sh` installs explicit scoped demo policy only after composition publication through
-  `reset-permissions.mts`; no blanket `demo@test.com` Action grants are created.
+- Operational warmup uses existing reviewed demo people. It creates no synthetic warmup accounts or
+  reader Roles. Its browser request guard still blocks business writes. Previously created live
+  warmup people need a separate authorized retirement; this source cutover does not delete them.
+- The canonical stage accounts file requires `tenants[].moduleKey`. The module must be declared by
+  the supplied composition. Core no longer chooses a business module when the field is absent.
+
+- Authorization v2 retired the `provision-current-actions` command and the legacy scoped-role policy
+  (ADR-0030). The local `up.sh` seeds the reviewed demo policy through `reset-permissions.mts`; no blanket
+  `demo@test.com` Action grants are created.
 - The shell signs sessions into `__Secure-better-auth.session_token`, but the API-key Better Auth instance
   reads `better-auth.session_token` over plain http. Issuing an API key from a browser session on
   `http://localhost` therefore returns 401. `reset-permissions.mts` sends the session under both names.

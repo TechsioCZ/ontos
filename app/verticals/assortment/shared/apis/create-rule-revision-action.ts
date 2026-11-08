@@ -2,12 +2,12 @@
 // @ontos-action-http-owner commerce.assortment
 // @ontos-action-http-slug create-rule-revision
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { CreateRuleRevisionPayloadSchema, CreateRuleRevisionResultSchema } from '../actions/create-rule-revision.ts';
 
 export { CreateRuleRevisionPayloadSchema } from '../actions/create-rule-revision.ts';
-
 const CreateRuleRevisionActionHeadersSchema = Schema.Struct({
   'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
 });
@@ -25,6 +25,7 @@ export const CreateRuleRevisionActionForbiddenProblemSchema = makeProblemDetails
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -136,7 +137,7 @@ export const CreateRuleRevisionActionApi = HttpApi.make('CreateRuleRevisionActio
         error: actionErrors,
         headers: CreateRuleRevisionActionHeadersSchema,
         payload: Schema.toEncoded(CreateRuleRevisionPayloadSchema),
-        success: CreateRuleRevisionResultSchema,
+        success: [ActionProposalAcceptedSchema, CreateRuleRevisionResultSchema],
       }),
     )
     .middleware(CreateRuleRevisionActionSchemaErrorMiddleware),

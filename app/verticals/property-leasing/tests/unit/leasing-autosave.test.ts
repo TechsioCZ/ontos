@@ -1,4 +1,6 @@
 import { startAutosave } from '@app/admin-ui';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import type { AutosaveOutcome } from '@app/admin-ui';
 import { Effect, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
@@ -82,6 +84,11 @@ const conflictProblem = (code: 'action_invocation_state_invalid' | 'occupancy_co
     type: 'about:blank',
   });
 const rent = rentDraftOf(lease.rentTerms);
+const proposal = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
+  _tag: 'ActionProposalAccepted',
+  expiresAt: '2026-11-14T10:00:00.000Z',
+  proposalId: '77777777-7777-4777-8777-777777777777',
+});
 
 describe('rent terms panel', () => {
   it('shows the stored rent in crowns and never saves an invalid amount or day', () => {
@@ -113,6 +120,37 @@ describe('rent terms panel', () => {
       expect(yield* leasingAutosaveResult(Effect.fail(conflictProblem('action_invocation_state_invalid')))).toBe(
         'failed',
       );
+    }),
+  );
+
+  it.effect('keeps a change parked for approval unsaved and reports it, but reports nothing for a commit', () =>
+    Effect.gen(function* outcomes() {
+      const reported: ActionProposalAccepted[] = [];
+      const report = (parked: ActionProposalAccepted) => {
+        reported.push(parked);
+      };
+      expect(yield* leasingAutosaveResult(Effect.succeed(proposal), report)).toBe('failed');
+      expect(reported).toEqual([proposal]);
+      expect(yield* leasingAutosaveResult(Effect.succeed({ resourceRef: null, revision: 9 }), report)).toBe(9);
+      expect(reported).toEqual([proposal]);
+    }),
+  );
+
+  it.effect('leaves the base revision alone when the autosaved rent is parked for approval', () =>
+    Effect.gen(function* parked() {
+      const controller = yield* startAutosave<RentDraft, never>(rent, {
+        equals: sameRentDraft,
+        isValid: (value) => Option.isSome(rentTermsOf(value)),
+        save: () =>
+          leasingAutosaveResult(Effect.succeed(proposal)).pipe(
+            Effect.map((result): AutosaveOutcome => (result === 'failed' ? 'failed' : 'saved')),
+          ),
+      });
+      controller.change({ ...rent, monthly: '19000' });
+      controller.flush();
+      yield* Effect.yieldNow;
+      expect(controller.status()).toBe('error');
+      expect(controller.confirmed()).toEqual(rent);
     }),
   );
 });

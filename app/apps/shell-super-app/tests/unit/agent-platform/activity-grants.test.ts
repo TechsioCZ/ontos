@@ -1,3 +1,4 @@
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { ContextAccess, OAuthGrantRegistry, ReadRuntime } from '@app/core-runtime';
 import type { OAuthGrantRecord, ReadRuntimeService } from '@app/core-runtime';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
@@ -136,7 +137,10 @@ const fixture = Effect.gen(function* activityGrantsFixture() {
         proposals: [],
       }).pipe(Effect.orDie),
   };
-  const run = loadAgentActivity({ legalName: 'Company', principal }, {}).pipe(
+  const run = loadAgentActivity(
+    { legalName: 'Company', principal, scope: { ...principal, correlationId: 'activity-test' } },
+    {},
+  ).pipe(
     Effect.provideService(ReadRuntime, reads),
     Effect.provideService(AgentReadRequestIdentity, { correlationId: 'activity-grants' }),
     Effect.provide(
@@ -156,6 +160,7 @@ const fixture = Effect.gen(function* activityGrantsFixture() {
         Layer.mock(CompanyDirectory, {
           snapshot: Effect.succeed(directory),
         }),
+        Layer.succeed(AccessDecisionGate, makeTestAccessDecision()),
         Layer.mock(ContextAccess, {}),
         Layer.mock(ActionAuthority, {}),
         Layer.mock(ActiveApplicationCompositionService, {}),

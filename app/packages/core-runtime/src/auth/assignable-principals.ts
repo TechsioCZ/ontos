@@ -1,6 +1,5 @@
-import { v1 } from '@authzed/authzed-node';
-import { and, eq } from 'drizzle-orm';
-import { Array as Arr, Context, Effect, Option } from 'effect';
+import { and, eq, gt, lte } from 'drizzle-orm';
+import { Context, DateTime, Effect, Option, Predicate } from 'effect';
 import { AssigneeIneligible } from './assignee-ineligible.ts';
 import { AssignablePrincipalsUnavailable } from './assignable-principals-unavailable.ts';
 
@@ -8,20 +7,26 @@ import { CoreDatabase } from '../db/client.ts';
 import { DatabaseIdentityEnrollmentContext } from '../db/database-identities.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import type { OperationalScope } from '../operations/context.ts';
-import { principalCompanyMemberships, principals } from '../db/schema.ts';
+import { accessAgentConnections, accessScopes, principalCompanyMemberships, principals } from '../db/schema.ts';
 import type { PrincipalStatus } from '../db/schema.ts';
 import type { CompanyMembershipStatus } from '../permissions/company-membership.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
+import type { GateCarrier } from '../access/enforcement/contract.ts';
+import type { AccessRecordTarget } from '../access/decision/contract.ts';
+import { decideAccess, resolveListAccess } from '../access/decision/engine.ts';
+import { capabilityPolicyOf } from '../access/enforcement/capability.ts';
+import { shouldRecordDecision } from '../access/enforcement/decision-log.ts';
+import type { AccessDecisionLogEntry } from '../access/enforcement/decision-log.ts';
 import {
-  acquireSpiceDbClientResource,
-  createSpiceDbPermissionClient,
-  fullyConsistent,
-  SPICEDB_CHECK_TIMEOUT_MS,
-} from '../permissions/client.ts';
-import type { SpiceDbPermissionClient } from '../permissions/client.ts';
-import { loadSpiceDbConfig } from '../permissions/config.ts';
-import { toContextPermissionAccessObjectId, toModuleAccessObjectId } from '../permissions/context-access.ts';
-import type { ContextPermissionAccessTarget } from '../permissions/context-access.ts';
+  AgentIdSchema,
+  AgentConnectionIdSchema,
+  LegalEntityIdSchema,
+  PrincipalIdSchema,
+  TenantIdSchema,
+} from '../access/ids.ts';
+import { AccessEnforcementPortsLive } from '../operations/access-gate.ts';
+import type { AccessEnforcementPorts } from '../operations/access-gate.ts';
+import type { ActorContext } from '../access/model.ts';
 import type { PrincipalRef } from '../permissions/principal-ref.ts';
 
 export { AssigneeIneligible } from './assignee-ineligible.ts';
@@ -44,6 +49,8 @@ export interface AssignmentDirectoryMember extends AssignablePrincipal {
 
 /** Core-owned SQL snapshot. Kind and affiliation are deliberately absent: neither grants rights. */
 export interface AssignablePrincipalDirectory extends AssignmentCompanyScope {
+  /** Complete real connection candidates, revalidated independently by the canonical engine. */
+  readonly agentContexts?: readonly Extract<ActorContext, { readonly _tag: 'Agent' }>[];
   readonly members: readonly AssignmentDirectoryMember[];
 }
 
@@ -90,7 +97,40 @@ export const loadAssignablePrincipalDirectory = Effect.fn('Core.loadAssignablePr
       )
       .orderBy(principals.displayName, principals.principalId)
       .pipe(Effect.mapError(unavailable));
+    const now = yield* DateTime.nowAsDate;
+    const connections = yield* transaction
+      .select({
+        agentId: accessAgentConnections.agentId,
+        connectionId: accessAgentConnections.connectionId,
+        principalId: accessAgentConnections.principalId,
+        revision: accessAgentConnections.revision,
+      })
+      .from(accessAgentConnections)
+      .innerJoin(
+        accessScopes,
+        and(
+          eq(accessScopes.tenantId, accessAgentConnections.tenantId),
+          eq(accessScopes.scopeId, accessAgentConnections.scopeId),
+        ),
+      )
+      .where(
+        and(
+          eq(accessAgentConnections.tenantId, scope.tenantId),
+          eq(accessScopes.legalEntityId, legalEntityId),
+          eq(accessAgentConnections.status, 'active'),
+          lte(accessAgentConnections.validFrom, now),
+          gt(accessAgentConnections.validUntil, now),
+        ),
+      )
+      .pipe(Effect.mapError(unavailable));
     return {
+      agentContexts: connections.map((row) => ({
+        _tag: 'Agent' as const,
+        agentId: AgentIdSchema.make(row.agentId),
+        connectionId: AgentConnectionIdSchema.make(row.connectionId),
+        consentRevision: row.revision,
+        principalId: PrincipalIdSchema.make(row.principalId),
+      })),
       legalEntityId,
       members: rows.map(({ displayName, membershipStatus, principalId, principalStatus, tenantId }) => ({
         displayName,
@@ -149,151 +189,181 @@ export const activeAssignmentMember = (
     : Effect.fail(ineligible());
 };
 
-const resourceFor = (directory: AssignmentCompanyScope, requiredPermission: ContextPermissionAccessTarget) => {
-  // Core treats module.access as the module entrypoint alias, not a named context permission.
-  const moduleAccess = requiredPermission.permission === 'module.access';
-  const objectId = moduleAccess
-    ? toModuleAccessObjectId(directory.tenantId, directory.legalEntityId, requiredPermission.moduleId)
-    : toContextPermissionAccessObjectId(directory.tenantId, directory.legalEntityId, requiredPermission);
-  return objectId === undefined
-    ? undefined
-    : v1.ObjectReference.create({ objectId, objectType: moduleAccess ? 'module_access' : 'context_permission' });
-};
-const subjectFor = (principalId: string) =>
-  v1.SubjectReference.create({ object: v1.ObjectReference.create({ objectId: principalId, objectType: 'principal' }) });
+/** The owner names an actual registered capability, not a legacy module permission. */
+export interface AssignmentEligibility {
+  readonly carrier: GateCarrier;
+  readonly scope: OperationalScope;
+  readonly target?: AccessRecordTarget;
+}
+
 const isActive = (directory: AssignablePrincipalDirectory, member: AssignmentDirectoryMember) =>
   member.principalRef.tenantId === directory.tenantId &&
   member.principalStatus === 'active' &&
   member.membershipStatus === 'active';
-const batchSize = 250;
 
-const checkAssignmentPage = Effect.fn('Core.checkAssignmentPage')(function* checkAssignmentPage(
-  client: SpiceDbPermissionClient,
-  resource: v1.ObjectReference,
-  page: readonly AssignmentDirectoryMember[],
-) {
-  const request = v1.CheckBulkPermissionsRequest.create({
-    consistency: fullyConsistent,
-    items: page.map(({ principalRef }) => ({
-      permission: 'access',
-      resource,
-      subject: subjectFor(principalRef.principalId),
-    })),
-  });
-  const response = yield* client.checkBulkPermissions(request).pipe(Effect.mapError(unavailable));
-  const expected = new Set(page.map(({ principalRef }) => principalRef.principalId));
-  const allowed = new Set<string>();
-  if (response.pairs.length !== expected.size) {
-    return yield* unavailable();
-  }
-  yield* Effect.forEach(
-    response.pairs,
-    Effect.fn('Core.assignmentPermissionPair')(function* assignmentPermissionPair(pair) {
-      const item = pair.request;
-      const id = item?.subject?.object?.objectId;
-      if (
-        id === undefined ||
-        !expected.delete(id) ||
-        item?.subject?.object?.objectType !== 'principal' ||
-        item.subject.optionalRelation !== '' ||
-        item.permission !== 'access' ||
-        item.resource?.objectId !== resource.objectId ||
-        item.resource.objectType !== resource.objectType ||
-        pair.response.oneofKind !== 'item'
-      ) {
-        return yield* unavailable();
-      }
-      const { permissionship } = pair.response.item;
-      if (permissionship === v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION) {
-        allowed.add(id);
-      } else if (permissionship !== v1.CheckPermissionResponse_Permissionship.NO_PERMISSION) {
-        return yield* unavailable();
-      }
-      return id;
-    }),
-    { concurrency: 1 },
-  );
-  return page.flatMap(({ displayName, principalRef }) =>
-    allowed.has(principalRef.principalId) ? [{ displayName, principalRef }] : [],
-  );
-});
-
-/** Native SpiceDB adapter. Call after SQL commits; the transport enforces that boundary. */
-export const makeAssignablePrincipals = (client: SpiceDbPermissionClient) => ({
-  read: Effect.fn('Core.readAssignablePrincipals')(function* read(
-    directory: AssignablePrincipalDirectory,
-    requiredPermission: ContextPermissionAccessTarget,
-  ) {
-    const resource = resourceFor(directory, requiredPermission);
-    if (resource === undefined) {
-      return yield* unavailable();
-    }
-    const members = directory.members.filter((member) => isActive(directory, member));
-    const pages = yield* Effect.forEach(
-      Arr.chunksOf(members, batchSize),
-      (page) => checkAssignmentPage(client, resource, page),
-      { concurrency: 1 },
-    );
-    return pages.flat();
-  }),
-  resolveAssignee: Effect.fn('Core.resolveAssignee')(function* resolveAssignee(
+/**
+ * Private subject query. The requester remains the authenticated evaluator and SQL scope. The
+ * subject is only an engine ActorContextInput, never an OperationalScope or an execution token.
+ */
+export const makeAssignablePrincipals = (ports: AccessEnforcementPorts) => {
+  const evaluate = Effect.fn('Core.assignmentEligibility')(function* evaluate(
     directory: AssignablePrincipalDirectory,
     principal: PrincipalRef,
-    requiredPermission: ContextPermissionAccessTarget,
+    eligibility: AssignmentEligibility,
   ) {
-    const member = yield* activeAssignmentMember(directory, principal);
-    const resource = resourceFor(directory, requiredPermission);
-    if (resource === undefined) {
+    const { carrier, scope, target } = eligibility;
+    const declaration = carrier.accessDeclaration;
+    if (
+      scope.tenantId !== directory.tenantId ||
+      scope.legalEntityId !== directory.legalEntityId ||
+      declaration?.kind !== 'read' ||
+      carrier.accessActor !== undefined ||
+      carrier.accessWorkload !== undefined
+    ) {
       return yield* unavailable();
     }
-    const response = yield* client
-      .checkPermission(
-        v1.CheckPermissionRequest.create({
-          consistency: fullyConsistent,
-          permission: 'access',
-          resource,
-          subject: subjectFor(principal.principalId),
-        }),
-      )
+    const principalId = PrincipalIdSchema.make(principal.principalId);
+    const tenantId = TenantIdSchema.make(scope.tenantId);
+    const legalEntityId = LegalEntityIdSchema.make(directory.legalEntityId);
+    const kind = yield* ports.principalKinds
+      .readKind({ principalId, scope, tenantId })
       .pipe(Effect.mapError(unavailable));
-    if (response.permissionship === v1.CheckPermissionResponse_Permissionship.NO_PERMISSION) {
-      return yield* ineligible();
+    if (Option.isNone(kind) || (kind.value !== 'human' && kind.value !== 'agent')) {
+      return false;
     }
-    if (response.permissionship !== v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION) {
-      return yield* unavailable();
-    }
-    return member;
-  }),
-});
+    const actors: readonly ActorContext[] =
+      kind.value === 'human'
+        ? [{ _tag: 'Principal', principalId }]
+        : (directory.agentContexts ?? []).filter((context) => context.agentId === principal.principalId);
+    const answers = yield* Effect.forEach(
+      actors,
+      Effect.fn('Core.assignmentSubjectContext')(function* evaluateContext(actor) {
+        if (Predicate.isTagged(actor, 'Agent')) {
+          const ownerKind = yield* ports.principalKinds
+            .readKind({ principalId: actor.principalId, scope, tenantId })
+            .pipe(Effect.mapError(unavailable));
+          if (Option.isNone(ownerKind) || ownerKind.value !== 'human') {
+            return false;
+          }
+        }
+        const subject = { actor, legalEntityId, tenantId };
+        const capability = capabilityPolicyOf(declaration);
+        const authority = ports.intent.authorityFor(scope);
+        const now = yield* DateTime.nowAsDate;
+        const resolution =
+          declaration.selectors.length > 0 && target === undefined
+            ? yield* resolveListAccess(authority, ports.check, { actor: subject, capability, mode: 'run', now })
+            : {
+                decision: yield* decideAccess(authority, ports.check, {
+                  actor: subject,
+                  now,
+                  request: target === undefined ? { capability, mode: 'run' } : { capability, mode: 'run', target },
+                }),
+              };
+        const { decision } = resolution;
+        if (decision.outcome === 'UNAVAILABLE') {
+          return yield* unavailable();
+        }
+        if (shouldRecordDecision(decision, capability)) {
+          const resolvedScope = yield* authority
+            .readScope({
+              holders: Predicate.isTagged(actor, 'Principal')
+                ? [actor]
+                : [
+                    { _tag: 'Principal', principalId: actor.principalId },
+                    { _tag: 'Agent', agentId: actor.agentId },
+                  ],
+              legalEntityId,
+              tenantId,
+            })
+            .pipe(Effect.mapError(unavailable));
+          if (Option.isNone(resolvedScope)) {
+            return yield* unavailable();
+          }
+          const entry: AccessDecisionLogEntry = {
+            actor,
+            capability,
+            decidedAt: now,
+            mode: 'run',
+            onBehalfOfPrincipalId: PrincipalIdSchema.make(scope.principalId),
+            outcome: decision.outcome,
+            reasons: decision.reasons,
+            scope,
+            scopeId: resolvedScope.value.scopeId,
+          };
+          const withTarget = target === undefined ? entry : { ...entry, target: target.recordKey };
+          yield* ports.decisionLog
+            .record(
+              decision.admissionDeadline === undefined
+                ? withTarget
+                : { ...withTarget, admissionDeadline: decision.admissionDeadline },
+            )
+            .pipe(Effect.mapError(unavailable));
+        }
+        // ALLOWED list authority is eligibility even when this candidate owns no row yet. A missing
+        // predicate is never silently widened to ALL; resolveListAccess supplies it only on proven reach.
+        return (
+          decision.outcome === 'ALLOWED' &&
+          (declaration.selectors.length === 0 ||
+            target !== undefined ||
+            ('predicate' in resolution && resolution.predicate !== undefined))
+        );
+      }),
+      { concurrency: 1 },
+    );
+    return answers.some(Boolean);
+  });
+  return {
+    read: Effect.fn('Core.readAssignablePrincipals')(function* read(
+      directory: AssignablePrincipalDirectory,
+      eligibility: AssignmentEligibility,
+    ) {
+      const candidates = yield* Effect.forEach(
+        directory.members.filter((member) => isActive(directory, member)),
+        (member) =>
+          evaluate(directory, member.principalRef, eligibility).pipe(
+            Effect.map((allowed) =>
+              allowed ? [{ displayName: member.displayName, principalRef: member.principalRef }] : [],
+            ),
+          ),
+        { concurrency: 1 },
+      );
+      return candidates.flat();
+    }),
+    resolveAssignee: Effect.fn('Core.resolveAssignee')(function* resolve(
+      directory: AssignablePrincipalDirectory,
+      principal: PrincipalRef,
+      eligibility: AssignmentEligibility,
+    ) {
+      const member = yield* activeAssignmentMember(directory, principal);
+      if (!(yield* evaluate(directory, principal, eligibility))) {
+        return yield* ineligible();
+      }
+      return member;
+    }),
+  };
+};
 
 export class AssignablePrincipals extends Context.Service<
   AssignablePrincipals,
   ReturnType<typeof makeAssignablePrincipals>
 >()('@app/core-runtime/auth/assignable-principals/AssignablePrincipals') {}
 
-const withClient = <A, E>(run: (service: ReturnType<typeof makeAssignablePrincipals>) => Effect.Effect<A, E>) =>
-  Effect.scoped(
-    Effect.gen(function* assignmentClient() {
-      const injected = yield* Effect.serviceOption(AssignablePrincipals);
-      if (Option.isSome(injected)) {
-        return yield* run(injected.value);
-      }
-      const config = yield* loadSpiceDbConfig().pipe(Effect.mapError(unavailable));
-      const client = yield* acquireSpiceDbClientResource(
-        () => createSpiceDbPermissionClient(config, SPICEDB_CHECK_TIMEOUT_MS),
-        unavailable,
-      );
-      return yield* run(makeAssignablePrincipals(client));
-    }),
-  );
+const withGate = Effect.fn('Core.assignmentGate')(function* assignmentGate<A, E, R>(
+  run: (service: ReturnType<typeof makeAssignablePrincipals>) => Effect.Effect<A, E, R>,
+) {
+  const injected = yield* Effect.serviceOption(AssignablePrincipals);
+  if (Option.isSome(injected)) {
+    return yield* run(injected.value);
+  }
+  return yield* run(makeAssignablePrincipals(yield* AccessEnforcementPortsLive));
+});
 
-export const readAssignablePrincipals = (
-  directory: AssignablePrincipalDirectory,
-  requiredPermission: ContextPermissionAccessTarget,
-) => withClient((service) => service.read(directory, requiredPermission));
+export const readAssignablePrincipals = (directory: AssignablePrincipalDirectory, eligibility: AssignmentEligibility) =>
+  withGate((service) => service.read(directory, eligibility));
 
 export const resolveAssignee = (
   directory: AssignablePrincipalDirectory,
   principal: PrincipalRef,
-  requiredPermission: ContextPermissionAccessTarget,
-) => withClient((service) => service.resolveAssignee(directory, principal, requiredPermission));
+  eligibility: AssignmentEligibility,
+) => withGate((service) => service.resolveAssignee(directory, principal, eligibility));

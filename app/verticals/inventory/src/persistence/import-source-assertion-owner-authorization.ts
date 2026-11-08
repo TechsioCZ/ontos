@@ -1,12 +1,9 @@
-import {
-  OwnerAuthorizationOverlay,
-  failClosedOwnerAuthorizationOverlay,
-  transactionalOwnerAuthorization,
-} from '@app/core-runtime';
+import { OwnerAuthorizationOverlay, failClosedOwnerAuthorizationOverlay } from '@app/core-runtime';
 import type {
   OwnerAuthorizationDecision,
   OwnerAuthorizationInput,
   OwnerAuthorizationOverlayService,
+  OwnerAccessFacts,
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
@@ -17,42 +14,53 @@ import { inventoryBackendConfigurationPersistenceForScope } from './inventory-ba
 import { stockPositionPersistenceForScope } from './stock-position-repository.ts';
 import { inventoryStockPositions } from './stock-position-table.ts';
 
-/** Owner-state admission only; Core still checks the executor and exact business permission. */
-export const authorizeImportSourceAssertionOwner = Effect.fn('InventoryImportOwnerAuthorization.authorize')(
-  function* authorize(
+/** The one capability this owner rule is about: importing an external source assertion (O31). */
+const IMPORT_SOURCE_ASSERTION_CAPABILITY = 'commerce.inventory.source-assertion.import';
+
+/**
+ * The Stock Position the payload asserts against. Core resolves these facts from the decoded payload
+ * and the trusted scope (O70); they name the owner record the rule reads, they grant nothing.
+ */
+const positionFactsOf = (facts: OwnerAccessFacts | undefined) =>
+  facts === undefined
+    ? undefined
+    : {
+        moduleId: facts['inventoryPositionModuleId'],
+        resourceId: facts['inventoryPositionResourceId'],
+        resourceType: facts['inventoryPositionResourceType'],
+        tenantId: facts['inventoryPositionTenantId'],
+      };
+
+/**
+ * Owner-state admission only: Core still decides the Action's own capability in the one access gate
+ * (O67-Q2), and this seam answers the owner's rule over its own state — the imported assertion may
+ * only land on a Position whose on-hand authority is the currently selected Inventory Backend
+ * configuration (O20/O31).
+ */
+export const importSourceAssertionOwnerAuthorizationOverlay: OwnerAuthorizationOverlayService = Object.freeze({
+  authorize: Effect.fn('InventoryImportOwnerAuthorization.authorize')(function* authorize(
     transaction: ScopedTransactionExecutor,
     input: OwnerAuthorizationInput,
   ): Effect.fn.Return<OwnerAuthorizationDecision> {
     if (
       input.operation !== 'action' ||
-      input.operationKey !== 'commerce.inventory.import-source-assertion' ||
+      input.capabilityKey !== IMPORT_SOURCE_ASSERTION_CAPABILITY ||
       input.owningModuleKey !== 'commerce.inventory'
     ) {
-      const failClosed = yield* failClosedOwnerAuthorizationOverlay.prepare(input);
-      return yield* failClosed(transaction, input.operationAt);
+      return yield* failClosedOwnerAuthorizationOverlay.authorize(transaction, input);
     }
-    const [target, ...unexpected] = input.targets;
+    const positional = positionFactsOf(input.ownerFacts);
     if (
-      target === undefined ||
-      unexpected.length !== 0 ||
-      target.kind !== 'business_permission' ||
-      target.target.kind !== 'inventory_resource'
+      positional === undefined ||
+      input.scope.legalEntityId !== undefined ||
+      input.scope.trustedStorefrontId !== undefined
     ) {
       return 'unavailable';
     }
-    if (
-      target.permission !== 'inventory.migration.manage' ||
-      target.target.tenantId !== input.scope.tenantId ||
-      input.scope.legalEntityId !== undefined ||
-      input.scope.trustedStorefrontId !== undefined ||
-      target.trustedStorefrontId !== undefined
-    ) {
+    if (positional.tenantId !== input.scope.tenantId) {
       return 'denied';
     }
-    const decoded = Schema.decodeUnknownResult(StockPositionRefSchema)({
-      ...target.target.resource,
-      tenantId: target.target.tenantId,
-    });
+    const decoded = Schema.decodeUnknownResult(StockPositionRefSchema)(positional);
     if (Result.isFailure(decoded)) {
       return 'denied';
     }
@@ -96,12 +104,8 @@ export const authorizeImportSourceAssertionOwner = Effect.fn('InventoryImportOwn
         StockPositionRejected: () => Effect.succeed('unavailable' as const),
       }),
     );
-  },
-);
-
-/** The owner decision reads only owner database state, so all of it runs inside Core's transaction. */
-export const importSourceAssertionOwnerAuthorizationOverlay: OwnerAuthorizationOverlayService =
-  transactionalOwnerAuthorization(authorizeImportSourceAssertionOwner);
+  }),
+});
 
 export const importSourceAssertionOwnerAuthorizationOverlayLive = Layer.succeed(
   OwnerAuthorizationOverlay,

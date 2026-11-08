@@ -5,9 +5,11 @@ import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { propertyPortfolioManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
+import { recordsRead } from './src/api/records.read.ts';
+import { searchLabelsRead } from './src/api/search-labels.read.ts';
 import { rebuildSearchWorker } from './src/workers/rebuild-search.worker.ts';
 import { refreshSearchWorker } from './src/workers/refresh-search.worker.ts';
-import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 // </generated-module-registration-imports>
 
 export const propertyPortfolioRegistration = defineVerticalRuntimeRegistration({
@@ -20,6 +22,7 @@ export const propertyPortfolioRegistration = defineVerticalRuntimeRegistration({
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       records: () => import('./src/api/records-client.ts'),
       'search-labels': () => import('./src/api/search-labels-client.ts'),
       // </generated-module-registration-apis>
@@ -52,6 +55,12 @@ export const propertyPortfolioRegistration = defineVerticalRuntimeRegistration({
     rebuildSearchWorker,
     refreshSearchWorker,
     // </generated-module-registration-workers>
+  ],
+  reads: [
+    // <generated-module-registration-reads>
+    recordsRead,
+    searchLabelsRead,
+    // </generated-module-registration-reads>
   ],
 });
 

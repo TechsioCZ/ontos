@@ -5,6 +5,7 @@ import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { crmActivitiesManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
+import { recordsRead } from './src/api/records.read.ts';
 // </generated-module-registration-imports>
 
 export const crmActivitiesRegistration = defineVerticalRuntimeRegistration({
@@ -16,6 +17,7 @@ export const crmActivitiesRegistration = defineVerticalRuntimeRegistration({
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       records: () => import('./src/api/records-client.ts'),
       // </generated-module-registration-apis>
     },
@@ -41,6 +43,11 @@ export const crmActivitiesRegistration = defineVerticalRuntimeRegistration({
   outboxWorkers: [
     // <generated-module-registration-workers>
     // </generated-module-registration-workers>
+  ],
+  reads: [
+    // <generated-module-registration-reads>
+    recordsRead,
+    // </generated-module-registration-reads>
   ],
 });
 

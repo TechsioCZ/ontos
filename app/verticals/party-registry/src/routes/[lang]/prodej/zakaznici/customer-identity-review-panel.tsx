@@ -4,6 +4,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Option } from 'effect';
+import { derivePartyDisplayName } from '../../../../../shared/domain/identity-contracts.ts';
 import type { useCustomerIdentityReview } from './customers-data.ts';
 
 type ReviewModel = ReturnType<typeof useCustomerIdentityReview>;
@@ -37,7 +38,9 @@ const ReviewParty = ({
         {t(`${reviewKey}.selectParty`, {
           name:
             identity.status === 'ready'
-              ? Option.getOrElse(identity.value.party.displayName, () => t(`${reviewKey}.unnamed`))
+              ? Option.getOrElse(identity.value.party.displayName ?? Option.none<string>(), () =>
+                  t(`${reviewKey}.unnamed`),
+                )
               : t(`${reviewKey}.unnamed`),
         })}
       </Button>
@@ -53,7 +56,8 @@ const ReviewParty = ({
       )}
       {contacts.status === 'ready' ? (
         contacts.value.items.map((contact) =>
-          !contact.current || contact.value.type === 'ADDRESS' ? null : (
+          // A withheld contact value is not shown.
+          !contact.current || contact.value === undefined || contact.value.type === 'ADDRESS' ? null : (
             <p className="text-sm" key={contact.contactPointRef.resourceId}>
               {contact.value.displayValue}
             </p>
@@ -80,7 +84,7 @@ const ReviewCaseDetail = ({
         items={[
           {
             label: t(`${reviewKey}.candidateName`),
-            value: duplicate.candidateCase.candidate.displayName ?? t(`${reviewKey}.unnamed`),
+            value: derivePartyDisplayName(duplicate.candidateCase.candidate) ?? t(`${reviewKey}.unnamed`),
           },
           {
             label: t(`${reviewKey}.partyType`),
@@ -100,7 +104,8 @@ const ReviewCaseDetail = ({
           { label: t(`${reviewKey}.reason`), value: duplicate.candidateCase.resolutionReason ?? '—' },
         ]}
       />
-      {duplicate.candidateCase.candidate.officialIdentifiers.map((identifier) => (
+      {/* Withheld identifier and evidence lists are absent and render nothing. */}
+      {(duplicate.candidateCase.candidate.officialIdentifiers ?? []).map((identifier) => (
         <p className="text-sm" key={`${identifier.identifierType}:${identifier.value}`}>
           {t(`${reviewKey}.identifier`, { type: identifier.identifierType, value: identifier.value })}
         </p>
@@ -111,7 +116,7 @@ const ReviewCaseDetail = ({
           {evidence.statement}
         </p>
       ))}
-      {duplicate.candidateCase.evaluatedEvidence.map((evidence) => (
+      {(duplicate.candidateCase.evaluatedEvidence ?? []).map((evidence) => (
         <p
           className="break-words text-sm"
           key={`${evidence.ruleKey}:${evidence.identifierType ?? ''}:${evidence.namespace ?? ''}:${evidence.normalizedValue ?? ''}:${evidence.officialIdentifierRef?.resourceId ?? ''}:${evidence.reason}`}

@@ -9,6 +9,7 @@ export interface ModuleStateSnapshot {
 interface ModuleStateSnapshotData {
   readonly declaredEntrypoints: ReadonlySet<string>;
   readonly evaluatedEntrypoints: Set<string>;
+  readonly intrinsicDependencies: ReadonlyMap<string, readonly string[]>;
   readonly states: ReadonlyMap<string, TenantModuleState>;
 }
 

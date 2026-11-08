@@ -22,7 +22,7 @@ const command = Command.make(
       const operator = yield* Effect.acquireRelease(authenticateAgentProfileOperator, (session) =>
         session.close.pipe(Effect.ignore),
       );
-      yield* Console.log(yield* runAgentProfileSetup(operator.principal, inputs, mode, sha256));
+      yield* Console.log(yield* runAgentProfileSetup(operator, inputs, mode, sha256));
     }).pipe(Effect.scoped),
 ).pipe(Command.provide(AgentProfileOperatorLive));
 

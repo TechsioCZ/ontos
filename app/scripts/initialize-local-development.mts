@@ -1,3 +1,5 @@
+import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../database/identity-enrollment.ts';
+import { makeDatabaseIdentityEnrollmentLive } from '../packages/core-runtime/src/db/database-identities.ts';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -7,11 +9,13 @@ import { betterAuth } from 'better-auth';
 import { verifyPassword } from 'better-auth/crypto';
 import { admin } from 'better-auth/plugins/admin';
 import { and, eq, or } from 'drizzle-orm';
-import { Config, ConfigProvider, Console, Effect, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
+import type { Crypto } from 'effect';
+import { Config, ConfigProvider, Console, DateTime, Effect, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
 import { isSqlError } from 'effect/sql/SqlError';
 
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '../packages/core-runtime/src/auth/staff-authentication-namespace.ts';
-import { AuthDatabase, AuthDatabaseFromDatabaseConfigLive } from '../apps/shell-super-app/api/auth/db/client.ts';
+import { AuthConfig } from '../apps/shell-super-app/api/auth/config.ts';
+import { AuthDatabase, AuthDatabaseLive } from '../apps/shell-super-app/api/auth/db/client.ts';
 import { account, user } from '../apps/shell-super-app/api/auth/db/schema.ts';
 import { CoreDatabase, CoreDatabaseLive } from '../packages/core-runtime/src/db/client.ts';
 import {
@@ -19,6 +23,8 @@ import {
   parseDatabaseConfig,
   parseDatabaseConnectionPair,
 } from '../packages/core-runtime/src/db/config.ts';
+import type { DatabaseConnectionError } from '../packages/core-runtime/src/db/connection-error.ts';
+import { LegalEntityIdSchema, PrincipalIdSchema, TenantIdSchema } from '../packages/core-runtime/src/access/ids.ts';
 import {
   legalEntities,
   principalAuthBindings,
@@ -28,23 +34,34 @@ import {
 } from '../packages/core-runtime/src/db/schema.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../packages/core-runtime/src/db/types.ts';
 import {
-  BootstrapCompanyMembershipSchema,
-  companyMembershipAdmissionRelationships,
-  installBootstrapCompanyMemberships,
   bootstrapPrincipalRecord,
-  bootstrapRelationshipRequest,
   selectBootstrapLegalEntities,
   selectBootstrapPrincipals,
   selectBootstrapAuthBindings,
 } from '../packages/core-runtime/src/install/context-bootstrap-shared.ts';
-import { newSpiceDbGrpcClient } from '../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { parseSpiceDbConfig } from '../packages/core-runtime/src/permissions/config.ts';
+import type { SpiceDbConfigValue } from '../packages/core-runtime/src/permissions/config.ts';
+import { TenantAccessBootstrap, TenantAccessBootstrapLive } from '@app/core-runtime/access/bootstrap';
+import { AccessChangesStoreLive } from '@app/core-runtime/access/changes/persistence/drizzle-store';
 import {
-  toLegalEntityAccessObjectId,
-  toModuleAccessObjectId,
-} from '../packages/core-runtime/src/permissions/context-access.ts';
+  makeAccessProjectionCompiler,
+  makeAccessProjectionTransport,
+} from '@app/core-runtime/access/compiler/spice-db-compiler';
+import { AccessCatalogSnapshotWriterLive } from '@app/core-runtime/access/intent/catalog-snapshot-writer';
+import { AccessMembershipStoreLive } from '@app/core-runtime/access/intent/memberships';
+import { AccessProjectionCompiler } from '@app/core-runtime/access/intent/projection-compiler';
+import { AccessProjectionWriterLive } from '@app/core-runtime/access/intent/projection-writer';
+import { TenantIntentLoaderLive } from '@app/core-runtime/access/intent/tenant-intent-loader';
+import { AccessWriteJournalStoreLive } from '@app/core-runtime/access/lifecycle/persistence/journal-store';
+import { installedModuleKeysOf } from '@app/core-runtime/install/stage-context-bootstrap';
+import type { InstallationRuntime } from '@app/core-runtime/install/stage-context-bootstrap';
+import { AccessWorkloadBindingIdSchema } from '../packages/core-runtime/src/access/workloads/store.ts';
+import { writeWorkloadBindings } from '../packages/core-runtime/src/access/workloads/binding-store.ts';
+import { WorkloadKeySchema } from '../packages/core-runtime/src/authorization/access-declaration.ts';
+import { stableUuid } from '../packages/core-runtime/src/access/catalog/stable-id.ts';
+import { stageScopeOf } from '../packages/core-runtime/src/install/stage-context-bootstrap.ts';
+import { readAccessCatalogArtifact } from './authorization-catalog-artifact.mts';
 import { deriveOntosModuleDeploymentContract } from './generate-ontos-module-contract.mts';
-import { localDevelopmentAdministratorFixture, principalRelationships } from './demo/permissions.mts';
 
 export interface LocalDevelopmentEnvironment {
   readonly BETTER_AUTH_SECRET?: unknown;
@@ -65,30 +82,34 @@ export const LOCAL_DEVELOPMENT_CONTEXT = Object.freeze({
   authBindingId: '73000000-0000-4000-8000-000000000010',
   defaultLocale: 'cs',
   email: 'demo@test.com',
-  legalEntityId: localDevelopmentAdministratorFixture.legalEntityId,
+  legalEntityId: '71000000-0000-4000-8000-000000000010',
   legalName: 'Local Legal Entity',
   password: localDevelopmentPassword,
   principalDisplayName: 'Local User',
-  principalId: localDevelopmentAdministratorFixture.principalId,
+  principalId: '72000000-0000-4000-8000-000000000010',
   registrationCountry: 'CZ',
   registrationNumber: 'LOCAL-0001',
-  tenantId: localDevelopmentAdministratorFixture.tenantId,
+  tenantId: '70000000-0000-4000-8000-000000000010',
   tenantName: 'Local Tenant',
   tenantSlug: 'local',
+});
+
+/**
+ * The trusted machine workload local development registers (O73). The shared Storefront client starts
+ * and claims portal enrollments on a visitor's behalf before any human session exists, so a local
+ * tenant needs its principal bound for that key: `commerce.customer-context.{start,claim}-portal-enrollment`
+ * name `commerce.storefront-client`, and without the binding the local gate refuses every enrollment.
+ */
+export const LOCAL_DEVELOPMENT_STOREFRONT_CLIENT = Object.freeze({
+  principalDisplayName: 'Local Storefront Client',
+  principalId: '72000000-0000-4000-8000-000000000011',
+  workloadKey: 'commerce.storefront-client',
 });
 
 export const LOCAL_DEVELOPMENT_VERTICALS = Object.freeze([
   'party-registry',
   'commerce-market-catalog',
   'commerce-customer-context',
-  // Sales demo MicroVerticals (demo/sales-crm).
-  'workforce',
-  'tagging',
-  'sales-pipeline',
-  'merchandise',
-  'sales-insights',
-  'facility-operations',
-  'crm',
 ] as const);
 
 export interface LocalDevelopmentConfiguration {
@@ -98,17 +119,10 @@ export interface LocalDevelopmentConfiguration {
   readonly email: string;
   readonly password: Redacted.Redacted;
   readonly principalDisplayName: string;
+  readonly spiceDb: SpiceDbConfigValue;
   readonly spiceDbCaCertificate: string;
   readonly spiceDbEndpoint: string;
   readonly spiceDbPreSharedKey: Redacted.Redacted;
-}
-
-export interface LocalDevelopmentRelationship {
-  readonly relation: string;
-  readonly resourceId: string;
-  readonly resourceType: string;
-  readonly subjectId: string;
-  readonly subjectType: string;
 }
 
 export interface LocalDevelopmentInitializationResult {
@@ -271,6 +285,7 @@ const parseLocalDevelopmentConfigurationFromProvider = (provider: ConfigProvider
       email: LOCAL_DEVELOPMENT_CONTEXT.email,
       password: LOCAL_DEVELOPMENT_CONTEXT.password,
       principalDisplayName: LOCAL_DEVELOPMENT_CONTEXT.principalDisplayName,
+      spiceDb,
       spiceDbCaCertificate: source.spiceDbCaCertificate,
       spiceDbEndpoint: spiceDb.endpoint,
       spiceDbPreSharedKey,
@@ -391,55 +406,6 @@ export const moduleStateIdFor = (moduleId: string): string => {
   return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
 };
 
-export const buildLocalDevelopmentRelationships = Effect.fn('LocalDevelopment.buildRelationships')(
-  function* buildRelationships(
-    moduleIds: readonly string[],
-  ): Effect.fn.Return<readonly LocalDevelopmentRelationship[], LocalDevelopmentInitializationError> {
-    const context = LOCAL_DEVELOPMENT_CONTEXT;
-    const legalEntityObjectId = toLegalEntityAccessObjectId(context.tenantId, context.legalEntityId);
-    if (legalEntityObjectId === undefined) {
-      return yield* failure('local_contract_invalid', 'The local Legal Entity authorization ID is invalid');
-    }
-    const shared: LocalDevelopmentRelationship[] = [
-      {
-        relation: 'tenant',
-        resourceId: context.principalId,
-        resourceType: 'principal',
-        subjectId: context.tenantId,
-        subjectType: 'tenant',
-      },
-      {
-        relation: 'self',
-        resourceId: context.principalId,
-        resourceType: 'principal',
-        subjectId: context.principalId,
-        subjectType: 'principal',
-      },
-      ...principalRelationships(
-        context.principalId,
-        localDevelopmentAdministratorFixture.role,
-        [],
-        context.legalEntityId,
-        context.tenantId,
-      ),
-    ];
-    for (const moduleId of moduleIds) {
-      const moduleObjectId = toModuleAccessObjectId(context.tenantId, context.legalEntityId, moduleId);
-      if (moduleObjectId === undefined) {
-        return yield* failure('local_contract_invalid', `Module ${moduleId} has an invalid authorization ID`);
-      }
-      shared.push({
-        relation: 'legal_entity',
-        resourceId: moduleObjectId,
-        resourceType: 'module_access',
-        subjectId: legalEntityObjectId,
-        subjectType: 'legal_entity',
-      });
-    }
-    return companyMembershipAdmissionRelationships(shared, [context]);
-  },
-);
-
 const ensureAuthUser = Effect.fn('LocalDevelopment.ensureAuthUser')(function* ensureAuthUserEffect(
   configuration: LocalDevelopmentConfiguration,
 ) {
@@ -516,10 +482,10 @@ const ensureAuthUser = Effect.fn('LocalDevelopment.ensureAuthUser')(function* en
 
 const reconcileLocalModules = Effect.fn('LocalDevelopment.reconcileLocalModules')(function* reconcileModuleStates(
   transaction: CoreTransaction,
-  moduleIds: readonly string[],
+  installedModuleKeys: readonly string[],
 ) {
   const context = LOCAL_DEVELOPMENT_CONTEXT;
-  for (const moduleId of moduleIds) {
+  for (const moduleId of installedModuleKeys) {
     const moduleStateId = moduleStateIdFor(moduleId);
     const moduleCandidates = yield* transaction
       .select({
@@ -558,7 +524,7 @@ const reconcileLocalModules = Effect.fn('LocalDevelopment.reconcileLocalModules'
 export const reconcileCoreContext = (
   database: CoreDatabaseExecutor,
   authUserId: string,
-  moduleIds: readonly string[],
+  installedModuleKeys: readonly string[],
 ): Effect.Effect<void, LocalDevelopmentInitializationError> =>
   database
     .transaction(
@@ -611,6 +577,32 @@ export const reconcileCoreContext = (
           yield* transaction.insert(principals).values(expectedPrincipal);
         }
 
+        // The local storefront-client workload principal (O73): a service identity of this tenant whose
+        // registered workload the gate admits on the portal-enrollment carriers.
+        const storefrontClient = LOCAL_DEVELOPMENT_STOREFRONT_CLIENT;
+        const workloadCandidates = yield* transaction
+          .select({ kind: principals.kind, status: principals.status, tenantId: principals.tenantId })
+          .from(principals)
+          .where(eq(principals.principalId, storefrontClient.principalId))
+          .limit(1);
+        const expectedWorkloadPrincipal = {
+          kind: 'service' as const,
+          status: 'active' as const,
+          tenantId: context.tenantId,
+        };
+        if (
+          (yield* classifyExactLocalRecord('workload principal', workloadCandidates[0], expectedWorkloadPrincipal)) ===
+          'create'
+        ) {
+          yield* transaction.insert(principals).values({
+            displayName: storefrontClient.principalDisplayName,
+            kind: 'service',
+            principalId: storefrontClient.principalId,
+            status: 'active',
+            tenantId: context.tenantId,
+          });
+        }
+
         const bindingCandidates = yield* selectBootstrapAuthBindings(
           transaction,
           context,
@@ -637,19 +629,7 @@ export const reconcileCoreContext = (
           yield* transaction.insert(principalAuthBindings).values(expectedBinding);
         }
 
-        yield* reconcileLocalModules(transaction, moduleIds);
-        const companyMembership = yield* Schema.decodeEffect(BootstrapCompanyMembershipSchema)({
-          affiliation: localDevelopmentAdministratorFixture.affiliation,
-          legalEntityId: context.legalEntityId,
-          principalId: context.principalId,
-        }).pipe(Effect.mapError(() => failure('local_contract_invalid', 'Invalid local developer membership fixture')));
-        yield* installBootstrapCompanyMemberships(transaction, context.tenantId, [companyMembership]).pipe(
-          Effect.catchTag('BootstrapCompanyMembershipConflict', () =>
-            Effect.fail(
-              failure('local_conflict', 'The local developer membership conflicts; offboarding is preserved'),
-            ),
-          ),
-        );
+        yield* reconcileLocalModules(transaction, installedModuleKeys);
         return yield* Effect.void;
       }),
     )
@@ -664,37 +644,6 @@ export const reconcileCoreContext = (
       ),
     );
 
-const acquireSpiceDbClient = (configuration: LocalDevelopmentConfiguration) =>
-  Effect.acquireRelease(
-    Effect.try({
-      catch: () => failure('local_persistence_failed', 'The local authorization client could not be created'),
-      try: () =>
-        newSpiceDbGrpcClient({
-          caCertificate: configuration.spiceDbCaCertificate,
-          endpoint: configuration.spiceDbEndpoint,
-          preSharedKey: Redacted.value(configuration.spiceDbPreSharedKey),
-        }),
-    }),
-    (client) => Effect.sync(() => client.close()),
-  );
-
-const touchRelationships = (
-  configuration: LocalDevelopmentConfiguration,
-  relationships: readonly LocalDevelopmentRelationship[],
-): Effect.Effect<void, LocalDevelopmentInitializationError> =>
-  Effect.scoped(
-    Effect.gen(function* touchLocalRelationships() {
-      const client = yield* acquireSpiceDbClient(configuration);
-      yield* Effect.tryPromise({
-        catch: () =>
-          failure('local_persistence_failed', 'The local authorization relationships could not be reconciled'),
-        try: async () => {
-          await client.promises.writeRelationships(bootstrapRelationshipRequest(relationships));
-        },
-      });
-    }),
-  );
-
 const loadRootConfiguration = () =>
   Effect.gen(function* loadConfiguration() {
     const fileProvider = yield* ConfigProvider.fromDotEnv({
@@ -703,6 +652,46 @@ const loadRootConfiguration = () =>
     const provider = ConfigProvider.orElse(ConfigProvider.fromEnv(), fileProvider);
     return yield* parseLocalDevelopmentConfigurationFromProvider(provider);
   });
+
+/**
+ * The installation runtime of this root: the engine transport of the local SpiceDB and the six access
+ * writers over the local Core database. `apps/shell-super-app/scripts/bootstrap-stage-accounts.mts`
+ * composes the same layer for stage, because each process root owns its own transport and pool.
+ */
+const localInstallationRuntime = (
+  databaseLayers: Layer.Layer<CoreDatabase, DatabaseConnectionError>,
+  spiceDb: SpiceDbConfigValue,
+): Layer.Layer<InstallationRuntime, DatabaseConnectionError, Crypto.Crypto> => {
+  // The engine transport belongs to this run: it is opened with the layer and closed when the run ends.
+  const engine = Layer.effect(
+    AccessProjectionCompiler,
+    Effect.acquireRelease(
+      Effect.sync(() => makeAccessProjectionTransport(spiceDb)),
+      (transport) => Effect.sync(() => transport.close()),
+    ).pipe(Effect.map((transport) => makeAccessProjectionCompiler(transport))),
+  );
+  const memberships = AccessMembershipStoreLive;
+  // A database that cannot be opened is a defect of this seed run, not a decision of the bootstrap.
+  const platform = Layer.mergeAll(
+    databaseLayers,
+    engine,
+    makeDatabaseIdentityEnrollmentLive(APP_DATABASE_IDENTITY_ENROLLMENT),
+  );
+  const stores = Layer.mergeAll(
+    TenantIntentLoaderLive,
+    AccessWriteJournalStoreLive,
+    AccessChangesStoreLive,
+    memberships,
+  ).pipe(Layer.provide(platform));
+  const catalog = AccessCatalogSnapshotWriterLive.pipe(Layer.provide(stores));
+  const writer = AccessProjectionWriterLive.pipe(Layer.provide(Layer.mergeAll(stores, platform)));
+  const bootstrap = TenantAccessBootstrapLive.pipe(Layer.provide(Layer.mergeAll(stores, platform, catalog, writer)));
+  return Layer.mergeAll(bootstrap, writer, catalog, stores, platform) satisfies Layer.Layer<
+    InstallationRuntime,
+    DatabaseConnectionError,
+    Crypto.Crypto
+  >;
+};
 
 export const initializeLocalDevelopment = (
   environmentEffect?: Effect.Effect<LocalDevelopmentEnvironment, LocalDevelopmentInitializationError>,
@@ -716,35 +705,102 @@ export const initializeLocalDevelopment = (
       environmentEffect === undefined
         ? yield* loadRootConfiguration()
         : yield* environmentEffect.pipe(Effect.flatMap(parseLocalDevelopmentConfiguration));
+    const workspaceRoot = path.join(import.meta.dirname, '..');
     const moduleIds = yield* deriveActivatedModuleIds(
-      path.join(import.meta.dirname, '..'),
+      workspaceRoot,
       deriveOntosModuleDeploymentContract,
       LOCAL_DEVELOPMENT_VERTICALS,
     );
-    const relationships = yield* buildLocalDevelopmentRelationships(moduleIds);
-    const databaseConfiguration = yield* parseDatabaseConfig({
-      DATABASE_URL: configuration.databaseAdminUrl,
-    }).pipe(
-      Effect.mapError(() => failure('local_configuration_invalid', 'The local Core database configuration is invalid')),
+    // The declarations of the whole composition (O69): a tenant's release is compiled from them, and a
+    // release without the governed reads would leave the local user unable to read anything. The set is
+    // the pinned catalog artifact, so this process root never scans source code; the drift check keeps it
+    // current with the declarations in the tree.
+    const accessModules = yield* readAccessCatalogArtifact(workspaceRoot).pipe(
+      Effect.mapError(() => failure('local_contract_invalid', 'The pinned access catalog artifact could not be read')),
     );
+    const installedModuleKeys = installedModuleKeysOf(moduleIds, accessModules);
     const authUser = yield* ensureAuthUser(configuration).pipe(
       Effect.provide(
-        AuthDatabaseFromDatabaseConfigLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, databaseConfiguration))),
+        AuthDatabaseLive.pipe(
+          Layer.provide(
+            Layer.succeed(AuthConfig, {
+              baseUrl: configuration.authBaseUrl,
+              connectionString: configuration.databaseAdminUrl,
+              secret: Redacted.value(configuration.authSecret),
+              secureCookies: false,
+              supportUserIds: [],
+              trustedOrigins: [configuration.authBaseUrl],
+            }),
+          ),
+        ),
       ),
       Effect.catchTag('AuthDatabaseConnectionError', () =>
         failure('local_persistence_failed', 'The local authentication database could not be opened'),
       ),
     );
+    const databaseConfiguration = yield* parseDatabaseConfig({
+      DATABASE_URL: configuration.databaseAdminUrl,
+    }).pipe(
+      Effect.mapError(() => failure('local_configuration_invalid', 'The local Core database configuration is invalid')),
+    );
+    const databaseLayers = CoreDatabaseLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, databaseConfiguration)));
     yield* Effect.gen(function* initializeCore() {
       const database = yield* CoreDatabase;
-      yield* reconcileCoreContext(database.executor, authUser.userId, moduleIds);
+      yield* reconcileCoreContext(database.executor, authUser.userId, installedModuleKeys);
+      // One bootstrap of the local tenant: its scopes, its owner's memberships, the release and the role
+      // "Plný přístup" — projected by the single Core writer, which is what the local gate reads.
+      const scope = yield* stageScopeOf({
+        principalId: LOCAL_DEVELOPMENT_CONTEXT.principalId,
+        tenantId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
+      }).pipe(Effect.mapError((error) => failure('local_contract_invalid', error.reason)));
+      const bootstrap = yield* TenantAccessBootstrap;
+      yield* bootstrap
+        .bootstrapTenantAccess({
+          legalEntityIds: [LegalEntityIdSchema.make(LOCAL_DEVELOPMENT_CONTEXT.legalEntityId)],
+          modules: accessModules,
+          scope,
+        })
+        .pipe(Effect.mapError((error) => failure('local_persistence_failed', `${error.code}: ${error.reason}`)));
+      // The operator-declared workload of the local tenant: the shared Storefront client, registered
+      // through Core's own registry so the gate admits it on the portal-enrollment carriers (O73).
+      const storefrontClient = LOCAL_DEVELOPMENT_STOREFRONT_CLIENT;
+      yield* writeWorkloadBindings({ ...database, enrollment: APP_DATABASE_IDENTITY_ENROLLMENT }, scope, {
+        bindings: [
+          {
+            bindingId: AccessWorkloadBindingIdSchema.make(
+              stableUuid(
+                [
+                  'ontos.local.workload-binding',
+                  LOCAL_DEVELOPMENT_CONTEXT.tenantId,
+                  storefrontClient.principalId,
+                  storefrontClient.workloadKey,
+                ].join(':'),
+              ),
+            ),
+            createdAt: DateTime.toDateUtc(DateTime.makeUnsafe(0)),
+            incarnation: AccessWorkloadBindingIdSchema.make(
+              stableUuid(
+                [
+                  'ontos.local.workload-incarnation',
+                  LOCAL_DEVELOPMENT_CONTEXT.tenantId,
+                  storefrontClient.principalId,
+                  storefrontClient.workloadKey,
+                ].join(':'),
+              ),
+            ),
+            principalId: PrincipalIdSchema.make(storefrontClient.principalId),
+            tenantId: TenantIdSchema.make(LOCAL_DEVELOPMENT_CONTEXT.tenantId),
+            workloadKey: WorkloadKeySchema.make(storefrontClient.workloadKey),
+          },
+        ],
+      }).pipe(Effect.mapError((error) => failure('local_persistence_failed', `${error.code}: ${error.reason}`)));
     }).pipe(
-      Effect.provide(CoreDatabaseLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, databaseConfiguration)))),
+      Effect.provide(localInstallationRuntime(databaseLayers, configuration.spiceDb)),
+      // A pool that cannot be opened is this seed's failure, reported with the reason it recorded.
       Effect.catchTag('DatabaseConnectionError', () =>
         failure('local_persistence_failed', 'The local Core database could not be opened'),
       ),
     );
-    yield* touchRelationships(configuration, relationships);
     return {
       authUser: authUser.status,
       email: configuration.email,

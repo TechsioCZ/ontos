@@ -44,6 +44,7 @@ const execute = Effect.fn('MarkGtinUnresolvedActionServer.execute')(function* ex
       authorization: Redacted.make(request.headers['authorization']),
       'x-correlation-id': correlationId,
     },
+    successContract: 'result-or-proposal',
   });
 });
 

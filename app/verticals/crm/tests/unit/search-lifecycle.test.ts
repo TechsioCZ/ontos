@@ -1,3 +1,5 @@
+import { crmRegistration } from '../../vertical.registration.ts';
+import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';
 import { ActiveApplicationCompositionService, ContextAccess, ActionAlreadyCommitted } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
@@ -9,9 +11,23 @@ import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
 import { requestSearchRebuildAction } from '../../src/actions/request-search-rebuild.action.ts';
 import { makeEntityId } from '../../shared/domain/common.ts';
 import { companyId, scope } from './search-fixtures.ts';
+import {
+  crmApplyCommandDeclaration,
+  crmClientOwnerAssignGroup,
+  crmRecordsReadDeclaration,
+} from '../../shared/domain/access-declarations.ts';
 
 const unused = () => Effect.die('Unexpected external boundary');
 const dependencies = Layer.mergeAll(
+  makeTestAccessGateLayers({
+    spec: {
+      answers: {
+        [crmApplyCommandDeclaration.key]: { outcome: 'ALLOWED' },
+        [crmClientOwnerAssignGroup.key]: { outcome: 'ALLOWED' },
+        [crmRecordsReadDeclaration.key]: { outcome: 'ALLOWED', predicate: { groups: [] } },
+      },
+    },
+  }),
   Layer.succeed(ActiveApplicationCompositionService, { load: unused() }),
   Layer.succeed(GatewayPrincipalVerifierConfiguration, { configuration: unused() }),
   Layer.succeed(
@@ -45,7 +61,9 @@ it.layer(dependencies)('committed search intent', (suite) => {
           loadRecords: unused,
         };
         const harness = yield* makeActionTestHarness({
-          actionPermission: 'allowed',
+          access: 'allowed',
+          compositionRevision: 'a'.repeat(64),
+          ownerRegistration: crmRegistration,
           services: [bindActionTestServices(applyCommandAction, services)],
         });
         const input = {
@@ -68,37 +86,36 @@ it.layer(dependencies)('committed search intent', (suite) => {
         });
       }),
   );
-  suite.effect(
-    'rebuild requires explicit execution and tenant identity management, then queues only owner intent',
-    () =>
-      Effect.gen(function* checkCommandLifecycle() {
-        yield* Effect.forEach(
-          [false, true],
-          (allowed) =>
-            Effect.gen(function* checkRebuildPermission() {
-              const harness = yield* makeActionTestHarness({
-                actionPermission: 'allowed',
-                tenantPermission: allowed ? 'allowed' : 'denied',
+  suite.effect('rebuild requires its registered maintenance capability, then queues only owner intent', () =>
+    Effect.gen(function* checkCommandLifecycle() {
+      yield* Effect.forEach(
+        [false, true],
+        (allowed) =>
+          Effect.gen(function* checkRebuildPermission() {
+            const harness = yield* makeActionTestHarness({
+              access: { 'demo.crm.request-search-rebuild.write': allowed ? 'allowed' : 'denied' },
+              compositionRevision: 'a'.repeat(64),
+              ownerRegistration: crmRegistration,
+            });
+            const outcome = yield* harness.runtime
+              .runAction({
+                payload: {},
+                principal,
+                registration: requestSearchRebuildAction,
+                transport: { correlationId: 'crm-rebuild', idempotencyKey: 'crm-rebuild' },
+              })
+              .pipe(Effect.exit);
+            expect(Exit.isSuccess(outcome)).toBe(allowed);
+            expect(harness.snapshot().committed.length).toBe(allowed ? 1 : 0);
+            if (allowed) {
+              expect(harness.snapshot().committed[0]?.evidence).toMatchObject({
+                outboxMessages: [{ message: { topic: 'demo.crm.search-rebuild-requested.v1' } }],
               });
-              const outcome = yield* harness.runtime
-                .runAction({
-                  payload: {},
-                  principal,
-                  registration: requestSearchRebuildAction,
-                  transport: { correlationId: 'crm-rebuild', idempotencyKey: 'crm-rebuild' },
-                })
-                .pipe(Effect.exit);
-              expect(Exit.isSuccess(outcome)).toBe(allowed);
-              expect(harness.snapshot().committed.length).toBe(allowed ? 1 : 0);
-              if (allowed) {
-                expect(harness.snapshot().committed[0]?.evidence).toMatchObject({
-                  outboxMessages: [{ message: { topic: 'demo.crm.search-rebuild-requested.v1' } }],
-                });
-              }
-            }),
-          { concurrency: 1, discard: true },
-        );
-      }),
+            }
+          }),
+        { concurrency: 1, discard: true },
+      );
+    }),
   );
   suite.effect('failed owner mutation commits no search event or delivery', () =>
     Effect.gen(function* failBeforeSearchIntent() {
@@ -109,7 +126,9 @@ it.layer(dependencies)('committed search intent', (suite) => {
         loadRecords: unused,
       };
       const harness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
+        access: 'allowed',
+        compositionRevision: 'a'.repeat(64),
+        ownerRegistration: crmRegistration,
         services: [bindActionTestServices(applyCommandAction, services)],
       });
       const failure = yield* harness.runtime

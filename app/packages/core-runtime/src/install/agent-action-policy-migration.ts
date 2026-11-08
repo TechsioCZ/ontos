@@ -1,3 +1,4 @@
+import type { ActionProvisioningIntent } from '../authorization/entrypoint-classification.ts';
 /** Preflight only: derive exact agent Action policy without mutating or discarding legacy graph evidence. */
 import { v1 } from '@authzed/authzed-node';
 import { Option, Result, Schema } from 'effect';
@@ -5,9 +6,20 @@ import { Option, Result, Schema } from 'effect';
 import { toLegalEntityAccessObjectId, toModuleAccessObjectId } from '../permissions/context-access.ts';
 import { agentScopedRoleObjectId } from '../permissions/scoped-role.ts';
 import { toSpiceDbActionGrantObjectId } from '../permissions/service.ts';
-import type { ActionAuthorizationProvisioningAction } from './action-authorization-provisioning.ts';
 import { AgentGrantAccessSchema, AgentGrantWritePolicySchema } from './agent-entity-grants.ts';
 import { ConfigureAgentAuditEvidenceSchema } from '../modules/actions/configure-agent.action.ts';
+
+/**
+ * Transitional: the retired Action-provisioning shape. Authorization v2 removed the explicit
+ * Action-grant model, so these helpers still describe one legacy Action and must be rehomed onto the
+ * v2 mandate/agent-connection model before they are used for anything but demo replay (ADR-0030).
+ */
+export interface ActionAuthorizationProvisioningAction {
+  readonly actionKey: string;
+  readonly legalEntityScope: 'forbidden' | 'optional' | 'required';
+  readonly owningModuleKey: string;
+  readonly provisioning: ActionProvisioningIntent;
+}
 
 const NonEmpty = Schema.String.check(Schema.isNonEmpty());
 const LegalEntityIdSchema = NonEmpty.pipe(Schema.brand('LegalEntityId'));

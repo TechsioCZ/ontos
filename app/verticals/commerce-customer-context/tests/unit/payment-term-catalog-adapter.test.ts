@@ -1,20 +1,22 @@
-import { readFileSync } from 'node:fs';
 import type { CurrentPaymentTermsRequest } from '@app/payment-term-catalog-contracts/current-payment-terms';
 import type { executeCurrentPaymentTerms } from '@app/payment-term-catalog-contracts/current-payment-terms/client';
-import { Effect, Layer, Redacted, Schema } from 'effect';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
+import { Effect, Redacted, Schema } from 'effect';
 import { HttpClientError, HttpClientRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
-import { getActionServiceFactory } from '../../../../packages/core-runtime/src/actions/definition.ts';
-import { getReadServiceFactory } from '../../../../packages/core-runtime/src/reads/definition.ts';
+import { OperationContextUnavailable } from '@app/core-runtime';
+import { getActionServicePreflight } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionServiceFactory } from '@app/core-runtime/testing/actions';
+import { getReadServiceFactory } from '@app/core-runtime/testing/reads';
 
 import type { PaymentTermDefinitionRequest } from '../../src/persistence/payment-term-persistence.ts';
 import {
-  PaymentTermCatalogGatewayCredentialService,
   paymentTermCatalogPort,
   paymentTermCatalogPortFromEnvironment,
 } from '../../src/integrations/payment-term-catalog.ts';
 import { PaymentTermsDependencyUnavailable } from '../../shared/domain/payment-term-errors.ts';
+import { issuedDelegatedContext, originatorSubject } from '../support/delegated-gateway-acquisition.fixture.ts';
 import { changeCustomerPaymentTermsAction } from '../../src/actions/change-customer-payment-terms.action.ts';
 import { changeRetailPaymentTermPreferenceAction } from '../../src/actions/change-retail-payment-term-preference.action.ts';
 import {
@@ -23,6 +25,7 @@ import {
 } from '../../src/api/guest-payment-terms-resolution.read.ts';
 import { paymentTermsResolutionRead } from '../../src/api/payment-terms-resolution.read.ts';
 
+const paymentTermSubject = originatorSubject('a'.repeat(64), '10000000-0000-4000-8000-000000000001');
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const firstPaymentTermRef = {
   moduleId: 'payment.term-catalog',
@@ -67,33 +70,20 @@ const definition = {
   updated: provenance,
 } as const;
 
-it('wires Payment Terms reads as SQL snapshots followed by catalog resolution and revalidation', () => {
+it('attaches production Payment Terms factories to persistence and the public catalog client', () => {
   const changeFactory = getActionServiceFactory(changeCustomerPaymentTermsAction).toString();
   const retailFactory = getActionServiceFactory(changeRetailPaymentTermPreferenceAction).toString();
   const resolutionFactory = getReadServiceFactory(paymentTermsResolutionRead).toString();
 
   expect(changeFactory).toContain('paymentTermsPersistenceForTransaction');
-  expect(changeFactory).toContain('paymentTermCatalogPort');
+  expect(changeFactory).not.toContain('paymentTermCatalogPort');
+  expect(getActionServicePreflight(changeCustomerPaymentTermsAction)).toBeDefined();
   expect(retailFactory).toContain('paymentTermsPersistenceForTransaction');
-  expect(retailFactory).toContain('paymentTermCatalogPort');
-  expect(resolutionFactory).toContain('loadPaymentTermsSnapshot');
-  expect(resolutionFactory).not.toContain('paymentTermCatalogPort');
-  const readSource = readFileSync(new URL('../../src/api/payment-terms-resolution.read.ts', import.meta.url), 'utf-8');
-  const [, finish] = readSource.split("Effect.fn('PaymentTermsResolutionRead.finish')");
-  expect(finish).toContain('finishPaymentTermsResolution(');
-  expect(finish).toContain('paymentTermCatalogPortFromEnvironment(');
-  expect(finish).toContain('context.transaction((transaction) =>');
-  expect(finish).toContain('stableRevision(current) === stableRevision(loaded)');
+  expect(retailFactory).not.toContain('paymentTermCatalogPort');
+  expect(getActionServicePreflight(changeRetailPaymentTermPreferenceAction)).toBeDefined();
+  expect(resolutionFactory).toContain('paymentTermsPersistenceForTransaction');
+  expect(resolutionFactory).toContain('paymentTermCatalogPort');
   expect(getReadServiceFactory(guestPaymentTermsResolutionRead)).toBe(makeGuestPaymentTermsResolutionServices);
-  const guestSource = readFileSync(
-    new URL('../../src/api/guest-payment-terms-resolution.read.ts', import.meta.url),
-    'utf-8',
-  );
-  const [, guestFinish] = guestSource.split("Effect.fn('GuestPaymentTermsResolutionRead.finish')");
-  expect(guestFinish).toContain('paymentTermCatalogPortFromEnvironment(');
-  expect(guestFinish).toContain('handleGuestPaymentTermsResolution(');
-  expect(guestFinish).toContain('context.transaction((transaction) =>');
-  expect(guestFinish).toContain('stableRevision(current) === stableRevision(loaded)');
 });
 
 it.effect('groups catalog requests by effective instant and keeps only USABLE definitions', () =>
@@ -243,23 +233,18 @@ it.effect('preserves a broken catalog reference as explicit rejection instead of
   }),
 );
 
-it.effect('requires a server-owned gateway credential before a production catalog call', () =>
-  Effect.gen(function* serverCredential() {
+it.effect('admits every production catalog call through the delegated Shell context for the captured subject', () =>
+  Effect.gen(function* delegatedAdmission() {
     let authorization = '';
     let destination = '';
     let selectedRevision = '';
-    const issuanceRequests: {
-      readonly audience: 'payment-term-catalog';
-      readonly legalEntityId: string;
-      readonly requestCorrelation: string;
-      readonly tenantId: string;
-    }[] = [];
+    const admissions: unknown[] = [];
     const port = yield* paymentTermCatalogPortFromEnvironment(
       {
         compositionRevision: 'a'.repeat(64),
         legalEntityId: '20000000-0000-4000-8000-000000000001',
         requestCorrelation: 'payment-correlation',
-        tenantId,
+        subject: paymentTermSubject,
       },
       (_payload, credential, _correlation, options) => {
         authorization = Redacted.value(credential);
@@ -273,20 +258,11 @@ it.effect('requires a server-owned gateway credential before a production catalo
           truncated: false,
         });
       },
-    ).pipe(
-      Effect.provide(
-        Layer.succeed(PaymentTermCatalogGatewayCredentialService, {
-          issue: (input) =>
-            Effect.sync(() => {
-              issuanceRequests.push(input);
-              return {
-                baseUrl: new URL('https://shell.example.test/owner-api'),
-                credential: Redacted.make('Bearer server-issued'),
-              };
-            }),
-        }),
-      ),
-    );
+      (request) => {
+        admissions.push(request);
+        return Effect.succeed(issuedDelegatedContext({ compositionRevision: 'a'.repeat(64), token: 'server-issued' }));
+      },
+    ).pipe(Effect.provide(nodeCryptoLayer));
     yield* port.resolveDefinitions([
       {
         at: '2026-09-09T10:00:00.000Z',
@@ -297,13 +273,12 @@ it.effect('requires a server-owned gateway credential before a production catalo
     expect(authorization).toBe('Bearer server-issued');
     expect(destination).toBe('https://shell.example.test/owner-api');
     expect(selectedRevision).toBe('a'.repeat(64));
-    expect(issuanceRequests).toEqual([
+    expect(admissions).toEqual([
       {
         audience: 'payment-term-catalog',
-        compositionRevision: 'a'.repeat(64),
-        legalEntityId: '20000000-0000-4000-8000-000000000001',
+        legalEntityScope: 'subject',
         requestCorrelation: 'payment-correlation',
-        tenantId,
+        subject: paymentTermSubject,
       },
     ]);
   }),
@@ -387,4 +362,85 @@ it.effect('consumes a proven equivalent Current alias as its exact retained owne
     expect(definitions[0]?.definitionRevisionId).toBe(aliasDefinition.definitionRevisionId);
     expect(definition.paymentTermRef).toEqual(firstPaymentTermRef);
   }),
+);
+
+it.effect('refuses a delegated Catalog credential from another composition before calling the owner', () =>
+  Effect.gen(function* mismatchedComposition() {
+    let ownerCalls = 0;
+    const port = yield* paymentTermCatalogPortFromEnvironment(
+      {
+        compositionRevision: 'a'.repeat(64),
+        legalEntityId: '20000000-0000-4000-8000-000000000001',
+        requestCorrelation: 'payment-composition-negative',
+        subject: paymentTermSubject,
+      },
+      () => {
+        ownerCalls += 1;
+        return Effect.die('The mismatched credential must not reach the Catalog');
+      },
+      () => Effect.succeed(issuedDelegatedContext({ compositionRevision: 'b'.repeat(64), token: 'wrong-revision' })),
+    ).pipe(Effect.provide(nodeCryptoLayer));
+    const failure = yield* port
+      .resolveDefinitions([{ at: '2026-09-09T10:00:00.000Z', paymentTermRef: firstPaymentTermRef }])
+      .pipe(Effect.flip);
+    expect(failure.dependency).toBe('PAYMENT_TERM_CATALOG');
+    expect(ownerCalls).toBe(0);
+  }),
+);
+
+it.effect(
+  'requires real scoped preparation for both published Payment Terms Actions before any SQL or Catalog call',
+  () =>
+    Effect.gen(function* requiredPreparationScope() {
+      const customer = getActionServicePreflight(changeCustomerPaymentTermsAction);
+      const retail = getActionServicePreflight(changeRetailPaymentTermPreferenceAction);
+      if (customer === undefined || retail === undefined) {
+        return yield* Effect.die('The production Actions must prepare Catalog evidence');
+      }
+      const context = {
+        actionInvocationId: '30000000-0000-4000-8000-000000000001',
+        compositionRevision: 'a'.repeat(64),
+        evaluatePolicy: () => Effect.die('Payment Terms preparation does not evaluate execution Policies'),
+        scope: {
+          authMethod: 'session' as const,
+          correlationId: 'payment-prepare-no-company',
+          principalId: '40000000-0000-4000-8000-000000000001',
+          tenantId,
+        },
+        transaction: () => Effect.die('No owner transaction is valid without the scoped company'),
+      } satisfies Parameters<typeof customer>[1] & Parameters<typeof retail>[1];
+      const profileRef = {
+        moduleId: 'commerce.customer-context' as const,
+        resourceId: '70000000-0000-4000-8000-000000000001',
+        resourceType: 'commerce.customer-context.counterparty-purchasing-profile' as const,
+        tenantId,
+      };
+      const counterpartyRef = {
+        moduleId: 'party.registry' as const,
+        resourceId: '80000000-0000-4000-8000-000000000001',
+        resourceType: 'party.registry.counterparty' as const,
+        tenantId,
+      };
+      const customerFailure = yield* customer(
+        {
+          changes: [{ _tag: 'CLEAR_PREFERENCE', effectiveAt: '2026-09-09T10:00:00.000Z' }],
+          counterpartyRef,
+          expectedRevision: 1,
+          profileRef,
+          reason: 'Clear preference',
+        },
+        context,
+      ).pipe(Effect.flip);
+      expect(Schema.is(OperationContextUnavailable)(customerFailure)).toBe(true);
+      const retailFailure = yield* retail(
+        {
+          change: { _tag: 'CLEAR_PREFERENCE', effectiveAt: '2026-09-09T10:00:00.000Z' },
+          expectedRevision: 1,
+          profileRef: { ...profileRef, resourceType: 'commerce.customer-context.retail-customer-profile' },
+        },
+        context,
+      ).pipe(Effect.flip);
+      expect(Schema.is(OperationContextUnavailable)(retailFailure)).toBe(true);
+      return yield* Effect.void;
+    }).pipe(Effect.provide(nodeCryptoLayer)),
 );

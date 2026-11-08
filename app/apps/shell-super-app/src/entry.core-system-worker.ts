@@ -1,18 +1,20 @@
-import { makeDatabaseIdentityEnrollmentLive } from '@app/core-runtime';
+import { coreSearchIngestionRegistryLayer, makeDatabaseIdentityEnrollmentLive } from '@app/core-runtime';
 import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import {
+  AccessProjectionWriterLive,
+  AccessWriteJournalStoreLive,
   ActionAuthorizationLifecycleLive,
+  CoreAuthorizationProjectionCompilerLive,
   CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS,
   coreSystemOutboxWorkers,
   corePeopleSearchOutboxWorkers,
   OutboxRuntimeLive,
   PeopleSearchProjectorLive,
   PeopleSearchSourceLive,
-  PeopleSearchVisibilityLive,
   peopleSearchIngestionRegistrations,
-  ScopedRoleMembershipLifecycleLive,
   SpiceDbConfigLive,
+  TenantIntentLoaderLive,
 } from '@app/core-runtime/outbox/core-system-worker';
 import {
   ActiveApplicationCompositionConfigLive,
@@ -22,8 +24,6 @@ import {
   OutboxRepositoryLive,
   CoreSearchWorkerSnapshotLive,
   CoreSearchProjectionStoreLive,
-  ResourceContainmentRelationshipMutationLive,
-  coreSearchIngestionRegistryLayer,
 } from '@app/core-runtime/outbox/worker';
 import { NodeCrypto } from '@effect/platform-node';
 import { Layer } from 'effect';
@@ -50,14 +50,22 @@ const peopleSearchSnapshotLive = CoreSearchWorkerSnapshotLive.pipe(
 );
 const peopleSearchLive = PeopleSearchProjectorLive.pipe(
   Layer.provide(
-    Layer.mergeAll(
-      PeopleSearchSourceLive.pipe(Layer.provide(peopleSearchSnapshotLive)),
-      PeopleSearchVisibilityLive,
-      CoreSearchProjectionStoreLive,
-      ResourceContainmentRelationshipMutationLive,
-    ),
+    Layer.mergeAll(PeopleSearchSourceLive.pipe(Layer.provide(peopleSearchSnapshotLive)), CoreSearchProjectionStoreLive),
   ),
 );
+
+/**
+ * The one Core projection writer of this worker host. Its engine transport is deferred, so the host starts and
+ * answers readiness without SpiceDB configured; the first reconcile that needs the engine opens it. The writer
+ * owns the fence, journal, plan and verification, so every lifecycle wake-up is one tenant-wide reconcile.
+ */
+const projectionLive = AccessProjectionWriterLive.pipe(
+  Layer.provide(
+    Layer.mergeAll(CoreAuthorizationProjectionCompilerLive, AccessWriteJournalStoreLive, TenantIntentLoaderLive),
+  ),
+);
+/** The Core lifecycle seam as this host composes it: the whole-tenant reconcile over the one writer. */
+const authorizationLifecycleLive = ActionAuthorizationLifecycleLive.pipe(Layer.provide(projectionLive));
 
 /** Public Node process root pinned to the same compiled Core/Shell deployment as its Actions. */
 export const outboxWorkerEntry = defineOutboxWorkerEntry({
@@ -66,15 +74,13 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
   layer: Layer.mergeAll(
     peopleSearchLive,
     OutboxRuntimeLive.pipe(Layer.provide(OutboxRepositoryLive)),
-    ActionAuthorizationLifecycleLive.pipe(
-      Layer.provide(ScopedRoleMembershipLifecycleLive),
-      Layer.provide(SpiceDbConfigLive),
-    ),
+    authorizationLifecycleLive,
     Reactivity.layer,
   ).pipe(
     Layer.provideMerge(compositionLive),
     Layer.provide(CorePersistenceLive),
     Layer.provide(DatabaseConfigLive),
+    Layer.provide(SpiceDbConfigLive),
     Layer.provideMerge(databaseIdentitiesLive),
     Layer.provide(NodeCrypto.layer),
   ),

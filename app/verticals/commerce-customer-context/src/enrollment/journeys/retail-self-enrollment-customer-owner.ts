@@ -178,8 +178,6 @@ const contactPayload = (
     privacyClassification: 'PERSONAL',
     provenance: { authoritative: false, evidenceReference, method: 'DECLARED_BY_PARTY', source: 'PARTY_DECLARATION' },
     validFrom: input.validFrom,
-    // Account email verification does not prove the Party owner verified the contact point.
-    verification: { state: 'UNVERIFIED' },
   }).pipe(Effect.mapError((cause) => unavailable('The declared customer contact is invalid', cause)));
 };
 

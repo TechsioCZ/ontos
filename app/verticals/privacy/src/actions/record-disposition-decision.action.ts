@@ -88,6 +88,14 @@ const handleRecordDispositionDecision = Effect.fn('RecordDispositionDecisionActi
 
 export const recordDispositionDecisionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.disposition-decision.record',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'retention', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.record-disposition-decision.access.v1',
@@ -99,7 +107,7 @@ export const recordDispositionDecisionAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.record-disposition-decision',
       moduleKey: 'privacy.core',
       role: 'action',

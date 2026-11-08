@@ -1,9 +1,15 @@
-import type { ContextAccessDecision, ContextAccessService, TenantModuleState } from '@app/core-runtime';
+import type {
+  AccessDeclarationInput,
+  ApplicationComposition,
+  ContextAccessDecision,
+  TenantModuleState,
+} from '@app/core-runtime';
+import { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY, ONTOS_SHELL_CONTRIBUTION_ABI } from '@app/core-runtime';
 import { LegalEntityNavigationExclusionsUnavailableError } from '@app/core-runtime/modules/legal-entity-navigation-exclusions';
-import { Effect, Schema } from 'effect';
+import { Cause, Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import { contentDigest, makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import {
   InstalledModuleCatalogUnavailableError,
   makeInstalledModuleCatalogLoader,
@@ -20,32 +26,48 @@ import type {
 } from '../../api/modules/shell-composition.ts';
 import { ShellCompositionSchema } from '../../shared/api.ts';
 import { moduleTargetLogAnnotations } from '../../api/modules/module-target-log.ts';
+import { makeShellTestAccessGate, shellTestScope } from '../support/access-decision-double.ts';
+import type { GateInput } from '@app/core-runtime/access/enforcement';
+import type { ShellTestAccess, ShellTestAccessGate } from '../support/access-decision-double.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
 const principalId = '30000000-0000-4000-8000-000000000001';
 
+interface PageGateAnswers extends Record<string, ShellTestAccess> {
+  'property.registry.page.open': ShellTestAccess;
+}
+
 /** The module's landing page contribution, optionally opted into tenant-only admission. */
-const pageHomeContribution = (appId: string, moduleId: string, legalEntityScope?: 'optional') => {
-  const page = {
-    componentKey: `${moduleId}.page-home`,
-    contributionKey: `${moduleId}.page.home`,
-    entrypoint: {
-      access: 'read',
-      authorization: {
-        kind: 'context_permission',
-        permission: 'module_access',
-      },
-      entrypointKey: `${moduleId}.page.home`,
-      moduleKey: moduleId,
-      role: 'page',
-      scope: 'tenant',
-    },
-    expose: './PageHome',
-    routePath: `/${appId}`,
-  };
-  return legalEntityScope === undefined ? page : { ...page, legalEntityScope };
-};
+/**
+ * One page capability as the access gate asks it. A page the fixture opts into tenant-only admission is
+ * declared `admin` (the one v2 scope the Shell can state without a selected company); every other page is
+ * company-owned business data.
+ */
+const pageAccessDeclaration = (moduleId: string, legalEntityScope?: 'optional'): AccessDeclarationInput => ({
+  key: `${moduleId}.page.open`,
+  kind: legalEntityScope === 'optional' ? 'admin' : 'read',
+  modes: ['run'],
+  placement: { group: 'pages', level: 'basic' },
+  risk: legalEntityScope === 'optional' ? 'sensitive' : 'routine',
+  selectors: [],
+});
+
+const pageHomeContribution = (appId: string, moduleId: string, legalEntityScope?: 'optional') => ({
+  accessDeclaration: pageAccessDeclaration(moduleId, legalEntityScope),
+  componentKey: `${moduleId}.page-home`,
+  contributionKey: `${moduleId}.page.home`,
+  entrypoint: {
+    access: 'read',
+    authorization: { kind: 'protected' as const },
+    entrypointKey: `${moduleId}.page.home`,
+    moduleKey: moduleId,
+    role: 'page',
+    scope: 'tenant' as const,
+  },
+  expose: './PageHome',
+  routePath: `/${appId}`,
+});
 
 const deployment = (
   appId: string,
@@ -87,13 +109,11 @@ const deployment = (
         mediaAttachments: [],
         navigation: [
           {
+            accessDeclaration: pageAccessDeclaration(moduleId, legalEntityScope),
             contributionKey: `${moduleId}.navigation.home`,
             entrypoint: {
               access: 'read',
-              authorization: {
-                kind: 'context_permission',
-                permission: 'module_access',
-              },
+              authorization: { kind: 'protected' },
               entrypointKey: `${moduleId}.page.home`,
               moduleKey: moduleId,
               role: 'page',
@@ -165,14 +185,12 @@ const catalogWithSecondPropertyPage = (routePath = '/property-registry/customers
     mfBoundaryId: 'verticalpropertyregistry',
   });
   property.manifest.publicSurface.shellContributions.pages.push({
+    accessDeclaration: pageAccessDeclaration('property.registry'),
     componentKey: 'property.registry.page-customers',
     contributionKey: 'property.registry.page.customers',
     entrypoint: {
       access: 'read',
-      authorization: {
-        kind: 'context_permission',
-        permission: 'module_access',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'property.registry.page.customers',
       moduleKey: 'property.registry',
       role: 'page',
@@ -199,14 +217,12 @@ const catalogWithContactPages = (
       mfBoundaryId: 'verticalpartyregistry',
     });
     party.manifest.publicSurface.shellContributions.pages.push({
+      accessDeclaration: pageAccessDeclaration('party.registry'),
       componentKey,
       contributionKey,
       entrypoint: {
         access: 'read',
-        authorization: {
-          kind: 'context_permission',
-          permission: 'module_access',
-        },
+        authorization: { kind: 'protected' },
         entrypointKey: contributionKey,
         moduleKey: 'party.registry',
         role: 'page',
@@ -267,25 +283,52 @@ it.effect(
     }),
 );
 
+/**
+ * The one access gate a Shell suite scripts, keyed by module id for readability. The fixture's pages ask
+ * `${moduleId}.page.open`, so the shim maps that declaration key and reports the module ids one gate
+ * snapshot covered (E-BATCH), never a per-module permission call.
+ */
+const moduleIdsOf = (inputs: readonly GateInput[]) =>
+  inputs.flatMap(({ carrier }) => {
+    const key = carrier.accessDeclaration?.key;
+    return key === undefined ? [] : [key.replace(/\.page\.open$/u, '')];
+  });
+
 const contextAccess = (
   decisions: Readonly<Record<string, ContextAccessDecision>>,
   onBatch?: (moduleIds: readonly string[]) => void,
-): ContextAccessService => ({
-  legalEntities: () => Effect.succeed([]),
-  modules: ({ moduleIds }) => {
-    onBatch?.(moduleIds);
-    return Effect.succeed(moduleIds.map((key) => ({ decision: decisions[key] ?? 'denied', key })));
-  },
-  resources: () => Effect.succeed([]),
-  tenants: () => Effect.succeed([]),
-});
+): ShellTestAccessGate => {
+  const answers = Object.fromEntries(
+    Object.entries(decisions).map(([moduleId, decision]) => [`${moduleId}.page.open`, decision]),
+  );
+  const gate = makeShellTestAccessGate({ answers });
+  return {
+    ...gate,
+    decide: (input) => {
+      onBatch?.(moduleIdsOf([input]));
+      return gate.decide(input);
+    },
+    decideMany: (input) => {
+      onBatch?.(moduleIdsOf(input));
+      return gate.decideMany(input);
+    },
+  };
+};
 
-const context = { legalEntityId, principalId, tenantId } as const;
+const context = shellTestScope({ legalEntityId, principalId, tenantId });
 
 /** Runs the composition steps in the governed-read order: access before, tenant data inside, finish after. */
-const makeShellComposition = (sources: ShellCompositionAccessSources & ShellCompositionDataSources) => {
-  const access = makeShellCompositionAccess(sources);
-  const data = makeShellCompositionData(sources);
+const makeShellComposition = (sources: {
+  readonly catalog: ShellCompositionAccessSources['catalog'];
+  readonly contextAccess: ShellTestAccessGate;
+  readonly moduleStates: ShellCompositionDataSources['moduleStates'];
+  readonly navigationExclusions: ShellCompositionDataSources['navigationExclusions'];
+}) => {
+  const access = makeShellCompositionAccess({ access: sources.contextAccess, catalog: sources.catalog });
+  const data = makeShellCompositionData({
+    moduleStates: sources.moduleStates,
+    navigationExclusions: sources.navigationExclusions,
+  });
   return {
     compose: (composeContext: ShellCompositionContext) =>
       access
@@ -524,14 +567,10 @@ it.effect('omits definite denial while preserving unavailable authorization as d
 it.effect('resolves direct targets independently with exhaustive safe outcomes and historical reads', () =>
   Effect.gen(function* resolvesDirectTargetsIndependentlyWithExhaustive() {
     let state: TenantModuleState = 'active';
-    let decision: ContextAccessDecision = 'allowed';
-    const mutableAccess = contextAccess({});
+    const answers: PageGateAnswers = { 'property.registry.page.open': 'allowed' };
     const composition = makeShellComposition({
       catalog: catalog(),
-      contextAccess: {
-        ...mutableAccess,
-        modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision, key }))),
-      },
+      contextAccess: makeShellTestAccessGate({ answers }),
       moduleStates: {
         getTenantModuleStates: (_tenantId, moduleIds) =>
           Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state }))),
@@ -542,19 +581,19 @@ it.effect('resolves direct targets independently with exhaustive safe outcomes a
       moduleId: 'property.registry',
     });
     expect(resolved.outcome).toBe('resolved');
-    decision = 'denied';
+    answers['property.registry.page.open'] = 'denied';
     const forbidden = yield* composition.resolveModuleTarget(context, {
       moduleId: 'property.registry',
     });
     expect(forbidden.outcome).toBe('forbidden');
     expect(forbidden).not.toHaveProperty('federation');
     expect(forbidden).not.toHaveProperty('page');
-    decision = 'unavailable';
+    answers['property.registry.page.open'] = 'unavailable';
     const unavailable = yield* composition.resolveModuleTarget(context, {
       moduleId: 'property.registry',
     });
     expect(unavailable.outcome).toBe('unavailable');
-    decision = 'allowed';
+    answers['property.registry.page.open'] = 'allowed';
     state = 'archived';
     const archived = yield* composition.resolveModuleTarget(context, {
       moduleId: 'property.registry',
@@ -565,10 +604,9 @@ it.effect('resolves direct targets independently with exhaustive safe outcomes a
       moduleId: 'property.registry',
     });
     expect(historical.outcome).toBe('resolved');
-    const selectionRequired = yield* composition.resolveModuleTarget(
-      { principalId, tenantId },
-      { moduleId: 'property.registry' },
-    );
+    const selectionRequired = yield* composition.resolveModuleTarget(shellTestScope({ principalId, tenantId }), {
+      moduleId: 'property.registry',
+    });
     expect(selectionRequired.outcome).toBe('selection_required');
     const missing = yield* composition.resolveModuleTarget(context, {
       moduleId: 'missing.module',
@@ -848,12 +886,10 @@ it.effect.each([
 it.effect('rechecks access for the same pinned release after revocation', () =>
   Effect.gen(function* refusesRevokedCanonicalAccess() {
     const approvedCatalog = yield* catalog();
-    let decision: ContextAccessDecision = 'allowed';
+    const answers: PageGateAnswers = { 'property.registry.page.open': 'allowed' };
     const composition = makeShellComposition({
       catalog: Effect.succeed(approvedCatalog),
-      contextAccess: {
-        modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision, key }))),
-      },
+      contextAccess: makeShellTestAccessGate({ answers }),
       moduleStates: {
         getTenantModuleStates: (_tenantId, moduleIds) =>
           Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' }))),
@@ -862,7 +898,7 @@ it.effect('rechecks access for the same pinned release after revocation', () =>
     });
     const input = { canonicalPath: '/property-registry', compositionRevision: approvedCatalog.composition.revision };
     expect((yield* composition.resolveModuleTarget(context, input)).outcome).toBe('resolved');
-    decision = 'denied';
+    answers['property.registry.page.open'] = 'denied';
     expect(yield* composition.resolveModuleTarget(context, input)).toEqual({ outcome: 'forbidden' });
   }),
 );
@@ -967,11 +1003,19 @@ const publicComponentCatalog = () => {
               ...owner.manifest.publicSurface.shellContributions,
               publicComponents: [
                 {
+                  accessDeclaration: {
+                    key: 'property.registry.component.overview.open',
+                    kind: 'read',
+                    modes: ['run'],
+                    placement: { group: 'components', level: 'basic' },
+                    risk: 'routine',
+                    selectors: [],
+                  },
                   componentKey: 'property.registry.overview',
                   contributionKey: 'property.registry.component.overview',
                   entrypoint: {
                     access: 'read',
-                    authorization: { kind: 'context_permission', permission: 'property.overview.read' },
+                    authorization: { kind: 'protected' },
                     entrypointKey: 'property.registry.component.overview',
                     moduleKey: 'property.registry',
                     role: 'public_component',
@@ -988,73 +1032,59 @@ const publicComponentCatalog = () => {
   );
 };
 
-it.effect(
-  'resolves only exact declared public components after fresh module, lifecycle and descriptor permission gates',
-  () =>
-    Effect.gen(function* publicComponentAuthorizationGate() {
-      const approvedCatalog = yield* publicComponentCatalog();
-      const calls: unknown[] = [];
-      const source = {
-        catalog: Effect.succeed(approvedCatalog),
-        contextAccess: {
-          ...contextAccess({ 'property.registry': 'allowed' }),
-          contextPermissions: (input: Parameters<NonNullable<ContextAccessService['contextPermissions']>>[0]) => {
-            calls.push(input);
-            return Effect.succeed([{ decision: 'allowed' as const, key: 'property.registry:property.overview.read' }]);
-          },
-        },
-        moduleStates: {
-          getTenantModuleStates: () => Effect.succeed([{ moduleKey: 'property.registry', state: 'active' as const }]),
-        },
-        navigationExclusions: noExclusions,
-      };
-      const composition = makeShellComposition(source);
-      const selector = { entrypointKey: 'property.registry.component.overview', moduleId: 'property.registry' };
-      const result = yield* composition.resolveModuleTarget(context, selector);
-      expect(result.outcome).toBe('resolved');
-      expect(calls).toEqual([
-        { ...context, targets: [{ moduleId: 'property.registry', permission: 'property.overview.read' }] },
-      ]);
-      expect(
-        (yield* composition.resolveModuleTarget(context, {
-          ...selector,
-          entrypointKey: 'property.registry.component.undeclared',
-        })).outcome,
-      ).toBe('not_found');
-      expect((yield* composition.resolveModuleTarget(context, { canonicalPath: '/Overview' })).outcome).toBe(
-        'not_found',
-      );
-      expect((yield* composition.resolveModuleTarget({ principalId, tenantId }, selector)).outcome).toBe(
-        'selection_required',
-      );
-      expect(calls.length).toBe(1);
-      const noAdapter = makeShellComposition({
+it.effect('resolves only exact declared public components after fresh module, lifecycle and declaration gates', () =>
+  Effect.gen(function* publicComponentAuthorizationGate() {
+    const approvedCatalog = yield* publicComponentCatalog();
+    const componentAccess = makeShellTestAccessGate({
+      answers: { 'property.registry.component.overview.open': 'allowed' },
+    });
+    const source = {
+      catalog: Effect.succeed(approvedCatalog),
+      contextAccess: componentAccess,
+      moduleStates: {
+        getTenantModuleStates: () => Effect.succeed([{ moduleKey: 'property.registry', state: 'active' as const }]),
+      },
+      navigationExclusions: noExclusions,
+    };
+    const composition = makeShellComposition(source);
+    const selector = { entrypointKey: 'property.registry.component.overview', moduleId: 'property.registry' };
+    const result = yield* composition.resolveModuleTarget(context, selector);
+    expect(result.outcome).toBe('resolved');
+    // One gate question per protected surface: the component's own declaration, in the request's scope.
+    expect(componentAccess.decisions.map(({ carrier }) => carrier.accessDeclaration?.key)).toEqual([
+      'property.registry.component.overview.open',
+    ]);
+    expect(
+      (yield* composition.resolveModuleTarget(context, {
+        ...selector,
+        entrypointKey: 'property.registry.component.undeclared',
+      })).outcome,
+    ).toBe('not_found');
+    expect((yield* composition.resolveModuleTarget(context, { canonicalPath: '/Overview' })).outcome).toBe('not_found');
+    expect((yield* composition.resolveModuleTarget(shellTestScope({ principalId, tenantId }), selector)).outcome).toBe(
+      'selection_required',
+    );
+    for (const decision of ['denied', 'unavailable'] as const) {
+      const gated = makeShellComposition({
         ...source,
-        contextAccess: contextAccess({ 'property.registry': 'allowed' }),
+        contextAccess: makeShellTestAccessGate({
+          answers: { 'property.registry.component.overview.open': decision },
+        }),
       });
-      expect((yield* noAdapter.resolveModuleTarget(context, selector)).outcome).toBe('unavailable');
-      for (const decision of ['denied', 'unavailable'] as const) {
-        const gated = makeShellComposition({
-          ...source,
-          contextAccess: {
-            ...source.contextAccess,
-            contextPermissions: () => Effect.succeed([{ decision, key: 'property.registry:property.overview.read' }]),
-          },
-        });
-        expect((yield* gated.resolveModuleTarget(context, selector)).outcome).toBe(
-          decision === 'denied' ? 'forbidden' : 'unavailable',
-        );
-      }
-      const inactive = makeShellComposition({
-        ...source,
-        moduleStates: {
-          getTenantModuleStates: () => Effect.succeed([{ moduleKey: 'property.registry', state: 'inactive' as const }]),
-        },
-      });
-      expect((yield* inactive.resolveModuleTarget(context, selector)).outcome).toBe('not_found');
-      // Access is decided before the transaction reads the module state, so an inactive module was checked too.
-      expect(calls.length).toBe(2);
-    }),
+      expect((yield* gated.resolveModuleTarget(context, selector)).outcome).toBe(
+        decision === 'denied' ? 'forbidden' : 'unavailable',
+      );
+    }
+    const inactive = makeShellComposition({
+      ...source,
+      moduleStates: {
+        getTenantModuleStates: () => Effect.succeed([{ moduleKey: 'property.registry', state: 'inactive' as const }]),
+      },
+    });
+    expect((yield* inactive.resolveModuleTarget(context, selector)).outcome).toBe('not_found');
+    // Access is decided before the transaction reads the module state, so an inactive module was checked too.
+    expect(componentAccess.decisions.length).toBeGreaterThanOrEqual(2);
+  }),
 );
 
 /**
@@ -1070,51 +1100,35 @@ const optedInCatalog = () =>
     ]),
   );
 
-type ContextPermissionInput = Parameters<NonNullable<ContextAccessService['contextPermissions']>>[0];
-
 it.effect('admits an opted-in page to a tenant session only through a genuine tenant module permission', () =>
   Effect.gen(function* tenantOnlyPageAdmission() {
     const approvedCatalog = yield* optedInCatalog();
-    const calls: ContextPermissionInput[] = [];
-    let decision: ContextAccessDecision = 'allowed';
+    const answers: PageGateAnswers = { 'property.registry.page.open': 'allowed' };
+    const gate = makeShellTestAccessGate({ answers });
     const source = {
       catalog: Effect.succeed(approvedCatalog),
-      contextAccess: {
-        ...contextAccess({ 'property.registry': 'allowed' }),
-        contextPermissions: (input: ContextPermissionInput) => {
-          calls.push(input);
-          return Effect.succeed([{ decision, key: 'property.registry:module.access' }]);
-        },
-      },
+      contextAccess: gate,
       moduleStates: {
         getTenantModuleStates: () => Effect.succeed([{ moduleKey: 'property.registry', state: 'active' as const }]),
       },
       navigationExclusions: noExclusions,
     };
     const composition = makeShellComposition(source);
-    const tenantContext = { principalId, tenantId } as const;
+    const tenantContext = shellTestScope({ principalId, tenantId });
     expect(
       (yield* composition.resolveTenantModuleTarget(tenantContext, { moduleId: 'property.registry' })).outcome,
     ).toBe('resolved');
-    expect(calls).toEqual([
-      { principalId, targets: [{ moduleId: 'property.registry', permission: 'module.access' }], tenantId },
+    expect(gate.decisions.map(({ carrier }) => carrier.accessDeclaration?.key)).toEqual([
+      'property.registry.page.open',
     ]);
-    decision = 'denied';
+    answers['property.registry.page.open'] = 'denied';
     expect(
       (yield* composition.resolveTenantModuleTarget(tenantContext, { moduleId: 'property.registry' })).outcome,
     ).toBe('forbidden');
-    decision = 'unavailable';
+    answers['property.registry.page.open'] = 'unavailable';
     expect(
       (yield* composition.resolveTenantModuleTarget(tenantContext, { moduleId: 'property.registry' })).outcome,
     ).toBe('unavailable');
-    // A missing context-permission adapter fails closed instead of admitting on the missing company.
-    const noAdapter = makeShellComposition({
-      ...source,
-      contextAccess: contextAccess({ 'property.registry': 'allowed' }),
-    });
-    expect((yield* noAdapter.resolveTenantModuleTarget(tenantContext, { moduleId: 'property.registry' })).outcome).toBe(
-      'unavailable',
-    );
     // The tenant path never admits a request that already carries a selected company.
     expect((yield* composition.resolveTenantModuleTarget(context, { moduleId: 'property.registry' })).outcome).toBe(
       'selection_required',
@@ -1124,22 +1138,18 @@ it.effect('admits an opted-in page to a tenant session only through a genuine te
 
 it.effect('keeps a page without the opt-in and every public component company-required for a tenant session', () =>
   Effect.gen(function* tenantOnlyPageRefusals() {
-    const calls: ContextPermissionInput[] = [];
+    const gate = makeShellTestAccessGate({
+      answers: { 'property.registry.component.overview.open': 'allowed', 'property.registry.page.open': 'allowed' },
+    });
     const source = {
-      contextAccess: {
-        ...contextAccess({ 'property.registry': 'allowed' }),
-        contextPermissions: (input: ContextPermissionInput) => {
-          calls.push(input);
-          return Effect.succeed([{ decision: 'allowed' as const, key: 'property.registry:module.access' }]);
-        },
-      },
+      contextAccess: gate,
       moduleStates: {
         getTenantModuleStates: () => Effect.succeed([{ moduleKey: 'property.registry', state: 'active' as const }]),
       },
       navigationExclusions: noExclusions,
     };
     const composition = makeShellComposition({ ...source, catalog: catalog() });
-    const tenantContext = { principalId, tenantId } as const;
+    const tenantContext = shellTestScope({ principalId, tenantId });
     expect(
       (yield* composition.resolveTenantModuleTarget(tenantContext, { moduleId: 'property.registry' })).outcome,
     ).toBe('selection_required');
@@ -1156,27 +1166,24 @@ it.effect('keeps a page without the opt-in and every public component company-re
         moduleId: 'property.registry',
       })).outcome,
     ).toBe('selection_required');
-    expect(calls).toEqual([]);
+    // The canonical gate sees the required-company carriers, never a tenant-scoped substitute.
+    expect(gate.decisions).toHaveLength(2);
+    expect(gate.decisions.every(({ legalEntityScope }) => legalEntityScope === 'required')).toBe(true);
   }),
 );
 
 it.effect('uses the selected legal entity for navigation and direct page authorization', () =>
   Effect.gen(function* scopesCompanyModules() {
     const rentalLegalEntityId = '20000000-0000-4000-8000-000000000002';
+    // The gate answers per request context: the same declaration is allowed for one company and denied for the
+    // other, so the suite flips the scripted answers between the two composes exactly as the engine would.
+    const answers: PageGateAnswers = {
+      'documents.center.page.open': 'allowed',
+      'property.registry.page.open': 'denied',
+    };
     const composition = makeShellComposition({
       catalog: catalog(),
-      contextAccess: {
-        ...contextAccess({}),
-        modules: ({ legalEntityId: selected, moduleIds }) =>
-          Effect.succeed(
-            moduleIds.map((key) => ({
-              decision: (key === (selected === rentalLegalEntityId ? 'property.registry' : 'documents.center')
-                ? 'allowed'
-                : 'denied') satisfies ContextAccessDecision,
-              key,
-            })),
-          ),
-      },
+      contextAccess: makeShellTestAccessGate({ answers }),
       moduleStates: {
         getTenantModuleStates: (_tenantId, moduleIds) =>
           Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' }))),
@@ -1187,6 +1194,8 @@ it.effect('uses the selected legal entity for navigation and direct page authori
     expect((yield* composition.compose(context)).navigation.map(({ moduleId }) => moduleId)).toEqual([
       'documents.center',
     ]);
+    answers['documents.center.page.open'] = 'denied';
+    answers['property.registry.page.open'] = 'allowed';
     expect((yield* composition.compose(rentalContext)).navigation.map(({ moduleId }) => moduleId)).toEqual([
       'property.registry',
     ]);
@@ -1194,6 +1203,7 @@ it.effect('uses the selected legal entity for navigation and direct page authori
     expect(hiddenTarget.outcome).toBe('forbidden');
     expect(hiddenTarget).not.toHaveProperty('federation');
     expect(hiddenTarget).not.toHaveProperty('page');
+    answers['documents.center.page.open'] = 'allowed';
     expect((yield* composition.resolveModuleTarget(context, { canonicalPath: '/documents-center' })).outcome).toBe(
       'resolved',
     );
@@ -1265,7 +1275,10 @@ it.effect('keeps the admitted Shell frame available when every contributed modul
       },
       navigationExclusions: noExclusions,
     };
-    yield* makeShellCompositionAccess(sources).prefetchCompositionDecisions(context);
+    yield* makeShellCompositionAccess({
+      access: sources.contextAccess,
+      catalog: sources.catalog,
+    }).prefetchCompositionDecisions(context);
     const result = yield* makeShellComposition(sources).compose(context);
     expect(result).toEqual({
       compositionRevision: approvedCatalog.composition.revision,
@@ -1278,5 +1291,93 @@ it.effect('keeps the admitted Shell frame available when every contributed modul
     });
     expect(new Set(checkedModules)).toEqual(new Set(approvedCatalog.moduleIds));
     expect(checkedModules).not.toContain('core.shell');
+  }),
+);
+
+it.effect('shows a navigation item that may be proposed without enabling it yet', () =>
+  Effect.gen(function* showsANavigationItemThatMayBeProposed() {
+    const result = yield* makeShellComposition({
+      catalog: catalog(),
+      contextAccess: makeShellTestAccessGate({
+        answers: {
+          'documents.center.page.open': 'needs_approval',
+          'property.registry.page.open': 'denied',
+        },
+      }),
+      moduleStates: {
+        getTenantModuleStates: (_tenantId, moduleIds) =>
+          Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' }))),
+      },
+      navigationExclusions: noExclusions,
+    }).compose(context);
+    expect(result.navigation).toEqual([
+      {
+        appId: 'documents-center',
+        enabled: false,
+        entrypointKey: 'documents.center.page.home',
+        groupKey: 'shell.navigation.modules',
+        icon: 'icon-[mdi--view-grid-outline]',
+        label: { cs: 'Documents', en: 'Documents' },
+        moduleId: 'documents.center',
+        order: 10,
+        state: 'active',
+        unavailable: false,
+        writable: true,
+      },
+    ]);
+  }),
+);
+
+it.effect('asks for a company when nothing company-scoped could be decided without one', () =>
+  Effect.gen(function* asksForACompany() {
+    const gate = makeShellTestAccessGate({ answers: {}, defaultAnswer: 'selection_required' });
+    const tenantContext = shellTestScope({ principalId, tenantId });
+    const result = yield* makeShellComposition({
+      catalog: catalog(),
+      contextAccess: gate,
+      moduleStates: {
+        getTenantModuleStates: (_tenantId, moduleIds) =>
+          Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' }))),
+      },
+      navigationExclusions: noExclusions,
+    }).compose(tenantContext);
+    expect(result).toEqual({ navigation: [], state: 'selection_required' });
+    // The Shell never guesses at the company's absence: the gate reports the missing scope (O28).
+    expect(gate.batches.length).toBe(1);
+    expect(gate.batches[0]?.every((entry) => entry.legalEntityScope === 'required') ?? false).toBe(true);
+  }),
+);
+
+it.effect('pins published fixture bytes to its receiver and rejects a different receiver', () =>
+  Effect.gen(function* verifyPublishedFixtureReceiver() {
+    const receiverDeployment: ApplicationComposition['shell']['deployment'] = {
+      appId: 'shell-super-app',
+      buildMarker: 'compiled-fixture-shell-release',
+    };
+    const document = JSON.stringify(
+      {
+        contributionAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
+        coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
+        deployment: receiverDeployment,
+        schemaVersion: '2',
+      },
+      null,
+      2,
+    );
+    const snapshot = yield* makeCompositionSnapshot([], 60_000, { document, receiverDeployment });
+    expect(snapshot.composition.shell.deployment).toEqual(receiverDeployment);
+    expect(snapshot.composition.shell.coreCapabilities).toEqual([ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY]);
+    expect(snapshot.composition.shell.runtimeContract.sha256).toBe(contentDigest(document));
+    expect(snapshot.composition.shell.runtimeContract.url).toContain('/releases/compiled-fixture-shell-release/');
+    const mismatch = yield* makeCompositionSnapshot([], 60_000, {
+      document,
+      receiverDeployment: { appId: 'shell-super-app', buildMarker: 'different-compiled-fixture-shell-release' },
+    }).pipe(Effect.exit);
+    expect(Exit.isFailure(mismatch)).toBe(true);
+    if (Exit.isFailure(mismatch)) {
+      expect(Cause.pretty(mismatch.cause)).toContain(
+        'The actual Shell runtime document must match the compiled fixture receiver',
+      );
+    }
   }),
 );

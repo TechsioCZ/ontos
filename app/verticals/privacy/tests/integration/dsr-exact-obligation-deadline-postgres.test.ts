@@ -2,34 +2,35 @@ import {
   defineDatabaseIdentityEnrollment,
   makeDatabaseIdentityEnrollmentLive,
   ActiveApplicationCompositionSnapshotSchema,
-  ContextAccess,
+  ActionAuthorizationPreflightDatabaseLive,
+  ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfig,
   InstalledModuleCatalogService,
-  ReadRuntimeLive,
+  ActiveApplicationCompositionService,
+  makeReadRuntimeLive,
+  makeActionRuntimeLive,
   TenantModuleStateServiceLive,
   buildInstalledModuleCatalog,
   changeTenantModuleStateAction,
-  makeContextAccessLive,
   parseDatabaseConfig,
   runAction,
   ReadRuntime,
   TrustedPrincipalContextSchema,
-  canonicalizeApplicationComposition,
-  makeContextPermissionRelationshipMutationLive,
   OntosModuleDeploymentContractSchema,
-  validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
 import {
+  ActionPermissionLive,
+  ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
+import { createPrivacyDeniedAccess } from '../support/live-access-authority.ts';
 import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
-import { createHash } from 'node:crypto';
 import {
   Array as EffectArray,
   ConfigProvider,
@@ -38,6 +39,7 @@ import {
   DateTime,
   Effect,
   Layer,
+  Option,
   Redacted,
   Ref,
   Schema,
@@ -47,8 +49,23 @@ import { createHttpApiHandler } from '@modern-js/bff-effect/effect-edge';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
 import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
+import {
+  AccessDecisionGate,
+  AccessDecisionLog,
+  AccessIntent,
+  AccessPrincipalKindSource,
+  LegalEntityCandidates,
+  makeAccessDecisionService,
+} from '@app/core-runtime/access/enforcement';
+import type { AccessLegalEntityCandidates } from '@app/core-runtime/access/enforcement';
+import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
+import { inertAccessEnforcementPorts } from '@app/core-runtime/testing/access-gate';
+import { DecisionCheck } from '../../../../packages/core-runtime/src/access/decision/engine.ts';
+import type { DecisionCheckPort } from '../../../../packages/core-runtime/src/access/decision/engine.ts';
+import { accessDecisionUnavailable } from '../../../../packages/core-runtime/src/access/decision/errors.ts';
 import { makePrivacyApiRuntime } from '../../api/index.ts';
-import { makeDsrObligationNative } from '../support/dsr-obligation-native.ts';
+import { makeDsrObligationNative, makePrivacyDsrCompositionSnapshot } from '../support/dsr-obligation-native.ts';
+import { privacyRegistration } from '../../vertical.registration.ts';
 import { executeDsrCasesWithAuthorization } from '../../src/api/dsr-cases-client.ts';
 import { executeCreateDsrCaseWithAuthorization } from '../../src/api/create-dsr-case-action-client.ts';
 import { executeRecordDsrDeadlineWithAuthorization } from '../../src/api/record-dsr-deadline-action-client.ts';
@@ -57,53 +74,20 @@ import {
   DsrIntakeReceiptSchema,
   DsrDeadlinePolicySchema,
 } from '../../shared/domain/privacy-dsr.ts';
-import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { createDsrCaseAction, DsrIntakeReceiptAuthority } from '../../src/actions/create-dsr-case.action.ts';
 import { recordDsrDeadlineAction, DsrDeadlineAuthority } from '../../src/actions/record-dsr-deadline.action.ts';
 import { privacyOperationRepositoryForScope } from '../../src/persistence/privacy-operation-postgres-repository.ts';
 import { PrivacyOperationPersistenceError } from '../../src/persistence/privacy-operation-repository.ts';
 
 const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
-const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
 );
 
 const makeDsrIsolation = Effect.fn('DsrExactDeadline.makeIsolation')(function* makeDsrIsolation() {
-  const base = yield* makeApplicationCompositionSnapshotFixture(
-    [ultramodernApiMarker.appId],
-    ultramodernApiMarker.buildMarker,
-  );
-  const modules = yield* Effect.forEach(
-    base.composition.modules,
-    Effect.fn('DsrExactDeadline.module')(function* module(entry) {
-      const contract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
-        entry.contractDocument,
-      );
-      const contractDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))({
-        ...contract,
-        manifest: { ...contract.manifest, module: { ...contract.manifest.module, id: 'privacy.core' } },
-      });
-      const sha256 = digest(contractDocument);
-      return {
-        ...entry,
-        contract: { ...entry.contract, sha256 },
-        contractDocument,
-        moduleId: 'privacy.core',
-        publicContract: { ...entry.publicContract, id: 'privacy.core', sha256 },
-      };
-    }),
-    { concurrency: 1 },
-  );
-  const composition = { ...base.composition, modules };
-  const snapshot = yield* validateActiveApplicationCompositionSnapshot({
-    ...base,
-    composition: {
-      ...composition,
-      revision: digest(canonicalizeApplicationComposition({ ...composition, revision: '0'.repeat(64) })),
-    },
-  });
+  const snapshot = yield* makePrivacyDsrCompositionSnapshot();
   const owned = yield* makeDsrObligationNative(snapshot, 'stabilization-1271-exact-obligation-deadline');
   return { ...owned, snapshot };
 });
@@ -124,6 +108,7 @@ const makeDsrNative = Effect.fn('DsrExactDeadline.makeNative')(function* makeDsr
   const { isolated, makeRedemption, snapshot } = owned ?? (yield* makeDsrIsolation());
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
+      access: 'allowed',
       actionExecutor: 'manager-only',
       actionKeys: [
         createDsrCaseAction.descriptor.actionKey,
@@ -244,25 +229,69 @@ const makeDsrNative = Effect.fn('DsrExactDeadline.makeNative')(function* makeDsr
         contracts.map((contract) => ({ contract, expectedAppId: contract.deployment.appId })),
       ),
   });
+  // The one access gate this suite scripts (the native database carries no v2 access intent and
+  // reaches no engine), plus the per-principal refusal it names (see `live-access-authority`).
+  const deniedAccess = createPrivacyDeniedAccess();
+  const accessLayer = fixture.layer.pipe(Layer.provide(deniedAccess.layer));
   // The catalog is the same validated TEST composition contract, not an allow-all lifecycle service.
-  const context = yield* Layer.build(
+  const fixtureContext = yield* Layer.build(
     Layer.mergeAll(
-      fixture.layer,
+      accessLayer,
       NodeCrypto.layer,
       authorities,
-      Layer.succeed(InstalledModuleCatalogService, { load: Effect.succeed(catalog) }),
+      Layer.succeed(InstalledModuleCatalogService, {
+        loadForRevision: (_compositionRevision) => Effect.succeed(catalog),
+      }),
     ),
   );
+  const owners = snapshot.composition.modules.filter(
+    ({ deployment, moduleId }) =>
+      moduleId === privacyRegistration.moduleId && deployment.appId === ultramodernDeliveryUnit.appId,
+  );
+  const [owner] = owners;
+  if (owners.length !== 1 || owner === undefined) {
+    return yield* Effect.fail(authorityFailure());
+  }
+  // Reuse the fixture's captured resolver and gate, not another allowing gate or another pool.
+  const fixtureServices = Layer.succeedContext(fixtureContext);
+  const moduleState = TenantModuleStateServiceLive.pipe(Layer.provide(fixtureServices));
+  const moduleGate = ModuleStateGateLive.pipe(Layer.provide(moduleState));
+  const entrypoint = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleGate));
+  const ownerDependencies = Layer.mergeAll(
+    fixtureServices,
+    deniedAccess.layer,
+    ActionAuthorizationPreflightDatabaseLive.pipe(Layer.provide(fixtureServices)),
+    ActionPermissionLive,
+    ActionRepositoryLive,
+    moduleGate,
+    entrypoint,
+    Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+  ).pipe(Layer.provide(fixtureServices));
+  const ownerApprovals = makeOwnerActionApprovalsLive(owner.deployment, privacyRegistration).pipe(
+    Layer.provide(ownerDependencies),
+  );
+  const ownerRuntimeContext = yield* Layer.build(
+    Layer.merge(
+      makeActionRuntimeLive(owner.deployment, privacyRegistration).pipe(Layer.provideMerge(ownerApprovals)),
+      makeReadRuntimeLive(owner.deployment, privacyRegistration),
+    ).pipe(Layer.provide(ownerDependencies)),
+  );
+  const context = Context.merge(fixtureContext, ownerRuntimeContext);
   // HTTP runs later under this exported context, independently of setup's ambient services.
   const exportedContextCrypto = Context.get(context, Crypto.Crypto);
   const exportedContextId = yield* exportedContextCrypto.randomUUIDv4();
   expect(Schema.is(Schema.String.check(Schema.isUUID()))(exportedContextId)).toBe(true);
-  const permissions = yield* makeContextPermissionRelationshipMutationLive();
-  const target = { moduleId: 'privacy.core', permission: 'privacy.dsr.read' };
-  const permissionInput = { legalEntityId: fixture.legalEntityId, principal, target, tenantId: fixture.tenantId };
-  yield* permissions.mutate({ ...permissionInput, operation: 'grant' });
-  yield* Effect.addFinalizer(() => permissions.mutate({ ...permissionInput, operation: 'revoke' }).pipe(Effect.orDie));
-  const changeReadPermission = (operation: 'grant' | 'revoke') => permissions.mutate({ ...permissionInput, operation });
+  // v2: one access gate decides every protected read (O62); the removed context permission no
+  // longer refuses anyone, so "grant"/"revoke" flip the fixture's own gate answer for this capability.
+  const readCapabilityKey = 'privacy.core.dsr-case.read';
+  const changeReadPermission = (operation: 'grant' | 'revoke') =>
+    Effect.sync(() => {
+      if (operation === 'grant') {
+        deniedAccess.allow(principal.principalId, readCapabilityKey);
+      } else {
+        deniedAccess.deny(principal.principalId, readCapabilityKey);
+      }
+    });
   const changeModuleState = Effect.fn('DsrExactDeadline.registeredModuleLifecycle')(function* changeModuleState(
     expectedState: 'active' | 'inactive',
     newState: 'active' | 'inactive',
@@ -277,7 +306,7 @@ const makeDsrNative = Effect.fn('DsrExactDeadline.makeNative')(function* makeDsr
       principal: fixture.manager,
       registration: changeTenantModuleStateAction,
       transport: { correlationId: yield* nextId, idempotencyKey: yield* nextId, targetModuleKey: 'core.modules' },
-    }).pipe(Effect.provideContext(context));
+    }).pipe(Effect.provideContext(fixtureContext));
   });
   return {
     caseRef,
@@ -285,6 +314,7 @@ const makeDsrNative = Effect.fn('DsrExactDeadline.makeNative')(function* makeDsr
     changeReadPermission,
     context,
     deadlineAuthorityCalls,
+    deniedAccess,
     fixture,
     isolated,
     makeRedemption,
@@ -333,30 +363,45 @@ const makeDsrHttp = Effect.fn('DsrExactDeadline.makeHttp')(function* makeDsrHttp
     Context.get(native.context, ReadRuntime),
   );
   if (readFault !== 'none') {
-    // TEST transport fault: this bound plaintext loopback server cannot complete the actual
-    // TLS SpiceDB protocol. No permission outcome is fabricated and shared SpiceDB remains intact.
-    const failedTransport = yield* makeContextAccessLive(undefined, () =>
-      Effect.succeed({
-        endpoint: `localhost:${sourceAddress.port}`,
-        preSharedKey: 'TEST.unavailable-transport',
-      }),
-    );
-    const liveAccess = yield* makeContextAccessLive();
-    const failedPermission = failedTransport.contextPermissions;
-    if (failedPermission === undefined) {
-      return yield* Effect.fail(authorityFailure());
-    }
-    const contextAccess =
+    // TEST transport fault injected at the one access gate's own ports (O48): the company-context
+    // read or the SpiceDB check is unavailable, so the runtime answers a retryable 503 and never
+    // presents an empty workflow or an implicit allow. Shared SpiceDB stays intact.
+    const inert = inertAccessEnforcementPorts();
+    const candidates: AccessLegalEntityCandidates =
       readFault === 'context-transport'
-        ? failedTransport
+        ? {
+            listCandidateIds: () =>
+              Effect.fail(accessDecisionUnavailable('TEST company context transport is unavailable')),
+          }
         : {
-            ...liveAccess,
-            contextPermissions: Effect.fn('DsrExactDeadline.TEST.readPermissionTransport')(function* permission(input) {
-              yield* Ref.update(readPermissionTransportCalls, (calls) => calls + 1);
-              return yield* failedPermission(input);
-            }),
+            // Echo exactly the company the request selected, as the fixture's scope authority does.
+            listCandidateIds: ({ legalEntityId }) =>
+              Effect.succeed(legalEntityId === undefined ? [] : [LegalEntityIdSchema.make(legalEntityId)]),
           };
-    const accessLayer = Layer.succeed(ContextAccess, contextAccess);
+    const check: DecisionCheckPort =
+      readFault === 'permission-transport'
+        ? {
+            checkBulk: () =>
+              Ref.update(readPermissionTransportCalls, (calls) => calls + 1).pipe(
+                Effect.andThen(Effect.fail(accessDecisionUnavailable('TEST SpiceDB check transport is unavailable'))),
+              ),
+          }
+        : inert.check;
+    const accessGate = makeAccessDecisionService({
+      authorityFor: inert.intent.authorityFor,
+      check,
+      decisionLog: inert.decisionLog,
+      legalEntities: candidates,
+      principalKinds: { readKind: () => Effect.succeed(Option.some('human' as const)) },
+    });
+    const accessLayer = Layer.mergeAll(
+      Layer.succeed(AccessDecisionGate, accessGate),
+      Layer.succeed(AccessIntent, inert.intent),
+      Layer.succeed(AccessDecisionLog, inert.decisionLog),
+      Layer.succeed(AccessPrincipalKindSource, inert.principalKinds),
+      Layer.succeed(DecisionCheck, check),
+      Layer.succeed(LegalEntityCandidates, candidates),
+    );
     const persistence = CorePersistenceLive.pipe(
       Layer.provide(
         Layer.effect(
@@ -367,12 +412,14 @@ const makeDsrHttp = Effect.fn('DsrExactDeadline.makeHttp')(function* makeDsrHttp
     );
     const state = TenantModuleStateServiceLive.pipe(Layer.provide(persistence));
     const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(ModuleStateGateLive.pipe(Layer.provide(state))));
-    const resolver = OperationalScopeResolverLive.pipe(Layer.provide(Layer.merge(persistence, accessLayer)));
-    readRuntime = ReadRuntimeLive.pipe(
-      Layer.provide(Layer.mergeAll(persistence, accessLayer, gateway, resolver)),
-      Layer.provide(
-        Layer.mergeAll(NodeCrypto.layer, makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]))),
-      ),
+    const resolver = OperationalScopeResolverLive.pipe(
+      Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, accessLayer)),
+    );
+    readRuntime = makeReadRuntimeLive(ultramodernDeliveryUnit, privacyRegistration).pipe(
+      Layer.provide(Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(native.snapshot) })),
+      Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, gateway, resolver, accessLayer)),
+      Layer.provide(makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]))),
+      Layer.provide(NodeCrypto.layer),
     );
   }
   const runtime = makePrivacyApiRuntime(readRuntime, Layer.succeedContext(native.context), redemption);
@@ -527,6 +574,9 @@ it.live(
       const missingLegalEntity = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(
         native.fixture.manager,
       );
+      // v2: the one access gate decides this Action (O62), so the principal with no assignment is
+      // named on the fixture's own per-request owner seam (see `live-access-authority`).
+      native.deniedAccess.deny(native.fixture.denied.principalId, 'privacy.core.dsr-deadline.record');
       for (const denied of [deniedPrincipal, missingLegalEntity]) {
         const failure = yield* http.deniedDeadline(denied, false).pipe(Effect.flip);
         expect(failure).toMatchObject({ status: 403 });
@@ -693,6 +743,9 @@ it.live('rejects definite executor and workflow permission denials after a truth
     const executorDenied = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(
       native.fixture.legalEntityOnly,
     );
+    // v2: the one access gate decides this Action (O62); a principal without the executor
+    // assignment is refused by the gate, named on the fixture's own per-request owner seam.
+    native.deniedAccess.deny(executorDenied.principalId, 'privacy.core.dsr-deadline.record');
     const execution = yield* http.deniedDeadline(executorDenied, false).pipe(Effect.flip);
     expect(execution).toMatchObject({ code: 'action_permission_denied', status: 403 });
     yield* native.changeReadPermission('revoke');

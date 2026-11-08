@@ -11,6 +11,7 @@ import { PricingCurrentMarketEvidenceResponseSchema } from '@app/commerce-market
 import { PricingSourceEvidenceVerifiedPresentSchema } from '@app/pricing-contracts/domain/source-revision-evidence';
 import { makeCurrentPricingDecisionEvaluationService } from '../../src/services/current-pricing-decision-evaluation.service.ts';
 import { publishOrdinaryCurrentPricingForCustomer } from '../../src/services/ordinary-current-pricing-publication.service.ts';
+import { verifiedTestScope } from '../support/owner-gateway-connection.fixture.ts';
 import { PricingMaterialEvidenceOwnerFinalFence } from '../../src/services/material-evidence-final-validation.service.ts';
 import type {
   PricingMaterialEvidenceFenceExpectation,
@@ -69,6 +70,13 @@ import {
   makePricingExternalOwnerEvidenceValidationService,
   PricingExternalOwnerEvidenceValidation,
 } from '../../src/services/external-owner-evidence-validation.service.ts';
+
+const publicationScope = verifiedTestScope({
+  correlationId: 'exact-price-publication-1279',
+  legalEntityId: '33333333-3333-4333-8333-333333331279',
+  principalId: '66666666-6666-4666-8666-666666661279',
+  tenantId: '22222222-2222-4222-8222-222222221279',
+});
 
 const definePriceGuardRoutine = defineScopedRoutine({
   name: 'define_price_v3',
@@ -1321,7 +1329,7 @@ const nativeWhole1279 = Effect.fn('test.1279.nativeWhole')(function* nativeWhole
     },
   });
   const evaluation = makeCurrentPricingDecisionEvaluationService(whole, (input) =>
-    publishOrdinaryCurrentPricingForCustomer(input).pipe(
+    publishOrdinaryCurrentPricingForCustomer(input, publicationScope).pipe(
       Effect.provideService(
         PricingExternalOwnerEvidenceValidation,
         makePricingExternalOwnerEvidenceValidationService(),

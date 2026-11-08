@@ -23,7 +23,9 @@ import type { OrdersPageInput } from '../../src/routes/[lang]/prodej/objednavky/
 import type { RecordsResponse } from '../../shared/apis/records.ts';
 
 rstest.mock('../../src/api/records-consumer.ts');
-rstest.mock('../../src/api/apply-command-action-client.ts');
+rstest.mock('../../src/api/manage-catalog-action-client.ts');
+rstest.mock('../../src/api/cleanup-demo-action-client.ts');
+rstest.mock('../../src/api/change-order-status-action-client.ts');
 // Reproduce useSettledPageData's retained prior render without running cold-mount effects.
 const retained: {
   value?: {

@@ -17,6 +17,11 @@ export {
   executeRequestSearchRebuildWithAuthorization,
 } from './request-search-rebuild-action-client.ts';
 export type { RequestSearchRebuildActionClientOptions } from './request-search-rebuild-action-client.ts';
+export {
+  executeIntakeClientParty,
+  executeIntakeClientPartyWithAuthorization,
+} from './intake-client-party-action-client.ts';
+export type { IntakeClientPartyActionClientOptions } from './intake-client-party-action-client.ts';
 // </generated-action-http-client-exports>
 
 // <generated-module-api-client-exports>

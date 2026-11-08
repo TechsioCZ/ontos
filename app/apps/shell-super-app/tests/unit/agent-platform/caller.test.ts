@@ -1,7 +1,8 @@
 import { AgentAppIdSchema } from '@app/shared-contracts/agent-proposals';
-import { ContextAccess, OntosActionContractSchema } from '@app/core-runtime';
+import type { AccessDeclarationInput, OntosActionContract, OperationalScope } from '@app/core-runtime';
+import { OntosActionContractSchema } from '@app/core-runtime';
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
-import type { OntosActionContract } from '@app/core-runtime';
 import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -12,6 +13,7 @@ import {
   assertAgentProposalsAuthorized,
   callerModuleAccess,
   proposalActionKey,
+  subjectModuleAccess,
 } from '../../../api/agent-platform/caller.ts';
 import type { AgentPlatformCaller } from '../../../api/agent-platform/caller.ts';
 import { loadActingAuthority } from '../../../api/oauth-connections/connection-service.ts';
@@ -20,24 +22,61 @@ import {
   ShellInstalledModuleCatalog,
 } from '../../../api/modules/installed-module-catalog.ts';
 import { makeCompositionSnapshot } from '../../fixtures/application-composition.ts';
+import { subjectInspectionFixture } from '../oauth-connections-admin/subject-inspection.fixture.ts';
 
 const moduleId = 'work.tasks';
 const appId = AgentAppIdSchema.make('work-tasks');
+const legalEntityId = '71000000-0000-4000-8000-000000000020';
+const principalId = '72000000-0000-4000-8000-000000000020';
+const tenantId = '70000000-0000-4000-8000-000000000020';
+/** The caller's own resolved trusted scope; every gate question is asked in a scope derived from it. */
+const scope: OperationalScope = {
+  authMethod: 'api_key',
+  correlationId: 'caller-test',
+  legalEntityId,
+  principalId,
+  tenantId,
+};
 const caller: AgentPlatformCaller = {
   legalName: 'Test company',
   principal: {
     authMethod: 'api_key',
-    legalEntityId: '71000000-0000-4000-8000-000000000020',
-    principalId: '72000000-0000-4000-8000-000000000020',
-    tenantId: '70000000-0000-4000-8000-000000000020',
+    legalEntityId,
+    principalId,
+    tenantId,
   },
+  scope,
 };
 
+/** An Action authority that answers every Action with one decision, in the scope it was asked in. */
+const actionAuthority = (
+  answer: (actionKey: string) => { readonly execute: 'allowed' | 'denied'; readonly propose: 'allowed' | 'denied' },
+) => ({
+  checkActionAuthorities: (input: { readonly actionKeys: readonly string[]; readonly scope: OperationalScope }) =>
+    Effect.succeed(input.actionKeys.map((actionKey) => ({ actionKey, ...answer(actionKey) }))),
+  checkActionProposalPermission: () => Effect.die('Unexpected single check'),
+});
+
+/**
+ * A published Action's own capability (O62): a protected Action entrypoint must carry its declaration,
+ * so each fixture Action declares one under its owning module. The sequence keeps the keys unique within
+ * the module, because a module may not declare the same access key twice.
+ */
+let actionFixtureSequence = 0;
 const action = (
   actionKey: string,
   legalEntityScope: OntosActionContract['legalEntityScope'] = 'required',
-): OntosActionContract =>
-  Schema.decodeUnknownSync(OntosActionContractSchema)({
+): OntosActionContract => {
+  actionFixtureSequence += 1;
+  return Schema.decodeUnknownSync(OntosActionContractSchema)({
+    accessDeclaration: {
+      key: `${moduleId}.action-${actionFixtureSequence}.run`,
+      kind: 'action',
+      modes: ['run'],
+      placement: { group: 'actions', level: 'extended' },
+      risk: 'routine',
+      selectors: [],
+    },
     actionKey,
     auditProfile: 'standard',
     entrypoint: {
@@ -53,6 +92,7 @@ const action = (
     owningModuleId: moduleId,
     schemaVersion: '1',
   });
+};
 
 const catalog = (actions: readonly OntosActionContract[] = [action(`${moduleId}.apply-command`)]) =>
   Effect.gen(function* publishedCatalog() {
@@ -101,11 +141,8 @@ it.effect('checks every proposal against the exact trusted principal and company
         checkActionAuthorities: () => Effect.die('Unexpected bulk check'),
         checkActionProposalPermission: (target) =>
           Effect.sync(() => {
-            expect(target).toMatchObject({
-              legalEntityId: caller.principal.legalEntityId,
-              principalId: caller.principal.principalId,
-              tenantId: caller.principal.tenantId,
-            });
+            // The question runs in the caller's own resolved scope, never a rebuilt scalar identity (O66).
+            expect(target.scope).toBe(caller.scope);
             checked.push(target.actionKey);
             return 'allowed' as const;
           }),
@@ -155,36 +192,69 @@ it.effect('denies revoked proposal rights and distinguishes graph failure from d
   }),
 );
 
+/** The gate answers every declared carrier with one outcome; the visibility hint is its own answer. */
+const gateAnswering = (outcome: 'ALLOWED' | 'DENIED') => makeTestAccessDecision({ defaultAnswer: { outcome } });
+
+it.effect('preserves the authenticated requester scope for visibility and exact Action authority', () =>
+  Effect.gen(function* originalCallerScope() {
+    const installed = yield* catalog();
+    const gate = gateAnswering('ALLOWED');
+    const authenticatedScope: OperationalScope = {
+      ...scope,
+      authBindingId: '74000000-0000-4000-8000-000000000040',
+      authContextRef: 'better-auth-api-key:original-caller',
+      authenticationNamespaceId: 'test.staff.better-auth.v1',
+    };
+    const actionScopes: OperationalScope[] = [];
+    const rights = yield* callerModuleAccess({ scope: authenticatedScope }).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provideService(AccessDecisionGate, gate),
+      Effect.provideService(ActionAuthority, {
+        checkActionAuthorities: (input) => {
+          actionScopes.push(input.scope);
+          return Effect.succeed(
+            input.actionKeys.map((actionKey) => ({
+              actionKey,
+              execute: 'allowed' as const,
+              propose: 'allowed' as const,
+            })),
+          );
+        },
+        checkActionProposalPermission: () => Effect.die('Unexpected single check'),
+      }),
+    );
+    expect([...rights.access]).toEqual([moduleId]);
+    expect(gate.askedDecisions.length).toBeGreaterThan(0);
+    expect(gate.askedDecisions.every((input) => input.scope === authenticatedScope)).toBe(true);
+    expect(actionScopes).toHaveLength(1);
+    expect(actionScopes[0]).toBe(authenticatedScope);
+  }),
+);
+
 it.effect(
-  'offers approval-only MCP authority from graph policy without an audit profile or direct principal tuples',
+  'keeps OAuth agents without a credential-bound connection unavailable instead of advertising MCP authority',
   () =>
-    Effect.gen(function* proposalScopedMcpConnection() {
+    Effect.gen(function* unprovisionedMcpConnection() {
       const installed = yield* catalog();
-      const authority = yield* loadActingAuthority({
+      const inspection = subjectInspectionFixture({
+        snapshot: yield* makeCompositionSnapshot(installed.contracts),
+        subjects: [{ kind: 'agent', legalEntityId, principalId, tenantId }],
+      });
+      const failure = yield* loadActingAuthority(scope, {
         actingKind: 'agent',
         actingPrincipalId: caller.principal.principalId,
         legalEntityId: caller.principal.legalEntityId,
-        tenantId: caller.principal.tenantId,
+        tenantId,
       }).pipe(
         Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
-        Effect.provideService(ContextAccess, {
-          legalEntities: () => Effect.die('Unexpected company check'),
-          modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
-          resources: () => Effect.die('Unexpected resource check'),
-          tenants: () => Effect.die('Unexpected tenant check'),
-        }),
-        Effect.provideService(ActionAuthority, {
-          checkActionAuthorities: (targets) =>
-            Effect.succeed(
-              targets.map((target) => ({ ...target, execute: 'denied' as const, propose: 'allowed' as const })),
-            ),
-          checkActionProposalPermission: () => Effect.die('Unexpected single check'),
-        }),
+        Effect.provide(inspection.layer),
+        Effect.flip,
       );
-      expect(authority.policyCap).toBe('approval');
-      expect([...authority.live.read]).toEqual([moduleId]);
-      expect([...authority.live.write]).toEqual([moduleId]);
-      expect(authority.offered).toEqual([{ label: moduleId, moduleId, read: true, write: true }]);
+      expect(failure).toMatchObject({
+        _tag: 'ConnectionUnavailable',
+        cause: { _tag: 'SubjectInspectionUnavailable' },
+      });
+      expect(inspection.requesterScopes).toEqual([]);
     }),
 );
 
@@ -193,22 +263,221 @@ it.effect('never treats proposal authority as executable module authority', () =
     const installed = yield* catalog();
     const rights = yield* callerModuleAccess(caller).pipe(
       Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
-      Effect.provideService(ContextAccess, {
-        legalEntities: () => Effect.die('Unexpected company check'),
-        modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
-        resources: () => Effect.die('Unexpected resource check'),
-        tenants: () => Effect.die('Unexpected tenant check'),
-      }),
-      Effect.provideService(ActionAuthority, {
-        checkActionAuthorities: (targets) =>
-          Effect.succeed(
-            targets.map((target) => ({ ...target, execute: 'denied' as const, propose: 'allowed' as const })),
-          ),
-        checkActionProposalPermission: () => Effect.die('Unexpected single check'),
-      }),
+      Effect.provideService(AccessDecisionGate, gateAnswering('ALLOWED')),
+      Effect.provideService(
+        ActionAuthority,
+        actionAuthority(() => ({ execute: 'denied' as const, propose: 'allowed' as const })),
+      ),
     );
     expect([...rights.access]).toEqual([moduleId]);
     expect([...rights.propose]).toEqual([moduleId]);
     expect(rights.write.size).toBe(0);
+  }),
+);
+
+/** One read page carrier: a module whose only capability is reading stays visible through it. */
+const pageDeclaration: AccessDeclarationInput = {
+  key: `${moduleId}.page.open`,
+  kind: 'read',
+  modes: ['run'],
+  placement: { group: 'pages', level: 'basic' },
+  risk: 'routine',
+  selectors: [],
+};
+
+const catalogWithPageOnly = (declaration: AccessDeclarationInput = pageDeclaration) =>
+  Effect.gen(function* pageOnlyCatalog() {
+    const contract = makeModuleContractFixture({ appId, moduleId });
+    const snapshot = yield* makeCompositionSnapshot([
+      {
+        ...contract,
+        manifest: {
+          ...contract.manifest,
+          publicSurface: {
+            ...contract.manifest.publicSurface,
+            actions: [],
+            components: [{ expose: './PageHome', key: `${moduleId}.page-home`, mfBoundaryId: 'verticalworktasks' }],
+            shellContributions: {
+              ...contract.manifest.publicSurface.shellContributions,
+              pages: [
+                {
+                  accessDeclaration: declaration,
+                  componentKey: `${moduleId}.page-home`,
+                  contributionKey: `${moduleId}.page.home`,
+                  entrypoint: {
+                    access: 'read',
+                    authorization: { kind: 'protected' },
+                    entrypointKey: `${moduleId}.page.home`,
+                    moduleKey: moduleId,
+                    role: 'page',
+                    scope: 'tenant',
+                  },
+                  expose: './PageHome',
+                  routePath: '/work-tasks',
+                },
+              ],
+            },
+          },
+        },
+      },
+    ]);
+    return yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
+  });
+
+it.effect('keeps a read-only module visible through its own read carrier, with no write or proposal rights', () =>
+  Effect.gen(function* readOnlyModuleVisible() {
+    const installed = yield* catalogWithPageOnly();
+    const rights = yield* callerModuleAccess(caller).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provideService(AccessDecisionGate, gateAnswering('ALLOWED')),
+      Effect.provideService(
+        ActionAuthority,
+        actionAuthority(() => ({ execute: 'denied' as const, propose: 'denied' as const })),
+      ),
+    );
+    expect([...rights.access]).toEqual([moduleId]);
+    expect(rights.propose.size).toBe(0);
+    expect(rights.write.size).toBe(0);
+  }),
+);
+
+it.effect('uses list admission for a record-scoped read instead of asking without its required target', () =>
+  Effect.gen(function* recordScopedModuleVisibility() {
+    const installed = yield* catalogWithPageOnly({ ...pageDeclaration, selectors: ['assigned'] });
+    const gate = gateAnswering('ALLOWED');
+    const rights = yield* callerModuleAccess(caller).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provideService(AccessDecisionGate, gate),
+      Effect.provideService(
+        ActionAuthority,
+        actionAuthority(() => ({ execute: 'denied' as const, propose: 'denied' as const })),
+      ),
+    );
+    expect([...rights.access]).toEqual([moduleId]);
+    expect(gate.askedLists).toHaveLength(1);
+    expect(gate.askedDecisions).toHaveLength(0);
+    expect(gate.askedLists[0]?.scope).toBe(scope);
+  }),
+);
+
+it.effect('sees a module for a principal that holds only v2 grants and no legacy module tuple', () =>
+  Effect.gen(function* v2OnlyPrincipal() {
+    const installed = yield* catalog();
+    const rights = yield* callerModuleAccess(caller).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      // The gate admits the module's own carriers; no legacy `module_access` read is consulted at all.
+      Effect.provideService(AccessDecisionGate, gateAnswering('ALLOWED')),
+      Effect.provideService(
+        ActionAuthority,
+        actionAuthority(() => ({ execute: 'allowed' as const, propose: 'allowed' as const })),
+      ),
+    );
+    expect([...rights.access]).toEqual([moduleId]);
+    expect([...rights.write]).toEqual([moduleId]);
+  }),
+);
+
+it.effect('denies a revoked or wrong-tenant acting principal that the gate refuses', () =>
+  Effect.gen(function* refusedActorDenied() {
+    const installed = yield* catalog();
+    const rights = yield* callerModuleAccess(caller).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provideService(AccessDecisionGate, gateAnswering('DENIED')),
+      Effect.provideService(
+        ActionAuthority,
+        actionAuthority(() => ({ execute: 'denied' as const, propose: 'denied' as const })),
+      ),
+    );
+    expect(rights.access.size).toBe(0);
+    expect(rights.propose.size).toBe(0);
+    expect(rights.write.size).toBe(0);
+  }),
+);
+
+it.effect('inspects candidate list visibility while every Core port retains the original authenticated requester', () =>
+  Effect.gen(function* readonlySubjectList() {
+    const installed = yield* catalogWithPageOnly({ ...pageDeclaration, selectors: ['assigned'] });
+    const actingPrincipalId = '73000000-0000-4000-8000-000000000030';
+    const requesterScope: OperationalScope = {
+      ...scope,
+      authBindingId: '74000000-0000-4000-8000-000000000040',
+      authContextRef: 'better-auth-api-key:readonly-requester',
+      authenticationNamespaceId: 'test.staff.better-auth.v1',
+    };
+    const inspection = subjectInspectionFixture({
+      capabilities: [{ key: pageDeclaration.key, modes: ['run'], selector: 'assigned' }],
+      snapshot: yield* makeCompositionSnapshot(installed.contracts),
+      subjects: [{ legalEntityId, principalId: actingPrincipalId, tenantId }],
+    });
+    const hints = yield* subjectModuleAccess({
+      queryScope: { legalEntityId, tenantId },
+      requesterScope,
+      subject: { principalId: actingPrincipalId, tenantId },
+    }).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+    );
+    expect(hints.inspectionOnly).toBe(true);
+    expect([...hints.access]).toEqual([moduleId]);
+    expect(hints.run.size).toBe(0);
+    expect(hints.propose.size).toBe(0);
+    expect('scope' in hints).toBe(false);
+    expect(inspection.requesterScopes.length).toBeGreaterThan(0);
+    expect(inspection.requesterScopes.every((observed) => observed === requesterScope)).toBe(true);
+    expect(requesterScope.principalId).toBe(principalId);
+  }),
+);
+
+it.effect('projects current human Action modes without turning the result into execution authority', () =>
+  Effect.gen(function* readonlyActionModes() {
+    const installed = yield* catalog();
+    const declarations = installed.contracts.flatMap(({ manifest }) =>
+      manifest.publicSurface.actions.flatMap(({ accessDeclaration }) =>
+        accessDeclaration === undefined ? [] : [accessDeclaration],
+      ),
+    );
+    const inspection = subjectInspectionFixture({
+      capabilities: declarations.map(({ key }) => ({ key, modes: ['run'] })),
+      snapshot: yield* makeCompositionSnapshot(installed.contracts),
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const authority = yield* loadActingAuthority(scope, {
+      actingKind: 'human',
+      actingPrincipalId: principalId,
+      legalEntityId,
+      tenantId,
+    }).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+    );
+    expect([...authority.live.read]).toEqual([moduleId]);
+    expect([...authority.live.write]).toEqual([moduleId]);
+    expect(authority.policyCap).toBe('direct');
+    expect(inspection.requesterScopes.every((observed) => observed === scope)).toBe(true);
+  }),
+);
+
+it.effect('denies a foreign-tenant subject without changing the requester tenant', () =>
+  Effect.gen(function* foreignSubject() {
+    const installed = yield* catalogWithPageOnly();
+    const foreignTenant = '70000000-0000-4000-8000-000000000099';
+    const inspection = subjectInspectionFixture({
+      capabilities: [{ key: pageDeclaration.key, modes: ['run'] }],
+      snapshot: yield* makeCompositionSnapshot(installed.contracts),
+      subjects: [{ legalEntityId, principalId, tenantId: foreignTenant }],
+    });
+    const hints = yield* subjectModuleAccess({
+      queryScope: { legalEntityId, tenantId },
+      requesterScope: scope,
+      subject: { principalId, tenantId: foreignTenant },
+    }).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+    );
+    expect(hints.inspectionOnly).toBe(true);
+    expect(hints.access.size).toBe(0);
+    expect(hints.run.size).toBe(0);
+    expect(hints.propose.size).toBe(0);
+    expect(scope.tenantId).toBe(tenantId);
   }),
 );

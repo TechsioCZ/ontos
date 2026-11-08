@@ -27,7 +27,7 @@ import {
   ProfilePersistenceDependencyFailure,
   profilePersistenceServicesForTransaction,
 } from '../persistence/profile-persistence.ts';
-import { stableRevision } from '../integrations/order-finalization-pricing-context.ts';
+import { stableRevision } from '../stable-revision.ts';
 import { createEnsureRetailCustomerProfileCommerceCustomerContextRetailCustomerProfileCreatedV1OutboxMessage as createProfileCreatedOutboxMessage } from './ensure-retail-customer-profile.commerce-customer-context-retail-customer-profile-created-v1.outbox-message.ts';
 import { recordProfileResourceLookup } from './profile-action-data-access.ts';
 
@@ -161,7 +161,14 @@ export const prepareRetailProfileServices: ActionServicePreflight<
       requestCorrelation: scope.correlationId,
       tenantId: scope.tenantId,
     },
-    Option.getOrUndefined(transport)?.execute,
+    Option.isNone(transport)
+      ? undefined
+      : (detailRequest, correlation) =>
+          transport.value.execute(detailRequest, correlation, {
+            actionInvocationId: context.actionInvocationId,
+            compositionRevision: context.compositionRevision,
+            scope,
+          }),
   )(request).pipe(
     Effect.mapError((cause) =>
       Object.defineProperty(
@@ -225,6 +232,21 @@ export const prepareRetailProfileServices: ActionServicePreflight<
 
 export const ensureRetailCustomerProfileAction = defineAction(
   {
+    accessActor: {
+      callers: ['commerce-customer-context'],
+      reason:
+        'Customer-context enrollment continuation ensures the retail customer profile for the subject it acts for',
+      subject: 'identity',
+      subjectWorkloads: ['commerce.storefront-client'],
+    },
+    accessDeclaration: {
+      key: 'commerce.customer-context.retail-customer-profile.ensure',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'customer-profiles', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.ensure-retail-customer-profile.access.v1',
@@ -237,7 +259,7 @@ export const ensureRetailCustomerProfileAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.ensure-retail-customer-profile',
       moduleKey: MODULE_KEY,
       role: 'action',

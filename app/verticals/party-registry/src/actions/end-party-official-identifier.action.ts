@@ -146,6 +146,15 @@ const makeEndService = (transaction: Parameters<typeof endOfficialIdentifierReco
   });
 export const endPartyOfficialIdentifierAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.official-identifier.end',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'party-identity', level: 'manage' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessTarget: (payload) => ({ moduleKey: 'party.registry', recordKey: payload.officialIdentifierRef.resourceId }),
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.end-party-official-identifier.access.v1',
@@ -156,10 +165,7 @@ export const endPartyOfficialIdentifierAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.end-party-official-identifier',
       moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
@@ -171,7 +177,6 @@ export const endPartyOfficialIdentifierAction = defineAction(
     policies: [],
     resultSchema: EndPartyOfficialIdentifierResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_party_identity',
   },
   handle,
   (transaction, scope) =>

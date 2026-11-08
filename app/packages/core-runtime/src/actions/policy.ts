@@ -1,9 +1,10 @@
-import { Schema } from 'effect';
-import type { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 
 import type { ActionTransportMetadata, TrustedPrincipalContext } from './context.ts';
+import type { ActionCoreError } from './errors.ts';
 
 const policyReference = '__actionPolicyReference' as const;
+const policyKeyField = 'Policy key';
 
 export interface ActionPolicyIdentity {
   readonly actionKey: string;
@@ -39,10 +40,23 @@ export type ActionPolicyEvaluator<Payload> = (
   input: ActionPolicyEvaluatorInput<Payload>,
 ) => Effect.Effect<void, PolicyDenied>;
 
+/**
+ * Invocation-local Core evaluator available only during registered service preparation. Requirements
+ * remain on the owner's Effect; the static Policy evaluator never acquires hidden ports.
+ */
+export type ActionPreparationPolicyEvaluator<Payload, DomainError> = <Value, Requirements>(
+  policy: ActionPolicy<Payload, string>,
+  evaluate: (
+    input: ActionPolicyEvaluatorInput<Payload>,
+  ) => Effect.Effect<Value, ActionCoreError | DomainError | PolicyDenied, Requirements>,
+) => Effect.Effect<Value, ActionCoreError | DomainError, Requirements>;
+
 interface ActionPolicyBase<Payload> {
   readonly evaluate: ActionPolicyEvaluator<Payload>;
   readonly policyKey: string;
   readonly [policyReference]: true;
+  /** Intrinsic obligation: missing preparation can never turn this Policy into a static allow. */
+  readonly requiresPreparation?: true;
 }
 
 export interface GlobalActionPolicy<Payload> extends ActionPolicyBase<Payload> {
@@ -70,6 +84,11 @@ export interface DefineMicroverticalPolicyInput<
   readonly owningModuleKey: Owner;
 }
 
+export interface DefineMicroverticalPreparationPolicyInput<Owner extends string> {
+  readonly owningModuleKey: Owner;
+  readonly policyKey: string;
+}
+
 const makePolicyDefinitionError = TypeError.bind(null);
 
 const requireStableIdentifier = (value: string, field: string): void => {
@@ -94,7 +113,7 @@ export const denyPolicy = (reasonCode: string, reason: string): PolicyDenied => 
 };
 
 export const defineGlobalPolicy = <Payload>(input: DefineGlobalPolicyInput<Payload>): GlobalActionPolicy<Payload> => {
-  requireStableIdentifier(input.policyKey, 'Policy key');
+  requireStableIdentifier(input.policyKey, policyKeyField);
   return registerPolicy({
     evaluate: input.evaluate,
     policyKey: input.policyKey,
@@ -106,7 +125,7 @@ export const defineGlobalPolicy = <Payload>(input: DefineGlobalPolicyInput<Paylo
 export const defineMicroverticalPolicy = <Payload, const Owner extends string>(
   input: DefineMicroverticalPolicyInput<Payload, Owner>,
 ): MicroverticalActionPolicy<Payload, Owner> => {
-  requireStableIdentifier(input.policyKey, 'Policy key');
+  requireStableIdentifier(input.policyKey, policyKeyField);
   requireStableIdentifier(input.owningModuleKey, 'Policy owning module key');
   return registerPolicy({
     evaluate: input.evaluate,
@@ -117,12 +136,32 @@ export const defineMicroverticalPolicy = <Payload, const Owner extends string>(
   });
 };
 
+/**
+ * An effectful owner Policy identity. The evaluator runs through preparation's Core hook; static
+ * use fails closed. Its real requirements belong to that preparation Effect, not all static Policies.
+ */
+export const defineMicroverticalPreparationPolicy = <Payload, const Owner extends string>(
+  input: DefineMicroverticalPreparationPolicyInput<Owner>,
+): MicroverticalActionPolicy<Payload, Owner> => {
+  requireStableIdentifier(input.policyKey, policyKeyField);
+  requireStableIdentifier(input.owningModuleKey, 'Policy owning module key');
+  return registerPolicy({
+    evaluate: () => Effect.fail(denyPolicy('policy_preparation_required', 'This Policy requires Core preparation')),
+    owningModuleKey: input.owningModuleKey,
+    policyKey: input.policyKey,
+    [policyReference]: true as const,
+    requiresPreparation: true as const,
+    scope: 'microvertical' as const,
+  });
+};
+
 /** Internal definition-time guard; only constructor-produced references pass. */
 const ActionPolicyReferenceSchema = Schema.Union([
   Schema.Struct({
     evaluate: Schema.Any,
     policyKey: Schema.String.pipe(Schema.brand('PolicyKey'), Schema.decodeTo(Schema.String)),
     [policyReference]: Schema.Literal(true),
+    requiresPreparation: Schema.optionalKey(Schema.Literal(true)),
     scope: Schema.Literal('global'),
   }),
   Schema.Struct({
@@ -130,6 +169,7 @@ const ActionPolicyReferenceSchema = Schema.Union([
     owningModuleKey: Schema.String.pipe(Schema.brand('OwningModuleKey'), Schema.decodeTo(Schema.String)),
     policyKey: Schema.String.pipe(Schema.brand('PolicyKey'), Schema.decodeTo(Schema.String)),
     [policyReference]: Schema.Literal(true),
+    requiresPreparation: Schema.optionalKey(Schema.Literal(true)),
     scope: Schema.Literal('microvertical'),
   }),
 ]);

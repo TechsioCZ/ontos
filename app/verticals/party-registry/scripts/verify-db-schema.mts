@@ -52,7 +52,7 @@ const ownerPrivilegesMismatch = (owner: OwnerInfrastructureRow): boolean => owne
 
 const ownerConstraintsMismatch = (owner: OwnerInfrastructureRow): boolean =>
   owner.journal_count !== 1 ||
-  owner.foreign_key_count !== 41 ||
+  owner.foreign_key_count !== 39 ||
   owner.external_foreign_key_count !== 0 ||
   owner.relationship_exclusion_count !== 1 ||
   owner.counterparty_role_exclusion_count !== 1 ||

@@ -24,7 +24,7 @@ type FinishContext = ReadFinishContext<
 const moduleKey = 'work.tasks';
 const agentReviewEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'work.tasks.api.agent-review',
   moduleKey,
   role: 'api',
@@ -54,6 +54,14 @@ const tasksUnavailable = (cause: unknown) =>
 
 export const agentReviewRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'work.tasks.api-agent-review.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'work-tasks', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: agentReviewEntrypoint,
     evidencePolicy: {
@@ -63,7 +71,6 @@ export const agentReviewRead = defineRead(
     inputSchema: AgentReviewRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'work.tasks.api.agent-review',
     resultSchema: AgentReviewResponseSchema,
@@ -71,7 +78,7 @@ export const agentReviewRead = defineRead(
   },
   {
     prepare: (_input, context) => workRecordsGrants(context.scope).pipe(Effect.mapError(tasksUnavailable)),
-    load: (_input, context) => context.services.loadRecords().pipe(Effect.mapError(tasksUnavailable)),
+    load: (_input, context) => context.services.loadRecords(context.prepared).pipe(Effect.mapError(tasksUnavailable)),
     finish: Effect.fn('Work.agentReview.finish')(function* finishReview(
       input: AgentReviewRequest,
       context: FinishContext,
@@ -125,5 +132,4 @@ export const agentReviewRead = defineRead(
     }),
   },
   makeAgentReviewServices,
-  () => ({ kind: 'module', moduleId: moduleKey }),
 );

@@ -107,7 +107,7 @@ export const CatalogContentPanel = ({
     runCommand({ _tag: 'UpdateProduct', id: product.id, patch }, revision, (outcome) => {
       setBusy(false);
       if (!outcome.ok) {
-        setServerError(failure(outcome.reason, onReload));
+        setServerError(failure(outcome.reason, onReload, outcome.proposal));
         return;
       }
       onCommitted('Obsah e-shopu uložen. Změnu uvidí zákazník po obnovení stránky.');

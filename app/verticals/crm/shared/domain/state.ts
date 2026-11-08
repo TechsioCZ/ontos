@@ -2,6 +2,7 @@
 // Each area owns its slice schema in ./<area>.ts; this file only composes them.
 import { Option, Schema } from 'effect';
 import type { CrmViewer } from './access.ts';
+import { canSeeEverything } from './access.ts';
 import { AiChangesSliceSchema, projectAiChangesSlice } from './ai-changes.ts';
 import { ClientsSliceSchema, initialClientsSlice, projectClientsSlice, visibleClientIds } from './clients.ts';
 import { CustomerInputsSliceSchema } from './customer-inputs.ts';
@@ -76,7 +77,9 @@ export const projectCrmState = (state: CrmState, viewer: CrmViewer): CrmState =>
     clients: projectClientsSlice(state.clients, visible),
     // Not client data: every CRM user sees which customer inputs block what (and the report needs R04).
     imports: projectImportsSlice(state.imports, visible, viewer),
-    salespeople: state.salespeople,
+    salespeople: canSeeEverything(viewer)
+      ? state.salespeople
+      : state.salespeople.filter((person) => person.principalId === viewer.principalId),
     visits: projectVisitsSlice(state.visits, visible),
   };
   if (state.customerInputs !== undefined) {

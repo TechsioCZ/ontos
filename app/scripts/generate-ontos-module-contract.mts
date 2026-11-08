@@ -19,11 +19,13 @@ import {
   OntosDeploymentAppIdSchema,
   OntosModuleDeploymentContractSchema,
   OntosModuleIdSchema,
+  canonicalOntosPublicApiKey,
   extractVerticalRuntimeSafeDescriptors,
 } from '../packages/core-runtime/src/index.ts';
 import type { OntosModuleManifest, VerticalRuntimeRegistration } from '../packages/core-runtime/src/index.ts';
 import {
   MODULE_CONTRACT_GENERATOR_HEADER,
+  readModuleRuntimeDeclarationEffect,
   MODULE_MANIFEST_ACTION_SLOT_END,
   MODULE_MANIFEST_ACTION_SLOT_START,
   MODULE_MANIFEST_IMPORT_SLOT_END,
@@ -39,6 +41,9 @@ import {
   toPascalCase,
 } from './scaffolding/shared.mts';
 import { deriveOntosMcpContribution } from './ontos-mcp-contribution.mts';
+
+const MODULE_MANIFEST_FILE = 'vertical.manifest.ts';
+const MODULE_REGISTRATION_FILE = 'vertical.registration.ts';
 
 export const OntosModuleContractTargetSchema = Schema.Literals(['cloudflare-dist', 'dist']);
 export type OntosModuleContractTarget = typeof OntosModuleContractTargetSchema.Type;
@@ -143,10 +148,10 @@ const sourceOnlyReactPackages = [
   // alias target, so a file target resolves to `index.ts/visible-text` and the owner bundle fails to build.
   { entry: 'packages/admin-ui/src', name: '@app/admin-ui' },
   {
-    entry: 'verticals/facility-operations/src/ui/record-discussion.tsx',
+    entry: 'verticals/facility-operations/src/components/record-discussion.tsx',
     name: '@app/facility-operations/ui/record-discussion',
   },
-  { entry: 'verticals/tagging/src/tags/tag-controls.tsx', name: '@app/tagging/components/tag-controls' },
+  { entry: 'verticals/tagging/src/components/tag-controls.tsx', name: '@app/tagging/components/tag-controls' },
 ] as const;
 
 const assertPlainTarget = (value: string, label: string, pattern: RegExp) =>
@@ -156,9 +161,21 @@ const assertOwnerSlots = (verticalDirectory: string) =>
   Effect.gen(function* assertOwnerSlotsEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
     const platformPath = yield* Path.Path;
-    const owners = [
+    const manifestPath = platformPath.join(verticalDirectory, MODULE_MANIFEST_FILE);
+    const registrationPath = platformPath.join(verticalDirectory, MODULE_REGISTRATION_FILE);
+    const [manifestContent, registrationContent] = yield* Effect.all([
+      fileSystem.readFileString(manifestPath),
+      fileSystem.readFileString(registrationPath),
+    ]);
+    const runtimeDeclaration = yield* readModuleRuntimeDeclarationEffect(
+      verticalDirectory,
+      platformPath.basename(verticalDirectory),
+      manifestContent,
+      registrationContent,
+    ).pipe(Effect.mapError((cause) => failure('invalid shared owner declaration', cause)));
+    const legacyOwners = [
       {
-        path: platformPath.join(verticalDirectory, 'vertical.manifest.ts'),
+        path: platformPath.join(verticalDirectory, MODULE_MANIFEST_FILE),
         slots: [
           MODULE_MANIFEST_IMPORT_SLOT_START,
           MODULE_MANIFEST_IMPORT_SLOT_END,
@@ -167,7 +184,7 @@ const assertOwnerSlots = (verticalDirectory: string) =>
         ],
       },
       {
-        path: platformPath.join(verticalDirectory, 'vertical.registration.ts'),
+        path: platformPath.join(verticalDirectory, MODULE_REGISTRATION_FILE),
         slots: [
           MODULE_REGISTRATION_IMPORT_SLOT_START,
           MODULE_REGISTRATION_IMPORT_SLOT_END,
@@ -178,6 +195,24 @@ const assertOwnerSlots = (verticalDirectory: string) =>
         ],
       },
     ] as const;
+    const owners =
+      runtimeDeclaration === undefined
+        ? legacyOwners
+        : [
+            {
+              path: runtimeDeclaration.path,
+              slots: [
+                MODULE_MANIFEST_IMPORT_SLOT_START,
+                MODULE_MANIFEST_IMPORT_SLOT_END,
+                MODULE_MANIFEST_ACTION_SLOT_START,
+                MODULE_MANIFEST_ACTION_SLOT_END,
+                MODULE_REGISTRATION_IMPORT_SLOT_START,
+                MODULE_REGISTRATION_IMPORT_SLOT_END,
+                MODULE_REGISTRATION_WORKER_SLOT_START,
+                MODULE_REGISTRATION_WORKER_SLOT_END,
+              ],
+            },
+          ];
     const ownerContents = yield* Effect.forEach(
       owners,
       (owner) =>
@@ -214,8 +249,8 @@ const loadOwnerValues = (workspaceRoot: string, verticalDirectory: string, verti
         .pipe(Effect.mapError((cause) => failure('unable to create the module contract temporary directory', cause)));
       const entryPath = platformPath.join(temporaryDirectory, 'entry.mts');
       const bundlePath = platformPath.join(temporaryDirectory, 'bundle.mjs');
-      const manifestPath = platformPath.join(verticalDirectory, 'vertical.manifest.ts');
-      const registrationPath = platformPath.join(verticalDirectory, 'vertical.registration.ts');
+      const manifestPath = platformPath.join(verticalDirectory, MODULE_MANIFEST_FILE);
+      const registrationPath = platformPath.join(verticalDirectory, MODULE_REGISTRATION_FILE);
       const prefix = toCamelCase(vertical);
       const encodedManifestPath = yield* Schema.encodeEffect(JsonStringTextSchema)(manifestPath).pipe(
         Effect.mapError((cause) => failure('unable to encode the manifest owner path', cause)),
@@ -427,7 +462,7 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
         return Effect.fail(failure(`public API ${key} is not an HttpApi`));
       }
       return Effect.succeed({
-        key: `${owner.manifest.module.id}.${toKebab(key)}`,
+        key: canonicalOntosPublicApiKey(owner.manifest.module.id, key),
         operationKeys: deriveApiOperationKeys(value),
       });
     });
@@ -453,26 +488,32 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
           moduleId: owner.manifest.module.id,
         }),
     });
+    const publicSurface = {
+      actions: safeRuntime.actions,
+      api: sorted(apiContracts, (left, right) => left.key.localeCompare(right.key)),
+      businessPermissions: owner.manifest.publicSurface.businessPermissions ?? [],
+      components: sorted(components, (left, right) => left.key.localeCompare(right.key)),
+      events: sorted(events, (left, right) => left.key.localeCompare(right.key)),
+      reports: owner.manifest.publicSurface.reports,
+      resourceTypes: owner.manifest.publicSurface.resourceTypes,
+      search: owner.manifest.publicSurface.search,
+      shellContributions: owner.manifest.publicSurface.shellContributions,
+    };
+    if (owner.manifest.publicSurface.operationContracts !== undefined) {
+      Object.assign(publicSurface, { operationContracts: safeRuntime.operationContracts });
+    }
+    const manifest = {
+      activation: owner.manifest.activation,
+      module: owner.manifest.module,
+      originatorActions: owner.manifest.originatorActions ?? [],
+      publicSurface,
+    };
+    if (safeRuntime.requirements !== undefined) {
+      Object.assign(manifest, { requirements: safeRuntime.requirements });
+    }
     const contract = {
-      deployment: {
-        appId,
-        buildMarker: releaseIdentity.buildMarker,
-      },
-      manifest: {
-        activation: owner.manifest.activation,
-        module: owner.manifest.module,
-        publicSurface: {
-          actions: safeRuntime.actions,
-          api: sorted(apiContracts, (left, right) => left.key.localeCompare(right.key)),
-          businessPermissions: owner.manifest.publicSurface.businessPermissions ?? [],
-          components: sorted(components, (left, right) => left.key.localeCompare(right.key)),
-          events: sorted(events, (left, right) => left.key.localeCompare(right.key)),
-          reports: owner.manifest.publicSurface.reports,
-          resourceTypes: owner.manifest.publicSurface.resourceTypes,
-          search: owner.manifest.publicSurface.search,
-          shellContributions: owner.manifest.publicSurface.shellContributions,
-        },
-      },
+      deployment: { appId, buildMarker: releaseIdentity.buildMarker },
+      manifest,
       runtime: { outboxSubscriptions: safeRuntime.outboxSubscriptions },
       schemaVersion: ONTOS_MODULE_CONTRACT_SCHEMA_VERSION,
     } as const;

@@ -23,7 +23,7 @@ const moduleKey = 'commerce.catalog';
 
 const productCategoryClassificationEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.product-category-classification' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.product-category-classification',
   moduleKey,
   role: 'api',
@@ -104,6 +104,14 @@ export const readProductCategoryClassification = Effect.fn('ProductCategoryClass
 
 export const productCategoryClassificationRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-category-classification.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product-category', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: productCategoryClassificationEntrypoint,
     evidencePolicy: {
@@ -113,7 +121,6 @@ export const productCategoryClassificationRead = defineRead(
     inputSchema: ProductCategoryClassificationRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: moduleKey,
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.product-category-classification',
     resultSchema: ProductCategoryClassificationResponseSchema,
@@ -126,5 +133,4 @@ export const productCategoryClassificationRead = defineRead(
       ),
   },
   (transaction, scope) => categoryClassificationPersistenceForScope(transaction, scope),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

@@ -16,7 +16,7 @@ const STAGE_ORIGIN = 'https://ontos-stage.web-revolution.cz';
 export const WARMUP_BUDGET_MS = 85_000;
 const AUTH_PREFIX = '/shell-super-app-api/auth/';
 
-/** Browser-level defence in addition to the seed's absent Action/write grants. */
+/** Warmup reuses reviewed people and blocks business writes regardless of their assigned Role cells. */
 export const warmupRequestAllowed = (method: string, url: string) => {
   const parsed = URL.parse(url);
   if (parsed?.origin !== STAGE_ORIGIN) {

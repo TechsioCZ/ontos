@@ -1,11 +1,16 @@
+import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
   PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
   PARTY_REGISTRY_REQUEST_IDENTITY,
 } from '@app/party-registry-identity-contracts';
-import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
-import { ContextAccessLive, DatabaseIdentityEnrollmentContext, makeDatabaseConfigLive } from '@app/core-runtime';
+import { CorePersistenceLive, DatabaseIdentityEnrollmentContext, makeDatabaseConfigLive } from '@app/core-runtime';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type { ActionRuntime, ReadRuntime, GatewayAssertionRedemptionService } from '@app/core-runtime';
+import type { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
+import {
+  OwnerActionApprovalSchemaErrorLive,
+  makeOwnerActionApprovalApiLive,
+} from '@app/core-runtime/access/approvals/owner-http';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
@@ -16,7 +21,10 @@ import { FetchHttpClient } from 'effect/http';
 import { partyRegistryApi } from '../shared/api.ts';
 import type { PartySearchProjectionGateway } from '../shared/domain/search-projection-gateway.ts';
 import type { AresSubjectService } from '../src/integrations/ares/ares-subject.service.ts';
-import { ActionPrincipalVerifierLive } from './auth/action-principal.ts';
+import {
+  ActionPrincipalVerifierLive,
+  authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal,
+} from './auth/action-principal.ts';
 import {
   GatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive,
@@ -26,6 +34,8 @@ import { aresLookupReadApiLive } from './ares-lookup-read-server.ts';
 import { counterpartiesReadApiLive } from './counterparties-search-server.ts';
 import { counterpartyReadReadApiLive } from './counterparty-read-read-server.ts';
 import { counterpartyRoleHistoryReadApiLive } from './counterparty-role-history-read-server.ts';
+import { createCrmClientPartyActionApiLive } from './create-crm-client-party-action-server.ts';
+import { crmClientIntakeReviewReadApiLive } from './crm-client-intake-review-read-server.ts';
 import { customerListReadApiLive } from './customer-list-read-server.ts';
 import { duplicateCandidateDetailReadApiLive } from './duplicate-candidate-detail-read-server.ts';
 import { duplicateCandidateListReadApiLive } from './duplicate-candidate-list-read-server.ts';
@@ -50,6 +60,7 @@ import { partyOfficialIdentifierHistoryReadApiLive } from './party-official-iden
 import { partyRegistryFoundationLive } from './party-registry-foundation.ts';
 import {
   partyRegistryActionRuntimeLive,
+  partyRegistryOwnerActionApprovalsLive,
   partyRegistryAresSubjectServiceLive,
   partyRegistryReadRuntimeLive,
   partyRegistrySearchProjectionGatewayLive,
@@ -62,6 +73,11 @@ import {
   partyRegistryCorsAllowedOrigins,
   resolvePartyRegistryShellOrigin,
 } from './read-server-support.ts';
+import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
+  TenantIntentLoaderLive,
+} from '@app/core-runtime/actions/runtime-wiring';
 
 export { partyRegistryFoundationLive } from './party-registry-foundation.ts';
 
@@ -96,17 +112,36 @@ const runtimeObservabilityLive = Layer.mergeAll(
   Layer.succeed(References.MinimumLogLevel, 'Info'),
 );
 
+const accessEnforcementLive = AccessDecisionLive.pipe(
+  Layer.provideMerge(AccessEnforcementPortsLive),
+  Layer.provide(TenantIntentLoaderLive),
+  Layer.provide(CorePersistenceLive),
+  Layer.provide(partyRegistryDatabaseConfigLive),
+  Layer.provide(nodeCryptoLayer),
+  Layer.provide(partyRegistryDatabaseIdentityEnrollmentLive),
+);
 const productionReadRuntimeLive = partyRegistryReadRuntimeLive.pipe(
   Layer.provide(
-    Layer.mergeAll(partyRegistryDatabaseConfigLive, partyRegistryDatabaseIdentityEnrollmentLive, nodeCryptoLayer),
+    Layer.mergeAll(
+      partyRegistryDatabaseConfigLive,
+      partyRegistryDatabaseIdentityEnrollmentLive,
+      nodeCryptoLayer,
+      accessEnforcementLive,
+    ),
   ),
 );
 const productionSearchProjectionGatewayLive = partyRegistrySearchProjectionGatewayLive.pipe(
   Layer.provide(Layer.merge(partyRegistryDatabaseConfigLive, partyRegistryDatabaseIdentityEnrollmentLive)),
 );
 const productionActionRuntimeLive = partyRegistryActionRuntimeLive.pipe(
+  Layer.provideMerge(partyRegistryOwnerActionApprovalsLive),
   Layer.provide(
-    Layer.mergeAll(partyRegistryDatabaseConfigLive, partyRegistryDatabaseIdentityEnrollmentLive, nodeCryptoLayer),
+    Layer.mergeAll(
+      partyRegistryDatabaseConfigLive,
+      partyRegistryDatabaseIdentityEnrollmentLive,
+      nodeCryptoLayer,
+      accessEnforcementLive,
+    ),
   ),
 );
 
@@ -117,7 +152,7 @@ type PartyRegistryApiRuntimeArguments = readonly [
     PartySearchProjectionGateway,
     Layer.Error<typeof productionSearchProjectionGatewayLive>
   >,
-  actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof productionActionRuntimeLive>>,
+  actionRuntime: Layer.Layer<ActionRuntime | OwnerActionApprovals, Layer.Error<typeof productionActionRuntimeLive>>,
   gatewayAssertionRedemption: Layer.Layer<
     GatewayAssertionRedemptionService,
     Layer.Error<typeof gatewayAssertionRedemptionLive>
@@ -138,12 +173,13 @@ export const makePartyRegistryApiRuntime = (
   const actionPrincipalVerifierLive = ActionPrincipalVerifierLive.pipe(Layer.provide(governedActionRuntimeLive));
   const apiHandlersLive = Layer.mergeAll(
     partyRegistryFoundationLive,
-    // The commands and their commit recovery read the committed result through the governed Read runtime.
-    partyRegistryCommandsLive.pipe(Layer.provide(Layer.mergeAll(governedActionRuntimeLive, governedReadRuntimeLive))),
-    partyRegistryCommandRecoveryLive.pipe(
-      Layer.provide(Layer.mergeAll(governedActionRuntimeLive, governedReadRuntimeLive)),
-    ),
+    partyRegistryCommandsLive.pipe(Layer.provide(governedActionRuntimeLive)),
+    partyRegistryCommandRecoveryLive.pipe(Layer.provide(governedActionRuntimeLive)),
     engagementProfileApiHandlersLive.pipe(Layer.provide(governedActionRuntimeLive)),
+    makeOwnerActionApprovalApiLive(partyRegistryApi, authenticateOwnerApprovalPrincipal).pipe(
+      GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
+      GovernedReadLayer.provide(governedActionRuntimeLive),
+    ),
     // <generated-governed-http-handler-layers>
     aresLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive), Layer.provide(aresSubjectService)),
     counterpartiesReadApiLive.pipe(
@@ -152,6 +188,11 @@ export const makePartyRegistryApiRuntime = (
     ),
     counterpartyReadReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     counterpartyRoleHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    createCrmClientPartyActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    crmClientIntakeReviewReadApiLive.pipe(
+      GovernedReadLayer.provide(governedReadRuntimeLive),
+      GovernedReadLayer.provide(governedActionRuntimeLive),
+    ),
     customerListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     duplicateCandidateDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     duplicateCandidateListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
@@ -176,8 +217,6 @@ export const makePartyRegistryApiRuntime = (
   ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));
   const resolvedApiHandlersLive = apiHandlersLive.pipe(
     Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, nodeCryptoLayer)),
-    // Search providers and the search-labels read check current Party authority in `finish` with ContextAccess.
-    Layer.provide(ContextAccessLive),
     Layer.provide(
       ActiveApplicationCompositionSourceLive.pipe(
         Layer.provide(

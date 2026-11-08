@@ -1,7 +1,10 @@
+import { withWorkerRuntimeBinding } from './worker-runtime-binding.ts';
+import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
 import {
   Array as Arr,
   Cause,
   Config,
+  ConfigProvider,
   Context,
   DateTime,
   Effect,
@@ -89,6 +92,7 @@ export interface DefineOutboxWorkerEntryInput<Registration extends AnyOutboxWork
     OutboxRuntime | ActiveApplicationCompositionService | OutboxWorkerRequirements<Registration>,
     LayerError
   >;
+  readonly ownerRegistration?: VerticalRuntimeRegistration;
   readonly registrations: readonly Registration[];
   readonly subscriptions: readonly OutboxWorkerSubscription[];
 }
@@ -96,11 +100,16 @@ export interface DefineOutboxWorkerEntryInput<Registration extends AnyOutboxWork
 export interface OutboxWorkerLoopInput {
   readonly config: OutboxPollingConfig;
   readonly health?: Pick<OutboxWorkerHealth, 'cycleFailed' | 'cycleSucceeded'>;
+  /** Set by {@link hostedOutboxWorkerEntry}: the variable this owner reads as the module credential. */
+  readonly moduleCredentialVariable?: string;
 }
 
+/** The module credential variable every module deployment reads; a hosted owner reads its own instead. */
+const MODULE_CREDENTIAL_VARIABLE = 'ONTOS_GATEWAY_MODULE_API_KEY';
+
 /**
- * One MicroVertical's hosted polling loop. The host runs each entry against its own
- * ManagedRuntime so owner layers stay as isolated as they were in dedicated processes.
+ * One MicroVertical's hosted polling loop. The host runs each entry in its own layer scope so owner layers
+ * stay as isolated as they were in dedicated processes.
  */
 export interface OutboxWorkerEntry<out LayerError> {
   readonly claimOwnerPrefix: string;
@@ -119,6 +128,37 @@ export interface RunOutboxWorkerHostInput<
   readonly startup?: () => Effect.Effect<void, StartupError, Scope.Scope>;
 }
 
+/**
+ * Hosts one owner's entry under its own module credential. The owner's loop and the handlers it runs (not its layer
+ * build), and nothing else in the host, read `ONTOS_GATEWAY_MODULE_API_KEY` as `moduleCredentialVariable` (for example
+ * `ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY`). Every other owner keeps its own view of the host configuration.
+ */
+export const hostedOutboxWorkerEntry = <LayerError>(
+  entry: OutboxWorkerEntry<LayerError>,
+  moduleCredentialVariable: string,
+): OutboxWorkerEntry<LayerError> =>
+  Object.freeze({
+    claimOwnerPrefix: entry.claimOwnerPrefix,
+    registrations: entry.registrations,
+    runLoop: (input: OutboxWorkerLoopInput) => entry.runLoop({ ...input, moduleCredentialVariable }),
+  });
+
+/**
+ * The configuration one owner reads. A hosted owner with a module credential variable reads its own: the module
+ * credential key resolves to that variable, and every other key resolves exactly as the host resolves it.
+ */
+const ownerConfigProvider = (
+  host: ConfigProvider.ConfigProvider,
+  moduleCredentialVariable: string | undefined,
+): ConfigProvider.ConfigProvider => {
+  if (moduleCredentialVariable === undefined) {
+    return host;
+  }
+  return ConfigProvider.mapInput(host, (path) =>
+    path.map((segment) => (segment === MODULE_CREDENTIAL_VARIABLE ? moduleCredentialVariable : segment)),
+  );
+};
+
 export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegistration, LayerError>(
   input: DefineOutboxWorkerEntryInput<Registration, LayerError>,
 ): OutboxWorkerEntry<LayerError | ActiveApplicationCompositionUnavailableError | OutboxWorkerDescriptorError> => {
@@ -131,7 +171,7 @@ export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegi
   return Object.freeze({
     claimOwnerPrefix: input.claimOwnerPrefix,
     registrations: registrations.length,
-    runLoop: ({ config, health }: OutboxWorkerLoopInput) => {
+    runLoop: ({ config, health, moduleCredentialVariable }: OutboxWorkerLoopInput) => {
       const loop = Effect.gen(function* runCompiledOutboxWorkerLoop() {
         const report = yield* OutboxWorkerAdmissionReport;
         yield* report.identify({ appId: expectedDeployment.appId, buildMarker: expectedDeployment.buildMarker });
@@ -216,15 +256,30 @@ export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegi
         };
         // The compiled owner and ABI stay fixed. Each new cycle captures one approved revision;
         // existing claimed handler contexts retain their original revision in owner transactions.
-        return yield* runOutboxPollingLoop(health === undefined ? pollingInput : { ...pollingInput, health });
+        return yield* withWorkerRuntimeBinding(
+          { authority, expectedDeployment, ownerRegistration: input.ownerRegistration, registrations },
+          runOutboxPollingLoop(health === undefined ? pollingInput : { ...pollingInput, health }),
+        );
       });
+      // The owner's loop and every handler it runs read this owner's configuration, so a hosted owner's module
+      // credential resolves to its own variable. Its layers build in their own runtime and must never read the
+      // module credential at build time; delegated calls read it per call.
+      const ownerLoop = ConfigProvider.ConfigProvider.pipe(
+        Effect.flatMap((host) =>
+          Effect.provideService(
+            loop,
+            ConfigProvider.ConfigProvider,
+            ownerConfigProvider(host, moduleCredentialVariable),
+          ),
+        ),
+      );
       return Effect.acquireUseRelease(
         Effect.sync(() => ManagedRuntime.make(input.layer)),
         // The owner runtime's context replaces the host's, so the host's admission report crosses explicitly.
         (runtime) =>
           Effect.all([runtime.contextEffect, Effect.service(OutboxWorkerAdmissionReport)], { concurrency: 1 }).pipe(
             Effect.flatMap(([context, report]) =>
-              Effect.provideContext(loop, Context.add(context, OutboxWorkerAdmissionReport, report)),
+              Effect.provideContext(ownerLoop, Context.add(context, OutboxWorkerAdmissionReport, report)),
             ),
           ),
         (runtime) => runtime.disposeEffect,
@@ -330,8 +385,8 @@ const hostStatus = (loops: readonly HostedLoop<unknown>[]): Effect.Effect<Outbox
 
 /**
  * Runs every entry's polling loop in one process behind one signal handler and one readiness
- * endpoint. The first loop to fail interrupts the others; each loop disposes its own runtime
- * before the host scope closes, so the failure surfaces only after every runtime is released.
+ * endpoint. The first loop to fail interrupts the others; each loop closes its own layer scope
+ * before the host scope closes, so the failure surfaces only after every owner scope is released.
  */
 export const runOutboxWorkerHost = <
   const LayerErrors extends readonly { readonly _tag: string }[],

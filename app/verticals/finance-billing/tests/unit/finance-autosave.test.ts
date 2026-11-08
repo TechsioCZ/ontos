@@ -56,6 +56,8 @@ describe('price list item draft', () => {
     expect(financeAutosaveOutcome({ ok: true })).toBe('saved');
     expect(financeAutosaveOutcome({ feedback: 'conflict', ok: false })).toBe('conflict');
     expect(financeAutosaveOutcome({ feedback: 'forbidden', ok: false })).toBe('failed');
+    // A change parked for approval saved nothing, and it did not fail either.
+    expect(financeAutosaveOutcome({ feedback: 'pendingApproval', ok: false })).toBe('proposed');
   });
 });
 
@@ -93,6 +95,17 @@ describe('price list item edit autosave', () => {
       controller.change({ ...saved, unit: 'čtvrtletí' });
       yield* TestClock.adjust('1 second');
       expect(sent).toHaveLength(1);
+    }),
+  );
+
+  it.effect('shows a price change parked for approval as proposed, not saved or failed', () =>
+    Effect.gen(function* proposed() {
+      const { controller, sent } = yield* panel(financeAutosaveOutcome({ feedback: 'pendingApproval', ok: false }));
+      controller.change({ ...saved, price: '21 000' });
+      controller.flush();
+      yield* Effect.yieldNow;
+      expect(sent.map(({ price }) => price)).toEqual(['21 000']);
+      expect(controller.status()).toBe('proposed');
     }),
   );
 });

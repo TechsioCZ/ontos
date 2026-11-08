@@ -72,6 +72,14 @@ const ACTION_KEY = 'commerce.catalog.retire-product-category';
 
 export const retireProductCategoryAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-category.retire',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product-category', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.retire-product-category.access.v1',
@@ -83,7 +91,7 @@ export const retireProductCategoryAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

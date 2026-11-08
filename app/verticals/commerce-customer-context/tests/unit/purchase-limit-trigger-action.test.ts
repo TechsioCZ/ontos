@@ -4,7 +4,7 @@ import type { OperationalScope } from '@app/core-runtime';
 import { expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
 import {
-  getActionBusinessPermissionTargetResolver,
+  getActionOwnerFactsResolver,
   getActionHandler,
 } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import {
@@ -138,28 +138,19 @@ const proposalEvidence = Schema.decodeUnknownSync(PurchaseApprovalProposalEviden
   state: 'CURRENT',
 });
 
-it('declares exact submit authorization without promoting an untrusted Storefront', () => {
-  const resolver = getActionBusinessPermissionTargetResolver(triggerPurchaseApprovalAction);
-  if (resolver === undefined) {
-    throw new Error('Trigger Purchase Approval must declare business authorization');
-  }
-  expect(resolver(payload, scopeWithoutTrustedStorefront)).toEqual({
-    permission: 'counterparty.purchase.submit',
-    target: {
-      counterpartyId: counterpartyRef.resourceId,
-      kind: 'counterparty_storefront',
-      legalEntityId,
-      storefrontId,
-      tenantId,
-    },
+it('names the Counterparty and Storefront for the owner rule without promoting an untrusted Storefront', () => {
+  // The v2 declaration gates the submit capability; the owner facts name the Counterparty and its
+  // Storefront so the overlay checks the Counterparty's own grant (O67-Q1, O70).
+  const resolveOwnerFacts = getActionOwnerFactsResolver(triggerPurchaseApprovalAction);
+  expect(resolveOwnerFacts).toBeDefined();
+  expect(resolveOwnerFacts?.(payload, scopeWithoutTrustedStorefront)).toEqual({
+    counterpartyId: counterpartyRef.resourceId,
+    storefrontId,
   });
-  expect(resolver(payload, { ...scope, trustedStorefrontId: 'storefront:other' })).toMatchObject({
-    target: { storefrontId },
-    trustedStorefrontId: 'storefront:other',
-  });
-  expect(resolver(payload, scope)).toMatchObject({
-    target: { storefrontId },
-    trustedStorefrontId: storefrontId,
+  // The facts name the payload's Storefront; a trusted scope value is never promoted into them (O64).
+  expect(resolveOwnerFacts?.(payload, { ...scope, trustedStorefrontId: 'storefront:other' })).toEqual({
+    counterpartyId: counterpartyRef.resourceId,
+    storefrontId,
   });
 });
 

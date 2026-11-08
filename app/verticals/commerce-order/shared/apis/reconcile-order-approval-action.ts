@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.order
 // @ontos-action-http-slug reconcile-order-approval
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/reconcile-order-approval.ts';
 
 export { ReconcileOrderApprovalPayloadSchema } from '../actions/reconcile-order-approval.ts';
-
 export const ReconcileOrderApprovalActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReconcileOrderApprovalActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const ReconcileOrderApprovalActionForbiddenProblemSchema = makeProblemDet
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -146,7 +147,7 @@ export const reconcileOrderApprovalActionGroupDefinition = HttpApiGroup.make('re
     HttpApiEndpoint.post('execute', '/commerce-order/actions/reconcile-order-approval', {
       error: actionErrors,
       payload: Schema.toEncoded(ReconcileOrderApprovalPayloadSchema),
-      success: ReconcileOrderApprovalResultSchema,
+      success: [ActionProposalAcceptedSchema, ReconcileOrderApprovalResultSchema],
     }),
   )
   .middleware(ReconcileOrderApprovalActionSchemaErrorMiddleware);

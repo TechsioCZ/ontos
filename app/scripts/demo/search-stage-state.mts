@@ -52,7 +52,6 @@ const searchStageTopicWorkers = {
   'core.identity': [
     ['people-search-rebuild-requested', 'rebuild-people-search'],
     ['principal-lifecycle-changed', 'project-people-lifecycle-search'],
-    ['scoped-role-membership-changed', 'project-people-role-search'],
   ],
   'demo.crm': changedTopicWorkers,
   'demo.merchandise': refreshTopicWorkers,

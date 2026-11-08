@@ -2,10 +2,10 @@ import { expect, it } from 'effect-rstest';
 import { Crypto, Effect, Layer, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import type { ActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { AccessPortalProjection } from '@app/core-runtime/access/portal';
+import { getActionHandler } from '@app/core-runtime/testing/actions';
 import type { DomainEventContractMap } from '../../../../packages/core-runtime/src/actions/events.ts';
 import {
-  BusinessPermissionRelationshipMutation,
   ContextAccess,
   PrincipalEligibility,
   trustVerifiedGatewayPrincipalContext,
@@ -29,12 +29,6 @@ import {
   CounterpartyAccessInvitationRevokedEventPayloadSchema,
   CounterpartyAccessRevokedEventPayloadSchema,
 } from '../../shared/domain/access-outbox-contract.ts';
-import {
-  CounterpartyAccessAdministratorBootstrapAuthorizationMutationRequestedPayloadSchema,
-  CounterpartyAccessGrantAuthorizationMutationRequestedPayloadSchema,
-  CounterpartyAccessInvitationClaimAuthorizationMutationRequestedPayloadSchema,
-  CounterpartyAccessRevokeAuthorizationMutationRequestedPayloadSchema,
-} from '../../shared/domain/access-authorization-mutation.ts';
 import { bootstrapCounterpartyAccessAdministratorAction } from '../../src/actions/bootstrap-counterparty-access-administrator.action.ts';
 import { claimCounterpartyAccessInvitationAction } from '../../src/actions/claim-counterparty-access-invitation.action.ts';
 import { createCounterpartyAccessInvitationAction } from '../../src/actions/create-counterparty-access-invitation.action.ts';
@@ -77,20 +71,15 @@ const scope = { kind: 'counterparty' } as const;
 const grantedAt = '2026-09-09T10:00:00.000Z';
 const expiresAt = '2026-09-10T10:00:00.000Z';
 const actionInvocationId = '50000000-0000-4000-8000-000000000005';
-const mutationId = '60000000-0000-4000-8000-000000000006';
-const permissionMutationId = '70000000-0000-4000-8000-000000000007';
 const testCrypto = Crypto.make({
   digest: () => Effect.succeed(new Uint8Array(32)),
   randomBytes: (size) => new Uint8Array(size),
 });
 const unusedAccessDependencies = Layer.mergeAll(
-  Layer.succeed(BusinessPermissionRelationshipMutation, {
-    mutate: () => Effect.void,
-  }),
   Layer.succeed(ContextAccess, {
-    businessPermissions: () => Effect.succeed([]),
     legalEntities: () => Effect.succeed([]),
     modules: () => Effect.succeed([]),
+    ownerPermissions: () => Effect.succeed([]),
     resources: () => Effect.succeed([]),
     tenants: () => Effect.succeed([]),
   }),
@@ -108,10 +97,11 @@ const unusedAccessDependencies = Layer.mergeAll(
     unavailableCounterpartyInvitationProofLifecycle('not used by the injected test service'),
   ),
   Layer.succeed(Crypto.Crypto, testCrypto),
+  Layer.succeed(AccessPortalProjection, { project: () => Effect.die('A handler never reconciles the engine') }),
 );
 const provideUnusedAccessPort = Effect.provide(unusedAccessDependencies);
 
-const expectSingleMutationRequest = (
+const expectSingleEvent = (
   material: {
     readonly domainEvents: readonly unknown[];
     readonly outboxMessages: readonly {
@@ -253,66 +243,9 @@ it('publishes exact, secret-safe access event contracts', () => {
         verifiedAt: grantedAt,
       },
     ],
-    [
-      CounterpartyAccessGrantAuthorizationMutationRequestedPayloadSchema,
-      {
-        catalogVersion: '1',
-        counterpartyRef,
-        grantRef,
-        legalEntityId,
-        mutationId,
-        operation: 'grant',
-        schemaVersion: '1',
-      },
-    ],
-    [
-      CounterpartyAccessRevokeAuthorizationMutationRequestedPayloadSchema,
-      {
-        catalogVersion: '1',
-        counterpartyRef,
-        grantRef,
-        legalEntityId,
-        mutationId,
-        operation: 'revoke',
-        schemaVersion: '1',
-      },
-    ],
-    [
-      CounterpartyAccessAdministratorBootstrapAuthorizationMutationRequestedPayloadSchema,
-      {
-        catalogVersion: '1',
-        counterpartyRef,
-        grantRef,
-        legalEntityId,
-        mutationId,
-        operation: 'grant',
-        schemaVersion: '1',
-      },
-    ],
-    [
-      CounterpartyAccessInvitationClaimAuthorizationMutationRequestedPayloadSchema,
-      {
-        catalogVersion: '1',
-        counterpartyRef,
-        invitationRef,
-        legalEntityId,
-        mutationId,
-        operation: 'claim',
-        permissionMutations: [
-          {
-            grantRef,
-            mutationId: permissionMutationId,
-            operation: 'grant',
-            permission: 'counterparty.purchase.prepare',
-          },
-        ],
-        schemaVersion: '1',
-        scope,
-      },
-    ],
   ] as const;
 
-  expect(eventContracts).toHaveLength(11);
+  expect(eventContracts).toHaveLength(7);
   for (const [schema, payload] of eventContracts) {
     expect(Schema.is(schema)(payload)).toBe(true);
     for (const forbiddenKey of ['claimProofRef', 'claimProofReference', 'invitationSecret', 'invitationToken']) {
@@ -328,33 +261,28 @@ it('publishes exact, secret-safe access event contracts', () => {
   const topics = accessActions.flatMap(({ descriptor }) => Object.keys(descriptor.domainEvents));
   expect(new Set(topics)).toEqual(
     new Set([
-      'commerce.customer-context.counterparty-access-grant-authorization-mutation-requested.v1',
-      'commerce.customer-context.counterparty-access-revoke-authorization-mutation-requested.v1',
-      'commerce.customer-context.counterparty-access-administrator-bootstrap-authorization-mutation-requested.v1',
+      'commerce.customer-context.counterparty-access-granted.v1',
+      'commerce.customer-context.counterparty-access-revoked.v1',
+      'commerce.customer-context.counterparty-access-administrator-bootstrapped.v1',
       'commerce.customer-context.counterparty-access-invitation-created.v1',
       'commerce.customer-context.counterparty-access-invitation-resent.v1',
       'commerce.customer-context.counterparty-access-invitation-revoked.v1',
-      'commerce.customer-context.counterparty-access-invitation-claim-authorization-mutation-requested.v1',
+      'commerce.customer-context.counterparty-access-invitation-claimed.v1',
     ]),
   );
   expect(accessActions.every(({ descriptor }) => Object.keys(descriptor.domainEvents).length === 1)).toBe(true);
 });
 
-it.effect('attaches a grant trigger only for a newly staged authorization mutation', () =>
-  Effect.gen(function* grantRequestAttachment() {
+it.effect('publishes the granted event only for a grant this Action applied', () =>
+  Effect.gen(function* grantEventAttachment() {
     const payload = {
       counterpartyRef,
       permission: 'counterparty.purchase.prepare' as const,
       recipient,
       scope,
     };
-    const grant = {
-      ...commonGrantPayload,
-      grantedAt,
-      grantedBy: actor,
-      state: 'RECONCILIATION_REQUIRED' as const,
-    };
-    const run = (staged: boolean) => {
+    const grant = { ...commonGrantPayload, grantedAt, grantedBy: actor, state: 'ACTIVE' as const };
+    const run = (outcome: 'APPLIED' | 'ALREADY_ACTIVE') => {
       const collector = createActionCollector(
         grantCounterpartyCommerceAccessAction.descriptor.domainEvents,
         'commerce.customer-context',
@@ -363,49 +291,35 @@ it.effect('attaches a grant trigger only for a newly staged authorization mutati
       );
       return getActionHandler(grantCounterpartyCommerceAccessAction)(
         payload,
-        actionContext(collector, {
-          grant: () =>
-            Effect.succeed({
-              grant,
-              outcome: 'RECONCILIATION_REQUIRED' as const,
-              reconciliation: { mutationId, operation: 'grant' as const, staged },
-            }),
-        }),
+        actionContext(collector, { grant: () => Effect.succeed({ grant, outcome }) }),
       ).pipe(Effect.map(() => collector.snapshot()));
     };
 
-    const material = yield* run(true);
-    expectSingleMutationRequest(
-      material,
-      'commerce.customer-context.counterparty-access-grant-authorization-mutation-requested.v1',
-    );
+    const material = yield* run('APPLIED');
+    expectSingleEvent(material, 'commerce.customer-context.counterparty-access-granted.v1');
     expect(material.outboxMessages[0]?.message.payloadJson).toEqual({
-      catalogVersion: '1',
-      counterpartyRef,
-      grantRef,
-      legalEntityId,
-      mutationId,
-      operation: 'grant',
-      schemaVersion: '1',
+      ...commonGrantPayload,
+      grantedAt,
+      grantedBy: actor,
     });
 
-    const replay = yield* run(false);
+    const replay = yield* run('ALREADY_ACTIVE');
     expect(replay.domainEvents).toHaveLength(0);
     expect(replay.outboxMessages).toHaveLength(0);
   }).pipe(provideUnusedAccessPort),
 );
 
-it.effect('attaches bootstrap trigger only for a newly staged authorization mutation', () =>
-  Effect.gen(function* bootstrapAttachment() {
+it.effect('publishes the bootstrapped event only for an administrator this Action applied', () =>
+  Effect.gen(function* bootstrapEventAttachment() {
     const payload = { counterpartyRef, reason: 'Initial administrator', recipient };
     const grant = {
       ...commonGrantPayload,
       grantedAt,
       grantedBy: actor,
       permission: 'counterparty.access.manage' as const,
-      state: 'RECONCILIATION_REQUIRED' as const,
+      state: 'ACTIVE' as const,
     };
-    const run = (staged: boolean) => {
+    const run = (outcome: 'APPLIED' | 'ALREADY_ACTIVE') => {
       const collector = createActionCollector(
         bootstrapCounterpartyAccessAdministratorAction.descriptor.domainEvents,
         'commerce.customer-context',
@@ -414,24 +328,20 @@ it.effect('attaches bootstrap trigger only for a newly staged authorization muta
       );
       return getActionHandler(bootstrapCounterpartyAccessAdministratorAction)(
         payload,
-        actionContext(collector, {
-          bootstrap: () =>
-            Effect.succeed({
-              grant,
-              outcome: 'RECONCILIATION_REQUIRED' as const,
-              reconciliation: { mutationId, operation: 'grant' as const, staged },
-            }),
-        }),
+        actionContext(collector, { bootstrap: () => Effect.succeed({ grant, outcome }) }),
       ).pipe(Effect.map(() => collector.snapshot()));
     };
 
-    const material = yield* run(true);
-    expectSingleMutationRequest(
-      material,
-      'commerce.customer-context.counterparty-access-administrator-bootstrap-authorization-mutation-requested.v1',
-    );
+    const material = yield* run('APPLIED');
+    expectSingleEvent(material, 'commerce.customer-context.counterparty-access-administrator-bootstrapped.v1');
+    expect(material.outboxMessages[0]?.message.payloadJson).toEqual({
+      ...commonGrantPayload,
+      bootstrappedAt: grantedAt,
+      bootstrappedBy: actor,
+      permission: 'counterparty.access.manage',
+    });
 
-    const replay = yield* run(false);
+    const replay = yield* run('ALREADY_ACTIVE');
     expect(replay.domainEvents).toHaveLength(0);
     expect(replay.outboxMessages).toHaveLength(0);
   }).pipe(provideUnusedAccessPort),
@@ -467,8 +377,8 @@ it.effect('rejects bootstrap from an authMethod-shaped context without trusted p
   }).pipe(provideUnusedAccessPort),
 );
 
-it.effect('attaches revoke trigger only for a newly staged authorization mutation', () =>
-  Effect.gen(function* revokeAttachment() {
+it.effect('publishes the revoked event only for a grant this Action revoked', () =>
+  Effect.gen(function* revokeEventAttachment() {
     const payload = {
       counterpartyRef,
       grantRef,
@@ -480,9 +390,12 @@ it.effect('attaches revoke trigger only for a newly staged authorization mutatio
       ...commonGrantPayload,
       grantedAt,
       grantedBy: actor,
-      state: 'RECONCILIATION_REQUIRED' as const,
+      revision: 2,
+      revokedAt: expiresAt,
+      revokedBy: actor,
+      state: 'REVOKED' as const,
     };
-    const run = (staged: boolean) => {
+    const run = (outcome: 'REVOKED' | 'ALREADY_REVOKED') => {
       const collector = createActionCollector(
         revokeCounterpartyCommerceAccessAction.descriptor.domainEvents,
         'commerce.customer-context',
@@ -491,24 +404,20 @@ it.effect('attaches revoke trigger only for a newly staged authorization mutatio
       );
       return getActionHandler(revokeCounterpartyCommerceAccessAction)(
         payload,
-        actionContext(collector, {
-          revoke: () =>
-            Effect.succeed({
-              grant,
-              outcome: 'RECONCILIATION_REQUIRED' as const,
-              reconciliation: { mutationId, operation: 'revoke' as const, staged },
-            }),
-        }),
+        actionContext(collector, { revoke: () => Effect.succeed({ grant, outcome }) }),
       ).pipe(Effect.map(() => collector.snapshot()));
     };
 
-    const material = yield* run(true);
-    expectSingleMutationRequest(
-      material,
-      'commerce.customer-context.counterparty-access-revoke-authorization-mutation-requested.v1',
-    );
+    const material = yield* run('REVOKED');
+    expectSingleEvent(material, 'commerce.customer-context.counterparty-access-revoked.v1');
+    expect(material.outboxMessages[0]?.message.payloadJson).toEqual({
+      ...commonGrantPayload,
+      revision: 2,
+      revokedAt: expiresAt,
+      revokedBy: actor,
+    });
 
-    const replay = yield* run(false);
+    const replay = yield* run('ALREADY_REVOKED');
     expect(replay.domainEvents).toHaveLength(0);
     expect(replay.outboxMessages).toHaveLength(0);
   }).pipe(provideUnusedAccessPort),
@@ -625,7 +534,7 @@ it.effect('attaches invitation-revoked outbox only for an actual revocation', ()
   }).pipe(provideUnusedAccessPort),
 );
 
-it.effect('attaches claim trigger only for a newly staged aggregate mutation', () =>
+it.effect('publishes the claimed event only for a claim this Action completed', () =>
   Effect.gen(function* invitationClaimAttachment() {
     const payload = {
       claimant: recipient,
@@ -650,20 +559,20 @@ it.effect('attaches claim trigger only for a newly staged aggregate mutation', (
       state: 'VERIFIED_AND_CONSUMED' as const,
       verifiedAt: grantedAt,
     };
-    const reconcilingInvitation = {
+    const claimedInvitation = {
       ...invitation,
       claimant: recipient,
       grantProgress: [
         {
           grantRef,
           permission: 'counterparty.purchase.prepare' as const,
-          state: 'RECONCILIATION_REQUIRED' as const,
+          state: 'ACTIVE' as const,
         },
       ],
-      revision: 2,
-      state: 'RECONCILIATION_REQUIRED' as const,
+      revision: 3,
+      state: 'CLAIMED' as const,
     };
-    const run = (staged: boolean) => {
+    const run = (claimed: boolean) => {
       const collector = createActionCollector(
         claimCounterpartyAccessInvitationAction.descriptor.domainEvents,
         'commerce.customer-context',
@@ -676,25 +585,11 @@ it.effect('attaches claim trigger only for a newly staged aggregate mutation', (
           collector,
           {
             claim: () =>
-              Effect.succeed({
-                attestation,
-                invitation: reconcilingInvitation,
-                outcome: 'RECONCILIATION_REQUIRED' as const,
-                reconciliation: {
-                  mutationId,
-                  operation: 'claim' as const,
-                  permissionMutations: [
-                    {
-                      grantRef,
-                      mutationId: permissionMutationId,
-                      operation: 'grant' as const,
-                      permission: 'counterparty.purchase.prepare' as const,
-                      staged,
-                    },
-                  ],
-                  staged,
-                },
-              }),
+              Effect.succeed(
+                claimed
+                  ? { attestation, invitation: claimedInvitation, outcome: 'CLAIMED' as const }
+                  : { invitation: claimedInvitation, outcome: 'ALREADY_CLAIMED' as const },
+              ),
           },
           recipient.principalId,
         ),
@@ -706,9 +601,17 @@ it.effect('attaches claim trigger only for a newly staged aggregate mutation', (
     expect(material.outboxMessages).toHaveLength(1);
     expect(material.outboxMessages[0]?.domainEventIndex).toBe(0);
     expect(material.outboxMessages[0]?.message.topic).toBe(
-      'commerce.customer-context.counterparty-access-invitation-claim-authorization-mutation-requested.v1',
+      'commerce.customer-context.counterparty-access-invitation-claimed.v1',
     );
-    expect(material.outboxMessages[0]?.message.payloadJson).not.toHaveProperty('claimProofReference');
+    expect(material.outboxMessages[0]?.message.payloadJson).toEqual({
+      ...commonInvitationPayload,
+      attestationReference: 'claim-attestation-ref-1',
+      claimedBy: recipient,
+      grantProgress: claimedInvitation.grantProgress,
+      intendedPermissions: claimedInvitation.intendedPermissions,
+      revision: 3,
+      verifiedAt: grantedAt,
+    });
 
     const replay = yield* run(false);
     expect(replay.domainEvents).toHaveLength(0);

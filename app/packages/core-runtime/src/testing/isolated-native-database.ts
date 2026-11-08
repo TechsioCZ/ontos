@@ -11,14 +11,15 @@ import {
   Ref,
   Schema,
   Scope,
+  Semaphore,
   Stream,
 } from 'effect';
 import { ChildProcess } from 'effect/process';
 import type { PlatformError } from 'effect';
 
-import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
+import type { CoreTransaction } from '../db/types.ts';
 import { makeCoreDatabase } from '../db/client.ts';
-import { defineDatabaseIdentityEnrollment } from '../db/database-identities.ts';
+import { defineDatabaseIdentityEnrollment, SHARED_RUNTIME_IDENTITY } from '../db/database-identities.ts';
 import type { DatabaseIdentityEnrollment } from '../db/database-identities.ts';
 import { loadDatabaseConnectionPair, parseDatabaseConnectionPair } from '../db/config.ts';
 import type { DatabaseConnectionPair, DatabaseConfigValue } from '../db/config.ts';
@@ -40,8 +41,23 @@ export class IsolatedNativeDatabaseError extends Schema.TaggedError<IsolatedNati
 
 const unavailable = (reason = 'The isolated native test database is unavailable', cause?: unknown) =>
   new IsolatedNativeDatabaseError({ cause: Redacted.make(cause), reason });
+const dumpFailed = (cause?: unknown) => unavailable('Schema-only dump failed', cause);
+const restoreFailed = (cause?: unknown) => unavailable('Schema-only restore failed', cause);
 const prefix = 'ontos_test_party_gateway_';
 const emptyCloneRowsSchema = Schema.Array(Schema.Struct({ populated: Schema.Literal(false) }));
+
+/**
+ * The container that serves the local test PostgreSQL. The shared development Compose service is
+ * the default; a suite running against a disposable, lane-owned database names its own container
+ * (`ONTOS_TEST_DB_CONTAINER`) and its own URLs (`DATABASE_ADMIN_URL`, `DATABASE_URL`) instead.
+ */
+const DEFAULT_DATABASE_CONTAINER = 'ontos-db';
+const databaseContainer = Config.option(Config.String('ONTOS_TEST_DB_CONTAINER')).pipe(
+  Effect.map((configured) => {
+    const name = Option.getOrElse(configured, () => DEFAULT_DATABASE_CONTAINER).trim();
+    return name.length === 0 ? DEFAULT_DATABASE_CONTAINER : name;
+  }),
+);
 
 const replaceDatabase = (configuration: DatabaseConfigValue, database: string) => {
   const url = new URL(configuration.connectionString);
@@ -51,13 +67,19 @@ const replaceDatabase = (configuration: DatabaseConfigValue, database: string) =
 
 const postgresTool = Effect.fn('IsolatedNativeDatabase.postgresTool')(function* postgresToolCommand(
   configuration: DatabaseConfigValue,
-  program: 'pg_dump' | 'psql',
+  program: 'pg_dump' | 'pg_restore',
   args: readonly string[],
   input?: Stream.Stream<Uint8Array, PlatformError.PlatformError>,
 ) {
   const url = new URL(configuration.connectionString);
-  const path = yield* Config.String('PATH').pipe(
-    Effect.mapError((cause) => unavailable('Unable to resolve PostgreSQL tool PATH', cause)),
+  const [path, container] = yield* Effect.all(
+    [
+      Config.String('PATH').pipe(
+        Effect.mapError((cause) => unavailable('Unable to resolve PostgreSQL tool PATH', cause)),
+      ),
+      databaseContainer,
+    ],
+    { concurrency: 2 },
   );
   return yield* ChildProcess.make(
     'docker',
@@ -66,7 +88,7 @@ const postgresTool = Effect.fn('IsolatedNativeDatabase.postgresTool')(function* 
       '-i',
       '-e',
       'PGPASSWORD',
-      'ontos-db',
+      container,
       program,
       '--host',
       'localhost',
@@ -85,52 +107,18 @@ const postgresTool = Effect.fn('IsolatedNativeDatabase.postgresTool')(function* 
   );
 });
 
-const fingerprintSql = sql`
-select json_build_object(
-  'relations', (select json_agg(row_to_json(r) order by r.schema, r.name) from (
-    select n.nspname as schema, c.relname as name, c.relkind, c.relrowsecurity, c.relforcerowsecurity,
-      array(select a::text from unnest(coalesce(c.relacl,acldefault((case when c.relkind='S' then 's' else 'r' end)::"char",c.relowner))) a order by a::text)::text as acl,pg_get_userbyid(c.relowner) as owner
-    from pg_class c join pg_namespace n on n.oid=c.relnamespace
-    where n.nspname not in ('pg_catalog','information_schema') and n.nspname not like 'pg_toast%'
-      and c.relkind in ('r','p','v','m','S')
-  ) r),
-  'policies', (select json_agg(row_to_json(p) order by p.schemaname,p.tablename,p.policyname)
-    from pg_policies p where p.schemaname not in ('pg_catalog','information_schema')),
-  'constraints', (select json_agg(row_to_json(k) order by k.schema,k.table_name,k.name) from (
-    select n.nspname as schema,c.relname as table_name,k.conname as name,pg_get_constraintdef(k.oid,true) as definition
-    from pg_constraint k join pg_class c on c.oid=k.conrelid join pg_namespace n on n.oid=c.relnamespace
-    where n.nspname not in ('pg_catalog','information_schema') and n.nspname not like 'pg_toast%'
-  ) k),
-  'functions', (select json_agg(row_to_json(f) order by f.schema,f.name,f.arguments) from (
-    select n.nspname as schema,p.proname as name,pg_get_function_identity_arguments(p.oid) as arguments,
-      pg_get_functiondef(p.oid) as definition,array(select a::text from unnest(coalesce(p.proacl,acldefault('f',p.proowner))) a order by a::text)::text as acl,pg_get_userbyid(p.proowner) as owner
-    from pg_proc p join pg_namespace n on n.oid=p.pronamespace
-    where n.nspname not in ('pg_catalog','information_schema') and p.prokind in ('f','p')
-  ) f)
-)::text as fingerprint`;
-
-// PostgreSQL deparse is visibility-sensitive. Both catalogs are rendered by PostgreSQL itself
-// in the same transaction-local context; pretty CHECK rendering is stable across pg_dump reparse.
-const readFingerprint = Effect.fn('IsolatedNativeDatabase.readFingerprint')(function* readFingerprint(
-  executor: CoreDatabaseExecutor,
-) {
-  return yield* executor
-    .transaction(
-      Effect.fn('IsolatedNativeDatabase.catalogSnapshot')(function* catalogSnapshot(transaction) {
-        yield* transaction.execute(sql`select set_config('search_path','pg_catalog',true)`, 'objects');
-        const [row] = yield* transaction.execute<{ readonly fingerprint: string }>(fingerprintSql, 'objects');
-        if (row === undefined) {
-          return yield* unavailable('Schema catalog fingerprint is unavailable');
-        }
-        return row.fingerprint;
-      }),
-    )
-    .pipe(Effect.mapError((cause) => unavailable('Unable to read the schema catalog fingerprint', cause)));
-});
-
 const schemaOnly = 'schema-only' as const;
+const browserCompositionPurpose = 'implementation-1296-browser-composition';
 const exactDeadlinePurpose = 'stabilization-1271-exact-obligation-deadline';
+const shellAuthPurpose = 'stabilization-1287-shell-auth';
+const assortmentAuthorizationPurpose = 'implementation-1290-assortment-authorization';
+const retainedPrivacyPurpose = 'stabilization-1258-privacy-drain';
 type IsolatedNativeDatabaseInput = (
+  | {
+      readonly compositionSnapshot?: never;
+      readonly mode: typeof schemaOnly;
+      readonly purpose: typeof browserCompositionPurpose;
+    }
   | {
       readonly compositionSnapshot: ActiveApplicationCompositionSnapshot;
       readonly mode: typeof schemaOnly;
@@ -145,6 +133,8 @@ type IsolatedNativeDatabaseInput = (
         | 'stabilization-1266-quantity-profile-admission'
         | 'stabilization-1230-preference-period'
         | 'stabilization-1267-party-gateway'
+        | typeof shellAuthPurpose
+        | typeof assortmentAuthorizationPurpose
         | 'stabilization-1268-address-plan'
         | 'stabilization-1261-retained-purpose-withdrawal'
         | 'stabilization-1247-set-component-current-closure'
@@ -177,19 +167,21 @@ type IsolatedNativeDatabaseInput = (
   | {
       readonly mode: 'empty';
       readonly purpose:
+        | 'stabilization-1287-core-operation-fence'
         | 'stabilization-1229-payment-entitlement'
         | 'stabilization-1234-outbox-clock'
         | 'stabilization-1235-inventory-release'
         | 'stabilization-1237-protection-intent'
         | 'stabilization-1260-privacy-legacy'
         | 'stabilization-1264-terminal-protection-health'
-        | 'stabilization-1258-privacy-drain'
+        | typeof retainedPrivacyPurpose
         | 'stabilization-1257-approval-fresh-proof'
         | 'stabilization-1274-media-ordering'
         | 'stabilization-1270-set-effective-revision'
         | 'stabilization-1250-market-revision'
         | 'stabilization-1248-price-group-effective-period'
         | 'stabilization-1281-party-legacy'
+        | 'party-verification-removal'
         | typeof exactDeadlinePurpose;
     }
 ) & {
@@ -201,6 +193,7 @@ type IsolatedNativeDatabaseInput = (
 const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
   input.mode === schemaOnly
     ? [
+        browserCompositionPurpose,
         'stabilization-1196-product-create',
         'stabilization-1229-payment-entitlement',
         'stabilization-1232-current-access',
@@ -211,6 +204,8 @@ const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
         'stabilization-1266-quantity-profile-admission',
         'stabilization-1230-preference-period',
         'stabilization-1267-party-gateway',
+        shellAuthPurpose,
+        assortmentAuthorizationPurpose,
         'stabilization-1268-address-plan',
         'stabilization-1261-retained-purpose-withdrawal',
         'stabilization-1247-set-component-current-closure',
@@ -242,21 +237,27 @@ const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
       ].includes(input.purpose)
     : input.mode === 'empty' &&
       [
+        'stabilization-1287-core-operation-fence',
         'stabilization-1229-payment-entitlement',
         'stabilization-1234-outbox-clock',
         'stabilization-1235-inventory-release',
         'stabilization-1237-protection-intent',
         'stabilization-1260-privacy-legacy',
         'stabilization-1264-terminal-protection-health',
-        'stabilization-1258-privacy-drain',
+        retainedPrivacyPurpose,
         'stabilization-1257-approval-fresh-proof',
         'stabilization-1274-media-ordering',
         'stabilization-1270-set-effective-revision',
         'stabilization-1250-market-revision',
         'stabilization-1248-price-group-effective-period',
         'stabilization-1281-party-legacy',
+        'party-verification-removal',
         exactDeadlinePurpose,
       ].includes(input.purpose);
+
+const supportsOwnedReplacement = (input: IsolatedNativeDatabaseInput): boolean =>
+  (input.mode === 'empty' && (input.purpose === exactDeadlinePurpose || input.purpose === retainedPrivacyPurpose)) ||
+  (input.mode === schemaOnly && input.purpose === shellAuthPurpose);
 
 /** A fresh schema-only database; it never drains, copies, or deletes the source database's data. */
 export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDatabase.make')(
@@ -265,7 +266,7 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       return yield* unavailable('Unsupported isolated database test purpose');
     }
     const snapshot =
-      input.mode === schemaOnly
+      input.mode === schemaOnly && input.purpose !== browserCompositionPurpose
         ? yield* validateActiveApplicationCompositionSnapshot(input.compositionSnapshot).pipe(
             Effect.mapError((cause) => unavailable('Invalid isolated test composition', cause)),
           )
@@ -289,6 +290,12 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
     }
     const crypto = yield* Crypto.Crypto;
     const databaseName = `${prefix}${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+    /**
+     * The enrollment the clone's roles and trust routines are matched against. A suite with dedicated
+     * database identities supplies its own; a Core-only suite enrolls none, exactly as a deployment
+     * that composes no owner identity would.
+     */
+    const enrollment = input.databaseIdentities ?? defineDatabaseIdentityEnrollment([]);
     const connections = yield* parseDatabaseConnectionPair({
       DATABASE_ADMIN_URL: replaceDatabase(source.admin, databaseName),
       DATABASE_URL: replaceDatabase(source.runtime, databaseName),
@@ -300,7 +307,6 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       Scope.provide(sourceScope),
       Effect.mapError((cause) => unavailable(undefined, cause)),
     );
-    const original = input.mode === schemaOnly ? yield* readFingerprint(admin.executor) : undefined;
     yield* Effect.acquireRelease(
       admin.executor
         .execute(sql`create database ${sql.identifier(databaseName)}`, 'objects')
@@ -321,34 +327,42 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       },
     );
     if (input.mode === schemaOnly) {
-      const sourceDump = yield* postgresTool(source.admin, 'pg_dump', ['--schema-only', '--no-comments']);
-      // One transaction: committing each of the dump's thousands of DDL statements separately made the clone
-      // cost seconds per test, and a failed restore now leaves no partial schema behind.
-      const restore = yield* postgresTool(
-        connections.admin,
-        'psql',
-        ['--set', 'ON_ERROR_STOP=1', '--quiet', '--single-transaction'],
-        sourceDump.stdout,
-      );
-      const [dumpExit, restoreExit] = yield* Effect.all(
-        [
-          sourceDump.exitCode,
-          restore.exitCode,
-          Stream.runDrain(sourceDump.stderr),
-          Stream.runDrain(restore.stderr),
-          Stream.runDrain(restore.stdout),
-        ],
-        { concurrency: 5 },
-      ).pipe(
-        Effect.mapError((cause) => unavailable('Schema-only clone failed', cause)),
+      // Finish the schema-only archive before restoring it. Plain SQL can end cleanly
+      // before its trailing grants; pg_restore validates the archive and commits schema,
+      // policies and grants together. No source data or keys enter this archive.
+      yield* Effect.gen(function* cloneSchemaArchive() {
+        const sourceDump = yield* postgresTool(source.admin, 'pg_dump', [
+          '--schema-only',
+          '--no-comments',
+          '--format=custom',
+        ]).pipe(Effect.mapError(dumpFailed));
+        const [dumpExit, archive] = yield* Effect.all(
+          [sourceDump.exitCode, Stream.runCollect(sourceDump.stdout), Stream.runDrain(sourceDump.stderr)],
+          { concurrency: 3 },
+        ).pipe(Effect.mapError(dumpFailed));
+        if (dumpExit !== 0) {
+          return yield* dumpFailed();
+        }
+        const restore = yield* postgresTool(
+          connections.admin,
+          'pg_restore',
+          ['--schema-only', '--exit-on-error', '--single-transaction'],
+          Stream.fromIterable(archive),
+        ).pipe(Effect.mapError(restoreFailed));
+        const [restoreExit] = yield* Effect.all(
+          [restore.exitCode, Stream.runDrain(restore.stderr), Stream.runDrain(restore.stdout)],
+          { concurrency: 3 },
+        ).pipe(Effect.mapError(restoreFailed));
+        if (restoreExit !== 0) {
+          return yield* restoreFailed();
+        }
+        return yield* Effect.void;
+      }).pipe(
         Effect.timeoutOrElse({
           duration: '30 seconds',
           orElse: () => Effect.fail(unavailable('Schema-only clone timed out')),
         }),
       );
-      if (dumpExit !== 0 || restoreExit !== 0) {
-        return yield* unavailable('Schema-only clone failed');
-      }
     }
     const isolatedScope = yield* Scope.make();
     yield* Effect.addFinalizer((exit) => Scope.close(isolatedScope, exit));
@@ -371,19 +385,9 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       },
       { concurrency: 2 },
     );
-    const assertClonedSchema = Effect.fn('IsolatedNativeDatabase.assertClonedSchema')(function* assertClonedSchema() {
-      if (input.mode !== schemaOnly || original === undefined) {
-        return yield* unavailable('Schema clone validation requires this scope’s schema-only database');
-      }
-      const copied = yield* readFingerprint(clone.executor);
-      if (copied !== original) {
-        return yield* unavailable('Schema-only clone changed schema, RLS or grants');
-      }
-      return yield* Effect.void;
-    });
-    if (input.mode === schemaOnly) {
-      yield* assertClonedSchema();
-    }
+    // Clone fidelity is tested in Core's integration suite, not re-audited before every business
+    // scenario. Each acquisition still requires successful PostgreSQL tools, a safe runtime role,
+    // empty cloned tables, and scope-owned cleanup.
     const [role] = runtimeRole;
     if (!Schema.is(Schema.Struct({ rolbypassrls: Schema.Literal(false), rolsuper: Schema.Literal(false) }))(role)) {
       return yield* unavailable('Unsafe isolated runtime role');
@@ -451,7 +455,6 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
               'objects',
             );
             // Match runtime-role bootstrap's canonical enrollment, never source table contents.
-            const enrollment = input.databaseIdentities ?? defineDatabaseIdentityEnrollment([]);
             const audienceRoles = enrollment.identities
               .filter(({ scopeAuthority }) => scopeAuthority === 'gateway_grant')
               .flatMap(({ gatewayScopeAudiences, role: audienceRole }) =>
@@ -469,11 +472,10 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
           }),
         )
         .pipe(Effect.mapError((cause) => unavailable('Unable to initialize isolated trust configuration', cause)));
-      yield* assertClonedSchema();
     }
-    const retainedOriginalEnabled = input.mode === 'empty' && input.purpose === 'stabilization-1258-privacy-drain';
-    const replacementEnabled =
-      input.mode === 'empty' && (input.purpose === exactDeadlinePurpose || retainedOriginalEnabled);
+    const retainedOriginalEnabled = input.mode === 'empty' && input.purpose === retainedPrivacyPurpose;
+    const assortmentRuntimeEnabled = input.mode === schemaOnly && input.purpose === assortmentAuthorizationPurpose;
+    const replacementEnabled = supportsOwnedReplacement(input);
     const retainedReplacementRevision = yield* Ref.make<string | null>(null);
     const replacementState = yield* Ref.make<'unused' | 'pending' | 'published' | 'failed'>('unused');
     const controllerClosed = yield* Ref.make(false);
@@ -502,8 +504,13 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
     let managedInitialRevision: string | undefined;
     let managedInitialObservedAt: number | undefined;
     let managedInitialValidUntil: number | undefined;
+    let latestObservationAt: number | undefined;
+    const observationRenewal = yield* Semaphore.make(1);
     const publishInitialComposition = Effect.fn('IsolatedNativeDatabase.publishInitialComposition')(
       function* publishInitialComposition(candidate: ActiveApplicationCompositionSnapshot) {
+        if (input.purpose === browserCompositionPurpose) {
+          return yield* unavailable('The browser fixture exclusively owns publication of its isolated composition');
+        }
         const validated = yield* validateActiveApplicationCompositionSnapshot(candidate).pipe(
           Effect.mapError((cause) => unavailable('Invalid isolated test composition', cause)),
         );
@@ -524,7 +531,9 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
           .pipe(Effect.mapError((cause) => unavailable('Unable to publish initial isolated composition', cause)));
         managedInitialRevision = validated.composition.revision;
         managedInitialObservedAt = DateTime.toEpochMillis(validated.observedAt);
+        latestObservationAt = managedInitialObservedAt;
         managedInitialValidUntil = DateTime.toEpochMillis(validated.validUntil);
+        return yield* Effect.void;
       },
     );
     if (snapshot !== undefined) {
@@ -618,6 +627,23 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
               sql`revoke all on function core.track_application_composition_durable_work(text,text,text,boolean) from public,${roleIdentifier}`,
               'objects',
             );
+            // The enrolled identities' trust routines, such as the Action access-fence lock the shared
+            // runtime (and every enrolled Action runner) executes.
+            const trustRoutines = enrollment.trustRoutines.filter(({ executableBy }) =>
+              executableBy.includes(SHARED_RUNTIME_IDENTITY.role),
+            );
+            if (trustRoutines.length > 0) {
+              yield* transaction.execute(sql`grant usage on schema trust to ${roleIdentifier}`, 'objects');
+            }
+            yield* Effect.forEach(
+              trustRoutines,
+              ({ signature }) =>
+                transaction.execute(
+                  sql`grant execute on function ${sql.raw(signature)} to ${roleIdentifier}`,
+                  'objects',
+                ),
+              { concurrency: 1, discard: true },
+            );
           }),
         )
         .pipe(Effect.mapError((cause) => unavailable('Unable to establish the isolated Core runtime contract', cause)));
@@ -677,6 +703,89 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
           .pipe(Effect.mapError((cause) => unavailable('Unable to control this isolated initial composition', cause)));
       },
     );
+    const renewObservation = Effect.fn('IsolatedNativeDatabase.renewObservation')(function* renewObservation(
+      candidate: ActiveApplicationCompositionSnapshot,
+    ) {
+      return yield* observationRenewal.withPermit(
+        Effect.gen(function* renewOwnedObservation() {
+          const previousObservedAt = latestObservationAt;
+          if (
+            retainedOriginalEnabled ||
+            nativeOwnedIdentity === undefined ||
+            previousObservedAt === undefined ||
+            (yield* Ref.get(controllerClosed))
+          ) {
+            return yield* unavailable('Observation renewal requires a live owned non-retained test controller');
+          }
+          const approved = yield* validateActiveApplicationCompositionSnapshot(candidate).pipe(
+            Effect.mapError((cause) => unavailable('Invalid isolated observation renewal', cause)),
+          );
+          const renewed = yield* runCompositionOperation(
+            Effect.fn('IsolatedNativeDatabase.publishOwnedObservation')(
+              function* publishOwnedObservation(transaction, revision) {
+                const [identity] = yield* transaction.execute<{ readonly owned: boolean }>(
+                  sql`select
+                current_database()=${ownedBoundary.database} and d.oid::text=${nativeOwnedIdentity.databaseOid}
+                and current_user=${ownedBoundary.adminUser} and session_user=${ownedBoundary.adminUser}
+                and pg_get_userbyid(d.datdba)=${ownedBoundary.adminUser}
+                and r.oid::text=${nativeOwnedIdentity.runtimeRoleOid} and not r.rolsuper and not r.rolbypassrls
+                and inet_server_addr()::text is not distinct from ${nativeOwnedIdentity.serverAddress}
+                and inet_server_port() is not distinct from ${nativeOwnedIdentity.serverPort} as owned
+                from pg_database d cross join pg_roles r
+                where d.datname=current_database() and r.rolname=${ownedBoundary.runtimeUser}`,
+                  'objects',
+                );
+                if (identity?.owned !== true) {
+                  return yield* unavailable('Observation renewal cannot target a foreign database, role or endpoint');
+                }
+                const [current] = yield* transaction
+                  .select({
+                    admission: applicationCompositionAuthority.durableWorkAdmission,
+                    phase: applicationCompositionAuthority.phase,
+                    revision: applicationCompositionAuthority.revision,
+                    validUntil: applicationCompositionAuthority.validUntil,
+                  })
+                  .from(applicationCompositionAuthority)
+                  .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+                if (
+                  (yield* Ref.get(controllerClosed)) ||
+                  current === undefined ||
+                  current.revision !== revision ||
+                  approved.composition.revision !== revision ||
+                  DateTime.toEpochMillis(approved.observedAt) <= previousObservedAt ||
+                  DateTime.toEpochMillis(approved.validUntil) <= current.validUntil.getTime()
+                ) {
+                  return yield* unavailable(
+                    'Observation renewal requires the exact owned original revision and strictly later observation times',
+                  );
+                }
+                yield* publishApplicationCompositionAuthority(transaction, approved);
+                const [after] = yield* transaction
+                  .select({
+                    admission: applicationCompositionAuthority.durableWorkAdmission,
+                    phase: applicationCompositionAuthority.phase,
+                    revision: applicationCompositionAuthority.revision,
+                    validUntil: applicationCompositionAuthority.validUntil,
+                  })
+                  .from(applicationCompositionAuthority)
+                  .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+                if (
+                  after?.revision !== revision ||
+                  after.phase !== current.phase ||
+                  after.admission !== current.admission ||
+                  after.validUntil.getTime() !== DateTime.toEpochMillis(approved.validUntil)
+                ) {
+                  return yield* unavailable('Observation renewal changed authority identity or admission state');
+                }
+                return approved;
+              },
+            ),
+          );
+          latestObservationAt = DateTime.toEpochMillis(renewed.observedAt);
+          return renewed;
+        }),
+      );
+    });
     const observeComposition = Effect.fn('IsolatedNativeDatabase.observeInitialComposition')(
       function* observeComposition(transaction: CoreTransaction, revision: string) {
         const [authority] = yield* transaction
@@ -901,20 +1010,86 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
         Effect.onExit((exit) => (Exit.isFailure(exit) ? Ref.set(replacementState, 'failed') : Effect.void)),
       );
     });
+    /** #1290's disposable clone only; reproduces the exact SQL privileges needed by its real owner routines. */
+    const prepareAssortmentAuthorizationRuntime = Effect.fn(
+      'IsolatedNativeDatabase.prepareAssortmentAuthorizationRuntime',
+    )(function* prepareAssortmentAuthorizationRuntime() {
+      if (
+        !assortmentRuntimeEnabled ||
+        (yield* Ref.get(controllerClosed)) ||
+        nativeOwnedIdentity === undefined ||
+        !databaseName.startsWith(prefix) ||
+        databaseName === source.admin.database ||
+        databaseName === source.runtime.database ||
+        connections.admin.database !== databaseName ||
+        connections.runtime.database !== databaseName
+      ) {
+        return yield* unavailable('Assortment test privileges require this scope’s fresh #1290 schema-only clone');
+      }
+      const roleIdentifier = sql.identifier(ownedBoundary.runtimeUser);
+      return yield* clone.executor
+        .transaction(
+          Effect.fn('IsolatedNativeDatabase.provisionAssortmentAuthorizationRuntime')(
+            function* provisionAssortmentAuthorizationRuntime(transaction) {
+              const [identity] = yield* transaction.execute<{ readonly owned: boolean }>(
+                sql`select
+              current_database()=${ownedBoundary.database} and current_user=${ownedBoundary.adminUser}
+              and d.oid::text=${nativeOwnedIdentity.databaseOid} and r.oid::text=${nativeOwnedIdentity.runtimeRoleOid}
+              and not r.rolsuper and not r.rolbypassrls
+              and inet_server_addr()::text is not distinct from ${nativeOwnedIdentity.serverAddress}
+              and inet_server_port() is not distinct from ${nativeOwnedIdentity.serverPort} as owned
+              from pg_database d cross join pg_roles r
+              where d.datname=current_database() and r.rolname=${ownedBoundary.runtimeUser}`,
+                'objects',
+              );
+              if (identity?.owned !== true) {
+                return yield* unavailable(
+                  'Assortment test privileges cannot target a foreign database, role or endpoint',
+                );
+              }
+              yield* transaction.execute(
+                sql`grant select,insert on table
+              assortment.assortment_stable_rules,
+              assortment.assortment_rule_revisions,
+              assortment.assortment_rule_retirement_facts,
+              assortment.assortment_applicability_bindings to ${roleIdentifier}`,
+                'objects',
+              );
+              yield* transaction.execute(
+                sql`grant select on table assortment.assortment_applicability_binding_end_facts to ${roleIdentifier}`,
+                'objects',
+              );
+              // PostgreSQL SELECT FOR UPDATE needs an UPDATE privilege; existing immutable triggers still prohibit owner-row mutation.
+              return yield* transaction
+                .execute(
+                  sql`grant update(stable_rule_id) on table assortment.assortment_stable_rules to ${roleIdentifier}`,
+                  'objects',
+                )
+                .pipe(Effect.asVoid);
+            },
+          ),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            unavailable('Unable to establish exact isolated Assortment test privileges', cause),
+          ),
+        );
+    });
     const composition = Object.freeze({
       closeAdmission: () => runCompositionOperation(closeApplicationCompositionDurableAdmission),
       drain: () => runCompositionOperation(drainApplicationCompositionAuthority),
       observe: () => runCompositionOperation(observeComposition),
       observeRetainedOriginal,
       publishReplacement,
+      renewObservation,
       seal: () => runCompositionOperation(sealApplicationCompositionAuthority),
     });
     // Only this scope's new database is reachable; no administrative executor escapes.
     return {
-      assertClonedSchema,
       composition,
       connections: connections satisfies DatabaseConnectionPair,
       migrateCoreSchema,
+      prepareAssortmentAuthorizationRuntime,
       publishInitialComposition,
     };
   },

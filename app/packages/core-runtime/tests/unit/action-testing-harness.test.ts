@@ -1,3 +1,10 @@
+import type { AnyActionRegistration } from '../../src/actions/definition.ts';
+import { defineOntosModuleManifest } from '../../src/modules/manifest.ts';
+import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
+import {
+  makeApplicationCompositionSnapshotFixture,
+  makeModuleContractFixture,
+} from '../../src/testing/module-contract.ts';
 import { Effect, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -6,6 +13,7 @@ import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';
 import { ACTION_RUNTIME_STAGES } from '../../src/actions/runtime.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { bindActionTestServices, makeActionTestHarness } from '../../src/testing/actions.ts';
+import { fixtureActionAccess } from '../support/access-declaration-fixtures.ts';
 
 const principal = {
   authBindingId: '10000000-0000-4000-8000-000000000001',
@@ -17,6 +25,7 @@ const principal = {
 
 const lifecycleAction = defineAction(
   {
+    accessDeclaration: fixtureActionAccess('test.counter'),
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'test.counter.read.v1',
@@ -64,6 +73,17 @@ const lifecycleAction = defineAction(
   }),
 );
 
+/** Synthetic test.* lifecycle definitions have genuine explicit historical owner metadata. */
+const fixtureOwner = (action: AnyActionRegistration) => {
+  const moduleId = action.descriptor.owningModuleKey;
+  const base = makeModuleContractFixture({ appId: moduleId.replaceAll('.', '-'), moduleId }).manifest;
+  const manifest = defineOntosModuleManifest({
+    ...base,
+    publicSurface: { ...base.publicSurface, actions: [action], api: {}, components: {} },
+  });
+  return defineVerticalRuntimeRegistration({ actions: [action], manifest, outboxWorkers: [] });
+};
+
 const request = {
   payload: { amount: 2 },
   principal,
@@ -79,6 +99,7 @@ it.effect(
   Effect.fn(function* testProgram1() {
     const harness = yield* makeActionTestHarness({
       actionPermission: 'allowed',
+      ownerRegistration: fixtureOwner(lifecycleAction),
       tenantPermission: 'allowed',
     });
 
@@ -101,7 +122,7 @@ it.effect(
 it.effect(
   'defaults authorization closed and never starts a transaction for a denial',
   Effect.fn(function* testProgram2() {
-    const harness = yield* makeActionTestHarness();
+    const harness = yield* makeActionTestHarness({ ownerRegistration: fixtureOwner(lifecycleAction) });
     const denied = yield* harness.runtime.runAction(request).pipe(Effect.flip);
     const snapshot = harness.snapshot();
 
@@ -118,13 +139,15 @@ it.effect(
 );
 
 it.effect(
-  'substitutes typed owner services without replacing the private handler',
+  'substitutes only transaction services after the real registered preparation',
   Effect.fn(function* testProgram3() {
     interface CounterServices {
       readonly increment: (amount: number) => Effect.Effect<number>;
     }
+    let preparations = 0;
     const serviceAction = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('test.service'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'test.service.read.v1',
@@ -154,12 +177,17 @@ it.effect(
       (payload, context) => context.services.increment(payload.amount),
       (): Effect.Effect<CounterServices> => Effect.die('production owner services must not run in this test'),
       {
-        prepareServices: () => Effect.die('production owner preparation must not run for an explicit test binding'),
+        prepareServices: () =>
+          Effect.sync(() => {
+            preparations += 1;
+            return () => Effect.die('The fixture replaces prepared transaction-service acquisition only');
+          }),
       },
     );
     let calls = 0;
     const harness = yield* makeActionTestHarness({
       actionPermission: 'allowed',
+      ownerRegistration: fixtureOwner(serviceAction),
       services: [
         bindActionTestServices(serviceAction, {
           increment: (amount) =>
@@ -182,6 +210,7 @@ it.effect(
     });
 
     expect(result).toBe(5);
+    expect(preparations).toBe(1);
     expect(calls).toBe(1);
     expect(harness.snapshot().committed.length).toBe(1);
   }),
@@ -205,6 +234,7 @@ it.effect('executes real preparation for registrations without an explicit test 
     );
     const harness = yield* makeActionTestHarness({
       actionPermission: 'allowed',
+      ownerRegistration: fixtureOwner(registration),
       tenantPermission: 'allowed',
     });
     expect(yield* harness.runtime.runAction({ ...request, registration })).toEqual({ total: 3 });
@@ -218,6 +248,7 @@ it.effect(
   Effect.fn(function* testProgram4() {
     const harness = yield* makeActionTestHarness({
       actionPermission: 'allowed',
+      ownerRegistration: fixtureOwner(lifecycleAction),
       tenantPermission: 'allowed',
     });
     const failure = yield* harness.runtime
@@ -251,6 +282,7 @@ it.effect('persists policy denials separately from permission denials before han
     );
     const harness = yield* makeActionTestHarness({
       actionPermission: 'allowed',
+      ownerRegistration: fixtureOwner(registration),
       tenantPermission: 'allowed',
     });
     yield* harness.runtime.runAction({ ...request, registration }).pipe(Effect.flip);
@@ -263,5 +295,42 @@ it.effect('persists policy denials separately from permission denials before han
     expect(snapshot.transactionCount).toBe(0);
     expect(snapshot.committed.length).toBe(0);
     expect(snapshot.stages.includes('handler_executed')).toBe(false);
+  }),
+);
+
+it.effect('uses the genuine approved owner/build revision instead of the historical synthetic revision', () =>
+  Effect.gen(function* boundOwnerRevision() {
+    const appId = 'test-counter';
+    const moduleId = 'test.counter.module';
+    const buildMarker = 'actual-test-counter-build';
+    const action = defineAction(
+      {
+        ...lifecycleAction.descriptor,
+        accessDeclaration: fixtureActionAccess(moduleId),
+        actionKey: `${moduleId}.bound`,
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'write',
+          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          entrypointKey: `${moduleId}.bound`,
+          moduleKey: moduleId,
+          role: 'action',
+        }),
+        owningModuleKey: moduleId,
+        resultSchema: Schema.Struct({ revision: Schema.String }),
+      },
+      (_payload, context) => Effect.succeed({ revision: context.compositionRevision }),
+    );
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture([appId], buildMarker);
+    const harness = yield* makeActionTestHarness({
+      actionPermission: 'allowed',
+      applicationComposition: { load: Effect.succeed(snapshot) },
+      expectedDeployment: { appId, buildMarker },
+      ownerRegistration: fixtureOwner(action),
+      tenantPermission: 'allowed',
+    });
+    const result = yield* harness.runtime.runAction({ ...request, registration: action });
+    expect(result.revision).toBe(snapshot.composition.revision);
+    expect(result.revision).not.toBe('a'.repeat(64));
+    expect(harness.snapshot().committed).toHaveLength(1);
   }),
 );

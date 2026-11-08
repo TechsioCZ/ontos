@@ -4,7 +4,8 @@ import { Effect } from 'effect';
 import { assignableSalespeople } from '../../../../crm/records.ts';
 import type { CrmCommandSubmit } from '../../../../crm/records.ts';
 // Create / edit a client (company or person). On create, contact persons can be entered right away (C01-01) and
-// someone with demo.crm.assign may pick the salesperson; a salesperson always creates the client for themself.
+// someone with the reassignment authority (`demo.crm.client-owner.assign`) may pick the salesperson; a
+// salesperson always creates the client for themself.
 import {
   AutosaveStatus,
   SidePanel,

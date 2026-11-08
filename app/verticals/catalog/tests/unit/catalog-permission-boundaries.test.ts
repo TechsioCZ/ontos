@@ -95,16 +95,16 @@ describe('Catalog permission boundaries (#477)', () => {
   it('classifies Buyer-sensitive retirement as lifecycle-only and tenant-scoped', () => {
     for (const operation of ['commerce.catalog.retire-product', 'commerce.catalog.retire-variant'] as const) {
       expect(catalogPublicOperationContracts[operation]).toMatchObject({
+        accessKind: 'action',
         authorityBundle: 'CATALOG_LIFECYCLE_MANAGER',
         permission: operation,
-        permissionKind: 'action_execution',
         scope: 'tenant',
       });
       expect(grantedPermissions('PRODUCT_EDITOR', 'CATALOG_DEFINITION_MANAGER').has(operation)).toBe(false);
     }
     expect(catalogPublicOperationContracts['commerce.catalog.rename-attribute-definition']).toMatchObject({
+      accessKind: 'action',
       authorityBundle: 'CATALOG_DEFINITION_MANAGER',
-      permissionKind: 'action_execution',
       scope: 'tenant',
     });
   });

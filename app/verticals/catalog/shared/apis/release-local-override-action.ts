@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug release-local-override
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,6 +11,7 @@ import {
 } from '../actions/release-local-override.ts';
 
 export { ReleaseLocalOverridePayloadSchema } from '../actions/release-local-override.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const ReleaseLocalOverrideActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReleaseLocalOverrideActionInvalidProblem',
@@ -24,6 +26,7 @@ export const ReleaseLocalOverrideActionForbiddenProblemSchema = makeProblemDetai
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -127,7 +130,7 @@ export const ReleaseLocalOverrideActionApi = HttpApi.make('ReleaseLocalOverrideA
       HttpApiEndpoint.post('execute', '/catalog/actions/release-local-override', {
         error: actionErrors,
         payload: Schema.toEncoded(ReleaseLocalOverridePayloadSchema),
-        success: ReleaseLocalOverrideResultSchema,
+        success: [ActionProposalAcceptedSchema, ReleaseLocalOverrideResultSchema],
       }),
     )
     .middleware(ReleaseLocalOverrideActionSchemaErrorMiddleware),

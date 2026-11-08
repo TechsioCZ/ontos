@@ -121,6 +121,15 @@ const handle = Effect.fn('UnarchivePartyAction.handle')(function* unarchiveParty
 });
 export const unarchivePartyAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.party.unarchive',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'party-identity', level: 'manage' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessTarget: (payload) => ({ moduleKey: 'party.registry', recordKey: payload.partyRef.resourceId }),
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.unarchive-party.access.v1',
@@ -131,10 +140,7 @@ export const unarchivePartyAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.unarchive-party',
       moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
@@ -146,7 +152,6 @@ export const unarchivePartyAction = defineAction(
     policies: [],
     resultSchema: UnarchivePartyResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_party_identity',
   },
   handle,
   (transaction, scope) =>

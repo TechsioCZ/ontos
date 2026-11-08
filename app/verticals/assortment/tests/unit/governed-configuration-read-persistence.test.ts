@@ -8,7 +8,7 @@ import {
   assortmentConfigurationReadService,
   assortmentConfigurationReadSourceForScope,
 } from '../../src/services/governed-configuration-read.service.ts';
-import { configurationReadPermissionTarget, readConfiguration } from '../../src/api/configuration.read.ts';
+import { readConfiguration } from '../../src/api/configuration.read.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '30000000-0000-4000-8000-000000000001';
@@ -192,15 +192,6 @@ it.effect('fails closed for wrong tenant, missing resource, legal-entity mismatc
       ).resolve(resource('commerce.assortment.rule-revision', 'revision-1'), scope),
     );
     expect(Schema.is(AssortmentPolicyPersistenceUnavailable)(dbFailure)).toStrictEqual(true);
-
-    const target = configurationReadPermissionTarget(
-      Schema.decodeUnknownSync(AssortmentConfigurationRequestSchema)({
-        resource: resource('commerce.assortment.rule-revision', 'revision-1'),
-      }),
-      scope,
-    );
-    expect(target.kind).toStrictEqual('assortment_permission');
-    expect(target.assortmentPermission.resource.resourceType).toStrictEqual('commerce.assortment.rule-revision');
 
     const handlerResult = yield* Effect.flip(
       readConfiguration(

@@ -4,10 +4,11 @@
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { priceGroupCatalogManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
+import { priceGroupDefinitionRead } from './src/api/price-group-definition.read.ts';
 import { createPriceGroupAction } from './src/actions/create-price-group.action.ts';
 import { createPriceGroupDefinitionRevisionAction } from './src/actions/create-price-group-definition-revision.action.ts';
-import { reconcilePriceGroupContainmentProjectionWorker } from './src/workers/reconcile-price-group-containment-projection.worker.ts';
 import { retirePriceGroupAction } from './src/actions/retire-price-group.action.ts';
+import { validatePriceGroupCompatibilityRead } from './src/api/validate-price-group-compatibility.read.ts';
 // </generated-module-registration-imports>
 
 export const priceGroupCatalogRegistration = defineVerticalRuntimeRegistration({
@@ -21,6 +22,7 @@ export const priceGroupCatalogRegistration = defineVerticalRuntimeRegistration({
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       'price-group-definition': () => import('./src/api/price-group-definition-client.ts'),
       'validate-price-group-compatibility': () => import('./src/api/validate-price-group-compatibility-client.ts'),
       // </generated-module-registration-apis>
@@ -45,8 +47,13 @@ export const priceGroupCatalogRegistration = defineVerticalRuntimeRegistration({
   manifest: priceGroupCatalogManifest,
   outboxWorkers: [
     // <generated-module-registration-workers>
-    reconcilePriceGroupContainmentProjectionWorker,
     // </generated-module-registration-workers>
+  ],
+  reads: [
+    // <generated-module-registration-reads>
+    priceGroupDefinitionRead,
+    validatePriceGroupCompatibilityRead,
+    // </generated-module-registration-reads>
   ],
 });
 

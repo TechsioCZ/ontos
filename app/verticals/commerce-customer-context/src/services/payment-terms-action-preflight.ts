@@ -1,11 +1,11 @@
-import { OperationContextUnavailable } from '@app/core-runtime';
+import { OperationContextUnavailable, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { ActionServicePreparationContext, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import type { CurrentPaymentTermsResponse } from '@app/payment-term-catalog-contracts/current-payment-terms';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 import type { Result } from 'effect';
 import type { CustomerPaymentTermsState } from '../../shared/domain/payment-term-contracts.ts';
 import { PaymentTermsDependencyUnavailable } from '../../shared/domain/payment-term-errors.ts';
-import { stableRevision } from '../integrations/order-finalization-pricing-context.ts';
+import { stableRevision } from '../stable-revision.ts';
 import { paymentTermCatalogPortFromEnvironment } from '../integrations/payment-term-catalog.ts';
 import type {
   PaymentTermCatalogPort,
@@ -66,7 +66,7 @@ export const preparePaymentTermsChangeCatalog = Effect.fn('PaymentTermsActionPre
             compositionRevision: context.compositionRevision,
             legalEntityId,
             requestCorrelation: scope.correlationId,
-            tenantId: scope.tenantId,
+            subject: { _tag: 'Assertion', scope },
           }).pipe(
             Effect.flatMap((catalog) => catalog.resolveDefinitions(requests)),
             Effect.result,
@@ -74,6 +74,8 @@ export const preparePaymentTermsChangeCatalog = Effect.fn('PaymentTermsActionPre
     const preparedCatalog = bindPreparedPaymentTermCatalog(requests, result);
     return (transaction: ScopedTransactionExecutor, currentScope: OperationalScope, revision: string) => {
       if (
+        !Schema.toEquivalence(TrustedPrincipalContextSchema)(currentScope, scope) ||
+        currentScope.trustedStorefrontId !== scope.trustedStorefrontId ||
         currentScope.tenantId !== scope.tenantId ||
         currentScope.legalEntityId !== legalEntityId ||
         currentScope.principalId !== scope.principalId ||

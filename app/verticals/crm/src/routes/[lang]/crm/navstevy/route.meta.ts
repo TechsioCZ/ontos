@@ -1,11 +1,20 @@
 import { defineTenantModuleEntrypoint } from '@app/core-runtime/module-entrypoint';
+import { defineRouteMeta } from '@app/core-runtime/route-meta';
 
-const routeMeta = {
+const routeMeta = defineRouteMeta({
+  accessDeclaration: {
+    key: 'demo.crm.page-visits.read',
+    kind: 'read',
+    modes: ['run'],
+    placement: { group: 'crm', level: 'basic' },
+    risk: 'routine',
+    selectors: [],
+  },
   canonicalPath: '/crm/navstevy',
   descriptionKey: 'crm.pages.visits.description',
   entrypoint: defineTenantModuleEntrypoint({
     access: 'read',
-    authorization: { kind: 'context_permission', permission: 'module.access' },
+    authorization: { kind: 'protected' },
     entrypointKey: 'demo.crm.page.visits',
     moduleKey: 'demo.crm',
     role: 'page',
@@ -23,7 +32,7 @@ const routeMeta = {
   public: false,
   publicSurface: 'private-app-screen',
   titleKey: 'crm.pages.visits.title',
-} as const;
+});
 
 export default routeMeta;
 export { routeMeta };

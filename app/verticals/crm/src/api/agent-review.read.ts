@@ -20,7 +20,7 @@ type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 const moduleKey = 'demo.crm';
 const agentReviewEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'demo.crm.api.agent-review',
   moduleKey,
   role: 'api',
@@ -50,6 +50,14 @@ const crmUnavailable = (cause: unknown) =>
 
 export const agentReviewRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'demo.crm.api-agent-review.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'crm', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: agentReviewEntrypoint,
     evidencePolicy: {
@@ -59,7 +67,6 @@ export const agentReviewRead = defineRead(
     inputSchema: AgentReviewRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'demo.crm.api.agent-review',
     resultSchema: AgentReviewResponseSchema,
@@ -69,7 +76,7 @@ export const agentReviewRead = defineRead(
     prepare: (_input, context) => crmRecordsGrants(context.scope).pipe(Effect.mapError(crmUnavailable)),
     load: (input, context) =>
       context.services
-        .loadRecords({}, [
+        .loadRecords(context.prepared, {}, [
           ...new Set(
             input.items.flatMap((item) => {
               const id = clientIdOf(item.command);
@@ -104,5 +111,4 @@ export const agentReviewRead = defineRead(
       ),
   },
   makeAgentReviewServices,
-  () => ({ kind: 'module', moduleId: moduleKey }),
 );

@@ -35,6 +35,14 @@ const handleReconcileOrderApproval = Effect.fn('ReconcileOrderApproval.handle')(
 });
 export const reconcileOrderApprovalAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.order.approval-consumption.reconcile',
+      kind: 'action',
+      modes: ['run', 'propose'],
+      placement: { group: 'order-finalization', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.order.reconcile-order-approval.access.v1',
@@ -45,7 +53,7 @@ export const reconcileOrderApprovalAction = defineAction(
     domainEvents: orderCommitmentDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.order.reconcile-order-approval',
       moduleKey: 'commerce.order',
       role: 'action',

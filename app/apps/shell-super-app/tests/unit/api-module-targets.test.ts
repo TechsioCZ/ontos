@@ -1,9 +1,9 @@
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import {
   ContextAccess,
   LegalEntityContext,
   ReadPermissionDenied,
   TrustedPrincipalContextSchema,
-  withRequestPermissionDecisions,
 } from '@app/core-runtime';
 import { Effect, Exit, Layer, Schema } from 'effect';
 import { HttpServerRequest } from 'effect/http';
@@ -58,10 +58,11 @@ const run = Effect.fn('test.moduleTargets')(function* run(
   const { revision } = catalog.composition;
   const resolveShellContext = rs.fn(() => Effect.succeed(authenticated));
   const readTarget = rs.fn(moduleTarget);
-  const exit = yield* withRequestPermissionDecisions(moduleTargetsHandler(request, payload(revision))).pipe(
+  const exit = yield* moduleTargetsHandler(request, payload(revision)).pipe(
     Effect.provide(
       Layer.mergeAll(
         Layer.succeed(AuthenticationService, makeAuthenticationServiceDouble({ resolveShellContext })),
+        Layer.succeed(AccessDecisionGate, makeTestAccessDecision()),
         Layer.succeed(ContextAccess, makeContextAccessDouble('allowed')),
         Layer.succeed(
           HttpServerRequest.HttpServerRequest,

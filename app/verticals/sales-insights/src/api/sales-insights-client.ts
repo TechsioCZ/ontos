@@ -14,6 +14,15 @@ export const getSalesInsightsReadiness = Effect.fn('SalesInsights.readiness')(fu
 // <generated-action-http-client-exports>
 export { executeApplyCommand, executeApplyCommandWithAuthorization } from './apply-command-action-client.ts';
 export type { ApplyCommandActionClientOptions } from './apply-command-action-client.ts';
+export { executeUpdateMetric, executeUpdateMetricWithAuthorization } from './update-metric-action-client.ts';
+export type { UpdateMetricActionClientOptions } from './update-metric-action-client.ts';
+export { executeAssignMetric, executeAssignMetricWithAuthorization } from './assign-metric-action-client.ts';
+export type { AssignMetricActionClientOptions } from './assign-metric-action-client.ts';
+export {
+  executeChangeMetricState,
+  executeChangeMetricStateWithAuthorization,
+} from './change-metric-state-action-client.ts';
+export type { ChangeMetricStateActionClientOptions } from './change-metric-state-action-client.ts';
 // </generated-action-http-client-exports>
 
 // <generated-module-api-client-exports>

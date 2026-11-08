@@ -2,6 +2,7 @@
 // @ontos-action-http-owner demo.crm
 // @ontos-action-http-slug apply-command
 import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { HttpServerRequest } from 'effect/http';
 import { Match, Option, Redacted, Schema } from 'effect';
@@ -81,7 +82,11 @@ const execute = Effect.fn('ApplyCommandActionServer.execute')(function* executeA
       authorization: Redacted.make(request.headers['authorization']),
       'x-correlation-id': correlationId,
     },
+    successContract: 'result-or-proposal',
   });
+  if (Schema.is(ActionProposalAcceptedSchema)(result)) {
+    return result;
+  }
   // Intake runs only after commit. Report its own observed outcome separately, never claim that a committed
   // selection of targets proves their identities were linked, or turn it into a retryable Action failure.
   const intakeEntityIds = Match.value(decoded.command).pipe(

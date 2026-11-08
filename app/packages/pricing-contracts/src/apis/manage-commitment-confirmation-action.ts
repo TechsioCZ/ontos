@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.pricing
 // @ontos-action-http-slug manage-commitment-confirmation
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,6 +11,7 @@ import {
 } from '../actions/manage-commitment-confirmation.ts';
 
 export { ManageCommitmentConfirmationPayloadSchema } from '../actions/manage-commitment-confirmation.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const ManageCommitmentConfirmationActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ManageCommitmentConfirmationActionInvalidProblem',
@@ -24,6 +26,7 @@ export const ManageCommitmentConfirmationActionForbiddenProblemSchema = makeProb
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -146,7 +149,7 @@ export const manageCommitmentConfirmationActionGroupDefinition = HttpApiGroup.ma
     HttpApiEndpoint.post('execute', '/pricing/actions/manage-commitment-confirmation', {
       error: actionErrors,
       payload: Schema.toEncoded(ManageCommitmentConfirmationPayloadSchema),
-      success: ManageCommitmentConfirmationResultSchema,
+      success: [ActionProposalAcceptedSchema, ManageCommitmentConfirmationResultSchema],
     }),
   )
   .middleware(ManageCommitmentConfirmationActionSchemaErrorMiddleware);

@@ -176,9 +176,12 @@ const ContractTermsPanel = ({ contract, state }: { readonly contract: Contract; 
     }
   };
   const send = (value: TermsDraft, expectedRevision: number, command: ContractTermsCommand) =>
-    autosaveTerms(command, expectedRevision, termsUnchangedSince(contract.contractRef.resourceId, base.current)).pipe(
-      Effect.tap((result) => Effect.sync(() => rememberSaved(value, result))),
-    );
+    autosaveTerms(
+      command,
+      expectedRevision,
+      termsUnchangedSince(contract.contractRef.resourceId, base.current),
+      state.reportProposal,
+    ).pipe(Effect.tap((result) => Effect.sync(() => rememberSaved(value, result))));
   const autosave = useAutosaveDraft<TermsDraft, never>({
     equals: sameTermsDraft,
     isValid: (value) => Option.isSome(termsCommandOf(contract.contractRef, value)),

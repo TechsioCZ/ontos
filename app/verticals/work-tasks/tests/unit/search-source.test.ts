@@ -15,8 +15,12 @@ import { expect, it } from 'effect-rstest';
 import { workRelations } from '../../src/database/schema.ts';
 import { loadSearchSnapshot } from '../../src/services/search-source.ts';
 import { buildSearchDocuments } from '../../src/services/search-projection.ts';
-import { loadSearch } from '../../src/services/search-read.ts';
+import { loadSearch as governedSearch } from '../../src/services/search-read.ts';
+
 import { company, context, otherCompany, otherTenant, ref, scope, tenantId } from './search-fixtures.ts';
+
+const loadSearch = (operationScope: Parameters<typeof governedSearch>[0], query: string) =>
+  governedSearch(operationScope, query, { groups: [] });
 
 interface SourceScenario {
   readonly records?: readonly unknown[];

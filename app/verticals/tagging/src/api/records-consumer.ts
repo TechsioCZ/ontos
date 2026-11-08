@@ -1,10 +1,15 @@
 // Owner and consumer calls over the generated governed records client. Callers pass the encoded request, which is
 // decoded here before the generated client sends it.
-import { Effect, Random, Schema } from 'effect';
+import { Effect, Match, Random, Schema } from 'effect';
 import { RecordsRequestSchema } from '../../shared/apis/records.ts';
 import type { RecordsRequestEncoded, RecordsResponse, Subject, SubjectKind, TagId } from '../../shared/apis/records.ts';
 import type { TaggingCommand } from '../../shared/actions/apply-command.ts';
 import { executeApplyCommand } from './apply-command-action-client.ts';
+import { executeUpdateTag } from './update-tag-action-client.ts';
+import { executeDeleteTag } from './delete-tag-action-client.ts';
+import { executeAssignTag } from './assign-tag-action-client.ts';
+import { executeUnassignTag } from './unassign-tag-action-client.ts';
+import { committedResult } from './action-result.ts';
 import {
   executeRecords as executeDecodedRecords,
   executeRecordsWithAuthorization as executeDecodedRecordsWithAuthorization,
@@ -130,16 +135,34 @@ export const subjectsWithTag = (kind: SubjectKind, tagId: TagId) =>
     Effect.map((records) => records.assignments.map((assignment) => assignment.subject.id)),
   );
 
+/** The owner workflow chooses the published operation before obtaining its single-use assertion. */
+const submitTagCommand = (command: TaggingCommand, expectedRevision: number, id: string) =>
+  Match.value(command).pipe(
+    Match.tag('CreateTag', (value) =>
+      executeApplyCommand({ command: value, expectedRevision }, id, { idempotencyKey: id }),
+    ),
+    Match.tag('UpdateTag', (value) =>
+      executeUpdateTag({ command: value, expectedRevision }, id, { idempotencyKey: id }),
+    ),
+    Match.tag('DeleteTag', (value) =>
+      executeDeleteTag({ command: value, expectedRevision }, id, { idempotencyKey: id }),
+    ),
+    Match.tag('AssignTag', (value) =>
+      executeAssignTag({ command: value, expectedRevision }, id, { idempotencyKey: id }),
+    ),
+    Match.tag('UnassignTag', (value) =>
+      executeUnassignTag({ command: value, expectedRevision }, id, { idempotencyKey: id }),
+    ),
+    Match.exhaustive,
+    Effect.flatMap(committedResult),
+  );
+
 /** Runs one command against the current revision, read immediately before the write. */
 export const applyTaggingCommand = (command: TaggingCommand) =>
   freshCorrelation.pipe(
     Effect.flatMap((readId) => executeRecords({}, readId)),
     Effect.flatMap((current) =>
-      freshCorrelation.pipe(
-        Effect.flatMap((id) =>
-          executeApplyCommand({ command, expectedRevision: current.revision }, id, { idempotencyKey: id }),
-        ),
-      ),
+      freshCorrelation.pipe(Effect.flatMap((id) => submitTagCommand(command, current.revision, id))),
     ),
   );
 
@@ -156,9 +179,7 @@ export const applyTaggingCommandIfUnchanged = (
     Effect.flatMap((current) =>
       unchanged(current)
         ? freshCorrelation.pipe(
-            Effect.flatMap((id) =>
-              executeApplyCommand({ command, expectedRevision: current.revision }, id, { idempotencyKey: id }),
-            ),
+            Effect.flatMap((id) => submitTagCommand(command, current.revision, id)),
             Effect.as('applied' as const),
           )
         : Effect.succeed('stale' as const),

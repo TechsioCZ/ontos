@@ -6,17 +6,15 @@ import type {
   CurrentPaymentTermsRequest,
   CurrentPaymentTermsResponse,
 } from '@app/payment-term-catalog-contracts/current-payment-terms';
-import { Effect, Option, Redacted } from 'effect';
+import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
+import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
+import { Crypto, Effect, Redacted } from 'effect';
 
 import { isPaymentTermDefinitionSupported } from '../../shared/domain/payment-term-contracts.ts';
 import { PaymentTermsDependencyUnavailable } from '../../shared/domain/payment-term-errors.ts';
-import {
-  PaymentTermCatalogGatewayCredentialService,
-  unavailablePaymentTermCatalogGatewayCredentialIssuer,
-} from '../../shared/domain/payment-term-catalog-gateway-credential.ts';
 import type { PaymentTermCatalogPort, PaymentTermDefinitionRequest } from '../persistence/payment-term-persistence.ts';
 
-export { PaymentTermCatalogGatewayCredentialService } from '../../shared/domain/payment-term-catalog-gateway-credential.ts';
+type DelegatedGatewayAcquisition = typeof acquireDelegatedGatewayContext;
 
 const maximumReferencesPerRequest = 200;
 
@@ -143,40 +141,38 @@ export const paymentTermCatalogPort = (
     ).pipe(Effect.map((definitions) => definitions.flat())),
 });
 
-export const paymentTermCatalogPortFromEnvironment = (
-  context: {
-    readonly compositionRevision: string;
-    readonly legalEntityId: string;
-    readonly requestCorrelation: string;
-    /** The Tenant being served; the catalog credential is that Tenant's own. */
-    readonly tenantId: string;
+export const paymentTermCatalogPortFromEnvironment = Effect.fn('PaymentTermCatalog.portFromEnvironment')(
+  function* paymentTermCatalogPortFromEnvironment(
+    context: {
+      readonly compositionRevision: string;
+      readonly legalEntityId: string;
+      readonly requestCorrelation: string;
+      readonly subject: GatewayDelegationSubject;
+    },
+    execute: AuthorizedCurrentPaymentTermsExecutor = executeAuthorizedCurrentPaymentTerms,
+    acquire: DelegatedGatewayAcquisition = acquireDelegatedGatewayContext,
+  ) {
+    const crypto = yield* Crypto.Crypto;
+    return paymentTermCatalogPort(context.requestCorrelation, (payload, correlation) =>
+      acquire(
+        {
+          audience: 'payment-term-catalog',
+          legalEntityScope: 'subject',
+          requestCorrelation: correlation,
+          subject: context.subject,
+        },
+        crypto,
+      ).pipe(
+        Effect.mapError(unavailable),
+        Effect.flatMap((issued) =>
+          issued.compositionRevision === context.compositionRevision
+            ? execute(payload, Redacted.make(issued.authorization), correlation, {
+                baseUrl: new URL(issued.apiBaseUrl),
+                compositionRevision: issued.compositionRevision,
+              })
+            : Effect.fail(unavailable('The Payment Term Catalog credential belongs to another composition')),
+        ),
+      ),
+    );
   },
-  execute: AuthorizedCurrentPaymentTermsExecutor = executeAuthorizedCurrentPaymentTerms,
-): Effect.Effect<PaymentTermCatalogPort> =>
-  Effect.serviceOption(PaymentTermCatalogGatewayCredentialService).pipe(
-    Effect.map((issuerOption) => {
-      if (Option.isNone(issuerOption)) {
-        return {
-          resolveDefinitions: () =>
-            unavailablePaymentTermCatalogGatewayCredentialIssuer
-              .issue({ audience: 'payment-term-catalog', ...context })
-              .pipe(Effect.as([] as const)),
-        };
-      }
-      return paymentTermCatalogPort(context.requestCorrelation, (payload, correlation) =>
-        issuerOption.value
-          .issue({
-            audience: 'payment-term-catalog',
-            compositionRevision: context.compositionRevision,
-            legalEntityId: context.legalEntityId,
-            requestCorrelation: correlation,
-            tenantId: context.tenantId,
-          })
-          .pipe(
-            Effect.flatMap(({ baseUrl, credential }) =>
-              execute(payload, credential, correlation, { baseUrl, compositionRevision: context.compositionRevision }),
-            ),
-          ),
-      );
-    }),
-  );
+);

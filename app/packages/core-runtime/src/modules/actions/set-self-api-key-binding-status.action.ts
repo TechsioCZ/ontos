@@ -61,6 +61,16 @@ const handle = Effect.fn('SetSelfApiKeyBindingStatusAction.handle')(function* se
 });
 export const setSelfApiKeyBindingStatusAction = defineAction(
   {
+    // Revoking or disabling your own API-key binding must always stay possible, so the reducing direction of
+    // this capability never waits for a grant; only activating a binding grants authority.
+    accessDeclaration: {
+      key: 'core.identity.self-api-key.change-status',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'core.identity.set-self-api-key-binding-status.access.v1',
@@ -71,10 +81,7 @@ export const setSelfApiKeyBindingStatusAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'principal_self_credentials',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.set-self-api-key-binding-status',
       moduleKey: 'core.identity',
       role: 'action',

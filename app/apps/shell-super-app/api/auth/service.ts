@@ -1,20 +1,22 @@
 import type {
   AvailableTenant,
+  ContextAccess,
+  LegalEntityContext,
   PrincipalResolutionError,
   ResolvedPrincipalIdentity,
   TrustedPrincipalContext,
-  LegalEntityContext,
 } from '@app/core-runtime';
 import {
-  ContextAccess,
   isDatabaseUnavailableFailure,
   PrincipalResolver,
+  recordSupportImpersonationAction,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import type { APIError } from 'better-auth';
 import { isAPIError } from 'better-auth/api';
 import { getCookies } from 'better-auth/cookies';
-import { Cause, Context, Effect, Layer, Predicate, Redacted, Result, Schema } from 'effect';
+import { Cause, Context, DateTime, Effect, Layer, Predicate, Redacted, Result, Schema } from 'effect';
 import { empty as emptyCookies, expireCookieUnsafe, toSetCookieHeaders } from 'effect/http/Cookies';
 
 import { AuthConfig } from './config.ts';
@@ -26,6 +28,7 @@ import {
 } from './observability.ts';
 import { BetterAuthFramework, FORBIDDEN_IDENTITY_CODE, IDENTITY_UNAVAILABLE_CODE } from './better-auth-framework.ts';
 import { observeGatewayPhase } from './gateway-timing.ts';
+import { SupportImpersonationCorrelationId } from './support-impersonation-correlation-id.ts';
 import type { AuthConfigValue } from './config.ts';
 import {
   AuthenticationInternalError,
@@ -141,7 +144,7 @@ interface AuthenticatedResolvedSession {
 }
 
 type ResolvedSession = AnonymousResolvedSession | AuthenticatedResolvedSession;
-type ResolvedSessionEffect = Effect.Effect<ResolvedSession, AuthenticationRuntimeError, ContextAccess>;
+type ResolvedSessionEffect = Effect.Effect<ResolvedSession, AuthenticationRuntimeError, AccessDecisionGate>;
 
 interface SupportImpersonationLifecycle {
   readonly actionId: string;
@@ -166,12 +169,16 @@ type ResolveImpersonatedIdentity = (
 ) => Effect.Effect<
   ResolvedTenantIdentity,
   AuthenticationUnavailableFailure | OntosIdentityForbiddenFailure,
-  ContextAccess
+  AccessDecisionGate
 >;
 
 type ResolveShellContext = (
   requestHeaders: Headers,
-) => Effect.Effect<ShellContextResult, AuthenticationRuntimeError, ContextAccess | LegalEntityContext>;
+) => Effect.Effect<
+  ShellContextResult,
+  AuthenticationRuntimeError,
+  AccessDecisionGate | ContextAccess | LegalEntityContext
+>;
 
 type ResolveAuthenticatedContext = (
   resolved: AuthenticatedResolvedSession,
@@ -179,7 +186,7 @@ type ResolveAuthenticatedContext = (
 ) => Effect.Effect<
   Exclude<ShellContextResult, { readonly state: 'anonymous' }>,
   AuthenticationRuntimeError,
-  ContextAccess | LegalEntityContext
+  AccessDecisionGate | ContextAccess | LegalEntityContext
 >;
 
 export type ShellContextResult =
@@ -225,11 +232,11 @@ export type ShellContextResult =
 export interface AuthenticationServiceContract {
   readonly availableTenants: (
     requestHeaders: Headers,
-  ) => Effect.Effect<AvailableTenantsResult, AuthenticationRuntimeError, ContextAccess>;
+  ) => Effect.Effect<AvailableTenantsResult, AuthenticationRuntimeError, AccessDecisionGate>;
   readonly createFixtureUser: FixtureUserProvision;
   readonly currentSession: (
     requestHeaders: Headers,
-  ) => Effect.Effect<CurrentSessionResult, AuthenticationRuntimeError, ContextAccess>;
+  ) => Effect.Effect<CurrentSessionResult, AuthenticationRuntimeError, AccessDecisionGate>;
   /** Better Auth OAuth 2.1 authorization server for MCP clients; mounted by api/auth/oauth-server/transport.ts. Optional so test doubles stay valid. */
   readonly oauth?: OAuthServerEndpoint;
   readonly resolveDocumentContext: (requestHeaders: Headers) => Effect.Effect<
@@ -238,14 +245,18 @@ export interface AuthenticationServiceContract {
       readonly tenants: Result.Result<AvailableTenantsResult, AuthenticationRuntimeError>;
     },
     AuthenticationRuntimeError,
-    ContextAccess | LegalEntityContext
+    AccessDecisionGate | ContextAccess | LegalEntityContext
   >;
   readonly resolveShellContext: (
     requestHeaders: Headers,
-  ) => Effect.Effect<ShellContextResult, AuthenticationRuntimeError, ContextAccess | LegalEntityContext>;
+  ) => Effect.Effect<
+    ShellContextResult,
+    AuthenticationRuntimeError,
+    AccessDecisionGate | ContextAccess | LegalEntityContext
+  >;
   readonly resolveTenantContext: (
     requestHeaders: Headers,
-  ) => Effect.Effect<TenantContextResult, AuthenticationRuntimeError, ContextAccess>;
+  ) => Effect.Effect<TenantContextResult, AuthenticationRuntimeError, AccessDecisionGate>;
   readonly signIn: (
     email: string,
     authenticationSecret: AuthenticationSecretInput,
@@ -261,18 +272,18 @@ export interface AuthenticationServiceContract {
       readonly setCookieHeaders: readonly string[];
     },
     AuthenticationRuntimeError | LegalEntitySelectionForbiddenError,
-    ContextAccess | LegalEntityContext
+    AccessDecisionGate | LegalEntityContext
   >;
   readonly switchTenant: (
     tenantId: string,
     requestHeaders: Headers,
-  ) => Effect.Effect<SwitchTenantResult, SwitchTenantRuntimeError, ContextAccess>;
+  ) => Effect.Effect<SwitchTenantResult, SwitchTenantRuntimeError, AccessDecisionGate>;
   readonly switchToTenantContext: (
     requestHeaders: Headers,
   ) => Effect.Effect<
     { readonly setCookieHeaders: readonly string[] },
     AuthenticationRuntimeError | TenantAccessForbiddenFailure,
-    ContextAccess
+    AccessDecisionGate | ContextAccess
   >;
 }
 
@@ -286,6 +297,15 @@ const mapResolverError = (
   Predicate.isTagged(error, 'PrincipalResolverUnavailableError')
     ? unavailable('principal_resolver_unavailable')
     : new OntosIdentityForbiddenError();
+
+/**
+ * The trusted request scope one authentication question is asked in (O66). The correlation id is
+ * ambient — the Shell's HTTP handlers publish it for the request — so no operation re-annotates it.
+ */
+const scopeOf = Effect.fn('AuthenticationService.scopeOf')(function* scopeOfEffect(principal: TrustedPrincipalContext) {
+  const correlationId = yield* SupportImpersonationCorrelationId;
+  return Object.freeze({ ...principal, correlationId });
+});
 
 type TrustedPrincipalContextInput = Readonly<{
   readonly authBindingId: string;
@@ -508,7 +528,7 @@ export const makeAuthenticationService = Effect.fn('AuthenticationService.make')
       sessionId: string,
       lifecycle: SupportImpersonationLifecycle,
     ) {
-      const contextAccess = yield* ContextAccess;
+      const access = yield* AccessDecisionGate;
       const target = yield* resolver
         .resolveBetterAuthUserForTenant(user.id, tenantId)
         .pipe(Effect.mapError(mapResolverError));
@@ -533,16 +553,30 @@ export const makeAuthenticationService = Effect.fn('AuthenticationService.make')
       if (!started) {
         return yield* new OntosIdentityForbiddenError();
       }
-      const [decision] = yield* contextAccess.tenants({
-        permission: 'impersonate',
+      const impersonator = yield* decodeTrustedPrincipalContext({
+        authBindingId: original.authBindingId,
+        authContextRef: `better-auth-session:${sessionId}`,
+        authenticationNamespaceId: resolver.authenticationNamespaceId,
+        authMethod: 'session',
         principalId: original.principalId,
-        tenantIds: [tenantId],
+        tenantId: target.tenantId,
       });
-      if (decision?.decision === 'denied') {
-        return yield* new OntosIdentityForbiddenError();
-      }
-      if (decision?.decision !== 'allowed') {
+      // Starting an impersonation is the impersonation capability itself (§3.2, O35): the
+      // administrator's own authority, asked as that Action's declaration asks it, in the tenant
+      // context. The same capability is re-checked on every request of the session by the scope
+      // resolver, so a revocation ends the session even without this check; this one keeps the start
+      // from ever minting a session the administrator may not hold.
+      const decision = yield* access.decide({
+        carrier: { accessDeclaration: recordSupportImpersonationAction.descriptor.accessDeclaration },
+        legalEntityScope: 'optional',
+        now: yield* DateTime.nowAsDate,
+        scope: yield* scopeOf(impersonator),
+      });
+      if (decision.outcome === 'UNAVAILABLE') {
         return yield* new AuthenticationUnavailableError();
+      }
+      if (decision.outcome !== 'ALLOWED') {
+        return yield* new OntosIdentityForbiddenError();
       }
       const principal = yield* decodeTrustedPrincipalContext({
         authBindingId: target.authBindingId,
@@ -680,7 +714,7 @@ export const makeAuthenticationService = Effect.fn('AuthenticationService.make')
 
     const authenticatedSession = (
       requestHeaders: Headers,
-    ): Effect.Effect<AuthenticatedResolvedSession, AuthenticationRuntimeError, ContextAccess> =>
+    ): Effect.Effect<AuthenticatedResolvedSession, AuthenticationRuntimeError, AccessDecisionGate> =>
       readResolvedSession(requestHeaders).pipe(
         Effect.filterOrFail(
           (resolved) => resolved.state !== 'anonymous',
@@ -690,6 +724,7 @@ export const makeAuthenticationService = Effect.fn('AuthenticationService.make')
 
     const resolveContext: ResolveAuthenticatedContext = Effect.fn('AuthenticationService.resolveContext')(
       function* resolveContextEffect(resolved: AuthenticatedResolvedSession, requestHeaders: Headers) {
+        const requestScope = yield* scopeOf(resolved.principal);
         if (resolved.selectedContextKind === 'tenant') {
           const allowed = yield* canSelectTenantContext({
             principalId: resolved.identity.principalId,
@@ -710,10 +745,7 @@ export const makeAuthenticationService = Effect.fn('AuthenticationService.make')
           }
           return {
             // Company choices are navigation data, never a prerequisite for tenant authorization.
-            availableLegalEntities: yield* resolveAuthorizedLegalEntities({
-              principalId: resolved.identity.principalId,
-              tenantId: resolved.identity.tenantId,
-            }).pipe(
+            availableLegalEntities: yield* resolveAuthorizedLegalEntities({ scope: requestScope }).pipe(
               Effect.map((choices) => choices.available),
               Effect.catchTag('LegalEntitySelectionUnavailableError', () => Effect.succeed([])),
             ),
@@ -724,17 +756,9 @@ export const makeAuthenticationService = Effect.fn('AuthenticationService.make')
           };
         }
         const selection = yield* resolveAuthorizedLegalEntities(
-          withOptionalProperty(
-            {
-              principalId: resolved.identity.principalId,
-            },
-            resolved.savedLegalEntityId !== undefined,
-            'savedLegalEntityId',
-            resolved.savedLegalEntityId,
-            {
-              tenantId: resolved.identity.tenantId,
-            },
-          ),
+          resolved.savedLegalEntityId === undefined
+            ? { scope: requestScope }
+            : { savedLegalEntityId: resolved.savedLegalEntityId, scope: requestScope },
         ).pipe(
           Effect.mapError((selectionFailure) => {
             void selectionFailure;
@@ -970,10 +994,11 @@ export const makeAuthenticationService = Effect.fn('AuthenticationService.make')
       switchLegalEntity: (legalEntityId, requestHeaders) =>
         authenticatedSession(requestHeaders).pipe(
           Effect.flatMap((resolved) =>
-            validateAuthorizedLegalEntity({
-              legalEntityId,
-              principalId: resolved.identity.principalId,
-              tenantId: resolved.identity.tenantId,
+            Effect.gen(function* validateSwitch() {
+              return yield* validateAuthorizedLegalEntity({
+                legalEntityId,
+                scope: yield* scopeOf(resolved.principal),
+              });
             }).pipe(
               Effect.mapError(mapLegalEntitySelectionError),
               observeAuthenticationPhase('legal-entity-switch.validate', requestHeaders),

@@ -49,7 +49,6 @@ const replacement: PartyContactPoint = {
     preferred: true,
     type: 'EMAIL',
   },
-  verification: { state: 'UNVERIFIED' },
 };
 it.effect('correction publishes the corrected stable ref while returning the validated replacement', () =>
   Effect.gen(function* correctionScenario() {
@@ -73,7 +72,6 @@ it.effect('correction publishes the corrected stable ref while returning the val
             privacyClassification: 'PERSONAL',
             provenance: replacement.provenance,
             validFrom: replacement.validFrom,
-            verification: replacement.verification,
           },
           type: 'CORRECT_CONTACT_POINT',
         },

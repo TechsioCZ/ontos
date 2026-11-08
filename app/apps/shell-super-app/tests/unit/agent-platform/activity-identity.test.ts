@@ -1,3 +1,4 @@
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { ContextAccess, ReadRuntime } from '@app/core-runtime';
 import type { ReadRuntimeService } from '@app/core-runtime';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
@@ -60,7 +61,11 @@ const principal: AgentPlatformCaller['principal'] = {
   principalId: '00000000-0000-4000-8000-000000000003',
   tenantId: '00000000-0000-4000-8000-000000000001',
 };
-const caller: AgentPlatformCaller = { legalName: 'Company', principal };
+const caller: AgentPlatformCaller = {
+  legalName: 'Company',
+  principal,
+  scope: { ...principal, correlationId: 'activity-test' },
+};
 const fixture = (selected: AgentPlatformCaller, privateRecords = false) =>
   Effect.gen(function* activityFixture() {
     const contract = makeModuleContractFixture({ appId: 'notes', moduleId: 'fixture.notes' });
@@ -128,6 +133,7 @@ const fixture = (selected: AgentPlatformCaller, privateRecords = false) =>
         Layer.mergeAll(
           registry,
           makeInstalledModuleCatalogLayer(Effect.succeed(composition)),
+          Layer.succeed(AccessDecisionGate, makeTestAccessDecision()),
           Layer.mock(ContextAccess, {}),
           Layer.mock(ActionAuthority, {}),
           Layer.mock(ActiveApplicationCompositionService, {}),

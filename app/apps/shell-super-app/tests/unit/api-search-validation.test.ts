@@ -1,3 +1,10 @@
+import {
+  createShellGovernedReadDefinitionsLayer,
+  ShellGovernedReads,
+  createShellGovernedReadsLayer,
+} from '../../api/modules/shell-governed-reads.ts';
+import { ShellGovernedReadDefinitions } from '../../api/modules/shell-governed-read-definitions.ts';
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 /* @rstest-environment node */
 
 // Server HTTP checks need one native fetch realm; mixed DOM Response/native Headers silently drops headers.
@@ -12,6 +19,7 @@ import {
   ReadRuntime,
   TenantModuleStateService,
   defineRead,
+  defineVerticalRuntimeRegistration,
   defineTenantModuleEntrypoint,
   makeActiveApplicationCompositionLayer,
 } from '@app/core-runtime';
@@ -55,7 +63,6 @@ import {
   ShellInstalledModuleCatalog,
 } from '../../api/modules/installed-module-catalog.ts';
 import type { ShellInstalledCatalog } from '../../api/modules/installed-module-catalog.ts';
-import { ShellGovernedReads, createShellGovernedReadsLayer } from '../../api/modules/shell-governed-reads.ts';
 import type { ShellGovernedReadsService } from '../../api/modules/shell-governed-reads.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import { makeContextAccessDouble } from '../support/context-access-double.ts';
@@ -111,6 +118,7 @@ const failedSearch = Effect.fn('test.failedSearch')(function* failedSearch(failu
           AuthenticationService,
           makeAuthenticationServiceDouble({ resolveShellContext: () => Effect.succeed(authenticated) }),
         ),
+        Layer.succeed(AccessDecisionGate, makeTestAccessDecision()),
         Layer.succeed(ContextAccess, makeContextAccessDouble('allowed')),
         Layer.mock(LegalEntityContext, {}),
         Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(catalog) }),
@@ -151,6 +159,7 @@ const searchHttpResponse = Effect.fn('test.searchHttpResponse')(function* search
         resolveShellContext: () => Effect.succeed(scenario?.authenticated ?? authenticated),
       }),
     ),
+    Layer.succeed(AccessDecisionGate, makeTestAccessDecision()),
     Layer.succeed(ContextAccess, makeContextAccessDouble('allowed')),
     Layer.mock(LegalEntityContext, {}),
     Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(catalog) }),
@@ -342,10 +351,18 @@ const signedContract = () => {
           ...base.manifest.publicSurface.shellContributions,
           search: [
             {
+              accessDeclaration: {
+                key: `${signedModule}.records.read`,
+                kind: 'read',
+                modes: ['run'],
+                placement: { group: 'records', level: 'basic' },
+                risk: 'routine',
+                selectors: [],
+              },
               contributionKey: `${signedModule}.search.contribution`,
               entrypoint: {
                 access: 'read',
-                authorization: { kind: 'context_permission', permission: 'module.access' },
+                authorization: { kind: 'protected' },
                 entrypointKey: `${signedModule}.search`,
                 moduleKey: signedModule,
                 role: 'search',
@@ -473,15 +490,7 @@ const signedSearchFixture = Effect.fn('SearchSigningTest.fixture')(function* sig
     expect(actual).toEqual(expected);
     return actual;
   });
-  const harness = yield* makeReadTestHarness({
-    compositionRevision: catalog.composition.revision,
-    executeOwnerQuery: neverPrivateQuery,
-    operationTime: new Date(signedNow * 1000),
-    ownerAuthorizationDecision: 'allowed',
-    permissionDecision: 'allowed',
-    scope: { ...expected, correlationId: signedCorrelation },
-  });
-  const ownerHarness = yield* makeReadTestHarness({
+  let harness = yield* makeReadTestHarness({
     compositionRevision: catalog.composition.revision,
     executeOwnerQuery: neverPrivateQuery,
     operationTime: new Date(signedNow * 1000),
@@ -503,10 +512,18 @@ const signedSearchFixture = Effect.fn('SearchSigningTest.fixture')(function* sig
   ]);
   const ownerRead = defineRead(
     {
+      accessDeclaration: {
+        key: `${signedModule}.records.read`,
+        kind: 'read',
+        modes: ['run'],
+        placement: { group: 'records', level: 'basic' },
+        risk: 'routine',
+        selectors: [],
+      },
       accessKind: 'search',
       entrypoint: defineTenantModuleEntrypoint({
         access: 'read',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
+        authorization: { kind: 'protected' },
         entrypointKey: `${signedModule}.search`,
         moduleKey: signedModule,
         role: 'search',
@@ -515,7 +532,6 @@ const signedSearchFixture = Effect.fn('SearchSigningTest.fixture')(function* sig
       inputSchema: Schema.Struct({ query: Schema.String }),
       legalEntityScope: 'required',
       owningModuleKey: signedModule,
-      permissionTarget: 'module',
       policies: [],
       readKey: `${signedModule}.search`,
       resultSchema: ShellSearchProviderResultsSchema,
@@ -531,9 +547,36 @@ const signedSearchFixture = Effect.fn('SearchSigningTest.fixture')(function* sig
           });
     },
     () => Effect.succeed({}),
-    () => ({ kind: 'module', moduleId: signedModule }),
-    (rows) => rows.map((entry) => entry.ref),
   );
+  const ownerContract = catalog.getByModuleId(signedModule);
+  if (ownerContract === undefined) {
+    return yield* Effect.die('The declared owner release is missing');
+  }
+  const ownerRegistration = defineVerticalRuntimeRegistration({
+    actions: [],
+    manifest: {
+      module: ownerContract.manifest.module,
+      publicSurface: {
+        actions: [],
+        api: {},
+        operationContracts: [],
+        shellContributions: ownerContract.manifest.publicSurface.shellContributions,
+      },
+    },
+    outboxWorkers: [],
+    reads: [ownerRead],
+  });
+  const ownerHarness = yield* makeReadTestHarness({
+    access: 'allowed',
+    applicationComposition: { load: Effect.succeed(snapshot) },
+    compositionRevision: catalog.composition.revision,
+    executeOwnerQuery: neverPrivateQuery,
+    expectedDeployment: ownerContract.deployment,
+    operationTime: new Date(signedNow * 1000),
+    ownerAuthorizationDecision: 'allowed',
+    ownerRegistration,
+    scope: { ...expected, correlationId: signedCorrelation },
+  });
   const gateway = makeModuleSearchProviderGateway((outgoing) =>
     Effect.gen(function* actualSignedOwnerRequest() {
       calls.owner += 1;
@@ -575,7 +618,7 @@ const signedSearchFixture = Effect.fn('SearchSigningTest.fixture')(function* sig
     listActiveTenantModules: neverPrivateQuery,
     listTenantModuleStates: neverPrivateQuery,
   };
-  const layer = createShellGovernedReadsLayer(
+  const definitionsLayer = createShellGovernedReadDefinitionsLayer(
     { resource: { detail: neverPrivateQuery, timeline: neverPrivateQuery }, search: gateway },
     providerIssuer,
     () => states,
@@ -583,12 +626,39 @@ const signedSearchFixture = Effect.fn('SearchSigningTest.fixture')(function* sig
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(ReadRuntime, harness.runtime),
+        Layer.succeed(
+          AccessDecisionGate,
+          makeTestAccessDecision({
+            answers: {
+              [`${signedModule}.records.read`]: {
+                get outcome() {
+                  return controls.revokedModule ? 'DENIED' : 'ALLOWED';
+                },
+              },
+            },
+          }),
+        ),
         Layer.succeed(ContextAccess, access),
         Layer.succeed(TenantModuleStateService, states),
         ShellCompositionFactoryLive,
         ShellResourceServicesFactoryLive,
       ),
     ),
+  );
+  const readRegistrations = yield* ShellGovernedReadDefinitions.pipe(Effect.provide(definitionsLayer));
+  harness = yield* makeReadTestHarness({
+    access: 'allowed',
+    applicationComposition: { load: makeCompositionSnapshot(catalog.contracts) },
+    compositionRevision: catalog.composition.revision,
+    executeOwnerQuery: () => Effect.die('Unexpected Shell owner SQL'),
+    expectedDeployment: catalog.composition.shell.deployment,
+    operationTime: new Date('2026-11-03T15:00:00Z'),
+    ownerAuthorizationDecision: 'allowed',
+    scope: { ...expected, correlationId: signedCorrelation },
+    shellSystemReads: readRegistrations,
+  });
+  const layer = createShellGovernedReadsLayer(readRegistrations).pipe(
+    Layer.provide(Layer.succeed(ReadRuntime, harness.runtime)),
   );
   const reads = yield* ShellGovernedReads.pipe(Effect.provide(layer), Effect.orDie);
   const run: ShellGovernedReadsService['search'] = (input) =>

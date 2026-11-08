@@ -3,8 +3,8 @@ import { StorefrontApplicationSummarySchema } from '@app/storefront-registry/api
 import { DateTime, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
+import { MarketRetirementAdmissionSchema } from '../../shared/apis/market-administration.ts';
 import { MarketHistoryResponseSchema } from '../../shared/apis/market-history.ts';
-import { MarketRetirementOutcomeSchema } from '../../shared/domain/market-retirement-intent.ts';
 import { MarketDefinitionSchema, StorefrontAssociationDefinitionSchema } from '../../shared/market-contracts.ts';
 import { eshopsOverview, storefrontName, storefrontUrl } from '../../src/market-admin/eshops-model.ts';
 import {
@@ -349,18 +349,27 @@ describe('market detail model', () => {
     expect(lifecycleActions('ACTIVE', true)).toEqual([]);
   });
 
-  it('reads a durable retirement outcome', () => {
-    const decode = Schema.decodeUnknownSync(MarketRetirementOutcomeSchema);
-    const base = { marketRef: ref('market', skMarketId), retirementIntentId: '99999999-9999-4999-8999-999999999999' };
+  it('reads the native retirement admission of the market', () => {
+    const decode = Schema.decodeUnknownSync(MarketRetirementAdmissionSchema);
+    const sourceActionInvocationId = '99999999-9999-4999-8999-999999999999';
     expect(retirementView()).toEqual({ kind: 'none' });
-    expect(retirementView(decode({ ...base, outcome: 'pending', stage: 'RESERVED' }))).toEqual({
-      kind: 'pending',
-      stage: 'RESERVED',
-    });
-    expect(retirementView(decode({ ...base, outcome: 'failed', reason: 'impact_assessment_stale' }))).toEqual({
-      kind: 'failed',
-      reason: 'impact_assessment_stale',
-    });
+    expect(retirementView(decode({ sourceActionInvocationId, status: 'PENDING' }))).toEqual({ kind: 'pending' });
+    expect(retirementView(decode({ sourceActionInvocationId, status: 'ABORTED' }))).toEqual({ kind: 'aborted' });
+    expect(
+      retirementView(
+        decode({
+          result: {
+            changed: true,
+            definitionRevisionRef: ref('market-definition-revision', skMarketId),
+            lifecycle: 'RETIRED',
+            marketRef: ref('market', skMarketId),
+            revision: 3,
+          },
+          sourceActionInvocationId,
+          status: 'COMMITTED',
+        }),
+      ),
+    ).toEqual({ kind: 'committed' });
   });
 
   it('confirms the retirement only with the market code', () => {

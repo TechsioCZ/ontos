@@ -79,6 +79,14 @@ const ACTION_KEY = 'commerce.catalog.remove-product-category-assignment';
 
 export const removeProductCategoryAssignmentAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-category-assignment.remove',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.remove-product-category-assignment.access.v1',
@@ -90,7 +98,7 @@ export const removeProductCategoryAssignmentAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

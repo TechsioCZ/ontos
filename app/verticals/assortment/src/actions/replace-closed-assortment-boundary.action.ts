@@ -2,7 +2,9 @@
 // @ontos-action-owner commerce.assortment
 // @ontos-action-slug replace-closed-assortment-boundary
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionAssortmentPermissions, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { assortmentCurrentnessFacts } from '../services/assortment-currentness.ts';
+import { replaceBoundaryCurrentnessTarget } from './boundary-administration-support.ts';
 import { Effect, Schema } from 'effect';
 import {
   ReplaceClosedAssortmentBoundaryPayloadSchema,
@@ -18,7 +20,7 @@ import {
 } from '../../shared/domain/policy-errors.ts';
 import type { BoundaryAdministrationService } from '../services/boundary-administration.service.ts';
 import { boundaryAdministrationService } from '../services/boundary-administration.service.ts';
-import { replaceBoundaryPermissionTargets } from './boundary-administration-support.ts';
+
 import {
   ReplaceClosedAssortmentBoundaryCommerceAssortmentBoundaryReplacedV1OutboxPayloadSchema,
   createReplaceClosedAssortmentBoundaryCommerceAssortmentBoundaryReplacedV1OutboxMessage,
@@ -112,21 +114,49 @@ export const handleReplaceClosedAssortmentBoundary = Effect.fn('ReplaceClosedAss
 );
 export const replaceClosedAssortmentBoundaryAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.assortment.closed-assortment-boundary.replace',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'boundaries', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.assortment.replace-closed-assortment-boundary.access.v1',
     },
+    accessFieldGroups: [
+      {
+        fieldClass: 'personal_data',
+        fields: ['proposedSubject'],
+        key: 'commerce.assortment.closed-assortment-boundary-replacement.customer-subject',
+        kind: 'field_write',
+        modes: ['run'],
+        placement: { group: 'boundaries-replacement-subject', level: 'manage' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+      {
+        fieldClass: 'assortment_policy',
+        fields: ['proposedAdmissionSet', 'proposedCommercialScope', 'proposedDecisionPurpose'],
+        key: 'commerce.assortment.closed-assortment-boundary-replacement.policy-detail',
+        kind: 'field_write',
+        modes: ['run'],
+        placement: { group: 'boundaries-replacement-policy', level: 'manage' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
+    accessOwnerFacts: (payload, scope) => assortmentCurrentnessFacts(replaceBoundaryCurrentnessTarget(payload, scope)),
     actionKey: 'commerce.assortment.replace-closed-assortment-boundary',
-    assortmentPermissions: defineActionAssortmentPermissions<ReplaceClosedAssortmentBoundaryPayload>((payload, scope) =>
-      replaceBoundaryPermissionTargets(payload, scope),
-    ),
     auditEvidenceSchema: AssortmentPolicyAuditEvidenceSchema,
     auditProfile: 'sensitive',
     domainErrorSchema: ActionErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.assortment.replace-closed-assortment-boundary',
       moduleKey: 'commerce.assortment',
       role: 'action',

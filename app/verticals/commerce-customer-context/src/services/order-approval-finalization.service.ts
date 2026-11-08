@@ -1,3 +1,4 @@
+import { stableRevision } from '../stable-revision.ts';
 import {
   ActiveApplicationCompositionService,
   validateActiveApplicationCompositionSnapshot,
@@ -62,7 +63,6 @@ import { PurchaseValueSchema } from '../../shared/domain/purchase-limit.ts';
 import {
   loadPurchasePricingContextSnapshot,
   resolvePurchasePricingContextFromSnapshot,
-  stableRevision,
 } from '../integrations/order-finalization-pricing-context.ts';
 
 const operationSchema = Schema.Literals([

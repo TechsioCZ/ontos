@@ -4,6 +4,8 @@ import { pathToFileURL } from 'node:url';
 
 import {
   ActionTransactionError,
+  defineDatabaseIdentityEnrollment,
+  ActiveApplicationCompositionUnavailableError,
   ContextAccess,
   GatewayAssertionRedemptionService,
   ReadRuntime,
@@ -24,12 +26,10 @@ import type {
   GatewayAssertionRedemption,
   OntosModuleDeploymentContract,
   OperationalScopeResolverService,
-  ReadRegistration,
   ReadRuntimeService,
   TrustedPrincipalContext,
   VerticalRuntimeRegistration,
 } from '@app/core-runtime';
-import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { v1 } from '@authzed/authzed-node';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { defineEffectBff, HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
@@ -65,7 +65,7 @@ import {
 } from '../../../../packages/core-runtime/src/auth/external-identity/verifier.ts';
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
-import { makeCoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
+import { CoreDatabase, makeCoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
 import { applicationCompositionAuthority } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { makeModuleEntrypointGateway } from '../../../../packages/core-runtime/src/modules/module-entrypoint-gateway.ts';
@@ -75,6 +75,7 @@ import {
   makeOperationalScopeRepository,
   makeOperationalScopeResolver,
 } from '../../../../packages/core-runtime/src/operations/context.ts';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import {
   SPICEDB_CHECK_TIMEOUT_MS,
   createSpiceDbPermissionClient,
@@ -87,14 +88,8 @@ import {
 } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import {
   makeActionPermissionService,
-  toSpiceDbActionGrantObjectId,
   toSpiceDbActionObjectId,
 } from '../../../../packages/core-runtime/src/permissions/service.ts';
-import {
-  buildActionAuthorizationRelationships,
-  buildActionAuthorizationRoleGrantRelationships,
-} from '../../../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
-import { toScopedRoleObjectId } from '../../../../packages/core-runtime/src/permissions/scoped-role.ts';
 import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { injectStatementFaults } from '../../../../packages/core-runtime/tests/support/database-faults.ts';
@@ -103,27 +98,33 @@ import { GatewayPrincipalVerifierLive } from '../../../../packages/gateway-princ
 import { deriveOntosModuleDeploymentContract } from '../../../../scripts/generate-ontos-module-contract.mts';
 import type { GatewayIssuerConfigValue } from '../../api/auth/gateway-issuer-config.ts';
 import { issueGatewayContextAssertion, makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
-import { CapturedShellCompositionCatalog } from '../../api/modules/captured-shell-catalog.ts';
+import { CapturedShellCompositionCatalog, capturedShellCatalog } from '../../api/modules/captured-shell-catalog.ts';
+import { ShellGovernedReadDefinitions } from '../../api/modules/shell-governed-read-definitions.ts';
+import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import {
   makeInstalledModuleCatalogLoader,
   ShellInstalledModuleCatalog,
 } from '../../api/modules/installed-module-catalog.ts';
 import { ShellCompositionFactoryLive } from '../../api/modules/shell-composition.ts';
-import { ShellGovernedReads, createShellGovernedReadsLayer } from '../../api/modules/shell-governed-reads.ts';
+import {
+  ShellGovernedReads,
+  createShellGovernedReadDefinitionsLayer,
+  createShellGovernedReadsLayer,
+} from '../../api/modules/shell-governed-reads.ts';
 import {
   ResourceRefSchema,
-  ShellSearchProviderResultsSchema,
   ShellProviderUnavailableError,
   ShellResourceServicesFactoryLive,
   makeShellSearch,
 } from '../../api/modules/shell-resources.ts';
 import type { ShellResourceGateways } from '../../api/modules/shell-resources.ts';
-import { LegalEntityIdSchema } from '../../shared/api.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import { makeScriptedBoundAccessGate, makeTestOperationalScopeAccess } from '@app/core-runtime/testing/access-gate';
+import { writeTestTenantScopes } from '@app/core-runtime/testing/tenant-access';
+import { makeShellTestAccessGate } from '../support/access-decision-double.ts';
 import { scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
 import { makeContextAccessDouble } from '../support/context-access-double.ts';
 import { GENERATED_OWNER, createGeneratedOwnerFixture } from './generated-owner-fixture.ts';
-import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
@@ -169,24 +170,7 @@ const OwnerTimelineSchema = Schema.Struct({
   ),
   projectionLagging: Schema.Boolean,
 });
-const OwnerSearchSchema = Schema.Array(
-  Schema.Struct({
-    ref: ResourceRefSchema,
-    selectedLegalEntityId: LegalEntityIdSchema,
-    title: Schema.String,
-  }),
-);
-// As with the dynamic Action below, Core checks the generated registration at runtime.
-type GeneratedOwnerSearch = ReadRegistration<
-  Schema.ConstraintDecoder<{ readonly query: string }>,
-  typeof OwnerSearchSchema,
-  string,
-  unknown,
-  unknown
->;
-const GeneratedOwnerSearchSchema = Schema.declare<GeneratedOwnerSearch>((value): value is GeneratedOwnerSearch =>
-  Predicate.isObjectKeyword(value),
-);
+const OwnerSearchSchema = Schema.Array(Schema.Struct({ ref: ResourceRefSchema, title: Schema.String }));
 interface GeneratedOwnerModules {
   // Generated source is imported from a temporary path, so TypeScript cannot retain the private
   // Action-registration symbols across the dynamic module boundary. Runtime checks below prove it.
@@ -462,6 +446,10 @@ const createOwnerSchema = Effect.fnUntraced(function* runIntegration5(admin: PgC
   yield* admin.unsafe(`grant usage on schema ${schemaName} to ontos_runtime`);
   yield* admin.unsafe(`grant select, insert, update, delete on all tables in schema ${schemaName} to ontos_runtime`);
 });
+// This generated owner actually runs through the shared session-setting login; no separate owner login is enrolled.
+const GENERATED_OWNER_DATABASE_IDENTITIES = defineDatabaseIdentityEnrollment([]);
+
+type CoreDatabaseService = Parameters<typeof makeActionRuntime>[0];
 type RuntimeActionRegistration = ActionRegistration<
   Schema.ConstraintDecoder<unknown>,
   Schema.ConstraintDecoder<unknown>,
@@ -476,27 +464,34 @@ const RuntimeActionRegistrationSchema = Schema.declare<RuntimeActionRegistration
   (value): value is RuntimeActionRegistration => Predicate.isObjectKeyword(value),
 );
 const isRuntimeActionRegistration = Schema.is(RuntimeActionRegistrationSchema);
-/**
- * Every Read evidence insert fails, wherever Core writes it: since ff350ac53 allowed evidence follows the owner
- * transaction's commit, and a definite denial is recorded in its own short transaction.
- */
-const failingEvidenceRuntime = (runtime: ReadRuntimeService): ReadRuntimeService => ({
-  runRead: (input) =>
-    runtime.runRead(input).pipe(
-      injectStatementFaults((statement) =>
-        statement.startsWith('insert into "core"."data_access_events"')
-          ? Effect.fail(
-              new SqlError({
-                reason: new UnknownError({
-                  cause: new Error('Injected SQL failure'),
-                  message: 'Injected evidence persistence failure',
-                }),
-              }),
-            )
-          : Effect.void,
+const failingEvidenceDatabase = (database: CoreDatabaseService): CoreDatabaseService => {
+  const transactionOverride = {
+    transaction: (runInTransaction, configuration) =>
+      database.executor.transaction(
+        (transaction) =>
+          runInTransaction(transaction).pipe(
+            injectStatementFaults((statement) =>
+              statement.startsWith('insert into "core"."data_access_events"')
+                ? Effect.fail(
+                    new SqlError({
+                      reason: new UnknownError({
+                        cause: new Error('Injected SQL failure'),
+                        message: 'Injected evidence persistence failure',
+                      }),
+                    }),
+                  )
+                : Effect.void,
+            ),
+          ),
+        configuration,
       ),
-    ),
-});
+  } satisfies Pick<CoreDatabaseService['executor'], 'transaction'>;
+  const executor: CoreDatabaseService['executor'] = Object.assign(
+    Object.create(database.executor),
+    transactionOverride,
+  );
+  return { executor };
+};
 const capturedLoggerLayer = (entries: string[]) =>
   Logger.layer([
     Logger.make((options) => {
@@ -581,86 +576,6 @@ it.live(
       listClient: true,
       searchClient: true,
     });
-    const searchContract: unknown = yield* Effect.tryPromise(
-      () => import(pathToFileURL(`${fixture.verticalRoot}/shared/apis/records-search.ts`).href),
-    );
-    const searchExports = yield* Schema.decodeUnknownEffect(DynamicModuleSchema)(searchContract);
-    const responseSchema = yield* Schema.decodeUnknownEffect(
-      Schema.declare<typeof OwnerSearchSchema>((value): value is typeof OwnerSearchSchema =>
-        Schema.is(Schema.declare(Schema.isSchema))(value),
-      ),
-    )(searchExports['RecordsProviderResponseSchema']);
-    const scopedRows = [
-      {
-        ref: {
-          moduleId: GENERATED_OWNER.moduleId,
-          resourceId: '40000000-0000-4000-8000-000000000001',
-          resourceType: GENERATED_OWNER.resourceType,
-          tenantId: '10000000-0000-4000-8000-000000000001',
-        },
-        selectedLegalEntityId: '20000000-0000-4000-8000-000000000001',
-        title: 'Scoped generated record',
-      },
-    ];
-    // The receiving owner's contract must retain scope through HTTP encoding, not silently strip it.
-    const decoded = yield* Schema.decodeUnknownEffect(responseSchema)(scopedRows);
-    const encoded = yield* Schema.encodeEffect(responseSchema)(decoded);
-    expect(encoded).toEqual(scopedRows);
-    expect(
-      yield* Schema.decodeUnknownEffect(ShellSearchProviderResultsSchema, { onExcessProperty: 'error' })(encoded),
-    ).toEqual(scopedRows);
-    const searchModule: unknown = yield* Effect.tryPromise(
-      () => import(pathToFileURL(`${fixture.verticalRoot}/src/search/records.provider.ts`).href),
-    );
-    const searchReadExports = yield* Schema.decodeUnknownEffect(DynamicModuleSchema)(searchModule);
-    const registration = yield* Schema.decodeUnknownEffect(GeneratedOwnerSearchSchema)(
-      searchReadExports['recordsRead'],
-    );
-    const [scopedRow] = scopedRows;
-    if (scopedRow === undefined) {
-      throw new TypeError('The scoped search fixture must contain one record');
-    }
-    const searchScope = {
-      authBindingId: '50000000-0000-4000-8000-000000000001',
-      authContextRef: 'better-auth-session:generated-owner-search-contract',
-      authMethod: 'session' as const,
-      correlationId: 'generated-owner-search-contract',
-      legalEntityId: scopedRow.selectedLegalEntityId,
-      principalId: '30000000-0000-4000-8000-000000000001',
-      tenantId: scopedRow.ref.tenantId,
-    };
-    // Script only the SQL transport. The generated repository, handler and Core Read lifecycle run unchanged.
-    const harness = yield* makeReadTestHarness({
-      executeOwnerQuery: ({ scope, sql }) => {
-        expect(scope).toEqual({ legalEntityId: searchScope.legalEntityId, tenantId: searchScope.tenantId });
-        if (!sql.includes('"entity_records"')) {
-          return Effect.die(new Error('Unexpected SQL in generated-owner search contract proof'));
-        }
-        return Effect.succeed([
-          {
-            legal_entity_id: scopedRow.selectedLegalEntityId,
-            resource_id: scopedRow.ref.resourceId,
-            tenant_id: scopedRow.ref.tenantId,
-            title: scopedRow.title,
-          },
-        ]);
-      },
-      operationTime: new Date('2026-11-04T00:00:00.000Z'),
-      ownerAuthorizationDecision: 'allowed',
-      permissionDecision: 'allowed',
-      scope: searchScope,
-    }).pipe(Effect.provide(NodeCrypto.layer));
-    const loaded = yield* harness.runtime
-      .runRead({
-        input: { query: 'generated' },
-        principal: searchScope,
-        registration,
-        transport: { correlationId: searchScope.correlationId },
-      })
-      .pipe(Effect.provide(NodeCrypto.layer));
-    expect(loaded).toEqual(scopedRows);
-    expect(yield* Schema.encodeEffect(responseSchema)(loaded)).toEqual(scopedRows);
-    expect(harness.snapshot().ownerQueries).toHaveLength(1);
   }),
 );
 it.live(
@@ -726,17 +641,39 @@ it.live(
     const spiceAdmin = newSpiceDbGrpcClient(testSpiceDb);
     const permissionClient = createSpiceDbPermissionClient(testSpiceDb, SPICEDB_CHECK_TIMEOUT_MS);
     const contextAccess = makeContextAccess(permissionClient);
+    // The generated owner's runtimes are decided by the one gate (O62): the suite scripts its answer
+    // and the legacy SpiceDB mirror stays only for the isolation assertions it still proves.
+    const accessGate = makeShellTestAccessGate({ defaultAnswer: 'allowed' });
     const moduleStates = makeTenantModuleStateService(runtimeDatabase);
     const moduleStateGate = makeModuleStateGate(moduleStates);
     const moduleGateway = makeModuleEntrypointGateway(moduleStateGate);
     const scopeResolver = withNamespaceRegistry(
       yield* makeOperationalScopeResolver(
-        makeOperationalScopeRepository(runtimeDatabase, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
-        contextAccess,
+        makeOperationalScopeRepository(runtimeDatabase, GENERATED_OWNER_DATABASE_IDENTITIES),
+        // Each principal may select exactly their own tenant's company: the forged principals below
+        // must be refused by the scope resolver before any read or write reaches the owner (O28).
+        makeTestOperationalScopeAccess({
+          legalEntityIds: (scope) => (scope.tenantId === tenantA ? [entityA1] : [entityB1]),
+        }),
       ),
     );
+    const generatedRegistrationModule: unknown = yield* Effect.tryPromise(
+      () => import(pathToFileURL(`${fixture.verticalRoot}/vertical.registration.ts`).href),
+    );
+    const generatedRegistrationExports =
+      yield* Schema.decodeUnknownEffect(DynamicModuleSchema)(generatedRegistrationModule);
+    const ownerRegistration = yield* Schema.decodeUnknownEffect(VerticalRuntimeRegistrationSchema)(
+      generatedRegistrationExports['isolationOwnerRegistration'],
+    );
+    const ownerAdmission = {
+      applicationComposition: { load: Effect.succeed(approvedSnapshot) },
+      databaseIdentities: GENERATED_OWNER_DATABASE_IDENTITIES,
+      expectedDeployment: contract.deployment,
+      ownerRegistration,
+    };
     const readRuntime = makeReadRuntime(runtimeDatabase, moduleGateway, scopeResolver, contextAccess, {
-      databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      ...ownerAdmission,
+      accessDecision: accessGate.bound,
     });
     const keyPair = yield* Effect.tryPromise(() => generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
     const privateJwk = yield* Effect.tryPromise(() => exportJWK(keyPair.privateKey));
@@ -855,21 +792,6 @@ it.live(
       resourceId: collidingResourceId,
       resourceType: GENERATED_OWNER.resourceType,
     });
-    const actionIdentity = {
-      actionKey: GENERATED_OWNER.actionKey,
-      legalEntityId: entityA1,
-      tenantId: tenantA,
-    };
-    const roleGrant = { ...actionIdentity, roleKey: 'generated-owner-executor' };
-    const actionRoleId = toScopedRoleObjectId(roleGrant);
-    const actionRelationships = [
-      ...buildActionAuthorizationRelationships([actionIdentity]),
-      ...buildActionAuthorizationRoleGrantRelationships(
-        [roleGrant],
-        [{ legalEntityId: entityA1, moduleKeys: [GENERATED_OWNER.moduleId], tenantId: tenantA }],
-      ),
-      relationship('scoped_role', actionRoleId, 'member', 'principal', principalA),
-    ];
     const touchedObjects: readonly [string, string][] = [
       ['tenant', tenantA],
       ['tenant', tenantB],
@@ -893,9 +815,10 @@ it.live(
       ],
       ['resource', requiredValue(toResourceAccessObjectId(tenantA, entityA1, resourceRef), 'Tenant A resource')],
       ['resource', requiredValue(toResourceAccessObjectId(tenantB, entityB1, resourceRef), 'Tenant B resource')],
-      ['action', toSpiceDbActionObjectId(actionIdentity)],
-      ['action_grant', toSpiceDbActionGrantObjectId(actionIdentity)],
-      ['scoped_role', actionRoleId],
+      [
+        'action',
+        toSpiceDbActionObjectId({ actionKey: GENERATED_OWNER.actionKey, legalEntityId: entityA1, tenantId: tenantA }),
+      ],
     ];
     yield* Effect.acquireRelease(
       Effect.void,
@@ -961,14 +884,12 @@ it.live(
           Effect.fnUntraced(function* runIntegration22() {
             return yield* admin.unsafe('delete from core.principals where tenant_id in ($1, $2)', [tenantA, tenantB]);
           }),
+          // Core retains access intent (D27): tenant A's scopes and fences, and so tenant A and its companies, stay.
           Effect.fnUntraced(function* runIntegration23() {
-            return yield* admin.unsafe('delete from core.legal_entities where tenant_id in ($1, $2)', [
-              tenantA,
-              tenantB,
-            ]);
+            return yield* admin.unsafe('delete from core.legal_entities where tenant_id = $1', [tenantB]);
           }),
           Effect.fnUntraced(function* runIntegration24() {
-            return yield* admin.unsafe('delete from core.tenants where tenant_id in ($1, $2)', [tenantA, tenantB]);
+            return yield* admin.unsafe('delete from core.tenants where tenant_id = $1', [tenantB]);
           }),
           Effect.fnUntraced(function* runIntegration25() {
             return yield* admin.unsafe(`drop schema if exists ${schemaName} cascade`);
@@ -1004,6 +925,12 @@ it.live(
       `insert into core.principals (principal_id, tenant_id, kind, display_name, status) values ($1, $3, 'human', 'Generated principal A', 'active'), ($2, $4, 'human', 'Generated principal B', 'active')`,
       [principalA, principalB, tenantA, tenantB],
     );
+    // The governed Action runs under tenant A's real access fence, so it carries the scopes production bootstrap writes.
+    yield* writeTestTenantScopes(adminDatabase.executor, {
+      legalEntityIds: [entityA1, entityA2],
+      principalId: principalA,
+      tenantId: tenantA,
+    });
     yield* admin.unsafe(
       `insert into core.principal_auth_bindings (principal_auth_binding_id, tenant_id, principal_id, authentication_namespace_id, provider, subject_type, provider_subject_id, status) values ($1, $3, $5, '${staffAuthenticationNamespaceId}', 'better_auth', 'user', $7, 'active'), ($2, $4, $6, '${staffAuthenticationNamespaceId}', 'better_auth', 'user', $8, 'active')`,
       [bindingA, bindingB, tenantA, tenantB, principalA, principalB, `user-${principalA}`, `user-${principalB}`],
@@ -1040,6 +967,11 @@ it.live(
     );
     const resourceA = requiredValue(toResourceAccessObjectId(tenantA, entityA1, resourceRef), 'Tenant A resource');
     const resourceB = requiredValue(toResourceAccessObjectId(tenantB, entityB1, resourceRef), 'Tenant B resource');
+    const actionId = toSpiceDbActionObjectId({
+      actionKey: GENERATED_OWNER.actionKey,
+      legalEntityId: entityA1,
+      tenantId: tenantA,
+    });
     const relationships = [
       relationship('tenant', tenantA, 'member', 'principal', principalA),
       relationship('tenant', tenantB, 'member', 'principal', principalB),
@@ -1059,7 +991,8 @@ it.live(
       relationship('resource', resourceA, 'reader', 'principal', principalA),
       relationship('resource', resourceB, 'module', 'module_access', moduleB),
       relationship('resource', resourceB, 'reader', 'principal', principalB),
-      ...actionRelationships,
+      relationship('action', actionId, 'restriction', 'action', actionId),
+      relationship('action', actionId, 'executor', 'principal', principalA),
     ];
     yield* Effect.tryPromise(() =>
       spiceAdmin.promises.writeRelationships(
@@ -1073,16 +1006,6 @@ it.live(
         }),
       ),
     );
-    const expectedSearchA = {
-      ref: { ...resourceRef, tenantId: tenantA },
-      selectedLegalEntityId: entityA1,
-      title: 'A1 searchable',
-    };
-    const expectedSearchB = {
-      ref: { ...resourceRef, tenantId: tenantB },
-      selectedLegalEntityId: entityB1,
-      title: 'B1 searchable',
-    };
     const ownerSearchProbe = yield* requestOwner(
       generated.search,
       `/${GENERATED_OWNER.moduleId}/search/records`,
@@ -1092,7 +1015,7 @@ it.live(
     );
     const ownerSearchProbeBody = yield* decodeResponse(ownerSearchProbe, OwnerSearchSchema);
     expect(ownerSearchProbe.status, JSON.stringify(ownerSearchProbeBody)).toBe(200);
-    expect(ownerSearchProbeBody).toEqual([expectedSearchA]);
+    expect(ownerSearchProbeBody.map(({ title }) => title)).toEqual(['A1 searchable']);
     const gateway = {
       resource: {
         detail: Effect.fnUntraced(
@@ -1184,26 +1107,27 @@ it.live(
         key: `${GENERATED_OWNER.moduleId}:${GENERATED_OWNER.resourceType}:${collidingResourceId}`,
       },
     ]);
-    const generatedModule = catalog.composition.modules.find(
-      ({ deployment }) => deployment.appId === GENERATED_OWNER.appId,
-    );
-    if (generatedModule === undefined) {
-      throw new Error('Generated owner release is not admitted');
-    }
     expect(
       yield* gateway.search.search({
         appId: GENERATED_OWNER.appId,
         authorization: yield* issueAuthorization(principalA1),
         correlationId: randomUUID(),
-        module: generatedModule,
+        module:
+          catalog.composition.modules.find((module) => module.moduleId === GENERATED_OWNER.moduleId) ??
+          (yield* Effect.die('Missing approved owner release')),
         query: 'searchable',
         searchKey: `${GENERATED_OWNER.moduleId}.records`,
       }),
-    ).toEqual([expectedSearchA]);
+    ).toEqual([
+      {
+        ref: resourceRef,
+        title: 'A1 searchable',
+      },
+    ]);
     const directShellSearch = makeShellSearch(
       {
+        access: accessGate,
         catalog: Effect.succeed(catalog),
-        contextAccess,
         issueAssertion: Effect.fnUntraced(
           function* integrationEffect29({
             compositionRevision,
@@ -1231,9 +1155,9 @@ it.live(
       ),
     ).toEqual({
       partial: false,
-      results: [{ ...expectedSearchA, kind: 'resource' }],
+      results: [{ kind: 'resource', ref: resourceRef, title: 'A1 searchable' }],
     });
-    const shellLayer = createShellGovernedReadsLayer(
+    const shellDefinitionsLayer = createShellGovernedReadDefinitionsLayer(
       gateway,
       {
         issueAssertion: Effect.fnUntraced(
@@ -1250,10 +1174,42 @@ it.live(
         ),
       },
       (transaction) => makeTenantModuleStateService({ executor: transaction }),
+    );
+    const shellLayer = Layer.unwrap(
+      Effect.gen(function* makeFixtureShellReads() {
+        const definitions = yield* ShellGovernedReadDefinitions;
+        const shellReadRuntime = makeReadRuntime(runtimeDatabase, moduleGateway, scopeResolver, contextAccess, {
+          accessDecision: accessGate.bound,
+          applicationComposition: {
+            load: capturedShellCatalog.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ActiveApplicationCompositionUnavailableError({
+                    cause,
+                    reason: 'No release was captured for the Shell fixture',
+                  }),
+              ),
+              Effect.filterOrFail(
+                (captured) => captured.composition.revision === approvedSnapshot.composition.revision,
+                () => new ActiveApplicationCompositionUnavailableError({ reason: 'The Shell fixture release changed' }),
+              ),
+              Effect.as(approvedSnapshot),
+            ),
+          },
+          databaseIdentities: GENERATED_OWNER_DATABASE_IDENTITIES,
+          expectedDeployment: ultramodernDeliveryUnit,
+          shellSystemReads: definitions,
+        });
+        return createShellGovernedReadsLayer(definitions).pipe(
+          Layer.provide(Layer.succeed(ReadRuntime, shellReadRuntime)),
+        );
+      }),
     ).pipe(
+      Layer.provide(shellDefinitionsLayer),
       Layer.provide(
         Layer.mergeAll(
-          Layer.succeed(ReadRuntime, readRuntime),
+          Layer.succeed(CoreDatabase, runtimeDatabase),
+          Layer.succeed(AccessDecisionGate, accessGate),
           Layer.succeed(ContextAccess, contextAccess),
           Layer.succeed(TenantModuleStateService, moduleStates),
           Layer.succeed(ShellInstalledModuleCatalog, {
@@ -1295,13 +1251,14 @@ it.live(
         ref: resourceRef,
       })
       .pipe(Effect.provideService(CapturedShellCompositionCatalog, catalog));
-    if ('outcome' in detailA || 'outcome' in detailB) {
-      expect.unreachable('The generated owner must support resource detail for both tenants');
+    expect(searchA.results.map(({ title }) => title)).toEqual(['A1 searchable']);
+    if (!('detail' in detailA) || !('detail' in detailB)) {
+      yield* Effect.die('Expected actual resource detail responses');
+      return;
     }
-    expect(searchA).toEqual({ partial: false, results: [{ ...expectedSearchA, kind: 'resource' }] });
     expect(detailA.detail.title).toBe('A1 searchable');
     expect(detailA.timeline.map(({ summary }) => summary)).toEqual(['Tenant A list']);
-    expect(searchB).toEqual({ partial: false, results: [{ ...expectedSearchB, kind: 'resource' }] });
+    expect(searchB.results.map(({ title }) => title)).toEqual(['B1 searchable']);
     expect(detailB.detail.title).toBe('B1 searchable');
     expect(detailB.timeline.map(({ summary }) => summary)).toEqual(['Tenant B list']);
     expect(assertionCount, 'every provider attempt must receive a fresh assertion').toBe(9);
@@ -1360,8 +1317,10 @@ it.live(
       deniedAuthorization,
       randomUUID(),
     );
-    expect(deniedResponse.status).toBe(403);
+    expect(deniedResponse.status).toBe(404);
     expect(generated.counts.detail).toBe(deniedBefore);
+    // A v2 read is scope-wide (O67-Q2): a record the owner's own scope predicate filters out is
+    // simply not found, and a read that never returned a result records no access evidence.
     const deniedEvidence = yield* admin.unsafe<{
       outcome: string;
       outcome_code: string;
@@ -1371,19 +1330,12 @@ it.live(
       `select outcome, outcome_code, query_hash, result_count from core.data_access_events where tenant_id = $1 and target_resource_id = $2`,
       [tenantA, deniedResourceId],
     );
-    expect(deniedEvidence).toEqual([
-      {
-        outcome: 'denied',
-        outcome_code: 'spicedb_permission_denied',
-        query_hash: null,
-        result_count: 0,
-      },
-    ]);
+    expect(deniedEvidence).toEqual([]);
     const unavailableContextAccess = makeContextAccessDouble('unavailable');
     const unavailableResolver: OperationalScopeResolverService = withNamespaceRegistry(
       yield* makeOperationalScopeResolver(
-        makeOperationalScopeRepository(runtimeDatabase, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
-        unavailableContextAccess,
+        makeOperationalScopeRepository(runtimeDatabase, GENERATED_OWNER_DATABASE_IDENTITIES),
+        makeTestOperationalScopeAccess({ decision: 'unavailable' }),
       ),
     );
     const unavailableRuntime = makeReadRuntime(
@@ -1391,7 +1343,7 @@ it.live(
       moduleGateway,
       unavailableResolver,
       unavailableContextAccess,
-      { databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT },
+      { ...ownerAdmission, accessDecision: makeScriptedBoundAccessGate('unavailable').bound },
     );
     const unavailableOwner = yield* loadGeneratedOwner(
       fixture.verticalRoot,
@@ -1413,10 +1365,12 @@ it.live(
     expect(JSON.stringify(yield* Effect.tryPromise(() => unavailableResponse.json()))).not.toMatch(
       /postgres|spicedb|permission check|row-level/iu,
     );
-    const evidenceFailureRuntime = failingEvidenceRuntime(
-      makeReadRuntime(runtimeDatabase, moduleGateway, scopeResolver, contextAccess, {
-        databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
-      }),
+    const evidenceFailureRuntime = makeReadRuntime(
+      failingEvidenceDatabase(runtimeDatabase),
+      moduleGateway,
+      scopeResolver,
+      contextAccess,
+      { ...ownerAdmission, accessDecision: accessGate.bound },
     );
     const evidenceFailureOwner = yield* loadGeneratedOwner(
       fixture.verticalRoot,
@@ -1442,10 +1396,10 @@ it.live(
       makeActionPermissionService(permissionClient),
       scopeResolver,
       {
-        databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+        ...ownerAdmission,
+        accessDecision: accessGate.bound,
         moduleEntrypointGateway: moduleGateway,
         moduleStateGate,
-
         resolveCompositionRevision: (verifiedPrincipal) => {
           const revision = readVerifiedGatewayCompositionRevision(verifiedPrincipal);
           return revision === undefined

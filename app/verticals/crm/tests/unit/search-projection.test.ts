@@ -1,14 +1,12 @@
 import {
   CoreSearchProjectionStore,
   CoreSearchIngestion,
-  ResourceContainmentRelationshipMutation,
   CoreSearchProjectionUnavailable,
   ReadHandlerUnavailable,
   createCoreSearchQueryRuntime,
   makeCoreSearchIngestion,
   makeInMemoryCoreSearchProjectionStore,
 } from '@app/core-runtime';
-import type { ResourceContainmentRelationshipMutationInput } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { SearchSource } from '../../src/services/search-source.service.ts';
 import { expect, it } from 'effect-rstest';
@@ -179,22 +177,15 @@ it('canonicalizes phone fields/queries only, without inventing Czech aliases for
   }
 });
 
-it.effect('updates, removes, rebuilds, contains, and rejects stale delivery without cross-company matches', () =>
+it.effect('updates, removes, rebuilds, and rejects stale delivery without cross-company matches', () =>
   Effect.gen(function* projectionTest() {
     const store = makeInMemoryCoreSearchProjectionStore();
     const search = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
     let current = snapshot;
-    const touched: ResourceContainmentRelationshipMutationInput[] = [];
     const projector = yield* makeSearchProjection.pipe(
       Effect.provideService(SearchSource, { load: () => Effect.succeed(current) }),
       Effect.provideService(CoreSearchIngestion, makeCoreSearchIngestion(store, searchIngestionRegistrations)),
       Effect.provideService(CoreSearchProjectionStore, store),
-      Effect.provideService(ResourceContainmentRelationshipMutation, {
-        touch: (input) =>
-          Effect.sync(() => {
-            touched.push(input);
-          }),
-      }),
     );
     const find = (resourceType: string, query: string, selectedLegalEntityId = companyId) =>
       search.search(
@@ -229,12 +220,6 @@ it.effect('updates, removes, rebuilds, contains, and rejects stale delivery with
           .pipe(Effect.flip),
       ),
     ).toBe(true);
-    expect(
-      touched
-        .flatMap((input) => input.relationships)
-        .every((edge) => edge.relation === 'module' && edge.container.objectType === 'module_access'),
-    ).toBe(true);
-    expect(touched.flatMap((input) => input.relationships).length).toBe(2);
     current = {
       ...snapshot,
       companies: [
@@ -265,7 +250,7 @@ it.effect('updates, removes, rebuilds, contains, and rejects stale delivery with
   }),
 );
 
-it.effect('archives contacts with their client and fails a foreign snapshot before external writes', () =>
+it.effect('archives contacts with their client and fails a foreign snapshot before index writes', () =>
   Effect.gen(function* projectionTest() {
     const docs = yield* buildSearchDocuments({
       ...snapshot,
@@ -288,9 +273,6 @@ it.effect('archives contacts with their client and fails a foreign snapshot befo
       Effect.provideService(SearchSource, { load: () => Effect.succeed({ ...snapshot, tenantId: otherCompanyId }) }),
       Effect.provideService(CoreSearchIngestion, makeCoreSearchIngestion(store, searchIngestionRegistrations)),
       Effect.provideService(CoreSearchProjectionStore, store),
-      Effect.provideService(ResourceContainmentRelationshipMutation, {
-        touch: () => Effect.die('No foreign containment'),
-      }),
     );
     expect(
       Schema.is(ReadHandlerUnavailable)(yield* projector.project(context, { entityIds: [] }).pipe(Effect.flip)),
@@ -298,7 +280,7 @@ it.effect('archives contacts with their client and fails a foreign snapshot befo
   }),
 );
 
-it.effect('duplicate owner IDs across companies fail before any containment or index mutation', () =>
+it.effect('duplicate owner IDs across companies fail before any index mutation', () =>
   Effect.gen(function* rejectDuplicateIdentity() {
     const store = makeInMemoryCoreSearchProjectionStore();
     const projector = yield* makeSearchProjection.pipe(
@@ -308,9 +290,6 @@ it.effect('duplicate owner IDs across companies fail before any containment or i
       }),
       Effect.provideService(CoreSearchIngestion, { ingest: () => Effect.die('No partial duplicate ingestion') }),
       Effect.provideService(CoreSearchProjectionStore, store),
-      Effect.provideService(ResourceContainmentRelationshipMutation, {
-        touch: () => Effect.die('No duplicate containment'),
-      }),
     );
     expect(
       Schema.is(ReadHandlerUnavailable)(

@@ -2,12 +2,7 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug remove-customer-payment-term
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  OperationContextUnavailable,
-  defineAction,
-  defineActionBusinessPermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { OperationContextUnavailable, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { PaymentTermsTimestampSchema } from '../../shared/domain/payment-term-contracts.ts';
 import { CustomerPaymentTermEntitlementRefSchema } from '../../shared/resources/customer-payment-term-entitlement.ts';
@@ -28,6 +23,7 @@ import {
 import { CustomerPaymentTermRemovalKindSchema } from '../../shared/domain/payment-terms.ts';
 import { createRemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTermRemovedV1OutboxMessage } from './remove-customer-payment-term.commerce-customer-context-customer-payment-term-removed-v1.outbox-message.ts';
 import type { RemoveCustomerPaymentTermCommerceCustomerContextCustomerPaymentTermRemovedV1OutboxPayload } from './remove-customer-payment-term.commerce-customer-context-customer-payment-term-removed-v1.outbox-message.ts';
+import { counterpartyOwnerFacts } from './owner-access-facts.ts';
 
 const revision = RemoveCustomerPaymentTermPayloadSchema.fields.expectedRevision;
 const moduleKey = 'commerce.customer-context' as const;
@@ -130,29 +126,29 @@ export const handleRemoveCustomerPaymentTerm = Effect.fn(
 
 export const removeCustomerPaymentTermAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.customer-payment-term.remove',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'payment-terms', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.remove-customer-payment-term.access.v1',
     },
+    accessOwnerFacts: (payload) => counterpartyOwnerFacts(payload.counterpartyRef.resourceId),
     actionKey: 'commerce.customer-context.remove-customer-payment-term',
     auditEvidenceSchema: CustomerPaymentTermsAuditEvidenceSchema,
     auditProfile: 'standard',
-    businessPermission: defineActionBusinessPermission<RemoveCustomerPaymentTermPayload>((payload, scope) => ({
-      permission: 'counterparty.settings.payment_terms.manage',
-      target: {
-        counterpartyId: payload.counterpartyRef.resourceId,
-        kind: 'counterparty',
-        legalEntityId: scope.legalEntityId ?? '',
-        tenantId: scope.tenantId,
-      },
-    })),
     domainErrorSchema: CustomerPaymentTermsActionRejected,
     domainEvents: {
       'commerce.customer-context.customer-payment-term-removed.v1': CustomerPaymentTermRemovedEventSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.remove-customer-payment-term',
       moduleKey: 'commerce.customer-context',
       role: 'action',

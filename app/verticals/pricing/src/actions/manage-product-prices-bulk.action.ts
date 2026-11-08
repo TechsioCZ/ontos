@@ -114,6 +114,14 @@ export const handleManageProductPricesBulk: (
 
 export const manageProductPricesBulkAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.pricing.price.manage-bulk',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'prices', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.pricing.manage-product-prices-bulk.access.v1',
@@ -125,7 +133,7 @@ export const manageProductPricesBulkAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.pricing.manage-product-prices-bulk',
       moduleKey: MODULE_KEY,
       role: 'action',

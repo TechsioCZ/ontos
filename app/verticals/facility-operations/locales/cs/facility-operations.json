@@ -48,6 +48,7 @@
         "emptyDescription": "Založte první záznam."
       },
       "errors": {
+        "approval_required": "Návrh čeká na schválení. Změna zatím nebyla provedena.",
         "conflict": "Záznam mezitím upravil někdo jiný. Data jsme načetli znovu, změnu zopakujte.",
         "forbidden": "Na tuto změnu nemáte oprávnění.",
         "invalid": "Zkontrolujte zadané hodnoty.",

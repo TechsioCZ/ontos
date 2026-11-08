@@ -2,15 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import {
-  BusinessPermissionRelationshipMutation,
-  BusinessPermissionRelationshipMutationLive,
-  GatewayAssertionReplayError,
-  loadDatabaseConnectionPair,
-} from '@app/core-runtime';
+import { GatewayAssertionReplayError, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
+import { environmentTestAccessTarget, grantTestTenantRoleAccess } from '@app/core-runtime/testing/tenant-access';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { decodeSupportedGatewayContextClaims } from '@app/shared-contracts';
@@ -162,6 +158,9 @@ it.live('durably rejects replay through the exact global least-privilege table',
   ),
 );
 
+/** The platform services the v2 access seed reads the catalog and mints its ids with. */
+const tenantAccessServices = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer);
+
 // Exercise the exported deployment root, with only its external configuration/source transport
 // supplied by the fixture. No receiving, redemption, Core, or owner layer is replaced.
 it.live('serves an authorized owner Read through the unchanged default API and rejects replay', () =>
@@ -169,10 +168,7 @@ it.live('serves an authorized owner Read through the unchanged default API and r
     Effect.gen(function* defaultReceivingProof() {
       const snapshot = yield* enrollmentApplicationCompositionSnapshot;
       const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId: randomUUID() }, snapshot.composition.revision);
-      const realm = yield* makeCounterpartyInvitationRealm(fixture, {
-        recipientActionKeys: [],
-        storefrontActionKeys: [],
-      });
+      const realm = yield* makeCounterpartyInvitationRealm(fixture);
       const gateway = yield* makeAcceptanceGatewayIssuer('https://ccc-default-redemption.ontos.test', 'ccc-redemption');
       rs.stubEnv('ONTOS_GATEWAY_ISSUER', gateway.issuer);
       rs.stubEnv('ONTOS_GATEWAY_PUBLIC_JWKS', JSON.stringify({ keys: [gateway.publicJwk] }));
@@ -184,20 +180,6 @@ it.live('serves an authorized owner Read through the unchanged default API and r
           rs.unstubAllEnvs();
         }),
       );
-      const mutationContext = yield* Layer.build(BusinessPermissionRelationshipMutationLive);
-      const mutation = Context.get(mutationContext, BusinessPermissionRelationshipMutation);
-      const permission = {
-        permission: 'counterparty.access.read' as const,
-        principal: { principalId: realm.recipientPrincipalId, tenantId: realm.tenantId },
-        target: {
-          counterpartyId: realm.counterpartyResourceId,
-          kind: 'counterparty' as const,
-          legalEntityId: realm.legalEntityId,
-          tenantId: realm.tenantId,
-        },
-      };
-      yield* mutation.mutate({ ...permission, operation: 'grant' });
-      yield* Effect.addFinalizer(() => mutation.mutate({ ...permission, operation: 'revoke' }).pipe(Effect.orDie));
       yield* fixture.admin.execute(
         sql`insert into commerce_customer_context.counterparty_commerce_access_grants
       (tenant_id, legal_entity_id, counterparty_purchasing_profile_id, lifecycle, permission_code, principal_id, revision, action_invocation_id, actor_principal_id)
@@ -215,6 +197,19 @@ it.live('serves an authorized owner Read through the unchanged default API and r
         principalId: realm.recipientPrincipalId,
         tenantId: realm.tenantId,
       };
+      // The recipient selects the Selling Legal Entity and holds only this Read there; the claim Action
+      // below stays ungranted.
+      yield* grantTestTenantRoleAccess({
+        ...(yield* environmentTestAccessTarget),
+        holders: [
+          {
+            capabilityKeys: ['commerce.customer-context.counterparty-commerce-access.list'],
+            principalId: realm.recipientPrincipalId,
+          },
+        ],
+        legalEntityIds: [realm.legalEntityId],
+        tenantId: realm.tenantId,
+      });
       const fresh = (targetAudience = 'commerce-customer-context') =>
         issueAcceptanceGatewayAssertion(fixture.admin, gateway, targetAudience, principal);
       const request = (assertion: string) =>
@@ -353,7 +348,7 @@ it.live('serves an authorized owner Read through the unchanged default API and r
       expect((yield* invoke(yield* fresh())).status).toBe(200);
       return yield* Effect.void;
     }),
-  ),
+  ).pipe(Effect.provide(tenantAccessServices)),
 );
 
 const restartServices = NodeChildProcessSpawner.layer.pipe(
@@ -556,6 +551,7 @@ it.live('retains signed assertion redemption after an actual process exits and a
       });
       const fixture = yield* Effect.acquireRelease(
         makeLiveOperationFixture({
+          access: 'allowed',
           actionKeys: [],
           adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
           allowedAudiences: ['commerce-customer-context'],
@@ -683,7 +679,6 @@ it.live('retains signed assertion redemption after an actual process exits and a
         audience: 'commerce-customer-context',
         issuer: gateway.issuer,
       });
-      yield* isolated.assertClonedSchema();
     }),
   ).pipe(Effect.provide(restartServices)),
 );

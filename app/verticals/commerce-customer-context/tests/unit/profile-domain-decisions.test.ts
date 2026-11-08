@@ -90,38 +90,34 @@ it('requires the exact Active binding, Active authorization, and exact Permissio
   ).toEqual({ allowed: false, outcome: 'BINDING_REVOKED' });
 });
 
-it('fails closed while a Retail binding authorization grant is pending or unresolved', () => {
-  for (const authorizationState of ['PENDING_GRANT', 'RECONCILIATION_REQUIRED'] as const) {
-    expect(
-      decideRetailPortalAccess({
-        authorizationOperation: 'grant',
-        authorizationState,
-        authorizationStatus: 'AVAILABLE',
-        bindingState: 'ACTIVE',
-        boundProfile: retailProfile,
-        grantedPermissions: ['retail.profile.read'],
-        requestedPermission: 'retail.profile.read',
-        requestedProfile: retailProfile,
-      }),
-    ).toEqual({ allowed: false, outcome: 'AUTHORIZATION_UNAVAILABLE' });
-  }
+it('fails closed when an ACTIVE Retail binding authorization does not name a grant', () => {
+  expect(
+    decideRetailPortalAccess({
+      authorizationOperation: 'revoke',
+      authorizationState: 'ACTIVE',
+      authorizationStatus: 'AVAILABLE',
+      bindingState: 'ACTIVE',
+      boundProfile: retailProfile,
+      grantedPermissions: ['retail.profile.read'],
+      requestedPermission: 'retail.profile.read',
+      requestedProfile: retailProfile,
+    }),
+  ).toEqual({ allowed: false, outcome: 'AUTHORIZATION_UNAVAILABLE' });
 });
 
-it('treats a pending or unresolved revoke as definitely revoked', () => {
-  for (const authorizationState of ['PENDING_REVOKE', 'RECONCILIATION_REQUIRED'] as const) {
-    expect(
-      decideRetailPortalAccess({
-        authorizationOperation: 'revoke',
-        authorizationState,
-        authorizationStatus: 'INDETERMINATE',
-        bindingState: 'ACTIVE',
-        boundProfile: retailProfile,
-        grantedPermissions: ['retail.profile.read'],
-        requestedPermission: 'retail.profile.read',
-        requestedProfile: retailProfile,
-      }),
-    ).toEqual({ allowed: false, outcome: 'BINDING_REVOKED' });
-  }
+it('treats a revoked authorization as definitely revoked', () => {
+  expect(
+    decideRetailPortalAccess({
+      authorizationOperation: 'revoke',
+      authorizationState: 'REVOKED',
+      authorizationStatus: 'INDETERMINATE',
+      bindingState: 'ACTIVE',
+      boundProfile: retailProfile,
+      grantedPermissions: ['retail.profile.read'],
+      requestedPermission: 'retail.profile.read',
+      requestedProfile: retailProfile,
+    }),
+  ).toEqual({ allowed: false, outcome: 'BINDING_REVOKED' });
   expect(
     decideRetailBindingAuthorizationCurrentness({
       authorizationOperation: 'grant',

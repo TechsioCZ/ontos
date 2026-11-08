@@ -1,48 +1,31 @@
 #!/usr/bin/env node
-/** Stage-only canonical schema, additive service/admin role policy and isolated verification provisioning. */
-import {
-  StageContextBootstrapError,
-  reconcileStageServicePrincipals,
-} from '@app/core-runtime/install/stage-context-bootstrap';
+/**
+ * Stage-only canonical permission-schema reconcile.
+ *
+ * The retired step reconciled two more things beside the schema: the native service-principal installer and the
+ * demo's per-company service/administrator role policy. Authorization v2 retired both (`ADR-0030`): service,
+ * integration and system principals never appear in a v2 tuple, and every role policy is intent in PostgreSQL that
+ * one Core writer projects. There is no migration or import step, so this command keeps the canonical schema
+ * reconcile — including its explicit handling of a removal the engine still serves — and refuses the retired legacy
+ * policy with the exact remediation instead of writing scoped-role or action-grant relationships again.
+ *
+ * `apps/shell-super-app/scripts/bootstrap-stage-accounts.mts` is where a stage Tenant's people, roles and service
+ * workloads are created now.
+ */
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
-import { Config, ConfigProvider, Console, Effect, Exit, Layer, Option, Predicate, Redacted, Schema } from 'effect';
+import { Config, Console, Effect, Exit, Layer, Option, Predicate, Redacted, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { FetchHttpClient } from 'effect/http';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
-import {
-  ActiveApplicationCompositionConfigLive,
-  ActiveApplicationCompositionService,
-} from '../../packages/core-runtime/src/modules/active-application-composition.ts';
-import { ActiveApplicationCompositionSourceLive } from '../../packages/core-runtime/src/modules/active-application-composition-source.node.ts';
 import { parseSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
-import { toLegalEntityAccessObjectId } from '../../packages/core-runtime/src/permissions/context-access.ts';
 import { openSpiceDbGrpcRpc } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../packages/core-runtime/src/permissions/schema.ts';
 import type { SpiceDbRpc } from '../../packages/core-runtime/src/permissions/spicedb-rpc.ts';
 import { OpsShellLive } from '../ops/ops-shell.mts';
 import { readZeropsValue } from '../ops/stage-operations.mts';
-import { discoverCurrentActions } from '../provision-current-action-authorization.mts';
 import { ZeropsPublicApiLive } from '../zerops-public-api.mts';
-import {
-  commercePortalPrincipal,
-  commercePortalRelationships,
-  privacyConsentAuthorityRelationships,
-  privacyConsentPrincipal,
-  marketRetirementPrincipal,
-  marketRetirementRelationships,
-  akrosStorefrontPrincipal,
-  eshopDemoRoles,
-  principalRelationships,
-  companyAdministratorWorkforceRelationships,
-} from './permissions.mts';
-import { administrators } from './accounts-admin-grants.mts';
-import { akrosDemoLegalEntityId, demoTenantId } from './fixture-ids.mts';
-
-import type { DemoAction } from './permissions.mts';
-import { ensureStageVerification } from './ensure-stage-verification.mts';
-import { verificationContext } from './verification-context.mts';
 
 export class ServiceGrantError extends Schema.TaggedError<ServiceGrantError>()('ServiceGrantError', {
   reason: Schema.String,
@@ -51,6 +34,22 @@ export type ServiceGrantRpc = Pick<SpiceDbRpc, 'readRelationships' | 'writeRelat
 export const ServiceGrantModeSchema = Schema.Literals(['apply', 'check', 'verify']);
 export type ServiceGrantMode = typeof ServiceGrantModeSchema.Type;
 export type StagePermissionSchemaRpc = Pick<SpiceDbRpc, 'diffSchema' | 'readSchema' | 'writeSchema'>;
+
+/**
+ * The retired legacy role policy has no v2 translation and no import step (`ADR-0030`). The reviewed policy stays
+ * where it is until a person rebuilds it as canonical Roles and Assignments; nothing here writes it again.
+ */
+export const RETIRED_STAGE_SERVICE_GRANT_REMEDIATION =
+  'The legacy stage service/administrator role policy (scoped_role, action_grant, module_access role relations) is retired by ADR-0030 and has no translation. Rebuild those rights as canonical Roles and Assignments through `apps/shell-super-app/scripts/bootstrap-stage-accounts.mts` (stage accounts) or the Access administration screens, and register service workloads through the tenant workload bindings.';
+
+/** Fails closed with the exact remediation; the canonical schema reconcile has already run when this is reached. */
+export const refuseRetiredStageServiceGrants = (mode: ServiceGrantMode) =>
+  Effect.gen(function* refuseRetired() {
+    yield* Console.error(`Stage service grants ${mode}: the legacy role policy is retired; no grant was written.`);
+    return yield* new ServiceGrantError({
+      reason: `The legacy stage service/administrator role policy cannot be reconciled (mode=${mode}). ${RETIRED_STAGE_SERVICE_GRANT_REMEDIATION}`,
+    });
+  });
 
 /** Native WriteSchema atomically refuses removals still used by live relationships, including subjects. */
 export const reconcileStagePermissionSchema = Effect.fn('Stage.reconcilePermissionSchema')(
@@ -135,19 +134,6 @@ const tupleKey = (relationship: v1.Relationship): string =>
     relationship.subject?.object?.objectId,
     relationship.subject?.optionalRelation ?? '',
   ].join('\0');
-const relationshipFrom = (
-  resourceType: string,
-  resourceId: string,
-  relation: string,
-  subjectType: string,
-  subjectId: string,
-  subjectRelation?: string,
-) =>
-  v1.Relationship.create({
-    relation,
-    resource: { objectId: resourceId, objectType: resourceType },
-    subject: { object: { objectId: subjectId, objectType: subjectType }, optionalRelation: subjectRelation ?? '' },
-  });
 const requestFor = (relationship: v1.Relationship): Effect.Effect<v1.ReadRelationshipsRequest, ServiceGrantError> => {
   const { resource } = relationship;
   const subject = relationship.subject?.object;
@@ -169,102 +155,6 @@ const requestFor = (relationship: v1.Relationship): Effect.Effect<v1.ReadRelatio
     }),
   );
 };
-const isPresent = (rows: readonly v1.ReadRelationshipsResponse[], expected: v1.Relationship) =>
-  rows.some(
-    ({ relationship }) =>
-      relationship !== undefined &&
-      relationship.optionalCaveat === undefined &&
-      relationship.optionalExpiresAt === undefined &&
-      tupleKey(relationship) === tupleKey(expected),
-  );
-
-export const stageServicePrincipals = () =>
-  [akrosStorefrontPrincipal, commercePortalPrincipal, privacyConsentPrincipal, marketRetirementPrincipal].map(
-    ({ displayName, legalEntityId, principalId }) => ({
-      displayName,
-      legalEntityId,
-      principalId,
-      tenantId: demoTenantId,
-    }),
-  );
-
-export const serviceGrantMemberships = (): readonly v1.Relationship[] =>
-  stageServicePrincipals().flatMap(({ legalEntityId, principalId, tenantId }) => {
-    const legalEntity = toLegalEntityAccessObjectId(tenantId, legalEntityId);
-    return legalEntity === undefined
-      ? []
-      : [relationshipFrom('legal_entity', legalEntity, 'member', 'principal', principalId)];
-  });
-/** Missing memberships may be provisioned; conditional/expiring memberships must never be overwritten. */
-export const assertServiceMembershipsCompatible = Effect.fn('Stage.assertServiceMembershipsCompatible')(
-  function* assertServiceMembershipsCompatible(rpc: ServiceGrantRpc) {
-    for (const membership of serviceGrantMemberships()) {
-      const rows = yield* rpc.readRelationships(yield* requestFor(membership));
-      if (
-        rows.some(
-          ({ relationship }) =>
-            relationship !== undefined &&
-            tupleKey(relationship) === tupleKey(membership) &&
-            (relationship.optionalCaveat !== undefined || relationship.optionalExpiresAt !== undefined),
-        )
-      ) {
-        return yield* new ServiceGrantError({
-          reason: 'Existing service membership has a caveat or expiration; no grants changed',
-        });
-      }
-    }
-    return yield* Effect.void;
-  },
-);
-
-/** Role policy only: the release step owns every `action` edge and derives it from the installed modules. */
-const withoutActionEdges = <Row extends { readonly resourceType: string }>(rows: readonly Row[]) =>
-  rows.filter(({ resourceType }) => resourceType !== 'action');
-
-export const desiredServiceGrants = (actions: readonly DemoAction[]): readonly v1.Relationship[] => {
-  const source = withoutActionEdges([
-    ...principalRelationships(
-      akrosStorefrontPrincipal.principalId,
-      eshopDemoRoles.akrosStorefront,
-      actions,
-      akrosDemoLegalEntityId,
-    ),
-    ...commercePortalRelationships(actions),
-    ...privacyConsentAuthorityRelationships(actions),
-    ...marketRetirementRelationships(actions),
-  ]);
-  return [
-    ...new Map(
-      source.map((item) => {
-        const relationship = relationshipFrom(
-          item.resourceType,
-          item.resourceId,
-          item.relation,
-          item.subjectType,
-          item.subjectId,
-          item.subjectRelation,
-        );
-        return [tupleKey(relationship), relationship];
-      }),
-    ).values(),
-  ];
-};
-
-/** Reconcile only role policy: absent or revoked human memberships must stay absent. */
-export const desiredCompanyAdministratorWorkforceGrants = (): readonly v1.Relationship[] =>
-  [...new Set(administrators.map(({ legalEntityId }) => legalEntityId))].flatMap((legalEntityId) =>
-    companyAdministratorWorkforceRelationships(legalEntityId).map((item) =>
-      relationshipFrom(
-        item.resourceType,
-        item.resourceId,
-        item.relation,
-        item.subjectType,
-        item.subjectId,
-        item.subjectRelation,
-      ),
-    ),
-  );
-
 const GRANT_SCAN_PAGE_SIZE = 256;
 const GRANT_SCAN_MAX_PAGES = 128;
 
@@ -362,55 +252,6 @@ export const readMissingServiceGrants = (rpc: ServiceGrantRpc, desired: readonly
     return desired.filter((relationship) => !present.has(tupleKey(relationship)));
   });
 
-export const reconcileServiceGrants = Effect.fn('Stage.reconcileServiceGrants')(function* reconcileServiceGrantsEffect(
-  rpc: ServiceGrantRpc,
-  desired: readonly v1.Relationship[],
-  mode: ServiceGrantMode,
-) {
-  yield* assertServiceMembershipsCompatible(rpc);
-  const memberships = serviceGrantMemberships();
-  if (memberships.length !== stageServicePrincipals().length) {
-    return yield* new ServiceGrantError({ reason: 'Invalid service company scope' });
-  }
-  // Check reports gaps so a first deployment can reach native provisioning in apply.
-  for (const membership of memberships) {
-    if (!isPresent(yield* rpc.readRelationships(yield* requestFor(membership)), membership)) {
-      const reason = `Initial service membership is missing for ${membership.subject?.object?.objectId}; no grants changed`;
-      if (mode !== 'check') {
-        return yield* new ServiceGrantError({ reason });
-      }
-      yield* Console.log(reason);
-    }
-  }
-  const missing = yield* readMissingServiceGrants(rpc, desired);
-  yield* Console.log(`Service grants ${mode}: desired=${desired.length} missing=${missing.length}`);
-  if (mode === 'verify' && missing.length > 0) {
-    return yield* new ServiceGrantError({ reason: `${missing.length} service grants are missing` });
-  }
-  if (mode !== 'apply' || missing.length === 0) {
-    return { applied: 0, desired: desired.length, missing: missing.length };
-  }
-  yield* rpc.writeRelationships(
-    v1.WriteRelationshipsRequest.create({
-      updates: missing.map((relationship) =>
-        v1.RelationshipUpdate.create({ operation: v1.RelationshipUpdate_Operation.TOUCH, relationship }),
-      ),
-    }),
-  );
-  if ((yield* readMissingServiceGrants(rpc, desired)).length > 0) {
-    return yield* new ServiceGrantError({ reason: 'A service grant could not be verified after apply' });
-  }
-  yield* Console.log(`Service grants verified: desired=${desired.length} applied=${missing.length} missing=0`);
-  return { applied: missing.length, desired: desired.length, missing: 0 };
-});
-
-/** Run only after native principal/account provisioning; the remaining grant writes are SpiceDB-only. */
-export const verifyDatabaseAndReconcileServiceGrants = <E, R>(
-  rpc: ServiceGrantRpc,
-  desired: readonly v1.Relationship[],
-  verify: Effect.Effect<void, E, R>,
-) => Effect.all([verify, reconcileServiceGrants(rpc, desired, 'apply')], { concurrency: 2, discard: true });
-
 /**
  * Deploy credentials the grant reconciliation reads; the owner verifiers it fans out to never need them, so the child
  * inherits the environment without them (Node omits undefined variables).
@@ -477,22 +318,15 @@ const environmentConfiguration = Effect.gen(function* environmentConfigurationEf
   });
 });
 type ReconciliationFailure =
-  | Effect.Error<(typeof ActiveApplicationCompositionService)['Service']['load']>
-  | Effect.Error<ReturnType<typeof reconcileServiceGrants>>
   | Effect.Error<typeof zeropsConfiguration>
   | Effect.Error<typeof environmentConfiguration>
-  | Effect.Error<ReturnType<typeof discoverCurrentActions>>
-  | Effect.Error<ReturnType<typeof reconcileStageServicePrincipals>>
-  | Effect.Error<ReturnType<typeof ensureStageVerification>>
-  | Effect.Error<ReturnType<typeof verificationContext>>;
+  | Effect.Error<ReturnType<typeof reconcileStagePermissionSchema>>
+  | Effect.Error<typeof verifyStageDatabase>;
 /**
- * The failure's tag and authored reason name the failing step (a config key, the composition source, SpiceDB)
- * without any value.
+ * The failure's tag and authored reason name the failing step (a config key, SpiceDB) without any value.
  */
-const failureTag = (error: ReconciliationFailure): string => {
-  const tag = Predicate.hasProperty(error, '_tag') && Predicate.isString(error._tag) ? error._tag : 'untagged';
-  return Schema.is(StageContextBootstrapError)(error) ? `${tag}: ${error.reason}` : tag;
-};
+const failureTag = (error: ReconciliationFailure): string =>
+  Predicate.hasProperty(error, '_tag') && Predicate.isString(error._tag) ? error._tag : 'untagged';
 const reportFailure = (error: ReconciliationFailure) =>
   Console.error(
     Schema.is(ServiceGrantError)(error)
@@ -530,8 +364,6 @@ const command = Command.make(
           }),
           (client) => Effect.sync(() => client.close()),
         );
-        const source = yield* ActiveApplicationCompositionService;
-        const actions = yield* discoverCurrentActions(yield* source.load);
         let mode: ServiceGrantMode = 'check';
         if (apply) {
           mode = 'apply';
@@ -539,48 +371,20 @@ const command = Command.make(
           mode = 'verify';
         }
         yield* reconcileStagePermissionSchema(rpc, mode);
-        yield* assertServiceMembershipsCompatible(rpc);
-        // Check/verify stay read-only; only apply invokes the guarded native stage installer.
-        if (mode === 'apply') {
-          const inherited = yield* ConfigProvider.ConfigProvider;
-          const provider = ConfigProvider.fromUnknown({
-            SPICEDB_CA_CERT: configuration.caCertificate,
-            SPICEDB_ENDPOINT: configuration.endpoint,
-            SPICEDB_PRESHARED_KEY: configuration.preSharedKey,
-            ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: configuration.deploymentEnvironment,
-          }).pipe(ConfigProvider.orElse(inherited));
-          yield* reconcileStageServicePrincipals(stageServicePrincipals(), provider);
-          yield* ensureStageVerification(configuration);
+        if (verifyDatabase) {
+          yield* verifyStageDatabase;
         }
-        const verification = yield* verificationContext(actions);
-        const verificationGrants = withoutActionEdges(verification.relationships).map((item) =>
-          relationshipFrom(
-            item.resourceType,
-            item.resourceId,
-            item.relation,
-            item.subjectType,
-            item.subjectId,
-            item.subjectRelation,
-          ),
-        );
-        const desired = yield* Effect.try({
-          catch: () => new ServiceGrantError({ reason: 'Published scoped service policy is invalid' }),
-          try: () => [...desiredServiceGrants(actions), ...desiredCompanyAdministratorWorkforceGrants()],
-        });
-        const grants = [...desired, ...verificationGrants];
-        return yield* verifyDatabase
-          ? verifyDatabaseAndReconcileServiceGrants(rpc, grants, verifyStageDatabase)
-          : reconcileServiceGrants(rpc, grants, mode).pipe(Effect.asVoid);
+        // The canonical schema is reconciled; the retired legacy role policy is refused with its remediation.
+        return yield* refuseRetiredStageServiceGrants(mode);
       }),
     ).pipe(Effect.tapError(reportFailure)),
 );
 
 if (import.meta.main) {
-  const services = Layer.mergeAll(
-    OpsShellLive,
-    ZeropsPublicApiLive,
-    ActiveApplicationCompositionConfigLive.pipe(Layer.provide(ActiveApplicationCompositionSourceLive)),
-  ).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(NodeServices.layer));
+  const services = Layer.mergeAll(OpsShellLive, ZeropsPublicApiLive).pipe(
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(NodeServices.layer),
+  );
   const exit = await Effect.runPromiseExit(
     Layer.build(
       Layer.effectDiscard(Command.run(command, { version: '1.0.0' })).pipe(

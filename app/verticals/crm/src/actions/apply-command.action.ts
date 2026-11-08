@@ -9,7 +9,6 @@ import {
 } from '@app/core-runtime';
 import type {
   ActionHandlerContext,
-  ActionServicePreparationContext,
   ActionServicePreflight,
   OperationalScope,
   ScopedTransactionExecutor,
@@ -23,9 +22,10 @@ import {
 } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
 
-import { assignmentPolicy } from '../services/assignment-policy.ts';
+import { assignmentPolicy, evaluateAssignmentPolicy } from '../services/assignment-policy.ts';
 import { persistenceService, prepareCrmCommand } from '../services/persistence.service.ts';
 
+import { crmApplyCommandDeclaration, crmClientOwnerAssignGroup } from '../../shared/domain/access-declarations.ts';
 import { OutboxPayloadSchema } from '../../shared/outbox/demo-crm-search-changed-v1.ts';
 import { createApplyCommandDemoCrmSearchChangedV1OutboxMessage } from './apply-command-demo-crm-search-changed-v1.outbox-message.ts';
 
@@ -54,9 +54,18 @@ const samePrincipal = Schema.toEquivalence(TrustedPrincipalContextSchema);
 
 export const prepareApplyCommandServices = Effect.fn('Crm.prepareApplyCommandServices')(function* prepareServices(
   payload: ApplyCommandPayload,
-  context: ActionServicePreparationContext,
+  context: Parameters<
+    ActionServicePreflight<
+      ApplyCommandPayload,
+      Services,
+      typeof CrmErrorSchema.Type,
+      | Effect.Services<ReturnType<typeof evaluateAssignmentPolicy>>
+      | Effect.Services<ReturnType<typeof prepareCrmCommand>>
+    >
+  >[1],
 ) {
   const preparedAt = yield* DateTime.now;
+  yield* context.evaluatePolicy(assignmentPolicy, evaluateAssignmentPolicy);
   const facts = yield* prepareCrmCommand(payload, context);
   return Effect.fn('Crm.revalidatePreparedCommand')(function* revalidatePreparedCommand(
     transaction: ScopedTransactionExecutor,
@@ -86,23 +95,26 @@ export const prepareApplyCommandServices = Effect.fn('Crm.prepareApplyCommandSer
 }) satisfies ActionServicePreflight<
   ApplyCommandPayload,
   Services,
-  Effect.Error<ReturnType<typeof prepareCrmCommand>>,
-  Effect.Services<ReturnType<typeof prepareCrmCommand>>
+  typeof CrmErrorSchema.Type,
+  Effect.Services<ReturnType<typeof prepareCrmCommand>> | Effect.Services<ReturnType<typeof evaluateAssignmentPolicy>>
 >;
 
 export const applyCommandAction = defineAction(
   {
+    accessDeclaration: crmApplyCommandDeclaration,
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'demo.crm.apply-command.access.v1',
     },
+    // Reassignment names a new client owner, which asks for its own authority on top of the write.
+    accessFieldGroups: [crmClientOwnerAssignGroup],
     actionKey: 'demo.crm.apply-command',
     auditProfile: 'standard',
     domainErrorSchema: CrmErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'demo.crm.apply-command',
       moduleKey: 'demo.crm',
       role: 'action',
@@ -117,7 +129,7 @@ export const applyCommandAction = defineAction(
   },
   handleApplyCommand,
   (transaction, scope) => persistenceService(transaction, { scope }),
-  { prepareServices: prepareApplyCommandServices },
+  { preparationPolicies: [assignmentPolicy], prepareServices: prepareApplyCommandServices },
 );
 
 // <generated-outbox-message-exports>

@@ -5,23 +5,13 @@ import { Effect, FileSystem, Layer, Path, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 
 import {
-  ONTOS_SHELL_CONTRIBUTION_ABI,
   ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
   OntosShellRuntimeContractSchema,
 } from '../packages/core-runtime/src/index.ts';
-import type { OntosShellRuntimeContract } from '../packages/core-runtime/src/index.ts';
 
-/**
- * The Shell reports the Core-defined contribution ABI and the Core capabilities it provides so the
- * Application Composition publisher observes them from the deployed Shell instead of assuming them.
- */
-export const createShellRuntimeContract = (buildMarker: string): OntosShellRuntimeContract =>
-  Object.freeze<OntosShellRuntimeContract>({
-    contributionAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
-    coreCapabilities: [],
-    deployment: { appId: 'shell-super-app', buildMarker },
-    schemaVersion: '2',
-  });
+import { createShellRuntimeContract } from './ontos-shell-runtime-contract.ts';
+
+export { createShellRuntimeContract } from './ontos-shell-runtime-contract.ts';
 
 export class ShellRuntimeContractGenerationError extends Schema.TaggedError<ShellRuntimeContractGenerationError>()(
   'ShellRuntimeContractGenerationError',

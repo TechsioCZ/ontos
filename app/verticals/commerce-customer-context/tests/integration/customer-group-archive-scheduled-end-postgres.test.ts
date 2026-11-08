@@ -1,5 +1,5 @@
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { createHash, randomUUID } from 'node:crypto';
-import { deadlineInterceptor, v1 } from '@authzed/authzed-node';
 import {
   ActiveApplicationCompositionService,
   ActionAlreadyCommitted,
@@ -8,9 +8,8 @@ import {
   ActionTransactionError,
   ContextAccessLive,
   GatewayAssertionRedemptionService,
+  OwnerAuthorizationOverlay,
   ReadRuntime,
-  ReadPermissionDenied,
-  toContextPermissionAccessObjectId,
   runAction,
   loadDatabaseConnectionPair,
   findPostgresFailure,
@@ -83,7 +82,6 @@ import {
 } from '../../src/database/schema.ts';
 import { commerceCustomerContextOwnerAuthorizationOverlayLive } from '../../src/persistence/owner-authorization-overlay.ts';
 import { ProfileCounterpartyRoleEligibilityResolverFactory } from '../../src/profile-counterparty-role-eligibility.ts';
-import { profileRetailPermissionReaderFactoryLive } from '../../src/integrations/retail-permission-reader.ts';
 import {
   profileReactivationEligibilityEvaluatorFactoryLive,
   profileReconfirmationPolicyUnavailableLive,
@@ -91,6 +89,7 @@ import {
 import { partyRegistryGuestResolverFactoryLive } from '../../src/integrations/party-registry-guest-resolver.ts';
 import { partyRegistryRetailPartyResolverFactoryLive } from '../../src/integrations/party-registry-retail-party-resolver.ts';
 import { enrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import { nativeTestDatabaseContainer } from '../support/native-test-database.ts';
 
 const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -109,7 +108,7 @@ const journalFingerprint = Effect.fn('GroupArchive.journalFingerprint')(function
       '-i',
       '-e',
       'PGPASSWORD',
-      'ontos-db',
+      yield* nativeTestDatabaseContainer,
       'psql',
       '--host',
       'localhost',
@@ -156,7 +155,7 @@ const copyOwnerBookkeeping = Effect.fn('GroupArchive.copyOwnerBookkeeping')(
         '-i',
         '-e',
         'PGPASSWORD',
-        'ontos-db',
+        yield* nativeTestDatabaseContainer,
         'pg_dump',
         '--host',
         'localhost',
@@ -185,7 +184,7 @@ const copyOwnerBookkeeping = Effect.fn('GroupArchive.copyOwnerBookkeeping')(
         '-i',
         '-e',
         'PGPASSWORD',
-        'ontos-db',
+        yield* nativeTestDatabaseContainer,
         'psql',
         '--host',
         'localhost',
@@ -300,93 +299,18 @@ const normalizeBody = (value: string) => value.replaceAll('\r\n', '\n').trim();
 const archiveMigration = '20261019212748_group_archive_scheduled_memberships';
 const archiveMigrationInstant = Date.UTC(2026, 9, 19, 21, 27, 48);
 const ownerModuleKey = 'commerce.customer-context';
+/** One denied owner-access pair, keyed by the acting principal and the capability it asks about. */
+const ownerAccessKey = (principalId: string, capabilityKey: string) => `${principalId}\u0000${capabilityKey}`;
 const audience = 'commerce-customer-context';
-class GroupArchiveFixturePermissionFailure extends Schema.TaggedError<GroupArchiveFixturePermissionFailure>()(
-  'GroupArchiveFixturePermissionFailure',
-  { reason: Schema.String },
-) {}
-
-// One fixture-owned context permission for the real registered historical Read.
-// This is TEST setup through the published SDK, never a product permission bypass.
-const installGroupHistoryPermission = Effect.fn('GroupArchive.installHistoryPermission')(
-  function* installGroupHistoryPermission(fixture: Effect.Success<ReturnType<typeof makeLiveOperationFixture>>) {
-    const endpoint = yield* Config.schema(
-      Schema.String.check(Schema.isPattern(/^(?:localhost|127\.0\.0\.1):[0-9]{1,5}$/u)),
-      'SPICEDB_ENDPOINT',
-    );
-    // The public environment contract contains the PEM certificate itself, not a file path.
-    const certificate = yield* Config.schema(Schema.NonEmptyString, 'SPICEDB_CA_CERT');
-    const key = yield* Config.Redacted('SPICEDB_PRESHARED_KEY');
-    const client = yield* Effect.acquireRelease(
-      Effect.try({
-        catch: () => new GroupArchiveFixturePermissionFailure({ reason: 'Fixture permission client unavailable' }),
-        try: () =>
-          v1.NewClientWithCustomCert(Redacted.value(key), endpoint, Buffer.from(certificate), undefined, {
-            interceptors: [deadlineInterceptor(5000)],
-          }),
-      }),
-      (resource) => Effect.sync(() => resource.close()),
-    );
-    const objectId = toContextPermissionAccessObjectId(fixture.tenantId, fixture.legalEntityId, {
-      moduleId: ownerModuleKey,
-      permission: 'customer.group.history.read',
-    });
-    assert(objectId !== undefined);
-    const relationships = [
-      v1.Relationship.create({
-        relation: 'tenant',
-        resource: { objectId, objectType: 'context_permission' },
-        subject: { object: { objectId: fixture.tenantId, objectType: 'tenant' } },
-      }),
-      v1.Relationship.create({
-        relation: 'grantee',
-        resource: { objectId, objectType: 'context_permission' },
-        subject: { object: { objectId: fixture.manager.principalId, objectType: 'principal' } },
-      }),
-    ];
-    const write = Effect.fn('GroupArchive.writeExactHistoryPermission')(function* write(
-      operation: v1.RelationshipUpdate_Operation,
-    ) {
-      yield* Effect.tryPromise({
-        catch: () => new GroupArchiveFixturePermissionFailure({ reason: 'Fixture permission mutation unavailable' }),
-        try: async () =>
-          await client.promises.writeRelationships(
-            v1.WriteRelationshipsRequest.create({
-              updates: relationships.map((relationship) => v1.RelationshipUpdate.create({ operation, relationship })),
-            }),
-          ),
-      });
-    });
-    // The complete exact two-tuple deletion ledger is registered before an uncertain TOUCH.
-    // Fixture.close retains grants, so this finalizer owns these new tuples explicitly.
-    yield* Effect.addFinalizer(() => write(v1.RelationshipUpdate_Operation.DELETE).pipe(Effect.orDie));
-    yield* write(v1.RelationshipUpdate_Operation.TOUCH);
-    const permission = yield* Effect.tryPromise({
-      catch: () => new GroupArchiveFixturePermissionFailure({ reason: 'Fixture permission verification unavailable' }),
-      try: async () =>
-        await client.promises.checkPermission(
-          v1.CheckPermissionRequest.create({
-            consistency: v1.Consistency.create({
-              requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' },
-            }),
-            permission: 'access',
-            resource: { objectId, objectType: 'context_permission' },
-            subject: { object: { objectId: fixture.manager.principalId, objectType: 'principal' } },
-          }),
-        ),
-    });
-    expect(permission.permissionship).toBe(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION);
-  },
-);
-
-const nativeFixture = Effect.fn('GroupArchive.nativeFixture')(function* nativeFixture() {
+const nativeFixture = Effect.fn('GroupArchive.nativeFixture')(function* nativeFixture(
+  access: 'allowed' | Readonly<Record<string, 'allowed' | 'denied'>> = 'allowed',
+) {
   const snapshot = yield* enrollmentApplicationCompositionSnapshot;
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     compositionSnapshot: snapshot,
     mode: 'schema-only',
     purpose: 'stabilization-1273-group-archive-scheduled-end',
   });
-  yield* isolated.assertClonedSchema();
   const source = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
   const sourceJournal = yield* journalFingerprint(source.admin);
   yield* Effect.addFinalizer(() =>
@@ -498,6 +422,7 @@ const nativeFixture = Effect.fn('GroupArchive.nativeFixture')(function* nativeFi
   expect(yield* journalFingerprint(isolated.connections.admin)).toBe(migratedJournal);
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
+      access,
       actionExecutor: 'manager-only',
       actionKeys: [
         createCounterpartyPurchasingProfileAction,
@@ -509,25 +434,17 @@ const nativeFixture = Effect.fn('GroupArchive.nativeFixture')(function* nativeFi
       ].map((action) => action.descriptor.actionKey),
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
       allowedAudiences: [audience],
+      applicationComposition: { load: Effect.succeed(snapshot) },
       authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: snapshot.composition.revision,
+      expectedDeployment: ultramodernApiMarker,
       moduleKeys: [ownerModuleKey],
+      ownerRegistration: commerceCustomerContextRegistration,
       runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     }),
     (resource) => resource.close().pipe(Effect.orDie),
   );
   const { legalEntityId, tenantId } = fixture;
-  yield* installGroupHistoryPermission(fixture);
-  const grantReadAccess = Effect.fn('GroupArchive.grantReadAccess')(function* grantReadAccess(
-    resource: Parameters<typeof fixture.grantResourceAccess>[0],
-  ) {
-    // Each resource is freshly created by this fixture; its writer tuple already owns the
-    // shared module/resource structure. Revoke only the new reader relation, before close.
-    yield* Effect.addFinalizer(() =>
-      fixture.revokeResourceAccess(resource, fixture.manager.principalId, 'reader').pipe(Effect.orDie),
-    );
-    yield* fixture.grantResourceAccess(resource, fixture.manager.principalId, 'reader');
-  });
   const now = Effect.fn('GroupArchive.nativeClock')(function* nativeClock() {
     const [row] = yield* admin.execute<{ at: string; epoch: number }>(
       sql`select to_char(clock_timestamp() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as at, floor(extract(epoch from clock_timestamp()))::integer as epoch`,
@@ -553,15 +470,28 @@ const nativeFixture = Effect.fn('GroupArchive.nativeFixture')(function* nativeFi
   });
   const ordinary = Layer.mergeAll(
     role,
-    profileRetailPermissionReaderFactoryLive,
     profileReactivationEligibilityEvaluatorFactoryLive,
     partyRegistryGuestResolverFactoryLive,
     partyRegistryRetailPartyResolverFactoryLive,
   ).pipe(Layer.provideMerge(ContextAccessLive), Layer.provide(profileReconfirmationPolicyUnavailableLive));
-  const overlay = commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(
-    Layer.provide(profileRetailPermissionReaderFactoryLive),
-    Layer.provide(ContextAccessLive),
+  // O70: the v2 capability is scope-wide, so one principal no longer differs from another by a
+  // SpiceDB tuple. The owner overlay is the per-request seam where the acting principal is known;
+  // a suite that proves one principal is refused while the fixture's own manager keeps its allow
+  // names that principal here, exactly as a live gate with no matching assignment would (O62).
+  const ownerOverlay = Context.get(
+    yield* Layer.build(commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(Layer.provide(ContextAccessLive))),
+    OwnerAuthorizationOverlay,
   );
+  const deniedOwnerAccess = new Set<string>();
+  const denyOwnerAccess = (principalId: string, capabilityKey: string) => {
+    deniedOwnerAccess.add(ownerAccessKey(principalId, capabilityKey));
+  };
+  const overlay = Layer.succeed(OwnerAuthorizationOverlay, {
+    authorize: (transaction, input) =>
+      deniedOwnerAccess.has(ownerAccessKey(input.scope.principalId, input.capabilityKey))
+        ? Effect.succeed('denied' as const)
+        : ownerOverlay.authorize(transaction, input),
+  });
   const runtimeLayer = ordinary.pipe(Layer.provideMerge(fixture.layer.pipe(Layer.provide(overlay))));
   let runtimeScope = yield* Scope.make();
   yield* Effect.addFinalizer((exit) => Scope.close(runtimeScope, exit));
@@ -661,8 +591,6 @@ const nativeFixture = Effect.fn('GroupArchive.nativeFixture')(function* nativeFi
       registration: createCounterpartyPurchasingProfileAction,
       transport: transport(),
     }).pipe(Effect.provideContext(runtimeContext));
-    yield* fixture.grantResourceAccess(profile.profileRef, fixture.manager.principalId, 'writer');
-    yield* grantReadAccess(profile.profileRef);
     return { profileKind: 'COUNTERPARTY' as const, profileRef: profile.profileRef };
   });
   const subject = yield* createProfile();
@@ -683,8 +611,6 @@ const nativeFixture = Effect.fn('GroupArchive.nativeFixture')(function* nativeFi
       transport: transport(),
     }).pipe(Effect.provideContext(runtimeContext));
     expect(created.group.currentDefinition.purpose).toBe(purpose);
-    yield* fixture.grantResourceAccess(created.group.groupRef, fixture.manager.principalId, 'writer');
-    yield* grantReadAccess(created.group.groupRef);
     return created.group;
   });
   const assign = Effect.fn('GroupArchive.assign')(function* assign(
@@ -701,7 +627,6 @@ const nativeFixture = Effect.fn('GroupArchive.nativeFixture')(function* nativeFi
       registration: assignCustomerGroupAction,
       transport: transport(),
     }).pipe(Effect.provideContext(runtimeContext));
-    yield* fixture.grantResourceAccess(result.membership.membershipRef, fixture.manager.principalId, 'writer');
     return result.membership;
   });
   const remove = Effect.fn('GroupArchive.remove')(function* remove(
@@ -821,6 +746,7 @@ const nativeFixture = Effect.fn('GroupArchive.nativeFixture')(function* nativeFi
     coreEvidenceExecutor,
     create,
     createProfile,
+    denyOwnerAccess,
     fixture,
     isolated,
     legalEntityId,
@@ -875,12 +801,8 @@ it.live('ends a genuinely scheduled membership at Archive and never restores it 
         .filter((message) => message.domainEventId === removalEvent?.domainEventId)
         .map(({ matchedAt: _matchedAt, ...immutable }) => immutable);
       const { at } = yield* test.now();
-      // The real writer remains denied without the separate profile reader grant.
-      // Keep the exact context and returned-Group grants, so this isolates the required target.
-      yield* test.fixture.revokeResourceAccess(test.subject.profileRef, test.fixture.manager.principalId, 'reader');
-      const unreadable = yield* Effect.flip(test.read(at));
-      expect(Schema.is(ReadPermissionDenied)(unreadable)).toBe(true);
-      yield* test.fixture.grantResourceAccess(test.subject.profileRef, test.fixture.manager.principalId, 'reader');
+      // The effective-membership Read is decided by its own v2 capability (the fixture's scripted
+      // gate); the retired resource tuple no longer widens or narrows it (O62).
       expect((yield* test.read(at)).items.map((item) => item.membershipRef)).toContainEqual(member.membershipRef);
       const permissionsBefore = yield* test.permissions();
       const archiveKey = randomUUID();
@@ -1138,7 +1060,7 @@ it.live('keeps exact real profile identity, kind and overlap boundaries through 
   ),
 );
 
-it.live('preserves exact end boundaries, cancelled future periods and denied Archive rollback', () =>
+it.live('preserves exact end boundaries and cancelled future periods', () =>
   Effect.scoped(
     Effect.gen(function* archiveBoundaries() {
       const test = yield* nativeFixture();
@@ -1175,7 +1097,14 @@ it.live('preserves exact end boundaries, cancelled future periods and denied Arc
       const future = DateTime.formatIso(DateTime.add(DateTime.makeUnsafe((yield* test.now()).at), { days: 1 }));
       const never = yield* test.assign(other.groupRef, future);
       yield* test.remove(never, future);
+      // The v2 Archive capability is scope-wide (Q2), so one company-scoped principal no longer
+      // differs from another by a SpiceDB tuple. The owner overlay is the per-request seam where the
+      // acting principal is known, so refuse the other principal's Archive there and prove no owner
+      // row moves while the fixture's own manager keeps its allow (O62, O67-Q1).
       const deniedBefore = yield* test.membershipRows();
+      const archiveCapabilityKey = archiveCustomerGroupAction.descriptor.accessDeclaration?.key;
+      assert(archiveCapabilityKey !== undefined);
+      test.denyOwnerAccess(test.fixture.legalEntityOnly.principalId, archiveCapabilityKey);
       const denied = yield* Effect.flip(
         test.archive(other, (yield* test.now()).at, randomUUID(), test.fixture.legalEntityOnly),
       );
@@ -1435,6 +1364,32 @@ it.live('denies wrong native Tenant or SLE settings before disclosing membership
         expect(Option.getOrThrow(findPostgresFailure(failure)).code).toBe('42501');
       }
       expect(yield* test.membershipRows()).toEqual(before);
+    }).pipe(Effect.provide(services)),
+  ),
+);
+
+it.live('refuses Archive at the gate before any owner write when the capability is denied', () =>
+  Effect.scoped(
+    Effect.gen(function* deniedArchiveGate() {
+      // The v2 capability is scope-wide (Q2), so one principal no longer differs from another by a
+      // tuple; the denial under test is the gate's own answer for the Archive capability. Setup
+      // capabilities stay allowed so the fixture can build the exact owner state first.
+      const test = yield* nativeFixture({
+        'commerce.customer-context.counterparty-purchasing-profile.create': 'allowed',
+        'commerce.customer-context.customer-group.archive': 'denied',
+        'commerce.customer-context.customer-group.assign': 'allowed',
+        'commerce.customer-context.customer-group.create': 'allowed',
+        'commerce.customer-context.customer-group.remove': 'allowed',
+      });
+      const group = yield* test.create('DENIED_GATE', 'Observe the gate denial before any owner write');
+      const future = DateTime.formatIso(DateTime.add(DateTime.makeUnsafe((yield* test.now()).at), { days: 1 }));
+      const never = yield* test.assign(group.groupRef, future);
+      yield* test.remove(never, future);
+      const deniedBefore = yield* test.membershipRows();
+      const denied = yield* Effect.flip(test.archive(group, (yield* test.now()).at));
+
+      expect(Schema.is(ActionPermissionDenied)(denied)).toBe(true);
+      expect(yield* test.membershipRows()).toEqual(deniedBefore);
     }).pipe(Effect.provide(services)),
   ),
 );

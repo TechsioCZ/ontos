@@ -15,7 +15,6 @@ import {
 import type { GtinCurrentRequest } from '../../shared/apis/gtin-current.ts';
 import { gtinReadsForScope, gtinTargetFromRow } from '../persistence/gtin-reads.ts';
 import type { GtinReads } from '../persistence/gtin-reads.ts';
-import { gtinResultPermissionTarget } from './gtin-read-support.ts';
 
 const moduleKey = 'commerce.catalog';
 const notFound = () => new ReadHandlerNotFound({ code: 'read_handler_not_found', reason: 'GTIN was not found' });
@@ -27,7 +26,7 @@ const unavailable = (cause: unknown) => {
 
 export const gtinCurrentEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.gtin-current' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.gtin-current',
   moduleKey,
   role: 'api',
@@ -35,13 +34,20 @@ export const gtinCurrentEntrypoint = defineTenantModuleEntrypoint({
 
 export const gtinCurrentRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.gtin-current.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: gtinCurrentEntrypoint,
     evidencePolicy: { captureMode: 'metadata_only', policyKey: 'commerce.catalog.api.gtin-current.evidence.v1' },
     inputSchema: GtinCurrentRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.catalog.api.gtin-current',
     resultSchema: GtinCurrentResponseSchema,
@@ -73,6 +79,4 @@ export const gtinCurrentRead = defineRead(
     }),
   },
   (transaction, scope) => Effect.succeed(gtinReadsForScope(transaction, scope)),
-  () => ({ kind: 'module', moduleId: moduleKey }),
-  (result) => [gtinResultPermissionTarget(result.target)],
 );

@@ -8,7 +8,7 @@ import { findPartyCorrection } from '../services/party-correction.service.ts';
 import { readUnavailable, requireReadValue, readDetailResult } from './read-outcome.ts';
 
 const partyCorrectionEntrypoint = defineTenantModuleEntrypoint({
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   access: 'historical_read',
   entrypointKey: 'party.registry.api.party-correction',
   moduleKey: 'party.registry',
@@ -17,10 +17,40 @@ const partyCorrectionEntrypoint = defineTenantModuleEntrypoint({
 interface Services {
   readonly find: (correctionId: string) => ReturnType<typeof findPartyCorrection>;
 }
-export const partyCorrectionPermissionTarget = () => ({ kind: 'tenant', permission: 'review_party_identity' }) as const;
 const unavailable = readUnavailable('Party Correction persistence is unavailable');
 export const partyCorrectionRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'party.registry.party-correction.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'identity-review', level: 'manage' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessTarget: (input) => ({ moduleKey: 'party.registry', recordKey: input.correctionRef.resourceId }),
+    accessFieldGroups: [
+      {
+        fieldClass: 'personal_data',
+        fields: ['originalAssertion', 'resultingAssertion', 'evidenceRefs', 'reasonDetail'],
+        key: 'party.registry.party-correction-evidence.read',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'sensitive-fields', level: 'extended' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+      {
+        fieldClass: 'authority_metadata',
+        fields: ['actingPrincipalId', 'approvingPrincipalId'],
+        key: 'party.registry.party-correction-authority.read',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'sensitive-fields', level: 'extended' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
     accessKind: 'detail',
     entrypoint: partyCorrectionEntrypoint,
     evidencePolicy: {
@@ -30,7 +60,6 @@ export const partyCorrectionRead = defineRead(
     inputSchema: PartyCorrectionRequestSchema,
     legalEntityScope: 'optional',
     owningModuleKey: 'party.registry',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'party.registry.api.party-correction',
     resultSchema: PartyCorrectionResponseSchema,
@@ -50,5 +79,4 @@ export const partyCorrectionRead = defineRead(
     Effect.succeed({
       find: (correctionId: string) => findPartyCorrection(transaction, scope.tenantId, correctionId),
     }),
-  partyCorrectionPermissionTarget,
 );

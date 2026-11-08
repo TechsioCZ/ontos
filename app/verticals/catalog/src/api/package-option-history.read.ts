@@ -27,7 +27,7 @@ const unavailable = (cause: unknown) => {
 
 const packageOptionHistoryEntrypoint = defineTenantModuleEntrypoint({
   access: 'historical_read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.package-option-history' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.package-option-history',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -73,6 +73,14 @@ export const readPackageOptionHistory = Effect.fn('PackageOptionHistoryRead.read
 
 export const packageOptionHistoryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.package-option-history.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'package-definition', level: 'extended' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: packageOptionHistoryEntrypoint,
     evidencePolicy: {
@@ -82,7 +90,6 @@ export const packageOptionHistoryRead = defineRead(
     inputSchema: PackageOptionHistoryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.package-option-history',
     resultSchema: PackageOptionHistoryResponseSchema,
@@ -95,5 +102,4 @@ export const packageOptionHistoryRead = defineRead(
     ) => Effect.suspend(() => readPackageOptionHistory(input, context.scope.tenantId, context.services)),
   },
   (transaction, scope) => Effect.succeed(packageOptionHistoryForScope(transaction, scope)),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

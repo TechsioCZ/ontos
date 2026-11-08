@@ -1,3 +1,10 @@
+import {
+  OwnerActionApprovalSchemaErrorLive,
+  makeOwnerActionApprovalApiLive,
+} from '@app/core-runtime/access/approvals/owner-http';
+import type { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
+import { inventoryRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
   defineDatabaseIdentityEnrollment,
@@ -6,16 +13,19 @@ import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import type { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
 import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
+  TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
@@ -28,7 +38,10 @@ import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 
 // <generated-governed-http-handler-support-imports>
-import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
+import {
+  ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive,
+  authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal,
+} from './auth/action-principal.ts';
 import {
   GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
   GatewayAssertionRedemptionDatabaseLive,
@@ -111,16 +124,43 @@ const compositionHttpClientLive = FetchHttpClient.layer.pipe(
   Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
 );
 const compositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(Layer.provide(compositionHttpClientLive));
+const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
+  Layer.provide(compositionSourceLive),
+);
+
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
+const accessEnforcementLive = AccessDecisionLive.pipe(
+  Layer.provideMerge(AccessEnforcementPortsLive),
+  Layer.provide(TenantIntentLoaderLive),
+  Layer.provide(CorePersistenceLive),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(nodeCryptoLayer),
+);
 const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
-  Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive)),
+  Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive, accessEnforcementLive)),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
-const inventoryActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+const inventoryReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, inventoryRegistration).pipe(
   Layer.provide(
     Layer.mergeAll(
-      ActiveApplicationCompositionConfigLive.pipe(Layer.provide(compositionSourceLive)),
+      CorePersistenceLive,
+      ContextAccessLive,
+      moduleEntrypointGatewayLive,
+      operationalScopeResolverLive,
+      accessEnforcementLive,
+    ),
+  ),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
+  Layer.provide(nodeCryptoLayer),
+  Layer.provide(activeApplicationCompositionLive),
+);
+
+const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(ultramodernDeliveryUnit, inventoryRegistration).pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      activeApplicationCompositionLive,
       CorePersistenceLive,
       ActionRepositoryLive,
       ActionPermissionLive,
@@ -129,15 +169,29 @@ const inventoryActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit
       moduleStateGateLive,
       moduleEntrypointGatewayLive,
       operationalScopeResolverLive,
+      accessEnforcementLive,
     ),
   ),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(databaseIdentitiesLive),
   Layer.provide(nodeCryptoLayer),
 );
-const inventoryReadRuntimeLive = ReadRuntimeLive.pipe(
+
+const inventoryActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, inventoryRegistration).pipe(
+  Layer.provideMerge(ownerActionApprovalsLive),
   Layer.provide(
-    Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
+    Layer.mergeAll(
+      activeApplicationCompositionLive,
+      CorePersistenceLive,
+      ActionRepositoryLive,
+      ActionPermissionLive,
+      importSourceAssertionOwnerAuthorizationOverlayLive,
+      ContextAccessLive,
+      moduleStateGateLive,
+      moduleEntrypointGatewayLive,
+      operationalScopeResolverLive,
+      accessEnforcementLive,
+    ),
   ),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(databaseIdentitiesLive),
@@ -151,7 +205,7 @@ const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedempt
 
 type InventoryApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof inventoryReadRuntimeLive>>,
-  actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof inventoryActionRuntimeLive>>,
+  actionRuntime: Layer.Layer<ActionRuntime | OwnerActionApprovals, Layer.Error<typeof inventoryActionRuntimeLive>>,
   gatewayAssertionRedemption: Layer.Layer<
     GatewayAssertionRedemptionService,
     Layer.Error<typeof productionGatewayAssertionRedemptionLive>
@@ -169,6 +223,10 @@ export const makeInventoryApiRuntime = (
   );
   const apiHandlersLive = Layer.mergeAll(
     inventoryReadinessLayer,
+    makeOwnerActionApprovalApiLive(inventoryApi, authenticateOwnerApprovalPrincipal).pipe(
+      GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
+      GovernedReadLayer.provide(governedActionRuntimeLive),
+    ),
     // <generated-governed-http-handler-layers>
     catalogToStockBindingResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     changeStockSharingEligibilityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

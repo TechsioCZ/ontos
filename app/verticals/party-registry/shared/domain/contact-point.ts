@@ -3,6 +3,7 @@ import { Match, Schema } from 'effect';
 import { PartyContactPointRefSchema } from '../resources/party-contact-point.ts';
 import { PartyRefSchema } from '../resources/party.ts';
 import { AresAppliedEvidenceSchema } from './ares-application.ts';
+import { normalizeContactPhone } from './contact-phone-normalization.ts';
 import { PartyContactPointInvalid } from './contact-point-errors.ts';
 import { IsoTimestampSchema } from './identity-contracts.ts';
 
@@ -28,8 +29,6 @@ const ContactPointLifecycleStateSchema = Schema.Literals(['ACTIVE', 'ENDED', 'SU
 export const ContactPointPrivacyClassificationSchema = Schema.Literals(['PUBLIC', 'BUSINESS_SENSITIVE', 'PERSONAL']);
 export type ContactPointPrivacyClassification = typeof ContactPointPrivacyClassificationSchema.Type;
 
-const ContactPointVerificationStateSchema = Schema.Literals(['UNVERIFIED', 'VERIFIED', 'REJECTED']);
-
 export const ContactPointProvenanceSchema = Schema.Struct({
   authoritative: Schema.Boolean,
   evidenceReference: Schema.optionalKey(TrimmedTextSchema),
@@ -48,14 +47,6 @@ const ContactPointProvenanceHistorySchema = Schema.Struct({
   ...ContactPointProvenanceSchema.fields,
   evidenceReferences: Schema.optionalKey(Schema.Array(TrimmedTextSchema).check(Schema.isMaxLength(33))),
 });
-
-export const ContactPointVerificationSchema = Schema.Struct({
-  method: Schema.optionalKey(TrimmedTextSchema),
-  state: ContactPointVerificationStateSchema,
-  verifiedAt: Schema.optionalKey(ContactPointTimestampSchema),
-  verifierReference: Schema.optionalKey(TrimmedTextSchema),
-});
-export type ContactPointVerification = typeof ContactPointVerificationSchema.Type;
 
 const EmailValueSchema = Schema.Trim.check(
   Schema.isMinLength(3),
@@ -192,7 +183,6 @@ export const AddressContactPointValueSchema = Schema.Struct({
       state: ContactPointLifecycleStateSchema,
       validFrom: ContactPointTimestampSchema,
       validTo: Schema.Union([ContactPointTimestampSchema, Schema.Null]),
-      verification: ContactPointVerificationSchema,
     }),
   ),
   type: Schema.Literal('ADDRESS'),
@@ -217,9 +207,16 @@ export const PartyContactPointSchema = Schema.Struct({
   validFrom: ContactPointTimestampSchema,
   validTo: Schema.Union([ContactPointTimestampSchema, Schema.Null]),
   value: ContactPointValueSchema,
-  verification: ContactPointVerificationSchema,
 });
 export type PartyContactPoint = typeof PartyContactPointSchema.Type;
+/**
+ * A contact point as a read answers it: the value is a governed field class, so a caller without the
+ * value capability receives the record without it (O17, O58).
+ */
+export const PartyContactPointViewSchema = Schema.Struct({
+  ...PartyContactPointSchema.fields,
+  value: Schema.optionalKey(ContactPointValueSchema),
+});
 
 export interface NormalizedChannel {
   readonly displayValue: string;
@@ -259,49 +256,17 @@ export const normalizeEmail = (rawValue: string): NormalizedChannel => {
   };
 };
 
-const digitsOnly = (value: string): string => value.replaceAll(/[^0-9]/gu, '');
-
-const assertPhoneParts = (displayValue: string, countryCode: string | undefined, extension: string | null): void => {
-  if (countryCode !== undefined && !/^[A-Z]{2}$/u.test(countryCode)) {
-    return invalidContactPoint('PHONE country context must be a two-letter country code');
-  }
-  if (extension !== null && !/^[0-9]{1,12}$/u.test(extension)) {
-    return invalidContactPoint('PHONE extension must contain 1 to 12 digits');
-  }
-  if (!/^\+?[()0-9 .-]+$/u.test(displayValue)) {
-    return invalidContactPoint('PHONE contains unsupported characters');
-  }
-};
-
+/**
+ * The one phone rule home is the published `contact-phone-normalization` contract; this owner
+ * keeps its own error vocabulary around the shared answer, so Party's durable contact point and
+ * every ingress canonicalize identically.
+ */
 export const normalizePhone = (rawValue: string, rawCountryCode?: string, rawExtension?: string): NormalizedPhone => {
-  const displayValue = rawValue.trim();
-  const countryCode = rawCountryCode?.trim().toUpperCase();
-  const digits = digitsOnly(displayValue);
-  const extension = rawExtension?.trim() ?? null;
-  assertPhoneParts(displayValue, countryCode, extension);
-  if (displayValue.startsWith('+')) {
-    if (!/^[1-9][0-9]{6,14}$/u.test(digits)) {
-      return invalidContactPoint('PHONE international form must contain 7 to 15 digits and start with 1 to 9');
-    }
-    return {
-      countryCode: countryCode ?? (digits.startsWith('420') ? 'CZ' : null),
-      displayValue,
-      extension,
-      lookupValue: `+${digits}`,
-    };
+  const normalization = normalizeContactPhone(rawValue, rawCountryCode, rawExtension);
+  if (!normalization.ok) {
+    return invalidContactPoint(normalization.reason);
   }
-  if (countryCode === undefined) {
-    return invalidContactPoint('National PHONE requires an explicit country context');
-  }
-  if (countryCode !== 'CZ' || digits.length !== 9) {
-    return invalidContactPoint('National PHONE has no approved normalization rule for this country');
-  }
-  return {
-    countryCode,
-    displayValue,
-    extension,
-    lookupValue: `+420${digits}`,
-  };
+  return normalization.normalized;
 };
 
 const normalizedOptional = (value: string | undefined): null | string => value?.trim() || null;
@@ -355,17 +320,6 @@ export const normalizeContactPointInput = (input: ContactPointInput): Normalized
     }),
   );
 
-export const assertVerificationRules = (verification: ContactPointVerification): void => {
-  if (
-    verification.state === 'VERIFIED' &&
-    (verification.method === undefined ||
-      verification.verifiedAt === undefined ||
-      verification.verifierReference === undefined)
-  ) {
-    return invalidContactPoint('VERIFIED contact channel requires method, time, and verifier provenance');
-  }
-};
-
 export const normalizedAddressKey = (address: StructuredAddress): string => {
   const normalized = normalizeAddress(address);
   return [
@@ -384,18 +338,15 @@ const assertAddressPurposeAssignment = (
   assignment: AddressPurposeAssignment,
   provenance: ContactPointProvenance,
 ): void => {
-  if (assignment.purpose === 'REGISTERED') {
-    if (
-      assignment.registryContext === undefined ||
-      assignment.registryContext.registryKey === 'GENERAL' ||
-      !/^[A-Za-z]{2}$/u.test(assignment.registryContext.jurisdiction) ||
-      assignment.registryContext.jurisdiction.toUpperCase() === 'ZZ' ||
-      !provenance.authoritative ||
-      provenance.evidenceReference === undefined
-    ) {
-      return invalidContactPoint('REGISTERED requires an explicit registry context and authoritative provenance');
+  if (assignment.purpose === 'REGISTERED' && assignment.registryContext !== undefined) {
+    const { jurisdiction, registryKey } = assignment.registryContext;
+    if (registryKey !== 'ARES' || jurisdiction.toUpperCase() !== 'CZ') {
+      return invalidContactPoint('The supported explicit REGISTERED registry context is ARES/CZ');
     }
-  } else if (assignment.registryContext !== undefined) {
+    if (!provenance.authoritative || provenance.evidenceReference === undefined) {
+      return invalidContactPoint('Explicit REGISTERED registry context requires authoritative provenance and evidence');
+    }
+  } else if (assignment.purpose !== 'REGISTERED' && assignment.registryContext !== undefined) {
     return invalidContactPoint('Registry context belongs only to REGISTERED purpose');
   }
 };

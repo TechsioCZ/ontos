@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { generateKeyPairSync, sign } from 'node:crypto';
 
@@ -14,8 +15,9 @@ import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-
 import { HttpServerRequest, HttpServerResponse, FetchHttpClient } from 'effect/http';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { createCatalogDeniedAccess } from './live-access-authority.ts';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
+import { deriveActualCatalogCompositionSnapshot } from './actual-catalog-composition.fixture.ts';
 import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeRuntime, NodeServices } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
 import {
@@ -33,6 +35,8 @@ import {
 } from 'effect';
 
 import { createSetCompositionActionApiLive } from '../../api/create-set-composition-action-server.ts';
+import { CreateSetCompositionResultSchema } from '../../shared/actions/create-set-composition.ts';
+import { requireExecutionResult } from './action-execution-result.ts';
 import { createSetCompositionAction } from '../../src/actions/create-set-composition.action.ts';
 import { executeCreateSetCompositionWithAuthorization } from '../../src/api/create-set-composition-action-client.ts';
 import { SetCompositionMutationPayloadSchema } from '../../shared/actions/set-composition-contract.ts';
@@ -77,7 +81,8 @@ import type { ProductTypeRef } from '../../shared/resources/product-type.ts';
 import type { AttributeDefinitionRef } from '../../shared/resources/attribute-definition.ts';
 import { ProductUnitRefSchema } from '../../shared/resources/product-unit.ts';
 import { VariantRefSchema } from '../../shared/resources/variant.ts';
-import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { catalogRegistration } from '../../vertical.registration.ts';
 import { attributeApplicabilityPersistenceForScope } from '../../src/persistence/attribute-applicability-persistence.ts';
 import { attributePersistenceForScope } from '../../src/persistence/attribute-persistence.ts';
 import { attributeValuesPersistenceForScope } from '../../src/persistence/attribute-values-persistence.ts';
@@ -600,15 +605,17 @@ export const makeSetComponentFixture = Effect.fn('SetComponentClosure.makeFixtur
   configuration,
   verification,
 }: ReceiverOptions = {}) {
-  const composition = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
+  const composition = yield* deriveActualCatalogCompositionSnapshot(
+    fileURLToPath(new URL('../../../../', import.meta.url)),
+  );
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     compositionSnapshot: composition,
     mode: 'schema-only',
     purpose: 'stabilization-1247-set-component-current-closure',
   });
-  yield* isolated.assertClonedSchema();
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
+      access: 'allowed',
       actionExecutor: 'manager-only',
       actionKeys: [
         governVariantAllowedValuesAction.descriptor.actionKey,
@@ -618,14 +625,21 @@ export const makeSetComponentFixture = Effect.fn('SetComponentClosure.makeFixtur
       ],
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
       allowedAudiences: ['catalog'],
+      applicationComposition: { load: Effect.succeed(composition) },
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: composition.composition.revision,
+      expectedDeployment: ultramodernDeliveryUnit,
       moduleKeys: ['commerce.catalog'],
+      ownerRegistration: catalogRegistration,
       runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     }),
     (value) => value.close().pipe(Effect.orDie),
   );
-  const fixtureContext = yield* Layer.build(fixture.layer);
+  // The one access gate this receiver scripts (the native database carries no v2 access intent and
+  // reaches no engine), plus the per-principal refusal its suite names (see `live-access-authority`).
+  const deniedAccess = createCatalogDeniedAccess();
+  const accessLayer = fixture.layer.pipe(Layer.provide(deniedAccess.layer));
+  const fixtureContext = yield* Layer.build(accessLayer);
   const permissions = yield* makeContextPermissionRelationshipMutationLive();
   const principal = { principalId: fixture.manager.principalId, tenantId: fixture.tenantId };
   const targets = [
@@ -862,7 +876,7 @@ export const makeSetComponentFixture = Effect.fn('SetComponentClosure.makeFixtur
           }),
       }),
     ),
-    Layer.provide(fixture.layer),
+    Layer.provide(accessLayer),
     Layer.provide(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({ ONTOS_GATEWAY_ISSUER: tokenIssuer, ONTOS_GATEWAY_PUBLIC_JWKS: jwks }),
@@ -881,7 +895,7 @@ export const makeSetComponentFixture = Effect.fn('SetComponentClosure.makeFixtur
             .add(catalogApi.groups.reviseProductTypeAction),
         ).pipe(
           Layer.provide(handlers),
-          Layer.provideMerge(fixture.layer),
+          Layer.provideMerge(accessLayer),
           Layer.provide(HttpServer.layerServices),
           Layer.provide(NodeCrypto.layer),
         ),
@@ -940,12 +954,14 @@ export const makeSetComponentFixture = Effect.fn('SetComponentClosure.makeFixtur
       variantRef: selected.variantRef,
     },
   });
-  const createdSet = yield* executeCreateSetCompositionWithAuthorization(
-    createPayload,
-    yield* authorization(),
-    yield* nextId,
-    { baseUrl, compositionRevision: composition.composition.revision, idempotencyKey: yield* nextId },
-  ).pipe(Effect.provideService(FetchHttpClient.Fetch, nativeFetch));
+  const createdSet = yield* requireExecutionResult(
+    CreateSetCompositionResultSchema,
+    executeCreateSetCompositionWithAuthorization(createPayload, yield* authorization(), yield* nextId, {
+      baseUrl,
+      compositionRevision: composition.composition.revision,
+      idempotencyKey: yield* nextId,
+    }).pipe(Effect.provideService(FetchHttpClient.Fetch, nativeFetch)),
+  );
   const setSelection = yield* Schema.decodeUnknownEffect(CatalogSelectionSchema)({
     ...selected,
     setComposition: createdSet.revision,
@@ -1145,6 +1161,7 @@ export const makeSetComponentFixture = Effect.fn('SetComponentClosure.makeFixtur
     composition,
     correctInherited,
     createPayload,
+    deniedAccess,
     fixture,
     nativeFetch,
     nativeRead,

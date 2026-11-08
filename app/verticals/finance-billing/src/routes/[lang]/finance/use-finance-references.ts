@@ -4,9 +4,11 @@ import type { CustomerListItem } from '@app/party-registry/api/client';
 import { listCustomers } from '@app/party-registry/api/client';
 import { listOpportunities } from '@app/sales-pipeline/clients/records';
 import { definePageData, pageDataPending } from '@app/shared-contracts/page-data';
+import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import { Effect, Option, Predicate, Result, Schema } from 'effect';
 import { useEffect, useSyncExternalStore } from 'react';
 import { financeBrowserRuntime } from '../../../runtime/browser.ts';
+import { financePageScope } from './finance-page-scope.ts';
 import { customerIndex } from './invoice-view.ts';
 import type { CustomerIndex } from './invoice-view.ts';
 import { financeReferenceAccess } from './sales-pipeline-readable.ts';
@@ -14,9 +16,11 @@ import { financeReferenceAccess } from './sales-pipeline-readable.ts';
 const ReferenceSourceSchema = Schema.Literals(['customers', 'opportunities', 'products']);
 type ReferenceSource = typeof ReferenceSourceSchema.Type;
 
-/** The reference lists belong to the document: a switch of company or account reloads it. */
-type DocumentScope = 'document';
-const documentScope: DocumentScope = 'document';
+/**
+ * The reference lists belong to one verified Shell scope (`financePageScope`, the cache key): another company or
+ * principal never sees them, and a late answer for an old scope settles only that scope's entry. The scope only keys
+ * the cache; the reads send the same requests as before, and the session's own credentials carry identity.
+ */
 
 /**
  * What the invoice list needs on its first paint: which optional references the legal entity may read (it decides
@@ -70,8 +74,8 @@ const loadDirectory = Effect.fn('Finance.referenceDirectory')(function* loadDire
 
 /** Never fails: every read's failure is part of the value. */
 const financeDirectory = definePageData({
-  key: (scope: DocumentScope) => `directory:${scope}`,
-  load: loadDirectory,
+  key: (scope: string) => scope,
+  load: (_scope: string) => loadDirectory(),
   runtime: financeBrowserRuntime,
 });
 
@@ -98,29 +102,44 @@ const loadProducts = Effect.fn('Finance.referenceProducts')(function* loadProduc
 });
 
 const financeProducts = definePageData({
-  key: (scope: DocumentScope) => `products:${scope}`,
-  load: loadProducts,
+  key: (scope: string) => scope,
+  load: (_scope: string) => loadProducts(),
   runtime: financeBrowserRuntime,
 });
 
-const directorySnapshot = () => financeDirectory.snapshot(documentScope);
-const productsSnapshot = () => financeProducts.snapshot(documentScope);
 const pendingSnapshot = () => pageDataPending;
 const noCustomers: readonly CustomerListItem[] = [];
 const noCustomerIndex: CustomerIndex = new Map();
 const noTitles: ReadonlyMap<string, string> = new Map();
 const noProducts: readonly ProductRecord[] = [];
 
-export const preloadFinanceDirectory: Effect.Effect<void> = financeDirectory.preload(documentScope);
+/** The Shell's prefetch of the first-paint directory; without a verified scope there is nothing to read for. */
+export const preloadFinanceDirectory = (context: ModulePageContext | undefined): Effect.Effect<void> => {
+  const scope = financePageScope(context);
+  return scope === undefined ? Effect.void : financeDirectory.preload(scope);
+};
 
-/** Names that the invoice list, detail and create form show instead of opaque ids. */
-export const useFinanceReferences = () => {
-  const directorySnap = useSyncExternalStore(financeDirectory.subscribe, directorySnapshot, pendingSnapshot);
-  const productsSnap = useSyncExternalStore(financeProducts.subscribe, productsSnapshot, pendingSnapshot);
+/**
+ * Names that the invoice list, detail and create form show instead of opaque ids, for one verified scope
+ * (`financePageScope`). Without a scope nothing is read and no list of any scope is exposed.
+ */
+export const useFinanceReferences = ({ scope }: { readonly scope: string | undefined }) => {
+  const directorySnap = useSyncExternalStore(
+    financeDirectory.subscribe,
+    () => (scope === undefined ? pageDataPending : financeDirectory.snapshot(scope)),
+    pendingSnapshot,
+  );
+  const productsSnap = useSyncExternalStore(
+    financeProducts.subscribe,
+    () => (scope === undefined ? pageDataPending : financeProducts.snapshot(scope)),
+    pendingSnapshot,
+  );
   useEffect(() => {
-    financeDirectory.ensure(documentScope);
-    financeProducts.ensure(documentScope);
-  }, []);
+    if (scope !== undefined) {
+      financeDirectory.ensure(scope);
+      financeProducts.ensure(scope);
+    }
+  }, [scope]);
   const directory = directorySnap.state === 'ready' ? directorySnap.value : undefined;
   const products = productsSnap.state === 'ready' ? productsSnap.value : undefined;
 
@@ -128,7 +147,7 @@ export const useFinanceReferences = () => {
     customerById: directory?.customerById ?? noCustomerIndex,
     customers: directory?.customers ?? noCustomers,
     /** True until the customer list answers, so rows do not read "Neznámý zákazník" while names are on the way. */
-    customersLoading: directory === undefined,
+    customersLoading: scope !== undefined && directory === undefined,
     opportunitiesForbidden: directory?.opportunitiesForbidden ?? false,
     opportunityTitles: directory?.opportunityTitles ?? noTitles,
     products: products?.items ?? noProducts,

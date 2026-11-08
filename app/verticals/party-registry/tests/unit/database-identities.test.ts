@@ -36,6 +36,7 @@ it('publishes the complete Party identity contract without changing its roles or
       ownerModuleKey: 'party.registry',
       registersGatewayScopeGrants: false,
       role: 'party_registry_runtime',
+      runsActions: true,
       scopeAuthority: 'gateway_grant',
       urlKey: 'PARTY_REGISTRY_DATABASE_URL',
     },
@@ -48,6 +49,7 @@ it('publishes the complete Party identity contract without changing its roles or
       ownerModuleKey: 'party.registry',
       registersGatewayScopeGrants: false,
       role: 'party_registry_worker',
+      runsActions: false,
       scopeAuthority: 'session_setting',
       urlKey: 'PARTY_REGISTRY_WORKER_DATABASE_URL',
     },
@@ -90,6 +92,7 @@ it('grants only request-scope trust routines and grants none to the worker', () 
     'trust.current_tenant_id()',
     'trust.current_legal_entity_id()',
     'trust.auth_binding_issuing_legal_entity(uuid,uuid)',
+    'trust.lock_access_scope_fence(uuid,uuid)',
     PRUNE_EXPIRED_GATEWAY_ASSERTION_REDEMPTIONS_SIGNATURE,
   ]);
   expect(PARTY_REGISTRY_WORKER_DATABASE_GRANTS.routines).toEqual([]);

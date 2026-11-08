@@ -1,5 +1,6 @@
 /// <reference types="node" />
 import { v5 } from 'uuid';
+import { salesDemoCustomers } from './data/sales-customers.mts';
 import { crmDemoCompany, eshopDemoCompany, rentalDemoCompany } from '@app/core-runtime/demo-company-profiles';
 
 /**
@@ -27,49 +28,8 @@ export const uuidV5 = (namespace: string, name: string): string => v5(name, name
  */
 const rawDemoId = (namespace: string, key: string): string => uuidV5(SALES_DEMO_NAMESPACE, `${namespace}:${key}`);
 
-/** IČO of the n-th customer seeded by party-registry `scripts/demo-customers.mts` (keep in sync). */
-const seededCustomerIcos: readonly string[] = [
-  '25741136',
-  '44474504',
-  '63207877',
-  '81941242',
-  '00674613',
-  '19407980',
-  '38141353',
-  '56874723',
-  '75608090',
-  '94341460',
-  '13074831',
-  '31808204',
-  '50541579',
-  '69274941',
-  '88008312',
-  '06741681',
-  '25475053',
-  '44208421',
-  '62941798',
-  '81675160',
-  '00408531',
-  '19141904',
-  '37875272',
-  '56608641',
-  '75342014',
-  '94075387',
-  '12808750',
-  '31542123',
-  '50275496',
-  '69008868',
-  '87742233',
-  '06475604',
-  '25208977',
-  '43942342',
-  '62675711',
-  '81409087',
-  '00142450',
-  '18875823',
-  '37609190',
-  '56342560',
-] as const;
+/** IČO order comes from the operator's sole customer dataset. */
+const seededCustomerIcos: readonly string[] = salesDemoCustomers.map(({ ico }) => ico);
 
 const customerIndexKey = /^c(?<index>\d{2})$/u;
 

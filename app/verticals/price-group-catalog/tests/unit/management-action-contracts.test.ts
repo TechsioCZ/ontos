@@ -1,7 +1,8 @@
+import { pricingPriceGroupReadPermission } from '../../shared/permissions/pricing-price-group-read.ts';
 import { describe, expect, it } from 'effect-rstest';
 import { Result, Schema } from 'effect';
 
-import { getActionBusinessPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionOwnerPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { PriceGroupActionCommittedRetryReceiptSchema } from '../../shared/domain/action-committed-retry-receipt.ts';
 import { CreatePriceGroupDefinitionRevisionPayloadSchema } from '../../shared/actions/create-price-group-definition-revision.ts';
 import {
@@ -75,12 +76,6 @@ const retirementPayload = {
   expectedCurrent,
   reason: 'Retire the classification from future use.',
 };
-const scope = {
-  authMethod: 'system' as const,
-  correlationId: 'price-group-management-contracts',
-  principalId,
-  tenantId,
-};
 
 describe('Price Group management Action contracts', () => {
   it('defines a transport-only successful receipt for an exact committed retry', () => {
@@ -151,55 +146,33 @@ describe('Price Group management Action contracts', () => {
 
   it('declares tenant-only Action execution with required idempotency', () => {
     for (const action of [createPriceGroupAction, createPriceGroupDefinitionRevisionAction, retirePriceGroupAction]) {
-      expect(action.descriptor.entrypoint.authorization).toEqual({
-        kind: 'action_execution',
-        provisioning: 'explicit',
-      });
+      expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+      expect(action.descriptor.accessDeclaration).toMatchObject({ kind: 'action', selectors: [] });
       expect(action.descriptor.idempotency).toBe('required');
       expect(action.descriptor.legalEntityScope).toBe('forbidden');
       expect(action.descriptor.entrypoint.scope).toBe('tenant');
     }
   });
 
-  it('resolves the exact catalog or stable Price Group business permission target', () => {
-    expect(getActionBusinessPermissionTargetResolver(createPriceGroupAction)?.(createPayload, scope)).toEqual({
-      permission: 'pricing.price_group.create',
-      target: { kind: 'pricing_catalog', pricingCatalogId: tenantId, tenantId },
-    });
+  it('carries one scope-wide capability per Action instead of a per-catalog target', () => {
+    // O67-Q2: the Price Group catalog is one implicit catalog per Tenant, so its capabilities are
+    // scope-wide and the retired per-catalog/per-Price-Group business targets are gone.
     expect(
-      getActionBusinessPermissionTargetResolver(createPriceGroupDefinitionRevisionAction)?.(revisionPayload, scope),
-    ).toEqual({
-      permission: 'pricing.price_group.revision.create',
-      target: {
-        kind: 'price_group',
-        priceGroupId: priceGroupRef.resourceId,
-        pricingCatalogId: tenantId,
-        tenantId,
-      },
-    });
-    expect(getActionBusinessPermissionTargetResolver(retirePriceGroupAction)?.(retirementPayload, scope)).toEqual({
-      permission: 'pricing.price_group.retire',
-      target: {
-        kind: 'price_group',
-        priceGroupId: priceGroupRef.resourceId,
-        pricingCatalogId: tenantId,
-        tenantId,
-      },
-    });
-
-    const foreignTenantId = '77777777-7777-4777-8777-777777777777';
-    const foreignExpectedCurrent = {
-      ...expectedCurrent,
-      priceGroupRef: { ...priceGroupRef, tenantId: foreignTenantId },
-    };
-    expect(
-      getActionBusinessPermissionTargetResolver(createPriceGroupDefinitionRevisionAction)?.(
-        { ...revisionPayload, expectedCurrent: foreignExpectedCurrent },
-        scope,
+      [createPriceGroupAction, createPriceGroupDefinitionRevisionAction, retirePriceGroupAction].map(
+        ({ descriptor }) => descriptor.accessDeclaration?.key,
       ),
-    ).toMatchObject({
-      target: { pricingCatalogId: foreignTenantId, tenantId: foreignTenantId },
-    });
+    ).toEqual([
+      'pricing.price-group-catalog.price-group.create',
+      'pricing.price-group-catalog.price-group-definition-revision.create',
+      'pricing.price-group-catalog.price-group.retire',
+    ]);
+    expect(
+      [
+        getActionOwnerPermissionTargetResolver(createPriceGroupAction),
+        getActionOwnerPermissionTargetResolver(createPriceGroupDefinitionRevisionAction),
+        getActionOwnerPermissionTargetResolver(retirePriceGroupAction),
+      ].filter((resolver) => resolver !== undefined),
+    ).toEqual([]);
   });
 
   it('registers every permission against its exact protected Action entrypoint', () => {
@@ -308,4 +281,65 @@ describe('Price Group management Action contracts', () => {
     expect(Schema.is(PriceGroupRetirementAcceptedOutboxPayloadSchema)(backdatedRetirementAcceptance)).toBe(false);
     expect(Schema.is(PriceGroupCreatedOutboxPayloadSchema)({ data: definition })).toBe(false);
   });
+});
+
+it('freezes every published owner descriptor including canonical capability and dormant entrypoints', () => {
+  expect([
+    pricingPriceGroupCreatePermission,
+    pricingPriceGroupReadPermission,
+    pricingPriceGroupRetirePermission,
+    pricingPriceGroupRevisionCreatePermission,
+  ]).toEqual([
+    {
+      allowedScopeKinds: ['pricing_catalog'],
+      auditSensitivity: 'sensitive',
+      authorityGroups: [],
+      customerDelegable: false,
+      internalGrantable: false,
+      key: 'pricing.price_group.create',
+      meaning: 'Pricing Price Group Create business permission.',
+      owningCapability: 'pricing.price-group-catalog',
+      protectedEntrypoints: ['pricing.price-group-catalog.create-price-group'],
+      schemaVersion: '1',
+    },
+    {
+      allowedScopeKinds: ['pricing_catalog', 'price_group'],
+      auditSensitivity: 'sensitive',
+      authorityGroups: [],
+      customerDelegable: false,
+      internalGrantable: false,
+      key: 'pricing.price_group.read',
+      meaning: 'Read one exact Price Group definition or validate its compatibility in the authorized Tenant.',
+      owningCapability: 'pricing.price-group-catalog',
+      protectedEntrypoints: [
+        'pricing.price-group-catalog.api.price-group-definition',
+        'pricing.price-group-catalog.api.validate-price-group-compatibility',
+      ],
+      schemaVersion: '1',
+    },
+    {
+      allowedScopeKinds: ['pricing_catalog', 'price_group'],
+      auditSensitivity: 'sensitive',
+      authorityGroups: [],
+      customerDelegable: false,
+      internalGrantable: false,
+      key: 'pricing.price_group.retire',
+      meaning: 'Pricing Price Group Retire business permission.',
+      owningCapability: 'pricing.price-group-catalog',
+      protectedEntrypoints: ['pricing.price-group-catalog.retire-price-group'],
+      schemaVersion: '1',
+    },
+    {
+      allowedScopeKinds: ['pricing_catalog', 'price_group'],
+      auditSensitivity: 'sensitive',
+      authorityGroups: [],
+      customerDelegable: false,
+      internalGrantable: false,
+      key: 'pricing.price_group.revision.create',
+      meaning: 'Pricing Price Group Revision Create business permission.',
+      owningCapability: 'pricing.price-group-catalog',
+      protectedEntrypoints: ['pricing.price-group-catalog.create-price-group-definition-revision'],
+      schemaVersion: '1',
+    },
+  ]);
 });

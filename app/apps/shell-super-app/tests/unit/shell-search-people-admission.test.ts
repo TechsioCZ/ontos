@@ -1,3 +1,5 @@
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
+import { ShellGovernedReadDefinitions } from '../../api/modules/shell-governed-read-definitions.ts';
 // @rstest-environment node
 import {
   ContextAccess,
@@ -16,7 +18,11 @@ import { ShellCryptoLive } from '../../api/auth/gateway-issuer.ts';
 import { CapturedShellCompositionCatalog } from '../../api/modules/captured-shell-catalog.ts';
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
 import { ShellCompositionFactoryLive } from '../../api/modules/shell-composition.ts';
-import { createShellGovernedReadsLayer, ShellGovernedReads } from '../../api/modules/shell-governed-reads.ts';
+import {
+  createShellGovernedReadsLayer,
+  createShellGovernedReadDefinitionsLayer,
+  ShellGovernedReads,
+} from '../../api/modules/shell-governed-reads.ts';
 import type { ShellGovernedReadsService } from '../../api/modules/shell-governed-reads.ts';
 import { ShellResourceServicesFactoryLive } from '../../api/modules/shell-resources.ts';
 import { ShellSystemSearch } from '../../api/modules/shell-system-search.ts';
@@ -89,10 +95,18 @@ const contract = (moduleId: string, resourceType: string) => ({
         resourceDetails: [],
         search: [
           {
+            accessDeclaration: {
+              key: `${moduleId}.records.read`,
+              kind: 'read',
+              modes: ['run'],
+              placement: { group: 'records', level: 'basic' },
+              risk: 'routine',
+              selectors: [],
+            },
             contributionKey: `${moduleId}.search.contribution`,
             entrypoint: {
               access: 'read',
-              authorization: { kind: 'context_permission', permission: 'module.access' },
+              authorization: { kind: 'protected' },
               entrypointKey: `${moduleId}.search`,
               moduleKey: moduleId,
               role: 'search',
@@ -110,9 +124,7 @@ const contract = (moduleId: string, resourceType: string) => ({
 });
 
 interface AdmissionControls {
-  readonly coreModule: ContextAccessDecision;
-  readonly legalEntity: ContextAccessDecision;
-  readonly tenant: ContextAccessDecision;
+  readonly people: ContextAccessDecision;
 }
 interface AdmissionCalls {
   readonly assertions: string[];
@@ -126,7 +138,7 @@ const fixture = (controls: AdmissionControls) =>
     const catalog = yield* makeInstalledModuleCatalogLoader(makeCompositionSnapshot([contract(alpha, alphaType)]));
     const calls: AdmissionCalls = { assertions: [], owners: [], system: 0 };
     const states: readonly TenantModuleStateRecord[] = [{ moduleKey: alpha, state: 'active' }];
-    const harness = yield* makeReadTestHarness({
+    let harness = yield* makeReadTestHarness({
       compositionRevision: catalog.composition.revision,
       executeOwnerQuery: () => Effect.die('the Shell people admission test must not run an owner SQL query'),
       operationTime: new Date('2026-11-04T12:00:00Z'),
@@ -134,16 +146,11 @@ const fixture = (controls: AdmissionControls) =>
       permissionDecision: 'allowed',
       scope: sessionPrincipal,
     });
-    const native = yield* ContextAccess.pipe(Effect.provide(harness.layer));
     const access: ContextAccessService = {
-      ...native,
-      legalEntities: ({ legalEntityIds }) =>
-        Effect.succeed(legalEntityIds.map((key) => ({ decision: controls.legalEntity, key }))),
-      modules: ({ moduleIds }) =>
-        Effect.succeed(
-          moduleIds.map((key) => ({ decision: key === alpha ? ('allowed' as const) : controls.coreModule, key })),
-        ),
-      tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision: controls.tenant, key }))),
+      legalEntities: () => Effect.die('Retired People admission must not run'),
+      modules: () => Effect.die('Retired People admission must not run'),
+      resources: () => Effect.die('Retired People admission must not run'),
+      tenants: () => Effect.die('Retired People admission must not run'),
     };
     const moduleStates = {
       getTenantModuleStates: (_tenantId: string, moduleIds: readonly string[]) =>
@@ -175,10 +182,23 @@ const fixture = (controls: AdmissionControls) =>
         },
       },
     };
-    const layer = createShellGovernedReadsLayer(gateways, issuer, () => moduleStates).pipe(
+    const definitionsLayer = createShellGovernedReadDefinitionsLayer(gateways, issuer, () => moduleStates).pipe(
       Layer.provide(
         Layer.mergeAll(
           Layer.succeed(ReadRuntime, harness.runtime),
+          Layer.succeed(
+            AccessDecisionGate,
+            makeTestAccessDecision({
+              answers: {
+                'admission.alpha.records.read': { outcome: 'ALLOWED' },
+                'core.identity.people-search.query': {
+                  outcome: ({ allowed: 'ALLOWED', denied: 'DENIED', unavailable: 'UNAVAILABLE' } as const)[
+                    controls.people
+                  ],
+                },
+              },
+            }),
+          ),
           Layer.succeed(ContextAccess, access),
           Layer.succeed(TenantModuleStateService, moduleStates),
           ShellCompositionFactoryLive,
@@ -191,6 +211,21 @@ const fixture = (controls: AdmissionControls) =>
           }),
         ),
       ),
+    );
+    const registrations = yield* ShellGovernedReadDefinitions.pipe(Effect.provide(definitionsLayer));
+    harness = yield* makeReadTestHarness({
+      access: 'allowed',
+      applicationComposition: { load: makeCompositionSnapshot(catalog.contracts) },
+      compositionRevision: catalog.composition.revision,
+      executeOwnerQuery: () => Effect.die('Unexpected Shell owner SQL'),
+      expectedDeployment: catalog.composition.shell.deployment,
+      operationTime: new Date('2026-11-03T15:00:00Z'),
+      ownerAuthorizationDecision: 'allowed',
+      scope: sessionPrincipal,
+      shellSystemReads: registrations,
+    });
+    const layer = createShellGovernedReadsLayer(registrations).pipe(
+      Layer.provide(Layer.succeed(ReadRuntime, harness.runtime)),
     );
     const reads = yield* ShellGovernedReads.pipe(Effect.provide(layer), Effect.orDie);
     const search: ShellGovernedReadsService['search'] = (input) =>
@@ -221,7 +256,7 @@ it.effect(
   () =>
     withRuntime(
       Effect.gen(function* deniedDirectory() {
-        const f = yield* fixture({ coreModule: 'allowed', legalEntity: 'denied', tenant: 'denied' });
+        const f = yield* fixture({ people: 'denied' });
         const result = yield* f.run();
         expect(result.partial).toBe(false);
         expect(result.presentation?.system).toBeUndefined();
@@ -236,12 +271,12 @@ it.effect(
 it.effect('a denied Core people module gate omits the system branch while an indeterminate one fails unavailable', () =>
   withRuntime(
     Effect.gen(function* moduleGate() {
-      const denied = yield* fixture({ coreModule: 'denied', legalEntity: 'allowed', tenant: 'allowed' });
+      const denied = yield* fixture({ people: 'denied' });
       const deniedResult = yield* denied.run();
       expect(deniedResult.presentation?.system).toBeUndefined();
       expect(denied.calls.system).toBe(0);
 
-      const indeterminate = yield* fixture({ coreModule: 'unavailable', legalEntity: 'allowed', tenant: 'allowed' });
+      const indeterminate = yield* fixture({ people: 'unavailable' });
       const failure = yield* indeterminate.run().pipe(Effect.flip);
       expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
       // The uncertain admission fails the read before any owner, assertion or system dispatch.
@@ -255,7 +290,7 @@ it.effect('a denied Core people module gate omits the system branch while an ind
 it.effect('an indeterminate Core people directory fails the governed read unavailable and never dispatches', () =>
   withRuntime(
     Effect.gen(function* indeterminateDirectory() {
-      const f = yield* fixture({ coreModule: 'allowed', legalEntity: 'unavailable', tenant: 'unavailable' });
+      const f = yield* fixture({ people: 'unavailable' });
       const failure = yield* f.run().pipe(Effect.flip);
       expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
       expect(f.calls.system).toBe(0);
@@ -268,7 +303,7 @@ it.effect('an indeterminate Core people directory fails the governed read unavai
 it.effect('an admitted Core people directory keeps the system branch and calls the system provider once', () =>
   withRuntime(
     Effect.gen(function* admittedDirectory() {
-      const f = yield* fixture({ coreModule: 'allowed', legalEntity: 'allowed', tenant: 'denied' });
+      const f = yield* fixture({ people: 'allowed' });
       const result = yield* f.run();
       expect(result.partial).toBe(false);
       expect(result.presentation?.system).toBeDefined();
@@ -279,10 +314,10 @@ it.effect('an admitted Core people directory keeps the system branch and calls t
   ),
 );
 
-it.effect('a single allowed directory alternative admits the branch even when the other target is indeterminate', () =>
+it.effect('canonical People admission does not consult a legacy tenant or directory alternative', () =>
   withRuntime(
     Effect.gen(function* anyOfAdmits() {
-      const f = yield* fixture({ coreModule: 'allowed', legalEntity: 'allowed', tenant: 'unavailable' });
+      const f = yield* fixture({ people: 'allowed' });
       const result = yield* f.run();
       expect(result.presentation?.system).toBeDefined();
       expect(f.calls.system).toBe(1);
@@ -293,7 +328,7 @@ it.effect('a single allowed directory alternative admits the branch even when th
 it.effect('an explicit empty selector returns the admitted inventory without any owner, assertion or system call', () =>
   withRuntime(
     Effect.gen(function* inventoryOnly() {
-      const admitted = yield* fixture({ coreModule: 'allowed', legalEntity: 'allowed', tenant: 'allowed' });
+      const admitted = yield* fixture({ people: 'allowed' });
       const admittedResult = yield* admitted.run({ resourceTypes: [] });
       expect(admittedResult.results).toEqual([]);
       expect(admittedResult.partial).toBe(false);
@@ -302,7 +337,7 @@ it.effect('an explicit empty selector returns the admitted inventory without any
       expect(admitted.calls.assertions).toEqual([]);
       expect(admitted.calls.system).toBe(0);
 
-      const denied = yield* fixture({ coreModule: 'allowed', legalEntity: 'denied', tenant: 'denied' });
+      const denied = yield* fixture({ people: 'denied' });
       const deniedResult = yield* denied.run({ resourceTypes: [] });
       expect(deniedResult.results).toEqual([]);
       expect(deniedResult.partial).toBe(false);
@@ -317,7 +352,7 @@ it.effect('an explicit empty selector returns the admitted inventory without any
 it.effect('an indeterminate People admission fails an inventory-only request instead of a complete inventory', () =>
   withRuntime(
     Effect.gen(function* uncertainInventory() {
-      const f = yield* fixture({ coreModule: 'allowed', legalEntity: 'unavailable', tenant: 'unavailable' });
+      const f = yield* fixture({ people: 'unavailable' });
       const failure = yield* f.run({ resourceTypes: [] }).pipe(Effect.flip);
       expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
       expect(f.calls.owners).toEqual([]);

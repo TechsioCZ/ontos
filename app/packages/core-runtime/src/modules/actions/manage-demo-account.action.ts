@@ -251,6 +251,16 @@ const handleManageDemoAccount = Effect.fn('ManageDemoAccount.handle')(function* 
 
 export const manageDemoAccountAction = defineAction(
   {
+    // Demo account administration is identity administration of a tenant's people and their roles
+    // (O43, O81): a human administrator's own capability.
+    accessDeclaration: {
+      key: 'core.identity.demo-account.manage',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'core.identity.manage-demo-account.access.v1',
@@ -262,7 +272,7 @@ export const manageDemoAccountAction = defineAction(
     domainEvents: principalLifecycleDomainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.manage-demo-account',
       moduleKey: 'core.identity',
       role: 'action',
@@ -274,7 +284,6 @@ export const manageDemoAccountAction = defineAction(
     policies: [],
     resultSchema: ManageDemoAccountResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_identity',
   },
   handleManageDemoAccount,
   (transaction) => Effect.succeed({ transaction }),

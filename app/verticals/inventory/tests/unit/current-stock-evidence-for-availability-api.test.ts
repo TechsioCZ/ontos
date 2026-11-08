@@ -1,6 +1,11 @@
-import { ReadPermissionDenied, allowOwnerAuthorizationOverlay, toBusinessPermissionAccessKey } from '@app/core-runtime';
+import { inventoryRegistration } from '../../vertical.registration.ts';
+import {
+  ReadPermissionDenied,
+  allowOwnerAuthorizationOverlay,
+  defineDatabaseIdentityEnrollment,
+} from '@app/core-runtime';
 import { expect, it } from 'effect-rstest';
-import { Effect, Predicate, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 
 import { mapCurrentStockEvidenceForAvailabilityDomainError } from '../../api/current-stock-evidence-for-availability-read-server.ts';
 import { CurrentStockEvidenceForAvailabilityDomainPolicyProblemSchema } from '../../shared/apis/current-stock-evidence-for-availability-domain-policy-problem.ts';
@@ -27,9 +32,7 @@ import {
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
-import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
-
-const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
+import { makeTestBoundAccessGate } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
@@ -61,7 +64,16 @@ const input = Schema.decodeSync(CurrentStockEvidenceForAvailabilityRequestSchema
 });
 
 it('binds the Read and public client to the exact Stock Position contract', () => {
-  expect(currentStockEvidenceForAvailabilityRead.descriptor.permissionTarget).toBe('business_permission');
+  // The one gate decides the read's own scope-wide capability (O62): the read declares it and carries
+  // no legacy permission target or positional resolver any more.
+  expect(currentStockEvidenceForAvailabilityRead.descriptor).toMatchObject({
+    accessDeclaration: {
+      key: 'commerce.inventory.stock-position.read-availability-evidence',
+      kind: 'read',
+      selectors: [],
+    },
+  });
+  expect(Object.keys(currentStockEvidenceForAvailabilityRead.descriptor)).not.toContain('permissionTarget');
   expect(inventoryResourceReadPermission.protectedEntrypoints).toEqual([
     'commerce.inventory.api.catalog-to-stock-binding-resolution',
     'commerce.inventory.api.commitment-protection-verification',
@@ -71,27 +83,8 @@ it('binds the Read and public client to the exact Stock Position contract', () =
     'commerce.inventory.api.reservation-confirmation-verification',
     'commerce.inventory.api.stock-sharing-eligibility-resolution',
   ]);
+  expect(getReadPermissionTargetResolver(currentStockEvidenceForAvailabilityRead)).toBeUndefined();
   expect(getReadResourcePermissionTargetResolver(currentStockEvidenceForAvailabilityRead)).toBeUndefined();
-
-  const resolver = getReadPermissionTargetResolver(currentStockEvidenceForAvailabilityRead);
-  expect(Predicate.isFunction(resolver)).toBe(true);
-  if (Predicate.isFunction(resolver)) {
-    expect(resolver(input, scope)).toEqual({
-      businessPermission: {
-        permission: 'inventory.resource.read',
-        target: {
-          kind: 'inventory_resource',
-          resource: {
-            moduleId: input.positionRef.moduleId,
-            resourceId: input.positionRef.resourceId,
-            resourceType: input.positionRef.resourceType,
-          },
-          tenantId,
-        },
-      },
-      kind: 'business_permission',
-    });
-  }
 
   expect(exportedExecuteCurrentStockEvidenceForAvailability).toBe(executeCurrentStockEvidenceForAvailability);
   expect(exportedExecuteCurrentStockEvidenceForAvailabilityWithAuthorization).toBe(
@@ -101,9 +94,8 @@ it('binds the Read and public client to the exact Stock Position contract', () =
 
 it.effect('denies the exact Stock Position before owner services are resolved', () =>
   Effect.gen(function* denyBeforeOwnerResolution() {
-    let businessChecks = 0;
-    let resourceChecks = 0;
     const stages: string[] = [];
+    const gate = makeTestBoundAccessGate();
     const database = {
       executor: yield* makeTestDatabase((text) =>
         Effect.succeed(
@@ -118,36 +110,23 @@ it.effect('denies the exact Stock Position before owner services are resolved', 
       openModuleEntrypointGateway,
       { resolve: () => Effect.succeed(scope) },
       {
-        businessPermissions: ({ targets }) => {
-          businessChecks += 1;
-          return Effect.succeed(
-            targets.map((target) => ({
-              decision: 'denied' as const,
-              key: toBusinessPermissionAccessKey(target),
-            })),
-          );
-        },
+        // The gate is the only authority: the retired target checks are never consulted (O62).
         legalEntities: ({ legalEntityIds }) =>
           Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
         modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
-        resources: ({ resources }) => {
-          resourceChecks += 1;
-          return Effect.succeed(
-            resources.map((resource) => ({
-              decision: 'allowed' as const,
-              key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
-            })),
-          );
-        },
+        ownerPermissions: () => Effect.die('The gate decides; no legacy owner target is checked'),
+        resources: () => Effect.die('The gate decides; no legacy resource target is checked'),
         tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision: 'allowed' as const, key }))),
       },
       {
-        databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+        accessDecision: gate.bound,
+        databaseIdentities: defineDatabaseIdentityEnrollment([]),
         onStage: (stage) => {
           stages.push(stage);
         },
 
         ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
+        ownerRegistration: inventoryRegistration,
       },
     );
 
@@ -161,8 +140,12 @@ it.effect('denies the exact Stock Position before owner services are resolved', 
       .pipe(Effect.flip);
 
     expect(Schema.is(ReadPermissionDenied)(failure)).toBe(true);
-    expect(businessChecks).toBe(1);
-    expect(resourceChecks).toBe(0);
+    // The one gate asked this read's own declaration, in the trusted scope (CUTOVER-PLAN §3.2).
+    expect(gate.accessDecision.askedDecisions).toHaveLength(1);
+    expect(gate.accessDecision.askedDecisions[0]?.carrier.accessDeclaration?.key).toBe(
+      'commerce.inventory.stock-position.read-availability-evidence',
+    );
+    expect(gate.accessDecision.askedDecisions[0]?.scope.legalEntityId).toBe(legalEntityId);
     expect(stages).toEqual(['input_decoded', 'scope_validated', 'module_state_checked', 'permission_checked']);
   }),
 );

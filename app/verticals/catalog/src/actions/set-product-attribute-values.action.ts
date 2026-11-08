@@ -6,10 +6,15 @@ import {
   prepareCatalogOpenSelectionPopulation,
   validatePreparedCatalogScope,
 } from '../services/catalog-open-selection-preflight.ts';
-import type { ActionHandlerContext, ActionServiceFactory, ActionServicePreflight } from '@app/core-runtime';
+import type {
+  ActionHandlerContext,
+  ActionServiceFactory,
+  ActionServicePreparationContext,
+  ActionServicePreflight,
+} from '@app/core-runtime';
 import { captureCatalogActionResult } from '../persistence/catalog-action-result-snapshot.ts';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Option } from 'effect';
 import type { Crypto } from 'effect';
 
 import {
@@ -19,7 +24,7 @@ import {
   requireProductAttributeCorrection,
 } from '../../shared/actions/attribute-value-mutations.ts';
 import type { SetProductAttributeValuesPayload } from '../../shared/actions/attribute-value-mutations.ts';
-import { cartOpenSelectionPopulationFromEnvironment } from '../../shared/domain/catalog-open-selection-population.ts';
+import { cartOpenSelectionPopulationForScope } from '../../shared/domain/catalog-open-selection-population.ts';
 import { ProductAuditEvidenceSchema } from '../../shared/domain/product.ts';
 import { OutboxPayloadSchema as SelectionSourceChangedEventSchema } from '../../shared/outbox/commerce-catalog-selection-source-changed-v1.ts';
 import { VariantRefSchema } from '../../shared/resources/variant.ts';
@@ -158,7 +163,8 @@ const setProductAttributeValuesActionServices = Effect.fn('SetProductAttributeVa
       readonly scope: Parameters<ActionServiceFactory<never>>[1];
     },
   ) {
-    const openSelections = preparedPopulation ?? (yield* cartOpenSelectionPopulationFromEnvironment);
+    const openSelections =
+      preparedPopulation ?? Option.getOrUndefined(yield* cartOpenSelectionPopulationForScope(scope));
     const services = yield* attributeValuesPersistenceForScope(transaction, scope);
     return {
       ...services,
@@ -183,20 +189,44 @@ const setProductAttributeValuesActionServices = Effect.fn('SetProductAttributeVa
   },
 );
 
-const prepareSetProductAttributeValuesActionServices: ActionServicePreflight<
+const ActionDomainErrorSchema = Schema.Union([
+  AttributeValuesConflict,
+  CatalogPersistenceUnavailable,
+  ProductAttributeChangeConflict,
+  CatalogOpenSelectionImpactUnavailable,
+]);
+
+const prepareSetProductAttributeValuesActionServices = Effect.fn('prepareSetProductAttributeValuesActionServices')(
+  function* prepareServices(
+    _payload: typeof SetProductAttributeValuesPayloadSchema.Type,
+    context: ActionServicePreparationContext,
+  ) {
+    const population = yield* prepareCatalogOpenSelectionPopulation(context);
+    return (
+      transaction: Parameters<ActionServiceFactory<never>>[0],
+      scope: Parameters<ActionServiceFactory<never>>[1],
+      revision: Parameters<ActionServiceFactory<never>>[2],
+    ) =>
+      validatePreparedCatalogScope(context, scope, revision).pipe(
+        Effect.flatMap(() => setProductAttributeValuesActionServices(transaction, { population, scope })),
+      );
+  },
+) satisfies ActionServicePreflight<
   typeof SetProductAttributeValuesPayloadSchema.Type,
   Effect.Success<ReturnType<typeof setProductAttributeValuesActionServices>>,
-  never
-> = Effect.fn('prepareSetProductAttributeValuesActionServices')(function* prepareServices(_payload, context) {
-  const population = yield* prepareCatalogOpenSelectionPopulation(context);
-  return (transaction, scope, revision) =>
-    validatePreparedCatalogScope(context, scope, revision).pipe(
-      Effect.flatMap(() => setProductAttributeValuesActionServices(transaction, { population, scope })),
-    );
-});
+  typeof ActionDomainErrorSchema.Type
+>;
 
 export const setProductAttributeValuesAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-attribute-values.set',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.set-product-attribute-values.access.v1',
@@ -204,16 +234,11 @@ export const setProductAttributeValuesAction = defineAction(
     actionKey: ACTION_KEY,
     auditEvidenceSchema: ProductAuditEvidenceSchema,
     auditProfile: 'standard',
-    domainErrorSchema: Schema.Union([
-      AttributeValuesConflict,
-      CatalogPersistenceUnavailable,
-      ProductAttributeChangeConflict,
-      CatalogOpenSelectionImpactUnavailable,
-    ]),
+    domainErrorSchema: ActionDomainErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.catalog.set-product-attribute-values',
       moduleKey: 'commerce.catalog',
       role: 'action',

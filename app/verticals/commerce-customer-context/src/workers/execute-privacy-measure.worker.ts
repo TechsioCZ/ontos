@@ -9,7 +9,7 @@ import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import type { OwnerExecutionOutcome } from '@app/privacy/domain/privacy-measure-handoff';
 import type { OutboxPayload } from '@app/privacy/outbox/privacy-measure-dispatched';
 import { Effect, Option } from 'effect';
-import { defineOutboxWorker, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { requireModuleOperation, defineOutboxWorker, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import {
   OutboxPayloadSchema,
   outboxProducerModuleKey,
@@ -55,12 +55,12 @@ const outcomeMatches = (payload: OutboxPayload, outcome: OwnerExecutionOutcome):
   );
 };
 
-export const handleExecutePrivacyMeasure = Effect.fn('CommerceExecutePrivacyMeasureWorker.handle')(function* handle(
+const prepareExecutePrivacyMeasure = Effect.fn('CommerceExecutePrivacyMeasureWorker.prepare')(function* prepare(
   payload: OutboxPayload,
   context: OutboxWorkerHandlerContext,
 ) {
   if (payload.handoff.owningCapability !== OWNER) {
-    return yield* Effect.void;
+    return Option.none();
   }
   if (!contextIsExact(payload, context)) {
     return yield* invalid('Core delivery evidence does not match this owner handoff');
@@ -73,13 +73,18 @@ export const handleExecutePrivacyMeasure = Effect.fn('CommerceExecutePrivacyMeas
   ) {
     return yield* invalid('Owner scope is INDETERMINATE because resource references do not identify one Legal Entity');
   }
+  const { originatorInvocationId } = context;
+  if (originatorInvocationId === undefined) {
+    return yield* invalid('Owner work has no originating action invocation to act for');
+  }
+  const originator = { actionInvocationId: originatorInvocationId, tenantId: payload.handoff.tenantId };
   const gateway = yield* PrivacyMeasureOwnerGateway;
   const correlation = context.correlationId ?? context.messageId;
   const fingerprint = fingerprintPrivacyMeasureHandoff(payload.handoff);
-  const receipt = yield* gateway.load(payload.handoff, legalEntityId, correlation, context.compositionRevision);
+  const receipt = yield* gateway.load(payload.handoff, correlation, context.compositionRevision, originator);
   let outcome: OwnerExecutionOutcome;
   if (Option.isNone(receipt)) {
-    outcome = yield* gateway.execute(payload.handoff, legalEntityId, correlation, context.compositionRevision);
+    outcome = yield* gateway.execute(payload.handoff, correlation, context.compositionRevision, originator);
   } else {
     const { handoffFingerprint, outcome: durableOutcome } = receipt.value;
     if (handoffFingerprint !== fingerprint) {
@@ -90,8 +95,24 @@ export const handleExecutePrivacyMeasure = Effect.fn('CommerceExecutePrivacyMeas
   if (!outcomeMatches(payload, outcome)) {
     return yield* conflict('The owner outcome does not exactly partition the approved resource scope');
   }
-  yield* gateway.report(outcome, legalEntityId, correlation, context.compositionRevision);
-  return yield* Effect.void;
+  return Option.some({ correlation, originator, outcome });
+});
+
+export const handleExecutePrivacyMeasure = Effect.fn('CommerceExecutePrivacyMeasureWorker.handle')(function* handle(
+  payload: OutboxPayload,
+  context: OutboxWorkerHandlerContext,
+) {
+  const prepared = yield* prepareExecutePrivacyMeasure(payload, context);
+  if (Option.isNone(prepared)) {
+    return yield* Effect.void;
+  }
+  const gateway = yield* PrivacyMeasureOwnerGateway;
+  return yield* gateway.report(
+    prepared.value.outcome,
+    prepared.value.correlation,
+    context.compositionRevision,
+    prepared.value.originator,
+  );
 });
 
 export const executePrivacyMeasureWorker = defineOutboxWorker(
@@ -116,6 +137,34 @@ export const executePrivacyMeasureWorker = defineOutboxWorker(
     topic: outboxTopic,
     workerKey: WORKER_KEY,
   },
-  handleExecutePrivacyMeasure,
+  Effect.fn('CommerceExecutePrivacyMeasureWorker.registered')(function* registered(
+    payload: OutboxPayload,
+    context: OutboxWorkerHandlerContext,
+  ) {
+    const prepared = yield* prepareExecutePrivacyMeasure(payload, context);
+    if (Option.isNone(prepared)) {
+      return yield* Effect.void;
+    }
+    yield* requireModuleOperation('commerce.customer-context.requirement.privacy-report-owner-outcome').pipe(
+      Effect.mapError((cause) =>
+        Object.defineProperty(
+          new ExecutePrivacyMeasureWorkerRejected({
+            code: 'OWNER_GATEWAY_UNAVAILABLE',
+            reason: 'Required Privacy outcome reporting operation is unavailable',
+            retryable: true,
+          }),
+          'cause',
+          { configurable: true, value: cause },
+        ),
+      ),
+    );
+    const gateway = yield* PrivacyMeasureOwnerGateway;
+    return yield* gateway.report(
+      prepared.value.outcome,
+      prepared.value.correlation,
+      context.compositionRevision,
+      prepared.value.originator,
+    );
+  }),
 );
 /* jscpd:ignore-end */

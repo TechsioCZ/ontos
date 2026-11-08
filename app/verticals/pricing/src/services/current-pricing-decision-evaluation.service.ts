@@ -1,3 +1,4 @@
+import type { OperationalScope } from '@app/core-runtime';
 import type { CurrentPricingDecisionRequest } from '@app/pricing-contracts/current-pricing-decision';
 import type {
   PricingCommercialTotalReady,
@@ -45,6 +46,8 @@ import {
   publishOrdinaryCurrentPricingForCustomer,
 } from './ordinary-current-pricing-publication.service.ts';
 import type { CurrentPricingDecisionSubjectAuthorityEvidence } from './current-pricing-decision-subject-authority.service.ts';
+import { requirePricingMarketFenceOperation } from '../integrations/pricing-operation-requirements.ts';
+import type { PricingWholeEvaluationRequirements } from '../integrations/pricing-operation-requirements.ts';
 
 export type CurrentPricingDecisionRequiredOwnerRefs = readonly [string, ...string[]];
 
@@ -135,6 +138,8 @@ export interface CurrentPricingDecisionEvaluationFactoryService {
     source: CurrentPricingDecisionWholeEvaluationPort,
     scopedPricingGateway: PricingOwnerMaterialEvidenceFenceGateway | undefined,
     compositionRevision: string,
+    scope: OperationalScope,
+    requirements?: PricingWholeEvaluationRequirements,
   ) => CurrentPricingDecisionEvaluationService;
 }
 
@@ -268,6 +273,12 @@ const publicationIndeterminate = (
 
 type PublishResolvedDecision = (
   request: PricingOrdinaryCurrentPublicationRequest,
+) => Effect.Effect<PricingCommercialTotalSafeProjection, PricingOrdinaryCurrentPublicationIndeterminate>;
+
+/** The verified scope is the subject-bearing context the owner final fence acts for; it is never copied. */
+type PublishResolvedForScope = (
+  request: PricingOrdinaryCurrentPublicationRequest,
+  scope: OperationalScope,
 ) => Effect.Effect<PricingCommercialTotalSafeProjection, PricingOrdinaryCurrentPublicationIndeterminate>;
 
 const nonResolvedEvaluation = (
@@ -465,27 +476,28 @@ export const makeCurrentPricingDecisionEvaluationService = (
 };
 
 export const makeCurrentPricingDecisionEvaluationFactory = (
-  publishResolved: PublishResolvedDecision,
+  publishResolved: PublishResolvedForScope,
   publishWithScopedPricingGateway?: (
     gateway: PricingOwnerMaterialEvidenceFenceGateway,
     compositionRevision: string,
-  ) => PublishResolvedDecision,
+    requirements?: PricingWholeEvaluationRequirements,
+  ) => PublishResolvedForScope,
 ): CurrentPricingDecisionEvaluationFactoryService => ({
-  make: (source, scopedPricingGateway, compositionRevision) =>
-    makeCurrentPricingDecisionEvaluationService(
-      source,
+  make: (source, scopedPricingGateway, compositionRevision, scope, requirements) => {
+    const publish =
       scopedPricingGateway === undefined || publishWithScopedPricingGateway === undefined
         ? publishResolved
-        : publishWithScopedPricingGateway(scopedPricingGateway, compositionRevision),
-    ),
+        : publishWithScopedPricingGateway(scopedPricingGateway, compositionRevision, requirements);
+    return makeCurrentPricingDecisionEvaluationService(source, (request) => publish(request, scope));
+  },
 });
 
 const publishResolvedWithOwners = (
   externalOwnerValidation: PricingExternalOwnerEvidenceValidationService,
   ownerFinalFence: PricingMaterialEvidenceOwnerFencePort,
-): PublishResolvedDecision => {
-  const publishResolved: PublishResolvedDecision = (request) =>
-    publishOrdinaryCurrentPricingForCustomer(request).pipe(
+): PublishResolvedForScope => {
+  const publishResolved: PublishResolvedForScope = (request, scope) =>
+    publishOrdinaryCurrentPricingForCustomer(request, scope).pipe(
       Effect.provideService(PricingExternalOwnerEvidenceValidation, externalOwnerValidation),
       Effect.provideService(PricingMaterialEvidenceOwnerFinalFence, ownerFinalFence),
     );
@@ -504,14 +516,26 @@ export const currentPricingDecisionEvaluationFactoryLive = Layer.effect(
     // A governed transaction supplies its Pricing gateway after the owner-local ports are scoped.
     return makeCurrentPricingDecisionEvaluationFactory(
       publishResolvedWithOwners(externalOwnerValidation, defaultOwnerFinalFence),
-      (pricing, compositionRevision) =>
+      (pricing, compositionRevision, requirements) =>
         publishResolvedWithOwners(
           externalOwnerValidation,
           makePricingMaterialEvidenceOwnerFinalFenceFromGateways(
             {
               'commerce.catalog': catalog,
               'commerce.customer-context': customerContext,
-              'commerce.market-catalog': market,
+              'commerce.market-catalog':
+                requirements === undefined
+                  ? market
+                  : {
+                      confirmObservedGenerationsThrough: (input) =>
+                        requirePricingMarketFenceOperation(requirements.marketFinalFence).pipe(
+                          Effect.andThen(() => market.confirmObservedGenerationsThrough(input)),
+                        ),
+                      verifyOpaqueProofsAgainstCurrentState: (input) =>
+                        requirePricingMarketFenceOperation(requirements.marketFinalFence).pipe(
+                          Effect.andThen(() => market.verifyOpaqueProofsAgainstCurrentState(input)),
+                        ),
+                    },
               'commerce.pricing': pricing,
               'commerce.promotion': promotion,
             },

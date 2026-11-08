@@ -7,9 +7,16 @@ import {
 } from '../services/manufacturer-target-preflight.ts';
 import type { PreparedManufacturerTarget } from '../services/manufacturer-target-preflight.ts';
 import { validatePreparedCatalogScope } from '../services/catalog-open-selection-preflight.ts';
+import type { Crypto } from 'effect';
 import { Effect, Match, Schema } from 'effect';
-import type { ActionHandlerContext, ActionServiceFactory, ActionServicePreflight } from '@app/core-runtime';
-import { ActionTransactionError, ReadRuntime, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import type {
+  ActionHandlerContext,
+  ActionServiceFactory,
+  ActionServicePreparationContext,
+  ActionServicePreflight,
+  ReadRuntime,
+} from '@app/core-runtime';
+import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { ProductAuditEvidenceSchema } from '../../shared/domain/product.ts';
 import {
   ChangeProductManufacturerPayloadSchema,
@@ -24,7 +31,6 @@ import {
 import type { ManufacturerPersistence } from '../persistence/manufacturer-persistence.ts';
 import { captureCatalogActionResult } from '../persistence/catalog-action-result-snapshot.ts';
 import { ManufacturerTargetForbidden } from '../persistence/manufacturer-target-forbidden.ts';
-import { manufacturerTargetResolverForCoreRead } from '../persistence/manufacturer-target-resolver.ts';
 
 export type { ChangeProductManufacturerPayload } from '../../shared/actions/manufacturer-mutations.ts';
 
@@ -86,20 +92,18 @@ export const handleChangeProductManufacturer = Effect.fn('ChangeProductManufactu
   },
 );
 
-const makeManufacturerServices = Effect.fn('ChangeProductManufacturerAction.services')(function* manufacturerServices(
+const makeManufacturerServices = Effect.fn('ChangeProductManufacturerAction.services')((
   transaction: Parameters<ActionServiceFactory<never>>[0],
   {
     prepared,
     scope,
   }: { readonly prepared?: PreparedManufacturerTarget; readonly scope: Parameters<ActionServiceFactory<never>>[1] },
-) {
-  const readRuntime = yield* ReadRuntime;
-  const services = manufacturerPersistenceForScope(transaction, scope, {
-    targetResolver:
-      prepared === undefined
-        ? manufacturerTargetResolverForCoreRead(readRuntime, scope)
-        : preparedManufacturerTargetResolver(prepared),
-  });
+) => {
+  const services = manufacturerPersistenceForScope(
+    transaction,
+    scope,
+    prepared === undefined ? undefined : { targetResolver: preparedManufacturerTargetResolver(prepared) },
+  );
   const capturingServices: CapturingManufacturerPersistence = {
     ...services,
     captureResult: (actionInvocationId: string, result: typeof ProductManufacturerMutationResultSchema.Type) =>
@@ -124,24 +128,51 @@ const makeManufacturerServices = Effect.fn('ChangeProductManufacturerAction.serv
         ),
       ),
   };
-  return capturingServices;
+  return Effect.succeed(capturingServices);
 });
 
-const prepareManufacturerServices: ActionServicePreflight<
+const ActionDomainErrorSchema = Schema.Union([
+  ManufacturerActionError,
+  ManufacturerPersistenceUnavailable,
+  ManufacturerTargetForbidden,
+]);
+
+export const prepareChangeProductManufacturerServices = Effect.fn('CatalogManufacturer.prepareServices')(
+  function* prepareServices(
+    payload: typeof ChangeProductManufacturerPayloadSchema.Type,
+    context: ActionServicePreparationContext,
+  ) {
+    const prepared = yield* prepareManufacturerTarget(
+      payload.target,
+      context.scope,
+      'commerce.catalog.requirement.change-product-manufacturer-party',
+    );
+    return (
+      transaction: Parameters<ActionServiceFactory<never>>[0],
+      scope: Parameters<ActionServiceFactory<never>>[1],
+      revision: Parameters<ActionServiceFactory<never>>[2],
+    ) =>
+      validatePreparedCatalogScope(context, scope, revision).pipe(
+        Effect.flatMap(() => makeManufacturerServices(transaction, { prepared, scope })),
+      );
+  },
+) satisfies ActionServicePreflight<
   typeof ChangeProductManufacturerPayloadSchema.Type,
   CapturingManufacturerPersistence,
-  never,
-  ReadRuntime
-> = Effect.fn('CatalogManufacturer.prepareServices')(function* prepareServices(payload, context) {
-  const prepared = yield* prepareManufacturerTarget(payload.target, context.scope);
-  return (transaction, scope, revision) =>
-    validatePreparedCatalogScope(context, scope, revision).pipe(
-      Effect.flatMap(() => makeManufacturerServices(transaction, { prepared, scope })),
-    );
-});
+  typeof ActionDomainErrorSchema.Type,
+  ReadRuntime | Crypto.Crypto
+>;
 
 export const changeProductManufacturerAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-manufacturer.change',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.change-product-manufacturer.access.v1',
@@ -149,15 +180,11 @@ export const changeProductManufacturerAction = defineAction(
     actionKey: ACTION_KEY,
     auditEvidenceSchema: ProductAuditEvidenceSchema,
     auditProfile: 'standard',
-    domainErrorSchema: Schema.Union([
-      ManufacturerActionError,
-      ManufacturerPersistenceUnavailable,
-      ManufacturerTargetForbidden,
-    ]),
+    domainErrorSchema: ActionDomainErrorSchema,
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: CATALOG_MODULE_KEY,
       role: 'action',
@@ -174,7 +201,7 @@ export const changeProductManufacturerAction = defineAction(
   (transaction, scope) => makeManufacturerServices(transaction, { scope }),
   {
     onDecodedSuccess: ({ actionInvocationId, result, services }) => services.captureResult(actionInvocationId, result),
-    prepareServices: prepareManufacturerServices,
+    prepareServices: prepareChangeProductManufacturerServices,
   },
 );
 

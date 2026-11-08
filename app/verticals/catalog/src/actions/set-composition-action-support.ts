@@ -1,5 +1,5 @@
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { DateTime, Effect, Match } from 'effect';
+import { DateTime, Effect, Match, Option } from 'effect';
 
 import { SetCompositionActionError } from '../../shared/actions/set-composition-contract.ts';
 import type { SetCompositionMutationPayload } from '../../shared/actions/set-composition-contract.ts';
@@ -11,7 +11,7 @@ import type {
 import { setCompositionPersistenceForScope } from '../persistence/set-composition-persistence.ts';
 import { setCompositionComponentCurrentBasisForScope } from '../persistence/set-composition-component-current-basis.ts';
 import type { CartOpenSelectionPopulationPort } from '../../shared/domain/catalog-open-selection-population.ts';
-import { cartOpenSelectionPopulationFromEnvironment } from '../../shared/domain/catalog-open-selection-population.ts';
+import { cartOpenSelectionPopulationForScope } from '../../shared/domain/catalog-open-selection-population.ts';
 import { setCompositionSelectionImpactForScope } from '../persistence/catalog-selection-change-impact.ts';
 
 type ScopedTransaction = Parameters<typeof setCompositionPersistenceForScope>[0];
@@ -33,7 +33,7 @@ export const setCompositionPersistenceServiceFactory = Effect.fn('SetComposition
     transaction: ScopedTransaction,
     { population, scope }: { readonly population?: CartOpenSelectionPopulationPort | undefined; readonly scope: Scope },
   ) {
-    const configuredPopulation = population ?? (yield* cartOpenSelectionPopulationFromEnvironment);
+    const configuredPopulation = population ?? Option.getOrUndefined(yield* cartOpenSelectionPopulationForScope(scope));
     return setCompositionPersistenceForScope(
       transaction,
       scope,

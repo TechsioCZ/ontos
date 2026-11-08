@@ -2,14 +2,12 @@ import { executeSelectionEvidenceWithAuthorization } from '@app/catalog/api/clie
 import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
 import type { CatalogSelection } from '@app/catalog/domain/catalog-selection-evidence';
 import type { CatalogSelectionOwnerAssessmentResult } from '@app/catalog/domain/catalog-selection-owner-contract';
-import { Context, Effect, Option, Redacted, Schema } from 'effect';
+import type { OperationalScope } from '@app/core-runtime';
+import { Context, Crypto, Effect, Redacted, Schema } from 'effect';
 
-import {
-  CatalogSelectionGatewayCredentialService,
-  PricingCatalogSelectionUnavailable,
-  unavailableCatalogSelectionGatewayCredentialIssuer,
-} from '../../shared/domain/catalog-selection-gateway-credential.ts';
-import type { CatalogSelectionGatewayCredentialIssuer } from '../../shared/domain/catalog-selection-gateway-credential.ts';
+import { PricingCatalogSelectionUnavailable } from '../../shared/domain/pricing-catalog-selection-unavailable.ts';
+import { acquireOwnerGatewayConnection } from './owner-gateway-connection.ts';
+import type { OwnerGatewayConnectionAcquire } from './owner-gateway-connection.ts';
 
 type SelectionEvidenceRequest = Parameters<typeof executeSelectionEvidenceWithAuthorization>[0];
 type SelectionEvidenceEffect = ReturnType<typeof executeSelectionEvidenceWithAuthorization>;
@@ -37,7 +35,7 @@ class CatalogSelectionAssessmentService extends Context.Service<
 
 const sameSelection = Schema.toEquivalence(CatalogSelectionSchema);
 
-const executeSelectionEvidence: SelectionEvidenceExecutor = (payload, credential, requestCorrelation, options) =>
+export const executeSelectionEvidence: SelectionEvidenceExecutor = (payload, credential, requestCorrelation, options) =>
   executeSelectionEvidenceWithAuthorization(payload, Redacted.value(credential), requestCorrelation, options);
 
 const unavailable = (reason: string, cause?: unknown): PricingCatalogSelectionUnavailable => {
@@ -68,22 +66,27 @@ const assessmentMatchesRequest = (
   return true;
 };
 
-const makeCatalogSelectionAssessmentPort = (dependencies: {
-  readonly context: {
-    readonly compositionRevision: string;
-    readonly legalEntityId: string;
-    readonly requestCorrelation: string;
-  };
+interface CatalogSelectionAssessmentContext {
+  readonly compositionRevision: string;
+  readonly legalEntityId: string;
+  readonly requestCorrelation: string;
+  readonly scope: OperationalScope;
+}
+
+export const makeCatalogSelectionAssessmentPort = (dependencies: {
+  readonly acquire: OwnerGatewayConnectionAcquire;
+  readonly context: CatalogSelectionAssessmentContext;
   readonly execute: SelectionEvidenceExecutor;
-  readonly issuer: CatalogSelectionGatewayCredentialIssuer;
 }): CatalogSelectionAssessmentPort =>
   CatalogSelectionAssessmentService.of({
     assess: (selection) =>
-      dependencies.issuer
-        .issue({
+      dependencies
+        .acquire({
           audience: 'catalog',
           compositionRevision: dependencies.context.compositionRevision,
+          legalEntityScope: 'tenant',
           requestCorrelation: dependencies.context.requestCorrelation,
+          scope: dependencies.context.scope,
         })
         .pipe(
           Effect.flatMap(({ baseUrl, credential }) =>
@@ -118,20 +121,16 @@ const makeCatalogSelectionAssessmentPort = (dependencies: {
         ),
   });
 
-export const catalogSelectionAssessmentPortFromEnvironment = (
-  context: {
-    readonly compositionRevision: string;
-    readonly legalEntityId: string;
-    readonly requestCorrelation: string;
+export const catalogSelectionAssessmentPortFromEnvironment = Effect.fn('catalogSelectionAssessmentPortFromEnvironment')(
+  function* catalogSelectionAssessmentPortFromEnvironment(
+    context: CatalogSelectionAssessmentContext,
+    execute: SelectionEvidenceExecutor = executeSelectionEvidence,
+  ): Effect.fn.Return<CatalogSelectionAssessmentPort, never, Crypto.Crypto> {
+    const crypto = yield* Crypto.Crypto;
+    return makeCatalogSelectionAssessmentPort({
+      acquire: (input) => acquireOwnerGatewayConnection(input, crypto),
+      context,
+      execute,
+    });
   },
-  execute: SelectionEvidenceExecutor = executeSelectionEvidence,
-): Effect.Effect<CatalogSelectionAssessmentPort> =>
-  Effect.serviceOption(CatalogSelectionGatewayCredentialService).pipe(
-    Effect.map((issuerOption) =>
-      makeCatalogSelectionAssessmentPort({
-        context,
-        execute,
-        issuer: Option.isSome(issuerOption) ? issuerOption.value : unavailableCatalogSelectionGatewayCredentialIssuer,
-      }),
-    ),
-  );
+);

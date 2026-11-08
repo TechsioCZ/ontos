@@ -27,7 +27,7 @@ const lookupUnavailable = (cause: unknown): ReadHandlerUnavailable =>
 
 const contractualDiscountResultLookupEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'authenticated_principal' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.pricing.api.contractual-discount-result-lookup',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -56,6 +56,14 @@ export const readContractualDiscountResult: (
 
 export const contractualDiscountResultLookupRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.pricing.contractual-discount.read-result',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'discounts', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: contractualDiscountResultLookupEntrypoint,
     evidencePolicy: {
@@ -65,7 +73,6 @@ export const contractualDiscountResultLookupRead = defineRead(
     inputSchema: ContractualDiscountResultLookupRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.pricing.api.contractual-discount-result-lookup',
     resultSchema: ContractualDiscountResultLookupResponseSchema,
@@ -81,5 +88,4 @@ export const contractualDiscountResultLookupRead = defineRead(
       ),
   },
   (transaction, scope) => contractualDiscountPersistenceForScope(transaction, scope),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

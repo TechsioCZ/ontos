@@ -19,7 +19,7 @@ export const PartyFactAssertionSchema = Schema.Struct({
   externalEvidence: Schema.OptionFromOptionalNullOr(AresAppliedEvidenceSchema, {
     onNoneEncoding: 'omit',
   }),
-  factKind: Schema.Literals(['PARTY_TYPE', 'DISPLAY_NAME']),
+  factKind: Schema.Literals(['PARTY_TYPE', 'FIRST_NAME', 'LAST_NAME', 'BUSINESS_NAME']),
   isCurrent: Schema.Boolean,
   partyRef: PartyRefSchema,
   recordedAt: IsoTimestampSchema,
@@ -28,7 +28,8 @@ export const PartyFactAssertionSchema = Schema.Struct({
   supersedesAssertionId: Schema.OptionFromNullOr(AssertionIdSchema),
   validFrom: IsoTimestampSchema,
   validTo: Schema.OptionFromNullOr(IsoTimestampSchema),
-  value: Schema.String,
+  // Absent when the caller lacks `party.registry.party-identity.read`; the assertion identity stays.
+  value: Schema.optionalKey(Schema.String),
 });
 export type PartyFactAssertion = typeof PartyFactAssertionSchema.Type;
 export const PartyDetailResolutionSchema = Schema.Struct({
@@ -38,10 +39,19 @@ export const PartyDetailResolutionSchema = Schema.Struct({
   requestedPartyRef: PartyRefSchema,
 });
 export type PartyDetailResolution = typeof PartyDetailResolutionSchema.Type;
+/** The names are absent when the caller lacks `party.registry.party-identity.read`. */
+const PartyDetailPartySchema = Schema.Struct({
+  ...PartySchema.fields,
+  businessName: Schema.optionalKey(PartySchema.fields.businessName),
+  displayName: Schema.optionalKey(PartySchema.fields.displayName),
+  firstName: Schema.optionalKey(PartySchema.fields.firstName),
+  lastName: Schema.optionalKey(PartySchema.fields.lastName),
+});
 export const PartyDetailResponseSchema = Schema.Struct({
   currentFactAssertions: Schema.Array(PartyFactAssertionSchema),
-  factHistory: Schema.OptionFromNullOr(Schema.Array(PartyFactAssertionSchema)),
-  party: PartySchema,
+  // Absent unless history was requested; a plain array (not an Option) so redaction projects its rows in place.
+  factHistory: Schema.optionalKey(Schema.Array(PartyFactAssertionSchema)),
+  party: PartyDetailPartySchema,
   resolution: PartyDetailResolutionSchema,
 });
 export type PartyDetailResponse = typeof PartyDetailResponseSchema.Type;

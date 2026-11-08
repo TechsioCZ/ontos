@@ -2,12 +2,12 @@
 // @ontos-action-http-owner commerce.inventory
 // @ontos-action-http-slug stock-receipt
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { StockReceiptPayloadSchema, StockReceiptResultSchema } from '../actions/stock-receipt.ts';
 
 export { StockReceiptPayloadSchema } from '../actions/stock-receipt.ts';
-
 const StockReceiptActionHeadersSchema = Schema.Struct({
   'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
 });
@@ -22,6 +22,7 @@ export const StockReceiptActionForbiddenProblemSchema = makeProblemDetailsSchema
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -145,7 +146,7 @@ export const stockReceiptActionGroupDefinition = HttpApiGroup.make('stockReceipt
       error: actionErrors,
       headers: StockReceiptActionHeadersSchema,
       payload: Schema.toEncoded(StockReceiptPayloadSchema),
-      success: StockReceiptResultSchema,
+      success: [ActionProposalAcceptedSchema, StockReceiptResultSchema],
     }),
   )
   .middleware(StockReceiptActionSchemaErrorMiddleware);

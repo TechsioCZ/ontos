@@ -17,6 +17,7 @@ const tenantId = 'e3460000-0000-4000-8000-000000000001';
 const otherTenantId = 'e3460000-0000-4000-8000-000000000002';
 const sellerId = 'e3460000-0000-4000-8000-000000000003';
 const otherSellerId = 'e3460000-0000-4000-8000-000000000004';
+const foreignSellerMarketId = 'e3461000-0000-4000-8000-000000000009';
 const principalId = 'e3460000-0000-4000-8000-000000000005';
 const marketId = 'e3461000-0000-4000-8000-000000000001';
 const duplicateMarketId = 'e3461000-0000-4000-8000-000000000002';
@@ -189,6 +190,26 @@ it.live('enforces CAS, idempotency, temporal associations, terminal retirement, 
         ),
       );
       expectOutcome(duplicateCode, 'market_code_conflict');
+
+      // The seller of a Market is the trusted legal-entity scope. v2 replaced the removed resource
+      // resolver with the create_market routine's own check, so a payload naming another company is
+      // refused before any Market row exists.
+      const foreignSeller = oneOutcome(
+        yield* scoped(runtime, (transaction) =>
+          transaction.execute(
+            sql`select * from commerce_market_catalog.create_market(
+              ${tenantId}::uuid, ${sellerId}::uuid,
+              ${JSON.stringify({
+                ...createPayload,
+                ...command('e3463000-0000-4000-8000-000000000004'),
+                marketId: foreignSellerMarketId,
+                sellingLegalEntityRef: { ...sellerRef, resourceId: otherSellerId },
+              })}::jsonb)`,
+            'objects',
+          ),
+        ),
+      );
+      expectOutcome(foreignSeller, 'cross_tenant_reference');
 
       const revisedDefinition = oneOutcome(
         yield* scoped(runtime, (transaction) =>
@@ -521,7 +542,7 @@ it.live('enforces CAS, idempotency, temporal associations, terminal retirement, 
   ),
 );
 
-it.live('exposes only the governed mutations, retirement-intent routines, and reads over forced Tenant RLS', () =>
+it.live('limits forced Tenant RLS tables to governed routines and exact admission settlement grants', () =>
   Effect.scoped(
     Effect.gen(function* marketSecurityCatalog() {
       const { admin: adminClient } = yield* testDatabaseClients;
@@ -568,12 +589,15 @@ it.live('exposes only the governed mutations, retirement-intent routines, and re
           'revise_storefront_association(uuid, uuid, jsonb)',
           'transition_market_lifecycle(uuid, uuid, jsonb)',
         ],
-        forced_tables: 7,
+        forced_tables: 8,
         private_routines_executable: false,
         runtime_table_grants: [
           'gateway_assertion_redemptions:DELETE',
           'gateway_assertion_redemptions:INSERT',
           'gateway_assertion_redemptions:SELECT',
+          'market_retirement_admissions:INSERT',
+          'market_retirement_admissions:SELECT',
+          'market_retirement_admissions:UPDATE',
         ],
       });
     }),

@@ -14,7 +14,7 @@ const moduleId = 'finance.billing';
 const readKey = 'finance.billing.search.documents';
 const documentsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: readKey,
   moduleKey: moduleId,
   role: 'search',
@@ -31,6 +31,14 @@ const makeSearchServices: ReadServiceFactory<SearchServices> = (transaction, sco
   persistenceService(transaction, scope);
 export const documentsRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'finance.billing.search-documents.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'finance-billing', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'search',
     entrypoint: documentsEntrypoint,
     evidencePolicy: {
@@ -40,20 +48,14 @@ export const documentsRead = defineRead(
     inputSchema: DocumentsProviderRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleId,
-    permissionTarget: 'module',
     policies: [],
     readKey,
-    resultAuthorization: {
-      accessFiltering: 'legal_entity_scope',
-      kind: 'owner-legal-entity-scope',
-      requiredModuleAccess: true,
-    } as const,
     resultSchema: DocumentsProviderResponseSchema,
     schemaVersion: '1',
   },
   {
     load: (_input, context: ReadLoadContext<SearchServices>) =>
-      context.services.loadStateRow().pipe(Effect.mapError(unavailable)),
+      context.services.loadSearchStateRow().pipe(Effect.mapError(unavailable)),
     finish: Effect.fn('Finance.search.documents.finish')(function* finish(
       input: DocumentsProviderRequest,
       context: ReadFinishContext<undefined, StateRow | undefined>,
@@ -70,5 +72,4 @@ export const documentsRead = defineRead(
     }, Effect.mapError(unavailable)),
   },
   makeSearchServices,
-  () => ({ kind: 'module', moduleId }),
 );

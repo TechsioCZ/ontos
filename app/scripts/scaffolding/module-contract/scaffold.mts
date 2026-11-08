@@ -22,14 +22,16 @@ import {
   MODULE_MANIFEST_ACTION_SLOT_START,
   MODULE_MANIFEST_API_SLOT_END,
   MODULE_MANIFEST_API_SLOT_START,
+  MODULE_MANIFEST_OPERATION_SLOT_START,
+  MODULE_MANIFEST_OPERATION_SLOT_END,
   MODULE_MANIFEST_COMPONENT_SLOT_END,
   MODULE_MANIFEST_COMPONENT_SLOT_START,
-  MODULE_MANIFEST_PERMISSION_SLOT_END,
-  MODULE_MANIFEST_PERMISSION_SLOT_START,
   MODULE_MANIFEST_IMPORT_SLOT_END,
   MODULE_MANIFEST_IMPORT_SLOT_START,
   MODULE_REGISTRATION_ACTION_SLOT_END,
   MODULE_REGISTRATION_ACTION_SLOT_START,
+  MODULE_REGISTRATION_READ_SLOT_START,
+  MODULE_REGISTRATION_READ_SLOT_END,
   MODULE_REGISTRATION_API_SLOT_END,
   MODULE_REGISTRATION_API_SLOT_START,
   MODULE_REGISTRATION_COMPONENT_SLOT_END,
@@ -160,6 +162,10 @@ export const governedHttpApi = ${apiValue};${source.slice(statementEnd + 1)}`;
 const initializeGovernedHttpHandlerRoot = (source: string, vertical: VerticalMetadata): string => {
   for (const reserved of [
     'GovernedReadRuntime',
+    'GovernedMakeReadRuntimeLive',
+    'governedOwnerRegistration',
+    'governedActiveApplicationCompositionLive',
+    'governedActionDeliveryUnit',
     'GovernedReadLayer',
     'governedReadRuntimeLive',
     'governedReadApiHandlersLive',
@@ -206,20 +212,26 @@ const initializeGovernedHttpHandlerRoot = (source: string, vertical: VerticalMet
   if (!assemblerMode && runtimeLayerStart === -1) {
     return raiseScaffoldFailure(`vertical ${vertical.slug} API root must contain the pinned HttpApiBuilder layer`);
   }
-  const generatedRoot = `import {
+  const generatedRoot = `import { ${toCamelCase(vertical.slug)}Registration as governedOwnerRegistration } from '../vertical.registration.ts';
+import { ultramodernDeliveryUnit as governedActionDeliveryUnit } from '../shared/ultramodern-build.ts';
+import {
   ContextAccessLive as GovernedContextAccessLive,
   CorePersistenceLive as GovernedCorePersistenceLive,
   DatabaseConfigLive as GovernedDatabaseConfigLive,
   defineDatabaseIdentityEnrollment as defineGovernedDatabaseIdentityEnrollment,
   makeDatabaseIdentityEnrollmentLive as makeGovernedDatabaseIdentityEnrollmentLive,
-  ReadRuntimeLive as GovernedReadRuntimeLive,
+  makeReadRuntimeLive as GovernedMakeReadRuntimeLive,
   TenantModuleStateServiceLive as GovernedTenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import {
+  AccessDecisionLive as GovernedAccessDecisionLive,
+  AccessEnforcementPortsLive as GovernedAccessEnforcementPortsLive,
   ModuleEntrypointGatewayLive as GovernedModuleEntrypointGatewayLive,
   ModuleStateGateLive as GovernedModuleStateGateLive,
   OperationalScopeResolverLive as GovernedOperationalScopeResolverLive,
+  TenantIntentLoaderLive as GovernedTenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
+import { ActiveApplicationCompositionConfigLive as GovernedApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { NodeCrypto } from '@effect/platform-node';
 import { Layer as GovernedReadLayer } from 'effect';
@@ -230,9 +242,9 @@ ${GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END}
 ${GOVERNED_HTTP_HANDLER_IMPORT_SLOT_START}
 ${GOVERNED_HTTP_HANDLER_IMPORT_SLOT_END}
 
-const governedDatabaseIdentitiesLive = makeGovernedDatabaseIdentityEnrollmentLive(
-  defineGovernedDatabaseIdentityEnrollment([]),
-);
+// This generated owner uses the shared runtime identity and enrolls no owner-private database identity.
+const governedDatabaseIdentitiesLive = makeGovernedDatabaseIdentityEnrollmentLive(defineGovernedDatabaseIdentityEnrollment([]));
+
 const governedTenantModuleStateServiceLive = GovernedTenantModuleStateServiceLive.pipe(
   GovernedReadLayer.provide(GovernedCorePersistenceLive),
 );
@@ -249,8 +261,13 @@ const governedReadRuntimeDependenciesLive = GovernedReadLayer.mergeAll(
     ),
   ),
 );
-const governedReadRuntimeLive = GovernedReadRuntimeLive.pipe(
-  GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
+const governedAccessEnforcementLive = GovernedAccessDecisionLive.pipe(
+  GovernedReadLayer.provideMerge(GovernedAccessEnforcementPortsLive),
+  GovernedReadLayer.provide(GovernedTenantIntentLoaderLive),
+  GovernedReadLayer.provide(GovernedCorePersistenceLive),
+  GovernedReadLayer.provide(GovernedDatabaseConfigLive),
+  GovernedReadLayer.provide(NodeCrypto.layer),
+  GovernedReadLayer.provide(governedDatabaseIdentitiesLive),
 );
 const governedApplicationCompositionSourceLive = GovernedApplicationCompositionSourceLive.pipe(
   GovernedReadLayer.provide(
@@ -260,6 +277,14 @@ const governedApplicationCompositionSourceLive = GovernedApplicationCompositionS
       ),
     ),
   ),
+);
+
+const governedActiveApplicationCompositionLive = GovernedApplicationCompositionConfigLive.pipe(
+  GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
+);
+const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(governedActionDeliveryUnit, governedOwnerRegistration).pipe(
+  GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
+  GovernedReadLayer.provide(governedActiveApplicationCompositionLive),
 );
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
@@ -279,6 +304,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
       .replace(/^handlers:\s*/u, '');
     return `${generatedRoot}\n${source.slice(0, handlerProperty.start)}
     handlers: GovernedReadLayer.mergeAll(${handlers}, governedReadApiHandlersLive).pipe(
+      GovernedReadLayer.provide(governedAccessEnforcementLive),
       GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
       GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedDatabaseConfigLive, NodeCrypto.layer)),
       GovernedReadLayer.provide(governedDatabaseIdentitiesLive),
@@ -289,6 +315,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
     runtimeLayerStart,
     runtimeLayerEnd,
   )}  GovernedReadLayer.provide(governedReadApiHandlersLive),
+  GovernedReadLayer.provide(governedAccessEnforcementLive),
   GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
   GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedDatabaseConfigLive, NodeCrypto.layer)),
   GovernedReadLayer.provide(governedDatabaseIdentitiesLive),
@@ -419,15 +446,15 @@ export const ${valueName} = defineOntosModuleManifest({
       ${MODULE_MANIFEST_API_SLOT_START}
       ${MODULE_MANIFEST_API_SLOT_END}
     },
-    businessPermissions: [
-      ${MODULE_MANIFEST_PERMISSION_SLOT_START}
-      ${MODULE_MANIFEST_PERMISSION_SLOT_END}
-    ],
     components: {
       ${MODULE_MANIFEST_COMPONENT_SLOT_START}
       ${MODULE_MANIFEST_COMPONENT_SLOT_END}
     },
     events: [],
+    operationContracts: [
+      ${MODULE_MANIFEST_OPERATION_SLOT_START}
+      ${MODULE_MANIFEST_OPERATION_SLOT_END}
+    ],
     reports: [
       ${MODULE_MANIFEST_REPORT_SLOT_START}
       ${MODULE_MANIFEST_REPORT_SLOT_END}
@@ -465,6 +492,12 @@ export const ${valueName} = defineOntosModuleManifest({
       ],
       timelines: [],
     },
+  },
+  requirements: {
+    coreCapabilities: [],
+    intrinsic: [],
+    operations: [],
+    schemaVersion: '1',
   },
 });
 `;
@@ -508,6 +541,10 @@ export const ${prefix}Registration = defineVerticalRuntimeRegistration({
     },
   },
   manifest: ${prefix}Manifest,
+  reads: [
+    ${MODULE_REGISTRATION_READ_SLOT_START}
+    ${MODULE_REGISTRATION_READ_SLOT_END}
+  ],
   outboxWorkers: [
     ${MODULE_REGISTRATION_WORKER_SLOT_START}
     ${MODULE_REGISTRATION_WORKER_SLOT_END}
@@ -526,15 +563,17 @@ ${VERTICAL_REPORT_SLOT_END}
 const addArtifactCommand = (
   current: JsonValue | undefined,
   vertical: VerticalMetadata,
+  target: 'cloudflare-dist' | 'dist',
   label: string,
 ): Effect.Effect<string, ModuleContractScaffoldError> =>
   Effect.gen(function* addArtifactCommandEffect() {
     const script = yield* trySync(() => requiredString(current, `vertical ${vertical.slug} ${label} script`));
-    const command = `node ../../scripts/generate-ontos-module-contract.mts --vertical ${vertical.slug} --target dist`;
+    const command = `node ../../scripts/generate-ontos-module-contract.mts --vertical ${vertical.slug} --target ${target}`;
     if (script.includes('generate-ontos-module-contract.mts')) {
       return yield* scaffoldError(`vertical ${vertical.slug} ${label} script already contains module emission`);
     }
-    const buildToken = 'modern build --deploy-target node';
+    const buildToken =
+      target === 'dist' ? 'modern build --deploy-target node' : 'modern build --deploy-target cloudflare';
     if (!script.includes(buildToken)) {
       return yield* scaffoldError(`vertical ${vertical.slug} ${label} script is not a generated Modern build`);
     }
@@ -563,7 +602,16 @@ const patchPackage = (
     const scripts = yield* trySync(() => ({
       ...asJsonObject(vertical.packageJson['scripts'], `vertical ${vertical.slug} scripts`),
     }));
-    scripts['build'] = yield* addArtifactCommand(scripts['build'], vertical, 'build');
+    scripts['build'] = yield* addArtifactCommand(scripts['build'], vertical, 'dist', 'build');
+    // Zerops-only owners have no Cloudflare build. Validate and patch an authored target only when it exists.
+    if (scripts['cloudflare:build'] !== undefined) {
+      scripts['cloudflare:build'] = yield* addArtifactCommand(
+        scripts['cloudflare:build'],
+        vertical,
+        'cloudflare-dist',
+        'cloudflare:build',
+      );
+    }
     return yield* trySync(() => {
       let content = patchJsonObjectProperty(vertical.packageContent, [], 'dependencies', sortedDependencies);
       content = patchJsonObjectProperty(content, [], 'scripts', scripts);

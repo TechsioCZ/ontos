@@ -1,23 +1,21 @@
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { createPrivacyDeniedAccess } from '../support/live-access-authority.ts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { recordConsentDecisionAction } from '../../src/actions/record-consent-decision.action.ts';
 import { addProcessingPurposeVersionAction } from '../../src/actions/add-processing-purpose-version.action.ts';
 import { PurposeVersionConflict } from '../../shared/domain/processing-purpose.ts';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
-import { createHash } from 'node:crypto';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import {
   makeContextPermissionRelationshipMutationLive,
   runAction,
   TrustedPrincipalContextSchema,
   ReadRuntime,
-  canonicalizeApplicationComposition,
-  OntosModuleDeploymentContractSchema,
-  validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
-import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
-import { makeNativeReadTestContext } from '@app/core-runtime/testing/native-reads';
+import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { privacyRegistration } from '../../vertical.registration.ts';
+import { makePrivacyDsrCompositionSnapshot } from '../support/dsr-obligation-native.ts';
+import { makeNativeReadTestContext, NativeReadTestOwnerRegistration } from '@app/core-runtime/testing/native-reads';
 import { eq } from 'drizzle-orm';
 import { currentConsentRead } from '../../src/api/current-consent.read.ts';
 import { processingPurposesRead } from '../../src/api/processing-purposes.read.ts';
@@ -49,41 +47,8 @@ const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
 );
-const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const makeRetainedIsolation = Effect.fn('RetainedWithdrawal.makeIsolation')(function* makeRetainedIsolation() {
-  const base = yield* makeApplicationCompositionSnapshotFixture(
-    [ultramodernApiMarker.appId],
-    ultramodernApiMarker.buildMarker,
-  );
-  const modules = yield* Effect.forEach(
-    base.composition.modules,
-    Effect.fn('RetainedWithdrawal.moduleContract')(function* moduleContract(module) {
-      const contract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
-        module.contractDocument,
-      );
-      const document = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))({
-        ...contract,
-        manifest: { ...contract.manifest, module: { ...contract.manifest.module, id: 'privacy.core' } },
-      });
-      const sha256 = digest(document);
-      return {
-        ...module,
-        contract: { ...module.contract, sha256 },
-        contractDocument: document,
-        moduleId: 'privacy.core',
-        publicContract: { ...module.publicContract, id: 'privacy.core', sha256 },
-      };
-    }),
-    { concurrency: 1 },
-  );
-  const composition = { ...base.composition, modules };
-  const snapshot = yield* validateActiveApplicationCompositionSnapshot({
-    ...base,
-    composition: {
-      ...composition,
-      revision: digest(canonicalizeApplicationComposition({ ...composition, revision: '0'.repeat(64) })),
-    },
-  });
+  const snapshot = yield* makePrivacyDsrCompositionSnapshot();
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     compositionSnapshot: snapshot,
     mode: 'schema-only',
@@ -98,6 +63,7 @@ const makeRetainedNative = Effect.fn('RetainedWithdrawal.makeNative')(function* 
 ) {
   const { isolated } = yield* makeRetainedIsolation();
   return yield* makeNativeReadTestContext({
+    access: 'allowed',
     connections: {
       admin: { connectionString: Redacted.make(isolated.connections.admin.connectionString) },
       runtime: { connectionString: Redacted.make(isolated.connections.runtime.connectionString) },
@@ -105,7 +71,7 @@ const makeRetainedNative = Effect.fn('RetainedWithdrawal.makeNative')(function* 
     contextPermissions,
     moduleId: 'privacy.core',
     ownerFixtureRetention: 'retain-complete-context',
-  });
+  }).pipe(Effect.provideService(NativeReadTestOwnerRegistration, privacyRegistration));
 });
 
 // Normal owner producers; the channel proof is an explicit fixture precondition,
@@ -874,14 +840,18 @@ it.live(
       const { isolated, snapshot } = yield* makeRetainedIsolation();
       const fixture = yield* Effect.acquireRelease(
         makeLiveOperationFixture({
+          access: 'allowed',
           actionKeys: [
             addProcessingPurposeVersionAction.descriptor.actionKey,
             recordConsentDecisionAction.descriptor.actionKey,
           ],
           adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
+          applicationComposition: { load: Effect.succeed(snapshot) },
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: snapshot.composition.revision,
+          expectedDeployment: ultramodernDeliveryUnit,
           moduleKeys: ['privacy.core'],
+          ownerRegistration: privacyRegistration,
           runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
         }),
         (value) => value.close().pipe(Effect.orDie),
@@ -912,7 +882,10 @@ it.live(
             .pipe(Effect.orDie),
         );
       }
-      const context = yield* Layer.build(fixture.layer);
+      // The one access gate this suite scripts (the native database carries no v2 access intent and
+      // reaches no engine), plus the per-principal refusals it names (see `live-access-authority`).
+      const deniedAccess = createPrivacyDeniedAccess();
+      const context = yield* Layer.build(fixture.layer.pipe(Layer.provide(deniedAccess.layer)));
       const original = yield* fixture
         .prepareOwner(prepareOriginalConsent, 'required')
         .pipe(Effect.provideContext(context));
@@ -963,29 +936,10 @@ it.live(
           tenantId: fixture.tenantId,
         });
         const runtime = yield* ReadRuntime.pipe(Effect.provideContext(context));
-        const missingModule = yield* runtime
-          .runRead({
-            input: { scopeRefs: [withdrawal.scope.scopeRef] },
-            principal,
-            registration: currentConsentRead,
-            transport: { correlationId: yield* nextId },
-          })
-          .pipe(Effect.provideContext(context), Effect.result);
-        expect(Result.isFailure(missingModule)).toBe(true);
-        if (Result.isFailure(missingModule)) {
-          expect(missingModule.failure).toMatchObject({ code: 'read_permission_denied' });
-        }
-        // This genuine produced Purpose reference supplies exact Privacy module access;
-        // the Consent Read itself still targets the module and separately requires its context permission.
-        yield* fixture.grantResourceAccess(original.purpose.purposeRef, fixture.manager.principalId, 'reader');
-        const consentPermission = { moduleId: 'privacy.core', permission: 'privacy.consent.read' };
-        yield* permissions.mutate({
-          legalEntityId: fixture.legalEntityId,
-          operation: 'revoke',
-          principal,
-          target: consentPermission,
-          tenantId: fixture.tenantId,
-        });
+        // v2: one access gate decides this read (O62). The removed legacy permission tuples no longer
+        // refuse anyone, so the suite flips the fixture's own gate answer and proves both the refusal
+        // and the same request succeeding once it is restored.
+        deniedAccess.deny(principal.principalId, 'privacy.core.consent.read');
         const missingContext = yield* runtime
           .runRead({
             input: { scopeRefs: [withdrawal.scope.scopeRef] },
@@ -998,13 +952,7 @@ it.live(
         if (Result.isFailure(missingContext)) {
           expect(missingContext.failure).toMatchObject({ code: 'read_permission_denied' });
         }
-        yield* permissions.mutate({
-          legalEntityId: fixture.legalEntityId,
-          operation: 'grant',
-          principal,
-          target: consentPermission,
-          tenantId: fixture.tenantId,
-        });
+        deniedAccess.allow(principal.principalId, 'privacy.core.consent.read');
         const current = yield* runtime
           .runRead({
             input: { scopeRefs: [withdrawal.scope.scopeRef] },

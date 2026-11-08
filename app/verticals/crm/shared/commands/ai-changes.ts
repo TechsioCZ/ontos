@@ -4,12 +4,13 @@ import type { EntityId } from '../domain/common.ts';
 // AREA: AI level C (specs AGENT.md) — owned by the ai-level-c lane. Command schemas + reducer.
 //
 //   AiProposeChanges  one pending batch of proposals. Every item waits for approval. Every proposal is dry-run
-//                     against the current state first (e.g. reassigning a client needs demo.crm.assign).
-//   AiDecideChanges   principal with write_all: approve (applies the stored operation as the approver) or reject.
-//   AiRevertBatch     principal with write_all: restores every applied change of one batch from its snapshots
+//                     against the current state first (e.g. reassigning a client needs the
+//                     demo.crm.client-owner.assign authority).
+//   AiDecideChanges   a full writer: approve (applies the stored operation as the approver) or reject.
+//   AiRevertBatch     a full writer: restores every applied change of one batch from its snapshots
 //                     (only when nobody changed the entity since); pending proposals of the batch are rejected.
 //
-// Native Action grants authorize execution; the reducer retains its write_all and proposal state checks.
+// Native Action grants authorize execution; the reducer retains its full-write and proposal state checks.
 import { Effect, Match, Option, Predicate, Result, Schema } from 'effect';
 import { AiOperationSchema, initialAiChangesSlice, newClientContactsDiff } from '../domain/ai-changes.ts';
 import type {

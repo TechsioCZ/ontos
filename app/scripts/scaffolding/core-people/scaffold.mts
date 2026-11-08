@@ -22,10 +22,9 @@ export const planCorePeopleSearchProvider = Effect.fn('CorePeopleScaffold.provid
     config.vertical !== 'core' ||
     config.name !== 'people' ||
     config.resource !== 'person' ||
-    config.authorization !== 'context_permission' ||
-    config.permission !== 'module.access'
+    config.authorization !== 'protected'
   ) {
-    return yield* scaffoldFailure('Core Search requires people/person with context_permission module.access');
+    return yield* scaffoldFailure('Core Search requires people/person with protected authorization');
   }
   // Never emit a provider whose reviewed owner resource has not been generated.
   const fileSystem = yield* FileSystem.FileSystem;
@@ -52,25 +51,24 @@ import { ReadHandlerUnavailable } from '../reads/errors.ts';
 import { PeopleSearchRequestSchema, PeopleSearchResponseSchema } from './people-search-contract.ts';
 
 export const peopleSearchRead = defineRead({
+  accessDeclaration: {
+    key: 'core.identity.people-search.query', kind: 'read', modes: ['run'],
+    placement: { group: 'identity', level: 'basic' }, risk: 'sensitive', selectors: [],
+  },
   accessKind: 'search',
   entrypoint: defineSystemModuleEntrypoint({
-    access: 'read', authorization: { kind: 'context_permission', permission: 'module.access' },
+    access: 'read', authorization: { kind: 'protected' },
     entrypointKey: 'core.identity.search.people', moduleKey: 'core.identity', role: 'search',
   }),
   evidencePolicy: { captureMode: 'metadata_only', policyKey: 'core.identity.search.people.access.v1' },
   inputSchema: PeopleSearchRequestSchema, legalEntityScope: 'required',
-  owningModuleKey: 'core.identity', permissionTarget: 'tenant', policies: [],
+  owningModuleKey: 'core.identity', policies: [],
   readKey: 'core.identity.search.people', resultSchema: PeopleSearchResponseSchema, schemaVersion: '1',
 }, {
   load: () => Effect.fail(new ReadHandlerUnavailable({
     code: 'read_handler_unavailable', reason: 'The Core owner has not implemented people search',
   })),
-}, () => Effect.succeed({}), (_input, scope) => ({
-  kind: 'any_of', targets: [
-    { kind: 'tenant', permission: 'read_people' },
-    { kind: 'legal_entity', permission: 'read_people' },
-  ],
-}), (result) => result.map(({ ref }) => ref));
+}, () => Effect.succeed({}));
 `,
     ),
     createMutationEffect(
@@ -104,7 +102,6 @@ export const peopleSearchDescriptor = Object.freeze({
 
 const topics = {
   'project-people-lifecycle-search': 'core.identity.principal-lifecycle-changed.v1',
-  'project-people-role-search': 'core.identity.scoped-role-membership-changed.v1',
   'rebuild-people-search': 'core.identity.people-search-rebuild-requested.v1',
 } as const;
 
@@ -182,67 +179,4 @@ export const worker = defineOutboxWorker({
     }
   }
   return { mutations: plans, result: { registryPath, workerPath } };
-});
-
-/** Core Actions terminate at the existing Shell tenant-session gateway, never a new auth boundary. */
-export const planCorePeopleRebuildHttp = Effect.fn('CorePeopleScaffold.rebuildHttp')(function* rebuildHttp(
-  workspace: string,
-  config: { readonly action: string; readonly vertical: string },
-) {
-  if (config.vertical !== 'core' || config.action !== 'request-people-search-rebuild') {
-    return yield* scaffoldFailure('Core Action HTTP currently supports only request-people-search-rebuild');
-  }
-  const fileSystem = yield* FileSystem.FileSystem;
-  const action = yield* fileSystem
-    .readFileString(root(workspace, 'modules', 'actions', `${config.action}.action.ts`))
-    .pipe(Effect.mapError((cause) => scaffoldFailure('Generate the Core rebuild Action before HTTP', cause)));
-  if (!action.includes('// @ontos-action-owner core.identity') || !action.includes("legalEntityScope: 'forbidden'")) {
-    return yield* scaffoldFailure('Core rebuild HTTP requires the exact tenant-wide Core identity Action');
-  }
-  const contractPath = resolveContainedPath(
-    workspace,
-    'apps',
-    'shell-super-app',
-    'shared',
-    'core-actions',
-    `${config.action}.ts`,
-  );
-  const serverPath = resolveContainedPath(workspace, 'apps', 'shell-super-app', 'api', 'people-search-rebuild.ts');
-  const mutations = yield* Effect.all([
-    createMutationEffect(
-      contractPath,
-      `${header}
-+import { Schema } from 'effect';
-+
-+export const RequestPeopleSearchRebuildHttpPayloadSchema = Schema.Struct({
-+  reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500), Schema.isPattern(/\\S/u)),
-+});
-+export const RequestPeopleSearchRebuildHttpResponseSchema = Schema.Struct({ status: Schema.Literal('requested') });
-+export const RequestPeopleSearchRebuildHttpHeadersSchema = Schema.Struct({
-+  'idempotency-key': Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-+});
-+export const peopleSearchRebuildHttpPath = '/core.identity/actions/request-people-search-rebuild';
-+`.replaceAll(/^\+/gmu, ''),
-    ),
-    createMutationEffect(
-      serverPath,
-      `${header}
-+import { ActionRuntime } from '@app/core-runtime';
-+import type { TrustedPrincipalContext, ActionTransportMetadata } from '@app/core-runtime';
-+import { requestPeopleSearchRebuildAction } from '@app/core-runtime/people/search-rebuild';
-+import { Effect } from 'effect';
-+import { RequestPeopleSearchRebuildHttpPayloadSchema } from '../shared/core-actions/request-people-search-rebuild.ts';
-+
-+/** The existing peopleAdministration ingress must supply its origin-checked tenant commandContext. */
-+export const requestPeopleSearchRebuild = Effect.fn('ShellPeopleSearchRebuild.execute')(function* requestPeopleSearchRebuild(
-+  context: { readonly principal: TrustedPrincipalContext; readonly transport: ActionTransportMetadata },
-+  payload: typeof RequestPeopleSearchRebuildHttpPayloadSchema.Type,
-+) {
-+  const runtime = yield* ActionRuntime;
-+  return yield* runtime.runAction({ ...context, payload, registration: requestPeopleSearchRebuildAction });
-+});
-+`.replaceAll(/^\+/gmu, ''),
-    ),
-  ]);
-  return { mutations, result: { clientPath: contractPath, contractPath, serverPath } };
 });

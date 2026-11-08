@@ -2,11 +2,14 @@
 // @ontos-action-http-owner projects.core
 // @ontos-action-http-slug archive-project
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { ArchiveProjectPayloadSchema, ArchiveProjectResultSchema } from '../actions/archive-project.ts';
 
 export { ArchiveProjectPayloadSchema } from '../actions/archive-project.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const ArchiveProjectActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ArchiveProjectActionInvalidProblem',
@@ -21,6 +24,7 @@ export const ArchiveProjectActionForbiddenProblemSchema = makeProblemDetailsSche
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -142,7 +146,7 @@ export const archiveProjectActionGroupDefinition = HttpApiGroup.make('archivePro
     HttpApiEndpoint.post('execute', '/projects/actions/archive-project', {
       error: actionErrors,
       payload: Schema.toEncoded(ArchiveProjectPayloadSchema),
-      success: ArchiveProjectResultSchema,
+      success: [ActionProposalAcceptedSchema, ArchiveProjectResultSchema],
     }),
   )
   .middleware(ArchiveProjectActionSchemaErrorMiddleware);

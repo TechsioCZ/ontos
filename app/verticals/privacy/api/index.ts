@@ -1,21 +1,32 @@
-import { PrivacySubjectPartyOwnerUnavailableLive } from '../src/persistence/privacy-subject-party-owner.ts';
+import type { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import {
-  defineDatabaseIdentityEnrollment,
-  makeDatabaseIdentityEnrollmentLive,
+  OwnerActionApprovalSchemaErrorLive,
+  makeOwnerActionApprovalApiLive,
+} from '@app/core-runtime/access/approvals/owner-http';
+import { privacyRegistration } from '../vertical.registration.ts';
+import { PrivacySubjectPartyOwnerUnavailableLive } from '../src/persistence/privacy-subject-party-owner.ts';
+import { GatewayAssertionRedemptionDatabaseLive } from '../src/auth/gateway-assertion-redemption-runtime.ts';
+import {
   ActionAuthorizationPreflightDatabaseLive,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
-  ReadRuntimeLive,
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
+  makeReadRuntimeLive,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import type { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
 import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
+  TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
@@ -23,17 +34,17 @@ import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-erro
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { FetchHttpClient } from 'effect/http';
-import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
+import { ultramodernDeliveryUnit, ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { Effect, HttpApiBuilder, Layer, Schema } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
 
 // <generated-governed-http-handler-support-imports>
-import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import {
-  GatewayAssertionRedemptionDatabaseLive,
-  GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
-} from './auth/gateway-assertion-redemption.ts';
+  ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive,
+  authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal,
+} from './auth/action-principal.ts';
+import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
@@ -92,7 +103,6 @@ import { upsertTemporaryDsrExportActionApiLive } from './upsert-temporary-dsr-ex
 
 import { privacyApi, privacyMarkerSchema, privacyOperationContexts } from '../shared/api.ts';
 import type { OperationContext } from '../shared/api.ts';
-import { privacyConsentAwareActionRuntimeLive } from './consent-aware-action-runtime.ts';
 import { ConsentSelfServiceAuthorityUnavailableLive } from '../src/actions/consent-self-service-authority.ts';
 import { PrivacyApplicabilityBusinessFactAuthorityUnavailableLive } from '../src/actions/privacy-applicability-business-fact-authority-service.ts';
 import { DsrIntakeReceiptAuthorityUnavailableLive } from '../src/actions/create-dsr-case.action.ts';
@@ -108,13 +118,18 @@ import { DsrDeadlineAuthorityUnavailableLive } from '../src/actions/record-dsr-d
 import { DsrDeliveryAuthorityUnavailableLive } from '../src/actions/record-dsr-delivery-evidence.action.ts';
 import { DsrVerificationAuthorityUnavailableLive } from '../src/actions/record-dsr-verification.action.ts';
 import { NoticeChannelDeliveryAuthorityUnavailableLive } from '../src/actions/record-notice-provision.action.ts';
-import { privacyNoticeInformationStepLive } from '../src/services/privacy-notice-acknowledgement-authority.service.ts';
 import { PrivacyNoticePresentationUnavailableLive } from '../src/services/privacy-notice-presentation.service.ts';
 import { CommerceCustomerContextNoticeSubjectAuthorityUnavailableLive } from '../src/integrations/commerce-customer-context/commerce-customer-context-notice-subject-authority.service.ts';
 import { DsrDeliveryAccessAuthorityUnavailableLive } from '../src/actions/dsr-delivery-access-authority.ts';
 import { ProcessingInterventionAuthorityUnavailableLive } from '../src/actions/processing-intervention-authority.ts';
+import { privacyNoticeInformationStepLive } from '../src/services/privacy-notice-acknowledgement-authority.service.ts';
+import { privacyConsentAwareActionRuntimeLive } from './consent-aware-action-runtime.ts';
 
 const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
+const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
+  Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+  Layer.provide(DatabaseConfigLive),
+);
 
 const operationAttributes = (operationContext: OperationContext) => {
   const attributes = {
@@ -166,12 +181,57 @@ const compositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(
     ),
   ),
 );
+const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
+  Layer.provide(compositionSourceLive),
+);
+
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
+const accessEnforcementLive = AccessDecisionLive.pipe(
+  Layer.provideMerge(AccessEnforcementPortsLive),
+  Layer.provide(TenantIntentLoaderLive),
+  Layer.provide(CorePersistenceLive),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(nodeCryptoLayer),
+);
 const operationalScopeResolverLive = Layer.provide(
   OperationalScopeResolverLive,
-  Layer.mergeAll(CorePersistenceLive, ContextAccessLive),
+  Layer.mergeAll(CorePersistenceLive, ContextAccessLive, accessEnforcementLive),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
+
+const noticeInformationStepLive = privacyNoticeInformationStepLive.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      nodeCryptoLayer,
+      PrivacyNoticePresentationUnavailableLive,
+      CommerceCustomerContextNoticeSubjectAuthorityUnavailableLive,
+    ),
+  ),
+);
+
+const productionReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, privacyRegistration).pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      CorePersistenceLive,
+      ContextAccessLive,
+      moduleEntrypointGatewayLive,
+      operationalScopeResolverLive,
+      accessEnforcementLive,
+    ),
+  ),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(databaseIdentitiesLive),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      noticeInformationStepLive,
+      PrivacyApplicabilityBusinessFactAuthorityUnavailableLive,
+      PrivacyNoticePresentationUnavailableLive,
+      CommerceCustomerContextNoticeSubjectAuthorityUnavailableLive,
+    ),
+  ),
+  Layer.provide(activeApplicationCompositionLive),
+);
+
 const privacyActionAuthorityUnavailableLive = Layer.mergeAll(
   ConsentSelfServiceAuthorityUnavailableLive,
   PrivacyApplicabilityBusinessFactAuthorityUnavailableLive,
@@ -194,30 +254,10 @@ const privacyActionAuthorityUnavailableLive = Layer.mergeAll(
   ProcessingInterventionAuthorityUnavailableLive,
   PrivacySubjectPartyOwnerUnavailableLive,
 );
-const noticeInformationStepLive = privacyNoticeInformationStepLive.pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      nodeCryptoLayer,
-      PrivacyNoticePresentationUnavailableLive,
-      CommerceCustomerContextNoticeSubjectAuthorityUnavailableLive,
-    ),
-  ),
-);
-const productionReadRuntimeLive = ReadRuntimeLive.pipe(
-  Layer.provideMerge(noticeInformationStepLive),
-  Layer.provide(
-    Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
-  ),
-  Layer.provide(Layer.mergeAll(DatabaseConfigLive, databaseIdentitiesLive, nodeCryptoLayer)),
-  Layer.provideMerge(
-    Layer.mergeAll(
-      PrivacyApplicabilityBusinessFactAuthorityUnavailableLive,
-      PrivacyNoticePresentationUnavailableLive,
-      CommerceCustomerContextNoticeSubjectAuthorityUnavailableLive,
-    ),
-  ),
-);
-const productionActionRuntimeLive = privacyConsentAwareActionRuntimeLive.pipe(
+
+// The demo consent seam: each invocation prepares fresh Commerce consent authority and notice
+// information before the owner transaction opens, then runs the Action with that authority provided.
+const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(ultramodernDeliveryUnit, privacyRegistration).pipe(
   Layer.provideMerge(noticeInformationStepLive),
   Layer.provide(
     Layer.mergeAll(
@@ -229,21 +269,40 @@ const productionActionRuntimeLive = privacyConsentAwareActionRuntimeLive.pipe(
       moduleEntrypointGatewayLive,
       operationalScopeResolverLive,
       ActionAuthorizationPreflightDatabaseLive.pipe(Layer.provideMerge(CorePersistenceLive)),
-      ActiveApplicationCompositionConfigLive.pipe(Layer.provide(compositionSourceLive)),
+      activeApplicationCompositionLive,
+      accessEnforcementLive,
     ),
   ),
-  Layer.provide(Layer.mergeAll(DatabaseConfigLive, databaseIdentitiesLive, nodeCryptoLayer)),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(databaseIdentitiesLive),
   Layer.provideMerge(privacyActionAuthorityUnavailableLive),
 );
 
-const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
-  Layer.provide(GatewayAssertionRedemptionDatabaseLive),
-  Layer.provide(DatabaseConfigLive),
+const productionActionRuntimeLive = privacyConsentAwareActionRuntimeLive.pipe(
+  Layer.provideMerge(ownerActionApprovalsLive),
+  Layer.provideMerge(noticeInformationStepLive),
+  Layer.provide(
+    Layer.mergeAll(
+      CorePersistenceLive,
+      ActionRepositoryLive,
+      ActionPermissionLive,
+      ContextAccessLive,
+      moduleStateGateLive,
+      moduleEntrypointGatewayLive,
+      operationalScopeResolverLive,
+      ActionAuthorizationPreflightDatabaseLive.pipe(Layer.provideMerge(CorePersistenceLive)),
+      activeApplicationCompositionLive,
+      accessEnforcementLive,
+    ),
+  ),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(databaseIdentitiesLive),
+  Layer.provideMerge(privacyActionAuthorityUnavailableLive),
 );
 
 type PrivacyApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof productionReadRuntimeLive>>,
-  actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof productionActionRuntimeLive>>,
+  actionRuntime: Layer.Layer<ActionRuntime | OwnerActionApprovals, Layer.Error<typeof productionActionRuntimeLive>>,
   gatewayAssertionRedemption: Layer.Layer<
     GatewayAssertionRedemptionService,
     Layer.Error<typeof productionGatewayAssertionRedemptionLive>
@@ -261,6 +320,10 @@ export const makePrivacyApiRuntime = (
   );
   const apiHandlersLive = Layer.mergeAll(
     privacyReadinessLayer,
+    makeOwnerActionApprovalApiLive(privacyApi, authenticateOwnerApprovalPrincipal).pipe(
+      GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
+      GovernedReadLayer.provide(governedActionRuntimeLive),
+    ),
     // <generated-governed-http-handler-layers>
     acknowledgePrivacyNoticeActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     addProcessingPurposeVersionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -316,9 +379,7 @@ export const makePrivacyApiRuntime = (
     // </generated-governed-http-handler-layers>
   ).pipe(
     Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)),
-    Layer.provide(
-      Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, compositionSourceLive, databaseIdentitiesLive),
-    ),
+    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, compositionSourceLive)),
     Layer.orDie,
   );
   return assembleEffectBffRuntime({

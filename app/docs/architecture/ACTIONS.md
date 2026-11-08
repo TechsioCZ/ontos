@@ -11,7 +11,7 @@ Operation scope, owner-local scoped services, database settings, and governed re
 - Every Action descriptor declares an explicit readonly array of immutable Policy object references. A global Shell/Core Policy may be referenced by any Action; an executable MicroVertical Policy may be referenced only by an Action with the same owning module key. Raw Policy keys, registries, and cross-owner Policy imports are forbidden.
 - A Domain Event is a past-tense business fact produced by a successfully committed Action. Domain Events describe what happened; they do not initiate hidden synchronous business state changes.
 - Generate Actions, Permissions, Policies, and Outbox Messages with their respective Codesmith generators.
-- Every Action requires an explicit SpiceDB `executor` relationship. A fully consistent `action#execute` result of `NO_PERMISSION`, including an Action with no relationships, is a definite denial; there is no unconfigured allow path.
+- Every Action is a `protected` entrypoint that carries its own `accessDeclaration`, or `accessWorkload` when only a trusted machine workload may run it. A protected Action without a carrier is a definition-time error, and a missing or indeterminate decision denies; there is no unconfigured allow path.
 - Every Action descriptor owns a structured `action`/`write` entrypoint. Business Actions are tenant-scoped; Core recovery capabilities are explicitly system-scoped as defined by [Module Entrypoints and Tenant State](./MODULE_ENTRYPOINTS.md).
 - A MicroVertical Action's `owningModuleKey`, key prefix, event producer, and access-policy identity use the manifest's dotted OntOS `moduleId`, never the topology deployment `appId`. The real Action value is published in the owner-authored manifest and bound to its private handler only in the owner-local runtime registration. See [OntOS Module Manifests](./MODULE_MANIFESTS.md).
 
@@ -21,11 +21,58 @@ Better Auth credential and session lifecycle operations—sign-in, sign-out or r
 
 All Core identity changes use generated restricted `core.identity.*` Actions: non-human principal creation/status, self or managed API-key binding/status, and requested/started/stopped support checkpoints. Provider key IDs may appear only in private Shell orchestration and the binding Action payload; raw keys, hashes, cookies, provider user IDs, and session tokens may not. Identity handlers record invariant reads as Data Access Events. Support checkpoint handlers additionally attach the safe reason, original/effective principal IDs, checkpoint, and optional safe session reference to the sensitive `action.executed` evidence; the audit row supplies tenant, timestamp, and Action identity.
 
-Action execution and tenant role authorization are independent grants. The default environment rule is an explicit `action:<encoded-key>#executor@tenant:<fixed-tenant>#member` relationship, so it allows every authenticated active Principal in that trusted Tenant and nobody outside it. Direct `principal` executor relationships remain supported for narrower grants and rollout compatibility. The self-key Actions require their explicit Action executor. Principal creation/status and managed-key mutations require both their Action executor and tenant `manage_identity`; support start requires the support checkpoint executor and tenant `impersonate`. Provision Action relations with the lossless object ID from `toSpiceDbActionObjectId`, never a hand-maintained alternate encoding, and remove them when the role, membership, or workload authorization is revoked. The parameterless operator command `mise exec -- pnpm authorization:provision-current-actions` discovers the complete current Action catalog and provisions only the fixed development or stage Tenant sets. For valid authorized provisioning input it is idempotent and accepts no caller-supplied Tenant or Action identifiers. It discovers the complete catalog: development supplies no explicit-Action policy and deliberately refuses a catalog containing `explicit` Actions before schema or grant writes; stage derives explicit grants and allowed/denied assertions from its approved operator accounts file. See the [development checkpoint](../../DEVELOPMENT.md#fail-closed-action-authorization-checkpoint) and [provisioning procedure](./DEPLOYMENT.md#spicedb). It must never run during startup, migration, sandbox preparation, or automatic deployment. Separately, each stage release adds the missing scope, grant-link and intrinsic self-credential edges this derivation yields for every active Tenant before it publishes (`scripts/zerops/release-action-authorization.mts`); that step only adds edges, writes no role policy, and records its result in `.zerops/runtime/release-action-authorization.json` on the container. Bootstrap `allowed-principal` tuples are test-only. The generated Action descriptor declares the additional tenant permission, and Core evaluates it inside the canonical Action authorization boundary after the executor check. A definite tenant-role denial produces the same durable permission-denial outcome; an indeterminate check fails retryably. Only a decoded support `stopped` checkpoint omits the continuing `impersonate` requirement so secure termination remains possible, while its Action executor check is still mandatory.
+Action execution is gated by the Action's own access declaration. Core asks the access decision gate for the Action's decoded carrier in the trusted scope; the gate resolves the actor, the scope, the capability policy, the record target and the amount, and answers `ALLOWED`, `NEEDS_APPROVAL`, `DENIED` or `UNAVAILABLE`. A `selectors`-bearing Action must declare `accessTarget`; a missing target is `deny.target_required`. An Action whose governed amount is a server-derived total declares `accessAmount`; its `amountInput` must then name a `derived.*` path (O18), while a scalar `amountInput` is read from the payload directly. An Action may declare `accessOwnerFacts` to hand owner-local facts to the owner overlay (O70). An Action that only trusted machine workloads may run declares `accessWorkload` instead of `accessDeclaration`; a human or agent reaching it is refused, and the workload path never grants a human. An Action that only reduces authority declares `accessReducesAuthority` and runs without a grant decision, but still requires an authenticated principal in a resolved scope (O35, O71b). Core identity Actions gate through their own `core.identity.*` declarations; support start declares `core.identity.support.impersonate`, and a decoded support `stopped` checkpoint runs as an authority-reducing Action. See [Granular Authorization](./AUTHORIZATION.md).
 
 Provider cleanup is not an Action retry disguised as a new mutation. Shell compares the governed Core binding status with Auth's enabled metadata, reports disagreement as `cleanupPending`, and may retry only the provider mechanic when Core already holds the requested terminal state. A rotation must never return a retryable failure while leaving a newly active secret undisclosed: it first attempts to revoke the replacement, and if that rollback cannot be proven it returns the one-time secret with cleanup debt. Newly issued provider keys carry a private mechanical `binding_pending_v1` marker from the same provider insert that creates the credential. Shell clears the marker after it observes the Core binding; a repeated issuance reconciles any retained marker against Core and disables an orphan before creating another key. Each marker is scoped by the trusted tenant and issuing Principal and remains leased for five minutes, including retries with the same caller idempotency key, so concurrent requests cannot reclaim a credential that is still being bound. The marker is neither an OntOS permission nor public metadata. Stale-marker lookup is tenant/issuer/staleness-filtered and indexed in Auth, processes at most one bounded batch per request, and requires a retry before issuance when more cleanup remains.
 
 Support start creates an Auth-owned non-secret recovery record after the provider session is initialized and before the started checkpoint commits; support stop therefore always has durable recovery state before Better Auth deletes or expires the impersonated session. The record carries only safe correlation, OntOS principal/binding IDs, reason, tenant, and safe session reference—not a token or cookie. Stopped evidence is idempotent; post-restore evidence or recovery cleanup failure still forwards the restored cookie and a repeated stop resumes the checkpoint. The recovery context is accepted only for the exact generated Action and a decoded `stopped` payload; it still performs the Action's normal SpiceDB permission check. Mechanical session termination therefore remains independent of evidence availability, while a denied or unavailable checkpoint remains pending instead of fabricating authorization.
+
+## Owner business permission targets
+
+A module publishes versioned Business Permission Definitions through its existing public contract.
+The definition identifies the permission meaning and permitted targets; it grants no Principal a
+permission. The owner binds target resolution to its private Action or Read registration. Decoded
+business input cannot select another definition or a broader permission variant.
+
+The contract's `owningModuleKey` identifies its publishing runtime module and must match the genuine
+registered operation. Each member definition retains its canonical `owningCapability`; a publisher
+may host definitions for several business capabilities. Exact definition membership is required.
+Publishing a future capability's descriptor neither activates that capability nor creates a grant.
+
+Owner-specific validation and canonical target construction stay with that owner. Core receives exact
+permission requests, verifies their trusted Tenant, Legal Entity and Storefront constraints, and
+performs the normal Current permission checks for the original Principal. Multiple required targets
+remain an ordered conjunction with exact response correlation. Publishing a descriptor, receiving a
+positive business outcome, or succeeding on an earlier invocation never substitutes for these checks.
+
+Finite inherited grant alternatives belong inside one resolved target. Core checks the primary
+object first, followed by its owner-declared alternatives, using the existing positive-grant union.
+These alternatives do not replace the ordered conjunction between independently required targets.
+An incomplete response remains unavailable unless another verified alternative allows the request.
+
+Grant identity and transport/history identity are separate. The context permission families preserve
+their existing `ctx_` encoding, ordered keys and relationship payloads. Owners resolve `transportModuleKey`,
+`transportObjectId` and any per-target `transportResourceType` for each Action or Read. The two
+operation kinds may have different historical projections. Core uses those projections for evidence,
+not to choose a grant or relax trusted scope. They must not be normalized to the grant object ID.
+
+Owner-state verification is independent of the Principal's Current grant. `ownerStateRequired`
+defaults to true. An owner may declare false only where its accepted scope has no additional
+owner-held record to verify; Tax's exact trusted Tenant/Legal Entity scope is such a case. This does
+not make a permission optional or disable executor, trusted context, module or resource gates.
+
+Grant/revoke preparation uses a genuine owner-qualified target and only its primary grant object;
+inherited alternatives are not additional grants. Journal reconciliation keeps the existing durable
+business target and intent, with an owner construction callback validating that target before Core
+compares the exact permission, Principal, Tenant, key and object ID. PriceGroup containment likewise
+uses owner-validated catalog/group endpoints through the existing bounded atomic writer. Neither
+path accepts a caller-supplied preparation callback or arbitrary relationships.
+
+Assortment owns selector, purpose, audience and admission-set meaning. Its canonical permission keys
+and `asp_` object identities remain stable when this implementation moves. Replace requires the old
+target's End permission followed by the proposed target's Create permission; combining or reordering
+these targets changes the authorization meaning. Core retains independent executor, context, module
+state and atomic admission gates.
 
 ## Invocation Lifecycle
 
@@ -33,16 +80,16 @@ Process every Action request in this order:
 
 1. Decode the request and validate its structural input schema. A decoding or structural validation failure does not create an Action Invocation Log and does not enter the Action lifecycle. The Action handler remains responsible for domain invariants and may return a typed domain rejection.
 2. Resolve and validate trusted tenant, legal-entity, principal, authentication, and correlation context separately from the Action payload. A payload must never supply or override trusted identity. A Shell-user call crossing a MicroVertical seam obtains this context only after the receiving BFF verifies the Shell-issued EdDSA assertion for its exact topology app ID. The assertion proves authentication and context only; it grants no Action permission and carries no Policy decision or business payload.
-3. Acquire one request snapshot and gate the owning structured entrypoint before request hashing, invocation creation, SpiceDB, Policy, or private handler resolution. Definite denial creates no invocation/evidence; an unavailable check fails closed.
+3. Acquire one request snapshot and gate the owning structured entrypoint before request hashing, invocation creation, the access decision, Policy, or private handler resolution. Definite denial creates no invocation/evidence; an unavailable check fails closed.
 4. Insert or resolve the Action Invocation Log outside and before the business transaction. The invocation is the durable idempotency anchor. If it cannot be persisted, stop processing with a typed infrastructure failure.
 5. Reject request-hash conflicts and treat an already `succeeded` invocation as committed without rerunning the handler or replaying a stored result.
-6. Enter the authentication boundary and check the Action permission through Core's SpiceDB service. The descriptor `actionKey` is losslessly encoded as `ak_` plus unpadded base64url for SpiceDB's restricted object-id alphabet; the trusted `principalId` remains the exact subject identifier.
+6. Enter the authentication boundary and check the Action with the Core access decision gate (`decide`), passing the Action's decoded carrier, its declared `legalEntityScope`, the trusted scope, a Core-minted `now`, and the `accessTarget`, `accessAmount` and `parentRead` facts the descriptor declares. `ALLOWED` proceeds; `NEEDS_APPROVAL` and `DENIED` are definite refusals; `UNAVAILABLE` is a retryable check failure.
 7. If permission allows, evaluate every referenced Policy sequentially and fail-fast in descriptor order. Policy input contains only the decoded payload, trusted principal context, sanitized transport/target metadata, and Action identity.
 8. If permission or a Policy denies, atomically finalize the still-`received` invocation as `rejected` outside the business transaction and return the corresponding typed denial. A permission-check or Policy-evaluation failure returns a sanitized typed error and leaves the invocation open for retry.
 9. Only after permission and all Policies allow, emit the observability stage `invocation_running`. This notification does not persist a status or prove a separate commit.
 10. Open the Core-owned transaction, acquire the Composition authority fence, lock and recheck the invocation, install and verify the transaction-local operational database scope, then authoritatively recheck tenant `write` access. Evaluate the owner authorization overlay at the trusted transaction operation time. Only after these transaction-local gates allow, update the invocation to `running` through the same scoped transaction. Core may then construct owner-local services, create the collector, resolve the private handler, and execute it. Competing requests may repeat read-only gates, but their handlers must never run concurrently.
 
-The first Shell/Core runtime receives an already trusted principal context. Permission and Policy evaluation are both enforced before the invocation becomes `running`, the business transaction opens, or the handler and collector are created. Core performs one fully consistent `execute` check: `HAS_PERMISSION` allows and `NO_PERMISSION` durably rejects the invocation before Policy, service, or handler resolution. Timeout, unavailability, authentication/schema failure, conditional decisions, and every other indeterminate result return a sanitized retryable check error while leaving the invocation open in `received`. The legacy `restriction` relation and `is_restricted` permission remain in the compatible schema only for N/N-1 rollout; the candidate runtime does not read them. Remove them only in a later contract release after previous runtimes and tuples are gone.
+The first Shell/Core runtime receives an already trusted principal context. Permission and Policy evaluation are both enforced before the invocation becomes `running`, the business transaction opens, or the handler and collector are created. Core asks the access decision gate once: `ALLOWED` runs, `NEEDS_APPROVAL` and `DENIED` durably reject the invocation before Policy, service, or handler resolution, and `UNAVAILABLE` returns a sanitized retryable check error while leaving the invocation open in `received`. A missing or invalid carrier, and any indeterminate caveat, denies.
 
 ## Outcomes
 
@@ -77,20 +124,17 @@ The database did not acknowledge whether the business transaction committed. Thi
 
 This increment resolves uncertain commits through an explicit server-side commit-resolution operation. It accepts the invocation identifier and trusted principal context, waits for any transaction lock to clear, and reports `succeeded` as already committed or an unlocked `received`, `running`, or `indeterminate` invocation as open. Database unavailability remains `ActionCommitIndeterminate`. General scanning, alerting, permanent failure finalization, and retention of open invocations remain deferred. Never roll back an already committed business transaction.
 
+## Owner post-attempt completion
+
+`defineAction` may retain an optional owner-authored post-attempt hook in its existing opaque registration, after the handler, service factory and optional in-transaction decoded-success hook. It is the fifth overall argument. It is not a caller-supplied `runAction` callback, public operation claim or durable continuation registry. The hook's requirements are retained together with the handler/service requirements.
+
+Core invokes this hook after the transaction outcome is known, under its genuine attempt scope and admitted Composition revision. The readonly input contains the decoded payload, original invocation identity, trusted scope and a closed outcome: `Committed`, `CommittedRejection`, `AlreadyCommitted`, `DefinitelyUncommitted`, `Indeterminate` or `Interrupted`. A decoded domain rejection is supplied only when known. No expired transaction, handler services, collector, raw Effect Cause or context-minting capability crosses this boundary. A hook can return `Settled`, or a schema-validated `Recovered` result for an actual already-committed or indeterminate attempt only after Core verifies the same original immutable invocation/hash is succeeded.
+
+A committed result or committed domain rejection cannot be rewritten into a rollback or failed invocation. A declared settlement failure after commit can report pending owner work without changing committed storage. Abort/release requires the existing validated terminal business rejection and original owner receipt/proof; uncertainty or `NOT_FOUND` does not authorize cleanup. Early `AlreadyCommitted` recovery follows the original trusted scope, input hash and invocation checks and preserves its governed recovery authorization; it does not acquire a new executor grant, consume a fresh mutation permit or replay the mutation merely to create a context. Fresh permission success precedes revision admission and genuine preflight permit consumption.
+
+The hook does not make external effects exactly-once or crash-safe. Owners retain idempotent original-effect reconciliation and durable pending work. Reads remain reads; owner writes must not move into a recovery Read or the in-transaction decoded-success hook to obtain an execution context.
+
 ## Events and Transactions
-
-An Action whose business decision needs remote owner facts may register a fourth definition argument with
-`prepareServices`. Core calls it only after permission, Policy, and composition admission, outside the business
-transaction. Its context supplies the exact invocation, trusted scope, composition revision, and a short guarded
-owner transaction capability. Use that capability only to load SQL snapshots. Do not return a transaction executor
-or transaction-bound service from a snapshot.
-
-Preparation resolves remote facts after the snapshot transaction releases its connection, then returns an
-invocation-local service factory. That factory runs inside the final business transaction and must reload and
-compare every owner fact that contributed to the decision before writing. A changed, expired, or unavailable
-snapshot fails closed. Prepared facts must not live on the shared Action registration or in a process-global cache.
-Preparation cannot change the decoded payload, bypass an authorization gate, or persist a successful Action result.
-The normal atomic business, evidence, and invocation commit remains unchanged.
 
 - Persist a successful result Audit Event for every committed Action. Generate any additional successful audit checkpoints required by the Action's evidence profile.
 - Define every expected domain failure, each permitted Domain Event type and payload schema, and the Data Access evidence policy as part of the Action descriptor. The policy—not handler input—selects `metadata_only`, `hash_only`, or `redacted_payload`; this runtime does not accept `stored_artifact` until Core can enforce its media, retention, classification, and encryption contract. An Action may instantiate zero or more declared Domain Events, and every instantiated Domain Event must be persisted. Core rejects undeclared error values, undeclared event types, invalid event payloads, and any event whose producer differs from the descriptor's owning module.
@@ -122,8 +166,8 @@ Authentication, permission, policy, and domain rejections remain typed Effect er
 
 Authentication assertion failures occur before the Action lifecycle and must not create an Action Invocation Log or reach an Action handler. An endpoint maps missing, malformed, tampered, expired, or otherwise unusable assertions to its declared `401` Problem Details response with a `WWW-Authenticate: Bearer` challenge. Public-JWKS or verification configuration unavailability maps to a declared retryable `503`. These endpoint-specific mappings do not replace the separate Core permission and Policy mappings and do not justify a generic Action HTTP endpoint.
 
-## Authorization provisioning and compatibility
+## Action access
 
-Every Action descriptor declares `authorization.kind = action_execution` and one provisioning intent. `tenant_membership_default` permits the fixed development/stage provisioner to create the tenant-member executor relation when its complete input is valid. `explicit` requires approved narrow grants and recorded allowed/denied assertions; stage derives them from its operator accounts file, while development supplies no explicit policy and refuses an explicit-containing catalog. An explicit Action is never granted blanket tenant membership.
+Every Action descriptor declares `authorization.kind = protected` and carries its own access metadata. A normal business Action declares `accessDeclaration`; an Action that only a trusted machine workload may run declares `accessWorkload`; the two may stand together on an Action that both humans and a workload run, where the workload path never grants a human and the declaration path never admits a workload. An Action never grants from code: its declaration becomes a catalog entry and is usable only through an adopted grant in an assigned Role.
 
-The default runtime remains fail closed. A bounded `report_only` contract may preserve only an explicitly baselined, pre-existing missing-policy allow while computing the candidate denial and emitting one sanitized `authorization.would_deny` event. Explicit denials, infrastructure errors, cross-tenant scope, invalid or expired credentials, disabled modules, and replay are never compatible. New Actions cannot enter the baseline implicitly.
+An Action that only reduces authority declares `accessReducesAuthority` and runs without a grant decision, but still requires an authenticated principal in a resolved scope and records the act (O35, O71b). An Action with record selectors declares `accessTarget`; an Action whose governed amount is a server-derived total declares `accessAmount`; an Action whose owner applies owner-local limits declares `accessOwnerFacts`. An Action may declare `accessFieldGroups` with `field_write` groups for the sensitive payload fields it writes (O58); field access needs the Action's own declaration. See [Granular Authorization](./AUTHORIZATION.md) for the carrier contract and the risk floors.

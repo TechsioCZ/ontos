@@ -40,10 +40,10 @@ describe('Product Unit HTTP Actions', () => {
       expect(api).toBeDefined();
       expect(client).toBeDefined();
       expect(catalogPublicOperationContracts[key]).toEqual({
+        accessKind: 'action',
         authorityBundle: 'CATALOG_DEFINITION_MANAGER',
         businessTarget: 'product-unit',
         permission: key,
-        permissionKind: 'action_execution',
         scope: 'tenant',
         version: '1',
       });

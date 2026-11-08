@@ -19,6 +19,7 @@ import type {
   PricingCommercialFeeScheduleAcknowledgement,
 } from '@app/pricing-contracts/domain/commercial-fee';
 import { priceDecimalValuesEqual } from '@app/pricing-contracts/domain/price-definition';
+import type { Crypto } from 'effect';
 import { Effect, Match, Schema } from 'effect';
 
 import { ManageProductCommercialFeesBulkPayloadSchema } from '../../shared/actions/manage-product-commercial-fees-bulk.ts';
@@ -71,7 +72,7 @@ import type {
   ProductCommercialFeeBulkTargetIntent,
   ProductCommercialFeeBulkTrustedContext,
 } from './product-commercial-fee-bulk-command.port.ts';
-import { PricingCatalogSelectionUnavailable } from '../../shared/domain/catalog-selection-gateway-credential.ts';
+import { PricingCatalogSelectionUnavailable } from '../../shared/domain/pricing-catalog-selection-unavailable.ts';
 import { ProductCommercialFeeBulkRejected } from './product-commercial-fee-bulk-rejected.ts';
 import type { ProductCommercialFeeBulkRejectionCode } from './product-commercial-fee-bulk-rejected.ts';
 
@@ -643,29 +644,32 @@ const productCommercialFeeBulkServicesWithCatalog = Effect.fn('ProductCommercial
   },
 );
 
-export const productCommercialFeeBulkServiceForScope: ActionServiceFactory<ProductCommercialFeeBulkActionServices> =
-  Effect.fn('ProductCommercialFeeBulkService.forScope')(
-    function* makeProductCommercialFeeBulkActionServices(transaction, scope, compositionRevision) {
-      const environment = {
-        compositionRevision,
-        legalEntityId: scope.legalEntityId ?? '',
-        requestCorrelation: scope.correlationId,
-      };
-      const { catalogSnapshot, catalogTarget } = yield* Effect.all(
-        {
-          catalogSnapshot: productCommercialFeeBulkCatalogSnapshotPortFromEnvironment(environment),
-          catalogTarget: commercialFeeCatalogTargetAssessmentPortFromEnvironment(environment),
-        },
-        { concurrency: 2 },
-      );
-      return yield* productCommercialFeeBulkServicesWithCatalog(transaction, {
-        catalogSnapshot,
-        catalogTarget,
-        compositionRevision,
-        scope,
-      });
-    },
-  );
+export const productCommercialFeeBulkServiceForScope: ActionServiceFactory<
+  ProductCommercialFeeBulkActionServices,
+  Crypto.Crypto
+> = Effect.fn('ProductCommercialFeeBulkService.forScope')(
+  function* makeProductCommercialFeeBulkActionServices(transaction, scope, compositionRevision) {
+    const environment = {
+      compositionRevision,
+      legalEntityId: scope.legalEntityId ?? '',
+      requestCorrelation: scope.correlationId,
+      scope,
+    };
+    const { catalogSnapshot, catalogTarget } = yield* Effect.all(
+      {
+        catalogSnapshot: productCommercialFeeBulkCatalogSnapshotPortFromEnvironment(environment),
+        catalogTarget: commercialFeeCatalogTargetAssessmentPortFromEnvironment(environment),
+      },
+      { concurrency: 2 },
+    );
+    return yield* productCommercialFeeBulkServicesWithCatalog(transaction, {
+      catalogSnapshot,
+      catalogTarget,
+      compositionRevision,
+      scope,
+    });
+  },
+);
 
 export const prepareProductCommercialFeeBulkServices = Effect.fn('ProductCommercialFeeBulkService.prepareServices')(
   function* prepareServices(payload: ManageProductCommercialFeesBulkPayload, context: ActionServicePreparationContext) {
@@ -686,6 +690,7 @@ export const prepareProductCommercialFeeBulkServices = Effect.fn('ProductCommerc
       compositionRevision: context.compositionRevision,
       legalEntityId,
       requestCorrelation: context.scope.correlationId,
+      scope: context.scope,
     });
     const current = yield* catalog.validateCurrent(payload.snapshot);
     const target = yield* prepareCommercialFeeCatalogTargets(

@@ -11,20 +11,32 @@ import { Effect, Fiber, Match, Option, Schema } from 'effect';
 import type { HttpClient } from 'effect/http';
 import { useEffect, useEffectEvent, useRef, useState } from 'react';
 
-import type { PeopleList, PeopleRoleCatalog, Person } from '../../../shared/people-api.ts';
-import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
-import type { PeopleOutcome } from './people-client.ts';
-import { changeCompanyMembership, changeScopedRole, loadAllPeople, loadRoleCatalog } from './people-client.ts';
 import {
+  AssignAccessRolePayloadSchema,
+  RevokeAccessAssignmentPayloadSchema,
+} from '../../../shared/access-admin-api.ts';
+import type { PeopleList, Person } from '../../../shared/people-api.ts';
+import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
+import type { PeopleOutcome, PersonRoleCommand } from './people-client.ts';
+import { changeCompanyMembership, changePersonRole, loadAllPeople, loadPeopleAccess } from './people-client.ts';
+import {
+  accessAssignmentOf,
+  accessRoleNamesOf,
+  accessRolesOfScope,
   defaultPeopleFilters,
   isChangeConfirmed,
   membershipLabels,
   personKindLabel,
   personStatusKey,
-  roleName,
+} from './people-model.ts';
+import type {
+  AccessRoleChoice,
+  PeopleAccessView,
+  PeopleEditKind,
+  PeopleFilters,
+  PendingPeopleChange,
 } from './people-model.ts';
 import { InvitePersonButton } from './invite-person-button.tsx';
-import type { PeopleEditKind, PeopleFilters, PendingPeopleChange } from './people-model.ts';
 import { PeopleTable, PeopleToolbar, PersonStatusDot } from './people-table.tsx';
 import { baseOf, membershipDraftOf, membershipEditOf, sameMembershipDraft } from './people-membership-draft.ts';
 import type { MembershipBase, MembershipDraft } from './people-membership-draft.ts';
@@ -35,66 +47,71 @@ interface Editor {
 }
 const selectClass = 'w-full rounded-md border border-border-primary bg-base p-100';
 
+/**
+ * The role picker offers exactly the canonical roles of this scope, named by their canonical identity.
+ * A role key never reaches a write: the assignment names the role id and the exact revision the screen read.
+ */
 const RolePicker = ({
+  access,
   busy,
-  catalog,
   onChange,
   operation,
   person,
-  roleKey,
-  scope,
+  roleId,
+  roles,
 }: {
+  readonly access: PeopleAccessView | undefined;
   readonly busy: boolean;
-  readonly catalog: PeopleRoleCatalog | undefined;
-  readonly onChange: (roleKey: string) => void;
+  readonly onChange: (roleId: string) => void;
   readonly operation: 'assign' | 'revoke';
   readonly person: Person;
-  readonly roleKey: string;
-  readonly scope: 'company' | 'tenant';
+  readonly roleId: string;
+  readonly roles: readonly AccessRoleChoice[];
 }) => {
-  const selected = catalog?.items.find((role) => role.roleKey === roleKey);
+  const selected = roles.find((role) => role.roleId === roleId);
+  const revocable = (role: AccessRoleChoice) =>
+    accessAssignmentOf(access, person.principalRef.principalId, role.roleId) !== undefined;
   return (
     <>
       <p className="text-fg-secondary text-sm">
-        Role platí pro {scope === 'tenant' ? 'celou organizaci' : 'vybranou firmu'}.
+        Role platí pro {selected?.scope.kind === 'company' ? 'vybranou firmu' : 'celou organizaci'}. Rozsah role je daný
+        rolí, ne volbou v této obrazovce.
       </p>
       <label className="grid gap-50">
         Role
         <select
           className={selectClass}
-          disabled={catalog === undefined || busy}
+          disabled={busy}
           onChange={(event) => onChange(event.target.value)}
           required
-          value={roleKey}
+          value={roleId}
         >
           <option value="">Vyberte roli</option>
-          {catalog?.items.flatMap((role) =>
-            operation === 'assign' || person.roleAssignments.some((assigned) => assigned.roleKey === role.roleKey)
-              ? [
-                  <option key={role.roleKey} value={role.roleKey}>
-                    {role.name}
-                  </option>,
-                ]
-              : [],
-          )}
+          {roles.map((role) => (
+            <option key={role.roleId} value={role.roleId}>
+              {role.name}
+              {operation === 'revoke' && !revocable(role) ? ' (nepřiřazena)' : ''}
+            </option>
+          ))}
         </select>
       </label>
-      {catalog === undefined ? (
-        <StatusText status="warning">Seznam rolí se zatím nepodařilo načíst. Zkusíme to znovu automaticky.</StatusText>
+      {roles.length === 0 ? (
+        <StatusText status="warning">V tomto rozsahu není žádná role. Role založíte v části Přístup → Role.</StatusText>
       ) : null}
-      {selected === undefined ? null : <p className="text-fg-secondary text-sm">{selected.description}</p>}
     </>
   );
 };
 
 const PeopleEditor = ({
-  catalog,
+  access,
+  companyId,
   editor,
   onClose,
   onCommitted,
   scope,
 }: {
-  readonly catalog: PeopleRoleCatalog | undefined;
+  readonly access: PeopleAccessView | undefined;
+  readonly companyId: string | undefined;
   readonly editor: Editor;
   readonly onClose: () => void;
   readonly onCommitted: (change: PendingPeopleChange) => void;
@@ -104,7 +121,8 @@ const PeopleEditor = ({
   const { person } = editor;
   const membership = person.selectedCompanyMembership;
   const { kind, principalRef } = person;
-  const [roleKey, setRoleKey] = useState('');
+  const roles = accessRolesOfScope(access, scope, companyId);
+  const [roleId, setRoleId] = useState('');
   const [operation, setOperation] = useState<'assign' | 'revoke'>('assign');
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
@@ -167,17 +185,49 @@ const PeopleEditor = ({
     }
     close();
   };
+  const chosen = roles.find((role) => role.roleId === roleId);
+  const held = chosen === undefined ? undefined : accessAssignmentOf(access, principalRef.principalId, chosen.roleId);
+  const command = (): PersonRoleCommand | undefined => {
+    if (access === undefined || chosen === undefined || reason.trim() === '') {
+      return undefined;
+    }
+    if (operation === 'assign') {
+      const payload = Schema.decodeUnknownOption(AssignAccessRolePayloadSchema)({
+        expectedRevision: access.people.revision,
+        expectedRoleRevisionId: chosen.latestRevisionId,
+        principalId: principalRef.principalId,
+        roleId: chosen.roleId,
+        scope: chosen.scope,
+      });
+      return Option.isNone(payload) ? undefined : { operation: 'assign', payload: payload.value };
+    }
+    if (held === undefined) {
+      return undefined;
+    }
+    const payload = Schema.decodeUnknownOption(RevokeAccessAssignmentPayloadSchema)({
+      expectedRevision: access.people.revision,
+      incarnationId: held.incarnationId,
+      reason: reason.trim(),
+    });
+    return Option.isNone(payload) ? undefined : { operation: 'revoke', payload: payload.value };
+  };
   const submit = () => {
-    if (busy || reason.trim() === '' || roleKey.trim() === '') {
+    if (busy) {
+      return;
+    }
+    const request = command();
+    if (request === undefined) {
+      setError(
+        access === undefined
+          ? 'Přístupové údaje se nepodařilo načíst. Obnovte stránku.'
+          : 'Vyberte roli, vyplňte důvod a u odebírání zvolte přiřazenou roli.',
+      );
       return;
     }
     setBusy(true);
     setError('');
     void browserRuntime.runPromise(
-      changeScopedRole(scope, { operation, principalRef, reason: reason.trim(), roleKey: roleKey.trim() }).pipe(
-        Effect.map((outcome): PeopleOutcome<PendingPeopleChange> =>
-          outcome.status === 'failed' ? outcome : { status: 'ok', value: { kind: 'role', result: outcome.value } },
-        ),
+      changePersonRole(request).pipe(
         Effect.andThen((outcome) =>
           Effect.sync(() => {
             setBusy(false);
@@ -199,7 +249,7 @@ const PeopleEditor = ({
             <Button disabled={busy} onClick={onClose} theme="outlined" variant="secondary">
               Zrušit
             </Button>
-            <Button disabled={busy || reason.trim() === '' || roleKey.trim() === ''} onClick={submit} variant="primary">
+            <Button disabled={busy || reason.trim() === '' || chosen === undefined} onClick={submit} variant="primary">
               {busy ? 'Odesílám…' : 'Potvrdit změnu'}
             </Button>
           </>
@@ -227,13 +277,13 @@ const PeopleEditor = ({
         {editor.kind === 'role' ? (
           <>
             <RolePicker
+              access={access}
               busy={busy}
-              catalog={catalog}
-              onChange={setRoleKey}
+              onChange={setRoleId}
               operation={operation}
               person={person}
-              roleKey={roleKey}
-              scope={scope}
+              roleId={roleId}
+              roles={roles}
             />
             <label className="grid gap-50">
               Změna
@@ -241,7 +291,7 @@ const PeopleEditor = ({
                 className={selectClass}
                 onChange={(event) => {
                   setOperation(event.target.value === 'revoke' ? 'revoke' : 'assign');
-                  setRoleKey('');
+                  setRoleId('');
                 }}
                 value={operation}
               >
@@ -291,8 +341,8 @@ const PeopleEditor = ({
               </label>
             ) : null}
             <p className="text-fg-secondary text-sm">
-              Zařazení zaměstnance ani pracovní pozice nepřidělují žádná práva. Při odchodu historie zůstává zachována;
-              změna přístupu se zpracuje po potvrzení.
+              Zařazení ve firmě a stav členství jsou organizační údaje: neurčují práva a jejich změna sama neodebere
+              žádnou roli. Oprávnění se mění přiřazením role; členství a správu firmy nastavujete ve správě přístupu.
             </p>
           </>
         )}
@@ -342,13 +392,13 @@ const InvitationDelivery = ({ delivery }: { readonly delivery: Person['invitatio
 };
 
 const PersonDetail = ({
-  catalog,
+  access,
   onClose,
   onEdit,
   person,
   scope,
 }: {
-  readonly catalog: PeopleRoleCatalog | undefined;
+  readonly access: PeopleAccessView | undefined;
   readonly onClose: () => void;
   readonly onEdit: (editor: Editor) => void;
   readonly person: Person;
@@ -405,12 +455,12 @@ const PersonDetail = ({
           : membershipLabels[person.selectedCompanyMembership.status]}
       </p>
       <InvitationDelivery delivery={person.invitationDelivery} />
-      <p>
-        Role v tomto rozsahu:{' '}
-        {person.roleAssignments.map((role) => roleName(catalog, role.roleKey)).join(', ') || 'Žádné'}
-      </p>
+      <p>Role v tomto rozsahu: {accessRoleNamesOf(access, person.principalRef.principalId).join(', ') || 'Žádné'}</p>
       {person.selectedCompanyMembership?.status === 'departed' ? (
-        <p>Odchod zachovává historii. Případné přeřazení práce ověřte přímo v agendě, která práci eviduje.</p>
+        <p>
+          Odchod je organizační stav: sám neodebere žádnou roli. Historie zůstává zachována a případné přeřazení práce
+          ověřte přímo v agendě, která práci eviduje.
+        </p>
       ) : null}
     </div>
   </Dialog>
@@ -520,7 +570,7 @@ export const PeoplePanel = ({
   readonly linkedPersonError?: string | undefined;
 }) => {
   const [scope, setScope] = useState<'company' | 'tenant'>(() => scopeOf(companyId));
-  const [catalogLoaded, setCatalogLoaded] = useState<Loaded<PeopleRoleCatalog>>();
+  const [accessLoaded, setAccessLoaded] = useState<Loaded<PeopleAccessView>>();
   const [detail, setDetail] = useState<Person>();
   const [loaded, setLoaded] = useState<Loaded<PeopleList>>();
   const [editor, setEditor] = useState<Editor | undefined>();
@@ -531,20 +581,20 @@ export const PeoplePanel = ({
   // A background reload keeps the rows of the same view on screen; only a new view starts empty.
   const current = loaded?.key === viewKey ? loaded.outcome : undefined;
   const list = current?.status === 'ok' ? current.value : undefined;
-  const catalog =
-    catalogLoaded?.key === viewKey && catalogLoaded.outcome.status === 'ok' ? catalogLoaded.outcome.value : undefined;
+  const access =
+    accessLoaded?.key === viewKey && accessLoaded.outcome.status === 'ok' ? accessLoaded.outcome.value : undefined;
   const loading = current === undefined;
   const error = peopleReadError(current, linkedPerson, linkedPersonError, linkedPersonCompanyQualified, companyId);
   const acceptRead = useEffectEvent(
-    (key: string, people: PeopleOutcome<PeopleList>, roles: PeopleOutcome<PeopleRoleCatalog>) => {
+    (key: string, people: PeopleOutcome<PeopleList>, roles: PeopleOutcome<PeopleAccessView>) => {
       const firstRead = loaded?.key !== key;
       setLoaded({ key, outcome: people });
-      setCatalogLoaded({ key, outcome: roles });
+      setAccessLoaded({ key, outcome: roles });
       if (people.status !== 'ok') {
         setDetail(undefined);
         setEditor(undefined);
       }
-      if (roles.status !== 'ok') {
+      if (roles.status === 'failed') {
         setEditor(undefined);
       }
       if (people.status === 'ok') {
@@ -553,21 +603,22 @@ export const PeoplePanel = ({
           const principalId = selected?.principalRef.principalId ?? (firstRead ? linkedPerson : undefined);
           return linkedPersonOf(people.value, principalId, linkedPersonCompanyQualified, companyId);
         });
-        setPending((changes) => changes.filter((change) => !isChangeConfirmed(change, people.value)));
+        const rolesOfRead = roles.status === 'ok' ? roles.value : undefined;
+        setPending((changes) => changes.filter((change) => !isChangeConfirmed(change, people.value, rolesOfRead)));
       }
     },
   );
   useEffect(() => {
     const fiber = browserRuntime.runFork(
-      Effect.all({ people: loadAllPeople(scope), roles: loadRoleCatalog(scope) }, { concurrency: 2 }).pipe(
-        Effect.andThen(({ people, roles }) => Effect.sync(() => acceptRead(viewKey, people, roles))),
+      Effect.all({ access: loadPeopleAccess(scope, companyId), people: loadAllPeople(scope) }, { concurrency: 2 }).pipe(
+        Effect.andThen(({ access: roles, people }) => Effect.sync(() => acceptRead(viewKey, people, roles))),
         Effect.withSpan('PeoplePanel.load', { attributes: { reload } }),
       ),
     );
     return () => {
       browserRuntime.runFork(Fiber.interrupt(fiber));
     };
-  }, [viewKey, scope, reload]);
+  }, [viewKey, scope, companyId, reload]);
   useLiveReload(() => setReload((value) => value + 1));
   const commit = (change: PendingPeopleChange) => {
     setPending((changes) => [...changes, change]);
@@ -577,15 +628,15 @@ export const PeoplePanel = ({
   return (
     <div className="grid min-w-0 gap-200">
       <PeopleToolbar
+        access={access}
         actions={scope === 'company' && list !== undefined ? <InvitePersonButton onCommitted={commit} /> : null}
-        catalog={catalog}
         companyAvailable={companyId !== undefined}
         filters={filters}
         onFiltersChange={setFilters}
         onScopeChange={(next) => {
           setScope(next);
           setEditor(undefined);
-          setFilters((value) => ({ ...value, roleKey: 'all' }));
+          setFilters((value) => ({ ...value, roleId: 'all' }));
         }}
         scope={scope}
       />
@@ -603,7 +654,7 @@ export const PeoplePanel = ({
       )}
       {detail === undefined ? null : (
         <PersonDetail
-          catalog={catalog}
+          access={access}
           onClose={() => setDetail(undefined)}
           onEdit={setEditor}
           person={detail}
@@ -612,7 +663,7 @@ export const PeoplePanel = ({
       )}
       {current?.status === 'failed' ? null : (
         <PeopleTable
-          catalog={catalog}
+          access={access}
           filters={filters}
           loading={loading}
           onEdit={(kind, person) => setEditor({ kind, person })}
@@ -624,7 +675,8 @@ export const PeoplePanel = ({
       )}
       {editor === undefined ? null : (
         <PeopleEditor
-          catalog={catalog}
+          access={access}
+          companyId={companyId}
           editor={editor}
           key={`${scope}:${editor.kind}:${editor.person.principalRef.principalId}`}
           onClose={() => setEditor(undefined)}

@@ -9,6 +9,7 @@ import {
   CORE_ACTION_CATALOG_VALUE_SLOT_START,
   CORE_ACTION_SLOT_END,
   CORE_ACTION_SLOT_START,
+  DEFAULT_ACCESS_RISK,
   MODULE_MANIFEST_ACTION_SLOT_END,
   MODULE_MANIFEST_ACTION_SLOT_START,
   MODULE_MANIFEST_IMPORT_SLOT_END,
@@ -19,15 +20,22 @@ import {
   MODULE_REGISTRATION_IMPORT_SLOT_START,
   OUTBOX_SLOT_END,
   OUTBOX_SLOT_START,
+  SCAFFOLD_RECORD_KEY_FIELD,
   createMutationEffect,
   discoverOntosModuleEffect,
   ensureUniqueMutationPaths,
   insertSortedSlot,
   isModuleManifestImport,
+  renderAccessDeclaration,
+  renderAccessTarget,
+  renderAccessWorkload,
+  raiseScaffoldFailure,
+  isModuleRegistrationImport,
   requireCanonicalSlug,
   requireCoreModuleKey,
   resolveContainedPath,
   scaffoldFailure,
+  toAccessDeclarationKey,
   toCamelCase,
   toPascalCase,
   toTitle,
@@ -35,26 +43,89 @@ import {
   updateMutation,
   withCoreDependency,
 } from '../shared.mts';
-import type { ActionScaffoldConfig, OntosVerticalMetadata } from '../shared.mts';
+import type { AccessDeclarationSelector, ActionScaffoldConfig, OntosVerticalMetadata } from '../shared.mts';
 
 const CORE_RUNTIME_DIRECTORY = 'core-runtime';
+
+/**
+ * The access carrier of a new Action (O62, O67-Q4): a declaration for a human capability, or a
+ * workload marker for an Action only trusted machines may run (O29/O59/O73). The two never mix in a
+ * scaffold, so a generated Action is decided by exactly one carrier.
+ */
+interface ActionAccessCarrier {
+  readonly selectors: readonly AccessDeclarationSelector[];
+  readonly workload?: string;
+  /** The registered workload keys the generated marker admits; required with `workload` (O73). */
+  readonly workloadKeys?: readonly string[];
+}
+
+const actionAccessCarrier = (config: ActionAccessScaffoldConfigView): ActionAccessCarrier => {
+  const { accessWorkload, accessWorkloadKeys } = config;
+  if (accessWorkload !== undefined) {
+    if (config.accessRisk !== undefined || config.accessSelectors !== undefined) {
+      return raiseScaffoldFailure('a workload Action declares no access risk or selectors');
+    }
+    if (accessWorkloadKeys === undefined || accessWorkloadKeys.length === 0) {
+      return raiseScaffoldFailure('a workload Action names at least one registered workload key (O73)');
+    }
+    return { selectors: [], workload: accessWorkload, workloadKeys: accessWorkloadKeys };
+  }
+  return { selectors: config.accessSelectors ?? [] };
+};
+
+type ActionAccessScaffoldConfigView = Pick<
+  ActionScaffoldConfig,
+  'accessRisk' | 'accessSelectors' | 'accessWorkload' | 'accessWorkloadKeys'
+>;
+
+const recordScopedPayload = (carrier: ActionAccessCarrier): string =>
+  carrier.selectors.length === 0
+    ? 'Schema.Struct({})'
+    : `Schema.Struct({\n  ${SCAFFOLD_RECORD_KEY_FIELD}: Schema.String.check(Schema.isUUID()),\n})`;
+
+const actionCarrierFields = (
+  moduleKey: string,
+  action: string,
+  carrier: ActionAccessCarrier,
+  risk: ActionAccessScaffoldConfigView['accessRisk'],
+): string => {
+  if (carrier.workload !== undefined) {
+    return renderAccessWorkload(carrier.workload, carrier.workloadKeys ?? [], '    ');
+  }
+  const accessKey = toAccessDeclarationKey(moduleKey, action, 'run');
+  const declaration = renderAccessDeclaration(
+    {
+      group: accessKey.split('.').at(-2) ?? action,
+      key: accessKey,
+      kind: 'action',
+      level: 'extended',
+      modes: ['run', 'propose', 'approve'],
+      risk: risk ?? DEFAULT_ACCESS_RISK,
+      selectors: carrier.selectors,
+    },
+    '    ',
+  );
+  return carrier.selectors.length === 0 ? declaration : `${declaration}${renderAccessTarget(moduleKey, '    ')}\n`;
+};
 
 const renderAction = (
   vertical: OntosVerticalMetadata,
   action: string,
   legalEntityScope: ActionScaffoldConfig['legalEntityScope'],
-  provisioning: ActionScaffoldConfig['provisioning'],
+  access: ActionAccessScaffoldConfigView,
 ): string => {
   const actionType = toPascalCase(action);
   const actionValue = `${toCamelCase(action)}Action`;
   const handler = `handle${actionType}`;
+  const carrier = actionAccessCarrier(access);
+  const carrierFields = actionCarrierFields(vertical.moduleId, action, carrier, access.accessRisk);
   return `${ACTION_GENERATOR_HEADER}
 // @ontos-action-owner ${vertical.moduleId}
 // @ontos-action-slug ${action}
 import { Effect, Schema } from 'effect';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 
-const ${actionType}PayloadSchema = Schema.Struct({});
+const ${actionType}PayloadSchema = ${recordScopedPayload(carrier)};
 
 const ${actionType}ResultSchema = Schema.Struct({});
 
@@ -76,7 +147,7 @@ const ${handler} = () =>
 
 export const ${actionValue} = defineAction(
   {
-    accessEvidencePolicy: {
+${carrierFields}    accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: '${vertical.moduleId}.${action}.access.v1',
     },
@@ -86,7 +157,7 @@ export const ${actionValue} = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: '${provisioning}' },
+      authorization: { kind: 'protected' },
       entrypointKey: '${vertical.moduleId}.${action}',
       moduleKey: '${vertical.moduleId}',
       role: 'action',
@@ -111,11 +182,13 @@ const renderCoreAction = (
   moduleKey: string,
   action: string,
   legalEntityScope: ActionScaffoldConfig['legalEntityScope'],
-  provisioning: ActionScaffoldConfig['provisioning'],
+  access: ActionAccessScaffoldConfigView,
 ): string => {
   const actionType = toPascalCase(action);
   const actionValue = `${toCamelCase(action)}Action`;
   const handler = `handle${actionType}`;
+  const carrier = actionAccessCarrier(access);
+  const carrierFields = actionCarrierFields(moduleKey, action, carrier, access.accessRisk);
   return `${ACTION_GENERATOR_HEADER}
 // @ontos-action-owner ${moduleKey}
 // @ontos-action-slug ${action}
@@ -123,7 +196,7 @@ import { Effect, Schema } from 'effect';
 import { defineAction } from '../../actions/definition.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
-const ${actionType}PayloadSchema = Schema.Struct({});
+const ${actionType}PayloadSchema = ${recordScopedPayload(carrier)};
 
 const ${actionType}ResultSchema = Schema.Struct({});
 
@@ -145,7 +218,7 @@ const ${handler} = () =>
 
 export const ${actionValue} = defineAction(
   {
-    accessEvidencePolicy: {
+${carrierFields}    accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: '${moduleKey}.${action}.access.v1',
     },
@@ -155,7 +228,7 @@ export const ${actionValue} = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: '${provisioning}' },
+      authorization: { kind: 'protected' },
       entrypointKey: '${moduleKey}.${action}',
       moduleKey: '${moduleKey}',
       role: 'action',
@@ -197,7 +270,7 @@ const planCoreActionScaffold = Effect.fn('ActionScaffold.planCore')(function* pl
   moduleKeyInput: string,
   action: string,
   legalEntityScope: ActionScaffoldConfig['legalEntityScope'],
-  provisioning: ActionScaffoldConfig['provisioning'],
+  access: ActionAccessScaffoldConfigView,
 ) {
   const moduleKey = yield* tryScaffold('Core module key is invalid', () => requireCoreModuleKey(moduleKeyInput));
   const [actionPath, indexPath, catalogPath] = yield* tryScaffold(
@@ -227,7 +300,7 @@ const planCoreActionScaffold = Effect.fn('ActionScaffold.planCore')(function* pl
   );
   const actionMutation = yield* createMutationEffect(
     actionPath,
-    renderCoreAction(moduleKey, action, legalEntityScope, provisioning),
+    renderCoreAction(moduleKey, action, legalEntityScope, access),
   );
   const fileSystem = yield* FileSystem.FileSystem;
   const indexContent = yield* fileSystem
@@ -273,13 +346,7 @@ const planActionScaffold = Effect.fn('ActionScaffold.plan')(function* planAction
 ) {
   const action = yield* tryScaffold('Action name is invalid', () => requireCanonicalSlug(config.action, 'action'));
   if (config.scope === 'core') {
-    return yield* planCoreActionScaffold(
-      workspaceRoot,
-      config.module,
-      action,
-      config.legalEntityScope,
-      config.provisioning,
-    );
+    return yield* planCoreActionScaffold(workspaceRoot, config.module, action, config.legalEntityScope, config);
   }
   const vertical = yield* discoverOntosModuleEffect(workspaceRoot, config.vertical);
   const actionPath = yield* tryScaffold('failed to resolve Action path', () =>
@@ -287,10 +354,35 @@ const planActionScaffold = Effect.fn('ActionScaffold.plan')(function* planAction
   );
   const actionMutation = yield* createMutationEffect(
     actionPath,
-    renderAction(vertical, action, config.legalEntityScope, config.provisioning),
+    renderAction(vertical, action, config.legalEntityScope, config),
   );
   const actionValue = `${toCamelCase(action)}Action`;
   const ownerImport = `import { ${actionValue} } from './src/actions/${action}.action.ts';`;
+  if (vertical.runtimeDeclaration !== undefined) {
+    const owner = vertical.runtimeDeclaration;
+    const content = yield* tryScaffold('failed to patch shared Action declaration', () =>
+      insertSortedSlot(
+        insertSortedSlot(
+          owner.content,
+          MODULE_MANIFEST_IMPORT_SLOT_START,
+          MODULE_MANIFEST_IMPORT_SLOT_END,
+          [ownerImport],
+          isModuleManifestImport,
+        ),
+        MODULE_MANIFEST_ACTION_SLOT_START,
+        MODULE_MANIFEST_ACTION_SLOT_END,
+        [`${actionValue},`],
+        (candidate) => /^[a-z][A-Za-z0-9]*Action,$/u.test(candidate),
+      ),
+    );
+    const ownerMutation = updateMutation(owner.path, owner.content, content);
+    const dependencyMutation = yield* tryScaffold('failed to patch the Core dependency', () =>
+      withCoreDependency(vertical),
+    );
+    const mutations = [actionMutation, ownerMutation, dependencyMutation].filter((mutation) => mutation !== undefined);
+    yield* tryScaffold('Action mutation paths are invalid', () => ensureUniqueMutationPaths(mutations));
+    return { mutations, result: { actionPath } };
+  }
   const [nextManifest, nextRegistration] = yield* tryScaffold(
     'failed to patch generated Action owner slots',
     () =>
@@ -314,13 +406,7 @@ const planActionScaffold = Effect.fn('ActionScaffold.plan')(function* planAction
             MODULE_REGISTRATION_IMPORT_SLOT_START,
             MODULE_REGISTRATION_IMPORT_SLOT_END,
             [ownerImport],
-            (candidate) =>
-              /^import \{ [a-z][A-Za-z0-9]*Action \} from '\.\/src\/actions\/[a-z][a-z0-9-]*\.action\.ts';$/u.test(
-                candidate,
-              ) ||
-              /^import \{ [a-z][A-Za-z0-9]*Worker \} from '\.\/src\/workers\/[a-z][a-z0-9-]*\.worker\.ts';$/u.test(
-                candidate,
-              ),
+            isModuleRegistrationImport,
           ),
           MODULE_REGISTRATION_ACTION_SLOT_START,
           MODULE_REGISTRATION_ACTION_SLOT_END,

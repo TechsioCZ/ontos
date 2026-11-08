@@ -1,4 +1,4 @@
-import { consumeOrderPurchaseApprovalAction } from '../../src/actions/consume-order-purchase-approval.action.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { consumePurchaseApprovalAction } from '../../src/actions/consume-purchase-approval.action.ts';
 import { revokeCounterpartyCommerceAccessAction } from '../../src/actions/revoke-counterparty-commerce-access.action.ts';
 import { suspendCustomerProfileAction } from '../../src/actions/suspend-customer-profile.action.ts';
@@ -6,8 +6,6 @@ import { revalidatePurchaseApprovalAction } from '../../src/actions/revalidate-p
 import { randomUUID } from 'node:crypto';
 import {
   ActiveApplicationCompositionService,
-  BusinessPermissionRelationshipMutation,
-  BusinessPermissionRelationshipMutationLive,
   ContextAccessLive,
   GatewayAssertionRedemptionService,
   PrincipalEligibilityLive,
@@ -18,7 +16,11 @@ import type { ActiveApplicationCompositionSnapshot, loadDatabaseConnectionPair }
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
-import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
+import {
+  DELEGATED_GATEWAY_ASSERTION_VERSION,
+  EXTERNAL_GATEWAY_ASSERTION_VERSION,
+  GATEWAY_ASSERTION_TTL_SECONDS,
+} from '@app/shared-contracts';
 import { PgClient } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
@@ -70,7 +72,6 @@ import {
 } from '../../src/persistence/purchase-limit-persistence.ts';
 import { purchaseApprovalCurrentnessFactoryLive } from '../../src/persistence/purchase-approval-currentness-persistence.ts';
 import { ProfileCounterpartyRoleEligibilityResolverFactory } from '../../src/profile-counterparty-role-eligibility.ts';
-import { profileRetailPermissionReaderFactoryLive } from '../../src/integrations/retail-permission-reader.ts';
 import {
   profileReactivationEligibilityEvaluatorFactoryLive,
   profileReconfirmationPolicyUnavailableLive,
@@ -78,7 +79,6 @@ import {
 import { partyRegistryGuestResolverFactoryLive } from '../../src/integrations/party-registry-guest-resolver.ts';
 import { partyRegistryRetailPartyResolverFactoryLive } from '../../src/integrations/party-registry-retail-party-resolver.ts';
 import { purchasingApprovalCommercialFixture } from '../unit/purchasing-approval-fixtures.ts';
-import { prepareTestApprovalCurrentness } from './purchasing-approval-test-currentness.ts';
 
 /** Shared native construction path: domain values stay decoded until the exact Core wire boundary. */
 export const purchasingApprovalNativePayloads = {
@@ -133,8 +133,8 @@ const storefrontId = 'native-approval-storefront';
 const buyerSubmitPermission = 'counterparty.purchase.submit';
 const money = (amount: string) => ({ amount, currency: 'EUR' });
 const observationNow = () => DateTime.now;
-export const beginGrant = defineScopedRoutine({
-  name: 'begin_access_grant',
+export const grantAccess = defineScopedRoutine({
+  name: 'grant_access',
   ownerModuleKey,
   parameters: [
     { source: 'tenantId', type: 'uuid' },
@@ -148,23 +148,8 @@ export const beginGrant = defineScopedRoutine({
     { nullable: true, source: 'input', type: 'text' },
     { source: 'input', type: 'boolean' },
   ],
-  resultSchema: Schema.Struct({ grant_id: Schema.String, mutation_id: Schema.String }),
+  resultSchema: Schema.Struct({ grant_id: Schema.String, state: Schema.Literal('ACTIVE') }),
   routineKey: 'test.approval.initial-grant',
-  schema: 'commerce_customer_context',
-});
-export const settleGrant = defineScopedRoutine({
-  name: 'transition_access_grant',
-  ownerModuleKey,
-  parameters: [
-    { source: 'tenantId', type: 'uuid' },
-    { source: 'legalEntityId', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'text' },
-    { source: 'input', type: 'text' },
-  ],
-  resultSchema: Schema.Struct({ state: Schema.Literals(['ACTIVE', 'REVOKED']) }),
-  routineKey: 'test.approval.settle-initial-grant',
   schema: 'commerce_customer_context',
 });
 
@@ -176,44 +161,42 @@ export const settleGrant = defineScopedRoutine({
 export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApprovalNative.make')(
   function* makePurchasingApprovalNativeFixture(input: {
     readonly apiKeyManager?: boolean;
-    readonly configuredModuleAccess?: boolean;
     readonly connections: Effect.Success<ReturnType<typeof loadDatabaseConnectionPair>>;
     readonly finalProofTest?: true;
     readonly snapshot: ActiveApplicationCompositionSnapshot;
   }) {
-    const fixtureConfiguration = {
-      actionExecutor: 'manager-only',
-      actionKeys: [
-        createCounterpartyPurchasingProfileAction,
-        changeCounterpartyPurchaseLimitAction,
-        createPurchaseProposalRevisionAction,
-        createApprovalHierarchyAction,
-        submitPurchaseApprovalRequestAction,
-        decidePurchaseApprovalRequestAction,
-        ...(input.finalProofTest === true
-          ? [
-              consumePurchaseApprovalAction,
-              consumeOrderPurchaseApprovalAction,
-              revalidatePurchaseApprovalAction,
-              revokeCounterpartyCommerceAccessAction,
-              suspendCustomerProfileAction,
-            ]
-          : []),
-      ].map((action) => action.descriptor.actionKey),
-      adminConnectionString: Redacted.make(input.connections.admin.connectionString),
-      allowedAudiences: [audience],
-      authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
-      authenticationSubjectTypes: input.finalProofTest === true ? ['user', 'api_key'] : ['user'],
-      compositionRevision: input.snapshot.composition.revision,
-      managerAuthenticationMethod: input.apiKeyManager === true ? 'api_key' : 'session',
-      moduleKeys: [ownerModuleKey],
-      runtimeConnectionString: Redacted.make(input.connections.runtime.connectionString),
-    } satisfies Parameters<typeof makeLiveOperationFixture>[0];
-    const moduleAccess = 'configured-modules';
     const fixture = yield* Effect.acquireRelease(
-      makeLiveOperationFixture(
-        input.configuredModuleAccess === true ? { ...fixtureConfiguration, moduleAccess } : fixtureConfiguration,
-      ),
+      makeLiveOperationFixture({
+        access: 'allowed',
+        actionExecutor: 'manager-only',
+        actionKeys: [
+          createCounterpartyPurchasingProfileAction,
+          changeCounterpartyPurchaseLimitAction,
+          createPurchaseProposalRevisionAction,
+          createApprovalHierarchyAction,
+          submitPurchaseApprovalRequestAction,
+          decidePurchaseApprovalRequestAction,
+          ...(input.finalProofTest === true
+            ? [
+                consumePurchaseApprovalAction,
+                revalidatePurchaseApprovalAction,
+                revokeCounterpartyCommerceAccessAction,
+                suspendCustomerProfileAction,
+              ]
+            : []),
+        ].map((action) => action.descriptor.actionKey),
+        adminConnectionString: Redacted.make(input.connections.admin.connectionString),
+        allowedAudiences: [audience],
+        applicationComposition: { load: Effect.succeed(input.snapshot) },
+        authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+        authenticationSubjectTypes: input.finalProofTest === true ? ['user', 'api_key'] : ['user'],
+        compositionRevision: input.snapshot.composition.revision,
+        expectedDeployment: ultramodernApiMarker,
+        managerAuthenticationMethod: input.apiKeyManager === true ? 'api_key' : 'session',
+        moduleKeys: [ownerModuleKey],
+        ownerRegistration: commerceCustomerContextRegistration,
+        runtimeConnectionString: Redacted.make(input.connections.runtime.connectionString),
+      }),
       (resource) => resource.close().pipe(Effect.orDie),
     );
     const { legalEntityId, tenantId } = fixture;
@@ -236,7 +219,7 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
           Schema.Struct({ at: Schema.DateTimeUtcFromString, epoch: Schema.Int }),
         )(row);
       });
-    const roleFacts = new Map<string, { readonly at: string; readonly roleId: string; readonly validUntil: null }>();
+    const roleFacts = new Map<string, { readonly at: string; readonly roleId: string }>();
     const candidates = new Map<
       string,
       {
@@ -261,7 +244,6 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
                   outcome: 'ELIGIBLE' as const,
                   roleResourceId: known.roleId,
                   roleResourceRevision: known.at,
-                  validUntil: known.validUntil,
                 }
               : { outcome: 'INDETERMINATE' as const },
           );
@@ -311,18 +293,6 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
         return known.facts;
       });
     const currentLayer = Layer.succeed(PurchaseLimitEvaluationCurrentnessPort, {
-      prepare: (context, source) => {
-        const known = candidates.get(source.sourceRef);
-        return known !== undefined && known.proposal.purchaseValue.sourceRevision === source.sourceRevision
-          ? prepareTestApprovalCurrentness(context, known)
-          : Effect.fail(
-              PurchaseLimitDependencyUnavailableSchema.make({
-                code: 'purchase_limit_dependency_unavailable',
-                dependency: 'TEST_EXACT_APPROVAL_SOURCE',
-                reason: 'The independent TEST owner has no exact source revision',
-              }),
-            );
-      },
       resolveCandidate: currentFacts,
       resolveCurrent: currentFacts,
     });
@@ -331,17 +301,12 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
       currentLayer,
       ContextAccessLive,
       PrincipalEligibilityLive,
-      BusinessPermissionRelationshipMutationLive,
-      profileRetailPermissionReaderFactoryLive,
       profileReactivationEligibilityEvaluatorFactoryLive,
       partyRegistryGuestResolverFactoryLive,
       partyRegistryRetailPartyResolverFactoryLive,
       Layer.succeed(CounterpartyInvitationProofDelivery, unavailableCounterpartyInvitationProofDelivery()),
     ).pipe(Layer.provide(ContextAccessLive), Layer.provide(profileReconfirmationPolicyUnavailableLive));
-    const overlay = commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(
-      Layer.provide(profileRetailPermissionReaderFactoryLive),
-      Layer.provide(ContextAccessLive),
-    );
+    const overlay = commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(Layer.provide(ContextAccessLive));
     const coreLayer = fixture.layer.pipe(Layer.provide(overlay));
     const actualOwners = Layer.mergeAll(purchaseLimitPersistenceLayer, purchaseApprovalCurrentnessFactoryLive).pipe(
       Layer.provideMerge(ordinaryDependencies),
@@ -361,16 +326,34 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
     const jwk = yield* Effect.promise(async () => await exportJWK(pair.publicKey));
     const issuer = 'https://approval-native-test.invalid';
     const verifier = bindGatewayPrincipalVerifier(audience, ultramodernApiMarker);
+    const callingModulePrincipalId = randomUUID();
     const authenticatedPrincipal = Effect.fn('PurchasingApprovalNative.authenticateTESTIssuer')(
-      function* authenticateTESTIssuer(actor = fixture.manager) {
+      function* authenticateTESTIssuer(actor = fixture.manager, calledBy?: string) {
         const clock = yield* nativeNow();
+        // A module-to-module call carries the calling module as `act`, as the Shell signs it (version 3).
+        const callingModule =
+          calledBy === undefined
+            ? undefined
+            : input.snapshot.composition.modules.find(({ deployment }) => deployment.appId === calledBy)?.deployment;
+        if (calledBy !== undefined && callingModule === undefined) {
+          return yield* Effect.die(`The composition has no calling module ${calledBy}`);
+        }
         const token = yield* Effect.promise(
           async () =>
             await new SignJWT({
+              ...(callingModule === undefined
+                ? { ver: EXTERNAL_GATEWAY_ASSERTION_VERSION }
+                : {
+                    act: {
+                      appId: callingModule.appId,
+                      buildMarker: callingModule.buildMarker,
+                      principalId: callingModulePrincipalId,
+                    },
+                    ver: DELEGATED_GATEWAY_ASSERTION_VERSION,
+                  }),
               compositionRevision: input.snapshot.composition.revision,
               principal: { ...actor, legalEntityId, trustedStorefrontId: storefrontId },
               targetBuildMarker: ultramodernApiMarker.buildMarker,
-              ver: EXTERNAL_GATEWAY_ASSERTION_VERSION,
             })
               .setProtectedHeader({ alg: 'EdDSA', kid: 'approval-native-test', typ: 'JWT' })
               .setIssuer(issuer)
@@ -400,27 +383,6 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
       targetModuleKey: ownerModuleKey,
     });
 
-    // Fixture-level completion of the real staged mutation protocol, not execution of an Outbox Worker.
-    const settleBuyerRevocation = (
-      counterpartyRef: typeof CounterpartyRefSchema.Type,
-      grantId: string,
-      mutationId: string,
-    ) =>
-      Effect.gen(function* settleActualBuyerRevocation() {
-        yield* Context.get(runtimeContext, BusinessPermissionRelationshipMutation).mutate({
-          operation: 'revoke',
-          permission: buyerSubmitPermission,
-          principal,
-          target: { counterpartyId: counterpartyRef.resourceId, kind: 'counterparty', legalEntityId, tenantId },
-        });
-        return yield* fixture
-          .prepareOwner(
-            (transaction) => transaction.invoke(settleGrant, [grantId, mutationId, 'revoke', 'REVOKED']),
-            'required',
-          )
-          .pipe(Effect.provideContext(runtimeContext));
-      });
-
     const createRequest = Effect.fn('PurchasingApprovalNative.createRequest')(function* createRequest({
       deliveryAddress = { country: 'CZ' },
       hierarchyTtlMilliseconds,
@@ -443,8 +405,7 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
         tenantId,
       });
       const roleAt = DateTime.formatIso((yield* nativeNow()).at);
-      // This TEST-owned synthetic role has no scheduled End; it is not a Party production observation.
-      roleFacts.set(counterpartyRef.resourceId, { at: roleAt, roleId: randomUUID(), validUntil: null });
+      roleFacts.set(counterpartyRef.resourceId, { at: roleAt, roleId: randomUUID() });
       const profile = yield* runAction({
         payload: yield* purchasingApprovalNativePayloads.profile(counterpartyRef, roleAt),
         principal: yield* authenticatedPrincipal(),
@@ -465,7 +426,7 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
         const prepared = yield* fixture
           .prepareOwner(
             (transaction) =>
-              transaction.invoke(beginGrant, [
+              transaction.invoke(grantAccess, [
                 counterpartyRef.resourceId,
                 principal.principalId,
                 permission,
@@ -478,29 +439,9 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
             'required',
           )
           .pipe(Effect.provideContext(runtimeContext));
-        const [grant] = prepared;
-        if (grant === undefined) {
+        if (prepared[0] === undefined) {
           return yield* Effect.die('The native initial grant was not prepared');
         }
-        const mutation = Context.get(runtimeContext, BusinessPermissionRelationshipMutation);
-        const relation = {
-          permission,
-          principal,
-          target: {
-            counterpartyId: counterpartyRef.resourceId,
-            kind: 'counterparty' as const,
-            legalEntityId,
-            tenantId,
-          },
-        };
-        yield* mutation.mutate({ ...relation, operation: 'grant' });
-        yield* Effect.addFinalizer(() => mutation.mutate({ ...relation, operation: 'revoke' }).pipe(Effect.orDie));
-        yield* fixture
-          .prepareOwner(
-            (transaction) => transaction.invoke(settleGrant, [grant.grant_id, grant.mutation_id, 'grant', 'ACTIVE']),
-            'required',
-          )
-          .pipe(Effect.provideContext(runtimeContext));
       }
       yield* runAction({
         payload: yield* purchasingApprovalNativePayloads.limit(counterpartyRef),
@@ -755,7 +696,7 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
           const [grant] = yield* fixture
             .prepareOwner(
               (transaction) =>
-                transaction.invoke(beginGrant, [
+                transaction.invoke(grantAccess, [
                   counterpartyRef.resourceId,
                   reader.principalId,
                   buyerSubmitPermission,
@@ -771,25 +712,6 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
           if (grant === undefined) {
             return yield* Effect.die('The TEST recovery reader grant was not prepared');
           }
-          const mutation = Context.get(runtimeContext, BusinessPermissionRelationshipMutation);
-          const relation = {
-            permission: buyerSubmitPermission,
-            principal: { principalId: reader.principalId, tenantId },
-            target: {
-              counterpartyId: counterpartyRef.resourceId,
-              kind: 'counterparty' as const,
-              legalEntityId,
-              tenantId,
-            },
-          };
-          yield* mutation.mutate({ ...relation, operation: 'grant' });
-          yield* Effect.addFinalizer(() => mutation.mutate({ ...relation, operation: 'revoke' }).pipe(Effect.orDie));
-          yield* fixture
-            .prepareOwner(
-              (transaction) => transaction.invoke(settleGrant, [grant.grant_id, grant.mutation_id, 'grant', 'ACTIVE']),
-              'required',
-            )
-            .pipe(Effect.provideContext(runtimeContext));
           return reader;
         }),
       coreEvidenceExecutor,
@@ -800,7 +722,6 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
       observationNow,
       principal,
       runtimeContext,
-      settleBuyerRevocation,
       storefrontId,
       tenantId,
     };

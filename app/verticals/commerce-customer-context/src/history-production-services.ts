@@ -1,9 +1,9 @@
 import type { OperationalScope } from '@app/core-runtime';
-import { ContextAccess, ReadHandlerNotFound } from '@app/core-runtime';
-import { Effect, Match, Option, Schema } from 'effect';
+import { ReadHandlerNotFound } from '@app/core-runtime';
+import { Effect, Match, Schema } from 'effect';
 import type { Exit } from 'effect';
 import { HistoryOwnerUnavailable } from '../shared/domain/history-errors.ts';
-import type { CustomerHistoryPorts, HistoricalResourceAccessPort } from '../shared/domain/history-ports.ts';
+import type { CustomerHistoryPorts } from '../shared/domain/history-ports.ts';
 import { profilePersistenceServicesForTransaction } from './persistence/profile-persistence.ts';
 import type { ProfileScopedRoutineInvoker } from './persistence/profile-persistence.ts';
 
@@ -28,60 +28,27 @@ const exactRef = (
   left.resourceType === right.resourceType &&
   left.tenantId === right.tenantId;
 
-const currentResourceAccess = (
-  scope: OperationalScope & { readonly legalEntityId: string },
-  contextAccess: typeof ContextAccess.Service,
-): HistoricalResourceAccessPort => ({
-  current: ({ principalId, refs }) => {
-    if (principalId !== scope.principalId || refs.some((ref) => ref.tenantId !== scope.tenantId)) {
-      return Effect.succeed('ABSENT');
-    }
-    return contextAccess
-      .resources({
-        legalEntityId: scope.legalEntityId,
-        permission: 'read',
-        principalId,
-        resources: refs,
-        tenantId: scope.tenantId,
-      })
-      .pipe(
-        Effect.map((decisions) => {
-          const malformed =
-            decisions.length !== refs.length ||
-            decisions.some(({ key }, index) => {
-              const ref = refs[index];
-              return ref === undefined || key !== `${ref.moduleId}:${ref.resourceType}:${ref.resourceId}`;
-            });
-          if (malformed || decisions.some(({ decision }) => decision === 'unavailable')) {
-            return 'INDETERMINATE' as const;
-          }
-          return decisions.some(({ decision }) => decision === 'denied') ? ('ABSENT' as const) : ('CURRENT' as const);
-        }),
-      );
-  },
-});
+type AssociationReader = CustomerHistoryPorts['counterpartyProfiles']['current'];
+type AssociationRefs = Parameters<AssociationReader>[0];
 
-export type CounterpartyAssociationRefs = Parameters<CustomerHistoryPorts['counterpartyProfiles']['current']>[0];
-type CounterpartyAssociationState = Effect.Success<ReturnType<CustomerHistoryPorts['counterpartyProfiles']['current']>>;
-
-/**
- * Read in the transaction: the owner-local association a history request names, kept as an outcome so the
- * composition after commit meets it (or its unavailability) in the same order it always did.
- */
 export interface PreloadedCounterpartyAssociation {
-  readonly outcome: Exit.Exit<CounterpartyAssociationState, HistoryOwnerUnavailable>;
-  readonly refs: CounterpartyAssociationRefs;
+  readonly outcome: Exit.Exit<Effect.Success<ReturnType<AssociationReader>>, HistoryOwnerUnavailable>;
+  readonly refs: AssociationRefs;
+  readonly scope: Pick<OperationalScope, 'tenantId' | 'legalEntityId' | 'principalId'>;
 }
 
-/** Owner-local Counterparty ↔ purchasing-profile association, from the Read's own transaction (database only). */
-export const counterpartyAssociationReader =
-  (transaction: ProfileScopedRoutineInvoker, scope: OperationalScope & { readonly legalEntityId: string }) =>
-  (input: CounterpartyAssociationRefs): Effect.Effect<CounterpartyAssociationState, HistoryOwnerUnavailable> => {
+/** The owner-local association is the only SQL dependency of history composition. */
+export const counterpartyAssociationReader = (
+  transaction: ProfileScopedRoutineInvoker,
+  scope: OperationalScope & { readonly legalEntityId: string },
+): AssociationReader => {
+  const profiles = profilePersistenceServicesForTransaction(transaction, scope);
+  return (input) => {
     if (input.counterpartyRef.tenantId !== scope.tenantId || input.profileRef.tenantId !== scope.tenantId) {
       return Effect.succeed('ABSENT');
     }
-    return profilePersistenceServicesForTransaction(transaction, scope)
-      .customerProfileRead.readProfile(
+    return profiles.customerProfileRead
+      .readProfile(
         {
           authorizationSubject: {
             counterpartyRef: input.counterpartyRef,
@@ -114,55 +81,44 @@ export const counterpartyAssociationReader =
         }),
       );
   };
+};
 
-/**
- * After commit: the deployment's external history ports, the association preloaded in the transaction, and Core
- * Resource authorization (SpiceDB). An association the request did not name is indeterminate, never assumed.
- */
-export const customerHistoryPortsAfterCommit = Effect.fn('CustomerHistoryProduction.customerHistoryPortsAfterCommit')(
-  function* productionPorts(
-    base: CustomerHistoryPorts,
-    association: PreloadedCounterpartyAssociation | undefined,
-    scope: OperationalScope,
-  ) {
-    if (scope.legalEntityId === undefined) {
-      return base;
-    }
-    const trustedScope = { ...scope, legalEntityId: scope.legalEntityId };
-    const contextAccess = yield* Effect.serviceOption(ContextAccess);
-    return {
-      ...base,
-      counterpartyProfiles: {
-        current: (input) =>
-          association !== undefined &&
-          exactRef(association.refs.counterpartyRef, input.counterpartyRef) &&
-          exactRef(association.refs.profileRef, input.profileRef)
-            ? association.outcome
-            : Effect.succeed('INDETERMINATE'),
-      },
-      resources: Option.match(contextAccess, {
-        onNone: () => base.resources,
-        onSome: (service) => currentResourceAccess(trustedScope, service),
-      }),
-    } satisfies CustomerHistoryPorts;
-  },
-);
+/** Remote history owners run only after the load transaction has committed. */
+export const customerHistoryPortsAfterCommit = (
+  base: CustomerHistoryPorts,
+  loaded: PreloadedCounterpartyAssociation | undefined,
+  scope: OperationalScope,
+): Effect.Effect<CustomerHistoryPorts> =>
+  Effect.succeed({
+    ...base,
+    counterpartyProfiles: {
+      current: (input) =>
+        loaded !== undefined &&
+        scope.legalEntityId !== undefined &&
+        scope.tenantId === loaded.scope.tenantId &&
+        scope.legalEntityId === loaded.scope.legalEntityId &&
+        scope.principalId === loaded.scope.principalId &&
+        input.counterpartyRef.tenantId === scope.tenantId &&
+        input.profileRef.tenantId === scope.tenantId &&
+        exactRef(input.counterpartyRef, loaded.refs.counterpartyRef) &&
+        exactRef(input.profileRef, loaded.refs.profileRef)
+          ? loaded.outcome
+          : Effect.fail(unavailable('commerce.customer-context')),
+    },
+  });
 
-/** For Actions, whose whole handler runs in the Action transaction: the association is read live from it. */
-export const customerHistoryPortsForOperation = Effect.fn('CustomerHistoryProduction.customerHistoryPortsForOperation')(
-  function* actionPorts(base: CustomerHistoryPorts, transaction: ProfileScopedRoutineInvoker, scope: OperationalScope) {
-    if (scope.legalEntityId === undefined) {
-      return base;
-    }
-    const trustedScope = { ...scope, legalEntityId: scope.legalEntityId };
-    const contextAccess = yield* Effect.serviceOption(ContextAccess);
-    return {
-      ...base,
-      counterpartyProfiles: { current: counterpartyAssociationReader(transaction, trustedScope) },
-      resources: Option.match(contextAccess, {
-        onNone: () => base.resources,
-        onSome: (service) => currentResourceAccess(trustedScope, service),
-      }),
-    } satisfies CustomerHistoryPorts;
-  },
-);
+/** Transaction-local association used by the history Action's owner adapter. */
+export const customerHistoryPortsForOperation = (
+  base: CustomerHistoryPorts,
+  transaction: ProfileScopedRoutineInvoker,
+  scope: OperationalScope,
+): Effect.Effect<CustomerHistoryPorts> =>
+  Effect.succeed({
+    ...base,
+    counterpartyProfiles: {
+      current:
+        scope.legalEntityId === undefined
+          ? () => Effect.succeed('INDETERMINATE' as const)
+          : counterpartyAssociationReader(transaction, { ...scope, legalEntityId: scope.legalEntityId }),
+    },
+  });

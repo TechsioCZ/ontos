@@ -2,13 +2,13 @@
 // @ontos-action-owner commerce.cart
 // @ontos-action-slug close-cart-draft
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect } from 'effect';
 import { CloseCartDraftPayloadSchema, CloseCartDraftResultSchema } from '../../shared/actions/close-cart-draft.ts';
 import type { CloseCartDraftPayload } from '../../shared/actions/close-cart-draft.ts';
 import { CartDraftRejected } from '../../shared/domain/cart-draft.ts';
 import { cartPopulationService } from '../services/cart-population.service.ts';
-import { cartDraftAuthorityPolicy } from '../policies/cart-draft-authority.policy.ts';
+import { cartDraftAuthorityPolicy, cartTargetOwnerFacts } from '../policies/cart-draft-authority.policy.ts';
 
 const owningModuleKey = 'commerce.cart';
 
@@ -29,14 +29,23 @@ const handleCloseCartDraft = Effect.fn('CloseCartDraftAction.handle')(function* 
 
 export const closeCartDraftAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.cart.cart-draft.close',
+      kind: 'action',
+      modes: ['run', 'propose'],
+      placement: { group: 'cart-drafts', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'commerce.cart.close-cart-draft.access.v1' },
+    accessOwnerFacts: (payload) => cartTargetOwnerFacts(payload.cartRef),
     actionKey: 'commerce.cart.close-cart-draft',
     auditProfile: 'standard',
     domainErrorSchema: CartDraftRejected,
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.cart.close-cart-draft',
       moduleKey: owningModuleKey,
       role: 'action',
@@ -46,10 +55,6 @@ export const closeCartDraftAction = defineAction(
     owningModuleKey,
     payloadSchema: CloseCartDraftPayloadSchema,
     policies: [cartDraftAuthorityPolicy],
-    resourcePermission: defineActionResourcePermission<CloseCartDraftPayload>(({ cartRef }) => ({
-      permission: 'write',
-      resource: cartRef,
-    })),
     resultSchema: CloseCartDraftResultSchema,
     schemaVersion: '1',
   },

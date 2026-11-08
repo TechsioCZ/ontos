@@ -82,6 +82,14 @@ export const handleCreateDsrCase = Effect.fn('CreateDsrCaseAction.handle')(funct
 
 export const createDsrCaseAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.dsr-case.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'dsr', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.create-dsr-case.access.v1',
@@ -93,7 +101,7 @@ export const createDsrCaseAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.create-dsr-case',
       moduleKey: 'privacy.core',
       role: 'action',

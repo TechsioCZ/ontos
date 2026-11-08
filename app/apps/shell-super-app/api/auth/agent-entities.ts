@@ -15,9 +15,16 @@ import {
   manageAgentStatusAction,
   configureAgentAction,
   openDemoAccountGrants,
+  OperationalScopeResolver,
   withPostgresSessionAdvisoryLock,
 } from '@app/core-runtime';
-import type { DemoAccountGrants, ManageAgentStatusPayload, OperationalScopeRequest } from '@app/core-runtime';
+import type {
+  DemoAccountGrants,
+  ManageAgentStatusPayload,
+  OperationalScopeRequest,
+  TrustedPrincipalContext,
+} from '@app/core-runtime';
+import { AccessProjectionWriter } from '@app/core-runtime/access/intent/projection-writer';
 import type {
   AgentEntity,
   ManageAgentEntityRequest,
@@ -34,7 +41,6 @@ import {
   AgentPrincipalIdSchema,
 } from '@app/shared-contracts/agent-proposals';
 import { Effect, Match, Option, Predicate, Redacted, Schema } from 'effect';
-import { ActionAuthorizationLifecycle } from '@app/core-runtime/outbox/core-system-worker';
 
 import { composedModulesOf } from '../agent-platform/composed-modules.ts';
 import { withdrawAllPendingOfAgent } from '../agent-platform/proposal-store.ts';
@@ -66,6 +72,22 @@ import type { DemoAccountUnavailable } from './demo-account-unavailable.ts';
 
 const CHANGE_STATUS = 'change-status';
 const unavailable = (cause: unknown) => new ConnectionsUnavailable({ cause });
+
+/**
+ * Authorization v2 retired the per-principal Action lifecycle: the one writer of the engine is the access
+ * projection writer, which brings the whole tenant's projection in line with its intent. The reconcile is
+ * idempotent, so a retry that already converged resumes instead of writing a second graph.
+ */
+const reconcileTenantProjection = Effect.fn('AgentEntities.reconcileTenantProjection')(
+  function* reconcileTenantProjection(principal: TrustedPrincipalContext) {
+    const { correlationId } = yield* AgentActionRequestIdentity;
+    const resolver = yield* OperationalScopeResolver;
+    const writer = yield* AccessProjectionWriter;
+    const scope = yield* resolver.resolve({ correlationId, legalEntityScope: 'required', principal });
+    yield* writer.reconcileTenant({ scope });
+  },
+  Effect.mapError(unavailable),
+);
 
 const fromDemoAccountError = (
   error: DemoAccountConflict | DemoAccountForbidden | DemoAccountInvalid | DemoAccountUnavailable,
@@ -272,11 +294,7 @@ const changeAgent = Effect.fn('AgentEntities.changeAgent')(function* applyAgentC
         Effect.catchTag('ActionAlreadyCommitted', () => Effect.void),
         Effect.mapError(fromActionError),
       );
-    const lifecycle = yield* ActionAuthorizationLifecycle;
-    const installed = yield* (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError(unavailable));
-    yield* lifecycle
-      .reconcilePrincipal(tenantId, payload.principalId, installed.composition.revision)
-      .pipe(Effect.mapError(unavailable));
+    yield* reconcileTenantProjection(caller.principal);
   });
   const revokeActive = (agentPrincipalId: string, reasonText: string) =>
     revokeAgentConnections(caller, deps, agentPrincipalId, reasonText);
@@ -323,11 +341,7 @@ const changeAgent = Effect.fn('AgentEntities.changeAgent')(function* applyAgentC
         Effect.catchTag('ActionAlreadyCommitted', () => Effect.succeed({ principalId })),
         Effect.mapError(fromActionError),
       );
-    const lifecycle = yield* ActionAuthorizationLifecycle;
-    const installed = yield* (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError(unavailable));
-    yield* lifecycle
-      .reconcilePrincipal(tenantId, result.principalId, installed.composition.revision)
-      .pipe(Effect.mapError(unavailable));
+    yield* reconcileTenantProjection(caller.principal);
     // Creation changes membership; read its governed post-create snapshot before setting operators.
     yield* deps.directory.replaceOperators({
       agentPrincipalId: result.principalId,
@@ -390,11 +404,7 @@ const changeAgent = Effect.fn('AgentEntities.changeAgent')(function* applyAgentC
         ),
         Effect.mapError(fromActionError),
       );
-    const lifecycle = yield* ActionAuthorizationLifecycle;
-    const installed = yield* (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError(unavailable));
-    yield* lifecycle
-      .reconcilePrincipal(tenantId, agent.principalId, installed.composition.revision)
-      .pipe(Effect.mapError(unavailable));
+    yield* reconcileTenantProjection(caller.principal);
     const configured: ManageAgentEntityResponse = {
       grantsGranted: 0,
       grantsRevoked: 0,

@@ -1201,10 +1201,9 @@ it('registers the exact owner schema, journal, verifier, and runtime grants', ()
     fileURLToPath(new URL('../../../../scripts/postgres/runtime-role-bootstrap.mts', import.meta.url)),
     'utf-8',
   );
-  expect(rootVerifier).toMatch(/'inventory'/u);
-  expect(rootVerifier).toMatch(/'__drizzle_migrations_inventory'/u);
-  expect(rootVerifier).toMatch(/verticals\/inventory\/scripts\/verify-db-schema\.mts/u);
-  expect(runtimeBootstrap).toMatch(/'catalog',\s*'inventory'/u);
+  expect(rootVerifier).toContain('loadApplicationMigrationInventory');
+  expect(rootVerifier).toContain('for (const path of stream.verifierPaths)');
+  expect(runtimeBootstrap).toMatch(/'catalog',\s+'inventory'/u);
 });
 
 it('exact Inventory catalog comparison rejects missing and unexpected tables', () => {

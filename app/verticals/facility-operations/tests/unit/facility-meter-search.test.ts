@@ -1,16 +1,14 @@
+import { facilityOperationsRegistration } from '../../vertical.registration.ts';
 import {
   CoreSearchProjectionHitSchema,
   CoreSearchProjectionStore,
   CoreSearchQueryRuntime,
-  ContextAccess,
-  ResourceContainmentRelationshipMutation,
   createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
-  toModuleAccessObjectId,
-  toResourceAccessObjectId,
 } from '@app/core-runtime';
-import type { CoreSearchQueryRuntimeService, ResourceContainmentRelationshipMutationInput } from '@app/core-runtime';
+import type { CoreSearchQueryRuntimeService } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { NodeCrypto } from '@effect/platform-node';
 import { Context, Crypto, Effect, Exit, Layer, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -58,10 +56,7 @@ const searchMeter = (runtime: CoreSearchQueryRuntimeService, query: string, incl
   );
 
 const publish = (source: FacilitySearchSnapshot, store: typeof CoreSearchProjectionStore.Service) =>
-  publishFacilitySearch(workerContext('rebuild'), source).pipe(
-    Effect.provideService(CoreSearchProjectionStore, store),
-    Effect.provideService(ResourceContainmentRelationshipMutation, { touch: () => Effect.void }),
-  );
+  publishFacilitySearch(workerContext('rebuild'), source).pipe(Effect.provideService(CoreSearchProjectionStore, store));
 
 it.effect(
   'finds actual indexed meter serial, supply point, medium and unit with company-qualified local identities',
@@ -135,52 +130,6 @@ it.effect(
       expect(yield* searchMeter(runtime, 'nove-meridlo', true)).toEqual([]);
       return yield* Effect.void;
     }),
-);
-
-it.effect('touches the selected-company module parent for every published meter before search', () =>
-  Effect.gen(function* meterParent() {
-    const store = makeInMemoryCoreSearchProjectionStore();
-    const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
-    const touches: ResourceContainmentRelationshipMutationInput[] = [];
-    yield* publishFacilitySearch(workerContext('rebuild'), meterSnapshot).pipe(
-      Effect.provideService(CoreSearchProjectionStore, store),
-      Effect.provideService(ResourceContainmentRelationshipMutation, {
-        touch: (input) =>
-          Effect.sync(() => {
-            touches.push(input);
-          }),
-      }),
-    );
-    const relationships = touches.flatMap((input) => input.relationships);
-    const meterResourceId = `${company}.meter-1`;
-    const meterRelationship = relationships.find(
-      (relationship) =>
-        relationship.resource.objectType === 'resource' &&
-        relationship.resource.objectId ===
-          toResourceAccessObjectId(tenantId, company, {
-            moduleId: 'facility.operations',
-            resourceId: meterResourceId,
-            resourceType: 'facility.operations.meter',
-          }),
-    );
-    expect(meterRelationship).toEqual({
-      container: {
-        objectId: toModuleAccessObjectId(tenantId, company, 'facility.operations'),
-        objectType: 'module_access',
-      },
-      relation: 'module',
-      resource: {
-        objectId: toResourceAccessObjectId(tenantId, company, {
-          moduleId: 'facility.operations',
-          resourceId: meterResourceId,
-          resourceType: 'facility.operations.meter',
-        }),
-        objectType: 'resource',
-      },
-    });
-    expect((yield* searchMeter(runtime, 'VOD-ŽIŽKOV-42')).map((hit) => hit.ref.resourceId)).toEqual([meterResourceId]);
-    return yield* Effect.void;
-  }),
 );
 
 it.effect('isolates identical local meter IDs by current tenant and company', () =>
@@ -312,7 +261,7 @@ it.effect('refreshes every meter mutation through the already registered facilit
   }),
 );
 
-it.effect('uses the generated governed Read with the exact read_all permission and actual Core meter hits', () =>
+it.effect('uses the governed Read and canonical operational gate for actual Core meter hits', () =>
   Effect.scoped(
     Effect.gen(function* governedRead() {
       const cryptoServices = yield* Layer.build(NodeCrypto.layer);
@@ -320,32 +269,34 @@ it.effect('uses the generated governed Read with the exact read_all permission a
       const store = makeInMemoryCoreSearchProjectionStore();
       const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
       yield* publish(meterSnapshot, store);
-      expect(metersRead.descriptor.entrypoint.authorization).toEqual({
-        kind: 'context_permission',
-        permission: 'facility.operations.read_all',
-      });
+      expect(metersRead.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
       expect(metersRead.descriptor.legalEntityScope).toBe('required');
       for (const decision of ['allowed', 'denied', 'unavailable'] as const) {
         const harness = yield* makeReadTestHarness({
-          executeOwnerQuery: () => Effect.die('No direct owner SQL expected'),
+          access: 'allowed',
+          compositionRevision: 'a'.repeat(64),
+          executeOwnerQuery: () =>
+            Effect.succeed([
+              {
+                legalEntityId: company,
+                records: meterSnapshot.rows.map(({ archived, id, title }) => ({ archived, id, title })),
+                tenantId,
+              },
+            ]),
           operationTime: new Date('2026-11-03T01:00:00Z'),
           ownerAuthorizationDecision: 'allowed',
+          ownerRegistration: facilityOperationsRegistration,
           permissionDecision: 'allowed',
           scope,
         }).pipe(Effect.provideService(Crypto.Crypto, crypto));
-        const permissions: string[] = [];
-        let searched = false;
-        Object.assign(Context.get(yield* Layer.build(harness.layer), ContextAccess), {
-          contextPermissions: ({
-            targets,
-          }: {
-            readonly targets: readonly { readonly moduleId: string; readonly permission: string }[];
-          }) =>
-            Effect.sync(() => {
-              permissions.push(...targets.map((target) => target.permission));
-              return targets.map((target) => ({ decision, key: `${target.moduleId}:${target.permission}` }));
-            }),
+        const gate = makeTestAccessDecision({
+          answers: {
+            'facility.operations.api-records.read': {
+              outcome: ({ allowed: 'ALLOWED', denied: 'DENIED', unavailable: 'UNAVAILABLE' } as const)[decision],
+            },
+          },
         });
+        let searched = false;
         const result = yield* Effect.exit(
           harness.runtime
             .runRead({
@@ -355,6 +306,7 @@ it.effect('uses the generated governed Read with the exact read_all permission a
               transport: { correlationId: scope.correlationId },
             })
             .pipe(
+              Effect.provideService(AccessDecisionGate, gate),
               Effect.provideService(CoreSearchQueryRuntime, {
                 search: (input, trusted) => {
                   searched = true;
@@ -363,11 +315,20 @@ it.effect('uses the generated governed Read with the exact read_all permission a
               }),
             ),
         );
-        expect(Exit.isSuccess(result)).toBe(decision === 'allowed');
+        if (decision !== 'unavailable' && Exit.isFailure(result)) {
+          return yield* Effect.failCause(result.cause);
+        }
+        expect(Exit.isSuccess(result)).toBe(decision !== 'unavailable');
         expect(searched).toBe(decision === 'allowed');
-        expect(permissions).toEqual(['facility.operations.read_all']);
+        expect(gate.askedDecisions.map((question) => question.carrier.accessDeclaration?.key)).toEqual([
+          'facility.operations.api-records.read',
+          'facility.operations.records-restricted.read',
+          'facility.operations.apply-command.write',
+        ]);
         if (Exit.isSuccess(result)) {
-          expect(result.value.map((hit) => hit.ref.resourceId)).toEqual([`${company}.meter-1`]);
+          expect(result.value.map((hit) => hit.ref.resourceId)).toEqual(
+            decision === 'allowed' ? [`${company}.meter-1`] : [],
+          );
         }
       }
       return yield* Effect.void;

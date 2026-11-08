@@ -48,6 +48,14 @@ const handleRecordLegalHold = Effect.fn('RecordLegalHoldAction.handle')(function
 
 export const recordLegalHoldAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.legal-hold.record',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'retention', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.record-legal-hold.access.v1',
@@ -59,7 +67,7 @@ export const recordLegalHoldAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.record-legal-hold',
       moduleKey: 'privacy.core',
       role: 'action',

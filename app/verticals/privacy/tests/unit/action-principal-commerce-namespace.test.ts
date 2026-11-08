@@ -9,6 +9,7 @@ import { AuthenticationNamespaceRegistry } from '@app/core-runtime/auth/external
 import { AuthenticationNamespaceIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeOperationalScopeResolver } from '@app/core-runtime/operations/context';
+import { makeTestOperationalScopeAccess } from '@app/core-runtime/testing/access-gate';
 import { NodeCrypto } from '@effect/platform-node';
 import { DateTime, Effect, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -23,6 +24,8 @@ import {
   ACTION_GATEWAY_AUDIENCE,
   PrivacyAuthenticationNamespaceRegistryLive,
 } from '../../api/auth/action-principal.ts';
+
+import { privacyRegistration } from '../../vertical.registration.ts';
 
 const COMMERCE_NAMESPACE = COMMERCE_AUTHENTICATION_NAMESPACE_ID;
 const principal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
@@ -48,10 +51,8 @@ const active = {
   principalTenantId: principal.tenantId,
   tenantStatus: 'active',
 };
-const legalEntityAccess = {
-  legalEntities: ({ legalEntityIds }: { readonly legalEntityIds: readonly string[] }) =>
-    Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
-};
+/** The trusted scope authority C04 introduced: the support check and the selectable companies. */
+const scopeAccess = makeTestOperationalScopeAccess();
 const request = {
   audience: ACTION_GATEWAY_AUDIENCE,
   correlationId: 'receiver-unit',
@@ -98,7 +99,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, PrivacyAuthenticationNamespaceRegistry
     );
     suite.effect('the real Core resolver preserves exact Commerce identity and both existing staff subject types', () =>
       Effect.gen(function* acceptedContexts() {
-        const resolver = yield* makeOperationalScopeResolver({ load: () => Effect.succeed(active) }, legalEntityAccess);
+        const resolver = yield* makeOperationalScopeResolver({ load: () => Effect.succeed(active) }, scopeAccess);
         expect(yield* resolver.resolve(request)).toEqual({ ...principal, correlationId: request.correlationId });
         for (const authMethod of ['session', 'api_key'] as const) {
           const staffPrincipal = {
@@ -115,7 +116,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, PrivacyAuthenticationNamespaceRegistry
                   bindingSubjectType: authMethod === 'api_key' ? 'api_key' : 'user',
                 }),
             },
-            legalEntityAccess,
+            scopeAccess,
           );
           const resolved = yield* staffResolver.resolve({ ...request, principal: staffPrincipal });
           expect(resolved).toEqual({ ...staffPrincipal, correlationId: request.correlationId });
@@ -126,10 +127,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, PrivacyAuthenticationNamespaceRegistry
       'rejects foreign audience, unregistered namespace and Commerce API-key subjects before business work',
       () =>
         Effect.gen(function* rejectedMetadata() {
-          const resolver = yield* makeOperationalScopeResolver(
-            { load: () => Effect.succeed(active) },
-            legalEntityAccess,
-          );
+          const resolver = yield* makeOperationalScopeResolver({ load: () => Effect.succeed(active) }, scopeAccess);
           const { authBindingId: _authBindingId, ...withoutBinding } = principal;
           const { authContextRef: _authContextRef, ...withoutContext } = principal;
           for (const input of [
@@ -162,10 +160,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, PrivacyAuthenticationNamespaceRegistry
             { ...active, legalEntityTenantId: '10000000-0000-4000-8000-000000000099' },
           ];
           for (const record of records) {
-            const resolver = yield* makeOperationalScopeResolver(
-              { load: () => Effect.succeed(record) },
-              legalEntityAccess,
-            );
+            const resolver = yield* makeOperationalScopeResolver({ load: () => Effect.succeed(record) }, scopeAccess);
             const rejected = yield* resolver.resolve(request).pipe(Effect.flip);
             expect(Schema.is(Schema.Union([OperationAuthenticationRequired, OperationContextDenied]))(rejected)).toBe(
               true,
@@ -181,7 +176,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, PrivacyAuthenticationNamespaceRegistry
                   }),
                 ),
             },
-            legalEntityAccess,
+            scopeAccess,
           );
           expect(Schema.is(OperationContextUnavailable)(yield* unavailable.resolve(request).pipe(Effect.flip))).toBe(
             true,
@@ -192,6 +187,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, PrivacyAuthenticationNamespaceRegistry
       Effect.gen(function* deniedAction() {
         let called = false;
         const harness = yield* makeActionTestHarness({
+          ownerRegistration: privacyRegistration,
           services: [
             bindActionTestServices(acknowledgePrivacyNoticeAction, {
               acknowledge: () =>
@@ -240,7 +236,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, PrivacyAuthenticationNamespaceRegistry
 );
 it.effect('a genuine external namespace remains unavailable without any receiving registry', () =>
   Effect.gen(function* missingRegistry() {
-    const resolver = yield* makeOperationalScopeResolver({ load: () => Effect.succeed(active) }, legalEntityAccess);
+    const resolver = yield* makeOperationalScopeResolver({ load: () => Effect.succeed(active) }, scopeAccess);
     expect(Schema.is(OperationContextUnavailable)(yield* resolver.resolve(request).pipe(Effect.flip))).toBe(true);
   }).pipe(Effect.provide(NodeCrypto.layer)),
 );

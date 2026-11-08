@@ -7,26 +7,31 @@ import type { SqlError } from 'effect/sql/SqlError';
 
 import { readVerifiedGatewayScopeAssertion } from '../auth/system-principal-context-provenance.ts';
 import {
+  DatabaseIdentityEnrollmentContext,
   defineDatabaseIdentityEnrollment,
   gatewayScopeGrantRoleForAudience,
   SHARED_RUNTIME_IDENTITY,
 } from '../db/database-identities.ts';
+import { CoreDatabase } from '../db/client.ts';
 import type { DatabaseIdentityEnrollment } from '../db/database-identities.ts';
 import { coreRelations } from '../db/schema.ts';
 import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import { checkModuleEntrypoint, makeModuleStateSnapshot } from '../modules/module-state-gate.ts';
-import { makeOperationalScopeResolver } from '../operations/context.ts';
+import { makeOperationalScopeResolver, OperationalScopeResolver } from '../operations/context.ts';
+import { makeScriptedBoundAccessGate, makeTestOperationalScopeAccess } from './access-gate.ts';
+import type { TestAccessOutcome } from './access-gate.ts';
 import type { OperationalScope } from '../operations/context.ts';
-import { ContextAccess, toBusinessPermissionAccessKey } from '../permissions/context-access.ts';
+import { ContextAccess } from '../permissions/context-access.ts';
 import type { TenantPermissionKey, LegalEntityPermissionKey } from '../permissions/context-permissions.ts';
+import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
+import type { OwnerAuthorizationDecision, OwnerAuthorizationInput } from '../access/enforcement/owner-overlay.ts';
 import type {
-  BusinessPermissionAccessTarget,
+  OwnerPermissionAccessTarget,
   ContextAccessDecision,
   ContextAccessService,
 } from '../permissions/context-access.ts';
-import { transactionalOwnerAuthorization } from '../permissions/owner-authorization-overlay.ts';
 import { ReadRuntime, makeReadRuntime } from '../reads/runtime.ts';
-import type { ReadRuntimeStage } from '../reads/runtime.ts';
+import type { ReadRuntimeOptions, ReadRuntimeStage } from '../reads/runtime.ts';
 import { scriptedPgClientLayer } from './scripted-pg-client.ts';
 import { guardPoolAcquisition } from '../db/transaction-io-guard.ts';
 
@@ -36,17 +41,32 @@ export interface ReadTestOwnerQuery {
   readonly sql: string;
 }
 
-export interface ReadTestHarnessOptions {
-  readonly businessPermissionDecision?: (target: BusinessPermissionAccessTarget) => ContextAccessDecision;
+export interface ReadTestHarnessOptions extends Pick<
+  ReadRuntimeOptions,
+  'accessDecision' | 'applicationComposition' | 'expectedDeployment' | 'shellSystemReads'
+> {
+  /** The access gate's scripted answer for every protected Read (a v2 carrier decides here). */
+  readonly access?: TestAccessOutcome | Readonly<Record<string, TestAccessOutcome>>;
   readonly compositionRevision?: string;
   readonly databaseIdentities?: DatabaseIdentityEnrollment;
   /** Explicit driver rows for owner SQL; unexpected statements must fail rather than supply empty. */
   readonly executeOwnerQuery: (query: ReadTestOwnerQuery) => Effect.Effect<readonly object[], SqlError>;
   readonly legalEntityPermissionDecisions?: Readonly<Partial<Record<LegalEntityPermissionKey, ContextAccessDecision>>>;
+  /** Observes the owner overlay input the runtime builds inside the transaction and answers it (O70). */
+  readonly onOwnerAuthorization?: (input: OwnerAuthorizationInput) => OwnerAuthorizationDecision;
   readonly operationTime: Date;
   readonly ownerAuthorizationDecision?: ContextAccessDecision;
+  readonly ownerPermissionDecision?: (target: OwnerPermissionAccessTarget) => ContextAccessDecision;
+  readonly ownerRegistration?: VerticalRuntimeRegistration;
+  /**
+   * The legacy context-access answer (scope admission and the legacy permission targets). A v2 read
+   * decides through `access`, so a harness that scripts a gate answer is admitted into its scope by
+   * default; override this only to exercise a refused scope.
+   */
   readonly permissionDecision?: ContextAccessDecision;
   readonly scope: OperationalScope;
+  /** The scope admission answer on its own, for a test that scripts a gate answer *and* a refused scope. */
+  readonly scopeAccess?: ContextAccessDecision;
   readonly tenantPermissionDecisions?: Readonly<Partial<Record<TenantPermissionKey, ContextAccessDecision>>>;
 }
 
@@ -245,15 +265,19 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
   const executor = yield* makeWithDefaults({ relations: coreRelations }).pipe(
     Effect.provideService(PgClient.PgClient, guardPoolAcquisition(Context.get(clientContext, PgClient.PgClient))),
   );
-  const decision = options.permissionDecision ?? 'denied';
+  /**
+   * The scope admission answer (O28). It is the harness's own question, answered by the V2 SCRIPT, never
+   * by the legacy context-access answer: a bag that scripts the gate through `access` is admitted into
+   * its scope, and `scopeAccess` is the explicit override for a test that is about a refused scope. The
+   * legacy `permissionDecision` is consulted only for a bag that has not migrated yet (no `access`), so
+   * the codemod's removal of that key can never turn a scope red; it disappears entirely in C03b step 3.
+   */
+  const decision: ContextAccessDecision =
+    options.scopeAccess ??
+    (options.access === undefined && options.accessDecision === undefined
+      ? (options.permissionDecision ?? 'denied')
+      : 'allowed');
   const contextAccess: ContextAccessService = {
-    businessPermissions: ({ targets }) =>
-      Effect.succeed(
-        targets.map((target) => ({
-          decision: options.businessPermissionDecision?.(target) ?? decision,
-          key: toBusinessPermissionAccessKey(target),
-        })),
-      ),
     legalEntities: ({ legalEntityIds, permission = 'access' }) =>
       Effect.succeed(
         legalEntityIds.map((key) => ({
@@ -262,6 +286,13 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
         })),
       ),
     modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision, key }))),
+    ownerPermissions: ({ targets }) =>
+      Effect.succeed(
+        targets.map(({ target }) => ({
+          decision: options.ownerPermissionDecision?.(target) ?? decision,
+          key: target.key,
+        })),
+      ),
     resources: ({ resources }) =>
       Effect.succeed(
         resources.map((resource) => ({
@@ -293,7 +324,7 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
           tenantStatus: 'active',
         }),
     },
-    contextAccess,
+    makeTestOperationalScopeAccess({ decision }),
   );
   const gateway = makeModuleEntrypointGateway({
     check: checkModuleEntrypoint,
@@ -313,17 +344,46 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
       ),
     recheckWrite: () => Effect.void,
   });
-  const runtime = makeReadRuntime({ executor }, gateway, scopeResolver, contextAccess, {
+  let runtimeOptions: ReadRuntimeOptions = {
+    accessDecision:
+      options.accessDecision ??
+      makeScriptedBoundAccessGate(options.access ?? options.permissionDecision ?? 'denied').bound,
     databaseIdentities,
     onStage: (stage) => {
       stages.push(stage);
     },
-    ownerAuthorizationOverlay: transactionalOwnerAuthorization(() =>
-      Effect.succeed(options.ownerAuthorizationDecision ?? 'denied'),
-    ),
-  });
+    ownerAuthorizationOverlay: {
+      authorize: (_transaction, input) =>
+        Effect.succeed(options.onOwnerAuthorization?.(input) ?? options.ownerAuthorizationDecision ?? 'denied'),
+    },
+  };
+  if (options.applicationComposition !== undefined) {
+    runtimeOptions = { ...runtimeOptions, applicationComposition: options.applicationComposition };
+  }
+  if (options.expectedDeployment !== undefined) {
+    runtimeOptions = { ...runtimeOptions, expectedDeployment: options.expectedDeployment };
+  }
+  if (options.shellSystemReads !== undefined) {
+    runtimeOptions = { ...runtimeOptions, shellSystemReads: options.shellSystemReads };
+  }
+  const database = { executor };
+  const runtime = makeReadRuntime(
+    database,
+    gateway,
+    scopeResolver,
+    contextAccess,
+    options.ownerRegistration === undefined
+      ? runtimeOptions
+      : { ...runtimeOptions, ownerRegistration: options.ownerRegistration },
+  );
   return {
     layer: Layer.mergeAll(Layer.succeed(ReadRuntime, runtime), Layer.succeed(ContextAccess, contextAccess)),
+    ownerServices: Layer.mergeAll(
+      Layer.succeed(CoreDatabase, database),
+      Layer.succeed(DatabaseIdentityEnrollmentContext, databaseIdentities),
+      Layer.succeed(OperationalScopeResolver, scopeResolver),
+      Layer.succeed(ContextAccess, contextAccess),
+    ),
     runtime,
     snapshot: () => ({
       evidenceWrites,
@@ -333,3 +393,14 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
     }),
   };
 });
+
+/** Test-owned access to the original registration factory. */
+export { getReadServiceFactory } from '../reads/definition.ts';
+
+export {
+  getReadPermissionTargetResolver,
+  getReadResourcePermissionTargetResolver,
+  getReadResultPermissionTargetResolver,
+  getReadConditionalPermissionPlan,
+  getReadHandler,
+} from '../reads/definition.ts';

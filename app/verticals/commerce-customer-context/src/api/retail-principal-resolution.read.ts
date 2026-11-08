@@ -5,7 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { OperationalScope, ReadLoadContext, ResolvedReadPermissionTarget } from '@app/core-runtime';
+import type { ReadLoadContext } from '@app/core-runtime';
 import { Effect } from 'effect';
 import {
   RetailPrincipalResolutionRequestSchema,
@@ -16,6 +16,7 @@ import type {
   RetailPrincipalResolutionResponse,
 } from '../../shared/apis/retail-principal-resolution.ts';
 import { profileServicesForVerifiedScope } from '../profile-service-factory.ts';
+import { retailProfileOwnerFacts } from './read-owner-facts.ts';
 
 export interface RetailPrincipalResolutionServices {
   readonly resolvePrincipal: (
@@ -51,25 +52,9 @@ export const resolveRetailPrincipalFromServices = (
     ? services.resolvePrincipal(input, principalId, tenantId)
     : Effect.fail(notFound());
 
-export const retailPrincipalResolutionPermissionTarget = (
-  input: RetailPrincipalResolutionRequest,
-  scope: OperationalScope,
-): ResolvedReadPermissionTarget => ({
-  businessPermission: {
-    permission: 'retail.profile.read',
-    target: {
-      kind: 'retail_profile',
-      legalEntityId: scope.legalEntityId ?? '',
-      profileId: input.profileRef.resourceId,
-      tenantId: scope.tenantId,
-    },
-  },
-  kind: 'business_permission',
-});
-
 const retailPrincipalResolutionEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.retail-principal-resolution',
   moduleKey: 'commerce.customer-context',
   role: 'api',
@@ -77,7 +62,16 @@ const retailPrincipalResolutionEntrypoint = defineTenantModuleEntrypoint({
 
 export const retailPrincipalResolutionRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.retail-principal.resolve',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'portal-access', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
+    accessOwnerFacts: (input) => retailProfileOwnerFacts(input, 'retail.profile.read'),
     entrypoint: retailPrincipalResolutionEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',
@@ -86,7 +80,6 @@ export const retailPrincipalResolutionRead = defineRead(
     inputSchema: RetailPrincipalResolutionRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: 'commerce.customer-context',
-    permissionTarget: 'business_permission',
     policies: [],
     readKey: 'commerce.customer-context.api.retail-principal-resolution',
     resultSchema: RetailPrincipalResolutionResponseSchema,
@@ -105,5 +98,4 @@ export const retailPrincipalResolutionRead = defineRead(
     profileServicesForVerifiedScope(transaction, scope).pipe(
       Effect.map(({ retailPrincipalResolution }): RetailPrincipalResolutionServices => retailPrincipalResolution),
     ),
-  retailPrincipalResolutionPermissionTarget,
 );

@@ -19,11 +19,7 @@ import type {
   UpdatePartyOfficialIdentifierPayload,
   UpdatePartyOfficialIdentifierResult,
 } from '../../shared/actions/update-party-official-identifier.ts';
-import {
-  IdentifierVerificationSchema,
-  OfficialIdentifierAssertionStateSchema,
-  OfficialIdentifierClaimConflict,
-} from '../../shared/domain/identifier-contracts.ts';
+import { OfficialIdentifierAssertionStateSchema } from '../../shared/domain/identifier-contracts.ts';
 import {
   IsoTimestampSchema,
   PartyPersistenceUnavailable,
@@ -40,11 +36,7 @@ import {
 import type { PartyAliasResolutionError } from '../../shared/domain/merge-alias-resolution.ts';
 import { PartyOfficialIdentifierRefSchema } from '../../shared/resources/party-official-identifier.ts';
 import { PartyRefSchema } from '../../shared/resources/party.ts';
-import {
-  PARTY_EXACT_CLAIM_RULE_VERSION,
-  endOfficialIdentifierRecord,
-  updateOfficialIdentifierVerificationRecord,
-} from '../services/party-official-identifier-persistence.service.ts';
+import { endOfficialIdentifierRecord } from '../services/party-official-identifier-persistence.service.ts';
 import { makePartyOfficialIdentifierRef } from '../services/party-official-identifier-reference.ts';
 import { createUpdatePartyOfficialIdentifierPartyRegistryOfficialIdentifierUpdatedV1OutboxMessage } from './update-party-official-identifier.party-registry-official-identifier-updated-v1.outbox-message.ts';
 
@@ -73,7 +65,6 @@ const PartyOfficialIdentifierUpdateConflict = Schema.TaggedError<
 type PartyOfficialIdentifierUpdateConflictError = InstanceType<typeof PartyOfficialIdentifierUpdateConflict>;
 
 const ErrorSchema = Schema.Union([
-  OfficialIdentifierClaimConflict,
   PartyOfficialIdentifierNotFound,
   PartyOfficialIdentifierUpdateConflict,
   PartyPersistenceUnavailable,
@@ -83,19 +74,15 @@ const ErrorSchema = Schema.Union([
   PartyAliasResolutionUnavailable,
   PartyAliasWriteRejected,
 ]);
-const VerifiedByPrincipalIdSchema = Schema.String.pipe(Schema.brand('VerifiedByPrincipalId'));
 const MetadataSnapshotSchema = Schema.Struct({
   state: OfficialIdentifierAssertionStateSchema,
   validTo: Schema.toEncoded(Schema.OptionFromNullOr(IsoTimestampSchema)),
-  verification: IdentifierVerificationSchema,
-  verifiedAt: Schema.toEncoded(Schema.OptionFromNullOr(IsoTimestampSchema)),
-  verifiedByPrincipalId: Schema.toEncoded(Schema.OptionFromNullOr(VerifiedByPrincipalIdSchema)),
 });
 type MetadataSnapshot = typeof MetadataSnapshotSchema.Type;
 export const OfficialIdentifierUpdatedEventSchema = Schema.Struct({
   after: MetadataSnapshotSchema,
   before: MetadataSnapshotSchema,
-  changeType: Schema.Literals(['SET_VERIFICATION', 'END_VALIDITY']),
+  changeType: Schema.Literal('END_VALIDITY'),
   evidenceRefs: UpdatePartyOfficialIdentifierPayloadSchema.fields.evidenceRefs,
   officialIdentifierRef: PartyOfficialIdentifierRefSchema,
   partyRef: PartyRefSchema,
@@ -112,7 +99,6 @@ interface Services {
       readonly before: MetadataSnapshot;
       readonly result: UpdatePartyOfficialIdentifierResult;
     },
-    | OfficialIdentifierClaimConflict
     | PartyOfficialIdentifierNotFoundError
     | PartyOfficialIdentifierUpdateConflictError
     | PartyPersistenceUnavailableError
@@ -168,6 +154,15 @@ const handleUpdatePartyOfficialIdentifier = Effect.fn(
 
 export const updatePartyOfficialIdentifierAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.official-identifier.update',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'party-identity', level: 'extended' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessTarget: (payload) => ({ moduleKey: 'party.registry', recordKey: payload.officialIdentifierRef.resourceId }),
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.update-party-official-identifier.access.v1',
@@ -178,10 +173,7 @@ export const updatePartyOfficialIdentifierAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.update-party-official-identifier',
       moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
@@ -193,7 +185,6 @@ export const updatePartyOfficialIdentifierAction = defineAction(
     policies: [],
     resultSchema: UpdatePartyOfficialIdentifierResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_party_identity',
   },
   handleUpdatePartyOfficialIdentifier,
   (transaction, scope) =>
@@ -201,24 +192,12 @@ export const updatePartyOfficialIdentifierAction = defineAction(
       update: Effect.fn('updatePartyOfficialIdentifierAction.update')(function* update(
         payload: UpdatePartyOfficialIdentifierPayload,
       ) {
-        const result = yield* payload.change.type === 'END_VALIDITY'
-          ? endOfficialIdentifierRecord(
-              transaction,
-              scope.tenantId,
-              payload.officialIdentifierRef.resourceId,
-              DateTime.formatIso(payload.change.validTo),
-            )
-          : updateOfficialIdentifierVerificationRecord(
-              transaction,
-              scope.tenantId,
-              payload.officialIdentifierRef.resourceId,
-              {
-                expectedVerification: payload.change.expectedVerification,
-                matchRuleVersion: PARTY_EXACT_CLAIM_RULE_VERSION,
-                principalId: scope.principalId,
-                verification: payload.change.verification,
-              },
-            );
+        const result = yield* endOfficialIdentifierRecord(
+          transaction,
+          scope.tenantId,
+          payload.officialIdentifierRef.resourceId,
+          DateTime.formatIso(payload.change.validTo),
+        );
         return yield* Match.value(result).pipe(
           Match.tag('not_found', () =>
             Effect.fail(
@@ -233,15 +212,7 @@ export const updatePartyOfficialIdentifierAction = defineAction(
               new PartyOfficialIdentifierUpdateConflict({
                 code: 'party_official_identifier_update_conflict',
                 reason:
-                  'The identifier is not current, the Party is archived, verification changed concurrently, or the validity end is future or precedes its start',
-              }),
-            ),
-          ),
-          Match.tag('claim_conflict', () =>
-            Effect.fail(
-              new OfficialIdentifierClaimConflict({
-                code: 'party_identifier_claim_conflict',
-                reason: 'This strong identifier is already claimed by another Party',
+                  'The identifier is not current, the Party is archived, or the validity end is future or precedes its start',
               }),
             ),
           ),
@@ -250,10 +221,6 @@ export const updatePartyOfficialIdentifierAction = defineAction(
               // SAFETY: the owner database CHECK constrains assertion state to this contract.
               state: row.state as MetadataSnapshot['state'],
               validTo: row.validTo?.toISOString() ?? null,
-              // SAFETY: the owner database CHECK constrains verification to this contract.
-              verification: row.verificationState as MetadataSnapshot['verification'],
-              verifiedAt: row.verifiedAt?.toISOString() ?? null,
-              verifiedByPrincipalId: row.verifiedByPrincipalId,
             });
             return Effect.succeed({
               after: metadata(value),
@@ -264,8 +231,6 @@ export const updatePartyOfficialIdentifierAction = defineAction(
                 // SAFETY: the owner database CHECK constrains assertion state to this contract.
                 state: value.state as UpdatePartyOfficialIdentifierResult['state'],
                 validTo: Option.fromNullOr(value.validTo).pipe(Option.map(DateTime.makeUnsafe)),
-                // SAFETY: the owner database CHECK constrains verification to this contract.
-                verification: value.verificationState as UpdatePartyOfficialIdentifierResult['verification'],
               },
             });
           }),

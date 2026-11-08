@@ -1,8 +1,9 @@
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import {
-  getActionBusinessPermissionTargetResolver,
+  getActionOwnerFactsResolver,
   getActionHandler,
 } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { changeRetailPaymentTermPreferenceAction } from '../../src/actions/change-retail-payment-term-preference.action.ts';
@@ -89,20 +90,17 @@ it('accepts preference changes only and declares the exact retail profile permis
     }),
   ).toBe(false);
 
-  const resolvePermission = getActionBusinessPermissionTargetResolver(changeRetailPaymentTermPreferenceAction);
+  // The v2 declaration gates the capability; the owner facts name the Retail profile and the retail
+  // capability whose own durable state the overlay checks (O67-Q1, O70).
+  const resolveOwnerFacts = getActionOwnerFactsResolver(changeRetailPaymentTermPreferenceAction);
   expect(
-    resolvePermission?.(payload, {
+    resolveOwnerFacts?.(payload, {
       ...scope,
       correlationId: 'retail-preference-permission',
     }),
   ).toEqual({
-    permission: 'retail.settings.payment_term_preference.manage',
-    target: {
-      kind: 'retail_profile',
-      legalEntityId: '55555555-5555-4555-8555-555555555555',
-      profileId: profileRef.resourceId,
-      tenantId,
-    },
+    retailPermission: 'retail.settings.payment_term_preference.manage',
+    retailProfileId: profileRef.resourceId,
   });
 });
 
@@ -165,5 +163,6 @@ it.effect('delegates entitlement validation atomically and records a changed pre
       profileRef,
       revision: 5,
     });
-  }),
+    // The handler shares its Requirements with the service factory, which acquires the catalog port with Crypto.
+  }).pipe(Effect.provide(nodeCryptoLayer)),
 );

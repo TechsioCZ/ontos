@@ -13,8 +13,9 @@ import { Schema } from 'effect';
 import type { ReactNode } from 'react';
 import { useSyncExternalStore } from 'react';
 
-import type { PeopleRoleCatalog, Person } from '../../../shared/people-api.ts';
+import type { Person } from '../../../shared/people-api.ts';
 import {
+  accessRoleNamesOf,
   allPeopleFilters,
   filterPeople,
   PeopleStatusFilterSchema,
@@ -24,9 +25,9 @@ import {
   PersonStatusKeySchema,
   personStatusKey,
   personStatusPresentation,
-  roleNames,
 } from './people-model.ts';
 import type {
+  PeopleAccessView,
   PeopleAdminScope,
   PeopleEditKind,
   PeopleFilters,
@@ -191,16 +192,16 @@ const FilterSelect = ({
 );
 
 export const PeopleToolbar = ({
+  access,
   actions,
-  catalog,
   companyAvailable,
   filters,
   onFiltersChange,
   onScopeChange,
   scope,
 }: {
+  readonly access: PeopleAccessView | undefined;
   readonly actions: ReactNode;
-  readonly catalog: PeopleRoleCatalog | undefined;
   readonly companyAvailable: boolean;
   readonly filters: PeopleFilters;
   readonly onFiltersChange: (filters: PeopleFilters) => void;
@@ -210,7 +211,7 @@ export const PeopleToolbar = ({
   const { t } = useModernI18n();
   const roles = [
     { label: t('shell.people.table.allRoles'), value: 'all' },
-    ...(catalog?.items ?? []).map((role) => ({ label: role.name, value: role.roleKey })),
+    ...(access?.options.roles ?? []).map((role) => ({ label: role.name, value: role.roleId })),
   ];
   return (
     <div className="flex flex-wrap items-end gap-150">
@@ -234,8 +235,8 @@ export const PeopleToolbar = ({
         items={roles}
         label={t('shell.people.table.roles')}
         name="people-role"
-        onChange={(roleKey) => onFiltersChange({ ...filters, roleKey })}
-        value={filters.roleKey}
+        onChange={(roleId) => onFiltersChange({ ...filters, roleId })}
+        value={filters.roleId}
       />
       <FilterSelect
         items={statusOptions(t)}
@@ -287,7 +288,7 @@ const tableTranslations = (t: PeopleTranslator): DataTableTranslations => ({
   rangeLabel: ({ end, start, total }) => t('shell.people.table.range', { end, start, total }),
 });
 
-const peopleColumns = (catalog: PeopleRoleCatalog | undefined, t: PeopleTranslator): ColumnDef<Person>[] => [
+const peopleColumns = (access: PeopleAccessView | undefined, t: PeopleTranslator): ColumnDef<Person>[] => [
   {
     accessorKey: 'displayName',
     cell: (info) => <PersonName person={info.row.original} secondary={invitationNote(info.row.original, t)} />,
@@ -301,8 +302,8 @@ const peopleColumns = (catalog: PeopleRoleCatalog | undefined, t: PeopleTranslat
     meta: { width: 140 },
   },
   {
-    accessorFn: (person) => roleNames(catalog, person).join(', '),
-    cell: (info) => <RoleChips names={roleNames(catalog, info.row.original)} />,
+    accessorFn: (person) => accessRoleNamesOf(access, person.principalRef.principalId).join(', '),
+    cell: (info) => <RoleChips names={accessRoleNamesOf(access, info.row.original.principalRef.principalId)} />,
     header: t('shell.people.table.roles'),
     id: 'roles',
     meta: { width: 320 },
@@ -317,13 +318,13 @@ const peopleColumns = (catalog: PeopleRoleCatalog | undefined, t: PeopleTranslat
 ];
 
 const CompactPeopleList = ({
-  catalog,
+  access,
   onEdit,
   onOpen,
   people,
   scope,
 }: {
-  readonly catalog: PeopleRoleCatalog | undefined;
+  readonly access: PeopleAccessView | undefined;
   readonly onEdit: (kind: PeopleEditKind, person: Person) => void;
   readonly onOpen: (person: Person) => void;
   readonly people: readonly Person[];
@@ -347,7 +348,7 @@ const CompactPeopleList = ({
             <PersonName person={person} secondary={personKindLabel(person)} />
             <span className="flex flex-wrap items-center gap-100 text-sm">
               <PersonStatusDot status={personStatusKey(person)} />
-              <RoleChips names={roleNames(catalog, person)} />
+              <RoleChips names={accessRoleNamesOf(access, person.principalRef.principalId)} />
             </span>
           </Button>
           <PersonActionsMenu onEdit={onEdit} person={person} scope={scope} />
@@ -358,7 +359,7 @@ const CompactPeopleList = ({
 };
 
 export const PeopleTable = ({
-  catalog,
+  access,
   filters,
   loading,
   onEdit,
@@ -367,7 +368,7 @@ export const PeopleTable = ({
   people,
   scope,
 }: {
-  readonly catalog: PeopleRoleCatalog | undefined;
+  readonly access: PeopleAccessView | undefined;
   readonly filters: PeopleFilters;
   readonly loading: boolean;
   readonly onEdit: (kind: PeopleEditKind, person: Person) => void;
@@ -379,7 +380,7 @@ export const PeopleTable = ({
   const { t } = useModernI18n();
   const translations = tableTranslations(t);
   const wide = useWideLayout();
-  const visible = filterPeople(people, filters, catalog);
+  const visible = filterPeople(people, filters, access);
   const empty = () =>
     people.length > 0 ? (
       <EmptyState
@@ -404,11 +405,11 @@ export const PeopleTable = ({
         empty()
       );
     }
-    return <CompactPeopleList catalog={catalog} onEdit={onEdit} onOpen={onOpen} people={visible} scope={scope} />;
+    return <CompactPeopleList access={access} onEdit={onEdit} onOpen={onOpen} people={visible} scope={scope} />;
   }
   return (
     <DataTable
-      columns={peopleColumns(catalog, t)}
+      columns={peopleColumns(access, t)}
       data={[...visible]}
       enablePagination
       enableSorting

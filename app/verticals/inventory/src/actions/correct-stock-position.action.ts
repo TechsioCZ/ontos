@@ -2,12 +2,7 @@
 // @ontos-action-owner commerce.inventory
 // @ontos-action-slug correct-stock-position
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 
 import {
@@ -152,6 +147,14 @@ export const handleCorrectStockPosition = Effect.fn('CorrectStockPositionAction.
 
 export const correctStockPositionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.inventory.stock-position.correct',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'stock', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.inventory.correct-stock-position.access.v1',
@@ -159,23 +162,11 @@ export const correctStockPositionAction = defineAction(
     actionKey: ACTION_KEY,
     auditEvidenceSchema: CorrectStockPositionAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission<typeof CorrectStockPositionPayloadSchema.Type>((payload) => ({
-      permission: 'inventory.stock.correct',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: payload.positionRef.moduleId,
-          resourceId: payload.positionRef.resourceId,
-          resourceType: payload.positionRef.resourceType,
-        },
-        tenantId: payload.positionRef.tenantId,
-      },
-    })),
     domainErrorSchema: CorrectStockPositionErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: MODULE_KEY,
       role: 'action',
@@ -185,10 +176,6 @@ export const correctStockPositionAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: CorrectStockPositionPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<typeof CorrectStockPositionPayloadSchema.Type>((payload) => ({
-      permission: 'write',
-      resource: payload.positionRef,
-    })),
     resultSchema: CorrectStockPositionResultSchema,
     schemaVersion: '1',
   },

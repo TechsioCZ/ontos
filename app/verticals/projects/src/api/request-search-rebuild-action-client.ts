@@ -17,6 +17,7 @@ export interface RequestSearchRebuildActionClientOptions {
   readonly compositionRevision?: string;
   readonly gateway?: Parameters<typeof operationGateway.invoke>[1];
   readonly idempotencyKey: string;
+  readonly referenceCredentials?: Redacted.Redacted;
   readonly [traceIdOption]?: string;
 }
 

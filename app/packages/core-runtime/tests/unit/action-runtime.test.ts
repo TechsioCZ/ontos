@@ -1,18 +1,53 @@
+import { historicalOwnerContract, historicalOwnerTarget } from '../support/historical-owner-targets.ts';
+import type { OperationalScope } from '../../src/operations/context.ts';
+import { remainingPermissionBaselines } from './owner-permission-baseline.ts';
+import {
+  fixtureOwnerContract,
+  fixtureOwnerCreatePermission,
+  fixtureOwnerEndPermission,
+  fixtureOwnerReadPermission,
+  ownerPermissionTarget,
+} from '../support/owner-permission-target.ts';
+import type { VerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
+import {
+  freshOutboxWorkerCompositionSnapshot,
+  makeOutboxWorkerComposition,
+} from '../support/outbox-worker-composition.ts';
+import type { ActiveApplicationCompositionServiceContract } from '../../src/modules/active-application-composition.ts';
+import { ActiveApplicationCompositionUnavailableError } from '../../src/modules/active-application-composition-errors.ts';
+import { requireModuleOperation } from '../../src/modules/module-operation-requirement.ts';
+import { withModuleOperationExecution } from '../../src/modules/module-operation-execution.ts';
+import { ModuleOperationRequirementError } from '../../src/modules/module-operation-requirement-error.ts';
+import { defineOntosModuleManifest } from '../../src/modules/manifest.ts';
+import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { NodeCrypto } from '@effect/platform-node';
-import { Cause, Crypto, DateTime, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema, Struct } from 'effect';
+import {
+  Cause,
+  Context,
+  Crypto,
+  DateTime,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Match,
+  Option,
+  Predicate,
+  Schema,
+  Struct,
+} from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError, isSqlError } from 'effect/sql/SqlError';
 import {
   defineAction,
-  defineActionAssortmentPermissions,
-  defineActionBusinessPermission,
+  defineActionOwnerPermissions,
   defineActionResourcePermission,
   getActionHandler,
 } from '../../src/actions/definition.ts';
 import { commitActionThenReject } from '../../src/actions/context.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import {
-  ActionInvocationNotFound,
   ActionInvocationPersistenceError,
   ActionInvocationStateError,
   ActionPermissionCheckError,
@@ -38,21 +73,16 @@ import {
   makeActionRepository,
 } from '../../src/actions/repository.ts';
 import type { ActionRuntimeOptions, ActionRuntimeStage } from '../../src/actions/runtime.ts';
-import {
-  ACTION_RUNTIME_STAGES,
-  ActionExecutionResolutionSchema,
-  makeActionRuntime,
-} from '../../src/actions/runtime.ts';
-import { makeActionAuthorizationPreflightPermit } from '../../src/permissions/action-authorization-preflight.ts';
-import type { ActionAuthorizationPreflightService } from '../../src/permissions/action-authorization-preflight.ts';
-import {
-  allowOwnerAuthorizationOverlay,
-  transactionalOwnerAuthorization,
-} from '../../src/permissions/owner-authorization-overlay.ts';
+import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runtime.ts';
+import { makeScriptedBoundAccessGate } from '../../src/testing/access-gate.ts';
+import type { TestAccessOutcome } from '../../src/testing/access-gate.ts';
+import { makeActionAuthorizationPreflightPermit } from '../../src/actions/owner-proof-preflight.ts';
+import type { ActionAuthorizationPreflightService } from '../../src/actions/owner-proof-preflight.ts';
+import { allowOwnerAuthorizationOverlay } from '../../src/access/enforcement/owner-overlay.ts';
 import type {
   OwnerAuthorizationInput,
   OwnerAuthorizationOverlayService,
-} from '../../src/permissions/owner-authorization-overlay.ts';
+} from '../../src/access/enforcement/owner-overlay.ts';
 import type { PrincipalManagementRepositoryService } from '../../src/auth/principal-management.ts';
 import { PrincipalManagementRepository } from '../../src/auth/principal-management.ts';
 import { supportRecoveryPrincipalContextResolverFromRepository } from '../../src/auth/support-recovery-principal-context.ts';
@@ -69,14 +99,24 @@ import {
 import { checkModuleEntrypoint, makeModuleStateSnapshot } from '../../src/modules/module-state-gate.ts';
 import type { TenantModuleState } from '../../src/modules/tenant-module-state-service.ts';
 import type { ActionPermissionDecision, CheckActionPermissionInput } from '../../src/permissions/service.ts';
-import { BusinessPermissionCodeSchema } from '../../src/permissions/business-permission.ts';
-import {
-  toAssortmentPermissionAccessKey,
-  toBusinessPermissionAccessKey,
-} from '../../src/permissions/context-access.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { makeTestDatabase } from '../support/database.ts';
 import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
+import { fixtureActionAccess } from '../support/access-declaration-fixtures.ts';
+
+const historicalActionPermissions = <Payload>(
+  permission: string,
+  resolver: (
+    payload: Payload,
+    scope: OperationalScope,
+  ) => Readonly<{ readonly permission: string; readonly target: object }>,
+) =>
+  defineActionOwnerPermissions(historicalOwnerContract(permission), (payload: Payload, scope) => {
+    const resolved = resolver(payload, scope);
+    return [historicalOwnerTarget(resolved.permission, resolved.target)];
+  });
+
+const FixturePermissionCodeSchema = Schema.String;
 
 const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
   authBindingId: '00000000-0000-4000-8000-000000000004',
@@ -145,8 +185,9 @@ interface TestCompositionAuthority {
 }
 
 interface HarnessOptions {
-  readonly assortmentPermissionDecision?: PermissionDecision;
-  readonly assortmentPermissionDecisions?: readonly PermissionDecision[];
+  /** A scripted gate answer for this run: `denied` proves the reduction exemption is real (O71). */
+  readonly access?: TestAccessOutcome;
+  readonly applicationComposition?: ActiveApplicationCompositionServiceContract;
   readonly authorizationPreflight?: ActionAuthorizationPreflightService;
   readonly businessPermissionDecision?: PermissionDecision;
   readonly commit?: Effect.Effect<readonly object[], SqlError>;
@@ -154,6 +195,7 @@ interface HarnessOptions {
   readonly compositionAuthority?: TestCompositionAuthority | 'missing';
   readonly compositionIsolation?: 'read committed' | 'repeatable read' | 'serializable';
   readonly createRecord?: ActionInvocationRecord & { readonly actionKey?: string };
+  readonly expectedDeployment?: ActionRuntimeOptions['expectedDeployment'];
   readonly failCompositionAuthorityLock?: boolean;
   readonly failTransactionTimestamp?: boolean;
   readonly legalEntityPermissionDecision?: PermissionDecision;
@@ -161,29 +203,50 @@ interface HarnessOptions {
   readonly moduleState?: TenantModuleState | 'missing' | 'unavailable';
   readonly omitCompositionRevisionResolver?: boolean;
   readonly omitOwnerAuthorizationOverlay?: boolean;
-  readonly onAssortmentPermissionCheck?: (targets: readonly unknown[]) => void;
+  readonly omitOwnerRegistration?: boolean;
   readonly onBusinessPermissionCheck?: () => void;
+  readonly onOwnerPermissionCheck?: (targets: readonly unknown[]) => void;
   readonly onResourcePermissionCheck?: () => void;
   readonly ownerAuthorizationOverlay?: OwnerAuthorizationOverlayService;
+  readonly ownerPermissionDecision?: PermissionDecision;
+  readonly ownerPermissionDecisions?: readonly PermissionDecision[];
+  readonly ownerRegistration?: VerticalRuntimeRegistration;
   readonly permissionDecision?: ActionPermissionDecision;
   readonly permissionFailure?: boolean;
   readonly policyFinalizationFailure?: boolean;
   /** Simulates a concurrent request whose rejection committed before this one finalizes. */
   readonly recordedByConcurrentRequest?: ActionRecordedRejection;
   readonly rejectionFailure?: boolean;
-  readonly resolutionMissing?: boolean;
   readonly resolutionUnavailable?: boolean;
+  readonly resolveCommitted?: boolean;
   readonly resolveCompositionRevision?: Effect.Effect<string, ActionTransactionError>;
   readonly resourcePermissionDecision?: PermissionDecision;
   readonly tenantPermissionDecision?: PermissionDecision;
   readonly transactionMode?: 'commit-definite' | 'definite-failure' | 'normal' | 'uncertain';
 }
 
+/** These local registrations are synthetic Core infrastructure probes, with no business-provider implementation. */
+const historicalFixtureOwner = (moduleId: string) => {
+  const base = makeModuleContractFixture({ appId: moduleId.replaceAll('.', '-'), moduleId }).manifest;
+  const manifest = defineOntosModuleManifest({
+    ...base,
+    publicSurface: { ...base.publicSurface, actions: [], api: {}, components: {} },
+  });
+  return defineVerticalRuntimeRegistration({ actions: [], manifest, outboxWorkers: [] });
+};
+
+interface HistoricalPermissionCheckObservation {
+  readonly principal: { readonly principalId: string; readonly tenantId: string };
+  readonly targets: readonly { readonly permission: string; readonly target: object }[];
+  trustedStorefrontId?: string;
+}
+
 const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}) {
   const finalized: FinalizeActionPolicyDenialInput[] = [];
   const flushed: FlushActionSuccessInput[] = [];
   const businessPermissionChecks: unknown[] = [];
-  const assortmentPermissionChecks: unknown[] = [];
+  const ownerPermissionChecks: unknown[] = [];
+  const ownerPermissionInputs: unknown[] = [];
   const legalEntityChecks: unknown[] = [];
   const permissionChecks: CheckActionPermissionInput[] = [];
   const rejections: RejectPermissionDeniedInput[] = [];
@@ -284,25 +347,19 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       };
       return Effect.succeed(Option.fromNullishOr(options.recordedByConcurrentRequest));
     },
-    resolveInvocation: () => {
-      if (options.resolutionUnavailable === true) {
-        return Effect.fail(
-          new ActionInvocationPersistenceError({
-            code: 'action_invocation_persistence_failed',
-            reason: 'test database unavailable',
+    resolveInvocation: () =>
+      options.resolutionUnavailable === true
+        ? Effect.fail(
+            new ActionInvocationPersistenceError({
+              code: 'action_invocation_persistence_failed',
+              reason: 'test database unavailable',
+            }),
+          )
+        : Effect.succeed({
+            ...currentInvocation,
+            requestHash: currentInvocation.requestHash || preparedHash,
+            status: options.resolveCommitted === true ? 'succeeded' : currentInvocation.status,
           }),
-        );
-      }
-      if (options.resolutionMissing === true) {
-        return Effect.fail(
-          new ActionInvocationNotFound({
-            code: 'action_invocation_not_found',
-            reason: 'No exact caller-owned invocation',
-          }),
-        );
-      }
-      return Effect.succeed(currentInvocation);
-    },
     transitionInvocationToRunning: () => {
       transitionCount += 1;
       if (
@@ -341,14 +398,17 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       }
       return [];
     });
+  const installTestScope = (values: readonly unknown[]) => {
+    const [tenantId, legalEntityId] = values;
+    if (Predicate.isString(tenantId) && Predicate.isString(legalEntityId)) {
+      installedTenantId = tenantId;
+      installedLegalEntityId = legalEntityId;
+    }
+  };
   const query = Effect.fn(function* executeQuery(statement: string, values: readonly unknown[]) {
     const text = statement.toLowerCase();
     if (text.includes('set_config')) {
-      const [tenantId, legalEntityId] = values;
-      if (Predicate.isString(tenantId) && Predicate.isString(legalEntityId)) {
-        installedTenantId = tenantId;
-        installedLegalEntityId = legalEntityId;
-      }
+      installTestScope(values);
     }
     if (text === 'begin') {
       transactionSteps.push('begin');
@@ -376,19 +436,24 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       return [];
     }
     if (text.includes('pg_advisory_xact_lock_shared')) {
-      const isolation = options.compositionIsolation ?? 'read committed';
-      if (isolation !== 'read committed') {
-        return [{ isolation }];
+      // The guarded fence only acquires its lock under READ COMMITTED; the CASE never takes it in an
+      // unsupported isolation, so an unsuitable transaction counts no lock and never holds one.
+      if ((options.compositionIsolation ?? 'read committed') === 'read committed') {
+        compositionAuthorityLockCount += 1;
+        transactionSteps.push('composition_authority_locked');
+        if (options.failCompositionAuthorityLock === true) {
+          return yield* new SqlError({
+            reason: new ConnectionError({ cause: new Error('composition authority lock unavailable') }),
+          });
+        }
+        compositionAuthorityLockHeld = true;
       }
-      compositionAuthorityLockCount += 1;
-      transactionSteps.push('composition_authority_locked');
-      if (options.failCompositionAuthorityLock === true) {
-        return yield* new SqlError({
-          reason: new ConnectionError({ cause: new Error('composition authority lock unavailable') }),
-        });
+      // The canonical fence is one combined statement (isolation probe + guarded lock), so it also
+      // answers the isolation read below. The separate-statement form returns here and the following
+      // statement answers it.
+      if (!text.includes("current_setting('transaction_isolation')")) {
+        return [];
       }
-      compositionAuthorityLockHeld = true;
-      return [{ isolation }];
     }
     if (text.includes('application_composition_authority')) {
       const authority = options.compositionAuthority ?? {
@@ -406,6 +471,9 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
               unexpired: authority.unexpired,
             },
           ];
+    }
+    if (text.includes("current_setting('transaction_isolation')")) {
+      return [{ isolation: options.compositionIsolation ?? 'read committed' }];
     }
     if (text.includes('current_setting')) {
       return [
@@ -508,29 +576,6 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
         };
   let runtimeOptions: ActionRuntimeOptions = {
     contextAccess: {
-      assortmentPermissions: (input) => {
-        assortmentPermissionChecks.push(...input.targets);
-        options.onAssortmentPermissionCheck?.(input.targets);
-        return Effect.succeed(
-          input.targets.map((target, index) => ({
-            decision:
-              options.assortmentPermissionDecisions?.[index] ??
-              options.assortmentPermissionDecision ??
-              ('allowed' as const),
-            key: toAssortmentPermissionAccessKey(principal.tenantId, principal.legalEntityId, target.target) ?? '',
-          })),
-        );
-      },
-      businessPermissions: (input) => {
-        options.onBusinessPermissionCheck?.();
-        businessPermissionChecks.push(input);
-        return Effect.succeed(
-          input.targets.map((target) => ({
-            decision: options.businessPermissionDecision ?? ('allowed' as const),
-            key: toBusinessPermissionAccessKey(target),
-          })),
-        );
-      },
       legalEntities: (input) => {
         legalEntityChecks.push(input);
         return Effect.succeed(
@@ -541,6 +586,35 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
         );
       },
       modules: () => Effect.succeed([]),
+      ownerPermissions: (input) => {
+        if (input.targets.every(({ target }) => target.contract.targetResourceType === 'historical_owner_permission')) {
+          options.onBusinessPermissionCheck?.();
+          const projected: HistoricalPermissionCheckObservation = {
+            principal: input.principal,
+            targets: input.targets.map(({ target }) => ({ permission: target.definition.key, target: target.target })),
+          };
+          if (input.trustedStorefrontId !== undefined) {
+            projected.trustedStorefrontId = input.trustedStorefrontId;
+          }
+          businessPermissionChecks.push(projected);
+          return Effect.succeed(
+            input.targets.map(({ target }) => ({
+              decision: options.businessPermissionDecision ?? ('allowed' as const),
+              key: target.key,
+            })),
+          );
+        }
+        ownerPermissionChecks.push(...input.targets);
+        ownerPermissionInputs.push(input);
+        options.onOwnerPermissionCheck?.(input.targets);
+        return Effect.succeed(
+          input.targets.map((target, index) => ({
+            decision:
+              options.ownerPermissionDecisions?.[index] ?? options.ownerPermissionDecision ?? ('allowed' as const),
+            key: target.target.key,
+          })),
+        );
+      },
       resources: (input) => {
         options.onResourcePermissionCheck?.();
         resourceChecks.push(input);
@@ -573,6 +647,15 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       return getActionHandler(action);
     },
   };
+  if (options.applicationComposition !== undefined) {
+    runtimeOptions = { ...runtimeOptions, applicationComposition: options.applicationComposition };
+  }
+  if (options.expectedDeployment !== undefined) {
+    runtimeOptions = { ...runtimeOptions, expectedDeployment: options.expectedDeployment };
+  }
+  if (options.ownerRegistration !== undefined) {
+    runtimeOptions = { ...runtimeOptions, ownerRegistration: options.ownerRegistration };
+  }
   if (options.omitCompositionRevisionResolver !== true) {
     runtimeOptions = {
       ...runtimeOptions,
@@ -583,10 +666,22 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   if (options.authorizationPreflight !== undefined) {
     runtimeOptions = { ...runtimeOptions, authorizationPreflight: options.authorizationPreflight };
   }
-  const runtime = makeActionRuntime(database, repository, permission, testOperationalScopeResolver, runtimeOptions);
+  const scriptedAccess = options.access === undefined ? undefined : makeScriptedBoundAccessGate(options.access);
+  if (scriptedAccess !== undefined) {
+    runtimeOptions = { ...runtimeOptions, accessDecision: scriptedAccess.bound };
+  }
+  const baseRuntime = makeActionRuntime(database, repository, permission, testOperationalScopeResolver, runtimeOptions);
+  const runAction: typeof baseRuntime.runAction = (input) =>
+    options.omitOwnerRegistration === true || options.ownerRegistration !== undefined
+      ? baseRuntime.runAction(input)
+      : makeActionRuntime(database, repository, permission, testOperationalScopeResolver, {
+          ...runtimeOptions,
+          ownerRegistration: historicalFixtureOwner(input.registration.descriptor.owningModuleKey),
+        }).runAction(input);
+  const runtime = { resolveActionCommit: baseRuntime.resolveActionCommit, runAction };
 
   return {
-    assortmentPermissionChecks,
+    accessQuestions: () => scriptedAccess?.accessDecision.askedDecisions ?? [],
     businessPermissionChecks,
     compositionAuthority: () => ({
       lockCount: compositionAuthorityLockCount,
@@ -607,6 +702,8 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
     }),
     invocationState: () => currentInvocation,
     legalEntityChecks,
+    ownerPermissionChecks,
+    ownerPermissionInputs,
     permissionChecks,
     permissionCounts: () => ({ permissionCheckCount, rejectionCount }),
     rejections,
@@ -739,6 +836,7 @@ it('repository cause readers reject foreign objects carrying the former cause pr
 const registration = () =>
   defineAction(
     {
+      accessDeclaration: fixtureActionAccess('core.shell'),
       accessEvidencePolicy: {
         captureMode: 'metadata_only',
         policyKey: 'counter.read.v1',
@@ -804,6 +902,7 @@ it.effect('runs the decoded-success hook before evidence flush and rolls back it
   Effect.gen(function* decodedSuccessHook() {
     const calls: string[] = [];
     const descriptor = {
+      accessDeclaration: fixtureActionAccess('core.shell'),
       accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
       actionKey: 'shell.counter.snapshot',
       auditProfile: 'standard',
@@ -964,6 +1063,8 @@ it.effect(
       originalRevision: approvedCompositionRevision,
     });
     expect(harness.flushed[0]?.allowedPolicies).toEqual([]);
+    // The trusted scope's own tenant and legal entity ride every permission check (ScopedActionIdentity);
+    // the check never derives them from the payload.
     expect(harness.permissionChecks).toEqual([
       {
         actionKey: 'shell.counter.change',
@@ -993,10 +1094,12 @@ it.effect('rejects missing, stale, draining, and expired composition authority b
       let ownerAuthorizationCalls = 0;
       const harness = yield* makeHarness({
         compositionAuthority,
-        ownerAuthorizationOverlay: transactionalOwnerAuthorization(() => {
-          ownerAuthorizationCalls += 1;
-          return Effect.succeed('allowed' as const);
-        }),
+        ownerAuthorizationOverlay: {
+          authorize: () => {
+            ownerAuthorizationCalls += 1;
+            return Effect.succeed('allowed' as const);
+          },
+        },
       });
       const failure = yield* Effect.flip(
         harness.runtime.runAction({
@@ -1147,10 +1250,12 @@ it.effect(
   Effect.fn(function* testOwnerOverlayDenial() {
     const ownerInputs: OwnerAuthorizationInput[] = [];
     const harness = yield* makeHarness({
-      ownerAuthorizationOverlay: transactionalOwnerAuthorization((_transaction, input) => {
-        ownerInputs.push(input);
-        return Effect.succeed('denied' as const);
-      }),
+      ownerAuthorizationOverlay: {
+        authorize: (_transaction, input) => {
+          ownerInputs.push(input);
+          return Effect.succeed('denied' as const);
+        },
+      },
     });
     const failure = yield* Effect.flip(
       harness.runtime.runAction({
@@ -1181,10 +1286,12 @@ it.effect('fails closed before owner authorization when PostgreSQL cannot provid
     let overlayCalls = 0;
     const harness = yield* makeHarness({
       failTransactionTimestamp: true,
-      ownerAuthorizationOverlay: transactionalOwnerAuthorization(() => {
-        overlayCalls += 1;
-        return Effect.succeed('allowed' as const);
-      }),
+      ownerAuthorizationOverlay: {
+        authorize: () => {
+          overlayCalls += 1;
+          return Effect.succeed('allowed' as const);
+        },
+      },
     });
     const failure = yield* Effect.flip(
       harness.runtime.runAction({
@@ -1226,6 +1333,7 @@ it.effect(
     });
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.shell'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'shell.temporal.v1',
@@ -1306,10 +1414,7 @@ it.effect(
       originalSessionId: 'expired-original-session',
       tenantId: principal.tenantId,
     });
-    const harness = yield* makeHarness({
-      permissionDecision: 'allowed',
-      tenantPermissionDecision: 'denied',
-    });
+    const harness = yield* makeHarness({ access: 'denied', permissionDecision: 'allowed' });
 
     const result = yield* harness.runtime
       .runAction({
@@ -1327,34 +1432,30 @@ it.effect(
       .pipe(providePrincipalManagementRepository);
 
     expect(result).toEqual({ checkpoint: 'stopped', recorded: true });
-    expect(harness.permissionCounts()).toEqual({
-      permissionCheckCount: 1,
-      rejectionCount: 0,
-    });
+    // Ending an impersonation only takes authority away, so the grant is never asked (O35, O71):
+    // the denying composition above still runs the stop and records it.
+    expect(harness.accessQuestions()).toEqual([]);
+    expect(harness.permissionCounts()).toEqual({ permissionCheckCount: 0, rejectionCount: 0 });
 
-    const deniedHarness = yield* makeHarness({ permissionDecision: 'denied' });
-    const denied = yield* Effect.flip(
-      deniedHarness.runtime
+    // The same denied gate does refuse a start, because a start is not a reduction.
+    const deniedStart = yield* Effect.flip(
+      harness.runtime
         .runAction({
           payload: {
-            checkpoint: 'stopped',
+            checkpoint: 'requested',
             originalPrincipalId: principal.principalId,
-            reason: 'Securely terminate support access',
-            sessionRef: 'better-auth-session:impersonated-session',
+            reason: 'Start an impersonation without a grant',
             targetPrincipalId: '00000000-0000-4000-8000-000000000099',
           },
-          principal: recoveryPrincipal,
+          principal,
           registration: recordSupportImpersonationAction,
-          transport: transport('support-recovery-denied'),
+          transport: transport('support-start-denied'),
         })
         .pipe(providePrincipalManagementRepository),
     );
-    expect(Predicate.isTagged(denied, 'ActionPermissionDenied')).toBe(true);
-
-    expect(deniedHarness.permissionCounts()).toEqual({
-      permissionCheckCount: 1,
-      rejectionCount: 1,
-    });
+    expect(Predicate.isTagged(deniedStart, 'ActionPermissionDenied')).toBe(true);
+    expect(harness.accessQuestions().length).toBe(1);
+    expect(harness.permissionCounts()).toEqual({ permissionCheckCount: 0, rejectionCount: 1 });
 
     const wrongCheckpoint = yield* Effect.flip(
       harness.runtime
@@ -1398,6 +1499,7 @@ it.effect(
         const harness = yield* makeHarness({ moduleState: state });
         const action = defineAction(
           {
+            accessDeclaration: fixtureActionAccess('inventory.stock'),
             accessEvidencePolicy: {
               captureMode: 'metadata_only',
               policyKey: 'stock.read.v1',
@@ -1471,6 +1573,7 @@ it.effect(
   Effect.fn(function* testProgram9() {
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('inventory.stock'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'stock.read.v1',
@@ -1561,6 +1664,7 @@ it.effect(
   Effect.fn(function* testProgram11() {
     const tenantAuthorizedRegistration = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.identity'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'identity.read.v1',
@@ -1644,6 +1748,7 @@ it.effect(
         const actionKey = `party.registry.permission-${index}`;
         const action = defineAction(
           {
+            accessDeclaration: fixtureActionAccess('party.registry'),
             accessEvidencePolicy: {
               captureMode: 'metadata_only',
               policyKey: 'party.read.v1',
@@ -1701,6 +1806,7 @@ it.effect(
   Effect.fn(function* testProgram15() {
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.identity'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'identity.read.v1',
@@ -1771,6 +1877,7 @@ it.effect(
     let policyCalls = 0;
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('party.registry'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'counterparty.read.v1',
@@ -1893,6 +2000,7 @@ it.effect(
     let policyCalls = 0;
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('party.registry'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'counterparty.read.v1',
@@ -2018,28 +2126,18 @@ it.effect(
     const observed: string[] = [];
     let handlerCalls = 0;
     let policyCalls = 0;
-    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)(
+    const permission = yield* Schema.decodeEffect(FixturePermissionCodeSchema)(
       'retail.settings.payment_term_preference.manage',
     );
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('commerce.customer-context'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'retail-profile.write.v1',
         },
         actionKey: 'commerce.customer-context.change-payment-term',
         auditProfile: 'sensitive',
-        businessPermission: defineActionBusinessPermission<{ readonly profileId: RetailProfileId }>(
-          ({ profileId }, scope) => ({
-            permission,
-            target: {
-              kind: 'retail_profile',
-              legalEntityId: scope.legalEntityId ?? '',
-              profileId,
-              tenantId: scope.tenantId,
-            },
-          }),
-        ),
         domainErrorSchema: Schema.Never,
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
@@ -2054,6 +2152,18 @@ it.effect(
         }),
         idempotency: 'required',
         legalEntityScope: 'required',
+        ownerPermissions: historicalActionPermissions<{ readonly profileId: RetailProfileId }>(
+          permission,
+          ({ profileId }, scope) => ({
+            permission,
+            target: {
+              kind: 'retail_profile',
+              legalEntityId: scope.legalEntityId ?? '',
+              profileId,
+              tenantId: scope.tenantId,
+            },
+          }),
+        ),
         owningModuleKey: 'commerce.customer-context',
         payloadSchema: Schema.Struct({ profileId: RetailProfileIdSchema }),
         policies: [
@@ -2147,7 +2257,7 @@ it.effect(
 it.effect(
   'enforces tenant-only Price Group targets and persists their canonical authorization evidence',
   Effect.fn(function* testPriceGroupBusinessPermission() {
-    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('pricing.price_group.read');
+    const permission = yield* Schema.decodeEffect(FixturePermissionCodeSchema)('pricing.price_group.read');
     const PriceGroupIdSchema = Schema.String.pipe(Schema.brand('PriceGroupId'));
     const PricingCatalogIdSchema = Schema.String.pipe(Schema.brand('PricingCatalogId'));
     const TargetTenantIdSchema = Schema.String.pipe(Schema.brand('TargetTenantId'));
@@ -2159,21 +2269,13 @@ it.effect(
     let handlerCalls = 0;
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('pricing.price-group-catalog'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'pricing.price-group.read.v1',
         },
         actionKey: 'pricing.price-group.inspect',
         auditProfile: 'sensitive',
-        businessPermission: defineActionBusinessPermission<typeof InputSchema.Type>((payload) => ({
-          permission,
-          target: {
-            kind: 'price_group',
-            priceGroupId: payload.priceGroupId,
-            pricingCatalogId: payload.pricingCatalogId,
-            tenantId: payload.targetTenantId,
-          },
-        })),
         domainErrorSchema: Schema.Never,
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
@@ -2188,6 +2290,15 @@ it.effect(
         }),
         idempotency: 'required',
         legalEntityScope: 'forbidden',
+        ownerPermissions: historicalActionPermissions<typeof InputSchema.Type>(permission, (payload) => ({
+          permission,
+          target: {
+            kind: 'price_group',
+            priceGroupId: payload.priceGroupId,
+            pricingCatalogId: payload.pricingCatalogId,
+            tenantId: payload.targetTenantId,
+          },
+        })),
         owningModuleKey: 'pricing.price-group-catalog',
         payloadSchema: InputSchema,
         policies: [],
@@ -2287,7 +2398,7 @@ it.effect(
 it.effect(
   'enforces exact tenant-qualified Inventory Resource permissions and preserves the durable ResourceRef in evidence',
   Effect.fn(function* testInventoryResourceBusinessPermission() {
-    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('inventory.stock.correct');
+    const permission = yield* Schema.decodeEffect(FixturePermissionCodeSchema)('inventory.stock.correct');
     const InventoryResourceIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('InventoryResourceId'));
     const TargetTenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('InventoryTargetTenantId'));
     const InputSchema = Schema.Struct({
@@ -2297,24 +2408,13 @@ it.effect(
     let handlerCalls = 0;
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('commerce.inventory'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'inventory.stock-correction.v1',
         },
         actionKey: 'commerce.inventory.correct-stock-position',
         auditProfile: 'sensitive',
-        businessPermission: defineActionBusinessPermission<typeof InputSchema.Type>((payload) => ({
-          permission,
-          target: {
-            kind: 'inventory_resource',
-            resource: {
-              moduleId: 'commerce.inventory',
-              resourceId: payload.resourceId,
-              resourceType: 'commerce.inventory.stock-position',
-            },
-            tenantId: payload.targetTenantId,
-          },
-        })),
         domainErrorSchema: Schema.Never,
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
@@ -2326,6 +2426,18 @@ it.effect(
         }),
         idempotency: 'required',
         legalEntityScope: 'optional',
+        ownerPermissions: historicalActionPermissions<typeof InputSchema.Type>(permission, (payload) => ({
+          permission,
+          target: {
+            kind: 'inventory_resource',
+            resource: {
+              moduleId: 'commerce.inventory',
+              resourceId: payload.resourceId,
+              resourceType: 'commerce.inventory.stock-position',
+            },
+            tenantId: payload.targetTenantId,
+          },
+        })),
         owningModuleKey: 'commerce.inventory',
         payloadSchema: InputSchema,
         policies: [],
@@ -2394,26 +2506,19 @@ it.effect(
 it.effect(
   'enforces TAX management only on the exact trusted Selling Legal Entity and never on another seller',
   Effect.fn(function* testTaxSellingLegalEntityBusinessPermission() {
-    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('tax.rule.manage');
+    const permission = yield* Schema.decodeEffect(FixturePermissionCodeSchema)('tax.rule.manage');
     const SellerIdSchema = Schema.String.pipe(Schema.brand('TaxSellerLegalEntityId'));
     const InputSchema = Schema.Struct({ sellerLegalEntityId: SellerIdSchema });
     let handlerCalls = 0;
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('commerce.tax'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'commerce.tax.create-tax-rule.access.v1',
         },
         actionKey: 'commerce.tax.create-tax-rule',
         auditProfile: 'sensitive',
-        businessPermission: defineActionBusinessPermission<typeof InputSchema.Type>((payload, scope) => ({
-          permission,
-          target: {
-            kind: 'tax_selling_legal_entity',
-            legalEntityId: payload.sellerLegalEntityId,
-            tenantId: scope.tenantId,
-          },
-        })),
         domainErrorSchema: Schema.Never,
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
@@ -2425,6 +2530,14 @@ it.effect(
         }),
         idempotency: 'required',
         legalEntityScope: 'required',
+        ownerPermissions: historicalActionPermissions<typeof InputSchema.Type>(permission, (payload, scope) => ({
+          permission,
+          target: {
+            kind: 'tax_selling_legal_entity',
+            legalEntityId: payload.sellerLegalEntityId,
+            tenantId: scope.tenantId,
+          },
+        })),
         owningModuleKey: 'commerce.tax',
         payloadSchema: InputSchema,
         policies: [],
@@ -2488,26 +2601,18 @@ it.effect(
 it.effect(
   'rejects a Pricing permission resolved onto a Counterparty target before checks, persistence, or handler code',
   Effect.fn(function* rejectMismatchedBusinessPermissionTarget() {
-    const pricingPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('pricing.price_group.read');
+    const pricingPermission = yield* Schema.decodeEffect(FixturePermissionCodeSchema)('pricing.price_group.read');
     const MismatchedTargetPayloadSchema = Schema.Struct({ counterpartyId: CounterpartyIdSchema });
     let handlerCalls = 0;
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('pricing.price-group-catalog'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'pricing.price-group.mismatched-target.v1',
         },
         actionKey: 'pricing.price-group.mismatched-target',
         auditProfile: 'sensitive',
-        businessPermission: defineActionBusinessPermission<typeof MismatchedTargetPayloadSchema.Type>((payload) => ({
-          permission: pricingPermission,
-          target: {
-            counterpartyId: payload.counterpartyId,
-            kind: 'counterparty',
-            legalEntityId: principalLegalEntityId,
-            tenantId: principal.tenantId,
-          },
-        })),
         domainErrorSchema: Schema.Never,
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
@@ -2519,6 +2624,18 @@ it.effect(
         }),
         idempotency: 'required',
         legalEntityScope: 'required',
+        ownerPermissions: historicalActionPermissions<typeof MismatchedTargetPayloadSchema.Type>(
+          pricingPermission,
+          (payload) => ({
+            permission: pricingPermission,
+            target: {
+              counterpartyId: payload.counterpartyId,
+              kind: 'counterparty',
+              legalEntityId: principalLegalEntityId,
+              tenantId: principal.tenantId,
+            },
+          }),
+        ),
         owningModuleKey: 'pricing.price-group-catalog',
         payloadSchema: MismatchedTargetPayloadSchema,
         policies: [],
@@ -2551,32 +2668,18 @@ it.effect(
 it.effect(
   'accepts Storefront business targets only from exact gateway-verified scope',
   Effect.fn(function* testTrustedStorefrontBusinessPermission() {
-    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('counterparty.purchase.submit');
+    const permission = yield* Schema.decodeEffect(FixturePermissionCodeSchema)('counterparty.purchase.submit');
     const StorefrontIdSchema = Schema.String.pipe(Schema.brand('StorefrontId'));
     let handlerCalls = 0;
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('commerce.customer-context'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'counterparty-storefront.write.v1',
         },
         actionKey: 'commerce.customer-context.storefront-command',
         auditProfile: 'sensitive',
-        businessPermission: defineActionBusinessPermission<{
-          readonly counterpartyId: CounterpartyId;
-          readonly storefrontId: string;
-        }>(({ counterpartyId, storefrontId }, scope) => ({
-          permission,
-          target: {
-            counterpartyId,
-            kind: 'counterparty_storefront',
-            legalEntityId: scope.legalEntityId ?? '',
-            storefrontId,
-            tenantId: scope.tenantId,
-          },
-          // Deliberately mirrors untrusted payload to prove Core does not accept self-promotion.
-          trustedStorefrontId: storefrontId,
-        })),
         domainErrorSchema: Schema.Never,
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
@@ -2591,6 +2694,21 @@ it.effect(
         }),
         idempotency: 'required',
         legalEntityScope: 'required',
+        ownerPermissions: historicalActionPermissions<{
+          readonly counterpartyId: CounterpartyId;
+          readonly storefrontId: string;
+        }>(permission, ({ counterpartyId, storefrontId }, scope) => ({
+          permission,
+          target: {
+            counterpartyId,
+            kind: 'counterparty_storefront',
+            legalEntityId: scope.legalEntityId ?? '',
+            storefrontId,
+            tenantId: scope.tenantId,
+          },
+          // Deliberately mirrors untrusted payload to prove Core does not accept self-promotion.
+          trustedStorefrontId: storefrontId,
+        })),
         owningModuleKey: 'commerce.customer-context',
         payloadSchema: Schema.Struct({
           counterpartyId: CounterpartyIdSchema,
@@ -2658,58 +2776,38 @@ it.effect(
   }),
 );
 
-it.effect('checks every plural Assortment target conjunctively before the handler', () =>
-  Effect.gen(function* checksPluralAssortmentTargets() {
+it.effect('checks every plural Owner target conjunctively before the handler', () =>
+  Effect.gen(function* checksPluralOwnerTargets() {
     let handlerCalls = 0;
     let serviceFactoryCalls = 0;
     const action = defineAction(
       {
-        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'assortment.replace.v1' },
-        actionKey: 'commerce.assortment.replace-binding',
-        assortmentPermissions: defineActionAssortmentPermissions(() => [
-          {
-            binding: {
-              moduleId: 'commerce.assortment',
-              resourceId: 'binding-1',
-              resourceType: 'commerce.assortment.applicability-binding',
-            },
-            kind: 'assortment_binding',
-            mode: 'end',
-            permission: 'assortment.binding.end',
-          },
-          {
-            audience: { kind: 'SHARED' },
-            commercialScope: {
-              channel: {
-                moduleId: 'commerce.channel',
-                resourceId: 'web',
-                resourceType: 'commerce.channel',
-              },
-            },
-            effectiveFrom: '2026-09-22T00:00:00.000Z',
-            kind: 'assortment_binding',
-            mode: 'create',
-            permission: 'assortment.binding.create',
-            ruleRevision: {
-              moduleId: 'commerce.assortment',
-              resourceId: 'rule-revision-2',
-              resourceType: 'commerce.assortment.rule-revision',
-            },
-          },
-        ]),
+        accessDeclaration: fixtureActionAccess('commerce.fixture'),
+        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'owner.replace.v1' },
+        actionKey: 'commerce.fixture.replace-binding',
         auditProfile: 'standard',
         domainErrorSchema: Schema.Never,
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
           access: 'write',
           authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
-          entrypointKey: 'commerce.assortment.replace-binding',
-          moduleKey: 'commerce.assortment',
+          entrypointKey: 'commerce.fixture.replace-binding',
+          moduleKey: 'commerce.fixture',
           role: 'action',
         }),
         idempotency: 'required',
         legalEntityScope: 'required',
-        owningModuleKey: 'commerce.assortment',
+        ownerPermissions: defineActionOwnerPermissions(fixtureOwnerContract, () => [
+          ownerPermissionTarget(principal, 'existing', {
+            definition: fixtureOwnerEndPermission,
+            transportObjectId: 'owner-conjunction',
+          }),
+          ownerPermissionTarget(principal, 'proposed', {
+            definition: fixtureOwnerCreatePermission,
+            transportObjectId: 'owner-conjunction',
+          }),
+        ]),
+        owningModuleKey: 'commerce.fixture',
         payloadSchema: Schema.Struct({ value: Schema.String }),
         policies: [],
         resultSchema: Schema.Void,
@@ -2724,81 +2822,292 @@ it.effect('checks every plural Assortment target conjunctively before the handle
         return Effect.succeed({});
       },
     );
-    const allowed = yield* makeHarness();
+    const allowed = yield* makeHarness({
+      createRecord: {
+        actionInvocationId: 'owner-plural-allowed',
+        completedAt: null,
+        requestHash: '',
+        status: 'received',
+      },
+    });
     yield* allowed.runtime.runAction({
       payload: { value: 'replace' },
       principal,
       registration: action,
-      transport: transport('assortment-plural-allowed'),
+      transport: transport('owner-plural-allowed'),
     });
-    expect(allowed.assortmentPermissionChecks).toHaveLength(2);
+    expect(allowed.ownerPermissionChecks).toHaveLength(2);
     expect(handlerCalls).toBe(1);
     expect(serviceFactoryCalls).toBe(1);
 
-    const denied = yield* makeHarness({ assortmentPermissionDecisions: ['allowed', 'denied'] });
+    const denied = yield* makeHarness({
+      createRecord: {
+        actionInvocationId: 'owner-plural-denied',
+        completedAt: null,
+        requestHash: '',
+        status: 'received',
+      },
+      ownerPermissionDecisions: ['allowed', 'denied'],
+    });
     const failure = yield* Effect.flip(
       denied.runtime.runAction({
         payload: { value: 'replace' },
         principal,
         registration: action,
-        transport: transport('assortment-plural-denied'),
+        transport: transport('owner-plural-denied'),
       }),
     );
     expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
-    expect(denied.assortmentPermissionChecks).toHaveLength(2);
+    expect(denied.ownerPermissionChecks).toHaveLength(2);
     expect(denied.gateCounts().handlerResolutionCount).toBe(0);
     expect(serviceFactoryCalls).toBe(1);
 
-    const unavailable = yield* makeHarness({ assortmentPermissionDecisions: ['allowed', 'unavailable'] });
+    const unavailableOptions = { ownerPermissionDecisions: ['allowed', 'unavailable'] } satisfies HarnessOptions;
+    const unavailable = yield* makeHarness(unavailableOptions);
     const unavailableFailure = yield* Effect.flip(
       unavailable.runtime.runAction({
         payload: { value: 'replace' },
         principal,
         registration: action,
-        transport: transport('assortment-plural-unavailable'),
+        transport: transport('owner-plural-unavailable'),
       }),
     );
     expect(Predicate.isTagged(unavailableFailure, 'ActionPermissionCheckError')).toBe(true);
-    expect(unavailable.assortmentPermissionChecks).toHaveLength(2);
+    expect(unavailable.ownerPermissionChecks).toHaveLength(2);
     expect(unavailable.gateCounts().handlerResolutionCount).toBe(0);
     expect(serviceFactoryCalls).toBe(1);
     expect(handlerCalls).toBe(1);
+    expect(unavailable.rejections).toHaveLength(0);
+    expect(unavailable.invocationState().status).toBe('received');
+    unavailableOptions.ownerPermissionDecisions = ['allowed', 'allowed'];
+    yield* unavailable.runtime.runAction({
+      payload: { value: 'replace' },
+      principal,
+      registration: action,
+      transport: transport('owner-plural-unavailable'),
+    });
+    expect(unavailable.ownerPermissionChecks).toHaveLength(4);
+    expect(handlerCalls).toBe(2);
+    expect(serviceFactoryCalls).toBe(2);
   }),
 );
 
-it.effect('fails closed for a configuration resource type outside its module namespace', () =>
-  Effect.gen(function* rejectsUnknownConfigurationType() {
+it.effect(
+  'checks Current grants for each fresh owner invocation and independently preserves executor, module and Resource gates',
+  () =>
+    Effect.gen(function* rechecksFreshOwnerAuthority() {
+      let handlerCalls = 0;
+      const action = defineAction(
+        {
+          accessDeclaration: fixtureActionAccess('commerce.fixture'),
+          accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'fixture.current.v1' },
+          actionKey: 'commerce.fixture.current',
+          auditProfile: 'standard',
+          domainErrorSchema: Schema.Never,
+          domainEvents: {},
+          entrypoint: defineTenantModuleEntrypoint({
+            access: 'write',
+            authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+            entrypointKey: 'commerce.fixture.current',
+            moduleKey: 'commerce.fixture',
+            role: 'action',
+          }),
+          idempotency: 'required',
+          legalEntityScope: 'required',
+          ownerPermissions: defineActionOwnerPermissions(fixtureOwnerContract, (_payload, scope) => [
+            ownerPermissionTarget(scope),
+          ]),
+          owningModuleKey: 'commerce.fixture',
+          payloadSchema: Schema.Void,
+          policies: [],
+          resourcePermission: defineActionResourcePermission(() => ({
+            permission: 'write',
+            resource: { moduleId: 'commerce.fixture', resourceId: 'existing', resourceType: 'fixture' },
+          })),
+          resultSchema: Schema.Void,
+          schemaVersion: '1',
+        },
+        () => {
+          handlerCalls += 1;
+          return Effect.void;
+        },
+        () => Effect.succeed({}),
+      );
+      const scenarios = [
+        { failure: null, key: 'initial', options: { ownerPermissionDecision: 'allowed' }, principal },
+        {
+          failure: 'ActionPermissionDenied',
+          key: 'revoked',
+          options: { ownerPermissionDecision: 'denied' },
+          principal,
+        },
+        {
+          failure: 'ActionPermissionDenied',
+          key: 'other-principal',
+          options: { ownerPermissionDecision: 'denied' },
+          principal: { ...principal, principalId: '00000000-0000-4000-8000-000000000099' },
+        },
+        {
+          failure: 'ActionPermissionDenied',
+          key: 'other-tenant',
+          options: { ownerPermissionDecision: 'denied' },
+          principal: { ...principal, tenantId: '00000000-0000-4000-8000-000000000098' },
+        },
+        {
+          failure: 'ActionPermissionDenied',
+          key: 'executor-denied',
+          options: { ownerPermissionDecision: 'allowed', permissionDecision: 'denied' },
+          principal,
+        },
+        {
+          failure: 'ModuleStateDeniedError',
+          key: 'module-inactive',
+          options: { moduleState: 'inactive', ownerPermissionDecision: 'allowed' },
+          principal,
+        },
+        {
+          failure: 'ActionPermissionDenied',
+          key: 'resource-denied',
+          options: { ownerPermissionDecision: 'allowed', resourcePermissionDecision: 'denied' },
+          principal,
+        },
+      ] as const;
+      for (const scenario of scenarios) {
+        const harness = yield* makeHarness({
+          ...scenario.options,
+          createRecord: { actionInvocationId: scenario.key, completedAt: null, requestHash: '', status: 'received' },
+        });
+        const invocation = harness.runtime.runAction({
+          payload: undefined,
+          principal: scenario.principal,
+          registration: action,
+          transport: transport(scenario.key),
+        });
+        if (scenario.failure === null) {
+          yield* invocation;
+        } else {
+          expect(Predicate.isTagged(yield* Effect.flip(invocation), scenario.failure)).toBe(true);
+        }
+        expect(handlerCalls).toBe(1);
+        if (
+          scenario.key === 'initial' ||
+          scenario.key === 'revoked' ||
+          scenario.key === 'other-principal' ||
+          scenario.key === 'other-tenant'
+        ) {
+          expect(harness.ownerPermissionInputs).toEqual([
+            expect.objectContaining({
+              principal: { principalId: scenario.principal.principalId, tenantId: scenario.principal.tenantId },
+              targets: [
+                expect.objectContaining({
+                  target: expect.objectContaining({
+                    scope: {
+                      kind: 'legal_entity',
+                      legalEntityId: scenario.principal.legalEntityId,
+                      tenantId: scenario.principal.tenantId,
+                    },
+                  }),
+                }),
+              ],
+            }),
+          ]);
+        }
+      }
+    }),
+);
+
+it.effect('rejects resolver-selected owner contracts and copied definitions before any permissive Current check', () =>
+  Effect.gen(function* rejectsOwnerDefinitionSubstitution() {
     let handlerCalls = 0;
-    let serviceFactoryCalls = 0;
+    const foreignContract = Object.freeze({ ...fixtureOwnerContract });
+    const copiedDefinition = Object.freeze({ ...fixtureOwnerReadPermission });
+    const SubstitutionModeSchema = Schema.Literals(['contract', 'definition']);
+    const PayloadSchema = Schema.Struct({ mode: SubstitutionModeSchema });
     const action = defineAction(
       {
-        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'assortment.configuration.v1' },
-        actionKey: 'commerce.assortment.configuration-check',
-        assortmentPermissions: defineActionAssortmentPermissions(() => [
-          {
-            kind: 'assortment_configuration',
-            permission: 'assortment.configuration.read',
-            resource: {
-              moduleId: 'commerce.assortment',
-              resourceId: 'configuration-1',
-              resourceType: 'foreign.module.configuration',
-            },
-            resourceScope: 'tenant',
-          },
-        ]),
+        accessDeclaration: fixtureActionAccess('commerce.fixture'),
+        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'fixture.bound.v1' },
+        actionKey: 'commerce.fixture.bound',
         auditProfile: 'standard',
         domainErrorSchema: Schema.Never,
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
           access: 'write',
           authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
-          entrypointKey: 'commerce.assortment.configuration-check',
-          moduleKey: 'commerce.assortment',
+          entrypointKey: 'commerce.fixture.bound',
+          moduleKey: 'commerce.fixture',
+          role: 'action',
+        }),
+        idempotency: 'required',
+        legalEntityScope: 'required',
+        ownerPermissions: defineActionOwnerPermissions<typeof PayloadSchema.Type>(
+          fixtureOwnerContract,
+          (payload, scope) => {
+            const target = ownerPermissionTarget(scope);
+            return [
+              Object.freeze(
+                payload.mode === 'contract'
+                  ? { ...target, contract: foreignContract }
+                  : { ...target, definition: copiedDefinition },
+              ),
+            ];
+          },
+        ),
+        owningModuleKey: 'commerce.fixture',
+        payloadSchema: PayloadSchema,
+        policies: [],
+        resultSchema: Schema.Void,
+        schemaVersion: '1',
+      },
+      () => {
+        handlerCalls += 1;
+        return Effect.void;
+      },
+      () => Effect.succeed({}),
+    );
+    for (const mode of SubstitutionModeSchema.literals) {
+      const harness = yield* makeHarness({ ownerPermissionDecision: 'allowed' });
+      const failure = yield* Effect.flip(
+        harness.runtime.runAction({
+          payload: { mode },
+          principal,
+          registration: action,
+          transport: transport(`owner-substitution-${mode}`),
+        }),
+      );
+      expect(Predicate.isTagged(failure, 'ActionPermissionCheckError')).toBe(true);
+      expect(harness.ownerPermissionInputs).toHaveLength(0);
+      expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+      expect(handlerCalls).toBe(0);
+    }
+  }),
+);
+
+it.effect('fails closed for an owner target outside the declared scope kinds', () =>
+  Effect.gen(function* rejectsUnknownConfigurationType() {
+    let handlerCalls = 0;
+    let serviceFactoryCalls = 0;
+    const action = defineAction(
+      {
+        accessDeclaration: fixtureActionAccess('commerce.fixture'),
+        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'owner.configuration.v1' },
+        actionKey: 'commerce.fixture.configuration-check',
+        auditProfile: 'standard',
+        domainErrorSchema: Schema.Never,
+        domainEvents: {},
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'write',
+          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          entrypointKey: 'commerce.fixture.configuration-check',
+          moduleKey: 'commerce.fixture',
           role: 'action',
         }),
         idempotency: 'required',
         legalEntityScope: 'optional',
-        owningModuleKey: 'commerce.assortment',
+        ownerPermissions: defineActionOwnerPermissions(fixtureOwnerContract, () => [
+          ownerPermissionTarget(principal, 'invalid', { scopeKind: 'unknown_scope' }),
+        ]),
+        owningModuleKey: 'commerce.fixture',
         payloadSchema: Schema.Void,
         policies: [],
         resultSchema: Schema.Void,
@@ -2819,11 +3128,11 @@ it.effect('fails closed for a configuration resource type outside its module nam
         payload: undefined,
         principal,
         registration: action,
-        transport: transport('assortment-unknown-configuration'),
+        transport: transport('owner-unknown-configuration'),
       }),
     );
     expect(Predicate.isTagged(failure, 'ActionPermissionCheckError')).toBe(true);
-    expect(harness.assortmentPermissionChecks).toHaveLength(0);
+    expect(harness.ownerPermissionChecks).toHaveLength(0);
     expect(handlerCalls).toBe(0);
     expect(serviceFactoryCalls).toBe(0);
   }),
@@ -2838,6 +3147,7 @@ it.effect(
     const harness = yield* makeHarness({ permissionDecision: 'denied' });
     const deniedRegistration = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.shell'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'counter.read.v1',
@@ -3210,6 +3520,7 @@ it.effect(
     });
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('inventory.stock'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'counter.read.v1',
@@ -3293,6 +3604,7 @@ it.effect(
     ] as const;
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.shell'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'counter.read.v1',
@@ -3386,6 +3698,7 @@ it.effect(
         });
         const action = defineAction(
           {
+            accessDeclaration: fixtureActionAccess('core.shell'),
             accessEvidencePolicy: {
               captureMode: 'metadata_only',
               policyKey: 'counter.read.v1',
@@ -3453,6 +3766,7 @@ it.effect(
     });
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.shell'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'counter.read.v1',
@@ -3541,6 +3855,7 @@ it.effect(
     });
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.shell'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'counter.read.v1',
@@ -3666,6 +3981,7 @@ it.effect(
     });
     const rejected = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.shell'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'counter.read.v1',
@@ -3738,6 +4054,7 @@ it.effect(
     const harness = yield* makeHarness();
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.shell'),
         accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
         actionKey: 'shell.counter.commit-then-reject',
         auditProfile: 'standard',
@@ -3839,6 +4156,7 @@ it.effect(
       const harness = yield* makeHarness();
       const action = defineAction(
         {
+          accessDeclaration: fixtureActionAccess('core.shell'),
           accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
           actionKey: `shell.counter.${id}-committed-rejection`,
           auditProfile: 'standard',
@@ -3902,6 +4220,7 @@ it.effect(
     const defectHarness = yield* makeHarness();
     const defective = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.shell'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'counter.read.v1',
@@ -3942,6 +4261,7 @@ it.effect(
     const resultHarness = yield* makeHarness();
     const invalidResult = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.shell'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'counter.read.v1',
@@ -4012,6 +4332,7 @@ it.effect(
     const harness = yield* makeHarness();
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.shell'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'counter.read.v1',
@@ -4253,32 +4574,6 @@ it.effect(
       throw new Error('Expected typed test outcome');
     }
     expect(unavailableResolution.invocationId).toBe(invocationId);
-
-    const keyed = { actionKey: 'shell.counter.write', idempotencyKey: 'not-an-invocation-uuid', principal };
-    const keyedOpen = yield* open.runtime.resolveActionCommit(keyed);
-    expect(keyedOpen.invocationId).toBe(invocationId);
-    const keyedCommitted = yield* Effect.flip(committed.runtime.resolveActionCommit(keyed));
-    expect(Predicate.isTagged(keyedCommitted, 'ActionAlreadyCommitted')).toBe(true);
-    if (Predicate.isTagged(keyedCommitted, 'ActionAlreadyCommitted')) {
-      expect(keyedCommitted.invocationId).toBe(invocationId);
-    }
-    const keyedUnavailable = yield* Effect.flip(unavailable.runtime.resolveActionCommit(keyed));
-    expect(Predicate.isTagged(keyedUnavailable, 'ActionInvocationPersistenceError')).toBe(true);
-    expect('invocationId' in keyedUnavailable).toBe(false);
-
-    for (const invalid of [
-      { actionKey: '', idempotencyKey: 'key', principal },
-      { actionKey: ' shell.counter.write', idempotencyKey: 'key', principal },
-      { actionKey: 'shell.counter.write', idempotencyKey: 'x'.repeat(201), principal },
-      { actionKey: 'shell.counter.write', idempotencyKey: undefined, principal },
-      { invocationId: 'invalid-uuid', principal },
-    ]) {
-      const failure = yield* Effect.flip(open.runtime.resolveActionCommit(invalid));
-      expect(Predicate.isTagged(failure, 'ActionPayloadValidationError')).toBe(true);
-    }
-    // @ts-expect-error Exercise a forged transport object that violates the exclusive lookup union.
-    const mixed = yield* Effect.flip(open.runtime.resolveActionCommit({ ...keyed, invocationId }));
-    expect(Predicate.isTagged(mixed, 'ActionPayloadValidationError')).toBe(true);
   }),
 );
 
@@ -4359,6 +4654,7 @@ it.effect(
     });
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.shell'),
         accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
         actionKey: 'shell.counter.concurrent-permission-winner',
         auditProfile: 'standard',
@@ -4482,6 +4778,7 @@ it.effect(
     const microvertical = yield* makeHarness();
     const moduleRegistration = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('inventory.stock'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'stock.read.v1',
@@ -4536,66 +4833,587 @@ it('the Core database service identity remains server-only', () => {
   expect(Predicate.isFunction(CoreDatabase)).toBe(true);
 });
 
-for (const scenario of [
-  { actionKey: 'shell.counter.write', completed: false, retryCommand: true, state: 'RETRYABLE', status: 'received' },
-  { actionKey: 'shell.counter.write', completed: false, retryCommand: false, state: 'RUNNING', status: 'running' },
-  {
-    actionKey: 'shell.counter.write',
-    completed: false,
-    retryCommand: false,
-    state: 'RUNNING',
-    status: 'indeterminate',
+class TestPostAttemptDependency extends Context.Service<
+  TestPostAttemptDependency,
+  { readonly record: (outcome: string) => void }
+>()('@app/core-runtime/tests/unit/action-runtime.test/TestPostAttemptDependency') {}
+
+const checkNestedRuntimeBoundaries = Effect.fn('ActionRuntimeTest.nestedConcurrentBoundaries')(
+  function* nestedConcurrentRuntimeBoundaries() {
+    const first = yield* Deferred.make<boolean>();
+    const second = yield* Deferred.make<boolean>();
+    const frameKey = '@app/core-runtime/modules/module-operation-execution/ModuleOperationExecution';
+    const decodeFrameStatus = Schema.decodeUnknownEffect(Schema.Option(Schema.Struct({ active: Schema.Boolean })));
+    const frameStatus = (context: Context.Context<never>) =>
+      decodeFrameStatus(context.mapUnsafe.get(frameKey)).pipe(Effect.orDie);
+    const preparePreflight = Effect.fn('ActionRuntimeTest.prepareWithoutAncestor')(function* prepareWithoutAncestor(
+      own: Deferred.Deferred<boolean>,
+      other: Deferred.Deferred<boolean>,
+    ) {
+      yield* Deferred.succeed(own, true);
+      yield* Deferred.await(other);
+      const context = yield* Effect.context();
+      expect(Option.isNone(yield* frameStatus(context))).toBe(true);
+      return { outcome: 'not_applicable' as const };
+    });
+    const captured: Context.Context<never>[] = [];
+    const run = (own: Deferred.Deferred<boolean>, other: Deferred.Deferred<boolean>, suffix: string) => {
+      const parent = registration();
+      return withModuleOperationExecution(
+        {
+          loadCatalog: Effect.fail(
+            new ModuleOperationRequirementError({
+              code: 'module_operation_requirement_unavailable',
+              reason: 'Synthetic parent has no provider catalog',
+            }),
+          ),
+          ownerRegistration: historicalFixtureOwner('core.shell'),
+          phase: 'execution',
+          registration: parent,
+          revision: approvedCompositionRevision,
+          scope: principal,
+        },
+        Effect.gen(function* parentRuntimeScope() {
+          const parentContext = yield* Effect.context();
+          const parentFrame = parentContext.mapUnsafe.get(frameKey);
+          const probeOwnedChild = Effect.gen(function* childFrameProbe() {
+            const context = yield* Effect.context();
+            const selected = yield* frameStatus(context);
+            expect(Option.isSome(selected) && selected.value.active).toBe(true);
+            expect(context.mapUnsafe.get(frameKey)).not.toBe(parentFrame);
+            captured.push(context);
+          });
+          const policy = defineGlobalPolicy<{ readonly amount: number }>({
+            evaluate: () => probeOwnedChild,
+            policyKey: `global.child-frame-${suffix}.v1`,
+          });
+          const child = defineAction(
+            { ...registration().descriptor, policies: [policy] },
+            (payload) => probeOwnedChild.pipe(Effect.as({ total: payload.amount })),
+            () => Effect.succeed({}),
+            undefined,
+            () => probeOwnedChild.pipe(Effect.as({ _tag: 'Settled' as const })),
+          );
+          const harness = yield* makeHarness({
+            authorizationPreflight: {
+              prepare: () => preparePreflight(own, other),
+            },
+          });
+          expect(
+            yield* harness.runtime.runAction({
+              payload: { amount: 3 },
+              principal,
+              registration: child,
+              transport: transport(`nested-runtime-${suffix}`),
+            }),
+          ).toEqual({ total: 3 });
+          const restored = yield* Effect.context();
+          expect(restored.mapUnsafe.get(frameKey)).toBe(parentFrame);
+          const active = yield* frameStatus(restored);
+          expect(Option.isSome(active) && active.value.active).toBe(true);
+          captured.push(parentContext);
+        }),
+      );
+    };
+    yield* Effect.all([run(first, second, 'first'), run(second, first, 'second')], { concurrency: 2 });
+    expect(captured).toHaveLength(8);
+    yield* Effect.forEach(
+      captured,
+      (context) =>
+        frameStatus(context).pipe(
+          Effect.tap((status) => Effect.sync(() => expect(Option.isSome(status) && !status.value.active).toBe(true))),
+        ),
+      { concurrency: 1, discard: true },
+    );
   },
-  { actionKey: 'shell.counter.write', completed: true, retryCommand: false, state: 'COMMITTED', status: 'succeeded' },
-  { actionKey: 'shell.counter.write', completed: true, retryCommand: false, state: 'REJECTED', status: 'rejected' },
-  { actionKey: 'shell.counter.write', completed: true, retryCommand: false, state: 'REJECTED', status: 'failed' },
-  { actionKey: 'shell.counter.write', completed: true, retryCommand: false, state: 'REJECTED', status: 'received' },
-] as const) {
-  it.effect(
-    `projects native execution ${scenario.status}/${String(scenario.completed)} as ${scenario.state} without executing`,
+);
+
+it.layer(NodeCrypto.layer)('Action post-attempt runtime', (suite) => {
+  suite.effect(
+    'runs the genuine post-attempt hook after commit with independent factory and callback dependencies',
     () =>
-      Effect.gen(function* nativeExecutionState() {
-        const invocationId = '00000000-0000-4000-8000-000000000099';
-        const h = yield* makeHarness({
-          createRecord: {
-            actionInvocationId: invocationId,
-            actionKey: scenario.actionKey,
-            completedAt: scenario.completed ? completionTime() : null,
-            requestHash: 'original',
-            status: scenario.status,
-          },
-        });
-        const executionState = { invocationId, retryCommand: scenario.retryCommand, state: scenario.state };
-        const expected =
-          scenario.state === 'COMMITTED' ? { actionKey: scenario.actionKey, ...executionState } : executionState;
-        expect(Schema.is(ActionExecutionResolutionSchema)(expected)).toBe(true);
-        if (scenario.state === 'COMMITTED') {
-          expect(Schema.is(ActionExecutionResolutionSchema)(executionState)).toBe(false);
-        }
-        expect(yield* h.runtime.resolveActionExecution({ invocationId, principal })).toEqual(expected);
-        expect(
-          yield* h.runtime.resolveActionExecution({
-            actionKey: 'shell.counter.write',
-            idempotencyKey: 'original-key',
-            principal,
+      Effect.gen(function* distinctPostAttemptRequirements() {
+        const harness = yield* makeHarness();
+        const seen: string[] = [];
+        const base = registration();
+        const action = defineAction(
+          base.descriptor,
+          (payload, context) => Effect.succeed({ total: payload.amount + context.services.offset }),
+          () =>
+            Effect.gen(function* factoryWithCrypto() {
+              yield* Crypto.Crypto;
+              return { offset: 1 };
+            }),
+          undefined,
+          Effect.fn(function* privateSettlement(context) {
+            const dependency = yield* TestPostAttemptDependency;
+            expect(harness.transactionOutcomes().committedTransactionCount).toBe(1);
+            expect(harness.flushed).toHaveLength(1);
+            expect(Object.isFrozen(context)).toBe(true);
+            expect(Object.isFrozen(context.payload)).toBe(true);
+            expect('services' in context).toBe(false);
+            expect('transaction' in context).toBe(false);
+            dependency.record(context.outcome._tag);
+            return { _tag: 'Settled' as const };
           }),
-        ).toEqual(expected);
-        expect(h.counts()).toEqual({ createCount: 0, lockCount: 0, transactionCount: 0, transitionCount: 0 });
+        );
+        const result = yield* harness.runtime
+          .runAction({
+            payload: { amount: 3 },
+            principal,
+            registration: action,
+            transport: transport('post-attempt-independent'),
+          })
+          .pipe(
+            Effect.provideService(TestPostAttemptDependency, {
+              record: (outcome) => {
+                seen.push(outcome);
+              },
+            }),
+          );
+        expect(result).toEqual({ total: 4 });
+        expect(seen).toEqual(['Committed']);
       }),
   );
+
+  suite.effect('recovers an original AlreadyCommitted invocation without new permission or preflight consume', () =>
+    Effect.gen(function* originalCommittedRecovery() {
+      const harness = yield* makeHarness({
+        createRecord: {
+          actionInvocationId: 'invocation-1',
+          completedAt: transactionOperationAt,
+          requestHash: '',
+          status: 'succeeded',
+        },
+      });
+      const seen: string[] = [];
+      const action = defineAction(
+        registration().descriptor,
+        () => Effect.succeed({ total: 1 }),
+        () => Effect.succeed({}),
+        undefined,
+        (context) =>
+          Effect.sync(() => {
+            seen.push(context.outcome._tag);
+            return { _tag: 'Recovered' as const, result: { total: 9 } };
+          }),
+      );
+      const result = yield* harness.runtime.runAction({
+        payload: { amount: 3 },
+        principal,
+        registration: action,
+        transport: transport('post-attempt-original'),
+      });
+      expect(result).toEqual({ total: 9 });
+      expect(seen).toEqual(['AlreadyCommitted']);
+      expect(harness.permissionCounts().permissionCheckCount).toBe(0);
+      expect(harness.counts().transactionCount).toBe(0);
+    }),
+  );
+
+  suite.effect('accepts commit-loss recovery only when the same original invocation is confirmed succeeded', () =>
+    Effect.gen(function* commitLossRecovery() {
+      for (const confirmed of [false, true]) {
+        const harness = yield* makeHarness({ resolveCommitted: confirmed, transactionMode: 'uncertain' });
+        const seen: string[] = [];
+        const action = defineAction(
+          registration().descriptor,
+          () => Effect.succeed({ total: 1 }),
+          () => Effect.succeed({}),
+          undefined,
+          (context) =>
+            Effect.sync(() => {
+              seen.push(context.outcome._tag);
+              return { _tag: 'Recovered' as const, result: { total: 9 } };
+            }),
+        );
+        const exit = yield* Effect.exit(
+          harness.runtime.runAction({
+            payload: { amount: 3 },
+            principal,
+            registration: action,
+            transport: transport(`post-attempt-loss-${confirmed}`),
+          }),
+        );
+        expect(seen).toEqual(['Indeterminate']);
+        expect(Exit.isSuccess(exit)).toBe(confirmed);
+        if (Exit.isSuccess(exit)) {
+          expect(exit.value).toEqual({ total: 9 });
+        } else {
+          expect(
+            exit.cause.reasons.some(
+              (reason) => Cause.isFailReason(reason) && Predicate.isTagged(reason.error, 'ActionCommitIndeterminate'),
+            ),
+          ).toBe(true);
+        }
+        expect(harness.permissionCounts().permissionCheckCount).toBe(1);
+      }
+    }),
+  );
+
+  suite.effect('preserves committed storage when a declared post-attempt settlement debt fails the response', () =>
+    Effect.gen(function* committedSettlementDebt() {
+      const harness = yield* makeHarness();
+      const debt = Schema.TaggedStruct('TestSettlementDebt', { reason: Schema.String });
+      const action = defineAction(
+        { ...registration().descriptor, domainErrorSchema: debt },
+        () => Effect.succeed({ total: 1 }),
+        () => Effect.succeed({}),
+        undefined,
+        () => Effect.fail({ _tag: 'TestSettlementDebt' as const, reason: 'receipt confirmation pending' }),
+      );
+      const failure = yield* Effect.flip(
+        harness.runtime.runAction({
+          payload: { amount: 3 },
+          principal,
+          registration: action,
+          transport: transport('post-attempt-debt'),
+        }),
+      );
+      expect(Schema.is(debt)(failure)).toBe(true);
+      expect(harness.transactionOutcomes()).toEqual({ committedTransactionCount: 1, rolledBackTransactionCount: 0 });
+      expect(harness.flushed).toHaveLength(1);
+    }),
+  );
+  suite.effect('round-trips transformed committed and recovered results without changing their domain shape', () =>
+    Effect.gen(function* transformedPostAttemptResults() {
+      const occurredAt = DateTime.makeUnsafe(Date.parse('2026-10-30T10:00:00.000Z'));
+      for (const replay of [false, true]) {
+        const harness = yield* makeHarness(
+          replay
+            ? {
+                createRecord: {
+                  actionInvocationId: 'invocation-1',
+                  completedAt: transactionOperationAt,
+                  requestHash: '',
+                  status: 'succeeded',
+                },
+              }
+            : {},
+        );
+        const action = defineAction(
+          { ...registration().descriptor, resultSchema: Schema.Struct({ occurredAt: Schema.DateTimeUtcFromString }) },
+          () => Effect.succeed({ occurredAt }),
+          () => Effect.succeed({}),
+          undefined,
+          (context) =>
+            Effect.succeed(
+              Match.value(context.outcome).pipe(
+                Match.tag('Committed', ({ result }) => {
+                  expect(DateTime.formatIso(result.occurredAt)).toBe('2026-10-30T10:00:00.000Z');
+                  expect(Object.isFrozen(result)).toBe(true);
+                  return { _tag: 'Settled' as const };
+                }),
+                Match.orElse(() => ({ _tag: 'Recovered' as const, result: { occurredAt } })),
+              ),
+            ),
+        );
+        const result = yield* harness.runtime.runAction({
+          payload: { amount: 3 },
+          principal,
+          registration: action,
+          transport: transport(`post-attempt-transformed-${replay}`),
+        });
+        expect(DateTime.formatIso(result.occurredAt)).toBe('2026-10-30T10:00:00.000Z');
+        expect(harness.permissionCounts().permissionCheckCount).toBe(replay ? 0 : 1);
+      }
+    }),
+  );
+  suite.effect('fails unknown owner metadata closed before permission or factory work', () =>
+    Effect.gen(function* unknownOwnerMetadata() {
+      const harness = yield* makeHarness({ omitOwnerRegistration: true });
+      const failure = yield* Effect.flip(
+        harness.runtime.runAction({
+          payload: { amount: 3 },
+          principal,
+          registration: registration(),
+          transport: transport('unknown-owner-metadata'),
+        }),
+      );
+      expect(Schema.is(ActionTransactionError)(failure)).toBe(true);
+      expect(harness.permissionCounts().permissionCheckCount).toBe(0);
+      expect(harness.counts().transactionCount).toBe(0);
+    }),
+  );
+  suite.effect(
+    'shadows ancestor frames through actual nested concurrent admission and restores only live parents',
+    checkNestedRuntimeBoundaries,
+  );
+  suite.effect('distinguishes definite rollback from committed rejection without changing either stored outcome', () =>
+    Effect.gen(function* closedRejectionOutcomes() {
+      const rejectionSchema = Schema.TaggedStruct('TestPostAttemptRejection', { reason: Schema.String });
+      const rejection = { _tag: 'TestPostAttemptRejection' as const, reason: 'known terminal business rule' };
+      for (const committed of [false, true]) {
+        const harness = yield* makeHarness();
+        const outcomes: string[] = [];
+        const action = defineAction(
+          { ...registration().descriptor, domainErrorSchema: rejectionSchema },
+          () => (committed ? Effect.succeed(commitActionThenReject(rejection)) : Effect.fail(rejection)),
+          () => Effect.succeed({}),
+          undefined,
+          (context) =>
+            Effect.sync(() => {
+              outcomes.push(context.outcome._tag);
+              return { _tag: 'Settled' as const };
+            }),
+        );
+        const failure = yield* Effect.flip(
+          harness.runtime.runAction({
+            payload: { amount: 3 },
+            principal,
+            registration: action,
+            transport: transport(`closed-rejection-${committed}`),
+          }),
+        );
+        expect(Schema.is(rejectionSchema)(failure)).toBe(true);
+        expect(outcomes).toEqual([committed ? 'CommittedRejection' : 'DefinitelyUncommitted']);
+        expect(harness.transactionOutcomes()).toEqual({
+          committedTransactionCount: committed ? 1 : 0,
+          rolledBackTransactionCount: committed ? 0 : 1,
+        });
+        expect(harness.flushed).toHaveLength(committed ? 1 : 0);
+      }
+    }),
+  );
+  suite.effect('reports Interrupted after rollback and cannot turn interruption into recovered success', () =>
+    Effect.scoped(
+      Effect.gen(function* interruptedPostAttempt() {
+        const entered = yield* Deferred.make<boolean>();
+        const harness = yield* makeHarness();
+        const outcomes: string[] = [];
+        const action = defineAction(
+          registration().descriptor,
+          () => Deferred.succeed(entered, true).pipe(Effect.andThen(Effect.never)),
+          () => Effect.succeed({}),
+          undefined,
+          (context) =>
+            Effect.sync(() => {
+              outcomes.push(context.outcome._tag);
+              return { _tag: 'Recovered' as const, result: { total: 99 } };
+            }),
+        );
+        const fiber = yield* Effect.forkChild(
+          harness.runtime.runAction({
+            payload: { amount: 3 },
+            principal,
+            registration: action,
+            transport: transport('interrupted-post-attempt'),
+          }),
+        );
+        yield* Deferred.await(entered);
+        yield* Fiber.interrupt(fiber);
+        const exit = yield* Fiber.await(fiber);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(outcomes).toEqual(['Interrupted']);
+        expect(harness.flushed).toHaveLength(0);
+        expect(harness.transactionOutcomes()).toEqual({ committedTransactionCount: 0, rolledBackTransactionCount: 1 });
+      }),
+    ),
+  );
+  suite.effect('does not turn a partial authority plus legacy revision resolver into a requirement lease', () =>
+    Effect.gen(function* partialActionAuthorityCannotAttest() {
+      let authorityLoads = 0;
+      const applicationComposition: ActiveApplicationCompositionServiceContract = {
+        load: Effect.suspend(() => {
+          authorityLoads += 1;
+          return Effect.fail(
+            new ActiveApplicationCompositionUnavailableError({
+              cause: new Error('Synthetic partial constructor'),
+              reason: 'No receiving build was bound',
+            }),
+          );
+        }),
+      };
+      const harness = yield* makeHarness({ applicationComposition });
+      const action = defineAction(
+        { ...registration().descriptor, domainErrorSchema: ModuleOperationRequirementError },
+        () => requireModuleOperation('core.shell.unqualified-operation').pipe(Effect.as({ total: 1 })),
+      );
+      const failure = yield* Effect.flip(
+        harness.runtime.runAction({
+          payload: { amount: 3 },
+          principal,
+          registration: action,
+          transport: transport('partial-action-authority'),
+        }),
+      );
+      expect(Schema.is(ModuleOperationRequirementError)(failure)).toBe(true);
+      expect(authorityLoads).toBe(0);
+      expect(harness.flushed).toHaveLength(0);
+    }),
+  );
+});
+
+for (const row of remainingPermissionBaselines) {
+  it.effect(`freezes corrected ${row.target.kind} Action history and request identity`, () =>
+    Effect.gen(function* familyActionBaseline() {
+      let handlerCalls = 0;
+      const permission = yield* Schema.decodeEffect(FixturePermissionCodeSchema)(row.permission);
+      const key = `${row.owner}.baseline.${row.target.kind.replaceAll('_', '-')}`;
+      const action = defineAction(
+        {
+          accessDeclaration: fixtureActionAccess(row.owner),
+          accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: `${key}.access.v1` },
+          actionKey: key,
+          auditProfile: 'sensitive',
+          domainErrorSchema: Schema.Never,
+          domainEvents: {},
+          entrypoint: defineTenantModuleEntrypoint({
+            access: 'write',
+            authorization: { kind: 'action_execution', provisioning: 'explicit' },
+            entrypointKey: key,
+            moduleKey: row.owner,
+            role: 'action',
+          }),
+          idempotency: 'required',
+          legalEntityScope: row.tenantOnly ? 'forbidden' : 'required',
+          ownerPermissions: historicalActionPermissions<typeof Schema.Void.Type>(permission, () =>
+            row.target.kind === 'counterparty_storefront'
+              ? { permission, target: row.target, trustedStorefrontId: row.target.storefrontId }
+              : { permission, target: row.target },
+          ),
+          owningModuleKey: row.owner,
+          payloadSchema: Schema.Void,
+          policies: [],
+          resultSchema: Schema.Void,
+          schemaVersion: '1',
+        },
+        () => {
+          handlerCalls += 1;
+          return Effect.void;
+        },
+      );
+      const actor = row.tenantOnly ? Struct.omit(principal, ['legalEntityId']) : principal;
+      const admittedActor =
+        row.target.kind === 'counterparty_storefront'
+          ? trustVerifiedGatewayPrincipalContext(
+              { ...actor, trustedStorefrontId: row.target.storefrontId },
+              'a'.repeat(64),
+            )
+          : actor;
+      const harness = yield* makeHarness();
+      yield* harness.runtime.runAction({
+        payload: undefined,
+        principal: admittedActor,
+        registration: action,
+        transport: transport(`baseline-${row.target.kind}`),
+      });
+      expect(harness.flushed[0]?.transport).toEqual({
+        ...row.actionTarget,
+        correlationId: `correlation-baseline-${row.target.kind}`,
+        idempotencyKey: `baseline-${row.target.kind}`,
+      });
+      expect(harness.requestHashes).toEqual([row.actionHash]);
+      for (const [decision, tag] of [
+        ['denied', 'ActionPermissionDenied'],
+        ['unavailable', 'ActionPermissionCheckError'],
+      ] as const) {
+        const checked = yield* makeHarness({ businessPermissionDecision: decision });
+        const failure = yield* Effect.flip(
+          checked.runtime.runAction({
+            payload: undefined,
+            principal: admittedActor,
+            registration: action,
+            transport: transport(`baseline-${row.target.kind}-${decision}`),
+          }),
+        );
+        expect(Predicate.isTagged(failure, tag)).toBe(true);
+      }
+      expect(handlerCalls).toBe(1);
+    }),
+  );
 }
-it.effect('distinguishes native absence from unavailable persistence and invalid recovery identities', () =>
-  Effect.gen(function* exactRecoveryFailures() {
-    const input = { actionKey: 'shell.counter.write', idempotencyKey: 'original-key', principal };
-    const missing = yield* makeHarness({ resolutionMissing: true });
-    expect(yield* missing.runtime.resolveActionExecution(input)).toEqual({ retryCommand: true, state: 'NOT_STARTED' });
-    const unavailable = yield* makeHarness({ resolutionUnavailable: true });
-    expect(
-      Schema.is(ActionInvocationPersistenceError)(
-        yield* unavailable.runtime.resolveActionExecution(input).pipe(Effect.flip),
-      ),
-    ).toBe(true);
-    const malformed = yield* missing.runtime.resolveActionExecution({ ...input, idempotencyKey: '' }).pipe(Effect.flip);
-    expect(Predicate.isTagged(malformed, 'ActionPayloadValidationError')).toBe(true);
-  }),
-);
+/** Synthetic registered host; the executed Action remains the exact production Core definition. */
+const registeredCoreActionHost = (moduleId: string, mismatchedProjection = false) => {
+  const base = makeModuleContractFixture({ appId: 'core-action-host', moduleId }).manifest;
+  const manifest = defineOntosModuleManifest({
+    ...base,
+    publicSurface: { ...base.publicSurface, actions: [], api: {}, components: {} },
+    requirements: {
+      coreCapabilities: mismatchedProjection ? [{ id: 'test.host.feature', version: '1' }] : [],
+      intrinsic: [],
+      operations: [],
+      schemaVersion: '1',
+    },
+  });
+  return defineVerticalRuntimeRegistration({ actions: [], manifest, outboxWorkers: [] });
+};
+
+const hostedCoreActionInput = () => ({
+  payload: {
+    checkpoint: 'stopped' as const,
+    originalPrincipalId: principal.principalId,
+    reason: 'Record the genuine Core Action through the registered test host',
+    sessionRef: 'better-auth-session:hosted-core-session',
+    targetPrincipalId: '00000000-0000-4000-8000-000000000099',
+  },
+  principal,
+  registration: recordSupportImpersonationAction,
+  transport: transport('genuine-hosted-core-action'),
+});
+
+it.layer(NodeCrypto.layer)('Core Actions hosted by genuine registered modules', (suite) => {
+  suite.effect('admits the exact Core Action through a genuine registered host and its pinned projection', () =>
+    Effect.gen(function* hostedCoreActionAdmission() {
+      const snapshot = yield* freshOutboxWorkerCompositionSnapshot(
+        makeOutboxWorkerComposition([
+          { appId: 'core-action-host', buildMarker: 'actual-host-build', moduleId: 'test.core-action-host.module' },
+        ]),
+      );
+      const harness = yield* makeHarness({
+        applicationComposition: { load: Effect.succeed(snapshot) },
+        compositionAuthority: { phase: 'active', revision: snapshot.composition.revision, unexpired: true },
+        expectedDeployment: { appId: 'core-action-host', buildMarker: 'actual-host-build' },
+        ownerRegistration: registeredCoreActionHost('test.core-action-host.module'),
+      });
+      const result = yield* harness.runtime
+        .runAction(hostedCoreActionInput())
+        .pipe(providePrincipalManagementRepository);
+      expect(result).toEqual({ checkpoint: 'stopped', recorded: true });
+      // Ending an impersonation only takes authority away, so no grant is decided (O35, O71).
+      expect(harness.accessQuestions()).toEqual([]);
+      expect(harness.permissionCounts().permissionCheckCount).toBe(0);
+      expect(harness.gateCounts().handlerResolutionCount).toBe(1);
+      expect(harness.flushed).toHaveLength(1);
+      expect(harness.compositionAuthority().lockCount).toBe(1);
+    }),
+  );
+
+  suite.effect('refuses wrong host builds, host projections and recreated Core Action keys', () =>
+    Effect.gen(function* hostedCoreActionRemainsExact() {
+      const snapshot = yield* freshOutboxWorkerCompositionSnapshot(
+        makeOutboxWorkerComposition([
+          { appId: 'core-action-host', buildMarker: 'actual-host-build', moduleId: 'test.core-action-host.module' },
+        ]),
+      );
+      let recreatedCalls = 0;
+      const recreated = defineAction({ ...recordSupportImpersonationAction.descriptor }, () => {
+        recreatedCalls += 1;
+        return Effect.succeed({ checkpoint: 'stopped' as const, recorded: true as const });
+      });
+      for (const control of ['wrong-host', 'wrong-build', 'wrong-projection', 'recreated-key'] as const) {
+        const harness = yield* makeHarness({
+          applicationComposition: { load: Effect.succeed(snapshot) },
+          compositionAuthority: { phase: 'active', revision: snapshot.composition.revision, unexpired: true },
+          expectedDeployment: {
+            appId: 'core-action-host',
+            buildMarker: control === 'wrong-build' ? 'other-build' : 'actual-host-build',
+          },
+          ownerRegistration: registeredCoreActionHost(
+            control === 'wrong-host' ? 'test.other-host.module' : 'test.core-action-host.module',
+            control === 'wrong-projection',
+          ),
+        });
+        const input = hostedCoreActionInput();
+        const failure =
+          control === 'recreated-key'
+            ? yield* harness.runtime.runAction({ ...input, registration: recreated }).pipe(Effect.flip)
+            : yield* harness.runtime.runAction(input).pipe(Effect.flip);
+        expect(Schema.is(ActionTransactionError)(failure)).toBe(true);
+        expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+        expect(harness.flushed).toHaveLength(0);
+      }
+      expect(recreatedCalls).toBe(0);
+    }),
+  );
+});

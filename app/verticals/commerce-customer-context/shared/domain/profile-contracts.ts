@@ -291,17 +291,12 @@ const RetailPortalAuthorityGroupSchema = Schema.Struct({
   version: ProfileBoundedKeySchema,
 });
 
+/**
+ * The binding lifecycle. Its authorization is written with the same transition, so the durable
+ * authorization state names this same vocabulary.
+ */
 export const RetailPortalBindingStateSchema = Schema.Literals(['ACTIVE', 'REVOKED']);
-
-/** Durable owner-local authorization state; it is independent from the binding lifecycle. */
-export const RetailPortalBindingAuthorizationStateSchema = Schema.Literals([
-  'ACTIVE',
-  'REVOKED',
-  'PENDING_GRANT',
-  'PENDING_REVOKE',
-  'RECONCILIATION_REQUIRED',
-]);
-export type RetailPortalBindingAuthorizationState = typeof RetailPortalBindingAuthorizationStateSchema.Type;
+export type RetailPortalBindingState = typeof RetailPortalBindingStateSchema.Type;
 export const RetailPortalBindingAuthorizationOperationSchema = Schema.Literals(['grant', 'revoke']);
 export type RetailPortalBindingAuthorizationOperation = typeof RetailPortalBindingAuthorizationOperationSchema.Type;
 

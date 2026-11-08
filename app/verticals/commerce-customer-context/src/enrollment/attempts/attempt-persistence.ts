@@ -309,6 +309,17 @@ const readAttemptRoutine = defineScopedRoutine({
   schema: 'commerce_customer_context',
 });
 
+const OriginatorRoutineRowSchema = Schema.Struct({ originator_action_invocation_id: nullableActionInvocationId });
+
+const readOriginatorRoutine = defineScopedRoutine({
+  name: 'read_portal_enrollment_originator',
+  ownerModuleKey: MODULE_KEY,
+  parameters: [{ source: 'tenantId', type: 'uuid' }, uuid()],
+  resultSchema: OriginatorRoutineRowSchema,
+  routineKey: 'portal-enrollment-attempt.read-originator',
+  schema: 'commerce_customer_context',
+});
+
 const readOwnerOperationRoutine = defineScopedRoutine({
   name: 'read_portal_enrollment_owner_operation',
   ownerModuleKey: MODULE_KEY,
@@ -1218,6 +1229,15 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
   transaction: EnrollmentAttemptScopedRoutineInvoker,
   scope: CommerceEnrollmentOwnerScope,
 ): CommerceEnrollmentAttemptPersistence => {
+  /** The originator is written once at creation and never changes, so a later read returns it exactly. */
+  const withOriginator = (attempt: EnrollmentAttemptSnapshot, attemptId: EnrollmentAttemptId) =>
+    transaction.invoke(readOriginatorRoutine, [attemptId]).pipe(
+      Effect.mapError(mapRoutineError),
+      Effect.map((rows) => {
+        const originator = rows[0]?.originator_action_invocation_id ?? undefined;
+        return originator === undefined ? attempt : { ...attempt, originatorActionInvocationId: originator };
+      }),
+    );
   const invokeAttempt = <Parameters extends readonly ScopedRoutineParameter[]>(
     routine: ScopedRoutineDefinition<typeof AttemptRoutineRowSchema, Parameters>,
     values: ScopedRoutineInputValues<Parameters>,
@@ -1317,6 +1337,7 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
                   )
                 : mapAttempt(row);
             }),
+            Effect.flatMap((attempt) => withOriginator(attempt, input.portalEnrollmentAttemptId)),
           ),
         ),
       ),

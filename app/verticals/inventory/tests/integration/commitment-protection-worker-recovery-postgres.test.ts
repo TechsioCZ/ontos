@@ -1,3 +1,4 @@
+import { inventoryRegistration } from '../../vertical.registration.ts';
 import { randomUUID } from 'node:crypto';
 
 import { and, eq, sql } from 'drizzle-orm';
@@ -10,6 +11,8 @@ import { expect, it } from 'effect-rstest';
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
 import {
+  accessScopeFences,
+  accessScopes,
   actionInvocations,
   applicationCompositionAuthority,
   auditEvents,
@@ -30,10 +33,10 @@ import {
 } from '../../../../packages/core-runtime/src/outbox/legal-entity-scope-fanout.ts';
 import { lockApplicationCompositionPublication } from '../../../../packages/core-runtime/src/modules/application-composition-authority.ts';
 import type { ContextAccessService } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
-import { toBusinessPermissionAccessKey } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
-import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/permissions/owner-authorization-overlay.ts';
+import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/access/enforcement/owner-overlay.ts';
 import { testOperationalScopeResolver } from '../../../../packages/core-runtime/tests/fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../../../../packages/core-runtime/tests/support/action-runtime-options.ts';
+import { makeScriptedBoundAccessGate } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
 import {
   makeTestDatabaseFromClient,
   testDatabaseClients,
@@ -101,6 +104,8 @@ const compositionRevision = 'a'.repeat(64);
 const tenantId = '91000000-0000-4000-8000-000000000001';
 const legalEntityId = '92000000-0000-4000-8000-000000000001';
 const principalId = '93000000-0000-4000-8000-000000000001';
+const tenantScopeId = '9a000000-0000-4000-8000-000000000001';
+const legalEntityScopeId = '9a000000-0000-4000-8000-000000000002';
 const authBindingId = '94000000-0000-4000-8000-000000000001';
 const configurationId = '95000000-0000-4000-8000-000000000001';
 const reservationId = '96000000-0000-4000-8000-000000000001';
@@ -127,13 +132,11 @@ const allowedPermission = {
 };
 
 const contextAccess: ContextAccessService = {
-  businessPermissions: (input) =>
-    Effect.succeed(
-      input.targets.map((target) => ({ decision: 'allowed' as const, key: toBusinessPermissionAccessKey(target) })),
-    ),
   legalEntities: ({ legalEntityIds }) =>
     Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
   modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
+  ownerPermissions: (input) =>
+    Effect.succeed(input.targets.map((target) => ({ decision: 'allowed' as const, key: target.target.key }))),
   resources: ({ resources }) =>
     Effect.succeed(
       resources.map(({ moduleId, resourceId, resourceType }) => ({
@@ -218,8 +221,7 @@ const cleanupCore = (database: TestDatabaseFromClient<typeof coreRelations>) =>
       yield* transaction.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId));
       yield* transaction.delete(principalAuthBindings).where(eq(principalAuthBindings.tenantId, tenantId));
       yield* transaction.delete(principals).where(eq(principals.tenantId, tenantId));
-      yield* transaction.delete(legalEntities).where(eq(legalEntities.tenantId, tenantId));
-      yield* transaction.delete(tenants).where(eq(tenants.tenantId, tenantId));
+      // Core retains access intent (D27), so the Tenant, its company and their access scopes stay.
     }),
   );
 
@@ -276,21 +278,47 @@ it.live(
           Effect.all([cleanupInventory(admin), cleanupCore(coreAdmin)]).pipe(Effect.orDie),
         );
 
-        yield* coreAdmin.insert(tenants).values({
-          defaultLocale: 'en',
-          name: 'Commitment Protection worker recovery',
-          slug: `commitment-protection-recovery-${tenantId}`,
-          status: 'active',
-          tenantId,
-        });
-        yield* coreAdmin.insert(legalEntities).values({
-          legalEntityId,
-          legalName: 'Commitment Protection test owner',
-          registrationCountry: 'CZ',
-          registrationNumber: 'COMMITMENT-PROTECTION-RECOVERY',
-          status: 'active',
-          tenantId,
-        });
+        yield* coreAdmin
+          .insert(tenants)
+          .values({
+            defaultLocale: 'en',
+            name: 'Commitment Protection worker recovery',
+            slug: `commitment-protection-recovery-${tenantId}`,
+            status: 'active',
+            tenantId,
+          })
+          .onConflictDoNothing();
+        yield* coreAdmin
+          .insert(legalEntities)
+          .values({
+            legalEntityId,
+            legalName: 'Commitment Protection test owner',
+            registrationCountry: 'CZ',
+            registrationNumber: 'COMMITMENT-PROTECTION-RECOVERY',
+            status: 'active',
+            tenantId,
+          })
+          .onConflictDoNothing();
+        // The runner re-decides every protected Action under its access scope's shared fence. Seed the
+        // tenant context scope and the company scope with a Ready fence each, as Core bootstrap does.
+        yield* coreAdmin
+          .insert(accessScopes)
+          .values([
+            { scopeId: tenantScopeId, tenantContextId: tenantId, tenantId },
+            { legalEntityId, scopeId: legalEntityScopeId, tenantId },
+          ])
+          .onConflictDoNothing();
+        yield* coreAdmin
+          .insert(accessScopeFences)
+          .values(
+            [tenantScopeId, legalEntityScopeId].map((scopeId) => ({
+              revision: 1,
+              scopeId,
+              state: 'Ready' as const,
+              tenantId,
+            })),
+          )
+          .onConflictDoNothing();
         yield* coreAdmin.insert(principals).values({
           displayName: 'Commitment Protection operator',
           kind: 'human',
@@ -449,10 +477,12 @@ it.live(
           testOperationalScopeResolver,
           {
             ...openActionRuntimeOptions,
+            accessDecision: makeScriptedBoundAccessGate('allowed').bound,
             contextAccess,
             databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
 
             ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
+            ownerRegistration: inventoryRegistration,
           },
         );
         const pending = yield* actionRuntime.runAction({

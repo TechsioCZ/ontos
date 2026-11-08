@@ -1,3 +1,4 @@
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import {
   MicroVerticalBuildMarkerSchema,
@@ -13,6 +14,8 @@ import { AgentReviewApi } from './apis/agent-review.ts';
 import { ApplyCommandActionApi } from './apis/apply-command-action.ts';
 import { ClientsSearchApi } from './apis/clients-search.ts';
 import { ContactsSearchApi } from './apis/contacts-search.ts';
+import { IntakeClientPartyActionApi } from './apis/intake-client-party-action.ts';
+import { PendingClientIntakeApi } from './apis/pending-client-intake.ts';
 import { RecordsApi } from './apis/records.ts';
 import { RequestSearchRebuildActionApi } from './apis/request-search-rebuild-action.ts';
 // </generated-governed-http-api-imports>
@@ -38,11 +41,14 @@ export const crmFoundationApi = HttpApi.make('CrmApiFoundation').add(
 
 export const crmApi = HttpApi.make('CrmApi')
   .addHttpApi(crmFoundationApi)
+  .addHttpApi(OwnerActionApprovalApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(AgentReviewApi)
   .addHttpApi(ApplyCommandActionApi)
   .addHttpApi(ClientsSearchApi)
   .addHttpApi(ContactsSearchApi)
+  .addHttpApi(IntakeClientPartyActionApi)
+  .addHttpApi(PendingClientIntakeApi)
   .addHttpApi(RecordsApi)
   .addHttpApi(RequestSearchRebuildActionApi)
   // </generated-governed-http-api-additions>

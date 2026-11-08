@@ -1,3 +1,4 @@
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { afterAll, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { Deferred, Effect, Fiber, Option, Schema } from 'effect';
 import { createElement } from 'react';
@@ -6,11 +7,11 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { moduleChangeEvent, moduleWriteEvent, pageDataPending } from '@app/shared-contracts/page-data';
 import { RecordsForbiddenProblemSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
-import { ApplyCommandActionConflictProblemSchema } from '../../shared/apis/apply-command-action.ts';
+import { ManageCatalogActionConflictProblemSchema } from '../../shared/apis/manage-catalog-action.ts';
 import { ProductRecordSchema } from '../../shared/domain/merchandise-model.ts';
 import type { ProductRecord } from '../../shared/domain/merchandise-model.ts';
 import { executeRecords } from '../../src/api/records-consumer.ts';
-import { executeApplyCommand } from '../../src/api/apply-command-action-client.ts';
+import { executeManageCatalog } from '../../src/api/manage-catalog-action-client.ts';
 import {
   currentProductRows,
   detailInput,
@@ -28,7 +29,7 @@ import {
 import type { CommandOutcome } from '../../src/routes/[lang]/provoz/produkty/products-api.ts';
 
 rstest.mock('../../src/api/records-consumer.ts');
-rstest.mock('../../src/api/apply-command-action-client.ts');
+rstest.mock('../../src/api/manage-catalog-action-client.ts');
 // Verify the client first-render branch without effects or an unrelated browser/component suite.
 rstest.mock('react', () => ({
   ...rstest.requireActual<typeof ReactRuntime>('react'),
@@ -190,7 +191,7 @@ it.effect(
       );
       expect(productDetailData.snapshot(input)).toBe(cached);
       expect(executeRecords).not.toHaveBeenCalled();
-      expect(executeApplyCommand).not.toHaveBeenCalled();
+      expect(executeManageCatalog).not.toHaveBeenCalled();
     }),
 );
 
@@ -207,7 +208,7 @@ it.effect('prefetch follows the final kit row order, not a source-array page sli
     expect(rstest.mocked(executeRecords).mock.calls.map(([request]) => request.view?.productId)).toEqual(
       final.map((row) => row.id),
     );
-    expect(executeApplyCommand).not.toHaveBeenCalled();
+    expect(executeManageCatalog).not.toHaveBeenCalled();
   }),
 );
 
@@ -231,7 +232,7 @@ it.effect('warming preserves read-only capabilities without requesting mutations
       view: { categoryTrails: true, ordersLimit: 0, productId: product.id },
     });
     expect(executeRecords).toHaveBeenCalledTimes(1);
-    expect(executeApplyCommand).not.toHaveBeenCalled();
+    expect(executeManageCatalog).not.toHaveBeenCalled();
   }),
 );
 
@@ -368,13 +369,13 @@ it.effect('owner commands invalidate details but preserve the submitted expected
   Effect.gen(function* ownerWrite() {
     yield* preloadProductDetails(context, 7, [product]);
     const commit = yield* Schema.decodeEffect(ApplyCommandResultSchema)({ entityIds: [product.id], revision: 8 });
-    rstest.mocked(executeApplyCommand).mockReturnValue(Effect.succeed(commit));
+    rstest.mocked(executeManageCatalog).mockReturnValue(Effect.succeed(commit));
     const done = yield* Deferred.make<CommandOutcome>();
     runCommand({ _tag: 'UpdateProduct', id: product.id, patch: { active: false } }, 7, (outcome) => {
       Deferred.doneUnsafe(done, Effect.succeed(outcome));
     });
     expect(yield* Deferred.await(done)).toEqual({ ok: true, revision: 8 });
-    expect(rstest.mocked(executeApplyCommand).mock.calls[0]?.[0].expectedRevision).toBe(7);
+    expect(rstest.mocked(executeManageCatalog).mock.calls[0]?.[0].expectedRevision).toBe(7);
     expect(productDetailData.snapshot(input)).toBe(pageDataPending);
   }),
 );
@@ -382,15 +383,15 @@ it.effect('owner commands invalidate details but preserve the submitted expected
 it.effect('rejected owner commands also invalidate the local cache without altering their revision', () =>
   Effect.gen(function* rejectedWrite() {
     yield* preloadProductDetails(context, 7, [product]);
-    const failure = yield* Schema.decodeEffect(ApplyCommandActionConflictProblemSchema)({
-      _tag: 'ApplyCommandActionConflictProblem',
+    const failure = yield* Schema.decodeEffect(ManageCatalogActionConflictProblemSchema)({
+      _tag: 'ManageCatalogActionConflictProblem',
       code: 'merchandise_revision_conflict',
       detail: 'Changed',
       status: 409,
       title: 'Conflict',
       type: 'urn:test:conflict',
     });
-    rstest.mocked(executeApplyCommand).mockReturnValue(Effect.fail(failure));
+    rstest.mocked(executeManageCatalog).mockReturnValue(Effect.fail(failure));
     const done = yield* Deferred.make<CommandOutcome>();
     runCommand({ _tag: 'UpdateProduct', id: product.id, patch: { active: false } }, 7, (outcome) => {
       Deferred.doneUnsafe(done, Effect.succeed(outcome));
@@ -426,3 +427,21 @@ it('the list view key distinguishes current scope, filters, sort and page', () =
   expect(productListData.key({ ...first, query: { ...first.query, offset: 50 } })).not.toBe(key);
   expect(productListData.key({ ...first, query: { ...first.query, search: 'cable' } })).not.toBe(key);
 });
+
+it.effect('a product proposal retains actual pending metadata without reporting a committed revision', () =>
+  Effect.gen(function* productProposal() {
+    const receipt = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
+      _tag: 'ActionProposalAccepted',
+      expiresAt: '2026-11-10T12:00:00.000Z',
+      proposalId: '60000000-0000-4000-8000-000000000001',
+    });
+    rstest.mocked(executeManageCatalog).mockReturnValue(Effect.succeed(receipt));
+    const completion = yield* Deferred.make<CommandOutcome>();
+    runCommand({ _tag: 'UpdateProduct', id: product.id, patch: { active: false } }, 7, (outcome) => {
+      Deferred.doneUnsafe(completion, Effect.succeed(outcome));
+    });
+    const outcome = yield* Deferred.await(completion);
+    expect(outcome).toEqual({ ok: false, proposal: receipt, reason: 'approval-required' });
+    expect('revision' in outcome).toBe(false);
+  }),
+);

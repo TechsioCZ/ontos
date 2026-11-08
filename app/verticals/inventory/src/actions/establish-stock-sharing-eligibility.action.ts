@@ -2,12 +2,7 @@
 // @ontos-action-owner commerce.inventory
 // @ontos-action-slug establish-stock-sharing-eligibility
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 
 import {
@@ -72,6 +67,14 @@ export const handleEstablishStockSharingEligibility = Effect.fn('EstablishStockS
 
 export const establishStockSharingEligibilityAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.inventory.stock-sharing-eligibility.establish',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'stock-sharing', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.inventory.establish-stock-sharing-eligibility.access.v1',
@@ -79,23 +82,11 @@ export const establishStockSharingEligibilityAction = defineAction(
     actionKey: ACTION_KEY,
     auditEvidenceSchema: StockSharingEligibilityLifecycleAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission<EstablishStockSharingEligibilityPayload>((payload, scope) => ({
-      permission: 'inventory.stock_sharing_eligibility.manage',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: payload.scope.positionRef.moduleId,
-          resourceId: payload.scope.positionRef.resourceId,
-          resourceType: payload.scope.positionRef.resourceType,
-        },
-        tenantId: payload.scope.positionRef.tenantId === scope.tenantId ? scope.tenantId : '',
-      },
-    })),
     domainErrorSchema: StockSharingEligibilityLifecycleErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: MODULE_KEY,
       role: 'action',
@@ -105,10 +96,6 @@ export const establishStockSharingEligibilityAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: EstablishStockSharingEligibilityPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<EstablishStockSharingEligibilityPayload>((payload) => ({
-      permission: 'write',
-      resource: payload.scope.positionRef,
-    })),
     resultSchema: EstablishStockSharingEligibilityResultSchema,
     schemaVersion: '1',
   },

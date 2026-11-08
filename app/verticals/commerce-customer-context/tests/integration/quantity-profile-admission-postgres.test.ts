@@ -1,3 +1,5 @@
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -8,13 +10,12 @@ import {
   ReadHandlerUnavailable,
   ReadRuntime,
   ContextAccessLive,
-  ContextPermissionRelationshipMutation,
-  ContextPermissionRelationshipMutationLive,
-  PrincipalRefSchema,
+  OntosModuleDeploymentContractSchema,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
+import { grantTestTenantOwnerAccess, liveFixtureSpiceDb } from '@app/core-runtime/testing/tenant-access';
 import { makeQuantityProfileOwnedDatabase } from '../support/quantity-profile-owned-database.ts';
 import { makeQuantityProfileDatabaseTransport } from '../support/quantity-profile-database-transport.ts';
 import { PgClient } from '@effect/sql-pg';
@@ -57,13 +58,16 @@ import { RetailPartyDetailExecutor } from '../../src/integrations/retail-party-d
 import { PartyDetailResponseSchema } from '@app/party-registry/api/client';
 import { ProfileCounterpartyRoleEligibilityResolverFactory } from '../../src/profile-counterparty-role-eligibility.ts';
 import { partyRegistryGuestResolverFactoryLive } from '../../src/integrations/party-registry-guest-resolver.ts';
-import { profileRetailPermissionReaderFactoryLive } from '../../src/integrations/retail-permission-reader.ts';
 import {
   profileReactivationEligibilityEvaluatorFactoryLive,
   profileReconfirmationPolicyUnavailableLive,
 } from '../../src/integrations/profile-reactivation-eligibility.ts';
 import { commerceCustomerContextOwnerAuthorizationOverlayLive } from '../../src/persistence/owner-authorization-overlay.ts';
 import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import {
+  describePriceGroupTemporalOwner,
+  makePriceGroupTemporalComposition,
+} from '../support/price-group-temporal-protocol.ts';
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -75,10 +79,22 @@ const transport = () => ({
   targetModuleKey: 'commerce.customer-context',
 });
 const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixture')(function* makeFixture(
-  buildMarker = 'quantity-profile-admission-native',
+  buildMarker = ultramodernApiMarker.buildMarker,
   databaseTransportMode: 'DIRECT' | 'OWNER_LOOKUP_OUTAGE' = 'DIRECT',
 ) {
-  const snapshot = yield* makeEnrollmentApplicationCompositionSnapshot(buildMarker, []);
+  const base = yield* makeEnrollmentApplicationCompositionSnapshot(buildMarker, []);
+  const ownModule = base.composition.modules.find(({ deployment }) => deployment.appId === ultramodernApiMarker.appId);
+  assert.isOk(ownModule !== undefined);
+  const ownContract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
+    ownModule.contractDocument,
+  );
+  const party = yield* describePriceGroupTemporalOwner('party-registry');
+  // Actual owner declarations and selected compiled identities; served Federation metadata is
+  // SOURCE/TEST-only. The controlled Party facts below do not prove provider transport or deployment.
+  const snapshot = yield* makePriceGroupTemporalComposition([
+    { contract: ownContract, marker: ownContract.deployment },
+    { contract: party.contract, marker: party.marker },
+  ]);
   const { isolated } = yield* makeQuantityProfileOwnedDatabase(snapshot);
   const databaseTransport =
     databaseTransportMode === 'OWNER_LOOKUP_OUTAGE'
@@ -92,6 +108,7 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
   const coreEvidenceExecutor = yield* testCoreDatabase.pipe(Effect.provide(coreEvidenceContext));
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
+      access: 'allowed',
       actionExecutor: 'manager-only',
       actionKeys: [
         ensureRetailCustomerProfileAction.descriptor.actionKey,
@@ -105,9 +122,13 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
       additionalLegalEntity: 'same-tenant',
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
       allowedAudiences: ['commerce-customer-context'],
+      applicationComposition: { load: Effect.succeed(snapshot) },
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: snapshot.composition.revision,
-      moduleKeys: ['commerce.customer-context'],
+      expectedDeployment: { ...ultramodernApiMarker, buildMarker },
+      // Party already belongs to the fixture namespace; this seeds its state without adding grants.
+      moduleKeys: ['commerce.customer-context', 'party.registry'],
+      ownerRegistration: commerceCustomerContextRegistration,
       runtimeConnectionString:
         databaseTransport?.connectionString ?? Redacted.make(isolated.connections.runtime.connectionString),
     }),
@@ -178,12 +199,8 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
         ),
     }),
     partyRegistryGuestResolverFactoryLive,
-    profileRetailPermissionReaderFactoryLive.pipe(Layer.provide(ContextAccessLive)),
     profileReactivationEligibilityEvaluatorFactoryLive.pipe(Layer.provide(profileReconfirmationPolicyUnavailableLive)),
-    commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(
-      Layer.provide(profileRetailPermissionReaderFactoryLive),
-      Layer.provide(ContextAccessLive),
-    ),
+    commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(Layer.provide(ContextAccessLive)),
   );
   const context = yield* Layer.build(fixture.layer.pipe(Layer.provideMerge(owners)));
   const runtime = Context.get(context, ActionRuntime);
@@ -243,21 +260,6 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
   const counterparty = yield* createCounterparty;
   yield* fixture.grantResourceAccess(retail.profileRef, fixture.manager.principalId, 'writer');
   yield* fixture.grantResourceAccess(counterparty.profileRef, fixture.manager.principalId, 'writer');
-  yield* ContextPermissionRelationshipMutation.pipe(
-    Effect.flatMap((permission) =>
-      permission.mutate({
-        legalEntityId: fixture.legalEntityId,
-        operation: 'grant',
-        principal: Schema.decodeUnknownSync(PrincipalRefSchema)({
-          principalId: fixture.manager.principalId,
-          tenantId: fixture.tenantId,
-        }),
-        target: { moduleId: 'commerce.customer-context', permission: 'customer_commerce_policy.quantity.read' },
-        tenantId: fixture.tenantId,
-      }),
-    ),
-    Effect.provide(ContextPermissionRelationshipMutationLive),
-  );
   return {
     context,
     coreEvidenceExecutor,
@@ -777,6 +779,8 @@ it.live(
         expect(after.outbox).toHaveLength(evidence.outbox.length);
       }),
     ).pipe(Effect.provide(nativeServices)),
+  // Native owner/source setup and disposal completed 30 assertions in 30.3s; retain the existing native case budget.
+  120_000,
 );
 
 const appRoot = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -789,7 +793,7 @@ const QuantityReceiverReadySchema = Schema.Struct({
   port: Schema.Number,
   type: Schema.Literal('ready'),
 });
-const quantityHttpServices = NodeHttpServer.layerTest.pipe(Layer.provideMerge(nativeServices));
+const quantityHttpServices = nativeServices;
 const prepareQuantityReceiverArtifact = Effect.fn('QuantityProfileAdmissionTests.receiverArtifact')(
   function* prepareReceiver() {
     const artifact = fileURLToPath(
@@ -842,6 +846,16 @@ const startQuantityPublicReceiver = Effect.fn('QuantityProfileAdmissionTests.pub
   owner: Effect.Success<ReturnType<typeof makeQuantityProfileFixture>>,
   prepared: Effect.Success<ReturnType<typeof prepareQuantityReceiverArtifact>>,
 ) {
+  // The receiver decides with the production gate, so the Tenant holds the v2 access it reads.
+  yield* grantTestTenantOwnerAccess({
+    adminConnectionString: Redacted.make(owner.isolated.connections.admin.connectionString),
+    legalEntityIds: [
+      owner.fixture.legalEntityId,
+      ...(owner.fixture.secondaryLegalEntity === undefined ? [] : [owner.fixture.secondaryLegalEntity.legalEntityId]),
+    ],
+    owner: owner.fixture.manager,
+    spiceDb: yield* liveFixtureSpiceDb(owner.fixture.permissionEnvironment),
+  });
   const pair = yield* Effect.promise(() => generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
   const publicJwk = yield* Effect.promise(() => exportJWK(pair.publicKey));
   const issuer = 'https://native-quantity-profile.ontos.test';
@@ -852,7 +866,7 @@ const startQuantityPublicReceiver = Effect.fn('QuantityProfileAdmissionTests.pub
   const snapshotDocument = yield* Schema.encodeEffect(
     Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
   )(owner.snapshot);
-  const source = yield* HttpServer.HttpServer;
+  const source = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
   yield* source.serve(Effect.succeed(HttpServerResponse.text(snapshotDocument, { contentType: 'application/json' })));
   const { address } = source;
   if (!Schema.is(Schema.Struct({ port: Schema.Number }))(address)) {

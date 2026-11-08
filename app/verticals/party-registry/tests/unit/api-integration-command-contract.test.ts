@@ -5,6 +5,7 @@ import { FileSystem, Effect, Schema, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { partyRegistryCommandsApi, PartyCommandAliasWriteRejectedProblemSchema } from '../../shared/command-api.ts';
+import { CreateCrmClientPartyActionApi } from '../../shared/apis/create-crm-client-party-action.ts';
 
 const ref = (id: string) => ({
   moduleId: 'party.registry',
@@ -23,12 +24,21 @@ it.layer(NodeFileSystem.layer)('api-integration-command-contract', (suite) => {
         .filter((file) => file.endsWith('.action.ts'))
         .map((file) => file.replace('.action.ts', ''))
         .filter((slug) => !slug.includes('engagement') && slug !== 'execute-privacy-measure');
-      const endpoints = Object.values(partyRegistryCommandsApi.groups.partyCommands.endpoints);
+      const endpoints = [
+        ...Object.values(partyRegistryCommandsApi.groups.partyCommands.endpoints),
+        CreateCrmClientPartyActionApi.groups.createCrmClientPartyAction.endpoints.execute,
+      ];
       expect(endpoints.length).toBe(actions.length);
       expect(endpoints.map((endpoint) => endpoint.path).toSorted()).toEqual(
         actions.map((slug) => `/party-registry/actions/${slug}`).toSorted(),
       );
       for (const slug of actions) {
+        if (slug === 'create-crm-client-party') {
+          expect(CreateCrmClientPartyActionApi.groups.createCrmClientPartyAction.endpoints.execute.path).toBe(
+            `/party-registry/actions/${slug}`,
+          );
+          continue;
+        }
         const name = slug
           .split('-')
           .map((part, index) => (index === 0 ? part : part.charAt(0).toUpperCase() + part.slice(1)))

@@ -2,8 +2,9 @@ import { Effect } from 'effect';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 // Reusable persistent comment thread (S14) — OWNED BY THE documents LANE (ops-documents). Embed anywhere inside
 // AgendaFrame:   <CommentThread subject={{ kind: 'task', id: task.id, label: task.title }} />
-// Comments are stored in the `documents` agenda (restricted): only roles with read_all see them; the server never
-// returns them to the external persona. Author/time are set by the server; edits keep the previous wording.
+// Comments are stored in the `documents` agenda (restricted): only roles the restricted field group covers see
+// them; the server never returns them to the external persona. Author/time are set by the server; edits keep the
+// previous wording.
 import { optionalField } from '../../shared/domain/common.ts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';

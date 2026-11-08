@@ -21,6 +21,7 @@ it.live('reassesses Product-specific axis allowance restrictions through native 
       alternate,
       baseUrl,
       composition,
+      deniedAccess,
       fixture,
       nativeFetch,
       nativeRead,
@@ -102,6 +103,10 @@ it.live('reassesses Product-specific axis allowance restrictions through native 
     expect(Schema.is(SelectionEvidenceUnavailableProblemSchema)(yield* read(foreignSelection).pipe(Effect.flip))).toBe(
       true,
     );
+    // v2: the one access gate decides this read (O62), so the principal with no assignment is named
+    // on the fixture's own per-request owner seam (the removed SpiceDB context permission no longer
+    // refuses anyone).
+    deniedAccess.deny(fixture.denied.principalId, 'commerce.catalog.selection-evidence.read');
     const denied = yield* read(selected, fixture.denied).pipe(Effect.flip);
     expect(Schema.is(SelectionEvidenceForbiddenProblemSchema)(denied)).toBe(true);
   }).pipe(Effect.scoped, Effect.provide(productAxisAllowanceTestServices)),

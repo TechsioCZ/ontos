@@ -2,21 +2,20 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { Array as EffectArray, Order, Result, Schema } from 'effect';
 
-import { ActionExecutionAuthorizationSchema } from '../../packages/core-runtime/src/authorization/entrypoint-classification.ts';
-
 export const PROTECTED_ENTRYPOINT_INVENTORY_SCHEMA_VERSION = 2 as const;
 
 const PermissionSchema = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u));
 
+/**
+ * The closed `authorization` classification (O62, CUTOVER-PLAN §4.2). A protected entrypoint carries
+ * `{ kind: 'protected' }` and must declare its access; the legacy `action_execution{provisioning}` and
+ * `context_permission{permission}` kinds are gone, so the inventory only records the v2 vocabulary.
+ */
 const InventoryAuthorizationSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal('public') }),
   Schema.Struct({ kind: Schema.Literal('authenticated_principal') }),
-  Schema.Struct({
-    kind: Schema.Literal('context_permission'),
-    permission: PermissionSchema,
-  }),
-  ActionExecutionAuthorizationSchema,
   Schema.Struct({ kind: Schema.Literal('owner_local_background') }),
+  Schema.Struct({ kind: Schema.Literal('protected') }),
   Schema.Struct({
     credential: Schema.Literals(['api_key', 'session']),
     kind: Schema.Literal('capability_issuance'),

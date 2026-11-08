@@ -1,21 +1,36 @@
 import { ActiveApplicationCompositionService, validateActiveApplicationCompositionSnapshot } from '@app/core-runtime';
+import type { OperationalScope } from '@app/core-runtime';
 import {
   CounterpartyReadResponseSchema,
   executeCounterpartyReadWithAuthorization,
 } from '@app/party-registry/api/client';
 import type { executeCounterpartyRead } from '@app/party-registry/api/client';
-import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
-import { Config, Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
+import { Context, Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
 
-import { commerceTenantGatewayApiKey } from '../api/tenant-workload-credentials.ts';
 import { ProfilePersistenceDependencyFailure } from './persistence/profile-persistence.ts';
 import type { CounterpartyRoleEligibility, ProfilePersistenceDependencies } from './persistence/profile-persistence.ts';
 
 type CounterpartyReadExecutor = typeof executeCounterpartyRead;
 type CounterpartyRoleEligibilityResolver = NonNullable<ProfilePersistenceDependencies['resolveCounterpartyRole']>;
+type DelegatedGatewayAcquisition = typeof acquireDelegatedGatewayContext;
+/** Seams for the Shell-issued admission and the Party read; production omits `execute`. */
+export interface ProfileCounterpartyRoleEligibilitySeams {
+  readonly acquire: DelegatedGatewayAcquisition;
+  readonly crypto: Crypto.Crypto;
+  readonly execute?: CounterpartyReadExecutor | undefined;
+}
+
+/** The Tenant and managed Legal Entity that classify Party evidence; the admission scope is not needed to classify. */
+type ProfileCounterpartyRoleEligibilityBoundary = Pick<
+  ProfileCounterpartyRoleEligibilityScope,
+  'legalEntityId' | 'tenantId'
+>;
 
 export interface ProfileCounterpartyRoleEligibilityScope {
   readonly legalEntityId: string;
+  /** The verified request scope; the Customer whose eligibility is read is its subject. */
+  readonly operationalScope: OperationalScope;
   readonly requestCorrelation: string;
   readonly tenantId: string;
 }
@@ -28,26 +43,10 @@ const dependencyFailure = (reason: string, cause?: unknown): ProfilePersistenceD
   return failure;
 };
 
-const serverConfiguration = Config.all({
-  shellBaseUrl: Config.schema(
-    Schema.URLFromString.check(
-      Schema.makeFilter((url) =>
-        (url.protocol === 'http:' || url.protocol === 'https:') &&
-        url.username.length === 0 &&
-        url.password.length === 0 &&
-        url.search.length === 0 &&
-        url.hash.length === 0
-          ? undefined
-          : 'Shell gateway URL must be HTTP(S) without credentials, query, or fragment',
-      ),
-    ),
-    'ONTOS_SHELL_GATEWAY_BASE_URL',
-  ),
-});
-
 const executeServerCounterpartyRead = Effect.fn('ProfileCounterpartyRoleEligibility.executeServerCounterpartyRead')(
   function* serverCounterpartyRead(
     scope: ProfileCounterpartyRoleEligibilityScope,
+    seams: ProfileCounterpartyRoleEligibilitySeams,
     payload: Parameters<CounterpartyReadExecutor>[0],
   ) {
     const composition = yield* Effect.serviceOption(ActiveApplicationCompositionService);
@@ -55,23 +54,26 @@ const executeServerCounterpartyRead = Effect.fn('ProfileCounterpartyRoleEligibil
       return yield* dependencyFailure('The server Application Composition authority is unavailable');
     }
     const active = yield* composition.value.load.pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
-    const configured = yield* serverConfiguration;
-    const apiKey = yield* commerceTenantGatewayApiKey(scope.tenantId);
     const compositionRevision = active.composition.revision;
-    const issued = yield* issueApiKeyGatewayContext(
-      { audience: 'party-registry', compositionRevision, legalEntityId: scope.legalEntityId },
-      { apiKey, baseUrl: configured.shellBaseUrl, requestCorrelation: scope.requestCorrelation },
-    );
+    const issued = yield* seams
+      .acquire(
+        {
+          audience: 'party-registry',
+          legalEntityScope: 'subject',
+          requestCorrelation: scope.requestCorrelation,
+          subject: { _tag: 'Assertion', scope: scope.operationalScope },
+        },
+        seams.crypto,
+      )
+      .pipe(Effect.mapError((cause) => dependencyFailure('The Party credential could not be issued', cause)));
     if (issued.compositionRevision !== compositionRevision) {
       return yield* dependencyFailure('The Party credential does not match the active composition revision');
     }
     yield* validateActiveApplicationCompositionSnapshot(active);
-    return yield* executeCounterpartyReadWithAuthorization(
-      payload,
-      `Bearer ${issued.token}`,
-      scope.requestCorrelation,
-      { baseUrl: new URL(issued.apiBaseUrl, configured.shellBaseUrl), compositionRevision },
-    );
+    return yield* executeCounterpartyReadWithAuthorization(payload, issued.authorization, scope.requestCorrelation, {
+      baseUrl: new URL(issued.apiBaseUrl),
+      compositionRevision,
+    });
   },
 );
 
@@ -88,7 +90,7 @@ const ineligibleEligibility = (): CounterpartyRoleEligibility => ({ outcome: 'IN
 
 const hasExactTenantEvidence = (
   response: CounterpartyReadResponse,
-  scope: ProfileCounterpartyRoleEligibilityScope,
+  scope: ProfileCounterpartyRoleEligibilityBoundary,
   counterpartyResourceId: string,
 ): boolean =>
   response.counterpartyRef.tenantId === scope.tenantId &&
@@ -123,18 +125,26 @@ const classifyEligibleRoles = (
 
   return {
     managedLegalEntityId,
+    observedAt: now,
     outcome: 'ELIGIBLE',
     roleResourceId: eligibleRole.rolePeriodRef.resourceId,
     // Role periods are immutable owner facts. Party Registry currently publishes their canonical
     // recordedAt instant, rather than a synthetic numeric revision, as the evidence version.
     roleResourceRevision: eligibleRole.recordedAt,
-    validUntil: eligibleRole.validTo,
+    validUntil: DateTime.formatIso(
+      DateTime.makeUnsafe(
+        Math.min(
+          DateTime.toEpochMillis(DateTime.makeUnsafe(now)) + 30_000,
+          eligibleRole.validTo === null ? Infinity : DateTime.toEpochMillis(DateTime.makeUnsafe(eligibleRole.validTo)),
+        ),
+      ),
+    ),
   };
 };
 
 export const classifyProfileCounterpartyRoleEligibility = (
   response: CounterpartyReadResponse,
-  scope: ProfileCounterpartyRoleEligibilityScope,
+  scope: ProfileCounterpartyRoleEligibilityBoundary,
   counterpartyResourceId: string,
   now: string,
 ): CounterpartyRoleEligibility => {
@@ -155,34 +165,6 @@ export const classifyProfileCounterpartyRoleEligibility = (
   );
 };
 
-/** Fail closed on an unknown or expired owner-reported role End; null alone means unbounded. */
-export const assertPreparedCounterpartyRoleCurrent = (role: CounterpartyRoleEligibility) => {
-  if (role.outcome !== 'ELIGIBLE') {
-    return Effect.void;
-  }
-  if (role.validUntil === undefined || (role.validUntil !== null && !isCanonicalInstant(role.validUntil))) {
-    return Effect.fail(dependencyFailure('The prepared Counterparty customer role has no valid owner End evidence'));
-  }
-  const { validUntil } = role;
-  return DateTime.now.pipe(
-    Effect.flatMap((now) =>
-      validUntil === null || DateTime.formatIso(now) < validUntil
-        ? Effect.void
-        : Effect.fail(dependencyFailure('The prepared Counterparty customer role has expired')),
-    ),
-  );
-};
-
-/** Validate before and after the write; a post-write failure must abort its enclosing transaction. */
-export const withPreparedCounterpartyRoleCurrent = <A, E, R>(
-  role: CounterpartyRoleEligibility,
-  write: Effect.Effect<A, E, R>,
-) =>
-  assertPreparedCounterpartyRoleCurrent(role).pipe(
-    Effect.andThen(write),
-    Effect.tap(() => assertPreparedCounterpartyRoleCurrent(role)),
-  );
-
 /**
  * Builds the Commerce adapter over Party Registry's governed Counterparty Read. The scope is
  * captured from trusted operation context; neither the Action payload nor the Party response can
@@ -191,10 +173,14 @@ export const withPreparedCounterpartyRoleCurrent = <A, E, R>(
 export const makeProfileCounterpartyRoleEligibilityResolver =
   (
     scope: ProfileCounterpartyRoleEligibilityScope,
-    execute?: CounterpartyReadExecutor,
+    seams: ProfileCounterpartyRoleEligibilitySeams,
   ): CounterpartyRoleEligibilityResolver =>
   ({ counterpartyResourceId, tenantId }) => {
-    if (tenantId !== scope.tenantId) {
+    if (
+      tenantId !== scope.tenantId ||
+      scope.operationalScope.tenantId !== scope.tenantId ||
+      scope.operationalScope.legalEntityId !== scope.legalEntityId
+    ) {
       return Effect.succeed({ outcome: 'INDETERMINATE' as const });
     }
 
@@ -211,9 +197,9 @@ export const makeProfileCounterpartyRoleEligibilityResolver =
       | Effect.Error<ReturnType<typeof executeServerCounterpartyRead>>
       | Effect.Error<ReturnType<CounterpartyReadExecutor>>
     > =
-      execute === undefined
-        ? executeServerCounterpartyRead(scope, payload)
-        : execute(payload, scope.requestCorrelation);
+      seams.execute === undefined
+        ? executeServerCounterpartyRead(scope, seams, payload)
+        : seams.execute(payload, scope.requestCorrelation);
     return read.pipe(
       Effect.mapError((cause) => dependencyFailure('Party Registry Counterparty eligibility is unavailable', cause)),
       Effect.flatMap((response) =>
@@ -229,6 +215,40 @@ export const makeProfileCounterpartyRoleEligibilityResolver =
     );
   };
 
+/** A prepared observation is usable only inside its exclusive owner-evidence window. */
+export const assertPreparedCounterpartyRoleCurrent = Effect.fn(
+  'ProfileCounterpartyRoleEligibility.assertPreparedCurrent',
+)(function* assertPreparedCurrent(role: CounterpartyRoleEligibility) {
+  if (role.outcome !== 'ELIGIBLE') {
+    return yield* Effect.void;
+  }
+  const now = DateTime.toEpochMillis(yield* DateTime.now);
+  if (
+    role.observedAt === undefined ||
+    !isCanonicalInstant(role.observedAt) ||
+    role.validUntil === undefined ||
+    role.validUntil === null ||
+    !isCanonicalInstant(role.validUntil) ||
+    now < DateTime.toEpochMillis(DateTime.makeUnsafe(role.observedAt)) ||
+    now >= DateTime.toEpochMillis(DateTime.makeUnsafe(role.validUntil)) ||
+    DateTime.toEpochMillis(DateTime.makeUnsafe(role.validUntil)) >
+      DateTime.toEpochMillis(DateTime.makeUnsafe(role.observedAt)) + 30_000
+  ) {
+    return yield* dependencyFailure('The prepared Counterparty customer-role observation is absent or expired');
+  }
+  return yield* Effect.void;
+});
+
+/** Check before and after mutation so expiration cannot commit a partially authorized write. */
+export const withPreparedCounterpartyRoleCurrent = <Value, Failure, Requirements>(
+  role: CounterpartyRoleEligibility,
+  operation: Effect.Effect<Value, Failure, Requirements>,
+): Effect.Effect<Value, Failure | ProfilePersistenceDependencyFailure, Requirements> =>
+  assertPreparedCounterpartyRoleCurrent(role).pipe(
+    Effect.andThen(operation),
+    Effect.tap(() => assertPreparedCounterpartyRoleCurrent(role)),
+  );
+
 export interface ProfileCounterpartyRoleEligibilityResolverFactoryService {
   readonly make: (
     scope: ProfileCounterpartyRoleEligibilityScope,
@@ -243,7 +263,17 @@ export class ProfileCounterpartyRoleEligibilityResolverFactory extends Context.S
   '@app/commerce-customer-context/profile-counterparty-role-eligibility/ProfileCounterpartyRoleEligibilityResolverFactory',
 ) {}
 
-export const profileCounterpartyRoleEligibilityResolverFactoryLive = Layer.succeed(
+export const profileCounterpartyRoleEligibilityResolverFactoryLive = Layer.effect(
   ProfileCounterpartyRoleEligibilityResolverFactory,
-  Object.freeze({ make: makeProfileCounterpartyRoleEligibilityResolver }),
+  Effect.gen(function* makeProfileCounterpartyRoleEligibilityResolverFactory() {
+    const crypto = yield* Crypto.Crypto;
+    return Object.freeze({
+      make: (scope: ProfileCounterpartyRoleEligibilityScope, execute?: CounterpartyReadExecutor) =>
+        makeProfileCounterpartyRoleEligibilityResolver(scope, {
+          acquire: acquireDelegatedGatewayContext,
+          crypto,
+          execute,
+        }),
+    });
+  }),
 );

@@ -10,7 +10,7 @@ import type { PartyCandidate } from '../../shared/domain/identity-contracts.ts';
 import { partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
 import { acceptRetailEnrollmentEvidenceAction } from '../../src/actions/accept-retail-enrollment-evidence.action.ts';
 import { acceptsRetailEnrollmentEvidence } from '../../src/policies/retail-enrollment-evidence.policy.ts';
-import { decideAtomicCreateWithoutStrongIdentifier } from '../../src/services/party-matching-persistence.service.ts';
+import { evaluatePartySubjectEvidence } from '../../src/policies/create-party-without-strong-identifier.policy.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -49,12 +49,15 @@ it('accepts verified retail person evidence only when no candidate Party is link
   expect(acceptsRetailEnrollmentEvidence(candidate, evidence, scope, [legalEntityId])).toBe(false);
 });
 
-it('does not relax normal no-identifier creation or claim that identity review happened', () => {
-  expect(decideAtomicCreateWithoutStrongIdentifier(candidate, false).decision).toBe('REVIEW_REQUIRED');
-  expect(acceptRetailEnrollmentEvidenceAction.descriptor.tenantPermission).toBeDefined();
+it('does not waive subject evidence or claim that identity review happened', () => {
+  expect(evaluatePartySubjectEvidence({ ...candidate, subjectEvidence: [] }).subjectEligible).toBe(false);
+  expect(acceptRetailEnrollmentEvidenceAction.descriptor.accessActor).toMatchObject({
+    callers: ['commerce-customer-context'],
+    subject: 'identity',
+    subjectWorkloads: ['commerce.storefront-client'],
+  });
   expect(acceptRetailEnrollmentEvidenceAction.descriptor.entrypoint.authorization).toEqual({
-    kind: 'action_execution',
-    provisioning: 'explicit',
+    kind: 'protected',
   });
 });
 
@@ -69,7 +72,7 @@ it('retains the native scaffold Action contract and original public schemas', ()
     auditProfile: 'standard',
     entrypoint: {
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.accept-retail-enrollment-evidence',
       moduleKey: 'party.registry',
       role: 'action',

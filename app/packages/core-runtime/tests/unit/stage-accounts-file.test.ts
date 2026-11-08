@@ -1,20 +1,29 @@
-import { Effect, Redacted } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { STAGE_GRANTABLE_TENANT_RELATIONS, parseStageAccountsFile } from '../../src/install/stage-accounts-file.ts';
+import { parseStageAccountsFile } from '../../src/install/stage-accounts-file.ts';
 
-const account = (tenant: string, index: number, explicitActions: 'all' | readonly string[]) => ({
-  affiliation: 'employee',
+/*
+ * The operator accounts file names a stage tenant's v2 authority as data: which account owns the tenant
+ * and which further accounts hold the tenant's "Plný přístup" role. A file that names no owner, two
+ * owners, or a role that does not exist yet cannot be bootstrapped, so it is refused before anything is
+ * written — a tenant without an owner would be created with no authority at all.
+ */
+
+const account = (tenant: string, index: number, grants: { owner: boolean; roles: readonly string[] }) => ({
   authBindingId: `30000000-0000-4000-8000-0000000000${tenant}${index}`,
   displayName: `Tenant ${tenant.toUpperCase()} account ${index}`,
   email: `account-${tenant}-${index}@example.invalid`,
-  grants: { explicitActions, tenantRelations: index === 1 ? ['party_identity_reader'] : ['identity_admin'] },
+  grants,
   password: `fixture-${tenant}-${index}-password`,
   principalId: `20000000-0000-4000-8000-0000000000${tenant}${index}`,
 });
 
 const tenant = (suffix: string) => ({
-  accounts: [account(suffix, 1, []), account(suffix, 2, 'all')],
+  accounts: [
+    account(suffix, 1, { owner: true, roles: [] }),
+    account(suffix, 2, { owner: false, roles: ['full_access'] }),
+  ],
   defaultLocale: 'cs',
   displayName: `Tenant ${suffix.toUpperCase()}`,
   legalEntity: {
@@ -30,32 +39,32 @@ const tenant = (suffix: string) => ({
 });
 
 const validFile = {
-  actionAuthorization: { actionAssertions: [], roleGrants: [] },
   retiredAccountEmails: ['retired-fixture@example.invalid'],
   retiredTenants: [
     {
       legalEntityId: '11000000-0000-4000-8000-0000000000c0',
-      moduleKey: 'party.registry',
       principalIds: ['20000000-0000-4000-8000-0000000000c1'],
       tenantId: '10000000-0000-4000-8000-0000000000c0',
     },
   ],
-  schemaVersion: 4,
-  scopedRoles: [],
+  schemaVersion: 2,
   tenants: [tenant('a'), tenant('b')],
 };
 
-const parse = <File>(file: File, mode = 0o600) => parseStageAccountsFile({ mode, source: JSON.stringify(file) });
+const reviewedWorkloads: ReadonlySet<string> = new Set(['fixture.machine-task', 'fixture.other-task']);
+const encodeFile = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const parse = <File>(file: File, mode = 0o600) =>
+  parseStageAccountsFile({ mode, source: JSON.stringify(file) }, reviewedWorkloads);
 const rejectionReason = <File>(file: File, mode?: number) =>
   Effect.flip(parse(file, mode)).pipe(Effect.map(({ reason }) => reason));
 
-it.effect('accepts any number of Tenants and accounts with grants as data', () =>
+it.effect('accepts any number of Tenants and accounts with v2 authority as data', () =>
   Effect.gen(function* acceptsValidFile() {
     const parsed = yield* parse(validFile);
     expect(parsed).toMatchObject({
       retiredAccountEmails: validFile.retiredAccountEmails,
       retiredTenants: validFile.retiredTenants,
-      schemaVersion: 4,
+      schemaVersion: 2,
       tenants: validFile.tenants.map(({ accounts, ...tenantData }) => ({
         ...tenantData,
         accounts: accounts.map(({ authBindingId, displayName, email, grants, principalId }) => ({
@@ -68,18 +77,11 @@ it.effect('accepts any number of Tenants and accounts with grants as data', () =
       })),
     });
     const [firstTenant] = parsed.tenants;
-    const [firstAccount] = firstTenant.accounts;
-    expect(Redacted.value(firstAccount.password)).toBe('fixture-a-1-password');
+    const [owner, holder] = firstTenant.accounts;
+    expect(owner?.grants).toEqual({ owner: true, roles: [] });
+    expect(holder?.grants).toEqual({ owner: false, roles: ['full_access'] });
+    expect(Redacted.value(owner?.password ?? Redacted.make(''))).toBe('fixture-a-1-password');
     expect(yield* parse({ ...validFile, tenants: [tenant('a')] })).toMatchObject({ tenants: [{ slug: 'tenant-a' }] });
-  }),
-);
-
-it.effect('derives grantable Tenant relations from the SpiceDB schema, never membership', () =>
-  Effect.sync(() => {
-    expect(STAGE_GRANTABLE_TENANT_RELATIONS).toContain('identity_admin');
-    expect(STAGE_GRANTABLE_TENANT_RELATIONS).toContain('party_identity_reader');
-    expect(STAGE_GRANTABLE_TENANT_RELATIONS).not.toContain('member');
-    expect(STAGE_GRANTABLE_TENANT_RELATIONS).not.toContain('company_member');
   }),
 );
 
@@ -105,7 +107,9 @@ it.effect('rejects malformed files without echoing their values', () =>
       withAccount({ password: 'short' }),
       withAccount({ email: 'not-an-email' }),
       withAccount({ role: 'anything' }),
-      withAccount({ grants: { explicitActions: 'some', tenantRelations: [] } }),
+      // The legacy grant shape is gone with the relations it named (O62): it is not accepted quietly.
+      withAccount({ grants: { explicitActions: 'all', tenantRelations: ['party_identity_reader'] } }),
+      withAccount({ grants: { owner: true, roles: ['role_editor_template'] } }),
     ]) {
       const reason = yield* rejectionReason(file);
       expect(reason).toMatch(/documented schema/u);
@@ -114,7 +118,7 @@ it.effect('rejects malformed files without echoing their values', () =>
   }),
 );
 
-it.effect('rejects duplicate identities, unknown relations, and overlapping retirements', () =>
+it.effect('rejects duplicate identities, unknown role keys, and overlapping retirements', () =>
   Effect.gen(function* rejectsInconsistentData() {
     const [first, second] = validFile.tenants;
     const [firstAccount, secondAccount] = first?.accounts ?? [];
@@ -128,62 +132,174 @@ it.effect('rejects duplicate identities, unknown relations, and overlapping reti
         withAccounts([firstAccount, { ...secondAccount, email: firstAccount?.email.toUpperCase() }]),
       ),
     ).toMatch(/own email/u);
-    for (const tenantRelations of [['member'], ['not_a_relation'], ['identity_admin', 'identity_admin']]) {
-      expect(
-        yield* rejectionReason(
-          withAccounts([{ ...firstAccount, grants: { explicitActions: [], tenantRelations } }, secondAccount]),
-        ),
-      ).toMatch(/SpiceDB schema/u);
-    }
+    expect(
+      yield* rejectionReason(
+        withAccounts([
+          firstAccount,
+          { ...secondAccount, grants: { owner: false, roles: ['full_access', 'full_access'] } },
+        ]),
+      ),
+    ).toMatch(/roles must be unique/u);
     expect(yield* rejectionReason({ ...validFile, retiredAccountEmails: [firstAccount?.email] })).toMatch(/Retired/u);
     expect(
       yield* rejectionReason({
         ...validFile,
         retiredTenants: [
-          {
-            legalEntityId: first?.legalEntity.legalEntityId,
-            moduleKey: first?.moduleKey,
-            principalIds: [],
-            tenantId: first?.tenantId,
-          },
+          { legalEntityId: first?.legalEntity.legalEntityId, principalIds: [], tenantId: first?.tenantId },
         ],
       }),
-    ).toMatch(/Retired/u);
+    ).toMatch(/documented schema/u);
   }),
 );
 
-it.effect('requires an explicit human affiliation and exact tenant-local scoped-role members', () =>
-  Effect.gen(function* exactStageMembershipSelections() {
+it.effect('refuses a Tenant with no owner or with two owners', () =>
+  Effect.gen(function* refusesUnbootstrappableTenants() {
+    const [first, second] = validFile.tenants;
+    const [owner, holder] = first?.accounts ?? [];
+    const withoutOwner = { ...validFile, tenants: [{ ...first, accounts: [holder] }, second] };
+    expect(yield* rejectionReason(withoutOwner)).toMatch(/exactly one owner/u);
+    const withTwoOwners = {
+      ...validFile,
+      tenants: [
+        {
+          ...first,
+          accounts: [owner, { ...holder, grants: { owner: true, roles: [] } }],
+        },
+        second,
+      ],
+    };
+    expect(yield* rejectionReason(withTwoOwners)).toMatch(/exactly one owner/u);
+  }),
+);
+
+it.effect('accepts only the workload declarations explicitly supplied by the caller', () =>
+  Effect.gen(function* acceptsDeclaredWorkloadsOnly() {
+    const [first, second] = validFile.tenants;
+    const principalId = first?.accounts[1]?.principalId;
+    const withWorkload = (workloadKey: string) => ({
+      ...validFile,
+      tenants: [{ ...first, workloads: [{ principalId, workloadKey }] }, second],
+    });
+    for (const workloadKey of reviewedWorkloads) {
+      expect((yield* parse(withWorkload(workloadKey))).tenants[0]?.workloads).toStrictEqual([
+        { principalId, workloadKey },
+      ]);
+    }
+    const reason = yield* rejectionReason(withWorkload('fixture.undeclared-task'));
+    expect(reason).toMatch(/declared by the composition/u);
+    expect(reason).not.toContain('fixture.undeclared-task');
+  }),
+);
+
+it.effect('allows the same declared workload in two tenants when each names its own principals', () =>
+  Effect.gen(function* acceptsTenantLocalWorkloads() {
+    const workloadKey = 'fixture.machine-task';
+    const tenants = validFile.tenants.map((entry) => ({
+      ...entry,
+      workloads: entry.accounts.map(({ principalId }) => ({ principalId, workloadKey })),
+    }));
+    const parsed = yield* parse({ ...validFile, tenants });
+    expect(parsed.tenants).toHaveLength(2);
+    expect(parsed.tenants.map(({ workloads }) => workloads)).toEqual(tenants.map(({ workloads }) => workloads));
+    expect(parsed.retiredTenants).toEqual(validFile.retiredTenants);
+  }),
+);
+
+it.effect('refuses another active file tenant principal with the value-free own-tenant error', () =>
+  Effect.gen(function* refusesCrossTenantWorkloadPrincipal() {
     const first = tenant('a');
     const second = tenant('b');
-    const [firstAccount] = first.accounts;
-    const [secondAccount] = second.accounts;
-    if (firstAccount === undefined || secondAccount === undefined) {
-      throw new Error('Missing stage account fixture');
+    const [foreignAccount] = second.accounts;
+    if (foreignAccount === undefined) {
+      expect.unreachable('The second tenant fixture needs its own active account');
     }
-    const role = {
-      legalEntityId: first.legalEntity.legalEntityId,
-      principalIds: [firstAccount.principalId],
-      roleKey: 'stage:writer',
-      tenantId: first.tenantId,
-    };
-    const scoped = { ...validFile, scopedRoles: [role] };
-    expect((yield* parse(scoped)).scopedRoles).toEqual([role]);
-    for (const selected of [
-      { ...role, tenantId: '10000000-0000-4000-8000-0000000000c0' },
-      { ...role, legalEntityId: second.legalEntity.legalEntityId },
-      { ...role, principalIds: [secondAccount.principalId] },
-      { ...role, principalIds: [] },
-      { ...role, principalIds: [...role.principalIds, ...role.principalIds] },
-    ]) {
-      expect(yield* rejectionReason({ ...scoped, scopedRoles: [selected] })).toContain('tenant-local');
-    }
-    expect(yield* rejectionReason({ ...scoped, scopedRoles: [role, role] })).toContain('unique');
-    const { affiliation: omittedAffiliation, ...unclassified } = firstAccount;
-    expect(omittedAffiliation).toBe('employee');
-    expect(yield* rejectionReason({ ...validFile, tenants: [{ ...first, accounts: [unclassified] }] })).toContain(
-      'schema',
+    expect(validFile.tenants.flatMap(({ accounts }) => accounts).map(({ principalId }) => principalId)).toContain(
+      foreignAccount.principalId,
     );
-    expect(yield* rejectionReason({ ...validFile, schemaVersion: 3 })).toContain('schema');
+    const failure = yield* parse({
+      ...validFile,
+      tenants: [
+        {
+          ...first,
+          workloads: [{ principalId: foreignAccount.principalId, workloadKey: 'fixture.machine-task' }],
+        },
+        second,
+      ],
+    }).pipe(Effect.flip);
+    expect(failure._tag).toBe('StageAccountsFileError');
+    expect(failure.reason).toBe('Every registered workload needs a principal of its own tenant');
+    expect(failure.cause).toBeUndefined();
+    for (const value of [
+      first.tenantId,
+      second.tenantId,
+      foreignAccount.principalId,
+      foreignAccount.email,
+      foreignAccount.password,
+    ]) {
+      expect(failure.reason).not.toContain(value);
+    }
+  }),
+);
+
+it.effect('uses exactly one supplied workload set, with no retained declarations between calls', () =>
+  Effect.gen(function* isolatesReviewedDeclarations() {
+    const first = tenant('a');
+    const workloadKey = 'another.integration-task';
+    const withWorkload = {
+      ...validFile,
+      tenants: [{ ...first, workloads: [{ principalId: first.accounts[0]?.principalId, workloadKey }] }],
+    };
+    const contents = { mode: 0o600, source: yield* encodeFile(withWorkload) };
+    const parsed = yield* parseStageAccountsFile(contents, new Set([workloadKey]));
+    expect(parsed.tenants[0].workloads).toEqual([{ principalId: first.accounts[0]?.principalId, workloadKey }]);
+    for (const declared of [new Set<string>(), reviewedWorkloads]) {
+      const failure = yield* parseStageAccountsFile(contents, declared).pipe(Effect.flip);
+      expect(failure.reason).toMatch(/declared by the composition/u);
+      expect(failure.reason).not.toContain(workloadKey);
+      expect(failure.reason).not.toContain(first.accounts[0]?.principalId);
+    }
+    expect(
+      (yield* parseStageAccountsFile({ mode: 0o600, source: yield* encodeFile(validFile) }, new Set())).tenants,
+    ).toHaveLength(2);
+  }),
+);
+
+it.effect('does not let supplied declarations bypass workload syntax or account identity checks', () =>
+  Effect.gen(function* validatesDeclaredWorkloadData() {
+    const first = tenant('a');
+    for (const workloadKey of ['', '*', 'invalid workload', 'upper.Task']) {
+      const file = {
+        ...validFile,
+        tenants: [{ ...first, workloads: [{ principalId: first.accounts[0]?.principalId, workloadKey }] }],
+      };
+      const failure = yield* parseStageAccountsFile(
+        { mode: 0o600, source: yield* encodeFile(file) },
+        new Set([workloadKey]),
+      ).pipe(Effect.flip);
+      expect(failure.reason).toMatch(/documented schema/u);
+      expect(failure.reason).not.toContain('fixture-');
+    }
+    const workloadKey = 'fixture.machine-task';
+    const workload = { principalId: '20000000-0000-4000-8000-000000000099', workloadKey };
+    expect(yield* rejectionReason({ ...validFile, tenants: [{ ...first, workloads: [workload] }] })).toMatch(
+      /principal of its own tenant/u,
+    );
+    const ownWorkload = { principalId: first.accounts[0]?.principalId, workloadKey };
+    expect(
+      yield* rejectionReason({ ...validFile, tenants: [{ ...first, workloads: [ownWorkload, ownWorkload] }] }),
+    ).toMatch(/only once/u);
+  }),
+);
+
+it.effect('requires explicit valid base-module intent without a legacy default', () =>
+  Effect.gen(function* explicitModuleIntent() {
+    const first = tenant('a');
+    for (const moduleKey of [undefined, '', '*', 'module access']) {
+      expect(yield* rejectionReason({ ...validFile, tenants: [{ ...first, moduleKey }] })).toMatch(
+        /documented schema/u,
+      );
+    }
+    const alternate = yield* parse({ ...validFile, tenants: [{ ...first, moduleKey: 'another.owner' }] });
+    expect(alternate.tenants[0].moduleKey).toBe('another.owner');
   }),
 );

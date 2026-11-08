@@ -44,6 +44,7 @@ import { updateDsrCaseAction } from './src/actions/update-dsr-case.action.ts';
 import { upsertDsrOwnerTaskAction } from './src/actions/upsert-dsr-owner-task.action.ts';
 import { upsertRetentionRuleAction } from './src/actions/upsert-retention-rule.action.ts';
 import { upsertTemporaryDsrExportAction } from './src/actions/upsert-temporary-dsr-export.action.ts';
+
 // </generated-module-registration-imports>
 
 export const privacyRegistration = defineVerticalRuntimeRegistration({
@@ -98,6 +99,7 @@ export const privacyRegistration = defineVerticalRuntimeRegistration({
       'legal-basis-assignments': () => import('./src/api/legal-basis-assignments-client.ts'),
       'notice-presentation': () => import('./src/api/notice-presentation-client.ts'),
       'notice-versions': () => import('./src/api/notice-versions-client.ts'),
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       'owner-inventory': () => import('./src/api/owner-inventory-client.ts'),
       'privacy-subjects': () => import('./src/api/privacy-subjects-client.ts'),
       'processing-activities': () => import('./src/api/processing-activities-client.ts'),
@@ -131,6 +133,10 @@ export const privacyRegistration = defineVerticalRuntimeRegistration({
     privacyMeasureDispatchWorker,
     retentionEvaluationWorker,
     // </generated-module-registration-workers>
+  ],
+  reads: [
+    // <generated-module-registration-reads>
+    // </generated-module-registration-reads>
   ],
 });
 

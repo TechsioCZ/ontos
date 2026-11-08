@@ -1,19 +1,17 @@
 import { readFileSync } from 'node:fs';
 
 import { v1 } from '@authzed/authzed-node';
-import {
-  BusinessPermissionCodeSchema,
-  ContextAccessLive,
-  loadDatabaseConnectionPair,
-  toBusinessPermissionAccessObjectId,
-} from '@app/core-runtime';
+import { ContextAccessLive, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import { ResolveExternalSubjectResultSchema } from '@app/core-runtime/auth/external-identity-contracts';
+import { productionReadRuntimeLive } from '../../api/index.ts';
+import { CommerceAuthenticationNamespaceRegistryLive } from '../../api/portal-auth/authentication-namespace-registry.ts';
 import { GatewayPrincipalVerifierLive } from '@app/gateway-principal-verifier/server';
 import { ExternalIdentityClient } from '@app/shared-contracts/server/external-identity-client';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { eq, sql } from 'drizzle-orm';
 import { Crypto, Config, Context, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
+import { Base64Url } from 'effect/encoding';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -23,6 +21,7 @@ import {
 import { commerceCustomerContextRelations } from '../../src/database/schema.ts';
 import { loadSpiceDbConfig } from '../../../../packages/core-runtime/src/permissions/config.ts';
 import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
+import { historicalPermissionObjectId } from '../../../../packages/core-runtime/tests/support/historical-owner-targets.ts';
 import { CommercePortalAuthEnrollmentStartInputSchema } from '../../api/portal-auth/enrollment/contracts.ts';
 import { commercePortalAuthEnrollmentAccountCreationOutcome } from '../../api/portal-auth/enrollment/http.ts';
 import {
@@ -100,6 +99,18 @@ import {
   installEnrollmentTestAuthority,
 } from '../support/enrollment-composition-authority.ts';
 import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
+
+const issuedFixtureExpiry = Effect.fn('EnrollmentAccountFixture.issuedExpiry')(function* issuedExpiry(
+  assertion: string,
+) {
+  const [, claims] = assertion.split('.');
+  if (claims === undefined) {
+    return yield* Effect.die('The test issuer did not return a signed assertion');
+  }
+  const text = yield* Effect.fromResult(Base64Url.decodeString(claims));
+  const decoded = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Struct({ exp: Schema.Number })))(text);
+  return decoded.exp;
+});
 
 const randomId = Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4()));
 
@@ -430,10 +441,12 @@ it.live('admits the new provider account immediately after verification and one 
       );
       const spice = newSpiceDbGrpcClient(yield* loadSpiceDbConfig());
       yield* Effect.addFinalizer(() => Effect.sync(() => spice.close()));
-      const permissionObjectId = toBusinessPermissionAccessObjectId(
-        Schema.decodeSync(BusinessPermissionCodeSchema)('retail.profile.read'),
-        { kind: 'retail_profile', legalEntityId, profileId, tenantId },
-      );
+      const permissionObjectId = historicalPermissionObjectId('retail.profile.read', {
+        kind: 'retail_profile',
+        legalEntityId,
+        profileId,
+        tenantId,
+      });
       if (permissionObjectId === undefined) {
         return yield* Effect.die('The exact retail profile permission must have a native identity');
       }
@@ -596,7 +609,28 @@ it.live('admits the new provider account immediately after verification and one 
       const core = Layer.succeed(ExternalIdentityClient, {
         activatePrincipalBinding: unusedAccountMutation,
         changePrincipalBindingStatus: unusedAccountMutation,
-        issueExternalGatewayContext: unusedAccountMutation,
+        issueExternalGatewayContext: (request) =>
+          issueAcceptanceGatewayAssertion(fixture.admin, gateway, 'commerce-customer-context', {
+            authBindingId,
+            authContextRef: request.authenticationRef,
+            authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+            authMethod: 'session',
+            legalEntityId,
+            principalId,
+            tenantId,
+          }).pipe(
+            Effect.flatMap((assertionToken) =>
+              issuedFixtureExpiry(assertionToken).pipe(
+                Effect.map((expiresAt) => ({
+                  apiBaseUrl: origin,
+                  compositionRevision: fixture.compositionRevision,
+                  expiresAt,
+                  token: assertionToken,
+                })),
+              ),
+            ),
+            Effect.orDie,
+          ),
         readPrincipalBinding: unusedAccountMutation,
         reservePrincipalBinding: unusedAccountMutation,
         resolveExternalSubject: (request) =>
@@ -617,6 +651,7 @@ it.live('admits the new provider account immediately after verification and one 
         Layer.provide(
           Layer.mergeAll(
             core,
+            productionReadRuntimeLive,
             commercePortalAuthPlatformCryptoLive,
             runner,
             ContextAccessLive,
@@ -639,6 +674,7 @@ it.live('admits the new provider account immediately after verification and one 
         Layer.provide(
           Layer.mergeAll(
             authority,
+            CommerceAuthenticationNamespaceRegistryLive,
             GatewayPrincipalVerifierLive.pipe(Layer.provide(gateway.verificationLive)),
             enrollmentApplicationCompositionLayer,
             Layer.succeed(GatewayAssertionRedemptionService, { consume: () => Effect.void }),

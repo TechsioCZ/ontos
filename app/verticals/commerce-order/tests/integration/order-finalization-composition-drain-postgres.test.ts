@@ -1,18 +1,43 @@
+import { defineOutboxWorkerEntry } from '@app/core-runtime/outbox/worker';
+import type { OutboxCycleError, OutboxCycleResult } from '@app/core-runtime';
+import { HttpApi } from 'effect/http-api';
+import { Hex } from 'effect/encoding';
+import { commerceOrderManifest } from '../../vertical.manifest.ts';
+import { commerceOrderRegistration } from '../../vertical.registration.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import {
+  ActiveApplicationCompositionService,
+  canonicalizeApplicationComposition,
+  canonicalOntosPublicApiKey,
+  extractVerticalRuntimeSafeDescriptors,
+  OntosModuleDeploymentContractSchema,
+  OutboxRuntime,
+  validateActiveApplicationCompositionSnapshot,
   extractOutboxWorkerSubscriptions,
   findPostgresFailure,
   loadDatabaseConnectionPair,
   matchOutboxMessages,
   OutboxRepositoryLive,
   OutboxRuntimeLive,
-  runOutboxCycle,
 } from '@app/core-runtime';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { CoreDatabase, testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Effect, Exit, Layer, Option, Redacted, Result, Schema } from 'effect';
+import {
+  Array as EffectArray,
+  Crypto,
+  Deferred,
+  Effect,
+  Exit,
+  Layer,
+  Match,
+  Option,
+  Redacted,
+  Result,
+  Schema,
+} from 'effect';
 import type { Scope } from 'effect';
 import type { ChildProcessSpawner } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
@@ -20,6 +45,7 @@ import { afterAll, expect, it, rs } from 'effect-rstest';
 
 import { createPrepareOrderCommitmentCommerceOrderFinalizationWorkOutboxMessage } from '../../src/actions/prepare-order-commitment-commerce-order-finalization-work.outbox-message.ts';
 import type { OrderCommitmentRejected } from '../../shared/domain/order-commitment.ts';
+import type { GatewayDelegationRequest } from '@app/shared-contracts/gateway-context-server';
 import { OrderFinalizationWorker } from '../../src/services/order-finalization-worker.service.ts';
 import { outboxWorkers } from '../../src/workers/index.ts';
 import {
@@ -39,12 +65,12 @@ import { orderTenantId, runOrderRevalidation } from '../support/order-revalidati
 
 const owners = rs.hoisted(() => ({
   complete: rs.fn<() => Effect.Effect<unknown>>(),
-  issueGateway: rs.fn<(request: { readonly compositionRevision: string }) => Effect.Effect<unknown>>(),
+  issueGateway: rs.fn<(request: GatewayDelegationRequest) => Effect.Effect<unknown>>(),
   load: rs.fn<() => Effect.Effect<unknown>>(),
 }));
 // The genuine Order worker runs under Core delivery; only its owner HTTP transport is replaced.
-rs.mock('@app/shared-contracts/server/gateway-context-api-key', () => ({
-  issueApiKeyGatewayContext: owners.issueGateway,
+rs.mock('@app/shared-contracts/gateway-context-server', () => ({
+  acquireDelegatedGatewayContext: owners.issueGateway,
 }));
 rs.mock('../../src/api/order-finalization-work-client.ts', () => ({
   executeOrderFinalizationWorkWithAuthorization: owners.load,
@@ -57,10 +83,132 @@ rs.mock('../../src/api/record-order-proof-set-action-client.ts', () => ({
 }));
 
 const subscriptions = extractOutboxWorkerSubscriptions(outboxWorkers);
+// The invocation that enqueued every delivered event; asynchronous work acts for it (DESIGN D7).
+const invocationId = '80000000-0000-4000-8000-0000000000b1';
+const claimOwner = 'order-finalization-drain';
 
 class OrderDrainSetupFailed extends Schema.TaggedError<OrderDrainSetupFailed>()('OrderDrainSetupFailed', {
   reason: Schema.String,
 }) {}
+
+const metadataDigest = Effect.fn('OrderFinalizationDrainTests.metadataDigest')(function* metadataDigest(
+  document: string,
+) {
+  const crypto = yield* Crypto.Crypto;
+  return Hex.encode(new Uint8Array(yield* crypto.digest('SHA-256', new TextEncoder().encode(document))));
+});
+const compareOperationKeys = (left: string, right: string): -1 | 0 | 1 => {
+  const compared = left.localeCompare(right);
+  if (compared < 0) {
+    return -1;
+  }
+  if (compared > 0) {
+    return 1;
+  }
+  return 0;
+};
+
+/** Full controlled SOURCE owner metadata, independent of any packaged receiver claim. */
+const makeOrderDrainSnapshot = Effect.fn('OrderFinalizationDrainTests.sourceSnapshot')(function* sourceSnapshot() {
+  const snapshot = yield* makeApplicationCompositionSnapshotFixture(
+    [ultramodernApiMarker.appId],
+    ultramodernApiMarker.buildMarker,
+  );
+  const owner = yield* Effect.try({
+    catch: () => new OrderDrainSetupFailed({ reason: 'The genuine Order owner registration is unavailable' }),
+    try: () => extractVerticalRuntimeSafeDescriptors(commerceOrderRegistration),
+  });
+  const manifest = commerceOrderManifest;
+  const events = yield* Effect.all(
+    manifest.publicSurface.events.map((event) =>
+      Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))(
+        Schema.toJsonSchemaDocument(event.payloadSchema),
+      ).pipe(
+        Effect.flatMap((document) => metadataDigest(`${document}\n`)),
+        Effect.map((payloadContract) => ({
+          key: event.key,
+          owningModuleId: event.owningModuleId,
+          payloadContract,
+          referencesResourceTypes: event.referencesResourceTypes,
+          tense: event.tense,
+          visibility: event.visibility,
+        })),
+      ),
+    ),
+  );
+  const apis = yield* Effect.forEach(Object.entries(manifest.publicSurface.api), ([key, api]) => {
+    if (!HttpApi.isHttpApi(api)) {
+      return Effect.fail(new OrderDrainSetupFailed({ reason: 'The actual Order owner API is not an HttpApi' }));
+    }
+    return Effect.succeed({
+      key: canonicalOntosPublicApiKey(owner.moduleId, key),
+      operationKeys: EffectArray.sort(
+        Object.values(api.groups).flatMap((group) =>
+          Object.values(group.endpoints).map((endpoint) =>
+            group.topLevel ? endpoint.identifier : `${group.identifier}.${endpoint.identifier}`,
+          ),
+        ),
+        compareOperationKeys,
+      ),
+    });
+  });
+  const authoredManifest = {
+    activation: manifest.activation,
+    module: manifest.module,
+    publicSurface: {
+      actions: owner.actions,
+      api: apis,
+      businessPermissions: manifest.publicSurface.businessPermissions ?? [],
+      components: Object.values(manifest.publicSurface.components),
+      events,
+      operationContracts: owner.operationContracts,
+      reports: manifest.publicSurface.reports,
+      resourceTypes: manifest.publicSurface.resourceTypes,
+      search: manifest.publicSurface.search,
+      shellContributions: owner.shellContributions,
+    },
+  };
+  if (owner.requirements !== undefined) {
+    Object.assign(authoredManifest, { requirements: owner.requirements });
+  }
+  const contract = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema, {
+    onExcessProperty: 'error',
+  })({
+    deployment: { appId: ultramodernApiMarker.appId, buildMarker: ultramodernApiMarker.buildMarker },
+    manifest: authoredManifest,
+    runtime: { outboxSubscriptions: owner.outboxSubscriptions },
+    schemaVersion: '2',
+  });
+  const contractDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
+    contract,
+  );
+  const sha256 = yield* metadataDigest(contractDocument);
+  const composition = {
+    ...snapshot.composition,
+    modules: snapshot.composition.modules.map((module) => ({
+      ...module,
+      allowedContributions: Object.values(owner.shellContributions).flatMap((items) =>
+        items.map(({ contributionKey }) => contributionKey),
+      ),
+      contract: { ...module.contract, sha256 },
+      contractDocument,
+      dependencies: EffectArray.sort(
+        (owner.requirements?.intrinsic ?? []).map(({ moduleId }) => moduleId),
+        compareOperationKeys,
+      ),
+      deployment: contract.deployment,
+      moduleId: contract.manifest.module.id,
+      publicContract: { id: contract.manifest.module.id, sha256, version: contract.schemaVersion },
+      requiredCoreCapabilities: owner.requirements?.coreCapabilities ?? [],
+    })),
+    revision: '0'.repeat(64),
+  };
+  const revision = yield* metadataDigest(canonicalizeApplicationComposition(composition));
+  return yield* validateActiveApplicationCompositionSnapshot({
+    ...snapshot,
+    composition: { ...composition, revision },
+  });
+});
 
 const fixture = Effect.fn('OrderFinalizationDrainTests.fixture')(function* fixture() {
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
@@ -69,16 +217,11 @@ const fixture = Effect.fn('OrderFinalizationDrainTests.fixture')(function* fixtu
     sourceConnections: yield* loadDatabaseConnectionPair(),
   });
   yield* isolated.migrateCoreSchema();
-  const snapshot = yield* makeApplicationCompositionSnapshotFixture([], 'order-finalization-drain');
+  const snapshot = yield* makeOrderDrainSnapshot();
   yield* isolated.publishInitialComposition(snapshot);
   const { revision } = snapshot.composition;
   const admin = yield* PgClient.makeClient({ url: Redacted.make(isolated.connections.admin.connectionString) });
   const runtime = yield* PgClient.makeClient({ url: Redacted.make(isolated.connections.runtime.connectionString) });
-  // The release admits Order's actual validated worker subscription and nothing else.
-  yield* admin.unsafe(
-    "update core.application_composition_authority set subscriptions_json=$1::jsonb where authority_key='active'",
-    [JSON.stringify(subscriptions)],
-  );
   yield* runtime.unsafe(
     "insert into core.tenants(tenant_id,name,slug,status,default_locale) values($1,$2,$3,'active','en')",
     [orderTenantId, 'Order finalization drain fixture', `order-drain-${orderTenantId}`],
@@ -87,9 +230,15 @@ const fixture = Effect.fn('OrderFinalizationDrainTests.fixture')(function* fixtu
     "insert into core.tenant_module_states(tenant_id,module_key,state) values($1,'commerce.order','active')",
     [orderTenantId],
   );
+  yield* runtime.unsafe(
+    "insert into core.action_invocations(action_invocation_id,tenant_id,action_key,status,request_hash) values($1,$2,'commerce.order.drain-fixture','succeeded',$3)",
+    [invocationId, orderTenantId, 'd'.repeat(64)],
+  );
   // Persist exactly what the registered Order Action collected, as Core's Action repository does.
-  // Only the original revision is this database's release; the in-memory harness admits a fixed one.
-  const [committed] = yield* runOrderRevalidation('PROOFS_PENDING');
+  // Only the original revision is this database's release; the harness admits its actual owner composition.
+  const {
+    committed: [committed],
+  } = yield* runOrderRevalidation('PROOFS_PENDING');
   const collected = committed?.evidence.outboxMessages[0];
   const event = collected === undefined ? undefined : committed?.evidence.domainEvents[collected.domainEventIndex];
   if (collected === undefined || event === undefined) {
@@ -124,7 +273,7 @@ const fixture = Effect.fn('OrderFinalizationDrainTests.fixture')(function* fixtu
   const accept = (work = proofWork) =>
     Effect.gen(function* acceptOrderWork() {
       const [inserted] = yield* runtime.unsafe<{ readonly id: string }>(
-        'insert into core.domain_events(tenant_id,producer_module_key,event_type,subject_module_key,subject_resource_type,subject_resource_id,payload_json) values($1,$2,$3,$4,$5,$6,$7::jsonb) returning domain_event_id as id',
+        'insert into core.domain_events(tenant_id,producer_module_key,event_type,subject_module_key,subject_resource_type,subject_resource_id,payload_json,action_invocation_id) values($1,$2,$3,$4,$5,$6,$7::jsonb,$8) returning domain_event_id as id',
         [
           orderTenantId,
           work.event.producerModuleKey,
@@ -133,6 +282,7 @@ const fixture = Effect.fn('OrderFinalizationDrainTests.fixture')(function* fixtu
           work.event.subjectResourceType,
           work.event.subjectResourceId,
           JSON.stringify(work.event.payloadJson),
+          invocationId,
         ],
       );
       const [message] = yield* runtime.unsafe<{ readonly id: string }>(
@@ -160,13 +310,44 @@ const fixture = Effect.fn('OrderFinalizationDrainTests.fixture')(function* fixtu
   // The real Order worker registration is delivered by Core; only its owner business work is inert.
   const cycle = Effect.gen(function* deliverOrderWork() {
     yield* matchOutboxMessages({ compositionRevision: revision });
-    return yield* runOutboxCycle({
-      claimOwner: 'order-finalization-drain',
-      compositionRevision: revision,
+    const outboxRuntime = yield* OutboxRuntime;
+    const worker = yield* OrderFinalizationWorker;
+    const completed = yield* Deferred.make<OutboxCycleResult, OutboxCycleError>();
+    const entry = defineOutboxWorkerEntry({
+      claimOwnerPrefix: claimOwner,
+      expectedDeployment: ultramodernApiMarker,
+      layer: Layer.mergeAll(
+        Layer.succeed(OrderFinalizationWorker, worker),
+        Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+        Layer.succeed(OutboxRuntime, {
+          ...outboxRuntime,
+          // Preserve the exact native cycle; the public entry owns genuine receiving admission.
+          runCycle: () =>
+            outboxRuntime
+              .runCycle({
+                claimOwner,
+                compositionRevision: revision,
+                registrations: outboxWorkers,
+                subscriptions,
+              })
+              .pipe(
+                Effect.provideService(OrderFinalizationWorker, worker),
+                Effect.onExit((exit) => Deferred.done(completed, exit)),
+              ),
+        }),
+      ),
+      ownerRegistration: commerceOrderRegistration,
       registrations: outboxWorkers,
       subscriptions,
     });
-  });
+    return yield* Deferred.await(completed).pipe(
+      Effect.raceFirst(
+        entry
+          .runLoop({ config: { claimOwner, maxDeliveries: 1, pollIntervalMs: 1000 } })
+          .pipe(Effect.andThen(Effect.never)),
+      ),
+    );
+  }).pipe(Effect.scoped);
   const deliver = cycle.pipe(
     Effect.provideService(OrderFinalizationWorker, { execute: () => Effect.void }),
     Effect.provide(outbox),
@@ -190,6 +371,7 @@ const fixture = Effect.fn('OrderFinalizationDrainTests.fixture')(function* fixtu
     deliverPreparation,
     eventCount,
     expiredProofWork,
+    invocationId,
     preparationWork,
     revision,
   };
@@ -241,8 +423,17 @@ const ownerTransport = (
 ) => {
   owners.issueGateway.mockReset();
   // A fixed far-future assertion expiry (2099-01-01) keeps this live test independent of its clock.
-  owners.issueGateway.mockImplementation(({ compositionRevision }) =>
-    Effect.succeed({ apiBaseUrl: '/order-api', compositionRevision, expiresAt: 4_070_908_800, token: 'drain-token' }),
+  // Originator subjects carry their release; the stub echoes it as the Shell would.
+  owners.issueGateway.mockImplementation((request) =>
+    Effect.succeed({
+      apiBaseUrl: '/order-api',
+      authorization: 'Bearer drain-token',
+      compositionRevision: Match.value(request.subject).pipe(
+        Match.tag('Originator', (originator) => originator.compositionRevision),
+        Match.orElse(() => null),
+      ),
+      expiresAt: 4_070_908_800,
+    }),
   );
   owners.load.mockReset();
   owners.load.mockReturnValueOnce(Effect.succeed(pending));
@@ -269,6 +460,18 @@ nativeTest('acknowledges an expired preparation delivery done so composition dra
       succeeded: 1,
     });
     expect(owners.complete).toHaveBeenCalledOnce();
+    // The delegation acts for the invocation that enqueued the delivered work, not for the worker.
+    expect(owners.issueGateway).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: {
+          _tag: 'Originator',
+          actionInvocationId: test.invocationId,
+          compositionRevision: test.revision,
+          tenantId: orderTenantId,
+        },
+      }),
+      expect.anything(),
+    );
     expect((yield* test.composition.observe()).pendingDurableWork).toEqual([]);
     yield* test.composition.drain();
     expect((yield* test.composition.observe()).phase).toBe('draining');
@@ -314,7 +517,7 @@ nativeTest('acknowledges an expired proof delivery without a Confirmation so com
 // replacements outlive this file and would leak into whatever runs next. Remove them and drop the
 // modules they replaced, so the next file evaluates the real implementations.
 afterAll(() => {
-  rs.doUnmock('@app/shared-contracts/server/gateway-context-api-key');
+  rs.doUnmock('@app/shared-contracts/gateway-context-server');
   rs.doUnmock('../../src/api/order-finalization-work-client.ts');
   rs.doUnmock('../../src/api/complete-order-preparation-action-client.ts');
   rs.doUnmock('../../src/api/record-order-proof-set-action-client.ts');

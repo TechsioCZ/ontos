@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 
 import { Array as EffectArray, Order, Schema } from 'effect';
@@ -42,29 +42,51 @@ const compare = (actual: readonly string[]): boolean =>
   );
 const sqlOrdered = EffectArray.sort(expected, Order.String);
 
+// Independently account for the shipped explicit GRANT/DROP signatures. This is a source contract
+// check, not execution of migrations or a substitute for the native verifier's privilege checks.
+const shippedRuntimeRoutines = () => {
+  const directory = new URL('../../drizzle/', import.meta.url);
+  const signatures = new Map<string, string>();
+  const migrations = EffectArray.sort(
+    readdirSync(directory, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map(({ name }) => name),
+    Order.String,
+  );
+  for (const migration of migrations) {
+    const sql = readFileSync(new URL(`${migration}/migration.sql`, directory), 'utf-8');
+    const declarations =
+      /(?<operation>GRANT\s+EXECUTE\s+ON\s+FUNCTION|DROP\s+FUNCTION(?:\s+IF\s+EXISTS)?)\s+"?commerce_customer_context"?\."?(?<name>[a-z0-9_]+)"?\((?<parameters>[^)]*)\)(?:\s+TO\s+"?(?<role>[a-z_]+)"?)?/giu;
+    for (const match of sql.matchAll(declarations)) {
+      const { name, operation, parameters, role } = Schema.decodeUnknownSync(
+        Schema.Struct({
+          name: Schema.String,
+          operation: Schema.String,
+          parameters: Schema.String,
+          role: Schema.UndefinedOr(Schema.String),
+        }),
+      )(match.groups);
+      const signature = `${name}(${parameters.toLowerCase().replaceAll(/\s+/gu, '')})`;
+      if (operation.startsWith('DROP')) {
+        signatures.delete(signature);
+      } else if (role === 'ontos_runtime') {
+        signatures.set(signature, name);
+      }
+    }
+  }
+  return EffectArray.sort([...signatures.values()], Order.String);
+};
+
 it('accepts the complete SQL-ordered runtime routine set through the verifier comparator', () => {
   expect(parsed.errors).toEqual([]);
   expect(source).toContain('array_agg(routine.proname::text order by routine.proname)');
   expect(source).toContain('!sameStrings(row.runtime_routines, EXPECTED_RUNTIME_ROUTINES)');
   expect(source).toContain('row.routine_count !== EXPECTED_RUNTIME_ROUTINES.length');
-  expect(expected).toHaveLength(133);
-  expect(new Set(expected).size).toBe(133);
+  expect(expected).toHaveLength(126);
+  expect(new Set(expected).size).toBe(126);
+  expect(shippedRuntimeRoutines()).toEqual(sqlOrdered);
+  expect(expected).toContain('recover_market_retirement_reservation');
   expect(compare(sqlOrdered)).toBe(true);
-});
-
-it('includes the exact original enrollment read granted by its migration', () => {
-  const migration = readFileSync(
-    new URL('../../drizzle/20261103120000_original-enrollment-request-read/migration.sql', import.meta.url),
-    'utf-8',
-  );
-  const signature = '"commerce_customer_context"."read_original_portal_enrollment"(uuid, uuid, uuid, text, text)';
-  expect(expected).toContain('read_original_portal_enrollment');
-  expect(migration).toContain('CREATE FUNCTION "commerce_customer_context"."read_original_portal_enrollment"(');
-  expect(migration).toContain(
-    'STABLE\nSECURITY DEFINER\nSET search_path = pg_catalog, commerce_customer_context, pg_temp',
-  );
-  expect(migration).toContain(`REVOKE ALL ON FUNCTION ${signature} FROM PUBLIC;`);
-  expect(migration).toContain(`GRANT EXECUTE ON FUNCTION ${signature} TO "ontos_runtime";`);
 });
 
 it('rejects missing, duplicate, unexpected, and substituted runtime routines', () => {

@@ -3,7 +3,7 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
-import { ContactPointTypeSchema, PartyContactPointSchema } from '../domain/contact-point.ts';
+import { ContactPointTypeSchema, PartyContactPointViewSchema } from '../domain/contact-point.ts';
 import { PartyRefSchema } from '../resources/party.ts';
 
 export const PartyContactPointsRequestSchema = Schema.Struct({
@@ -13,7 +13,7 @@ export const PartyContactPointsRequestSchema = Schema.Struct({
 });
 export type PartyContactPointsRequest = typeof PartyContactPointsRequestSchema.Type;
 export const PartyContactPointsResponseSchema = Schema.Struct({
-  items: Schema.Array(PartyContactPointSchema),
+  items: Schema.Array(PartyContactPointViewSchema),
 });
 export type PartyContactPointsResponse = typeof PartyContactPointsResponseSchema.Type;
 

@@ -55,6 +55,7 @@ import {
 import { executeTaxCorrectionPreviewWithAuthorization } from '../../src/api/tax-correction-preview-client.ts';
 import { taxCorrectionPreviewRead } from '../../src/api/tax-correction-preview.read.ts';
 import { taxRuleHistoryRead } from '../../src/api/tax-rule-history.read.ts';
+import { taxRegistration } from '../../vertical.registration.ts';
 import { TaxDependencyUnavailableSchema } from '../../src/domain/tax-non-success-outcome.ts';
 import {
   TaxCorrectionDeltaSchema,
@@ -140,10 +141,11 @@ const grantAllContextPermissions: ContextAccessService['contextPermissions'] = (
 
 const makeGrantedHarness = Effect.fn('TaxCorrectionPreviewTest.makeGrantedHarness')(function* makeGrantedHarness() {
   const harness = yield* makeReadTestHarness({
+    access: 'allowed',
     executeOwnerQuery: () => Effect.die('The Tax correction preview reads no owner state'),
     operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-10-05T12:00:00.000Z')),
     ownerAuthorizationDecision: 'allowed',
-    permissionDecision: 'allowed',
+    ownerRegistration: taxRegistration,
     scope,
   });
   const builtContext = yield* Layer.build(harness.layer);

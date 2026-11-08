@@ -1,12 +1,17 @@
 import { OperationContextUnavailable } from '@app/core-runtime';
-import type { OperationalScope, ScopedTransactionExecutor, ActionServicePreparationContext } from '@app/core-runtime';
+import type {
+  OperationalScope,
+  ScopedTransactionExecutor,
+  ActionServicePreparationContext,
+  ActionServiceFactory,
+} from '@app/core-runtime';
 import {
   PricingCommitmentConfirmationIssuedSchema,
   PricingCommitmentConfirmationBindingSchema,
 } from '@app/pricing-contracts/domain/commitment-confirmation';
 import { PricingQuotationBindingSchema, PricingQuotationIssuedSchema } from '@app/pricing-contracts/domain/quotation';
 import { PricingDecisionSchema } from '@app/pricing-contracts/pricing-decision';
-import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { Context, Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
 
 import type { ManageCommitmentConfirmationActionServices } from '../actions/manage-commitment-confirmation.action.ts';
 import type { CommitmentConfirmationPersistence } from '../services/commitment-confirmation-persistence.service.ts';
@@ -161,13 +166,28 @@ type CommitmentConfirmationProductionServices = ManageCommitmentConfirmationActi
   readonly recoverIssuance: CommitmentConfirmationPersistence['recoverIssuance'];
 };
 
+type CommitmentConfirmationFactoryRequirements =
+  | PricingCommitmentConfirmationVerificationFactory
+  | PricingQuotationRevalidationFactory
+  | PricingQuotationBackedConfirmationIssuanceFactory
+  | PricingCommitmentConfirmationRenewalFactory;
+
+type PreparedCommitmentConfirmationServices = ActionServiceFactory<
+  CommitmentConfirmationProductionServices,
+  Crypto.Crypto | CommitmentConfirmationFactoryRequirements
+>;
+
 export const commitmentConfirmationProductionForScope = Effect.fn('PricingCommitmentConfirmation.productionForScope')(
   function* productionForScope(
     transaction: ScopedTransactionExecutor,
     scope: OperationalScope,
     compositionRevision: string | undefined,
     preparedBinding?: Effect.Success<ReturnType<typeof pricingFinalizationOwnerGateways>>['verifyBinding'],
-  ) {
+  ): Effect.fn.Return<
+    CommitmentConfirmationProductionServices,
+    OperationContextUnavailable,
+    Crypto.Crypto | CommitmentConfirmationFactoryRequirements
+  > {
     // Core read factories can receive no revision; an absent revision must never reach an owner gateway.
     if (compositionRevision === undefined) {
       return yield* new OperationContextUnavailable({
@@ -176,7 +196,8 @@ export const commitmentConfirmationProductionForScope = Effect.fn('PricingCommit
       });
     }
     const proof = yield* pricingCommitmentOwnerProof.pipe(Effect.mapError(unavailable));
-    const owners = yield* pricingFinalizationOwnerGateways(scope, compositionRevision).pipe(
+    const crypto = yield* Crypto.Crypto;
+    const owners = yield* pricingFinalizationOwnerGateways(scope, compositionRevision, crypto).pipe(
       Effect.mapError(unavailable),
     );
     const verifyBinding = preparedBinding ?? owners.verifyBinding;
@@ -363,7 +384,10 @@ export const commitmentConfirmationProductionForScope = Effect.fn('PricingCommit
 /** Released owner binding reads, then immutable SQL-source revalidation inside the Action commit. */
 export const prepareCommitmentConfirmationProductionServices = Effect.fn(
   'PricingCommitmentConfirmation.prepareServices',
-)(function* prepareServices(payload: ManageCommitmentConfirmationPayload, context: ActionServicePreparationContext) {
+)(function* prepareServices(
+  payload: ManageCommitmentConfirmationPayload,
+  context: ActionServicePreparationContext,
+): Effect.fn.Return<PreparedCommitmentConfirmationServices, OperationContextUnavailable, Crypto.Crypto> {
   const binding = payload.kind === 'VERIFY_COMMITMENT_CONFIRMATION' ? payload.requestedBinding : payload.binding;
   if (
     binding.purchase.tenantId !== context.scope.tenantId ||
@@ -390,7 +414,10 @@ export const prepareCommitmentConfirmationProductionServices = Effect.fn(
   const { before, owners } = yield* Effect.all(
     {
       before: context.transaction((transaction) => load(transaction, context.scope)).pipe(Effect.mapError(unavailable)),
-      owners: pricingFinalizationOwnerGateways(context.scope, context.compositionRevision).pipe(
+      owners: Crypto.Crypto.pipe(
+        Effect.flatMap((crypto) =>
+          pricingFinalizationOwnerGateways(context.scope, context.compositionRevision, crypto),
+        ),
         Effect.mapError(unavailable),
       ),
     },
@@ -443,14 +470,30 @@ export const prepareCommitmentConfirmationProductionServices = Effect.fn(
 export class PricingCommitmentConfirmationProduction extends Context.Service<
   PricingCommitmentConfirmationProduction,
   {
-    readonly forScope: typeof commitmentConfirmationProductionForScope;
-    readonly prepareServices?: typeof prepareCommitmentConfirmationProductionServices;
+    readonly forScope: (
+      ...input: Parameters<typeof commitmentConfirmationProductionForScope>
+    ) => Effect.Effect<
+      CommitmentConfirmationProductionServices,
+      OperationContextUnavailable,
+      CommitmentConfirmationFactoryRequirements
+    >;
+    readonly prepareServices?: (
+      ...input: Parameters<typeof prepareCommitmentConfirmationProductionServices>
+    ) => Effect.Effect<PreparedCommitmentConfirmationServices, OperationContextUnavailable>;
   }
 >()('@app/pricing/integrations/commitment-confirmation-production/PricingCommitmentConfirmationProduction') {}
-export const pricingCommitmentConfirmationProductionLive = Layer.succeed(PricingCommitmentConfirmationProduction, {
-  forScope: commitmentConfirmationProductionForScope,
-  prepareServices: prepareCommitmentConfirmationProductionServices,
-});
+export const pricingCommitmentConfirmationProductionLive = Layer.effect(
+  PricingCommitmentConfirmationProduction,
+  Effect.gen(function* makeProduction() {
+    const crypto = yield* Crypto.Crypto;
+    return {
+      forScope: (...input: Parameters<typeof commitmentConfirmationProductionForScope>) =>
+        commitmentConfirmationProductionForScope(...input).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+      prepareServices: (...input: Parameters<typeof prepareCommitmentConfirmationProductionServices>) =>
+        prepareCommitmentConfirmationProductionServices(...input).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+    };
+  }),
+);
 
 export const pricingCommitmentAlgorithmFactoriesLive = Layer.mergeAll(
   pricingCommitmentConfirmationRenewalFactoryLive,

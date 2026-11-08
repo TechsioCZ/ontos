@@ -2,12 +2,17 @@ import { activeAssignmentMember, loadAssignablePrincipalDirectory } from '@app/c
 import { assignmentPrincipalIds } from './assignment-policy.ts';
 import { agentHistoryPageSql } from '@app/core-runtime/db/agent-history-page';
 // CRM persistence + ACL (owned by crm-scaffold). One JSONB document per (tenant, legal entity), optimistic
-// revision. The viewer (principal + context permissions + salesperson record) is computed here for every read
-// and command; projections and reducers in shared/ enforce it (C00).
-import { ContextAccess, isConnectionWriteAllowed, OperationContextUnavailable } from '@app/core-runtime';
+// revision. The viewer (principal + the reach the one access gate resolved + salesperson record) is computed
+// here for every read and command; projections and reducers in shared/ enforce it (C00).
+import { AccessKeySchema, isConnectionWriteAllowed, OperationContextUnavailable } from '@app/core-runtime';
 import type { ActionServicePreparationContext, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
+import { AccessDecisionGate, capabilityPolicyOf } from '@app/core-runtime/access/enforcement';
+import type { GateCarrier } from '@app/core-runtime/access/enforcement';
+import type { ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
 
 import { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-verifier/server';
+import { CounterpartyReadRequestSchema } from '@app/party-registry/api';
+import type { CounterpartyReadResponse } from '@app/party-registry/api';
 import { executeCounterpartyReadWithAuthorization } from '@app/party-registry/api/client';
 import { and, eq, sql } from 'drizzle-orm';
 import { DateTime, Effect, Option, Schema } from 'effect';
@@ -31,8 +36,13 @@ import type { PrincipalId } from '../../shared/domain/common.ts';
 
 import { dispatchCrmCommand, partyLinksOf } from '../../shared/commands/index.ts';
 import type { PartyLinkInput } from '../../shared/domain/clients.ts';
-import { canWriteAnything, crmPermissionKeys } from '../../shared/domain/access.ts';
-import type { CrmPermissionKey, CrmViewer } from '../../shared/domain/access.ts';
+import { canWriteAnything, crmRecordSelectorOf, viewerFor as viewerFromGrants } from '../../shared/domain/access.ts';
+import type { CrmGrants, CrmRecordSelector, CrmViewer } from '../../shared/domain/access.ts';
+import {
+  crmApplyCommandDeclaration,
+  crmClientOwnerAssignGroup,
+  crmRecordsReadDeclaration,
+} from '../../shared/domain/access-declarations.ts';
 
 import { CrmStateSchema, initialCrmState, projectCrmState, withDefaultSlices } from '../../shared/domain/state.ts';
 import type { CrmState } from '../../shared/domain/state.ts';
@@ -79,18 +89,16 @@ const NotVisibleProblem = Schema.Struct({ status: Schema.Literals([403, 404]) })
 const isNotVisible = Schema.is(NotVisibleProblem);
 
 interface CounterpartyFacts {
-  readonly currentRoles: readonly {
-    readonly roleType: string;
-    readonly state: string;
-    readonly validFrom: string;
-    readonly validTo: string | null;
-  }[];
-  readonly legalEntityRef: { readonly resourceId: string };
+  readonly currentRoles: readonly Pick<
+    CounterpartyReadResponse['currentRoles'][number],
+    'roleType' | 'state' | 'validFrom' | 'validTo'
+  >[];
+  readonly legalEntityRef: Pick<CounterpartyReadResponse['legalEntityRef'], 'resourceId'>;
   readonly party: {
-    readonly archived: boolean;
-    readonly canonicalPartyRef: { readonly resourceId: string };
-    readonly displayName: string | null;
-    readonly storedPartyRef: { readonly resourceId: string };
+    readonly archived: CounterpartyReadResponse['party']['archived'];
+    readonly canonicalPartyRef: Pick<CounterpartyReadResponse['party']['canonicalPartyRef'], 'resourceId'>;
+    readonly displayName?: CounterpartyReadResponse['party']['displayName'];
+    readonly storedPartyRef: Pick<CounterpartyReadResponse['party']['storedPartyRef'], 'resourceId'>;
   };
 }
 
@@ -124,7 +132,7 @@ export const verifiedPartyOf = (
     return 'Firma nemá v evidenci zákazníků platnou roli zákazníka';
   }
   const candidate = { counterpartyId: link.counterpartyId, partyId: counterparty.party.canonicalPartyRef.resourceId };
-  if (counterparty.party.displayName !== null) {
+  if (counterparty.party.displayName !== null && counterparty.party.displayName !== undefined) {
     Object.assign(candidate, { displayName: counterparty.party.displayName });
   }
   return Option.getOrElse(
@@ -133,50 +141,86 @@ export const verifiedPartyOf = (
   );
 };
 
-/** One batched context-permission check for all five CRM permissions. */
-const grantedPermissions = Effect.fn('Crm.grantedPermissions')(function* grantedPermissions(
-  access: ContextAccess['Service'],
-  scope: OperationalScope,
-) {
-  if (scope.legalEntityId === undefined || access.contextPermissions === undefined) {
+/**
+ * The three CRM declarations the owner asks the one access gate about (ADR-0030). Each carrier is the
+ * shared declaration with its key branded, so the descriptor and this owner can never name a
+ * different capability. Nothing here grants: the gate answers, the owner only reads its answer.
+ */
+const crmRecordsReadCarrier = {
+  accessDeclaration: { ...crmRecordsReadDeclaration, key: AccessKeySchema.make(crmRecordsReadDeclaration.key) },
+} satisfies GateCarrier;
+const crmApplyCommandCarrier = {
+  accessDeclaration: { ...crmApplyCommandDeclaration, key: AccessKeySchema.make(crmApplyCommandDeclaration.key) },
+} satisfies GateCarrier;
+const crmClientOwnerAssignCarrier = {
+  accessDeclaration: { ...crmClientOwnerAssignGroup, key: AccessKeySchema.make(crmClientOwnerAssignGroup.key) },
+} satisfies GateCarrier;
+
+/** The record selector a resolved list predicate stands for; a reach it cannot describe is no reach. */
+const readSelectorOf = (
+  predicate: ListAccessPredicate | undefined,
+  principalId: string,
+): CrmRecordSelector | undefined => (predicate === undefined ? undefined : crmRecordSelectorOf(predicate, principalId));
+
+/**
+ * The one access gate's answer about this principal in this company: the reach over the records read,
+ * whether it may change CRM at all, and whether it may reassign a client owner. An engine that cannot
+ * answer is retryable, never an allow (O48b).
+ */
+const crmGrants = Effect.fn('Crm.grants')(function* crmGrants(scope: OperationalScope) {
+  if (scope.legalEntityId === undefined) {
     return yield* referenceUnavailable();
   }
-  const decisions = yield* access.contextPermissions({
-    legalEntityId: scope.legalEntityId,
-    principalId: scope.principalId,
-    targets: crmPermissionKeys.map((permission) => ({ moduleId, permission })),
-    tenantId: scope.tenantId,
-  });
-  if (decisions.length !== crmPermissionKeys.length || decisions.some((entry) => entry.decision === 'unavailable')) {
-    return yield* referenceUnavailable();
-  }
-  const allowed = new Set(
-    decisions.flatMap((entry) => (entry.decision === 'allowed' ? [entry.key.replace(`${moduleId}:`, '')] : [])),
+  const gate = yield* AccessDecisionGate;
+  const question = {
+    legalEntityScope: 'required' as const,
+    now: DateTime.toDateUtc(yield* DateTime.now),
+    scope,
+  };
+  // One bounded batch: the write and reassignment decisions and the records read's row predicate.
+  const [decisions, listing] = yield* Effect.all(
+    [
+      gate.decideMany([
+        { ...question, carrier: crmApplyCommandCarrier },
+        {
+          ...question,
+          carrier: crmClientOwnerAssignCarrier,
+          parentRead: { capability: capabilityPolicyOf(crmApplyCommandCarrier.accessDeclaration) },
+        },
+      ]),
+      gate.list({ ...question, carrier: crmRecordsReadCarrier }),
+    ],
+    { concurrency: 1 },
   );
-  return (permission: CrmPermissionKey) => allowed.has(permission);
+  const [write, assign] = decisions;
+  if (write === undefined || assign === undefined) {
+    return yield* referenceUnavailable();
+  }
+  if (
+    write.outcome === 'UNAVAILABLE' ||
+    assign.outcome === 'UNAVAILABLE' ||
+    listing.decision.outcome === 'UNAVAILABLE'
+  ) {
+    return yield* referenceUnavailable();
+  }
+  const assignAllowed = assign.outcome === 'ALLOWED';
+  const writeAllowed = write.outcome === 'ALLOWED';
+  const readSelector =
+    listing.decision.outcome === 'ALLOWED' ? readSelectorOf(listing.predicate, scope.principalId) : undefined;
+  return readSelector === undefined
+    ? { assign: assignAllowed, write: writeAllowed }
+    : { assign: assignAllowed, readSelector, write: writeAllowed };
 });
 
 /** The ACL subject of every read and command: permissions + the principal's salesperson record. */
-export const viewerFor = (
-  state: CrmState,
-  principalId: PrincipalId,
-  has: (permission: CrmPermissionKey) => boolean,
-): CrmViewer => {
+export const viewerFor = (state: CrmState, principalId: PrincipalId, grants: CrmGrants): CrmViewer => {
   const salesperson = salespersonOfPrincipal(state.salespeople, principalId);
-  const base = {
-    assign: has('demo.crm.assign'),
-    principalId,
-    readAll: has('demo.crm.read_all'),
-    readAssigned: has('demo.crm.read_assigned'),
-    writeAll: has('demo.crm.write_all'),
-    writeAssigned: has('demo.crm.write_assigned'),
-  };
-  return salesperson === undefined ? base : { ...base, salespersonId: salesperson.id };
+  return viewerFromGrants(grants, principalId, salesperson?.id);
 };
 
 /**
  * The viewer a records read reports. A read-only or approval-only MCP connection cannot change CRM directly, so its
- * write flags are off; read reach stays exactly as before (write_assigned alone also lets a salesperson read).
+ * write flags are off; read reach stays exactly as before (the assigned write reach also lets a salesperson read).
  */
 export const reportedViewer = (
   viewer: CrmViewer,
@@ -214,14 +258,14 @@ const verifyCrmParties = Effect.fn('Crm.verifyParties')(function* verifyCrmParti
     ) {
       const credential = yield* references.issue('party-registry').pipe(Effect.mapError(registryUnavailable));
       const counterparty = yield* executeCounterpartyReadWithAuthorization(
-        {
+        yield* Schema.decodeUnknownEffect(CounterpartyReadRequestSchema)({
           counterpartyRef: {
             moduleId: 'party.registry',
             resourceId: link.counterpartyId,
             resourceType: 'party.registry.counterparty',
             tenantId: scope.tenantId,
           },
-        },
+        }).pipe(Effect.mapError(registryUnavailable)),
         credential.authorization,
         scope.correlationId,
         { baseUrl: credential.apiBaseUrl, compositionRevision: credential.compositionRevision },
@@ -242,7 +286,7 @@ const verifyCrmParties = Effect.fn('Crm.verifyParties')(function* verifyCrmParti
 });
 interface CrmCommandPreparation {
   readonly actionInvocationId: string;
-  readonly has: (permission: CrmPermissionKey) => boolean;
+  readonly grants: CrmGrants;
   readonly payload: ApplyCommandPayload;
   readonly verifiedParties: ReadonlyMap<string, VerifiedParty> | null;
 }
@@ -255,14 +299,13 @@ export const prepareCrmCommand = Effect.fn('Crm.prepareCommand')(function* prepa
   if (scope.legalEntityId === undefined) {
     return yield* referenceUnavailable();
   }
-  const access = yield* ContextAccess;
-  const has = yield* grantedPermissions(access, scope);
-  if (!has('demo.crm.write_all') && !has('demo.crm.write_assigned')) {
+  const grants = yield* crmGrants(scope);
+  if (!grants.write) {
     return yield* new CrmPermissionDenied({ code: 'crm_permission_denied', reason: 'Nemáte oprávnění k zápisu v CRM' });
   }
   const links = partyLinksOf(payload.command);
   if (links.length === 0) {
-    return { has, verifiedParties: null };
+    return { grants, verifiedParties: null };
   }
   const { legalEntityId } = scope;
   const revision = yield* context.transaction((transaction) =>
@@ -284,7 +327,7 @@ export const prepareCrmCommand = Effect.fn('Crm.prepareCommand')(function* prepa
   }
   // The snapshot has released its SQL connection before any credential or owner call begins.
   const verifiedParties = yield* verifyCrmParties(links, scope);
-  return { has, verifiedParties };
+  return { grants, verifiedParties };
 });
 
 export const persistenceService = Effect.fn('Crm.persistenceService')(
@@ -363,12 +406,12 @@ export const persistenceService = Effect.fn('Crm.persistenceService')(
       ) {
         return yield* referenceUnavailable();
       }
-      const { has } = prepared;
+      const { grants } = prepared;
       const snapshot = yield* load();
       const actorPrincipalId = yield* Schema.decodeEffect(PrincipalIdSchema)(scope.principalId).pipe(
         Effect.mapError(referenceUnavailable),
       );
-      const viewer = viewerFor(snapshot.state, actorPrincipalId, has);
+      const viewer = viewerFor(snapshot.state, actorPrincipalId, grants);
       if (!canWriteAnything(viewer)) {
         return yield* new CrmPermissionDenied({
           code: 'crm_permission_denied',
@@ -408,9 +451,9 @@ export const persistenceService = Effect.fn('Crm.persistenceService')(
       return { entityIds: [...change.entityIds], revision };
     });
     /** Ordinary records, bounded history, or only the clients needed by the owner review. */
-    type LoadRecordsArgs = [request?: RecordsRequest, reviewClientIds?: readonly string[]];
+    type LoadRecordsArgs = [grants: CrmGrants, request?: RecordsRequest, reviewClientIds?: readonly string[]];
     const loadRecords = Effect.fn('Crm.loadRecords')(
-      function* loadCrmRecords(...[request = {}, reviewClientIds]: LoadRecordsArgs) {
+      function* loadCrmRecords(...[grants, request = {}, reviewClientIds]: LoadRecordsArgs) {
         const empty = yield* Schema.encodeEffect(Schema.fromJsonString(CrmStateSchema))(initialCrmState);
         const historySource = sql`${crmStates.state}->'aiChanges'`;
         const history =
@@ -434,6 +477,50 @@ export const persistenceService = Effect.fn('Crm.persistenceService')(
           'salespeople', coalesce((select jsonb_agg(p) from (select p from jsonb_array_elements(coalesce(${crmStates.state}->'salespeople', '[]'::jsonb)) p
             where p->>'principalId' = ${scope.principalId} and p->>'active' = 'true' limit 1) people), '[]'::jsonb)))`;
         }
+        if (grants.readSelector !== 'all') {
+          const own = grants.readSelector === 'assigned' || grants.readSelector === 'entrusted';
+          // Apply the owner reach inside SQL. Contacts, visits, orders and history use exactly the
+          // same visible client ids; neither a search nor a direct lookup fetches another rep's data.
+          state = sql`(with source as (select ${state} as s),
+            visible_clients as (
+              select c from source, jsonb_array_elements(coalesce(s->'clients'->'items', '[]'::jsonb)) c
+              where ${own} and exists (
+                select 1 from jsonb_array_elements(coalesce(s->'salespeople', '[]'::jsonb)) p
+                where p->>'id' = c->>'ownerSalespersonId'
+                  and p->>'principalId' = ${scope.principalId} and p->>'active' = 'true'
+              )
+            ),
+            visible_orders as (
+              select o - 'candidates' as o from source,
+                jsonb_array_elements(coalesce(s->'imports'->'orders', '[]'::jsonb)) o
+              where o->>'clientId' in (select c->>'id' from visible_clients)
+            )
+            select s || jsonb_build_object(
+              'aiChanges', jsonb_build_object('batches', '[]'::jsonb, 'changes', '[]'::jsonb, 'log', '[]'::jsonb),
+              'salespeople', coalesce((select jsonb_agg(p) from jsonb_array_elements(coalesce(s->'salespeople', '[]'::jsonb)) p
+                where p->>'principalId' = ${scope.principalId}), '[]'::jsonb),
+              'clients', jsonb_build_object(
+                'items', coalesce((select jsonb_agg(c) from visible_clients), '[]'::jsonb),
+                'contacts', coalesce((select jsonb_agg(v) from jsonb_array_elements(coalesce(s->'clients'->'contacts', '[]'::jsonb)) v
+                  where v->>'clientId' in (select c->>'id' from visible_clients)), '[]'::jsonb),
+                'assignmentHistory', coalesce((select jsonb_agg(v) from jsonb_array_elements(coalesce(s->'clients'->'assignmentHistory', '[]'::jsonb)) v
+                  where v->>'clientId' in (select c->>'id' from visible_clients)), '[]'::jsonb),
+                'events', coalesce((select jsonb_agg(v) from jsonb_array_elements(coalesce(s->'clients'->'events', '[]'::jsonb)) v
+                  where v->>'clientId' in (select c->>'id' from visible_clients)), '[]'::jsonb)),
+              'visits', jsonb_build_object(
+                'items', coalesce((select jsonb_agg(v) from jsonb_array_elements(coalesce(s->'visits'->'items', '[]'::jsonb)) v
+                  where v->>'clientId' in (select c->>'id' from visible_clients) and v->'archive' is null), '[]'::jsonb),
+                'plan', coalesce((select jsonb_agg(v) from jsonb_array_elements(coalesce(s->'visits'->'plan', '[]'::jsonb)) v
+                  where v->>'clientId' in (select c->>'id' from visible_clients)), '[]'::jsonb)),
+              'imports', jsonb_build_object(
+                'batches', '[]'::jsonb,
+                'orders', coalesce((select jsonb_agg(o) from visible_orders), '[]'::jsonb),
+                'customerLinks', coalesce((select jsonb_agg(v) from jsonb_array_elements(coalesce(s->'imports'->'customerLinks', '[]'::jsonb)) v
+                  where v->>'clientId' in (select c->>'id' from visible_clients)), '[]'::jsonb),
+                'pairingHistory', coalesce((select jsonb_agg(v) from jsonb_array_elements(coalesce(s->'imports'->'pairingHistory', '[]'::jsonb)) v
+                  where v->>'orderId' in (select o->>'id' from visible_orders)), '[]'::jsonb))
+            ) from source)`;
+        }
         return yield* transaction
           .select({ revision: crmStates.revision, state })
           .from(crmStates)
@@ -443,8 +530,18 @@ export const persistenceService = Effect.fn('Crm.persistenceService')(
       },
       (program, ..._args: LoadRecordsArgs) => program.pipe(Effect.mapError(unavailable)),
     );
-    const loadAssignmentDirectory = () =>
-      loadAssignablePrincipalDirectory(transaction, scope).pipe(Effect.mapError(unavailable));
+    const loadAssignmentDirectory = (grants: CrmGrants) =>
+      loadAssignablePrincipalDirectory(transaction, scope).pipe(
+        Effect.mapError(unavailable),
+        Effect.map((directory) =>
+          grants.readSelector === 'all'
+            ? directory
+            : {
+                ...directory,
+                members: directory.members.filter((member) => member.principalRef.principalId === scope.principalId),
+              },
+        ),
+      );
     return { apply, loadAssignmentDirectory, loadRecords };
   },
   Effect.mapError((cause) =>
@@ -460,7 +557,7 @@ export const persistenceService = Effect.fn('Crm.persistenceService')(
 
 /** What a records read knows before its transaction opens: every CRM permission, in one bulk check. */
 export const crmRecordsGrants = Effect.fn('Crm.recordsGrants')(function* crmRecordsGrants(scope: OperationalScope) {
-  return yield* grantedPermissions(yield* ContextAccess, scope);
+  return yield* crmGrants(scope);
 });
 
 /** The stored CRM row as the owner transaction read it (still encoded). */
@@ -470,7 +567,7 @@ export type LoadedCrmRecords = Option.Option<{ readonly revision: number; readon
 export const finishCrmRecords = Effect.fn('Crm.finishRecords')(function* finishCrmRecords(
   request: RecordsRequest,
   loaded: LoadedCrmRecords,
-  has: (permission: CrmPermissionKey) => boolean,
+  grants: CrmGrants,
   scope: OperationalScope,
 ) {
   const snapshot = Option.isNone(loaded)
@@ -484,7 +581,7 @@ export const finishCrmRecords = Effect.fn('Crm.finishRecords')(function* finishC
   const actorPrincipalId = yield* Schema.decodeEffect(PrincipalIdSchema)(scope.principalId).pipe(
     Effect.mapError(referenceUnavailable),
   );
-  const viewer = viewerFor(snapshot.state, actorPrincipalId, has);
+  const viewer = viewerFor(snapshot.state, actorPrincipalId, grants);
   const projected = projectCrmState(snapshot.state, viewer);
   const narrowed =
     request.clientId === undefined

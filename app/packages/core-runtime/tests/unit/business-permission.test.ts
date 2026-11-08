@@ -6,7 +6,6 @@ import {
   defineBusinessPermission,
   defineBusinessPermissionCatalog,
 } from '../../src/permissions/business-permission.ts';
-import { canTransitionAuthorizationMutation } from '../../src/permissions/authorization-mutation.ts';
 
 const readPermission = defineBusinessPermission({
   allowedScopeKinds: ['counterparty', 'counterparty_storefront'],
@@ -24,10 +23,8 @@ const readPermission = defineBusinessPermission({
 it('builds an immutable, reciprocal and versioned permission catalog', () => {
   expect(Schema.decodeSync(BusinessPermissionCodeSchema)('retail.repeat_order')).toBe('retail.repeat_order');
   expect(Schema.decodeSync(BusinessPermissionCodeSchema)('pricing.price_group.read')).toBe('pricing.price_group.read');
-  expect(Schema.decodeSync(BusinessPermissionCodeSchema)('assortment.configuration.read')).toBe(
-    'assortment.configuration.read',
-  );
-  expect(Schema.decodeSync(BusinessPermissionScopeKindSchema)('assortment_boundary')).toBe('assortment_boundary');
+  expect(Schema.decodeSync(BusinessPermissionCodeSchema)('fixture.read')).toBe('fixture.read');
+  expect(Schema.decodeSync(BusinessPermissionScopeKindSchema)('fixture_target')).toBe('fixture_target');
   expect(Schema.decodeSync(BusinessPermissionCodeSchema)('pricing.currency_support.read')).toBe(
     'pricing.currency_support.read',
   );
@@ -45,8 +42,8 @@ it('builds an immutable, reciprocal and versioned permission catalog', () => {
 });
 
 it('rejects invalid codes, duplicate catalog entries, and one-sided group membership', () => {
-  expect(() => defineBusinessPermission({ ...readPermission, key: 'generic.manage' })).toThrow();
-  for (const permission of ['assortment.manage', 'assortment.boundary.replace', 'assortment.rules.create']) {
+  expect(() => defineBusinessPermission({ ...readPermission, key: 'generic.manage' })).not.toThrow();
+  for (const permission of ['invalid permission', 'UPPERCASE.code', 'invalid..code']) {
     expect(() => Schema.decodeSync(BusinessPermissionCodeSchema)(permission)).toThrow();
   }
   expect(() =>
@@ -67,115 +64,18 @@ it('rejects invalid codes, duplicate catalog entries, and one-sided group member
   ).toThrow(/undeclared authority group/u);
 });
 
-it('accepts only the canonical tenant-only Pricing target kinds', () => {
-  expect(
-    defineBusinessPermission({
-      ...readPermission,
-      allowedScopeKinds: ['pricing_catalog', 'price_group'],
-      key: 'pricing.price_group.create',
-    }).allowedScopeKinds,
-  ).toEqual(['pricing_catalog', 'price_group']);
-  expect(() =>
-    defineBusinessPermission({
-      ...readPermission,
-      allowedScopeKinds: ['counterparty'],
-      key: 'pricing.price_group.create',
-    }),
-  ).toThrow(/incompatible target scope/u);
-  expect(() =>
-    defineBusinessPermission({
-      ...readPermission,
-      allowedScopeKinds: ['price_group'],
-    }),
-  ).toThrow(/incompatible target scope/u);
+it('accepts explicit owner scope vocabulary without interpreting permission families', () => {
+  const descriptor = defineBusinessPermission({
+    ...readPermission,
+    allowedScopeKinds: ['fixture_parent', 'fixture_child'],
+    key: 'fixture.operation',
+  });
+  expect(descriptor.allowedScopeKinds).toEqual(['fixture_parent', 'fixture_child']);
+  expect(Object.isFrozen(descriptor.allowedScopeKinds)).toBe(true);
 });
 
-it('accepts Inventory permissions only for exact Inventory Resource scope', () => {
-  expect(Schema.decodeSync(BusinessPermissionCodeSchema)('inventory.stock.correct')).toBe('inventory.stock.correct');
-  expect(
-    defineBusinessPermission({
-      ...readPermission,
-      allowedScopeKinds: ['inventory_resource'],
-      key: 'inventory.stock.correct',
-    }).allowedScopeKinds,
-  ).toEqual(['inventory_resource']);
-  expect(() =>
-    defineBusinessPermission({
-      ...readPermission,
-      allowedScopeKinds: ['counterparty'],
-      key: 'inventory.stock.correct',
-    }),
-  ).toThrow(/incompatible target scope/u);
-  expect(() =>
-    defineBusinessPermission({
-      ...readPermission,
-      allowedScopeKinds: ['inventory_resource'],
-    }),
-  ).toThrow(/incompatible target scope/u);
-});
-
-it('accepts TAX management permissions only for exact Selling Legal Entity scope', () => {
-  for (const key of ['tax.rule.manage']) {
-    expect(
-      defineBusinessPermission({
-        ...readPermission,
-        allowedScopeKinds: ['tax_selling_legal_entity'],
-        key,
-      }).allowedScopeKinds,
-    ).toEqual(['tax_selling_legal_entity']);
-    for (const scope of ['module', 'counterparty'] as const) {
-      expect(() =>
-        defineBusinessPermission({
-          ...readPermission,
-          allowedScopeKinds: [scope],
-          key,
-        }),
-      ).toThrow(/incompatible target scope/u);
-    }
+it('rejects empty, repeated and malformed scope declarations', () => {
+  for (const allowedScopeKinds of [[], ['fixture_parent', 'fixture_parent'], ['invalid scope']]) {
+    expect(() => defineBusinessPermission({ ...readPermission, allowedScopeKinds })).toThrow();
   }
-  expect(
-    defineBusinessPermission({
-      ...readPermission,
-      allowedScopeKinds: ['module'],
-      key: 'tax.governed.read',
-    }).allowedScopeKinds,
-  ).toEqual(['module']);
-  expect(() =>
-    defineBusinessPermission({
-      ...readPermission,
-      allowedScopeKinds: ['tax_selling_legal_entity'],
-      key: 'tax.governed.read',
-    }),
-  ).toThrow(/incompatible target scope/u);
-});
-
-it('models module-scoped context permissions without admitting a business target scope', () => {
-  expect(
-    defineBusinessPermission({
-      ...readPermission,
-      allowedScopeKinds: ['module'],
-      key: 'pricing.currency_support.read',
-    }).allowedScopeKinds,
-  ).toEqual(['module']);
-  expect(() =>
-    defineBusinessPermission({
-      ...readPermission,
-      allowedScopeKinds: ['pricing_catalog'],
-      key: 'pricing.currency_support.read',
-    }),
-  ).toThrow(/incompatible target scope/u);
-  expect(() =>
-    defineBusinessPermission({
-      ...readPermission,
-      allowedScopeKinds: ['module'],
-      key: 'pricing.price_group.read',
-    }),
-  ).toThrow(/incompatible target scope/u);
-});
-
-it('allows only explicit authorization projection state transitions', () => {
-  expect(canTransitionAuthorizationMutation('PENDING_GRANT', 'ACTIVE')).toBe(true);
-  expect(canTransitionAuthorizationMutation('ACTIVE', 'REVOKED')).toBe(false);
-  expect(canTransitionAuthorizationMutation('PENDING_REVOKE', 'REVOKED')).toBe(true);
-  expect(canTransitionAuthorizationMutation('RECONCILIATION_REQUIRED', 'ACTIVE')).toBe(true);
 });

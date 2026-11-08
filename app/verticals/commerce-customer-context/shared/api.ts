@@ -1,3 +1,4 @@
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { CustomerOwnConsentReadApi, CustomerOwnConsentUpdateApi } from './portal-auth/consent-api.ts';
 import { CustomerOwnPasswordChangeApi } from './portal-auth/password-change-api.ts';
 import { identity } from 'effect';
@@ -78,7 +79,7 @@ import { InvoiceRecipientResolutionApi } from './apis/invoice-recipient-resoluti
 import { MarketAffectedUseAssessmentApi } from './apis/market-affected-use-assessment.ts';
 import { MarketBootstrapPolicyCurrentApi } from './apis/market-bootstrap-policy-current.ts';
 import { MarketBootstrapResolutionApi } from './apis/market-bootstrap-resolution.ts';
-import { MarketRetirementReservationApi } from './apis/market-retirement-reservation.ts';
+import { MarketRetirementReservationRecoveryApi } from './apis/market-retirement-reservation-recovery.ts';
 import { MarketSubjectRestrictionsCurrentApi } from './apis/market-subject-restrictions-current.ts';
 import { MigrateCounterpartyPriceGroupActionApi } from './apis/migrate-counterparty-price-group-action.ts';
 import { MigrateCustomerPriceGroupActionApi } from './apis/migrate-customer-price-group-action.ts';
@@ -347,6 +348,7 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(CustomerOwnPasswordChangeApi)
   .addHttpApi(CustomerOwnProfileReadApi)
   .addHttpApi(CustomerOwnProfileUpdateApi)
+  .addHttpApi(OwnerActionApprovalApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(AddSavedAddressActionApi)
   .addHttpApi(ArchiveCustomerGroupActionApi)
@@ -408,7 +410,7 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(MarketAffectedUseAssessmentApi)
   .addHttpApi(MarketBootstrapPolicyCurrentApi)
   .addHttpApi(MarketBootstrapResolutionApi)
-  .addHttpApi(MarketRetirementReservationApi)
+  .addHttpApi(MarketRetirementReservationRecoveryApi)
   .addHttpApi(MarketSubjectRestrictionsCurrentApi)
   .addHttpApi(MigrateCounterpartyPriceGroupActionApi)
   .addHttpApi(MigrateCustomerPriceGroupActionApi)

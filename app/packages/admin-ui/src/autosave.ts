@@ -4,13 +4,17 @@ import type { Fiber, ManagedRuntime } from 'effect';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 
-/** What the inline status line shows. `invalid` means a draft exists but is not sent until the form is valid. */
+/**
+ * What the inline status line shows. `invalid` means a draft exists but is not sent until the form is valid;
+ * `proposed` means the draft was accepted for approval and is not saved yet.
+ */
 export const AutosaveStateSchema = Schema.Literals([
   'idle',
   'dirty',
   'invalid',
   'saving',
   'saved',
+  'proposed',
   'error',
   'conflict',
 ]);
@@ -18,9 +22,10 @@ export type AutosaveState = typeof AutosaveStateSchema.Type;
 
 /**
  * Result of one save. `conflict` is the action's optimistic-concurrency refusal (the record changed since the
- * revision the draft was based on); every other failure is `failed`.
+ * revision the draft was based on); `proposed` is a change parked for approval, which saved nothing; every other
+ * failure is `failed`.
  */
-export const AutosaveOutcomeSchema = Schema.Literals(['saved', 'conflict', 'failed']);
+export const AutosaveOutcomeSchema = Schema.Literals(['saved', 'proposed', 'conflict', 'failed']);
 export type AutosaveOutcome = typeof AutosaveOutcomeSchema.Type;
 
 export interface AutosaveOptions<V, R> {
@@ -57,6 +62,8 @@ export class AutosaveController<V, R = never> {
   private latest: V;
   private readonly listeners = new Set<() => void>();
   private options: AutosaveOptions<V, R>;
+  /** The draft last accepted for approval. It is not saved, and it is never sent again. */
+  private proposed: Option.Option<V> = Option.none();
   private saved: V;
   private state: AutosaveState = 'idle';
   private timer: Option.Option<Fiber.Fiber<void>> = Option.none();
@@ -84,6 +91,10 @@ export class AutosaveController<V, R = never> {
     this.cancelTimer();
     if (this.same(value, this.saved)) {
       this.setState('idle');
+      return;
+    }
+    if (this.isProposed(value)) {
+      this.setState('proposed');
       return;
     }
     if (!this.options.isValid(value)) {
@@ -118,6 +129,10 @@ export class AutosaveController<V, R = never> {
       }
       return;
     }
+    if (this.isProposed(this.latest)) {
+      this.setState('proposed');
+      return;
+    }
     if (!this.options.isValid(this.latest)) {
       this.setState('invalid');
       return;
@@ -125,7 +140,7 @@ export class AutosaveController<V, R = never> {
     this.start(this.latest);
   };
 
-  /** Sends the draft again after a failed save. */
+  /** Sends the draft again after a failed save. A draft waiting for approval is not sent again. */
   readonly retry = (): void => {
     if (this.state === 'error') {
       this.flush();
@@ -156,10 +171,16 @@ export class AutosaveController<V, R = never> {
     if (this.disposed) {
       return;
     }
-    if (outcome === 'saved') {
-      this.saved = value;
+    if (outcome === 'saved' || outcome === 'proposed') {
+      if (outcome === 'saved') {
+        this.saved = value;
+        this.proposed = Option.none();
+      } else {
+        // Parked for approval: the confirmed version stays, and this draft is never sent again.
+        this.proposed = Option.some(value);
+      }
       if (this.same(this.latest, value)) {
-        this.setState('saved');
+        this.setState(outcome);
       } else {
         // Edits made while this save ran: exactly one follow-up save with the newest draft.
         this.flush();
@@ -168,6 +189,10 @@ export class AutosaveController<V, R = never> {
     }
     this.cancelTimer();
     this.setState(outcome === 'conflict' ? 'conflict' : 'error');
+  }
+
+  private isProposed(value: V): boolean {
+    return Option.isSome(this.proposed) && this.same(value, this.proposed.value);
   }
 
   private notify(): void {
@@ -268,8 +293,8 @@ interface Generation<V, R> {
 }
 
 /**
- * Result of a save that knows revisions: the new revision of the record when it was saved, otherwise `conflict` or
- * `failed` (`saved` when the save returns no revision).
+ * Result of a save that knows revisions: the new revision of the record when it was saved, otherwise `proposed`,
+ * `conflict` or `failed` (`saved` when the save returns no revision). `proposed` keeps the base revision.
  */
 export type RevisionedSaveResult = AutosaveOutcome | number;
 
@@ -354,8 +379,9 @@ export interface UseAutosaveDraftOptions<V, R> extends Omit<AutosaveOptions<V, R
   /** The host's browser runtime; saves and timers run in it. */
   readonly runtime: ManagedRuntime.ManagedRuntime<R, never>;
   /**
-   * Sends one draft. Return the record's new revision (or `saved`), `conflict` for the action's revision conflict
-   * and `failed` otherwise; a defect or interruption counts as `failed`.
+   * Sends one draft. Return the record's new revision (or `saved`), `proposed` when the change was parked for
+   * approval, `conflict` for the action's revision conflict and `failed` otherwise; a defect or interruption counts
+   * as `failed`.
    */
   readonly save: (value: V, expectedRevision: number) => Effect.Effect<RevisionedSaveResult, never, R>;
   /** The record as the server has it now, in the draft's shape (recomputed on every render is fine). */
@@ -390,6 +416,10 @@ export const useAutosaveDraft = <V, R>(options: UseAutosaveDraftOptions<V, R>): 
     const settled = !autosavePending(status) && same(draft, controller.confirmed());
     if (settled && !same(server, draft)) {
       setDraft(server);
+      setGeneration(begin(server, revision));
+    } else if (status === 'proposed' && same(server, draft)) {
+      // The proposal was approved: the server now has this draft, so it is confirmed from that version on. The old
+      // generation's unmount flush finds only the proposed draft and sends nothing.
       setGeneration(begin(server, revision));
     }
   }

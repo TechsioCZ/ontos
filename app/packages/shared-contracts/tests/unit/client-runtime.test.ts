@@ -13,6 +13,11 @@ import { Predicate, Redacted, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
 
+import {
+  REFERENCE_GATEWAY_CREDENTIALS_HEADER,
+  ReferenceGatewayCredentialsSchema,
+} from '../../src/reference-gateway.ts';
+
 const RepresentativeConflictSchema = Schema.TaggedStruct('RepresentativeConflict', {
   detail: Schema.String,
   status: Schema.Literal(409),
@@ -337,4 +342,59 @@ it.effect('governed clients send the Idempotency-Key as a transport header only 
       ).toEqual([false, false]);
     }
   }),
+);
+
+const CombinedTransportApi = HttpApi.make('CombinedTransportApi').add(
+  HttpApiGroup.make('commands').add(
+    HttpApiEndpoint.post('apply', '/apply', {
+      payload: Schema.Struct({ command: Schema.String }),
+      success: Schema.Struct({ revision: Schema.Int }),
+    }),
+  ),
+);
+
+it.effect(
+  'carries reference credentials, read freshness and action intent in one transport without dropping a header',
+  () =>
+    Effect.gen(function* combinedTransportHeaders() {
+      const requests: Request[] = [];
+      const fakeFetch: typeof fetch = (input, init) => {
+        requests.push(new Request(input, init));
+        return Promise.resolve(Response.json({ revision: 1 }));
+      };
+      const compositionRevision = 'c'.repeat(64);
+      const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(ReferenceGatewayCredentialsSchema))([
+        { audience: 'party-registry', authorization: Redacted.make('Bearer fresh-provider-assertion') },
+      ]);
+      yield* makeGovernedEffectBffClient(
+        {
+          api: CombinedTransportApi,
+          credential: Redacted.make('Bearer combined-credential'),
+          defaultApiPrefix: 'https://owner.example/combined-api',
+          idempotencyKey: 'combined-idempotency',
+          intent: 'propose',
+          requestCorrelation: 'combined-correlation',
+        },
+        {
+          compositionRevision,
+          referenceCredentials: Redacted.make(encoded),
+          requestCache: 'no-store',
+        },
+      ).pipe(
+        Effect.flatMap((client) => client.commands.apply({ payload: { command: 'ConfirmInvoice' } })),
+        Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
+      );
+      const [request] = requests;
+      expect(request).toBeDefined();
+      if (request === undefined) {
+        throw new Error('Expected a captured request');
+      }
+      expect(request.headers.get('authorization')).toBe('Bearer combined-credential');
+      expect(request.headers.get('cache-control')).toBe('no-store');
+      expect(request.headers.get('idempotency-key')).toBe('combined-idempotency');
+      expect(request.headers.get('x-action-intent')).toBe('propose');
+      expect(request.headers.get('x-correlation-id')).toBe('combined-correlation');
+      expect(request.headers.get('x-ontos-composition-revision')).toBe(compositionRevision);
+      expect(request.headers.get(REFERENCE_GATEWAY_CREDENTIALS_HEADER)).toBe(encoded);
+    }),
 );

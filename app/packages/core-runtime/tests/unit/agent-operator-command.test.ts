@@ -52,7 +52,15 @@ it('defines an explicitly provisioned sensitive native Action with required comp
   expect(descriptor.auditProfile).toBe('sensitive');
   expect(descriptor.idempotency).toBe('required');
   expect(descriptor.legalEntityScope).toBe('required');
-  expect(descriptor.entrypoint.authorization).toEqual({ kind: 'action_execution', provisioning: 'explicit' });
+  expect(descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+  // Naming an agent's operators is human-only administration of its oversight (O43, O81), decided by
+  // the one gate over this declaration rather than a legacy provisioning mode.
+  expect(descriptor.accessDeclaration).toMatchObject({
+    key: 'core.identity.agent-operators.replace',
+    kind: 'admin',
+    modes: ['run'],
+    risk: 'critical',
+  });
   expect(descriptor.domainEvents).toEqual(principalLifecycleDomainEvents);
   expect(Schema.is(ReplaceAgentOperatorsResultSchema)({ agentPrincipalId, projection: 'pending', revision: 1 })).toBe(
     true,

@@ -84,12 +84,18 @@ export const itemUnchangedSince =
     return current !== undefined && sameItemDraft(itemDraftOf(current), base);
   };
 
-/** A finance command outcome as autosave sees it: a concurrent change is a conflict, anything else a failure. */
+/**
+ * A finance command outcome as autosave sees it: a write is saved, a concurrent change a conflict, a change parked
+ * for approval is proposed (nothing saved yet, and not a failure), anything else a failure.
+ */
 export const financeAutosaveOutcome = (
   outcome: { readonly ok: true } | { readonly feedback: string; readonly ok: false },
 ): AutosaveOutcome => {
   if (outcome.ok) {
     return 'saved';
+  }
+  if (outcome.feedback === 'pendingApproval') {
+    return 'proposed';
   }
   return outcome.feedback === 'conflict' ? 'conflict' : 'failed';
 };

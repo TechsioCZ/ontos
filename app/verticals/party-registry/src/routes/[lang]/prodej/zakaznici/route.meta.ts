@@ -5,7 +5,7 @@ const routeMeta = {
   descriptionKey: 'party-registry.pages.customers.description',
   entrypoint: defineTenantModuleEntrypoint({
     access: 'read',
-    authorization: { kind: 'context_permission', permission: 'module.access' },
+    authorization: { kind: 'protected' },
     entrypointKey: 'party.registry.page.customers',
     moduleKey: 'party.registry',
     role: 'page',

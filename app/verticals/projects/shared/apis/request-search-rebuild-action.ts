@@ -2,6 +2,7 @@
 // @ontos-action-http-owner projects.core
 // @ontos-action-http-slug request-search-rebuild
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -24,6 +25,7 @@ export const RequestSearchRebuildActionForbiddenProblemSchema = makeProblemDetai
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',

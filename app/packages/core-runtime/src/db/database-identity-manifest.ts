@@ -44,6 +44,8 @@ export interface DatabaseIdentity {
   readonly ownerModuleKey: string | null;
   readonly registersGatewayScopeGrants: boolean;
   readonly role: string;
+  /** The identity runs protected Actions, so it locks their access scope fence. */
+  readonly runsActions: boolean;
   readonly scopeAuthority: DatabaseScopeAuthority;
   readonly urlKey: string;
 }
@@ -79,6 +81,226 @@ export interface DatabaseOwnerIdentityDescriptor {
   readonly schemas: readonly string[];
   readonly worker: DatabaseIdentity;
 }
+
+/**
+ * What one access decision reads and writes in `core`, as the least-privilege request identity sees it.
+ *
+ * Every entry is reached by `access/enforcement/**` or `access/intent/**` on the request path only:
+ * the acting principal's kind (actor.ts), the scope, membership, live cells, connection and teams the
+ * decision is taken from (tenant-intent-loader.ts), the tenant's companies (legal-entities.ts) and the
+ * one evidence row a denial, an approval request or sensitive work appends (decision-log.ts). The
+ * projection writer's catalog reads and the approval store's proposal, mandate and journal writes are
+ * the worker's and the admin BFF's, never the request path's, so no request identity gets them here.
+ *
+ * This is a declaration, not authority: a composing role only ever receives the union of these
+ * columns, and PostgreSQL row security still decides which tenant's rows the request may see.
+ */
+export const ACCESS_DECISION_REQUEST_GRANTS: readonly DatabaseTableGrant[] = Object.freeze([
+  {
+    columns: { select: ['revision', 'scope_id', 'state', 'tenant_id'] },
+    privileges: ['select'],
+    reason:
+      'Core prepared Action authority compares persisted projection revisions before external I/O and under its writer fence',
+    table: 'core.access_scope_fences',
+  },
+  {
+    columns: { select: ['kind', 'principal_id', 'tenant_id'] },
+    privileges: ['select'],
+    reason: 'Core access/enforcement/actor.ts reads the acting principal kind before the engine is asked',
+    table: 'core.principals',
+  },
+  {
+    columns: { select: ['legal_entity_id', 'tenant_id'] },
+    privileges: ['select'],
+    reason: 'Core access/enforcement/legal-entities.ts lists the companies the engine may then narrow',
+    table: 'core.legal_entities',
+  },
+  {
+    columns: { select: ['legal_entity_id', 'scope_id', 'tenant_context_id', 'tenant_id'] },
+    privileges: ['select'],
+    reason: 'Core access/intent/tenant-intent-loader.ts resolves the scope a request asks in',
+    table: 'core.access_scopes',
+  },
+  {
+    columns: {
+      select: [
+        'agent_id',
+        'created_at',
+        'kind',
+        'membership_id',
+        'principal_id',
+        'recorded_by',
+        'scope_id',
+        'status',
+        'tenant_id',
+        'valid_from',
+        'valid_until',
+      ],
+    },
+    privileges: ['select'],
+    reason: 'Core access/intent/tenant-intent-loader.ts reads the membership deadlines of every holder (D6)',
+    table: 'core.access_memberships',
+  },
+  {
+    columns: {
+      select: [
+        'agent_id',
+        'assigned_by',
+        'delegated_by',
+        'delegation_envelope_json',
+        'incarnation_id',
+        'principal_id',
+        'role_id',
+        'role_revision_id',
+        'scope_id',
+        'status',
+        'tenant_id',
+        'valid_from',
+        'valid_until',
+      ],
+    },
+    privileges: ['select'],
+    reason: 'Core access/intent/tenant-intent-loader.ts reads the live assignments of the asked capability',
+    table: 'core.access_assignments',
+  },
+  {
+    columns: {
+      select: [
+        'catalog_snapshot_id',
+        'cells_json',
+        'created_at',
+        'created_by',
+        'provenance',
+        'revision',
+        'role_id',
+        'role_revision_id',
+        'template_key',
+        'tenant_id',
+      ],
+    },
+    privileges: ['select'],
+    reason: 'Core access/intent/tenant-intent-loader.ts reads the role revision a live assignment pins',
+    table: 'core.access_role_revisions',
+  },
+  {
+    columns: {
+      select: ['capability_key', 'grant_incarnation_id', 'mode', 'role_id', 'scope_id', 'slot', 'status', 'tenant_id'],
+    },
+    privileges: ['select'],
+    reason: 'Core access/intent/tenant-intent-loader.ts reads the live grant incarnation of one cell',
+    table: 'core.access_grant_incarnations',
+  },
+  {
+    columns: {
+      select: [
+        'amount_ceiling_json',
+        'capability_keys',
+        'delegation_id',
+        'granted_by',
+        'manager_id',
+        'people',
+        'role_ids',
+        'scope_id',
+        'status',
+        'tenant_id',
+        'until',
+        'valid_from',
+      ],
+    },
+    privileges: ['select'],
+    reason: 'Core access/intent/tenant-intent-loader.ts reads the delegation that bounds a delegated cell',
+    table: 'core.access_delegations',
+  },
+  {
+    columns: {
+      select: [
+        'agent_id',
+        'connection_id',
+        'principal_id',
+        'revision',
+        'scope_id',
+        'status',
+        'tenant_id',
+        'valid_from',
+        'valid_until',
+      ],
+    },
+    privileges: ['select'],
+    reason: 'Core access/intent/tenant-intent-loader.ts reads the agent connection a decision is asked for',
+    table: 'core.access_agent_connections',
+  },
+  {
+    columns: { select: ['ceiling_json', 'connection_id', 'revision', 'tenant_id'] },
+    privileges: ['select'],
+    reason: 'Core access/intent/tenant-intent-loader.ts reads the consent ceiling at the connection revision',
+    table: 'core.access_consent_snapshots',
+  },
+  {
+    columns: { select: ['agent_id', 'principal_id', 'team_id', 'tenant_id'] },
+    privileges: ['select'],
+    reason: 'Core access/intent/tenant-intent-loader.ts reads the teams a holder takes part in (team selector)',
+    table: 'core.access_team_members',
+  },
+  {
+    columns: { select: ['scope_id', 'team_id', 'tenant_id'] },
+    privileges: ['select'],
+    reason: 'Core access/intent/tenant-intent-loader.ts reads the team a team membership reaches',
+    table: 'core.access_teams',
+  },
+  {
+    columns: {
+      select: [
+        'action_key',
+        'capability_key',
+        'command_digest',
+        'command_json',
+        'created_at',
+        'proposal_id',
+        'scope_id',
+        'tenant_id',
+      ],
+    },
+    privileges: ['select'],
+    reason: 'Core mandate dispatch reads the frozen command bound to the proposal (O75)',
+    table: 'core.access_frozen_commands',
+  },
+  {
+    columns: { select: ['binding_id', 'incarnation', 'principal_id', 'status', 'tenant_id', 'workload_key'] },
+    privileges: ['select'],
+    reason: 'Core access/workloads/bindings.ts reads the active workloads the acting workload is registered for (O73)',
+    table: 'core.access_workload_bindings',
+  },
+  {
+    columns: {
+      insert: [
+        'actor_json',
+        'actor_principal_id',
+        'admission_deadline',
+        'capability_key',
+        'correlation_id',
+        'decided_at',
+        'decision_log_id',
+        'delegate_app_id',
+        'delegate_principal_id',
+        'mode',
+        'on_behalf_of_principal_id',
+        'operation_id',
+        'outcome',
+        'reasons_json',
+        'scope_id',
+        'target',
+        'tenant_id',
+      ],
+    },
+    privileges: ['insert'],
+    // Drizzle names every column of the table in the insert (an unset one as `default`), and PostgreSQL
+    // checks the column privilege for each named column, so the request path's unset `operation_id` needs it too.
+    reason:
+      'Core access/enforcement/decision-log.ts appends the evidence row of one denial, approval or sensitive allow',
+    table: 'core.access_decision_logs',
+  },
+]);
+
 export interface TrustRoutine {
   readonly executableBy: readonly string[];
   readonly securityDefiner: boolean;
@@ -105,6 +327,7 @@ export const trustRoutinesForIdentities = (identities: readonly DatabaseIdentity
   const requests = identities.flatMap((identity) =>
     identity.scopeAuthority === 'gateway_grant' ? [identity.role] : [],
   );
+  const actionRunners = identities.flatMap((identity) => (identity.runsActions ? [identity.role] : []));
   return Object.freeze([
     ...[
       {
@@ -117,6 +340,10 @@ export const trustRoutinesForIdentities = (identities: readonly DatabaseIdentity
         'trust.current_legal_entity_id()',
         'trust.auth_binding_issuing_legal_entity(uuid,uuid)',
       ].map((signature) => ({ executableBy: requests, signature })),
+      {
+        executableBy: actionRunners,
+        signature: 'trust.lock_access_scope_fence(uuid,uuid)',
+      },
     ].map(({ executableBy, signature }) =>
       Object.freeze({ executableBy: Object.freeze([...executableBy]), securityDefiner: true, signature }),
     ),
@@ -141,6 +368,7 @@ const IdentitySchema = Struct({
   ownerModuleKey: OptionFromNullOr(ModuleKeySchema),
   registersGatewayScopeGrants: BooleanSchema,
   role: IdentifierSchema,
+  runsActions: BooleanSchema,
   scopeAuthority: Literals(DATABASE_SCOPE_AUTHORITIES),
   urlKey: VariableSchema.pipe(brand('DatabaseUrlKey')),
 });

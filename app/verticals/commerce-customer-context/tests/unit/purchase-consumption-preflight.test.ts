@@ -45,8 +45,9 @@ const fixture = Effect.fn('ConsumptionPreflightTest.fixture')(function* fixture(
   const scope = trustVerifiedGatewayPrincipalContext(
     {
       authBindingId: '30000000-0000-4000-8000-000000000001',
-      authContextRef: 'better-auth-api-key:exact-final-order',
-      authMethod: 'api_key',
+      authContextRef: 'better-auth-session:exact-final-order',
+      authenticationNamespaceId: 'ontos.shell.better-auth.v1',
+      authMethod: 'session',
       correlationId: 'exact-final-order',
       legalEntityId,
       principalId: '40000000-0000-4000-8000-000000000001',
@@ -54,17 +55,24 @@ const fixture = Effect.fn('ConsumptionPreflightTest.fixture')(function* fixture(
       trustedStorefrontId: 'storefront',
     },
     compositionRevision,
+    undefined,
+    {
+      appId: 'commerce-order',
+      buildMarker: 'current-order-owner',
+      principalId: '60000000-0000-4000-8000-000000000001',
+    },
   );
-  const context = {
-    actionInvocationId: '50000000-0000-4000-8000-000000000001',
-    compositionRevision,
-    scope,
-    transaction: () => Effect.die('Immutable Order observation must not open a SQL transaction'),
-  };
   const preflight = getActionServicePreflight(consumePurchaseApprovalAction);
   if (preflight === undefined || payload.finalBinding === undefined || payload.revalidationRef === undefined) {
     return yield* Effect.die('Consumption must register its preparation and this fixture must name the exact proof');
   }
+  const context = {
+    actionInvocationId: '50000000-0000-4000-8000-000000000001',
+    compositionRevision,
+    evaluatePolicy: () => Effect.die('Final-binding preparation does not evaluate execution Policies'),
+    scope,
+    transaction: () => Effect.die('Immutable Order observation must not open a SQL transaction'),
+  } satisfies Parameters<typeof preflight>[1];
   const commitment = {
     bindingEvidence: {
       binding: payload.finalBinding,
@@ -119,6 +127,20 @@ it.effect('rejects missing authority, untrusted actors and wrong or expired owne
       (yield* test.preflight(test.payload, { ...test.context, scope: { ...test.context.scope } }).pipe(Effect.flip))
         .code,
     ).toBe('PERMISSION_DENIED');
+    for (const actorAppId of [undefined, 'pricing']) {
+      const actor =
+        actorAppId === undefined
+          ? undefined
+          : {
+              appId: actorAppId,
+              buildMarker: 'unrelated-owner',
+              principalId: '60000000-0000-4000-8000-000000000002',
+            };
+      const scope = trustVerifiedGatewayPrincipalContext(test.context.scope, compositionRevision, undefined, actor);
+      expect((yield* test.preflight(test.payload, { ...test.context, scope }).pipe(Effect.flip)).code).toBe(
+        'PERMISSION_DENIED',
+      );
+    }
     const invalid = [
       { ...test.commitment, orderRef: { ...test.commitment.orderRef, resourceId: 'other-order' } },
       { ...test.commitment, revalidationRef: { ...test.commitment.revalidationRef, resourceId: 'other-proof' } },

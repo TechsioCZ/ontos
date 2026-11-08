@@ -31,6 +31,7 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
   exposes: {
     './PageRecords': './src/routes/[lang]/nastaveni/stitky/page.tsx',
     './Route': './src/federation-entry.tsx',
+    './TagControls': './src/components/tag-controls.tsx',
   },
   filename: 'remoteEntry.js',
   name: 'verticalTagging',

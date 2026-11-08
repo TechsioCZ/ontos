@@ -6,15 +6,13 @@ import {
   CoreSearchProjectionStore,
   coreSearchIngestionRegistryLayer,
   defineCoreSearchIngestionRegistrations,
-  ownerResourceModuleContainment,
-  ResourceContainmentRelationshipMutation,
 } from '@app/core-runtime';
 import type {
   CoreSearchProjectionDocument,
   CoreSearchProjectionMutation,
   OutboxWorkerHandlerContext,
 } from '@app/core-runtime';
-import { Array as Arr, Context, Effect, Layer, Schema } from 'effect';
+import { Context, Effect, Layer, Schema } from 'effect';
 import { searchUnavailable } from '../search/search-unavailable.ts';
 import { crmClientSearchTerms, crmContactRecordSearchTerms, SearchSource } from './search-source.service.ts';
 import type { SearchSnapshot } from './search-source.service.ts';
@@ -78,22 +76,6 @@ export const buildSearchDocuments = Effect.fn('Crm.buildSearchDocuments')((snaps
   }).pipe(Effect.mapError(searchUnavailable)),
 );
 
-const containmentBatches = Effect.fn('Crm.searchContainmentBatches')(
-  (documents: readonly CoreSearchProjectionDocument[]) =>
-    Effect.forEach(
-      documents,
-      (document) => {
-        const relationship = ownerResourceModuleContainment(
-          document.ref.tenantId,
-          document.selectedLegalEntityId ?? '',
-          document.ref,
-        );
-        return relationship === undefined ? Effect.fail(searchUnavailable()) : Effect.succeed(relationship);
-      },
-      { concurrency: 1 },
-    ).pipe(Effect.map((relationships) => Arr.chunksOf(relationships, 100))),
-);
-
 const removedResources = (documents: readonly CoreSearchProjectionDocument[], entityIds: readonly string[]) =>
   [...new Set(entityIds)].flatMap((resourceId) =>
     searchResourceTypes.flatMap((resourceType) =>
@@ -107,7 +89,6 @@ export const makeSearchProjection = Effect.gen(function* makeProjection() {
   const source = yield* SearchSource;
   const ingestion = yield* CoreSearchIngestion;
   const store = yield* CoreSearchProjectionStore;
-  const containment = yield* ResourceContainmentRelationshipMutation;
   return {
     project: Effect.fn('Crm.searchProjection')(function* project(
       context: OutboxWorkerHandlerContext,
@@ -123,13 +104,8 @@ export const makeSearchProjection = Effect.gen(function* makeProjection() {
         return yield* searchUnavailable();
       }
 
-      const batches = yield* containmentBatches(documents);
-      // External TOUCH begins only after Core has released the source snapshot transaction.
-      yield* Effect.forEach(
-        batches,
-        (relationships) => containment.touch({ relationships }).pipe(Effect.mapError(searchUnavailable)),
-        { concurrency: 1, discard: true },
-      );
+      // Core Search enforces the caller's access list predicate and field projection; the owner writes
+      // no permission-graph containment edge. The source snapshot transaction has already closed.
       if ('rebuild' in target) {
         return yield* Effect.forEach(
           searchResourceTypes,

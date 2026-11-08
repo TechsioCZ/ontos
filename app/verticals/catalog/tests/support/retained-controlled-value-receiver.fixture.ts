@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { generateKeyPairSync, sign } from 'node:crypto';
 
@@ -14,8 +15,9 @@ import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-
 import { HttpServerRequest, HttpServerResponse, FetchHttpClient } from 'effect/http';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { createCatalogDeniedAccess } from './live-access-authority.ts';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
+import { deriveActualCatalogCompositionSnapshot } from './actual-catalog-composition.fixture.ts';
 import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeRuntime, NodeServices } from '@effect/platform-node';
 import { eq } from 'drizzle-orm';
 import {
@@ -62,7 +64,8 @@ import type { ProductTypeRef } from '../../shared/resources/product-type.ts';
 import type { AttributeDefinitionRef } from '../../shared/resources/attribute-definition.ts';
 import { ProductUnitRefSchema } from '../../shared/resources/product-unit.ts';
 import { VariantRefSchema } from '../../shared/resources/variant.ts';
-import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { catalogRegistration } from '../../vertical.registration.ts';
 import { attributeApplicabilityPersistenceForScope } from '../../src/persistence/attribute-applicability-persistence.ts';
 import { attributePersistenceForScope } from '../../src/persistence/attribute-persistence.ts';
 import { attributeValuesPersistenceForScope } from '../../src/persistence/attribute-values-persistence.ts';
@@ -523,15 +526,17 @@ const produceCatalogSelection = Effect.fn('RetainedControlledValue.produceSelect
 /** Narrow Catalog-owned native receiver; no production provider is activated. */
 export const makeRetainedControlledValueFixture = Effect.fn('RetainedControlledValue.makeFixture')(
   function* makeFixture(verification?: { readonly issuer: string; readonly jwks: string }) {
-    const composition = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
+    const composition = yield* deriveActualCatalogCompositionSnapshot(
+      fileURLToPath(new URL('../../../../', import.meta.url)),
+    );
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: composition,
       mode: 'schema-only',
       purpose: 'stabilization-1254-retained-controlled-values',
     });
-    yield* isolated.assertClonedSchema();
     const fixture = yield* Effect.acquireRelease(
       makeLiveOperationFixture({
+        access: 'allowed',
         actionKeys: [
           governVariantAllowedValuesAction.descriptor.actionKey,
           retireControlledAttributeValueAction.descriptor.actionKey,
@@ -539,14 +544,21 @@ export const makeRetainedControlledValueFixture = Effect.fn('RetainedControlledV
         ],
         adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
         allowedAudiences: ['catalog'],
+        applicationComposition: { load: Effect.succeed(composition) },
         authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
         compositionRevision: composition.composition.revision,
+        expectedDeployment: ultramodernDeliveryUnit,
         moduleKeys: ['commerce.catalog'],
+        ownerRegistration: catalogRegistration,
         runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
       }),
       (value) => value.close().pipe(Effect.orDie),
     );
-    const fixtureContext = yield* Layer.build(fixture.layer);
+    // The one access gate this receiver scripts (the native database carries no v2 access intent and
+    // reaches no engine), plus the per-principal refusal its suite names (see `live-access-authority`).
+    const deniedAccess = createCatalogDeniedAccess();
+    const accessLayer = fixture.layer.pipe(Layer.provide(deniedAccess.layer));
+    const fixtureContext = yield* Layer.build(accessLayer);
     const permissions = yield* makeContextPermissionRelationshipMutationLive();
     const principal = { principalId: fixture.manager.principalId, tenantId: fixture.tenantId };
     const targets = [
@@ -646,7 +658,7 @@ export const makeRetainedControlledValueFixture = Effect.fn('RetainedControlledV
         ).pipe(Layer.provide(ActiveApplicationCompositionSourceLive), Layer.provide(FetchHttpClient.layer)),
       ),
       Layer.provide(redemption),
-      Layer.provide(fixture.layer),
+      Layer.provide(accessLayer),
       Layer.provide(
         ConfigProvider.layer(
           ConfigProvider.fromUnknown({ ONTOS_GATEWAY_ISSUER: tokenIssuer, ONTOS_GATEWAY_PUBLIC_JWKS: jwks }),
@@ -664,7 +676,7 @@ export const makeRetainedControlledValueFixture = Effect.fn('RetainedControlledV
               .add(catalogApi.groups.setVariantAttributeOverrideAction),
           ).pipe(
             Layer.provide(handlers),
-            Layer.provideMerge(fixture.layer),
+            Layer.provideMerge(accessLayer),
             Layer.provide(HttpServer.layerServices),
             Layer.provide(NodeCrypto.layer),
           ),
@@ -798,6 +810,7 @@ export const makeRetainedControlledValueFixture = Effect.fn('RetainedControlledV
       authorization,
       baseUrl,
       composition,
+      deniedAccess,
       fixture,
       nativeFetch,
       nativeRead,

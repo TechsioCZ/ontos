@@ -2,7 +2,6 @@ import {
   CoreSearchProjectionStore,
   CoreSearchQueryRuntime,
   CoreSearchWorkerSnapshot,
-  ResourceContainmentRelationshipMutation,
   createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
 } from '@app/core-runtime';
@@ -237,7 +236,6 @@ it.effect(
         );
         yield* publishFacilitySearch(workerContext('rebuild'), exit.value).pipe(
           Effect.provideService(CoreSearchProjectionStore, store),
-          Effect.provideService(ResourceContainmentRelationshipMutation, { touch: () => Effect.void }),
         );
         const assets = yield* loadFacilitySearch(scope, 'asset', 'cerpadlo', AssetRefSchema).pipe(
           Effect.provideService(CoreSearchQueryRuntime, runtime),
@@ -311,7 +309,6 @@ it.effect('decodes meter-only safe SQL evidence and publishes serial and supply-
       const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
       yield* publishFacilitySearch(workerContext('rebuild'), exit.value).pipe(
         Effect.provideService(CoreSearchProjectionStore, store),
-        Effect.provideService(ResourceContainmentRelationshipMutation, { touch: () => Effect.void }),
       );
       for (const query of ['el-zizkov', 'EAN-859182400000000001']) {
         const hits = yield* loadFacilitySearch(scope, 'meter', query, MeterRefSchema).pipe(

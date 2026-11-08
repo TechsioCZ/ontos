@@ -1,5 +1,4 @@
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../../shared/portal-auth-contracts.ts';
-import { ContextAccess } from '@app/core-runtime';
 import type { ReadHandlerUnavailable } from '@app/core-runtime';
 import { ReadPrincipalBindingPayloadSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { PartyMatchRequestSchema } from '@app/party-registry/api';
@@ -9,9 +8,7 @@ import type {
   ExternalIdentityClientPort,
   ReadPrincipalBindingRequest,
 } from '@app/shared-contracts/server/external-identity-client';
-import { ProfileRetailPermissionReaderFactory } from '../../integrations/retail-permission-reader.ts';
-import type { ProfileRetailPermissionReaderFactoryService } from '../../integrations/retail-permission-reader.ts';
-import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { Context, Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
 
 import { CommercePortalAuthAccountLookupService } from '../../../api/portal-auth/provider/account-lookup-service.ts';
 import type { CommercePortalAuthAccountLookup } from '../../../api/portal-auth/provider/account-lookup-service.ts';
@@ -299,8 +296,15 @@ const partyCandidateFor = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.party
       ],
       validFrom: DateTime.formatIso(attempt.createdAt),
     };
-    const withDisplayName = displayName === undefined ? candidate : { ...candidate, displayName };
-    const request = yield* Schema.decodeEffect(PartyMatchRequestSchema)({ candidate: withDisplayName }).pipe(
+    const [firstName, ...surname] = displayName?.trim().split(/\s+/u) ?? [];
+    let namedCandidate = candidate;
+    if (firstName !== undefined) {
+      namedCandidate = { ...candidate, firstName };
+      if (surname.length > 0) {
+        namedCandidate = { ...namedCandidate, lastName: surname.join(' ') };
+      }
+    }
+    const request = yield* Schema.decodeEffect(PartyMatchRequestSchema)({ candidate: namedCandidate }).pipe(
       Effect.mapError(
         rejectFor(context, 'The Attempt does not describe a Party candidate the Party Registry vocabulary can carry'),
       ),
@@ -586,6 +590,7 @@ const ownerReadFor =
 export const retailCustomerProfileCommitResolutionFor = (
   run: Option.Option<CommerceEnrollmentOwnerTransactionRun>,
   input: RetailCustomerProfileOwnerInput,
+  crypto: Crypto.Crypto,
   resolveCommand: typeof resolveRetailOwnerCommand = resolveRetailOwnerCommand,
 ): RetailCustomerProfileOwnerExecutors['commitResolution'] =>
   Option.isNone(run)
@@ -595,10 +600,12 @@ export const retailCustomerProfileCommitResolutionFor = (
           {
             compositionRevision: input.compositionRevision,
             legalEntityId: input.sellingLegalEntityRef.resourceId,
+            originator: input.originator,
             requestCorrelation: input.requestCorrelation,
             tenantId: input.partyRef.tenantId,
           },
           { actionKey: 'commerce.customer-context.ensure-retail-customer-profile', idempotencyKey },
+          crypto,
         ).pipe(
           Effect.mapError((cause) =>
             commitResolutionUnavailable('The exact native Commerce command could not be resolved', cause),
@@ -636,6 +643,8 @@ const bindProfileCommitResolution = (
   run: Option.Option<CommerceEnrollmentOwnerTransactionRun>,
   context: CommerceEnrollmentOwnerEffectContext,
   profileResourceId: string,
+  crypto: Crypto.Crypto,
+  originator: RetailCustomerProfileOwnerInput['originator'],
 ): RetailPortalBindingOwnerExecutors['commitResolution'] =>
   Option.isNone(run)
     ? actionResultNotRepublished
@@ -644,10 +653,12 @@ const bindProfileCommitResolution = (
           {
             compositionRevision: context.attempt.compositionRevision,
             legalEntityId: context.subject.sellingLegalEntityRef.resourceId,
+            originator,
             requestCorrelation: context.requestCorrelation,
             tenantId: context.attempt.tenantId,
           },
           { actionKey: 'commerce.customer-context.bind-retail-portal-profile', idempotencyKey },
+          crypto,
         ).pipe(
           Effect.mapError((cause) =>
             commitResolutionUnavailable('The exact native Commerce command could not be resolved', cause),
@@ -680,12 +691,30 @@ const bindProfileCommitResolution = (
         );
       });
 
-const ensureProfileEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactionRun>): RegistryEntry =>
+const originatorFor = (context: CommerceEnrollmentOwnerEffectContext) =>
+  context.attempt.originatorActionInvocationId === undefined
+    ? Effect.fail(
+        attemptRejected(
+          'The Attempt has no recorded original Action invocation',
+          context.attempt.portalEnrollmentAttemptId,
+        ),
+      )
+    : Effect.succeed({
+        actionInvocationId: context.attempt.originatorActionInvocationId,
+        compositionRevision: context.attempt.compositionRevision,
+        tenantId: context.attempt.tenantId,
+      });
+
+const ensureProfileEntry = (
+  run: Option.Option<CommerceEnrollmentOwnerTransactionRun>,
+  crypto: Crypto.Crypto,
+): RegistryEntry =>
   Effect.fn('CommerceEnrollmentOwnerEffectRegistry.ensureProfile')(function* ensureProfileEntryEffect(
     transition: JourneyTransitionSpec,
     context: CommerceEnrollmentOwnerEffectContext,
   ): Effect.fn.Return<Option.Option<CommerceEnrollmentRegisteredOwnerEffect>, CommerceEnrollmentAttemptError> {
     const { partyRef } = context.subject;
+    const originator = yield* originatorFor(context);
     if (Option.isNone(partyRef)) {
       return none;
     }
@@ -701,14 +730,15 @@ const ensureProfileEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactio
     const input = {
       compositionRevision: context.attempt.compositionRevision,
       effectiveAt: context.attempt.createdAt,
+      originator,
       partyRef: partyRef.value,
       requestCorrelation: context.requestCorrelation,
       sellingLegalEntityRef: context.subject.sellingLegalEntityRef,
     };
     return registered(
       retailCustomerProfileOwnerEffect(input, {
-        commitResolution: retailCustomerProfileCommitResolutionFor(run, input),
-        ensureProfile: retailCustomerProfileActionExecutor(input),
+        commitResolution: retailCustomerProfileCommitResolutionFor(run, input, crypto),
+        ensureProfile: retailCustomerProfileActionExecutor(input, crypto),
       }),
       requestDigest,
     );
@@ -716,7 +746,7 @@ const ensureProfileEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactio
 
 const bindProfileEntry = (
   run: Option.Option<CommerceEnrollmentOwnerTransactionRun>,
-  reader: Option.Option<ProfileRetailPermissionReaderFactoryService>,
+  crypto: Crypto.Crypto,
 ): RegistryEntry =>
   Effect.fn('CommerceEnrollmentOwnerEffectRegistry.bindProfile')(function* bindProfileEntryEffect(
     transition: JourneyTransitionSpec,
@@ -725,7 +755,10 @@ const bindProfileEntry = (
     const { partyRef } = context.subject;
     // The binding attaches to the profile the ensure transition durably recorded; it never names a
     // profile the owner journal has not already proven.
-    const restart = yield* restartContextFor(run, context);
+    const { originator, restart } = yield* Effect.all(
+      { originator: originatorFor(context), restart: restartContextFor(run, context) },
+      { concurrency: 1 },
+    );
     const profileResourceId = succeededResultReference(
       context,
       COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY,
@@ -758,6 +791,7 @@ const bindProfileEntry = (
       compositionRevision: context.attempt.compositionRevision,
       effectiveAt: context.attempt.createdAt,
       enrollmentEvidenceRef: String(context.attempt.portalEnrollmentAttemptId),
+      originator,
       principalRef: context.subject.principalRef,
       profileRef,
       reason: RETAIL_PORTAL_BINDING_REASON,
@@ -766,10 +800,16 @@ const bindProfileEntry = (
     };
     return registered(
       retailPortalBindingOwnerEffect(input, {
-        bindProfile: retailPortalBindingActionExecutor(input),
-        commitResolution: bindProfileCommitResolution(run, context, String(profileResourceId.value)),
+        bindProfile: retailPortalBindingActionExecutor(input, crypto),
+        commitResolution: bindProfileCommitResolution(
+          run,
+          context,
+          String(profileResourceId.value),
+          crypto,
+          originator,
+        ),
         confirmCurrentBinding: (result) => {
-          if (Option.isNone(run) || Option.isNone(reader)) {
+          if (Option.isNone(run)) {
             return Effect.succeed(false);
           }
           const scope = {
@@ -781,16 +821,11 @@ const bindProfileEntry = (
             run.value,
             context,
           )((invoker) =>
-            retailEnrollmentBindingIsCurrentForPrincipal(
-              invoker,
-              scope,
-              {
-                bindingId: result.bindingRef.resourceId,
-                enrollmentEvidenceRef: input.enrollmentEvidenceRef,
-                profileId: input.profileRef.resourceId,
-              },
-              reader.value.make(scope),
-            ),
+            retailEnrollmentBindingIsCurrentForPrincipal(invoker, scope, {
+              bindingId: result.bindingRef.resourceId,
+              enrollmentEvidenceRef: input.enrollmentEvidenceRef,
+              profileId: input.profileRef.resourceId,
+            }),
           );
         },
       }),
@@ -938,90 +973,85 @@ const claimabilityFor = (
     ),
   ).pipe(Effect.mapError((failure) => claimUnavailable(failure.reason, failure)));
 
-/** Layer construction captures the actual Core checker; owner callbacks remain closed effects. */
+const originalClaimFor = (
+  run: CommerceEnrollmentOwnerTransactionRun,
+  subject: CounterpartyInvitationClaimReconciliationSubject,
+  input: CommerceEnrollmentOwnerReconciliationInput,
+) => {
+  const base = { invitationId: subject.invitationId, principalId: subject.boundPrincipalId };
+  const identity =
+    input.ownerResultReference === undefined ? base : { ...base, expectedAttestation: input.ownerResultReference };
+  return run({ legalEntityId: subject.legalEntityId, tenantId: subject.tenantId }, (transaction) =>
+    readEnrollmentInvitationClaimCurrent(transaction, subject, identity).pipe(
+      Effect.mapError((failure) =>
+        attemptUnavailable('The original accepted claim is unavailable', subject.portalEnrollmentAttemptId, failure),
+      ),
+    ),
+  ).pipe(Effect.mapError((failure) => claimUnavailable(failure.reason, failure)));
+};
+
+/** Reconciliation reads the retained claim and current owner authority through the bound runner. */
 export const counterpartyInvitationClaimReconciliationFactory: Effect.Effect<CounterpartyInvitationClaimReconciliationFactory> =
-  Effect.gen(function* makeCounterpartyInvitationClaimReconciliationFactory() {
-    const contextAccess = Option.getOrUndefined(yield* Effect.serviceOption(ContextAccess));
-    const originalClaimFor = (
-      run: CommerceEnrollmentOwnerTransactionRun,
-      subject: CounterpartyInvitationClaimReconciliationSubject,
+  Effect.succeed((run, subject) =>
+    Effect.fn('CommerceEnrollmentCounterpartyInvitationClaim.reconcile')(function* reconcileInvitationClaim(
       input: CommerceEnrollmentOwnerReconciliationInput,
-    ) => {
-      const base = { invitationId: subject.invitationId, principalId: subject.boundPrincipalId };
-      const identity =
-        input.ownerResultReference === undefined ? base : { ...base, expectedAttestation: input.ownerResultReference };
-      return run({ legalEntityId: subject.legalEntityId, tenantId: subject.tenantId }, (transaction) =>
-        readEnrollmentInvitationClaimCurrent(transaction, subject, identity, contextAccess).pipe(
-          Effect.mapError((failure) =>
-            attemptUnavailable(
-              'The original accepted claim is unavailable',
-              subject.portalEnrollmentAttemptId,
-              failure,
-            ),
-          ),
-        ),
-      ).pipe(Effect.mapError((failure) => claimUnavailable(failure.reason, failure)));
-    };
-    return (run, subject) =>
-      Effect.fn('CommerceEnrollmentCounterpartyInvitationClaim.reconcile')(function* reconcileInvitationClaim(
-        input: CommerceEnrollmentOwnerReconciliationInput,
-      ): Effect.fn.Return<ReconcileEnrollmentResolution, CommerceEnrollmentOwnerEffectError> {
-        const claimability = yield* claimabilityFor(run, subject);
-        const verdict = counterpartyInvitationClaimVerdict(claimability, subject.boundPrincipalId);
-        if (verdict.kind === 'UNKNOWN') {
-          return yield* claimUnavailable(verdict.reason);
+    ): Effect.fn.Return<ReconcileEnrollmentResolution, CommerceEnrollmentOwnerEffectError> {
+      const claimability = yield* claimabilityFor(run, subject);
+      const verdict = counterpartyInvitationClaimVerdict(claimability, subject.boundPrincipalId);
+      if (verdict.kind === 'UNKNOWN') {
+        return yield* claimUnavailable(verdict.reason);
+      }
+      const reconciliationRef = retailSelfEnrollmentEvidenceReference([
+        COUNTERPARTY_INVITATION_CLAIM_RECONCILIATION_PURPOSE,
+        subject.tenantId,
+        String(subject.portalEnrollmentAttemptId),
+        CLAIM_COUNTERPARTY_ACCESS_INVITATION_TRANSITION_KEY,
+      ]);
+      if (verdict.kind === 'ACCEPTED') {
+        const accepted = yield* originalClaimFor(run, subject, input);
+        if (Option.isNone(accepted)) {
+          return yield* claimUnavailable('The invitation names no exact original accepted claim');
         }
-        const reconciliationRef = retailSelfEnrollmentEvidenceReference([
-          COUNTERPARTY_INVITATION_CLAIM_RECONCILIATION_PURPOSE,
-          subject.tenantId,
-          String(subject.portalEnrollmentAttemptId),
-          CLAIM_COUNTERPARTY_ACCESS_INVITATION_TRANSITION_KEY,
-        ]);
-        if (verdict.kind === 'ACCEPTED') {
-          const accepted = yield* originalClaimFor(run, subject, input);
-          if (Option.isNone(accepted)) {
-            return yield* claimUnavailable('The invitation names no exact original accepted claim');
-          }
-          if (!accepted.value.current) {
-            return yield* decodeInvitationClaimResolution({
-              actorPrincipalId: input.actorPrincipalId,
-              failureCode: OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE,
-              failureReason: 'The accepted invitation claim does not yet prove every Current Permission',
-              nextState: 'RECONCILIATION_REQUIRED',
-              outcomeCode: COUNTERPARTY_INVITATION_CLAIM_PENDING_OUTCOME_CODE,
-              reconciliationRef,
-              resultReference: accepted.value.attestationReference,
-              status: 'FAILED',
-            });
-          }
+        if (!accepted.value.current) {
           return yield* decodeInvitationClaimResolution({
             actorPrincipalId: input.actorPrincipalId,
-            outcomeCode: COUNTERPARTY_INVITATION_CLAIMED_OUTCOME_CODE,
+            failureCode: OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE,
+            failureReason: 'The accepted invitation claim does not yet prove every Current Permission',
+            nextState: 'RECONCILIATION_REQUIRED',
+            outcomeCode: COUNTERPARTY_INVITATION_CLAIM_PENDING_OUTCOME_CODE,
             reconciliationRef,
             resultReference: accepted.value.attestationReference,
-            status: 'SUCCEEDED',
-          });
-        }
-        if (verdict.kind === 'OPEN') {
-          return yield* decodeInvitationClaimResolution({
-            actorPrincipalId: input.actorPrincipalId,
-            failureCode: COUNTERPARTY_INVITATION_CLAIM_OPEN_FAILURE_CODE,
-            failureReason: 'The invitation is still unclaimed, so this claim never committed',
-            outcomeCode: COUNTERPARTY_INVITATION_CLAIM_OPEN_OUTCOME_CODE,
-            reconciliationRef,
             status: 'FAILED',
           });
         }
         return yield* decodeInvitationClaimResolution({
           actorPrincipalId: input.actorPrincipalId,
-          failureCode: 'owner_rejected',
-          failureReason: verdict.reason,
-          outcomeCode: verdict.outcomeCode,
+          outcomeCode: COUNTERPARTY_INVITATION_CLAIMED_OUTCOME_CODE,
+          reconciliationRef,
+          resultReference: accepted.value.attestationReference,
+          status: 'SUCCEEDED',
+        });
+      }
+      if (verdict.kind === 'OPEN') {
+        return yield* decodeInvitationClaimResolution({
+          actorPrincipalId: input.actorPrincipalId,
+          failureCode: COUNTERPARTY_INVITATION_CLAIM_OPEN_FAILURE_CODE,
+          failureReason: 'The invitation is still unclaimed, so this claim never committed',
+          outcomeCode: COUNTERPARTY_INVITATION_CLAIM_OPEN_OUTCOME_CODE,
           reconciliationRef,
           status: 'FAILED',
         });
+      }
+      return yield* decodeInvitationClaimResolution({
+        actorPrincipalId: input.actorPrincipalId,
+        failureCode: 'owner_rejected',
+        failureReason: verdict.reason,
+        outcomeCode: verdict.outcomeCode,
+        reconciliationRef,
+        status: 'FAILED',
       });
-  });
+    }),
+  );
 
 export const counterpartyInvitationClaimReconciliationFor = Effect.fn(
   'CommerceEnrollmentCounterpartyInvitationClaim.make',
@@ -1319,10 +1349,10 @@ export const CommerceEnrollmentOwnerEffectRegistryLive = Layer.effect(
   CommerceEnrollmentOwnerEffectRegistry,
   Effect.gen(function* makeCommerceEnrollmentOwnerEffectRegistry() {
     const accountLookup = yield* CommercePortalAuthAccountLookupService;
-    const retailReader = yield* Effect.serviceOption(ProfileRetailPermissionReaderFactory);
     const claimReconciliationFactory = yield* counterpartyInvitationClaimReconciliationFactory;
     const accountCreationReconciliation = yield* CommercePortalAuthAccountCreationReconciliationService;
     const client = yield* ExternalIdentityClient;
+    const crypto = yield* Crypto.Crypto;
     const configuration = yield* CommerceCoreIdentityClientConfig;
     /**
      * Optional on purpose: the two Commerce-owned transitions reconcile by reading the Commerce
@@ -1357,11 +1387,11 @@ export const CommerceEnrollmentOwnerEffectRegistryLive = Layer.effect(
       ],
       [
         registryKey(COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY, ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY),
-        ensureProfileEntry(ownerTransactionRun),
+        ensureProfileEntry(ownerTransactionRun, crypto),
       ],
       [
         registryKey(COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY, BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY),
-        bindProfileEntry(ownerTransactionRun, retailReader),
+        bindProfileEntry(ownerTransactionRun, crypto),
       ],
       [
         registryKey(COUNTERPARTY_ACCESS_OWNER_MODULE_KEY, CLAIM_COUNTERPARTY_ACCESS_INVITATION_TRANSITION_KEY),
@@ -1384,7 +1414,14 @@ export const CommerceEnrollmentOwnerEffectRegistryLive = Layer.effect(
           return Effect.succeed(none);
         }
         const entry = entries.get(key);
-        return entry === undefined ? Effect.succeed(none) : entry(transition, { ...context, subject });
+        if (entry === undefined) {
+          return Effect.succeed(none);
+        }
+        const ownerContext = { ...context, subject };
+        const resolved = entry(transition, ownerContext);
+        return transition.ownerModuleKey === PARTY_REGISTRY_OWNER_MODULE_KEY
+          ? originatorFor(ownerContext).pipe(Effect.andThen(resolved))
+          : resolved;
       },
       verificationRequired: (context) => retailEnrollmentVerificationRequired(context, accountLookup),
     };

@@ -2,11 +2,13 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug reorder-catalog-media
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { ReorderCatalogMediaPayloadSchema, ReorderCatalogMediaResultSchema } from '../actions/reorder-catalog-media.ts';
 
 export { ReorderCatalogMediaPayloadSchema } from '../actions/reorder-catalog-media.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const ReorderCatalogMediaActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReorderCatalogMediaActionInvalidProblem',
@@ -21,6 +23,7 @@ export const ReorderCatalogMediaActionForbiddenProblemSchema = makeProblemDetail
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -130,7 +133,7 @@ export const ReorderCatalogMediaActionApi = HttpApi.make('ReorderCatalogMediaAct
       HttpApiEndpoint.post('execute', '/catalog/actions/reorder-catalog-media', {
         error: actionErrors,
         payload: Schema.toEncoded(ReorderCatalogMediaPayloadSchema),
-        success: ReorderCatalogMediaResultSchema,
+        success: [ActionProposalAcceptedSchema, ReorderCatalogMediaResultSchema],
       }),
     )
     .middleware(ReorderCatalogMediaActionSchemaErrorMiddleware),

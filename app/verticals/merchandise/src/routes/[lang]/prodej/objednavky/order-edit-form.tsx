@@ -248,6 +248,7 @@ const useOrderEditForm = ({
   revision,
 }: OrderEditFormProps) => {
   const { t } = useModernI18n();
+  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft>(() => draftOf(order));
   const sequence = useRef(0);
   // The product picked for a new line, with its full record (variants) read on pick.
@@ -346,7 +347,7 @@ const useOrderEditForm = ({
       );
       return command === null
         ? Effect.succeed('saved')
-        : saveOrderEdit(command, version).pipe(
+        : saveOrderEdit(command, version, setPendingMessage).pipe(
             Effect.tap((outcome) =>
               Effect.sync(() => {
                 if (outcome === 'saved') {
@@ -433,6 +434,7 @@ const useOrderEditForm = ({
     parsedLines,
     patch,
     patchLine,
+    pendingMessage,
     pick,
     pickedVariantId,
     pickedVariants,
@@ -586,6 +588,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
     parsedLines,
     patch,
     patchLine,
+    pendingMessage,
     pick,
     pickedVariantId,
     pickedVariants,
@@ -800,6 +803,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-150">
+          {pendingMessage !== null && <StatusText status="error">{pendingMessage}</StatusText>}
           <AutosaveStatus onReloadLatest={reloadLatest} onRetry={handleRetry} status={autosave.status} />
           <Button disabled={busy} onClick={close} theme="outlined" type="button" variant="secondary">
             Zavřít

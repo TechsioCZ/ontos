@@ -50,8 +50,6 @@ export {
   PartyDetailResponseSchema,
 } from '../../shared/api.ts';
 export type { PartyDetailResponse } from '../../shared/api.ts';
-export { customerSegmentDefinitions } from '../../shared/api.ts';
-export type { CustomerSegmentCode, CustomerSegmentDefinition } from '../../shared/api.ts';
 
 export { executeAresLookupWithAuthorization, executeAresLookup } from './ares-lookup-client.ts';
 export type { AresLookupClientOptions } from './ares-lookup-client.ts';
@@ -244,6 +242,11 @@ export {
   executeExecutePrivacyMeasure,
 } from './execute-privacy-measure-action-client.ts';
 export type { ExecutePrivacyMeasureActionClientOptions } from './execute-privacy-measure-action-client.ts';
+export {
+  executeCreateCrmClientParty,
+  executeCreateCrmClientPartyWithAuthorization,
+} from './create-crm-client-party-action-client.ts';
+export type { CreateCrmClientPartyActionClientOptions } from './create-crm-client-party-action-client.ts';
 // </generated-action-http-client-exports>
 export {
   AresApplySelectionInvalid,
@@ -320,3 +323,8 @@ export const partyRegistryClient = {
 } satisfies PartyRegistryClient;
 
 export { recoverPartyCreate, recoverPartyCreateWithAuthorization } from './party-command-client.ts';
+
+export {
+  executeCrmClientIntakeReview,
+  executeCrmClientIntakeReviewWithAuthorization,
+} from './crm-client-intake-review-client.ts';

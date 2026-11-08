@@ -5,6 +5,7 @@ import {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,
   ActiveApplicationCompositionSnapshotSchema,
+  bindLiveAccessGate,
   DatabaseConfig,
   GatewayAssertionRedemptionService,
   GatewayAssertionRedemptionUnavailableError,
@@ -17,16 +18,21 @@ import {
 } from '@app/core-runtime';
 import type {
   ActionRuntimeService,
+  ActiveApplicationCompositionSnapshot,
   GatewayAssertionRedemption,
   ReadCoreError,
   ReadRuntimeService,
 } from '@app/core-runtime';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
+import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';
+import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { RequestSchemaProblemSchema } from '@app/shared-contracts/problem-details';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer, defineEffectBff } from '@modern-js/bff-effect/effect-edge';
-import { Config, ConfigProvider, Context, Effect, Layer, Redacted, Schema } from 'effect';
+import { NodeCrypto } from '@effect/platform-node';
+import { Config, ConfigProvider, Context, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
 import { exportJWK, generateKeyPair, importJWK, SignJWT } from 'jose';
@@ -41,6 +47,7 @@ import { priceGroupDefinitionReadApiLive } from '../../api/price-group-definitio
 import { validatePriceGroupCompatibilityReadApiLive } from '../../api/validate-price-group-compatibility-read-server.ts';
 import { priceGroupCatalogApi } from '../../shared/api.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { priceGroupCatalogRegistration } from '../../vertical.registration.ts';
 import {
   PriceGroupDefinitionAuthenticationProblemSchema,
   PriceGroupDefinitionDomainUnavailableProblemSchema,
@@ -322,6 +329,34 @@ const makeProductionAssertion = (audience = 'price-group-catalog') =>
 const nonPersistingRedemption: GatewayAssertionRedemption = {
   consume: () => Effect.void,
 };
+/** This Read/redemption proof has no Core owner SQL; the actual unused provider must fail if it reaches any. */
+const unusedOwnerApprovals = Effect.fn('GovernedReadHttp.unusedOwnerApprovals')(function* unusedOwnerApprovals(
+  snapshot: ActiveApplicationCompositionSnapshot,
+) {
+  const cryptoContext = yield* Layer.build(NodeCrypto.layer);
+  const accessServices = yield* Layer.build(makeTestAccessGateLayers());
+  const accessDecision = yield* bindLiveAccessGate.pipe(Effect.provideContext(accessServices));
+  const harness = yield* makeReadTestHarness({
+    accessDecision,
+    executeOwnerQuery: () => Effect.die('The governed Read HTTP proof must not perform Core owner SQL'),
+    operationTime: yield* DateTime.nowAsDate,
+    ownerRegistration: priceGroupCatalogRegistration,
+    scope: { ...principal, correlationId: 'price-group-governed-read-http' },
+  }).pipe(Effect.provideContext(cryptoContext));
+  return yield* Layer.build(
+    makeOwnerActionApprovalsLive(ultramodernApiMarker, priceGroupCatalogRegistration).pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          harness.ownerServices,
+          Layer.succeedContext(accessServices),
+          Layer.succeedContext(cryptoContext),
+          Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+        ),
+      ),
+    ),
+  );
+});
+
 const unusedActionRuntime: ActionRuntimeService = {
   resolveActionCommit: () => Effect.die('Action runtime is outside this governed Read proof'),
   resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
@@ -791,7 +826,11 @@ describe('Price Group governed Read HTTP integration', () => {
       const assertion = yield* makeProductionAssertion().pipe(Effect.provide(sourceConfiguration));
       const harness = makeReadRuntime();
       const readLayer = Layer.succeed(ReadRuntime, harness.readRuntime);
-      const actionLayer = Layer.succeed(ActionRuntime, unusedActionRuntime);
+      const ownerApprovals = yield* unusedOwnerApprovals(snapshot);
+      const actionLayer = Layer.mergeAll(
+        Layer.succeed(ActionRuntime, unusedActionRuntime),
+        Layer.succeedContext(ownerApprovals),
+      );
       const redemptionLayer = GatewayAssertionRedemptionLive.pipe(
         Layer.provide(GatewayAssertionRedemptionDatabaseLive),
         Layer.provide(Layer.succeed(DatabaseConfig, connections.runtime)),

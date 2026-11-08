@@ -2,6 +2,7 @@ import { PricingExplicitInputContextSchema } from '@app/pricing-contracts/domain
 import type { PricingExplicitInputEvaluationResult } from '@app/pricing-contracts/domain/broken-explicit-input';
 import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+import { getReadPermissionTargetResolver } from '../../../../packages/core-runtime/src/reads/definition.ts';
 
 import {
   ExactPriceResolutionIndeterminateResponseSchema,
@@ -31,11 +32,18 @@ describe('exact Price resolution generated transport boundary', () => {
     expect(exactPriceResolutionRead.descriptor).toMatchObject({
       entrypoint: {
         access: 'read',
-        authorization: { kind: 'context_permission', permission: 'pricing.exact_price_resolution.read' },
+        authorization: { kind: 'protected' },
       },
       legalEntityScope: 'required',
-      permissionTarget: 'module',
     });
+    // One atomic capability on the read's own declaration; the legacy target is gone (O62).
+    expect(exactPriceResolutionRead.descriptor.accessDeclaration).toMatchObject({
+      key: 'commerce.pricing.price.resolve-exact',
+      kind: 'read',
+      selectors: [],
+    });
+    expect(Object.keys(exactPriceResolutionRead.descriptor)).not.toContain('permissionTarget');
+    expect(getReadPermissionTargetResolver(exactPriceResolutionRead)).toBeUndefined();
   });
 
   it('accepts only safe lookup context and rejects caller-supplied owner observations', () => {

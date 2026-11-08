@@ -63,7 +63,7 @@ const recoverCorrectGtin = Effect.fn('CorrectGtinRecoveryRead.recover')(function
 
 const correctGtinRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.correct-gtin-recovery' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.correct-gtin-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -71,6 +71,14 @@ const correctGtinRecoveryEntrypoint = defineTenantModuleEntrypoint({
 
 export const correctGtinRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.correct-gtin-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'variant', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: correctGtinRecoveryEntrypoint,
     evidencePolicy: {
@@ -80,7 +88,6 @@ export const correctGtinRecoveryRead = defineRead(
     inputSchema: CorrectGtinRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.correct-gtin-recovery',
     resultSchema: CorrectGtinRecoveryResponseSchema,
@@ -92,5 +99,4 @@ export const correctGtinRecoveryRead = defineRead(
   },
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

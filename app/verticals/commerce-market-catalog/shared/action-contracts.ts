@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+import { MarketRetirementAbortedSettlementSchema } from './domain/market-retirement-impact.ts';
 
 import {
   AssociationProvenanceSchema,
@@ -138,11 +139,17 @@ export const MarketLifecycleResultSchema = Schema.Struct({
   ),
 );
 
+export type MarketLifecycleResult = typeof MarketLifecycleResultSchema.Type;
+
 /** Per-Action result contracts of the lifecycle transitions published under `shared/actions/`. */
 export const ActivateMarketResultSchema = MarketLifecycleResultSchema;
 export const SuspendMarketResultSchema = MarketLifecycleResultSchema;
-/** Retirement completes asynchronously: the Action returns the durable intent outcome. */
-export { MarketRetirementOutcomeSchema as RetireMarketResultSchema } from './domain/market-retirement-intent.ts';
+/**
+ * Retirement returns the Market's new lifecycle state, exactly like activate- and suspend-market. A retirement
+ * whose Customer Context settlement stays pending fails with the typed `MarketRetirementSettlementPending` problem
+ * that carries the already-committed result instead of the plain success.
+ */
+export const RetireMarketResultSchema = MarketLifecycleResultSchema;
 
 export const AssociateStorefrontPayloadSchema = Schema.Struct({
   associationId: StorefrontAssociationIdSchema,
@@ -230,4 +237,5 @@ export class MarketCommandRejected extends Schema.TaggedError<MarketCommandRejec
     'seller_identity_immutable',
   ]),
   reason,
+  retirementSettlement: Schema.optionalKey(MarketRetirementAbortedSettlementSchema),
 }) {}

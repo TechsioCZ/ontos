@@ -1,15 +1,24 @@
+import { CoreDatabase } from '@app/core-runtime/db/client';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
+import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
+import { makeShellTestAuthentication } from '../support/shell-authentication.ts';
+import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
+
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
   ActiveApplicationCompositionService,
+  OntosModuleDeploymentContractSchema,
+  OntosShellRuntimeContractSchema,
+  ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
+  ActiveApplicationCompositionUnavailableError,
   PrincipalResolver,
   PrincipalResolverUnavailableError,
   ContextAccess,
-  GatewayScopeGrantRegistrarLive,
   LegalEntityContext,
   TenantModuleStateReadUnavailableError,
   TenantModuleStateService,
@@ -27,15 +36,14 @@ import {
   CorePersistenceLive,
   DatabaseConfig,
   makeContextAccessLive,
-  makeContextPermissionRelationshipMutationLive,
   PrincipalResolverLive,
   runAction,
 } from '@app/core-runtime';
-import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
+import type { DatabaseConnectionPair } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
-import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { makeGatewayScopeGrantRegistrar, makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
+import { NodeChildProcessSpawner, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
@@ -74,7 +82,6 @@ import {
   makeTestPgClient,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
-import { shellAuthenticationFrameworkLive } from '../support/shell-authentication.ts';
 import { AuthenticationNamespaceRegistrationSchema } from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
 import {
   AuthenticationNamespaceRegistry,
@@ -83,31 +90,99 @@ import {
 import { renderActionPrincipalServer } from '../../../../scripts/scaffolding/microvertical-action-boundary/scaffold.mts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
 import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
-import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
-import { AuthDatabase, BetterAuthNativeAdapterLive, makeAuthDatabase } from '../../api/auth/db/client.ts';
+import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { account, apikey, authRelations, session, user } from '../../api/auth/db/schema.ts';
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 import { makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerLayerOptions } from '../../api/auth/gateway-issuer.ts';
-import { BetterAuthFrameworkLive } from '../../api/auth/better-auth-framework.ts';
-import { BetterAuthRuntimeLive } from '../../api/auth/better-auth-runtime.ts';
-import { AuthenticationService, makeAuthenticationService } from '../../api/auth/service.ts';
-import { OAuthCredentialsLive } from '../../api/auth/db/oauth-credentials-live.ts';
-import { OAuthEndpointGuardsLive } from '../../api/auth/oauth-server/endpoint-guards.ts';
-import { OAuthConnectionHooksLive } from '../../api/oauth-connections/better-auth-hooks.ts';
-import { OAuthEndpointGuardDataLive } from '../../api/oauth-connections/grant-store.ts';
-import { CoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
-import { OAuthAuthenticationAuditLive } from '../../../../packages/core-runtime/src/auth/oauth-authentication-audit.ts';
-import { OAuthGrantRegistryLive } from '../../../../packages/core-runtime/src/auth/oauth-grant-registry-live.ts';
-import { makeShellAuthenticationApiRuntime } from '../../api/index.ts';
+import { AuthenticationService } from '../../api/auth/service.ts';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import type { AccessDecisionService, GateInput } from '@app/core-runtime/access/enforcement';
+import { makeShellAuthenticationApiRuntime as makeProductionShellAuthenticationApiRuntime } from '../../api/index.ts';
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
 import { ShellProviderUnavailableError } from '../../api/modules/shell-resources.ts';
-import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
-import { ShellDocumentContextSchema } from '../../shared/api.ts';
+import {
+  ResolvedModuleTargetSchema,
+  ShellTargetForbiddenProblemSchema,
+  ShellTargetNotFoundProblemSchema,
+} from '../../shared/api.ts';
+import {
+  makeModuleEntrypointLoadScheduler,
+  moduleEntrypointLoadIdentity,
+} from '../../src/routes/module-entrypoint-loader.ts';
+import {
+  contentDigest,
+  makeCompositionSnapshot as makeFixtureCompositionSnapshot,
+} from '../fixtures/application-composition.ts';
+import { makeShellTestAccessGate, shellTestAnswers } from '../support/access-decision-double.ts';
+import type { ShellTestAccessGateOptions } from '../support/access-decision-double.ts';
 import { scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
 
-import { makeDatabaseIdentityEnrollmentLive } from '../../../../packages/core-runtime/src/db/database-identities.ts';
-import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
+/** Test authority retains the actual validated fixture snapshot, including its original freshness. */
+const fixtureSnapshots = new Map<string, Effect.Success<ReturnType<typeof makeFixtureCompositionSnapshot>>>();
+const makeCompositionSnapshot: typeof makeFixtureCompositionSnapshot = (...args) =>
+  makeFixtureCompositionSnapshot(...args).pipe(
+    Effect.tap((snapshot) =>
+      Effect.sync(() => {
+        fixtureSnapshots.set(snapshot.composition.revision, snapshot);
+      }),
+    ),
+  );
+const makeShellRuntimeForDatabase =
+  (runtimeDatabase?: DatabaseConnectionPair) =>
+  (...args: Parameters<typeof makeProductionShellAuthenticationApiRuntime>) => {
+    const [authentication, issuer, states, loadCatalog, matcher, access, gateways, scopedStates, external, gate] = args;
+    const load =
+      loadCatalog === undefined
+        ? Effect.fail(
+            new ActiveApplicationCompositionUnavailableError({ reason: 'No test release source was configured' }),
+          )
+        : loadCatalog.pipe(
+            Effect.mapError(
+              (cause) =>
+                new ActiveApplicationCompositionUnavailableError({
+                  cause,
+                  reason: 'Test release source is unavailable',
+                }),
+            ),
+            Effect.flatMap((catalog) => {
+              const snapshot = fixtureSnapshots.get(catalog.composition.revision);
+              return snapshot === undefined
+                ? Effect.fail(
+                    new ActiveApplicationCompositionUnavailableError({
+                      reason: 'No actual fixture snapshot matches the captured release',
+                    }),
+                  )
+                : Effect.succeed(snapshot);
+            }),
+          );
+    return makeProductionShellAuthenticationApiRuntime(
+      authentication,
+      issuer,
+      states,
+      loadCatalog,
+      matcher,
+      access,
+      gateways,
+      scopedStates,
+      external,
+      gate,
+      { load },
+      runtimeDatabase,
+    );
+  };
+const makeShellAuthenticationApiRuntime = makeShellRuntimeForDatabase();
+const shellAuthFixtureServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
+const fixtureSnapshotForRevision = (revision: string) => {
+  const snapshot = fixtureSnapshots.get(revision);
+  return snapshot === undefined
+    ? Effect.fail(
+        new ActiveApplicationCompositionUnavailableError({
+          reason: 'No actual fixture snapshot matches this revision',
+        }),
+      )
+    : Effect.succeed(snapshot);
+};
 
 type AuthenticationRuntimeHandler = ReturnType<ReturnType<typeof makeShellAuthenticationApiRuntime>['createHandler']>;
 const email = 'better-auth-runtime@example.test';
@@ -115,6 +190,7 @@ const password = 'correct-horse-battery-staple';
 const tenantId = '30000000-0000-4000-8000-000000000001';
 const foreignTenantId = '30000000-0000-4000-8000-000000000002';
 const principalId = '40000000-0000-4000-8000-000000000001';
+const changedPrincipalId = '40000000-0000-4000-8000-000000000002';
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..', '..');
 const fixtureLegalEntityId = '35000000-0000-4000-8000-000000000001';
 const fixtureAuthBindingId = '45000000-0000-4000-8000-000000000001';
@@ -145,6 +221,7 @@ const RetryableProblemSchema = Schema.Struct({
   retryable: Schema.optional(Schema.Boolean),
 });
 const TokenResponseSchema = Schema.Struct({ token: Schema.String });
+const ExposedPageFixtureNamespaceSchema = Schema.Struct({ expose: Schema.NonEmptyString });
 const DefectProblemSchema = Schema.Struct({
   detail: Schema.optional(Schema.String),
 });
@@ -176,8 +253,18 @@ const contextAccessLayer = Layer.mergeAll(
   Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
   Layer.succeed(ContextAccess, legalEntitySelectionOptions.contextAccess),
 );
+/**
+ * The one access gate a Shell runtime in this suite asks (O62): the suite scripts every answer, so a
+ * test never reaches the live engine. The fixture company is always selectable, exactly as the
+ * legacy `ContextAccess` double answered it.
+ */
+const shellTestGate = (options: ShellTestAccessGateOptions = {}) =>
+  makeShellTestAccessGate({ defaultAnswer: 'allowed', selectableLegalEntityIds: [fixtureLegalEntityId], ...options });
+const shellAccessLayer = (options: ShellTestAccessGateOptions = {}): Layer.Layer<AccessDecisionGate> =>
+  Layer.succeed(AccessDecisionGate, shellTestGate(options));
 const authenticationContextLayer = Layer.mergeAll(
   contextAccessLayer,
+  shellAccessLayer(),
   Layer.succeed(LegalEntityContext, legalEntitySelectionOptions.legalEntityContext),
 );
 const cookieHeader = (setCookieHeaders: readonly string[]) =>
@@ -333,8 +420,6 @@ const installedPageCatalog = () =>
                     scope: 'tenant',
                   },
                   groupKey: 'shell.navigation.modules',
-                  icon: 'icon-[mdi--view-grid-outline]',
-                  label: { cs: 'Domů', en: 'Home' },
                   order: 100,
                   pageKey: 'testing.pages.page.home',
                 },
@@ -368,6 +453,30 @@ const installedPageCatalog = () =>
                   expose: './PageCustomers',
                   routePath: '/inventory-stock/customers',
                 },
+                {
+                  // The one protected page: the gate decides it, so a suite can prove both the
+                  // allowed and the denied outcome (CUTOVER-PLAN §3.2).
+                  accessDeclaration: {
+                    key: 'testing.pages.protected-page.open',
+                    kind: 'read',
+                    modes: ['run'],
+                    placement: { group: 'fixtures', level: 'basic' },
+                    risk: 'routine',
+                    selectors: [],
+                  },
+                  componentKey: 'testing.pages.page-home',
+                  contributionKey: 'testing.pages.page.protected',
+                  entrypoint: {
+                    access: 'read',
+                    authorization: { kind: 'protected' },
+                    entrypointKey: 'testing.pages.page.protected',
+                    moduleKey: 'testing.pages',
+                    role: 'page',
+                    scope: 'tenant',
+                  },
+                  expose: './PageHome',
+                  routePath: '/inventory-stock/protected',
+                },
               ],
               publicComponents: [],
               reports: [],
@@ -385,43 +494,31 @@ const installedPageCatalog = () =>
 it.live(
   'creates, resolves, persists, revokes, and signs out a Better Auth session',
   Effect.fnUntraced(function* runIntegration1() {
-    // Production also requires secure cookies when its local/public origin is HTTP.
-    const configuration = { ...(yield* loadAuthConfig({ envPath: '/dev/null' })), secureCookies: true };
-    const coreClient = yield* makeTestPgClient(configuration.connectionString);
-    const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
-    const authPersistence = yield* makeAuthDatabase({
-      connectionString: configuration.connectionString,
-      expectedRole: SHARED_RUNTIME_IDENTITY.role,
+    const approvedPageCatalog = yield* installedPageCatalog();
+    const isolated = yield* makeIsolatedNativeDatabaseFixture({
+      compositionSnapshot: yield* fixtureSnapshotForRevision(approvedPageCatalog.composition.revision),
+      mode: 'schema-only',
+      purpose: 'stabilization-1287-shell-auth',
     });
+    const makeOwnedShellAuthenticationApiRuntime = makeShellRuntimeForDatabase(isolated.connections);
+    const configuration = {
+      ...(yield* loadAuthConfig({ envPath: '/dev/null' })),
+      connectionString: isolated.connections.runtime.connectionString,
+    };
+    const coreClient = yield* makeTestPgClient(isolated.connections.admin.connectionString);
+    const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
+    const authPersistence = yield* makeAuthDatabase({ ...configuration, expectedRole: SHARED_RUNTIME_IDENTITY.role });
     const authDatabase = authPersistence.executor;
     const resolver = makePrincipalResolver(
       { executor: coreDatabase },
       { authenticationNamespaceId: staffAuthenticationNamespaceId },
     );
-    const betterAuthRuntime = Layer.succeedContext(yield* Layer.build(BetterAuthRuntimeLive));
-    const oauthAuthenticationLayer = Layer.mergeAll(
-      betterAuthRuntime,
-      BetterAuthNativeAdapterLive,
-      OAuthAuthenticationAuditLive,
-      OAuthEndpointGuardDataLive,
-      OAuthConnectionHooksLive.pipe(Layer.provide(OAuthGrantRegistryLive)),
-    ).pipe(
-      Layer.provide(Layer.mergeAll(OAuthGrantRegistryLive, OAuthCredentialsLive)),
-      Layer.provide(
-        Layer.mergeAll(
-          Layer.succeed(CoreDatabase, { executor: coreDatabase }),
-          Layer.succeed(AuthDatabase, authPersistence),
-        ),
-      ),
-    );
-    const authenticationFramework = BetterAuthFrameworkLive({ allowFixtureSignUp: true }).pipe(
-      Layer.provideMerge(oauthAuthenticationLayer),
-    );
-    const authenticationGuards = OAuthEndpointGuardsLive.pipe(Layer.provideMerge(authenticationFramework));
-    const authentication = yield* makeAuthenticationService().pipe(
-      Effect.provide(authenticationGuards),
+    const authentication = yield* makeShellTestAuthentication({
+      allowFixtureSignUp: true,
+    }).pipe(
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
+      Effect.provideService(CoreDatabase, { executor: coreDatabase }),
       Effect.provideService(PrincipalResolver, resolver),
     );
     const authenticationLayer = Layer.succeed(AuthenticationService, authentication);
@@ -456,7 +553,7 @@ it.live(
         coreDatabase.delete(principalAuthBindings).where(eq(principalAuthBindings.principalId, principalId)),
         coreDatabase.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId)),
         coreDatabase.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, foreignTenantId)),
-        coreDatabase.delete(principals).where(eq(principals.principalId, principalId)),
+        coreDatabase.delete(principals).where(inArray(principals.principalId, [principalId, changedPrincipalId])),
         coreDatabase.delete(legalEntities).where(eq(legalEntities.legalEntityId, fixtureLegalEntityId)),
         coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId)),
         coreDatabase.delete(tenants).where(eq(tenants.tenantId, foreignTenantId)),
@@ -499,6 +596,13 @@ it.live(
       status: 'active',
       tenantId,
     });
+    yield* coreDatabase.insert(principals).values({
+      displayName: 'Changed current principal without module permission',
+      kind: 'human',
+      principalId: changedPrincipalId,
+      status: 'active',
+      tenantId,
+    });
     yield* coreDatabase.insert(legalEntities).values({
       legalEntityId: fixtureLegalEntityId,
       legalName: 'Fixture legal entity',
@@ -530,7 +634,7 @@ it.live(
     });
     const invalid = yield* Effect.flip(authentication.signIn(email, 'wrong-password', requestHeaders));
     expect(Predicate.isTagged(invalid, 'InvalidCredentialsError')).toBe(true);
-    const anonymousRuntime = makeShellAuthenticationApiRuntime(
+    const anonymousRuntime = makeOwnedShellAuthenticationApiRuntime(
       authenticationLayer,
       makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
@@ -542,6 +646,10 @@ it.live(
       installedCatalog(['testing.one']),
       false,
       contextAccessLayer,
+      undefined,
+      undefined,
+      undefined,
+      shellAccessLayer(),
     );
     const unavailableHandler = anonymousRuntime.createHandler();
     handlers.push(unavailableHandler);
@@ -628,33 +736,13 @@ it.live(
       cookie: cookieHeader(signedInCookies),
       origin: configuration.baseUrl,
     });
-    const apiKeys = yield* makeApiKeyService().pipe(
-      Effect.provideService(AuthConfig, configuration),
-      Effect.provideService(AuthDatabase, authPersistence),
-    );
-    const issuedKey = yield* apiKeys.issue(authenticatedHeaders, {
-      issuerPrincipalId: principalId,
-      lifecycleOperationId: globalThis.crypto.randomUUID(),
-      name: 'secure-session-issuance',
-      tenantId,
-    });
-    yield* Effect.addFinalizer(() =>
-      authDatabase.delete(apikey).where(eq(apikey.id, issuedKey.providerKeyId)).pipe(Effect.orDie),
-    );
-    expect(signedInCookies.some((cookie) => cookie.startsWith('__Secure-better-auth.session_token='))).toBe(true);
-    expect((yield* apiKeys.verify(Redacted.value(issuedKey.secret))).providerKeyId).toBe(issuedKey.providerKeyId);
-    yield* apiKeys.setEnabled(issuedKey.providerKeyId, false);
-    expect(
-      Predicate.isTagged(
-        yield* Effect.flip(apiKeys.verify(Redacted.value(issuedKey.secret))),
-        'ApiKeyCredentialInvalidError',
-      ),
-    ).toBe(true);
-    const approvedPageCatalog = yield* installedPageCatalog();
-    const exactPageRequest = (entrypointKey = 'testing.pages.page.customers') =>
+    const exactPageRequest = (
+      entrypointKey = 'testing.pages.page.customers',
+      compositionRevision = approvedPageCatalog.composition.revision,
+    ) =>
       new Request(`${configuration.baseUrl}/shell/module-target`, {
         body: JSON.stringify({
-          compositionRevision: approvedPageCatalog.composition.revision,
+          compositionRevision,
           entrypointKey,
           moduleId: 'testing.pages',
         }),
@@ -673,6 +761,7 @@ it.live(
     let moduleResourcePermissionCalls = 0;
     let providerCalls = 0;
     let authenticationContextCalls = 0;
+    const observedModuleContexts: { readonly principalId: string; readonly tenantId: string }[] = [];
     const observedAuthenticationLayer = Layer.succeed(AuthenticationService, {
       ...authentication,
       resolveShellContext: (headers) => {
@@ -684,21 +773,31 @@ it.live(
       Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
       Layer.succeed(ContextAccess, {
         ...legalEntitySelectionOptions.contextAccess,
-        modules: (input) => {
-          moduleResourcePermissionCalls += 1;
-          return legalEntitySelectionOptions.contextAccess.modules(input);
-        },
         resources: () => {
           moduleResourcePermissionCalls += 1;
           return legalEntitySelectionOptions.contextAccess.resources();
         },
       }),
     );
+    // Scripted per-Principal gate only: session/binding resolution and Module State use the real
+    // owned native DB. This is not a native SpiceDB permission-revocation claim.
+    const fixturePrincipalGate = shellTestGate();
+    const otherPrincipalGate = shellTestGate({ defaultAnswer: 'denied' });
+    const gateFor = (input: GateInput) => {
+      moduleResourcePermissionCalls += 1;
+      observedModuleContexts.push({ principalId: input.scope.principalId, tenantId: input.scope.tenantId });
+      return input.scope.principalId === principalId ? fixturePrincipalGate : otherPrincipalGate;
+    };
+    const observedGate: AccessDecisionService = {
+      ...fixturePrincipalGate,
+      decide: (input) => gateFor(input).decide(input),
+      decideMany: (inputs) => Effect.forEach(inputs, (input) => gateFor(input).decide(input), { concurrency: 1 }),
+    };
     const unavailableObservedProvider = () => {
       providerCalls += 1;
       return Effect.fail(new ShellProviderUnavailableError());
     };
-    const pageRuntime = makeShellAuthenticationApiRuntime(
+    const pageRuntime = makeOwnedShellAuthenticationApiRuntime(
       observedAuthenticationLayer,
       makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
@@ -714,6 +813,9 @@ it.live(
         resource: { detail: unavailableObservedProvider, timeline: unavailableObservedProvider },
         search: { search: unavailableObservedProvider },
       },
+      undefined,
+      undefined,
+      Layer.succeed(AccessDecisionGate, observedGate),
     ).createHandler();
     handlers.push(pageRuntime);
     const exactPageResponse = yield* Effect.tryPromise(() => pageRuntime.handler(exactPageRequest()));
@@ -735,6 +837,87 @@ it.live(
       routeParameters: {},
       writable: true,
     });
+    const resolveApprovedTarget = Effect.fn('AuthRuntimeTest.resolveApprovedTarget')(function* resolveApprovedTarget(
+      entrypointKey: string,
+    ) {
+      const response = yield* Effect.tryPromise(() => pageRuntime.handler(exactPageRequest(entrypointKey)));
+      expect(response.status).toBe(200);
+      return yield* Schema.decodeUnknownEffect(ResolvedModuleTargetSchema)(
+        yield* Effect.tryPromise(() => response.json()),
+      );
+    });
+    const approvedTargets = yield* Effect.all([
+      resolveApprovedTarget('testing.pages.page.home'),
+      resolveApprovedTarget('testing.pages.page.customers'),
+    ]);
+    // The production handler supplies the actual approved target identities; controlled import
+    // thunks exercise the real browser scheduler without pretending to execute native remote UI.
+    const scheduler = makeModuleEntrypointLoadScheduler();
+    let physicalLoads = 0;
+    const results = yield* scheduler.settle(
+      approvedTargets.map((target) => ({
+        contract: Schema.Struct({ expose: Schema.Literal(target.federation.expose) }),
+        identity: target,
+        load: () =>
+          Effect.sync(() => {
+            physicalLoads += 1;
+            return { expose: target.federation.expose };
+          }).pipe(Effect.flatMap(Schema.decodeUnknownEffect(ExposedPageFixtureNamespaceSchema))),
+        loadIdentity: moduleEntrypointLoadIdentity(target),
+      })),
+    );
+    expect(physicalLoads).toBe(2);
+    expect(results.map((result) => (result.state === 'ready' ? result.value.expose : result.reason))).toEqual([
+      './PageHome',
+      './PageCustomers',
+    ]);
+    expect(moduleEntrypointLoadIdentity(approvedTargets[0]).result).not.toBe(
+      moduleEntrypointLoadIdentity(approvedTargets[1]).result,
+    );
+    const contextCallsAfterCodeLoad = authenticationContextCalls;
+    // Native DB activation changes must win even after this exact code target was loaded.
+    yield* coreDatabase
+      .update(tenantModuleStates)
+      .set({ state: 'suspended' })
+      .where(and(eq(tenantModuleStates.tenantId, tenantId), eq(tenantModuleStates.moduleKey, 'testing.pages')));
+    const inactiveTarget = yield* Effect.tryPromise(() => pageRuntime.handler(exactPageRequest()));
+    // A suspended page is safely undiscoverable: the target resolver deliberately maps
+    // denied Module State to not_found, distinct from an explicit permission denial below.
+    expect(inactiveTarget.status).toBe(404);
+    const inactiveBody = yield* Effect.tryPromise(() => inactiveTarget.json());
+    const inactiveProblem = yield* Schema.decodeUnknownEffect(ShellTargetNotFoundProblemSchema)(inactiveBody);
+    expect(inactiveProblem.detail).toBe('The requested module target was not found.');
+    expect(inactiveBody).not.toHaveProperty('federation');
+    expect(physicalLoads).toBe(2);
+    yield* coreDatabase
+      .update(tenantModuleStates)
+      .set({ state: 'active' })
+      .where(and(eq(tenantModuleStates.tenantId, tenantId), eq(tenantModuleStates.moduleKey, 'testing.pages')));
+    // Only a protected page is asked of the gate; an authenticated-only page stays open to any Principal.
+    const protectedPageRequest = () => exactPageRequest('testing.pages.page.protected');
+    const fixturePrincipalProtected = yield* Effect.tryPromise(() => pageRuntime.handler(protectedPageRequest()));
+    expect(fixturePrincipalProtected.status).toBe(200);
+    // Change the real binding behind the same session; its new Principal gets its own scripted
+    // page permission decision rather than inheriting the earlier Principal's successful resolution.
+    yield* coreDatabase
+      .update(principalAuthBindings)
+      .set({ principalId: changedPrincipalId })
+      .where(eq(principalAuthBindings.principalAuthBindingId, fixtureAuthBindingId));
+    const changedPrincipalTarget = yield* Effect.tryPromise(() => pageRuntime.handler(protectedPageRequest()));
+    expect(changedPrincipalTarget.status).toBe(403);
+    const changedPrincipalBody = yield* Effect.tryPromise(() => changedPrincipalTarget.json());
+    yield* Schema.decodeUnknownEffect(ShellTargetForbiddenProblemSchema)(changedPrincipalBody);
+    expect(changedPrincipalBody).not.toHaveProperty('federation');
+    expect(physicalLoads).toBe(2);
+    expect(observedModuleContexts.at(-1)).toEqual({ principalId: changedPrincipalId, tenantId });
+    yield* coreDatabase
+      .update(principalAuthBindings)
+      .set({ principalId })
+      .where(eq(principalAuthBindings.principalAuthBindingId, fixtureAuthBindingId));
+    const reopenedTarget = yield* resolveApprovedTarget('testing.pages.page.customers');
+    expect(moduleEntrypointLoadIdentity(reopenedTarget)).toEqual(moduleEntrypointLoadIdentity(approvedTargets[1]));
+    expect(authenticationContextCalls).toBeGreaterThan(contextCallsAfterCodeLoad);
+    expect(physicalLoads).toBe(2);
     const permissionCallsBeforeStaleRequests = moduleResourcePermissionCalls;
     const staleRevision = 'f'.repeat(64);
     const staleRef = {
@@ -813,7 +996,7 @@ it.live(
     if (authenticatedContext.state !== 'authenticated') {
       throw new Error('The exact-page boundary fixture must resolve an authenticated context');
     }
-    const selectionRequiredRuntime = makeShellAuthenticationApiRuntime(
+    const selectionRequiredRuntime = makeOwnedShellAuthenticationApiRuntime(
       Layer.succeed(AuthenticationService, {
         ...authentication,
         resolveShellContext: () =>
@@ -840,6 +1023,10 @@ it.live(
       installedPageCatalog(),
       false,
       contextAccessLayer,
+      undefined,
+      undefined,
+      undefined,
+      shellAccessLayer(),
     ).createHandler();
     handlers.push(selectionRequiredRuntime);
     const selectionRequiredPageResponse = yield* Effect.tryPromise(() =>
@@ -851,7 +1038,7 @@ it.live(
         yield* Effect.tryPromise(() => selectionRequiredPageResponse.json()),
       ).status,
     ).toBe(409);
-    const deniedPageRuntime = makeShellAuthenticationApiRuntime(
+    const deniedPageRuntime = makeOwnedShellAuthenticationApiRuntime(
       authenticationLayer,
       makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
@@ -864,19 +1051,70 @@ it.live(
       false,
       Layer.mergeAll(
         Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
-        Layer.succeed(ContextAccess, {
-          ...legalEntitySelectionOptions.contextAccess,
-          modules: ({ moduleIds }: { readonly moduleIds: readonly string[] }) =>
-            Effect.succeed(moduleIds.map((key) => ({ decision: 'denied' as const, key }))),
-        }),
+        Layer.succeed(ContextAccess, legalEntitySelectionOptions.contextAccess),
       ),
+      undefined,
+      undefined,
+      undefined,
+      shellAccessLayer({
+        answers: shellTestAnswers({ 'testing.pages.protected-page.open': 'denied' }),
+        defaultAnswer: 'allowed',
+      }),
     ).createHandler();
     handlers.push(deniedPageRuntime);
-    const deniedPageResponse = yield* Effect.tryPromise(() => deniedPageRuntime.handler(exactPageRequest()));
+    const deniedPageResponse = yield* Effect.tryPromise(() =>
+      deniedPageRuntime.handler(exactPageRequest('testing.pages.page.protected')),
+    );
     expect(deniedPageResponse.status).toBe(403);
     expect(
       Schema.decodeUnknownSync(ProblemStatusSchema)(yield* Effect.tryPromise(() => deniedPageResponse.json())).status,
     ).toBe(403);
+    // A real explicit promotion changes only this case's owned database after the page stale/denial controls.
+    const replacementSnapshot = yield* installedSnapshot(['testing.one']);
+    expect(replacementSnapshot.composition.revision).toBe(testRevision);
+    yield* isolated.composition.closeAdmission();
+    yield* isolated.composition.drain();
+    yield* isolated.composition.publishReplacement(replacementSnapshot);
+    // Reuse the fixture's one real R1 -> R2 replacement. This R2 deliberately removes
+    // testing.pages, so it must deny the old code target; this is not retained-target
+    // success, a browser reload, or proof of an actual R2 browser remote execution.
+    const replacementCatalog = yield* makeInstalledModuleCatalogLoader(Effect.succeed(replacementSnapshot));
+    const replacementRuntime = makeOwnedShellAuthenticationApiRuntime(
+      observedAuthenticationLayer,
+      makeGatewayIssuerLayer({
+        currentTimeSeconds: Effect.succeed(1_700_000_000),
+        generateJti: Effect.succeed('60000000-0000-4000-8000-000000000012'),
+        loadAdmission: installedAdmission(['testing.one']),
+        loadConfig: parseGatewayIssuerConfig({}),
+      }).pipe(Layer.provide(scopeGrantRegistrarLayer())),
+      moduleStateLayer,
+      Effect.succeed(replacementCatalog),
+      false,
+      observedContextAccessLayer,
+      undefined,
+      undefined,
+      undefined,
+      shellAccessLayer(),
+    ).createHandler();
+    handlers.push(replacementRuntime);
+    const oldRevisionTarget = yield* Effect.tryPromise(() => replacementRuntime.handler(exactPageRequest()));
+    expect(oldRevisionTarget.status).toBe(409);
+    const removedTarget = yield* Effect.tryPromise(() =>
+      replacementRuntime.handler(
+        exactPageRequest('testing.pages.page.customers', replacementSnapshot.composition.revision),
+      ),
+    );
+    // An explicit module selector absent from the approved catalog is a permission denial;
+    // the resolver reserves not_found for a missing page or a state-hidden installed target.
+    expect(removedTarget.status).toBe(403);
+    const removedBody = yield* Effect.tryPromise(() => removedTarget.json());
+    const removedProblem = yield* Schema.decodeUnknownEffect(ShellTargetForbiddenProblemSchema)(removedBody);
+    expect(removedProblem.detail).toBe('The requested module is forbidden in the selected context.');
+    expect(removedBody).not.toHaveProperty('federation');
+    expect(physicalLoads).toBe(2);
+    const supersededPageResponse = yield* Effect.tryPromise(() => pageRuntime.handler(exactPageRequest()));
+    expect(supersededPageResponse.status).toBe(503);
+    expect(providerCalls).toBe(0);
     const currentSessionResponse = yield* Effect.tryPromise(() =>
       unavailableHandler.handler(
         new Request(`${configuration.baseUrl}/auth/session`, {
@@ -903,7 +1141,7 @@ it.live(
       ),
     );
     expect(missingIdempotencyResponse.status).toBe(428);
-    const deniedIdentityAdministrationRuntime = makeShellAuthenticationApiRuntime(
+    const deniedIdentityAdministrationRuntime = makeOwnedShellAuthenticationApiRuntime(
       authenticationLayer,
       makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
@@ -916,33 +1154,15 @@ it.live(
       false,
       Layer.mergeAll(
         Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
-        Layer.succeed(ContextAccess, {
-          ...legalEntitySelectionOptions.contextAccess,
-          tenants: ({
-            permission,
-            tenantIds,
-          }: {
-            readonly permission:
-              | 'access'
-              | 'impersonate'
-              | 'manage_identity'
-              | 'manage_party_identity'
-              | 'manage_party_relationships'
-              | 'merge_party_identity'
-              | 'read_party_identity'
-              | 'read_people'
-              | 'review_party_identity'
-              | 'select_context';
-            readonly tenantIds: readonly string[];
-          }) =>
-            Effect.succeed(
-              tenantIds.map((key) => ({
-                decision: permission === 'manage_identity' ? ('denied' as const) : ('allowed' as const),
-                key,
-              })),
-            ),
-        }),
+        Layer.succeed(ContextAccess, legalEntitySelectionOptions.contextAccess),
       ),
+      undefined,
+      undefined,
+      undefined,
+      shellAccessLayer({
+        answers: shellTestAnswers({ 'core.identity.principal.create-non-human': 'denied' }),
+        defaultAnswer: 'allowed',
+      }),
     ).createHandler();
     handlers.push(deniedIdentityAdministrationRuntime);
     const deniedIdentityAdministrationResponse = yield* Effect.tryPromise(() =>
@@ -994,12 +1214,10 @@ it.live(
         }),
       ),
     );
+    // This is the production Shell wiring and its real dynamically created Core Read, not a ReadRuntime double.
     expect(activeModulesResponse.status).toBe(200);
     expect(yield* Effect.tryPromise(() => activeModulesResponse.json())).toEqual({
       compositionRevision: testRevision,
-      deniedAppIds: [],
-      gatewayAudiences: ['inventory-stock'],
-      homeComponents: [],
       navigation: [],
       state: 'available',
       unavailableDeployments: [],
@@ -1012,6 +1230,7 @@ it.live(
         outcomeCode: dataAccessEvents.outcomeCode,
         queryHash: dataAccessEvents.queryHash,
         resultCount: dataAccessEvents.resultCount,
+        servingModuleKey: dataAccessEvents.servingModuleKey,
       })
       .from(dataAccessEvents)
       .where(
@@ -1027,90 +1246,9 @@ it.live(
       outcomeCode: 'read_allowed',
       queryHash: null,
       resultCount: 0,
+      servingModuleKey: 'core.shell',
     });
-    // Company admission must open the Shell frame even when every module capability is denied.
-    const zeroRoleModuleChecks: string[] = [];
-    const zeroRoleContextAccess = {
-      ...legalEntitySelectionOptions.contextAccess,
-      legalEntities: ({
-        legalEntityIds,
-        permission,
-      }: Parameters<(typeof ContextAccess)['Service']['legalEntities']>[0]) =>
-        Effect.succeed(
-          legalEntityIds.map((key) => ({
-            decision: permission === undefined || permission === 'access' ? ('allowed' as const) : ('denied' as const),
-            key,
-          })),
-        ),
-      modules: ({ moduleIds }: { readonly moduleIds: readonly string[] }) => {
-        zeroRoleModuleChecks.push(...moduleIds);
-        return Effect.succeed(moduleIds.map((key) => ({ decision: 'denied' as const, key })));
-      },
-      tenants: ({ permission, tenantIds }: Parameters<(typeof ContextAccess)['Service']['tenants']>[0]) =>
-        Effect.succeed(
-          tenantIds.map((key) => ({
-            decision: permission === 'access' ? ('allowed' as const) : ('denied' as const),
-            key,
-          })),
-        ),
-    };
-    const zeroRoleRuntime = makeShellAuthenticationApiRuntime(
-      authenticationLayer,
-      makeGatewayIssuerLayer({
-        currentTimeSeconds: Effect.succeed(1_700_000_000),
-        generateJti: Effect.succeed('60000000-0000-4000-8000-000000000003'),
-        loadAdmission: installedAdmission(['testing.one']),
-        loadConfig: parseGatewayIssuerConfig({}),
-      }).pipe(Layer.provide(scopeGrantRegistrarLayer())),
-      moduleStateLayer,
-      installedCatalog(['testing.one']),
-      false,
-      Layer.mergeAll(
-        Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
-        Layer.succeed(ContextAccess, zeroRoleContextAccess),
-      ),
-    ).createHandler();
-    handlers.push(zeroRoleRuntime);
-    const zeroRoleDocumentResponse = yield* Effect.tryPromise(() =>
-      zeroRoleRuntime.handler(
-        new Request(`${configuration.baseUrl}/shell/document-context`, {
-          body: JSON.stringify({ home: true }),
-          headers: new Headers({
-            'content-type': 'application/json',
-            cookie: headerValue(authenticatedHeaders, 'cookie'),
-            origin: configuration.baseUrl,
-          }),
-          method: 'POST',
-        }),
-      ),
-    );
-    expect(zeroRoleDocumentResponse.status).toBe(200);
-    const zeroRoleDocument = yield* Schema.decodeUnknownEffect(ShellDocumentContextSchema)(
-      yield* Effect.tryPromise(() => zeroRoleDocumentResponse.json()),
-    );
-    expect(zeroRoleDocument.session).toMatchObject({
-      identity: { legalEntityId: fixtureLegalEntityId },
-      state: 'authenticated',
-    });
-    expect(zeroRoleDocument.composition).toEqual({
-      compositionRevision: testRevision,
-      deniedAppIds: ['inventory-stock'],
-      gatewayAudiences: [],
-      homeComponents: [],
-      navigation: [],
-      state: 'available',
-      unavailableDeployments: [],
-    });
-    expect(zeroRoleDocument.home?.contribution).toEqual({ state: 'forbidden' });
-    expect(zeroRoleDocument.canManagePeople).toBe(false);
-    expect(zeroRoleDocument.legalEntities).toMatchObject({
-      legalEntities: [{ legalEntityId: fixtureLegalEntityId }],
-      selectedLegalEntityId: fixtureLegalEntityId,
-      state: 'authenticated',
-    });
-    expect(zeroRoleModuleChecks).toContain('testing.one');
-    expect(zeroRoleModuleChecks).not.toContain('core.shell');
-    const refreshingRuntime = makeShellAuthenticationApiRuntime(
+    const refreshingRuntime = makeOwnedShellAuthenticationApiRuntime(
       Layer.succeed(AuthenticationService, {
         ...authentication,
         currentSession: () =>
@@ -1159,6 +1297,10 @@ it.live(
       installedCatalog(['testing.one']),
       false,
       contextAccessLayer,
+      undefined,
+      undefined,
+      undefined,
+      shellAccessLayer(),
     ).createHandler();
     handlers.push(refreshingRuntime);
     const refreshedModulesResponse = yield* Effect.tryPromise(() =>
@@ -1191,7 +1333,7 @@ it.live(
           }),
         ),
     };
-    const unavailableModulesHandler = makeShellAuthenticationApiRuntime(
+    const unavailableModulesHandler = makeOwnedShellAuthenticationApiRuntime(
       authenticationLayer,
       makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
@@ -1205,6 +1347,8 @@ it.live(
       contextAccessLayer,
       undefined,
       () => unavailableModuleStates,
+      undefined,
+      shellAccessLayer(),
     ).createHandler();
     handlers.push(unavailableModulesHandler);
     const unavailableModulesResponse = yield* Effect.tryPromise(() =>
@@ -1265,136 +1409,19 @@ it.live(
         },
       }),
     };
-    const issuingHandler = makeShellAuthenticationApiRuntime(
+    const issuingHandler = makeOwnedShellAuthenticationApiRuntime(
       authenticationLayer,
       makeGatewayIssuerLayer(issuerDependencies).pipe(Layer.provide(scopeGrantRegistrarLayer())),
       moduleStateLayer,
       installedCatalog(['testing.one']),
       false,
       contextAccessLayer,
+      undefined,
+      undefined,
+      undefined,
+      shellAccessLayer(),
     ).createHandler();
     handlers.push(issuingHandler);
-    // Native Better Auth and PostgreSQL own the selected scope. Graph semantics are
-    // covered separately against real SpiceDB; these decisions exercise session transitions.
-    const tenantSwitch = yield* Effect.tryPromise(() =>
-      issuingHandler.handler(
-        new Request(`${configuration.baseUrl}/auth/context/tenant`, {
-          headers: authenticatedHeaders,
-          method: 'POST',
-        }),
-      ),
-    );
-    expect(tenantSwitch.status).toBe(200);
-    expect(yield* Effect.tryPromise(() => tenantSwitch.json())).toEqual({ selectedContext: 'tenant' });
-    const persistedTenantScope = yield* authDatabase
-      .select({
-        activeContextKind: session.activeContextKind,
-        activeLegalEntityId: session.activeLegalEntityId,
-        activeTenantId: session.activeTenantId,
-      })
-      .from(session)
-      .where(eq(session.userId, betterAuthUserId));
-    expect(persistedTenantScope).toEqual([
-      {
-        activeContextKind: 'tenant',
-        activeLegalEntityId: null,
-        activeTenantId: tenantId,
-      },
-    ]);
-    let selectionAllowed = true;
-    let selectionChecks = 0;
-    const selectedScopeLayer = Layer.mergeAll(
-      Layer.succeed(LegalEntityContext, legalEntitySelectionOptions.legalEntityContext),
-      Layer.succeed(ContextAccess, {
-        ...legalEntitySelectionOptions.contextAccess,
-        tenants: ({
-          permission,
-          principalId: checkedPrincipal,
-          tenantIds,
-        }: {
-          readonly permission: string;
-          readonly principalId: string;
-          readonly tenantIds: readonly string[];
-        }) =>
-          Effect.sync(() => {
-            expect(permission).toBe('select_context');
-            expect(checkedPrincipal).toBe(principalId);
-            expect(tenantIds).toEqual([tenantId]);
-            selectionChecks += 1;
-            return tenantIds.map((key) => ({
-              decision: selectionAllowed ? ('allowed' as const) : ('denied' as const),
-              key,
-            }));
-          }),
-      }),
-    );
-    for (let reload = 0; reload < 2; reload += 1) {
-      const selected = yield* authentication
-        .resolveShellContext(authenticatedHeaders)
-        .pipe(Effect.provide(selectedScopeLayer));
-      expect(selected.state).toBe('tenant_authenticated');
-      if (selected.state === 'tenant_authenticated') {
-        expect(selected.principal.tenantId).toBe(tenantId);
-        expect(selected.principal.legalEntityId).toBeUndefined();
-      }
-    }
-    expect(selectionChecks).toBe(2);
-    const tenantGateway = yield* Effect.tryPromise(() =>
-      issuingHandler.handler(
-        new Request(`${configuration.baseUrl}/auth/gateway-context`, {
-          body: JSON.stringify({ audience: 'inventory-stock', compositionRevision: testRevision }),
-          headers: {
-            'content-type': 'application/json',
-            cookie: cookieHeader(signedInCookies),
-            origin: configuration.baseUrl,
-          },
-          method: 'POST',
-        }),
-      ),
-    );
-    expect(tenantGateway.status).toBe(200);
-    const tenantAssertion = yield* verifiedGatewayAssertion(tenantGateway, pair.publicKey, testRevision);
-    expect(tenantAssertion.principal.tenantId).toBe(tenantId);
-    expect(tenantAssertion.principal.legalEntityId).toBeUndefined();
-    const companyFromTenantScope = yield* Effect.tryPromise(() =>
-      issuingHandler.handler(
-        new Request(`${configuration.baseUrl}/auth/gateway-context`, {
-          body: JSON.stringify({
-            audience: 'inventory-stock',
-            compositionRevision: testRevision,
-            legalEntityId: fixtureLegalEntityId,
-          }),
-          headers: {
-            'content-type': 'application/json',
-            cookie: cookieHeader(signedInCookies),
-            origin: configuration.baseUrl,
-          },
-          method: 'POST',
-        }),
-      ),
-    );
-    expect(companyFromTenantScope.status).toBe(403);
-    selectionAllowed = false;
-    const revoked = yield* authentication
-      .resolveShellContext(authenticatedHeaders)
-      .pipe(Effect.provide(selectedScopeLayer));
-    expect(revoked.state).toBe('access_blocked');
-    expect(selectionChecks).toBe(3);
-    const deniedSelection = yield* authentication
-      .switchToTenantContext(authenticatedHeaders)
-      .pipe(Effect.provide(selectedScopeLayer), Effect.flip);
-    expect(Predicate.isTagged(deniedSelection, 'TenantAccessForbiddenError')).toBe(true);
-    yield* authentication
-      .switchLegalEntity(fixtureLegalEntityId, authenticatedHeaders)
-      .pipe(Effect.provide(authenticationContextLayer));
-    const restoredCompanyScope = yield* authDatabase
-      .select({
-        activeContextKind: session.activeContextKind,
-        activeLegalEntityId: session.activeLegalEntityId,
-      })
-      .from(session)
-      .where(eq(session.userId, betterAuthUserId));
-    expect(restoredCompanyScope).toEqual([{ activeContextKind: 'company', activeLegalEntityId: fixtureLegalEntityId }]);
     const assertionResponse = yield* Effect.tryPromise(() =>
       issuingHandler.handler(
         new Request(`${configuration.baseUrl}/auth/gateway-context`, {
@@ -1409,7 +1436,6 @@ it.live(
       ),
     );
     expect(assertionResponse.status, yield* Effect.tryPromise(() => assertionResponse.clone().text())).toBe(200);
-    expect(headerValue(assertionResponse.headers, 'cache-control')).toBe('no-store');
     const { principal: verifiedPrincipal, token: assertionToken } = yield* verifiedGatewayAssertion(
       assertionResponse,
       pair.publicKey,
@@ -1421,46 +1447,6 @@ it.live(
     expect(verifiedPrincipal.legalEntityId).toBe(fixtureLegalEntityId);
     expect(verifiedPrincipal.principalId).toBe(principalId);
     expect(verifiedPrincipal.tenantId).toBe(tenantId);
-    // The document batch issues the same session assertion per admitted audience and leaves out the rest.
-    const documentBatchResponse = yield* Effect.tryPromise(() =>
-      issuingHandler.handler(
-        new Request(`${configuration.baseUrl}/auth/gateway-contexts`, {
-          body: JSON.stringify({ audiences: ['inventory-stock', 'not-admitted'], compositionRevision: testRevision }),
-          headers: new Headers({
-            'content-type': 'application/json',
-            cookie: cookieHeader(signedInCookies),
-            origin: configuration.baseUrl,
-          }),
-          method: 'POST',
-        }),
-      ),
-    );
-    expect(documentBatchResponse.status).toBe(200);
-    expect(headerValue(documentBatchResponse.headers, 'cache-control')).toBe('no-store');
-    const documentBatch = Schema.decodeUnknownSync(
-      Schema.Struct({ assertions: Schema.Array(Schema.Struct({ audience: Schema.String })) }),
-    )(yield* Effect.tryPromise(() => documentBatchResponse.clone().json()));
-    expect(documentBatch.assertions.map(({ audience }) => audience)).toEqual(['inventory-stock']);
-    const [batchAssertion] = Schema.decodeUnknownSync(Schema.Struct({ assertions: Schema.Array(Schema.Unknown) }))(
-      yield* Effect.tryPromise(() => documentBatchResponse.json()),
-    ).assertions;
-    const { principal: batchPrincipal } = yield* verifiedGatewayAssertion(
-      Response.json(batchAssertion),
-      pair.publicKey,
-      testRevision,
-    );
-    expect(batchPrincipal).toEqual(verifiedPrincipal);
-    const anonymousBatchResponse = yield* Effect.tryPromise(() =>
-      issuingHandler.handler(
-        new Request(`${configuration.baseUrl}/auth/gateway-contexts`, {
-          body: JSON.stringify({ audiences: ['inventory-stock'], compositionRevision: testRevision }),
-          headers: new Headers({ 'content-type': 'application/json', origin: configuration.baseUrl }),
-          method: 'POST',
-        }),
-      ),
-    );
-    expect(anonymousBatchResponse.status).toBe(401);
-    expect(headerValue(anonymousBatchResponse.headers, 'cache-control')).toBe('no-store');
     yield* Effect.tryPromise(() =>
       mkdir(path.join(generatedFixtureRoot, 'node_modules', '@app'), {
         recursive: true,
@@ -1550,8 +1536,39 @@ it.live(
     expect(generatedPrincipal.legalEntityId).toBe(fixtureLegalEntityId);
     expect(generatedPrincipal.principalId).toBe(principalId);
     expect(generatedPrincipal.tenantId).toBe(tenantId);
-    const databaseConnections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+    const databaseConnections = isolated.connections;
     const scopeGrantAdminClient = yield* makeTestPgClient(databaseConnections.admin.connectionString);
+    const sourceIdentities = yield* loadDatabaseIdentityConnections({
+      enrollment: SHELL_DATABASE_IDENTITY_ENROLLMENT,
+      envPath: '/dev/null',
+    });
+    const sourceIssuer = sourceIdentities.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id];
+    if (sourceIssuer === undefined) {
+      yield* Effect.die('Enrolled Shell database identity is missing');
+      return;
+    }
+    const sourceShared = sourceIdentities.runtime[SHARED_RUNTIME_IDENTITY.id];
+    if (sourceShared === undefined) {
+      yield* Effect.die('Enrolled shared runtime identity is missing');
+      return;
+    }
+    const issuerAddress = new URL(sourceIssuer.connectionString);
+    expect(sourceIssuer.host).toBe(isolated.connections.runtime.host);
+    expect(sourceIssuer.port).toBe(isolated.connections.runtime.port);
+    expect(sourceIssuer.database).toBe(sourceShared.database);
+    expect(sourceIssuer.user).toBe(SHELL_GATEWAY_ISSUER_IDENTITY.role);
+    expect(issuerAddress.search).toBe('');
+    expect(issuerAddress.hash).toBe('');
+    issuerAddress.pathname = `/${isolated.connections.runtime.database}`;
+    const ownedIssuer = yield* loadDatabaseConnectionPair({
+      environment: {
+        DATABASE_ADMIN_URL: isolated.connections.admin.connectionString,
+        SHELL_GATEWAY_ISSUER_DATABASE_URL: issuerAddress.href,
+      },
+      envPath: '/dev/null',
+      identity: SHELL_GATEWAY_ISSUER_IDENTITY,
+    });
+    const scopeGrantIssuerClient = yield* makeTestPgClient(ownedIssuer.runtime.connectionString);
     // The grant function checks expiry against the database clock, so the issuer reads the same clock.
     const databaseNowSeconds = scopeGrantAdminClient<{
       readonly now: number;
@@ -1559,7 +1576,7 @@ it.live(
       Effect.map(([row]) => row?.now ?? 0),
       Effect.orDie,
     );
-    const partyRegistryIssuingHandler = makeShellAuthenticationApiRuntime(
+    const partyRegistryIssuingHandler = makeOwnedShellAuthenticationApiRuntime(
       authenticationLayer,
       makeGatewayIssuerLayer({
         ...issuerDependencies,
@@ -1571,8 +1588,8 @@ it.live(
         }),
       }).pipe(
         Layer.provide(
-          GatewayScopeGrantRegistrarLive.pipe(
-            Layer.provide(makeDatabaseIdentityEnrollmentLive(FIXTURE_DATABASE_IDENTITY_ENROLLMENT)),
+          scopeGrantRegistrarLayer(
+            makeGatewayScopeGrantRegistrar(scopeGrantIssuerClient, SHELL_DATABASE_IDENTITY_ENROLLMENT),
           ),
         ),
       ),
@@ -1580,6 +1597,10 @@ it.live(
       installedCatalog(['testing.one']),
       false,
       contextAccessLayer,
+      undefined,
+      undefined,
+      undefined,
+      shellAccessLayer(),
     ).createHandler();
     handlers.push(partyRegistryIssuingHandler);
     const partyRegistryAssertionResponse = yield* Effect.tryPromise(() =>
@@ -1648,7 +1669,7 @@ it.live(
       ),
     );
     expect(invalidAudienceResponse.status).toBe(400);
-    const defectHandler = makeShellAuthenticationApiRuntime(
+    const defectHandler = makeOwnedShellAuthenticationApiRuntime(
       authenticationLayer,
       makeGatewayIssuerLayer({
         ...issuerDependencies,
@@ -1658,6 +1679,10 @@ it.live(
       installedCatalog(['testing.one']),
       false,
       contextAccessLayer,
+      undefined,
+      undefined,
+      undefined,
+      shellAccessLayer(),
     ).createHandler();
     handlers.push(defectHandler);
     const defectResponse = yield* Effect.tryPromise(() =>
@@ -1739,7 +1764,7 @@ it.live(
     );
     expect(expiredModulesResponse.status).toBe(401);
     expect(yield* Effect.tryPromise(() => expiredModulesResponse.text())).not.toMatch(/30000000|40000000/u);
-  }, Effect.provide(NodeCrypto.layer)),
+  }, Effect.provide(shellAuthFixtureServices)),
 );
 it.live(
   'selects, lists, switches, revalidates, and upgrades a multi-tenant session',
@@ -1783,49 +1808,50 @@ it.live(
       Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
       Layer.succeed(ContextAccess, multiLegalEntitySelectionOptions.contextAccess),
     );
+    /** The multi-tenant fixture's own gate: every company of either tenant is selectable. */
+    const multiShellAccessLayer = (options: ShellTestAccessGateOptions = {}): Layer.Layer<AccessDecisionGate> =>
+      Layer.succeed(
+        AccessDecisionGate,
+        makeShellTestAccessGate({
+          defaultAnswer: 'allowed',
+          selectableLegalEntityIds: [firstLegalEntityId, secondLegalEntityId, fallbackLegalEntityId],
+          ...options,
+        }),
+      );
     const multiAuthenticationContextLayer = Layer.mergeAll(
       multiContextAccessLayer,
+      multiShellAccessLayer(),
       Layer.succeed(LegalEntityContext, multiLegalEntitySelectionOptions.legalEntityContext),
     );
-    const configuration = yield* loadAuthConfig({ envPath: '/dev/null' });
-    const databaseConnections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
-    const adminClient = yield* makeTestPgClient(databaseConnections.admin.connectionString);
-    const coreClient = yield* makeTestPgClient(configuration.connectionString);
-    const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
-    const authPersistence = yield* makeAuthDatabase({
-      connectionString: configuration.connectionString,
-      expectedRole: SHARED_RUNTIME_IDENTITY.role,
+    const initialSnapshot = yield* installedSnapshot(['testing.first', 'testing.second']);
+    const testRevision = initialSnapshot.composition.revision;
+    const isolated = yield* makeIsolatedNativeDatabaseFixture({
+      compositionSnapshot: initialSnapshot,
+      mode: 'schema-only',
+      purpose: 'stabilization-1287-shell-auth',
     });
+    const makeOwnedShellAuthenticationApiRuntime = makeShellRuntimeForDatabase(isolated.connections);
+    const configuration = {
+      ...(yield* loadAuthConfig({ envPath: '/dev/null' })),
+      connectionString: isolated.connections.runtime.connectionString,
+    };
+    const databaseConnections = isolated.connections;
+    const adminClient = yield* makeTestPgClient(databaseConnections.admin.connectionString);
+    const coreClient = yield* makeTestPgClient(isolated.connections.admin.connectionString);
+    const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
+    const authPersistence = yield* makeAuthDatabase({ ...configuration, expectedRole: SHARED_RUNTIME_IDENTITY.role });
     const authDatabase = authPersistence.executor;
     const adminAuthDatabase = yield* makeTestDatabaseFromClient(adminClient, authRelations);
     const resolver = makePrincipalResolver(
       { executor: coreDatabase },
       { authenticationNamespaceId: staffAuthenticationNamespaceId },
     );
-    const betterAuthRuntime = Layer.succeedContext(yield* Layer.build(BetterAuthRuntimeLive));
-    const oauthAuthenticationLayer = Layer.mergeAll(
-      betterAuthRuntime,
-      BetterAuthNativeAdapterLive,
-      OAuthAuthenticationAuditLive,
-      OAuthEndpointGuardDataLive,
-      OAuthConnectionHooksLive.pipe(Layer.provide(OAuthGrantRegistryLive)),
-    ).pipe(
-      Layer.provide(Layer.mergeAll(OAuthGrantRegistryLive, OAuthCredentialsLive)),
-      Layer.provide(
-        Layer.mergeAll(
-          Layer.succeed(CoreDatabase, { executor: coreDatabase }),
-          Layer.succeed(AuthDatabase, authPersistence),
-        ),
-      ),
-    );
-    const authenticationFramework = BetterAuthFrameworkLive({ allowFixtureSignUp: true }).pipe(
-      Layer.provideMerge(oauthAuthenticationLayer),
-    );
-    const authenticationGuards = OAuthEndpointGuardsLive.pipe(Layer.provideMerge(authenticationFramework));
-    const authentication = yield* makeAuthenticationService().pipe(
-      Effect.provide(authenticationGuards),
+    const authentication = yield* makeShellTestAuthentication({
+      allowFixtureSignUp: true,
+    }).pipe(
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
+      Effect.provideService(CoreDatabase, { executor: coreDatabase }),
       Effect.provideService(PrincipalResolver, resolver),
     );
     const moduleStateLayer = Layer.succeed(
@@ -1837,8 +1863,6 @@ it.live(
     // Ordered child-before-parent within the owned fixture rows.
     const cleanup = Effect.fnUntraced(function* runIntegration7() {
       yield* coreDatabase.delete(dataAccessEvents).where(inArray(dataAccessEvents.tenantId, fixtureTenants));
-      // The switch to a disabled principal records an authn.rejected audit event bound to its auth binding.
-      yield* coreDatabase.delete(auditEvents).where(inArray(auditEvents.tenantId, fixtureTenants));
       const existingUsers = yield* authDatabase.select({ id: user.id }).from(user).where(eq(user.email, multiEmail));
       const existingUserIds = existingUsers.map(({ id }) => id);
       if (existingUserIds.length > 0) {
@@ -1985,8 +2009,7 @@ it.live(
     assertOptionalField(initialSessions[0], 'activeTenantId', firstTenantId);
     const pair = yield* Effect.tryPromise(() => generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
     const privateJwk = yield* Effect.tryPromise(() => exportJWK(pair.privateKey));
-    const testRevision = (yield* installedSnapshot(['testing.first', 'testing.second'])).composition.revision;
-    const runtime = makeShellAuthenticationApiRuntime(
+    const runtime = makeOwnedShellAuthenticationApiRuntime(
       Layer.succeed(AuthenticationService, authentication),
       makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
@@ -2009,6 +2032,10 @@ it.live(
       installedCatalog(['testing.first', 'testing.second']),
       false,
       multiContextAccessLayer,
+      undefined,
+      undefined,
+      undefined,
+      multiShellAccessLayer(),
     ).createHandler();
     handlers.push(runtime);
     const anonymousAvailableResponse = yield* Effect.tryPromise(() =>
@@ -2047,9 +2074,6 @@ it.live(
     );
     expect(yield* Effect.tryPromise(() => firstModules.json())).toEqual({
       compositionRevision: testRevision,
-      deniedAppIds: [],
-      gatewayAudiences: ['inventory-stock', 'testing-second'],
-      homeComponents: [],
       navigation: [],
       state: 'available',
       unavailableDeployments: [],
@@ -2072,13 +2096,10 @@ it.live(
       .update(principals)
       .set({ status: 'active' })
       .where(eq(principals.principalId, secondPrincipalId));
-    // The framework captures the same overridden resolver as the service; only ready SDK instances are shared.
-    const resolverUnavailableFramework = BetterAuthFrameworkLive().pipe(Layer.provideMerge(oauthAuthenticationLayer));
-    const resolverUnavailableGuards = OAuthEndpointGuardsLive.pipe(Layer.provideMerge(resolverUnavailableFramework));
-    const resolverUnavailableAuthentication = yield* makeAuthenticationService().pipe(
-      Effect.provide(resolverUnavailableGuards),
+    const resolverUnavailableAuthentication = yield* makeShellTestAuthentication({}).pipe(
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
+      Effect.provideService(CoreDatabase, { executor: coreDatabase }),
       Effect.provideService(PrincipalResolver, {
         ...resolver,
         resolveBetterAuthUserForTenant: (userId, selectedTenantId) =>
@@ -2091,7 +2112,7 @@ it.live(
             : resolver.resolveBetterAuthUserForTenant(userId, selectedTenantId),
       }),
     );
-    const resolverUnavailableRuntime = makeShellAuthenticationApiRuntime(
+    const resolverUnavailableRuntime = makeOwnedShellAuthenticationApiRuntime(
       Layer.succeed(AuthenticationService, resolverUnavailableAuthentication),
       makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
@@ -2100,6 +2121,13 @@ it.live(
         loadConfig: parseGatewayIssuerConfig({}),
       }).pipe(Layer.provide(scopeGrantRegistrarLayer())),
       moduleStateLayer,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      shellAccessLayer(),
     ).createHandler();
     handlers.push(resolverUnavailableRuntime);
     const resolverUnavailableResponse = yield* Effect.tryPromise(() =>
@@ -2259,9 +2287,6 @@ it.live(
     );
     expect(yield* Effect.tryPromise(() => secondModules.json())).toEqual({
       compositionRevision: testRevision,
-      deniedAppIds: [],
-      gatewayAudiences: ['inventory-stock', 'testing-second'],
-      homeComponents: [],
       navigation: [],
       state: 'available',
       unavailableDeployments: [],
@@ -2396,13 +2421,12 @@ it.live(
     // resolver can still prove that an existing selected session rejects a genuinely missing row.
     yield* purgeFixtureRows([
       coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, secondTenantId)),
-      coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, secondTenantId)),
       coreDatabase.delete(principalAuthBindings).where(eq(principalAuthBindings.tenantId, secondTenantId)),
     ]);
     yield* assertSessionForbidden(
       authentication.currentSession(authenticatedHeaders).pipe(Effect.provide(multiAuthenticationContextLayer)),
     );
-  }, Effect.provide(NodeCrypto.layer)),
+  }, Effect.provide(shellAuthFixtureServices)),
 );
 
 class TenantPartyGatewayTestError extends Schema.TaggedError<TenantPartyGatewayTestError>()(
@@ -2435,7 +2459,7 @@ const PartyCreatedResponseSchema = Schema.Struct({
   partyRef: PartyGatewayReferenceSchema,
 });
 const PartyGatewayDetailResponseSchema = Schema.Struct({
-  factHistory: Schema.OptionFromNullOr(Schema.Array(Schema.Struct({ partyRef: PartyGatewayReferenceSchema }))),
+  factHistory: Schema.optionalKey(Schema.Array(Schema.Struct({ partyRef: PartyGatewayReferenceSchema }))),
   party: Schema.Struct({
     displayName: Schema.String,
     partyRef: PartyGatewayReferenceSchema,
@@ -2448,6 +2472,30 @@ const tenantPartyServices = NodeChildProcessSpawner.layer.pipe(
 );
 const tenantPartyArtifactServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
+const readFixtureReleaseIdentity = Effect.fn('TenantPartyGatewayTest.releaseIdentity')(
+  function* readFixtureReleaseIdentity(directory: string) {
+    const generated = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(
+        Schema.Struct({
+          deliveryUnit: Schema.Struct({
+            buildMarker: Schema.String,
+            unitId: Schema.String.pipe(Schema.brand('UltramodernDeliveryUnitId')),
+          }),
+        }),
+      ),
+    )(
+      yield* Effect.tryPromise(() => readFile(path.join(appRoot, directory, 'shared/ultramodern-build.json'), 'utf-8')),
+    );
+    return yield* Effect.try(() =>
+      resolveUltramodernReleaseIdentity({
+        generationBuildMarker: generated.deliveryUnit.buildMarker,
+        unitId: generated.deliveryUnit.unitId,
+        workspaceRoot: appRoot,
+      }),
+    );
+  },
+);
+
 const prepareTenantPartyArtifacts = Effect.fn('TenantPartyGatewayTest.artifacts')(
   function* prepareTenantPartyArtifacts() {
     const toolchainPaths: Record<string, string> = {};
@@ -2458,6 +2506,35 @@ const prepareTenantPartyArtifacts = Effect.fn('TenantPartyGatewayTest.artifacts'
       }
     }
     const toolchainEnvironment = { ...toolchainPaths, APP_ENV_PATH: '/dev/null' };
+    const partyIdentity = yield* readFixtureReleaseIdentity('verticals/party-registry');
+    const shellIdentity = yield* readFixtureReleaseIdentity('apps/shell-super-app');
+    // Source-compiled default HTTP proof: retain the complete actual public documents and their physical hashes.
+    // Separate native relay tests prove the actual packaged receivers.
+    const partyDocument = yield* Effect.tryPromise(() =>
+      readFile(
+        path.join(appRoot, 'verticals/party-registry/.output/public/.well-known/ontos-module-manifest.json'),
+        'utf-8',
+      ),
+    );
+    const shellRuntimeDocument = yield* Effect.tryPromise(() =>
+      readFile(
+        path.join(appRoot, 'apps/shell-super-app/.output/public', ONTOS_SHELL_RUNTIME_CONTRACT_PATH.slice(1)),
+        'utf-8',
+      ),
+    );
+    const partyContract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
+      partyDocument,
+    );
+    const shellRuntimeContract = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(OntosShellRuntimeContractSchema),
+    )(shellRuntimeDocument);
+    expect(partyContract.deployment).toMatchObject({ appId: 'party-registry', buildMarker: partyIdentity.buildMarker });
+    expect(shellRuntimeContract.deployment).toMatchObject({
+      appId: 'shell-super-app',
+      buildMarker: shellIdentity.buildMarker,
+    });
+    const partyContractSha256 = contentDigest(partyDocument);
+    const shellRuntimeSha256 = contentDigest(shellRuntimeDocument);
     const crypto = yield* Crypto.Crypto;
     const suffix = yield* crypto.randomUUIDv4();
     const artifact = path.join(appRoot, 'verticals/party-registry/node_modules/.cache/ontos-1267', `${suffix}.mjs`);
@@ -2475,6 +2552,8 @@ const prepareTenantPartyArtifacts = Effect.fn('TenantPartyGatewayTest.artifacts'
         '--platform=node',
         '--format=esm',
         '--packages=external',
+        `--define:ULTRAMODERN_BUILD_MARKER=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(partyIdentity.buildMarker)}`,
+        `--define:ULTRAMODERN_SOURCE_REVISION=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(partyIdentity.sourceRevision)}`,
         `--outfile=${artifact}`,
       ],
       { cwd: appRoot, env: toolchainEnvironment, extendEnv: false, stderr: 'pipe', stdout: 'pipe' },
@@ -2501,6 +2580,7 @@ const prepareTenantPartyArtifacts = Effect.fn('TenantPartyGatewayTest.artifacts'
     );
     expect(descriptionExit).toBe(0);
     const marker = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PartyOwnerMarkerSchema))(markerLines[0]);
+    expect(marker).toEqual(partyContract.deployment);
     const shellArtifact = path.join(appRoot, 'apps/shell-super-app/node_modules/.cache/ontos-1267', `${suffix}.mjs`);
     yield* Effect.addFinalizer(() => Effect.promise(() => rm(shellArtifact, { force: true })));
     const shellBundle = yield* ChildProcess.make(
@@ -2516,6 +2596,8 @@ const prepareTenantPartyArtifacts = Effect.fn('TenantPartyGatewayTest.artifacts'
         '--platform=node',
         '--format=esm',
         '--packages=external',
+        `--define:ULTRAMODERN_BUILD_MARKER=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(shellIdentity.buildMarker)}`,
+        `--define:ULTRAMODERN_SOURCE_REVISION=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(shellIdentity.sourceRevision)}`,
         `--outfile=${shellArtifact}`,
       ],
       { cwd: appRoot, env: toolchainEnvironment, extendEnv: false, stderr: 'pipe', stdout: 'pipe' },
@@ -2525,7 +2607,38 @@ const prepareTenantPartyArtifacts = Effect.fn('TenantPartyGatewayTest.artifacts'
       { concurrency: 3 },
     );
     expect(shellBundleExit).toBe(0);
-    return { artifact, marker, shellArtifact, toolchainEnvironment };
+    const shellDescription = yield* ChildProcess.make(process.execPath, [shellArtifact, '--describe'], {
+      cwd: appRoot,
+      env: toolchainEnvironment,
+      extendEnv: false,
+      stderr: 'pipe',
+      stdout: 'pipe',
+    });
+    const [shellMarkerLines, shellDescriptionExit] = yield* Effect.all(
+      [
+        shellDescription.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runCollect),
+        shellDescription.exitCode,
+        Stream.runDrain(shellDescription.stderr),
+      ],
+      { concurrency: 3 },
+    );
+    expect(shellDescriptionExit).toBe(0);
+    const shellReceiverDeployment = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(ShellOwnerReadySchema.fields.marker),
+    )(shellMarkerLines[0]);
+    expect(shellReceiverDeployment).toEqual(shellRuntimeContract.deployment);
+    expect(shellReceiverDeployment.buildMarker).toBe(shellIdentity.buildMarker);
+    return {
+      artifact,
+      marker,
+      partyContractSha256,
+      partyDocument,
+      shellArtifact,
+      shellReceiverDeployment,
+      shellRuntimeDocument,
+      shellRuntimeSha256,
+      toolchainEnvironment,
+    };
   },
 );
 const TenantPartyArtifacts = Context.Service<Effect.Success<ReturnType<typeof prepareTenantPartyArtifacts>>>(
@@ -2538,13 +2651,26 @@ const tenantPartyArtifactsLayer = Layer.effect(TenantPartyArtifacts, prepareTena
 const prepareTenantPartyCase = Effect.fn('TenantPartyGatewayTest.prepareCase')(function* prepareTenantPartyCase(
   quotaOnly: boolean,
 ) {
-  const { artifact, marker, shellArtifact, toolchainEnvironment } = yield* TenantPartyArtifacts;
+  const {
+    artifact,
+    marker,
+    partyContractSha256,
+    partyDocument,
+    shellArtifact,
+    shellReceiverDeployment,
+    shellRuntimeDocument,
+    shellRuntimeSha256,
+    toolchainEnvironment,
+  } = yield* TenantPartyArtifacts;
   const crypto = yield* Crypto.Crypto;
   const suffix = yield* crypto.randomUUIDv4();
-  const snapshot = yield* makeCompositionSnapshot(
-    installedContracts(['party.registry']).map((contract) => ({ ...contract, deployment: marker })),
-    3_600_000,
-  );
+  const snapshot = yield* makeCompositionSnapshot([partyDocument], 3_600_000, {
+    document: shellRuntimeDocument,
+    receiverDeployment: shellReceiverDeployment,
+  });
+  expect(snapshot.composition.modules[0]?.contract.sha256).toBe(partyContractSha256);
+  expect(snapshot.composition.modules[0]?.contractDocument).toBe(partyDocument);
+  expect(snapshot.composition.shell.runtimeContract.sha256).toBe(shellRuntimeSha256);
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     compositionSnapshot: snapshot,
     mode: 'schema-only',
@@ -2571,17 +2697,19 @@ const prepareTenantPartyCase = Effect.fn('TenantPartyGatewayTest.prepareCase')(f
     enrollment: SHELL_DATABASE_IDENTITY_ENROLLMENT,
     envPath: '/dev/null',
   });
-  const sourceConnection = (identity: { readonly id: string }) => {
-    const connection = sourceIdentities.runtime[identity.id];
-    return connection === undefined
-      ? Effect.fail(new TenantPartyGatewayTestError({ reason: 'A dedicated identity has no source connection' }))
-      : Effect.succeed(connection);
-  };
-  const partyUrl = new URL((yield* sourceConnection(PARTY_REGISTRY_REQUEST_IDENTITY)).connectionString);
-  const issuerUrl = new URL((yield* sourceConnection(SHELL_GATEWAY_ISSUER_IDENTITY)).connectionString);
-  const sourceShared = yield* sourceConnection(SHARED_RUNTIME_IDENTITY);
+  const partyIdentity = sourceIdentities.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id];
+  const issuerIdentity = sourceIdentities.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id];
+  const sourceShared = sourceIdentities.runtime[SHARED_RUNTIME_IDENTITY.id];
+  if (partyIdentity === undefined || issuerIdentity === undefined || sourceShared === undefined) {
+    return yield* new TenantPartyGatewayTestError({ reason: 'Required enrolled database identity is missing' });
+  }
+  const partyUrl = new URL(partyIdentity.connectionString);
+  const issuerUrl = new URL(issuerIdentity.connectionString);
   for (const identity of [PARTY_REGISTRY_REQUEST_IDENTITY, SHELL_GATEWAY_ISSUER_IDENTITY]) {
-    const canonical = yield* sourceConnection(identity);
+    const canonical = sourceIdentities.runtime[identity.id];
+    if (canonical === undefined) {
+      return yield* new TenantPartyGatewayTestError({ reason: 'Required enrolled identity is missing' });
+    }
     const address = new URL(canonical.connectionString);
     const exactSourceAndOwnedTarget = [
       canonical.database === sourceIdentities.admin.database,
@@ -2638,32 +2766,29 @@ const prepareTenantPartyCase = Effect.fn('TenantPartyGatewayTest.prepareCase')(f
   const sourceConfiguration = yield* loadAuthConfig({ envPath: '/dev/null' });
   const configuration = { ...sourceConfiguration, connectionString: isolated.connections.runtime.connectionString };
   expect(new URL(configuration.connectionString).pathname === `/${isolated.connections.runtime.database}`).toBe(true);
-  const authPersistence = yield* makeAuthDatabase({
-    connectionString: configuration.connectionString,
-    expectedRole: isolated.connections.runtime.expectedRole,
-  });
-  const authenticationContext = yield* Layer.build(
-    shellAuthenticationFrameworkLive({ allowFixtureSignUp: true }).pipe(
-      Layer.provideMerge(PrincipalResolverLive({ authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID })),
+  const authPersistence = yield* makeAuthDatabase({ ...configuration, expectedRole: SHARED_RUNTIME_IDENTITY.role });
+  const resolverContext = yield* Layer.build(
+    PrincipalResolverLive({ authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID }).pipe(
       Layer.provideMerge(CorePersistenceLive),
-      Layer.provideMerge(
-        Layer.mergeAll(
-          Layer.succeed(AuthConfig, configuration),
-          Layer.succeed(AuthDatabase, authPersistence),
-          Layer.succeed(DatabaseConfig, isolated.connections.runtime),
-        ),
-      ),
+      Layer.provide(Layer.succeed(DatabaseConfig, isolated.connections.runtime)),
     ),
   );
-  const authentication = yield* makeAuthenticationService().pipe(Effect.provideContext(authenticationContext));
+  const authentication = yield* makeShellTestAuthentication({ allowFixtureSignUp: true }).pipe(
+    Effect.provideService(AuthConfig, configuration),
+    Effect.provideService(AuthDatabase, authPersistence),
+    Effect.provideService(CoreDatabase, { executor: Context.get(resolverContext, CoreDatabase).executor }),
+    Effect.provideContext(resolverContext),
+  );
   const fixtureEmail = `party-gateway-${suffix}@example.test`;
   const providerSubjectId = yield* authentication.createFixtureUser(fixtureEmail, 'Party gateway fixture', password);
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
+      access: 'allowed',
       actionKeys: [
         bindSelfApiKeyAction.descriptor.actionKey,
         changeTenantModuleStateAction.descriptor.actionKey,
         'party.registry.create-party',
+        'party.registry.resolve-duplicate-candidate-create',
       ],
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
@@ -2863,6 +2988,8 @@ const prepareTenantPartyReceivers = Effect.fn('TenantPartyGatewayTest.receivers'
         BETTER_AUTH_SECRET: configuration.secret,
         BETTER_AUTH_TRUSTED_ORIGINS: configuration.trustedOrigins.join(','),
         BETTER_AUTH_URL: configuration.baseUrl,
+        // No module credential is enrolled: the staff API key is never a module deployment credential.
+        ONTOS_GATEWAY_MODULE_BINDINGS: '[]',
         ONTOS_GATEWAY_PRIVATE_JWK: JSON.stringify({ ...privateJwk, alg: 'EdDSA', kid, use: 'sig' }),
         SHELL_GATEWAY_ISSUER_DATABASE_URL: issuerConnections.runtime.connectionString,
       },
@@ -2933,9 +3060,11 @@ const tenantPartyPublicGateway = Effect.fn('TenantPartyGatewayTest.publicGateway
       origin: configuration.baseUrl,
     });
     const contextAccess = yield* makeContextAccessLive();
-    const resolved = yield* authentication
-      .resolveTenantContext(sessionHeaders)
-      .pipe(Effect.provideService(ContextAccess, contextAccess));
+    const resolved = yield* authentication.resolveTenantContext(sessionHeaders).pipe(
+      Effect.provideService(ContextAccess, contextAccess),
+      // The fixture company is the only one this staff person may select in the live fixture tenant.
+      Effect.provideService(AccessDecisionGate, shellTestGate({ selectableLegalEntityIds: [fixture.legalEntityId] })),
+    );
     expect(resolved.state).toBe('authenticated');
     if (resolved.state !== 'authenticated') {
       return yield* new TenantPartyGatewayTestError({ reason: 'The real staff session did not resolve' });
@@ -3046,13 +3175,25 @@ const tenantPartyPublicGateway = Effect.fn('TenantPartyGatewayTest.publicGateway
         }),
       );
     });
+    // The Party child serves this suite's own scripted gate (v2 decides every protected read at the
+    // one access gate, O62), so the negative control below flips the child's answer for exactly the
+    // capability `party-detail` declares. The removed SpiceDB module-access tuples refuse nobody.
+    const controlPartyRead = (operation: 'grant' | 'revoke') =>
+      Effect.tryPromise(() =>
+        fetch(
+          `http://127.0.0.1:${ready.port}/__1258/${operation}-party-read?capabilityPrefix=party.registry.party.read`,
+          {
+            method: 'POST',
+          },
+        ),
+      );
     const createdResponse = yield* request(
       '/party-registry/actions/create-party',
       JSON.stringify({
         candidate: {
-          displayName: 'Public tenant gateway proof',
+          businessName: 'Public tenant gateway proof',
           evidenceRefs: ['review/public-party-gateway'],
-          officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
+          officialIdentifiers: [{ identifierType: 'ICO', value: '27074358' }],
           partyType: 'ORGANIZATION',
           provenance: { method: 'DOCUMENT', source: 'public-party-gateway' },
           subjectEvidence: [
@@ -3076,15 +3217,11 @@ const tenantPartyPublicGateway = Effect.fn('TenantPartyGatewayTest.publicGateway
     );
     expect(created.partyRef.tenantId).toBe(fixture.tenantId);
     const detailPayload = { partyRef: created.partyRef };
+    // v2 negative control: the gate refuses the capability this read declares, and the same request
+    // succeeds once the capability is restored. No SpiceDB tuple is granted or revoked here (O62).
+    expect((yield* controlPartyRead('revoke')).status).toBe(204);
     expect((yield* request('/reads/party-detail', JSON.stringify(detailPayload))).status).toBe(403);
-    const mutation = yield* makeContextPermissionRelationshipMutationLive();
-    const grant = {
-      principal: apiKeyPrincipal,
-      target: { moduleId: 'party.registry', permission: 'module.access' },
-      tenantId: fixture.tenantId,
-    };
-    yield* mutation.mutate({ ...grant, operation: 'grant' });
-    yield* Effect.addFinalizer(() => mutation.mutate({ ...grant, operation: 'revoke' }).pipe(Effect.orDie));
+    expect((yield* controlPartyRead('grant')).status).toBe(204);
     const detailResponse = yield* request('/reads/party-detail', JSON.stringify(detailPayload));
     expect(detailResponse.status).toBe(200);
     const detail = yield* Schema.decodeUnknownEffect(PartyGatewayDetailResponseSchema)(
@@ -3095,7 +3232,7 @@ const tenantPartyPublicGateway = Effect.fn('TenantPartyGatewayTest.publicGateway
       partyRef: created.partyRef,
       partyType: 'ORGANIZATION',
     });
-    expect(Option.isNone(detail.factHistory)).toBe(true);
+    expect(detail.factHistory).toBeUndefined();
     const historyResponse = yield* request(
       '/reads/party-detail',
       JSON.stringify({ ...detailPayload, includeFactHistory: true }),
@@ -3105,12 +3242,11 @@ const tenantPartyPublicGateway = Effect.fn('TenantPartyGatewayTest.publicGateway
       yield* Effect.tryPromise(() => historyResponse.json()),
     );
     expect(history.party).toEqual(detail.party);
-    expect(Option.isSome(history.factHistory)).toBe(true);
-    if (Option.isNone(history.factHistory)) {
+    if (history.factHistory === undefined) {
       return yield* new TenantPartyGatewayTestError({ reason: 'The authorized owner history was absent' });
     }
-    expect(history.factHistory.value.length).toBeGreaterThan(0);
-    for (const fact of history.factHistory.value) {
+    expect(history.factHistory.length).toBeGreaterThan(0);
+    for (const fact of history.factHistory) {
       expect(fact.partyRef).toEqual(created.partyRef);
       expect(fact.partyRef.tenantId).toBe(fixture.tenantId);
     }
@@ -3140,7 +3276,9 @@ const tenantPartyPublicGateway = Effect.fn('TenantPartyGatewayTest.publicGateway
         },
       }).pipe(
         Effect.provideContext(runtimeContext),
-        Effect.provideService(InstalledModuleCatalogService, { load: Effect.succeed(catalog) }),
+        Effect.provideService(InstalledModuleCatalogService, {
+          loadForRevision: (_compositionRevision) => Effect.succeed(catalog),
+        }),
       );
     });
     yield* changeState('inactive');

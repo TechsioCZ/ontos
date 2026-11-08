@@ -1,3 +1,4 @@
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts';
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
@@ -10,9 +11,15 @@ import {
   MarketRevisionSchema,
 } from './market-affected-use-assessment.ts';
 
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 const boundedReason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500), Schema.isTrimmed());
 const sha256Digest = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
 const checkedUuid = Schema.String.check(Schema.isUUID());
+export const MarketRetirementSourceActionInvocationIdSchema = checkedUuid.pipe(
+  Schema.brand('MarketRetirementSourceActionInvocationId'),
+  Schema.decodeTo(checkedUuid),
+);
 export const MarketRetirementReservationTokenSchema = checkedUuid.pipe(
   Schema.brand('MarketRetirementReservationToken'),
   Schema.decodeTo(checkedUuid),
@@ -35,9 +42,18 @@ const reserve = Schema.Struct({
   assessmentDigest: sha256Digest,
   evaluatedAt: MarketRetirementInstantSchema,
   operation: Schema.Literal('RESERVE'),
+  // Correlation only; Core's trusted scope remains the authentication authority.
   reason: boundedReason,
+  releaseGuardHash: Schema.optionalKey(sha256Digest),
+  sourceActionInvocationId: Schema.optionalKey(MarketRetirementSourceActionInvocationIdSchema),
   sourceEvidence: Schema.Array(MarketAffectedUseSourceEvidenceSchema).check(Schema.isMinLength(1)),
-});
+}).check(
+  Schema.makeFilter(({ releaseGuardHash, sourceActionInvocationId }) =>
+    (sourceActionInvocationId === undefined) === (releaseGuardHash === undefined)
+      ? undefined
+      : 'Source-bound reservations require an abort guard',
+  ),
+);
 
 const finish = <Operation extends 'COMMIT' | 'RELEASE'>(operation: Operation) =>
   Schema.Struct({
@@ -48,7 +64,9 @@ const finish = <Operation extends 'COMMIT' | 'RELEASE'>(operation: Operation) =>
     reservationVersion: MarketRetirementReservationVersionSchema,
   });
 
-export const ReserveMarketRetirementPayloadSchema = Schema.Union([reserve, finish('COMMIT'), finish('RELEASE')]).check(
+const release = Schema.Struct({ ...finish('RELEASE').fields, releaseProof: Schema.optionalKey(checkedUuid) });
+
+export const ReserveMarketRetirementPayloadSchema = Schema.Union([reserve, finish('COMMIT'), release]).check(
   Schema.makeFilter(({ marketRef, tenantId }) =>
     marketRef.tenantId === tenantId ? undefined : 'Market and reservation must belong to the same Tenant',
   ),
@@ -77,6 +95,7 @@ export const ReserveMarketRetirementForbiddenProblemSchema = makeProblemDetailsS
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -170,7 +189,7 @@ export const ReserveMarketRetirementApi = HttpApi.make('ReserveMarketRetirementA
         ReserveMarketRetirementInternalProblemSchema,
       ],
       payload: Schema.toEncoded(ReserveMarketRetirementPayloadSchema),
-      success: ReserveMarketRetirementResultSchema,
+      success: [ActionProposalAcceptedSchema, ReserveMarketRetirementResultSchema],
     }),
   ),
 );

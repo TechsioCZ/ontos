@@ -1,6 +1,6 @@
-name: Ultramodern Workspace Gates
+name: Ultramodern Workspace Gates and Main-to-Stage Deploy
 
-# Repository-root documentation feeds no app check (app/ tools read app/AGENTS.md, not the root one), so it runs no gate.
+# Repository-root documentation feeds no app check (app/ tools read app/AGENTS.md, not the root one), so it deploys nothing.
 on:
   push:
     branches:
@@ -10,27 +10,32 @@ on:
       - CONTEXT-MAP.md
       - README.md
       - AGENTS.md
-  # The main ruleset requires the Workspace gates check and the merge queue, so every pull request and
-  # merge group reports it, documentation-only ones included: a filtered run would never report it.
+  # Always report Workspace gates. The ci-plan job, not workflow path filtering, selects required work.
   pull_request:
     branches:
       - main
-  # The merge queue proves the exact commit that lands on main, so its push skips the gates.
+  # The merge queue proves the exact commit that lands on main. Its push then deploys without re-running the gates.
   merge_group:
     types:
       - checks_requested
+  schedule:
+    - cron: '30 2 * * *'
   workflow_dispatch:
+    inputs:
+      force-ci-full:
+        description: Run every CI gate even if the merge queue already proved this commit.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+env:
+  ONTOS_ACTION_TRANSACTION_IO_GUARD: 'true'
+
 defaults:
   run:
     shell: bash
-
-# Guard all unit/integration Actions before production enablement; stage delivery is a separate workflow.
-env:
-  ONTOS_ACTION_TRANSACTION_IO_GUARD: 'true'
 
 concurrency:
   group: ultramodern-workspace-${{ github.workflow }}-${{ github.ref }}
@@ -39,11 +44,10 @@ concurrency:
 jobs:
   # A push to main or a dispatch on main carries a commit the merge queue may already have proven: its
   # merge_group run of this workflow ran every gate on this exact commit and succeeded. Such a commit skips
-  # the gates. Any other commit (pushed before the queue, or by a ruleset
-  # bypass) runs them.
+  # the gates and deploys. Any other commit (pushed before the queue, or by a ruleset bypass) runs them.
   queue-proof:
     name: Find the merge queue proof of this commit
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && inputs.force-ci-full != true
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -63,9 +67,60 @@ jobs:
             echo "The merge queue proved $GITHUB_SHA in $(jq -r '.[0]' <<<"$runs"); the gates are skipped."
             echo 'proven=true' >>"$GITHUB_OUTPUT"
           else
-            echo "No merge group run proved $GITHUB_SHA; the gates run."
+            echo "No merge group run proved $GITHUB_SHA; the gates run before the deploy."
             echo 'proven=false' >>"$GITHUB_OUTPUT"
           fi
+
+  ci-plan:
+    name: Select required checks from changed inputs
+    needs: [queue-proof]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      mode: ${{ steps.selection.outputs.mode || steps.changes.outputs.mode }}
+      expected: ${{ steps.selection.outputs.expected || steps.changes.outputs.expected }}
+      source: ${{ steps.selection.outputs.source || steps.changes.outputs.source }}
+      unit: ${{ steps.selection.outputs.unit || steps.changes.outputs.unit }}
+      integration: ${{ steps.selection.outputs.integration || steps.changes.outputs.integration }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+      - name: Checkout the exact comparison history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Classify the complete diff without app dependencies
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+          QUEUE_PROVEN: ${{ needs.queue-proof.outputs.proven }}
+          FORCE_FULL: ${{ inputs.force-ci-full }}
+        run: bash app/scripts/plan-ci-changes.sh "$RUNNER_TEMP/ci-changed-paths"
+      - name: Record the documentation or exact-commit no-op
+        if: steps.changes.outputs.mode == 'docs' || steps.changes.outputs.mode == 'proven'
+        env:
+          REASON: ${{ steps.changes.outputs.reason }}
+        run: printf '## CI selection\n\n%s\n\nNo app dependencies, builds or services are needed.\n' "$REASON" >> "$GITHUB_STEP_SUMMARY"
+      - name: Install the app workspace for code impact analysis
+        if: steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'
+        uses: ./.github/actions/install-app
+      - name: Resolve affected packages and required matrices
+        id: selection
+        if: steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'
+        working-directory: app
+        env:
+          BOOTSTRAP_MODE: ${{ steps.changes.outputs.mode }}
+          APPLY_AFFECTED: ${{ vars.CI_AFFECTED_ENABLED }}
+        run: |
+          args=(--paths-file "$RUNNER_TEMP/ci-changed-paths")
+          [[ "$BOOTSTRAP_MODE" != full ]] || args+=(--full)
+          [[ "$APPLY_AFFECTED" != true ]] || args+=(--apply-affected)
+          mise exec -- node scripts/plan-ci-checks.mts "${args[@]}"
 
   # The only job that saves the caches the gates restore, on main, where every pull request and merge
   # group can read them: the pnpm store, the TS-Go typecheck build, the Playwright Chromium build, and
@@ -156,48 +211,17 @@ jobs:
           path: ~/.cache/playwright-apt-debs
           key: ${{ steps.chromium-debs.outputs.key }}
 
-  # Each entry runs its commands one after another and reports every one that fails. Entries group a few
-  # minutes of checks each, so each runner pays one install for them: the org runs at most 20 jobs at
-  # once, and every gate job of the first wave must start at once to finish in time.
+  # Source checks start immediately after planning; they do not wait for Node artifacts.
   workspace-gate:
     name: ${{ matrix.name }}
-    needs: [queue-proof]
-    if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
+    needs: [ci-plan]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-gate'] == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: Typecheck, Effect Rule Implementation, and OntOS API Boundary Rules
-            typescript-build: true
-            commands: |
-              pnpm typecheck
-              pnpm typecheck:lint-rules
-              pnpm test:lint-rules
-              pnpm lint:repository-policy
-              pnpm api:check:ontos
-              pnpm handler-services:check
-          - name: Repository Tooling, Module Entrypoint, and Codesmith Generation Tests
-            commands: |
-              pnpm shell:ui-candidates:check
-              pnpm test:scripts
-              pnpm module-entrypoints:check
-              pnpm test:generation
-          # The root `pnpm test:unit` (every package's test:unit, then every package's test:component) in
-          # shards of packages balanced by measured test time. The last shard runs every package the others
-          # do not name, so a new package is always tested; Repository Tooling Tests check the split.
-          - name: Unit and Component Tests (Catalog, Commerce Customer Context, and Inventory)
-            commands: |
-              pnpm -r --no-sort --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:unit
-              pnpm -r --no-sort --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:component
-          - name: Unit and Component Tests (every other package)
-            # Pricing's issue #890 traceability test compares immutable historical revisions and the
-            # branch's latest main integration merge. Keep that bounded history in this shard only.
-            fetch_depth: 512
-            commands: |
-              pnpm -r --no-sort --if-present --filter '!.' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' run test:unit
-              pnpm -r --no-sort --if-present --filter '!.' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' run test:component
+        include: ${{ fromJSON(needs.ci-plan.outputs.source) }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -214,6 +238,69 @@ jobs:
         uses: ./.github/actions/install-app
         with:
           restore-typescript-build: ${{ matrix.typescript-build == true }}
+
+      - name: Run ${{ matrix.name }}
+        working-directory: app
+        env:
+          COMMANDS: ${{ matrix.commands }}
+          # Leave room for the runner and Effect diagnostics while checking the complete workspace.
+          GOMEMLIMIT: ${{ matrix.typescript-build && '4GiB' || '' }}
+          ULTRAMODERN_TSGO_BUILDERS: ${{ matrix.typescript-build && '1' || '' }}
+          MODERN_PUBLIC_SITE_URL: http://localhost:8080
+          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          failed=()
+          while IFS= read -r command; do
+            [[ -n "$command" ]] || continue
+            echo "::group::$command"
+            if ! mise exec -- bash -c "$command"; then
+              failed+=("$command")
+            fi
+            echo '::endgroup::'
+          done <<<"$COMMANDS"
+          for command in "${failed[@]}"; do
+            echo "::error title=Gate command failed::$command"
+          done
+          [[ ${#failed[@]} -eq 0 ]]
+
+  workspace-unit:
+    name: ${{ matrix.name }}
+    needs: [ci-plan, node-artifact-build]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.ci-plan.outputs.unit) }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: ${{ matrix.fetch_depth || 1 }}
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+        with:
+          restore-typescript-build: ${{ matrix.typescript-build == true }}
+
+      - name: Download the same-run Node artifacts for unit contract fixtures
+        if: matrix.node-artifacts == true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: node-units-*
+          path: ${{ runner.temp }}/native-composition-units
+
+      - name: Unpack the Node artifacts for unit contract fixtures
+        if: matrix.node-artifacts == true
+        working-directory: app
+        run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output
 
       # The finance-billing POHODA export tests validate their generated documents against the
       # official STORMWARE dataPack 2.0 schemas, which the repository does not redistribute. Only the
@@ -252,8 +339,8 @@ jobs:
 
   static-contracts:
     name: Static Contracts
-    needs: [queue-proof]
-    if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
+    needs: [ci-plan]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['static-contracts'] == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -292,74 +379,40 @@ jobs:
 
       # Share one install across independent checks and retain a log for each check.
       # Keep the memory-heavy API analyzer and Commerce build outside this group.
-      - name: Start the independent static contract checks
-        id: static-contract-checks
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        working-directory: app
-        run: |
-          mkdir "$RUNNER_TEMP/static-contracts"
-          nohup bash -eo pipefail >"$RUNNER_TEMP/static-contracts/runner.log" 2>&1 <<'CHECKS' &
-          directory="$RUNNER_TEMP/static-contracts"
-          result=1
-          trap 'printf "%s\n" "$result" > "$directory/status"' EXIT
-          names=(
-            'Validate the root lefthook config'
-            'Skills'
-            'Lean Core Dependencies'
-            'Workspace Contract'
-            'Module Contract Generation'
-            'Action Unit Tests'
-          )
-          commands=(
-            'cd .. && app/node_modules/.bin/lefthook validate'
-            'mise exec -- pnpm skills:check'
-            'mise exec -- pnpm lean-core:check'
-            'mise exec -- pnpm contract:check'
-            'mise exec -- pnpm check:module-contracts'
-            'mise exec -- pnpm action:test:unit'
-          )
-          pids=()
-          for index in "${!commands[@]}"; do
-            bash -eo pipefail -c "${commands[$index]}" >"$directory/$index.log" 2>&1 &
-            pids+=("$!")
-          done
-          failed=0
-          for index in "${!pids[@]}"; do
-            if wait "${pids[$index]}"; then
-              status=0
-            else
-              status=$?
-              failed=1
-            fi
-            echo "::group::${names[$index]}"
-            cat "$directory/$index.log"
-            echo '::endgroup::'
-            if [[ "$status" != 0 ]]; then
-              echo "::error title=Static contract check failed::${names[$index]} exited $status."
-            fi
-          done
-          result="$failed"
-          CHECKS
+      - parallel:
+          - name: Validate the root lefthook config
+            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            run: app/node_modules/.bin/lefthook validate
 
-      - name: Database Access Boundaries
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        working-directory: app
-        run: mise exec -- pnpm database-access:check
+          - name: Skills
+            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            working-directory: app
+            run: mise exec -- pnpm skills:check
 
-      - name: Wait for every independent static contract check
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        env:
-          STATIC_CHECKS_OUTCOME: ${{ steps.static-contract-checks.outcome }}
-        run: |
-          if [[ "$STATIC_CHECKS_OUTCOME" != success ]]; then
-            echo '::error::The independent static contract checks could not start.'
-            exit 1
-          fi
-          until [[ -f "$RUNNER_TEMP/static-contracts/status" ]]; do
-            sleep 1
-          done
-          cat "$RUNNER_TEMP/static-contracts/runner.log"
-          [[ "$(cat "$RUNNER_TEMP/static-contracts/status")" == 0 ]]
+          - name: Database Access Boundaries
+            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            working-directory: app
+            run: mise exec -- pnpm database-access:check
+
+          - name: Lean Core Dependencies
+            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            working-directory: app
+            run: mise exec -- pnpm lean-core:check
+
+          - name: Workspace Contract
+            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            working-directory: app
+            run: mise exec -- pnpm contract:check
+
+          - name: Module Contract Generation
+            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            working-directory: app
+            run: mise exec -- pnpm check:module-contracts
+
+          - name: Action Unit Tests
+            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            working-directory: app
+            run: mise exec -- pnpm action:test:unit
 
       # Module contract generation creates and deletes bundles inside verticals.
       # Wait for it before the i18n scanner walks those source directories.
@@ -382,8 +435,8 @@ jobs:
   # they cover every file once, and the hook's own globs still choose what each tool checks.
   format-and-lint:
     name: Format and Lint through the pre-commit hook (${{ matrix.shard }}/2)
-    needs: [queue-proof]
-    if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
+    needs: [ci-plan]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['format-and-lint'] == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -436,80 +489,14 @@ jobs:
   # are even (its heaviest is 3.7 minutes of a 14.6-minute job), so two shards halve it outright.
   service-integration:
     name: ${{ matrix.name }}
-    needs: [queue-proof]
-    if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
+    needs: [ci-plan, node-artifact-build]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - suite: integration
-            name: Database, Migration, RLS, Authorization, and Outbox Integration
-            root-suite: true
-            package-filters: >-
-              --filter !. --filter !./verticals/catalog --filter !./verticals/pricing
-              --filter !./verticals/inventory --filter !./verticals/commerce-customer-context
-              --filter !./verticals/commerce-market-catalog --filter !./verticals/commerce-order
-              --filter !./verticals/payment-term-catalog --filter !./verticals/price-group-catalog
-              --filter !./verticals/storefront-registry --filter !./verticals/privacy
-              --filter !./verticals/party-registry --filter !./verticals/tax --filter !./verticals/projects
-          - suite: integration
-            name: Catalog Integration
-            package-filters: --filter ./verticals/catalog
-          - suite: integration
-            name: Pricing and Inventory Integration
-            package-filters: --filter ./verticals/pricing --filter ./verticals/inventory
-          - suite: integration
-            name: Commerce Customer Context Integration (1/6)
-            package-filters: --filter ./verticals/commerce-customer-context
-            rstest-shard: 1/6
-          - suite: integration
-            name: Commerce Customer Context Integration (2/6)
-            package-filters: --filter ./verticals/commerce-customer-context
-            rstest-shard: 2/6
-          - suite: integration
-            name: Commerce Customer Context Integration (3/6)
-            package-filters: --filter ./verticals/commerce-customer-context
-            rstest-shard: 3/6
-          - suite: integration
-            name: Commerce Customer Context Integration (4/6)
-            package-filters: --filter ./verticals/commerce-customer-context
-            rstest-shard: 4/6
-          - suite: integration
-            name: Commerce Customer Context Integration (5/6)
-            package-filters: --filter ./verticals/commerce-customer-context
-            rstest-shard: 5/6
-          - suite: integration
-            name: Commerce Customer Context Integration (6/6)
-            package-filters: --filter ./verticals/commerce-customer-context
-            rstest-shard: 6/6
-          - suite: integration
-            name: Market, Order, Payment Term, Price Group, and Storefront Integration
-            native-preproposal: true
-            package-filters: >-
-              --filter ./verticals/commerce-market-catalog --filter ./verticals/commerce-order
-              --filter ./verticals/payment-term-catalog --filter ./verticals/price-group-catalog
-              --filter ./verticals/storefront-registry
-          - suite: integration
-            name: Privacy Integration (1/2)
-            package-filters: --filter ./verticals/privacy
-            rstest-shard: 1/2
-          - suite: integration
-            name: Privacy Integration (2/2)
-            package-filters: --filter ./verticals/privacy
-            rstest-shard: 2/2
-          - suite: integration
-            name: Party Registry Integration
-            package-filters: --filter ./verticals/party-registry
-          - suite: integration
-            name: Tax Integration
-            package-filters: --filter ./verticals/tax
-          - suite: integration
-            name: Projects Integration
-            package-filters: --filter ./verticals/projects
-          - suite: browser
-            name: Authenticated Browser Tests
+        include: ${{ fromJSON(needs.ci-plan.outputs.integration) }}
     env:
       BETTER_AUTH_SECRET: ontos-ci-better-auth-secret-at-least-32-characters
       BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:3020,http://127.0.0.1:3020
@@ -547,6 +534,27 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
+      # Native receiving fixtures and Inventory workers use genuine published owner metadata.
+      # Restore this run's outputs instead of rebuilding or substituting synthetic build identities.
+      - name: Download the same-run Node artifacts for native owner fixtures
+        if: matrix.suite == 'integration'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: node-units-*
+          path: ${{ runner.temp }}/native-composition-units
+
+      - name: Unpack the Node artifacts for native owner fixtures
+        if: matrix.suite == 'integration'
+        working-directory: app
+        run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output
+
+      - name: Materialize the native Customer Context worker artifact
+        if: matrix.root-suite == true
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+        run: mise exec -- pnpm zerops:materialize --app commerce-customer-context --package @app/commerce-customer-context --package-dir verticals/commerce-customer-context --worker
+
       # The Chromium build is pinned by the Playwright version in the lockfile; its system libraries are not cached.
       # Only warm-caches on main saves it, so parallel jobs never race to save.
       - name: Restore the Playwright Chromium build
@@ -576,16 +584,13 @@ jobs:
       # background while the services start and the migrations run; the browser tests wait for it below.
       - name: Install Chromium and its runtime dependencies
         id: chromium-install
+        background: true
         if: matrix.suite == 'browser'
         timeout-minutes: 10
         working-directory: app
         env:
           CHROMIUM_CACHED: ${{ steps.playwright-cache.outputs.cache-hit }}
         run: |
-          nohup bash -eo pipefail >"$RUNNER_TEMP/chromium-install.log" 2>&1 <<'CHROMIUM' &
-          result=1
-          trap 'printf "%s\n" "$result" > "$RUNNER_TEMP/chromium-install.status"' EXIT
-          if timeout --kill-after=30s 10m bash -eo pipefail <<'INSTALL'; then
           if [ -d ~/.cache/playwright-apt-debs ]; then
             sudo find ~/.cache/playwright-apt-debs -maxdepth 1 -name '*.deb' -exec cp {} /var/cache/apt/archives/ \;
           fi
@@ -595,12 +600,6 @@ jobs:
             set -- install --with-deps chromium
           fi
           mise exec -- pnpm --filter @app/shell-super-app exec playwright "$@"
-          INSTALL
-            result=0
-          else
-            result=$?
-          fi
-          CHROMIUM
 
       - name: Create the local SpiceDB TLS certificate
         working-directory: app
@@ -619,15 +618,6 @@ jobs:
           docker compose down --volumes --remove-orphans
           docker compose up --detach --wait --wait-timeout 120
 
-      # Compose seeds only the shared role. Provision every manifest identity in this ephemeral
-      # loopback database before either suite's fail-closed reconcile bootstrap.
-      - name: Initialize the fresh CI database identities from the grant manifest
-        working-directory: app
-        env:
-          DATABASE_LOGIN_ROLE_POLICY: initialize-local
-          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: development
-        run: mise exec -- pnpm db:bootstrap-runtime-role
-
       - name: Remove the pre-seeded runtime role to prove deployment bootstrap ordering
         if: matrix.suite == 'integration'
         working-directory: app
@@ -637,20 +627,21 @@ jobs:
           DROP ROLE ontos_runtime;
           SQL
 
-      - name: Run the stage migrator once against the fresh database
+      - name: Run the assembled stage migrator artifact against the fresh database
         if: matrix.suite == 'integration'
         working-directory: app
-        # Stage-shaped: the entry point the app host runs before it starts the owners (MIGRATOR_ONCE),
-        # bootstraps SpiceDB's database, and opts into the Commerce portal realm with its own provider
-        # runtime role that nothing pre-creates — exactly what the stage app host receives.
+        # Stage-shaped: the migrator ships only its zerops.yaml deployFiles, runs its real start entry
+        # point, bootstraps SpiceDB's database, and opts into the Commerce portal realm with its own
+        # provider runtime role that nothing pre-creates — exactly what the stage migrator receives.
         env:
           COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
           COMMERCE_PORTAL_AUTH_DATABASE_URL: postgresql://commerce_auth_runtime:commerce_auth_runtime@localhost:5433/ontos_ci
-          MIGRATOR_ONCE: 'true'
+          MIGRATOR_PORT: '8080'
           NODE_ENV: production
           SPICEDB_DATABASE_PASSWORD: spicedb
           ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
-        run: mise exec -- node scripts/run-zerops-migrator.mjs
+          ULTRAMODERN_ZEROPS_SERVICE: migrator
+        run: mise exec -- sh scripts/prove-zerops-migrator-artifact.sh "$RUNNER_TEMP/zerops-migrator-artifact"
 
       - name: Apply and verify Core, Auth, and Contacts migrations, plus Party Registry
         working-directory: app
@@ -674,7 +665,7 @@ jobs:
         working-directory: app
         run: mise exec -- pnpm database-trust:audit
 
-      # Stage-shaped: the host is materialized by its build command,
+      # Stage-shaped on the Cloudflare target: the host is materialized by its zerops.yaml build command,
       # ships only its deployFiles, polls every hosted owner's outbox against the freshly migrated
       # database until /ready, then drains on SIGTERM.
       - name: Build and run the Outbox Worker host artifact against the fresh database
@@ -691,6 +682,7 @@ jobs:
           APP_ENV_PATH: /dev/null
           MIGRATION_EQUIVALENCE_TEST_DATABASE_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/postgres
           MIGRATION_EQUIVALENCE_TEST_SANDBOX: owned-postgres18
+          SPICEDB_DATABASE_PASSWORD: spicedb
           PACKAGE_FILTERS: ${{ matrix.package-filters }}
           ROOT_SUITE: ${{ matrix.root-suite }}
           RSTEST_SHARD: ${{ matrix.rstest-shard }}
@@ -700,8 +692,10 @@ jobs:
           if [[ "$ROOT_SUITE" == true ]]; then
             mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1
           fi
-          # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
-          mise exec -- pnpm -r --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1 ${RSTEST_SHARD:+--shard "$RSTEST_SHARD"}
+          if [[ -n "$PACKAGE_FILTERS" ]]; then
+            # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
+            mise exec -- pnpm -r --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1 ${RSTEST_SHARD:+--shard "$RSTEST_SHARD"}
+          fi
 
       - name: Prove native preproposal basis and genuine approval through registered owners
         if: matrix.native-preproposal == true
@@ -714,32 +708,22 @@ jobs:
 
       # `wait` always runs, including on non-browser shards where the install was skipped.
       - name: Wait for the Chromium install
-        if: ${{ !cancelled() }}
-        timeout-minutes: 10
-        env:
-          CHROMIUM_INSTALL_OUTCOME: ${{ steps.chromium-install.outcome }}
-        run: |
-          if [[ "$CHROMIUM_INSTALL_OUTCOME" == skipped ]]; then
-            exit 0
-          fi
-          if [[ "$CHROMIUM_INSTALL_OUTCOME" != success ]]; then
-            echo '::error::The Chromium install could not start.'
-            exit 1
-          fi
-          until [[ -f "$RUNNER_TEMP/chromium-install.status" ]]; do
-            sleep 1
-          done
-          cat "$RUNNER_TEMP/chromium-install.log"
-          status="$(cat "$RUNNER_TEMP/chromium-install.status")"
-          if [[ "$status" != 0 ]]; then
-            echo "::error::The Chromium install exited $status."
-            exit 1
-          fi
+        wait: chromium-install
 
       - name: Run parallel authenticated browser tests without retries
         if: matrix.suite == 'browser'
         working-directory: app
         run: mise exec -- pnpm --filter @app/shell-super-app test:e2e
+
+      - name: Verify browser recovery into a newly published release
+        if: matrix.suite == 'browser'
+        working-directory: app
+        env:
+          ONTOS_E2E_RETAINED_PARTY_R2: 'true'
+        run: >-
+          mise exec -- pnpm --filter @app/shell-super-app exec playwright test
+          tests/e2e/login.spec.ts --grep 'reloads failed Contacts into a genuinely published R2'
+          --workers 1
 
       - name: Upload browser failure diagnostics
         if: failure() && matrix.suite == 'browser'
@@ -768,16 +752,18 @@ jobs:
   # the units build in shards on parallel runners, one unit at a time per shard: parallel builds on one
   # runner fight over its cores, and every unit's TS-Go declaration pass then runs several times slower.
   # Each target balances its shards by its own measured build times; a new unit joins one shard of each
-  # target (a test checks). The shard that verifies a target's outputs waits for every other shard of its target,
-  # downloads every shard and verifies the whole target. The Node shard runs the Node proof.
+  # target (a test checks). A target's lightest shards also prove it, on the runner they already set up:
+  # each waits for every other shard of its target, downloads every shard and proves the whole topology,
+  # exactly as one build did. The Node shard runs the Node proof; two Cloudflare shards run the two
+  # independent Worker proofs side by side (the outputs and their SSR, and the topology on real services).
   node-artifact-build:
     name: Build node artifacts (${{ matrix.shard }}/5)
-    needs: [queue-proof]
+    needs: [ci-plan]
     # The proving shard reads its siblings' job results.
     permissions:
       actions: read
       contents: read
-    if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -909,15 +895,6 @@ jobs:
           mise exec -- pnpm mf:types
           mise exec -- pnpm performance:readiness
 
-      # The bare PostgreSQL service has no runtime roles. Keep creation outside migration policy.
-      - name: Initialize the fresh CI database identities from the grant manifest
-        if: matrix.proof == 'node'
-        working-directory: app
-        env:
-          DATABASE_LOGIN_ROLE_POLICY: initialize-local
-          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: development
-        run: mise exec -- pnpm db:bootstrap-runtime-role
-
       - name: Migrate the Node proof database and provision its runtime identities
         if: matrix.proof == 'node'
         working-directory: app
@@ -928,41 +905,22 @@ jobs:
         working-directory: app
         run: mise exec -- pnpm node:proof
 
-  # The one required status check of the main ruleset, so new gate jobs join it here, not the ruleset.
-  # It passes when every gate passed, or when the merge queue already proved this commit and the gates were skipped.
+  # Keep one required check. Selected jobs must succeed and every skipped job must be explicitly planned.
   workspace-gates:
     name: Workspace gates
     if: ${{ always() }}
     needs:
-      [
-        queue-proof,
-        workspace-gate,
-        static-contracts,
-        format-and-lint,
-        service-integration,
-        node-artifact-build,
-      ]
+      [queue-proof, ci-plan, workspace-gate, workspace-unit, static-contracts, format-and-lint, service-integration, node-artifact-build]
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions: {}
+    permissions:
+      contents: read
     steps:
-      - name: Require every gate, or the merge queue proof of this commit
+      - name: Checkout the gate verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require selected gates and reject unplanned skips
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
-        run: |
-          proof="$(jq -r '.["queue-proof"].result' <<<"$NEEDS_JSON")"
-          if [[ "$proof" != success && "$proof" != skipped ]]; then
-            echo "::error title=Merge queue proof not checked::The queue-proof job ended $proof."
-            exit 1
-          fi
-          proven="$(jq -r '.["queue-proof"].outputs.proven // ""' <<<"$NEEDS_JSON")"
-          expected=success
-          if [[ "$proven" == true ]]; then
-            expected=skipped
-          fi
-          failed="$(jq -r --arg expected "$expected" 'to_entries[] | select(.key != "queue-proof" and .value.result != $expected) | "\(.key) \(.value.result)"' <<<"$NEEDS_JSON")"
-          if [[ -n "$failed" ]]; then
-            echo "::error title=Workspace gates failed::Expected every gate $expected, got: ${failed//$'\n'/, }"
-            exit 1
-          fi
-          echo "Every gate is $expected."
+        run: bash app/scripts/check-ci-gates.sh

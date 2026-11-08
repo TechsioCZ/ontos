@@ -27,11 +27,19 @@ it('retains native explicit authorization and the persisted Action identity', ()
   expect(descriptor.owningModuleKey).toBe('core.identity');
   expect(descriptor.entrypoint).toMatchObject({
     access: 'write',
-    authorization: { kind: 'action_execution', provisioning: 'explicit' },
+    authorization: { kind: 'protected' },
     entrypointKey: 'core.identity.configure-agent',
     moduleKey: 'core.identity',
     role: 'action',
     scope: 'system',
+  });
+  // Configuring an agent's profile is human-only administration (O43), decided by the one gate over
+  // this declaration rather than a legacy provisioning mode.
+  expect(descriptor.accessDeclaration).toMatchObject({
+    key: 'core.identity.agent-profile.configure',
+    kind: 'admin',
+    modes: ['run'],
+    risk: 'critical',
   });
   expect(descriptor.idempotency).toBe('required');
   expect(descriptor.legalEntityScope).toBe('required');

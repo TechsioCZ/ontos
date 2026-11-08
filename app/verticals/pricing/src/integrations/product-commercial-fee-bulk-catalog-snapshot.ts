@@ -1,16 +1,14 @@
+import type { OperationalScope } from '@app/core-runtime';
 import { executeProductVariantSnapshotWithAuthorization } from '@app/catalog/api/client';
 import { CatalogSelectionValidEvidenceSchema } from '@app/catalog/domain/catalog-selection-evidence';
 import { priceCatalogTargetsEqual } from '@app/pricing-contracts/domain/catalog-price-target';
 import type { PricingCommercialFeeProductTargetSnapshot } from '@app/pricing-contracts/domain/commercial-fee';
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
-import { Effect, Option, Redacted, Schema } from 'effect';
+import { Crypto, Effect, Redacted, Schema } from 'effect';
 
-import {
-  CatalogSelectionGatewayCredentialService,
-  PricingCatalogSelectionUnavailable,
-  unavailableCatalogSelectionGatewayCredentialIssuer,
-} from '../../shared/domain/catalog-selection-gateway-credential.ts';
-import type { CatalogSelectionGatewayCredentialIssuer } from '../../shared/domain/catalog-selection-gateway-credential.ts';
+import { PricingCatalogSelectionUnavailable } from '../../shared/domain/pricing-catalog-selection-unavailable.ts';
+import { acquireOwnerGatewayConnection } from './owner-gateway-connection.ts';
+import type { OwnerGatewayConnectionAcquire } from './owner-gateway-connection.ts';
 
 type SnapshotRequest = Parameters<typeof executeProductVariantSnapshotWithAuthorization>[0];
 type SnapshotEffect = ReturnType<typeof executeProductVariantSnapshotWithAuthorization>;
@@ -111,22 +109,25 @@ export const productCommercialFeeBulkSnapshotMatchesCurrentOwnerRead = (
     );
   });
 
-const makePort = (dependencies: {
+export const makeProductCommercialFeeBulkCatalogSnapshotPort = (dependencies: {
+  readonly acquire: OwnerGatewayConnectionAcquire;
   readonly context: {
     readonly compositionRevision: string;
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
+    readonly scope: OperationalScope;
   };
   readonly execute: SnapshotExecutor;
-  readonly issuer: CatalogSelectionGatewayCredentialIssuer;
 }): ProductCommercialFeeBulkCatalogSnapshotPort => ({
   validateCurrent: (snapshot) =>
-    dependencies.issuer
-      .issue({
+    dependencies
+      .acquire({
         audience: 'catalog',
         compositionRevision: dependencies.context.compositionRevision,
-        legalEntityId: dependencies.context.legalEntityId,
+        // The Catalog snapshot contract is tenant-scoped and forbids Legal Entity context.
+        legalEntityScope: 'tenant',
         requestCorrelation: dependencies.context.requestCorrelation,
+        scope: dependencies.context.scope,
       })
       .pipe(
         Effect.flatMap(({ baseUrl, credential }) =>
@@ -146,20 +147,21 @@ const makePort = (dependencies: {
       ),
 });
 
-export const productCommercialFeeBulkCatalogSnapshotPortFromEnvironment = (
+export const productCommercialFeeBulkCatalogSnapshotPortFromEnvironment = Effect.fn(
+  'productCommercialFeeBulkCatalogSnapshotPortFromEnvironment',
+)(function* productCommercialFeeBulkCatalogSnapshotPortFromEnvironment(
   context: {
     readonly compositionRevision: string;
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
+    readonly scope: OperationalScope;
   },
   execute: SnapshotExecutor = executeSnapshot,
-): Effect.Effect<ProductCommercialFeeBulkCatalogSnapshotPort> =>
-  Effect.serviceOption(CatalogSelectionGatewayCredentialService).pipe(
-    Effect.map((issuerOption) =>
-      makePort({
-        context,
-        execute,
-        issuer: Option.isSome(issuerOption) ? issuerOption.value : unavailableCatalogSelectionGatewayCredentialIssuer,
-      }),
-    ),
-  );
+): Effect.fn.Return<ProductCommercialFeeBulkCatalogSnapshotPort, never, Crypto.Crypto> {
+  const crypto = yield* Crypto.Crypto;
+  return makeProductCommercialFeeBulkCatalogSnapshotPort({
+    acquire: (input) => acquireOwnerGatewayConnection(input, crypto),
+    context,
+    execute,
+  });
+});

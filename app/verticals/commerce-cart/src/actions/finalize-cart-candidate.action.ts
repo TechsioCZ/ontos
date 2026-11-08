@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.cart
 // @ontos-action-slug finalize-cart-candidate
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect } from 'effect';
 import {
   FinalizeCartCandidatePayloadSchema,
@@ -11,7 +11,7 @@ import {
 import type { FinalizeCartCandidatePayload } from '../../shared/actions/finalize-cart-candidate.ts';
 import { CartDraftRejected } from '../../shared/domain/cart-draft.ts';
 import { finalCartCandidateService } from '../services/final-cart-candidate.service.ts';
-import { cartDraftAuthorityPolicy } from '../policies/cart-draft-authority.policy.ts';
+import { cartDraftAuthorityPolicy, cartTargetOwnerFacts } from '../policies/cart-draft-authority.policy.ts';
 
 const owningModuleKey = 'commerce.cart';
 
@@ -32,17 +32,26 @@ const handleFinalizeCartCandidate = Effect.fn('FinalizeCartCandidateAction.handl
 
 export const finalizeCartCandidateAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.cart.final-cart-candidate.finalize',
+      kind: 'action',
+      modes: ['run', 'propose'],
+      placement: { group: 'cart-finalization', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.cart.finalize-cart-candidate.access.v1',
     },
+    accessOwnerFacts: (payload) => cartTargetOwnerFacts(payload.cartRef),
     actionKey: 'commerce.cart.finalize-cart-candidate',
     auditProfile: 'standard',
     domainErrorSchema: CartDraftRejected,
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.cart.finalize-cart-candidate',
       moduleKey: owningModuleKey,
       role: 'action',
@@ -52,10 +61,6 @@ export const finalizeCartCandidateAction = defineAction(
     owningModuleKey,
     payloadSchema: FinalizeCartCandidatePayloadSchema,
     policies: [cartDraftAuthorityPolicy],
-    resourcePermission: defineActionResourcePermission<FinalizeCartCandidatePayload>(({ cartRef }) => ({
-      permission: 'write',
-      resource: cartRef,
-    })),
     resultSchema: FinalizeCartCandidateResultSchema,
     schemaVersion: '1',
   },

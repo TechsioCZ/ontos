@@ -1,6 +1,5 @@
 import {
   projectPeopleLifecycleSearchSubscription,
-  projectPeopleRoleSearchSubscription,
   rebuildPeopleSearchSubscription,
 } from '../people/people-search-subscriptions.ts';
 import { defineSystemModuleEntrypoint } from '../modules/module-entrypoint.ts';
@@ -55,27 +54,10 @@ export const corePrincipalBindingSubscription = Object.freeze({
   workerKey: bindingWorkerKey,
 });
 
-const scopedRoleWorkerKey = 'core.authorization.reconcile-scoped-role-membership';
-export const coreScopedRoleMembershipSubscription = Object.freeze({
-  consumerModuleKey,
-  entrypoint: defineSystemModuleEntrypoint({
-    access: 'background',
-    authorization: { kind: 'owner_local_background' },
-    entrypointKey: scopedRoleWorkerKey,
-    moduleKey: consumerModuleKey,
-    role: 'worker',
-  }),
-  producerModuleKey: identityProducerModuleKey,
-  topic: 'core.identity.scoped-role-membership-changed.v1',
-  workerKey: scopedRoleWorkerKey,
-});
-
 export const CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS: readonly OutboxWorkerSubscription[] = Object.freeze([
   projectPeopleLifecycleSearchSubscription,
-  projectPeopleRoleSearchSubscription,
   rebuildPeopleSearchSubscription,
   coreModuleInstallationSubscription,
   corePrincipalBindingSubscription,
   corePrincipalLifecycleSubscription,
-  coreScopedRoleMembershipSubscription,
 ]);

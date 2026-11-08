@@ -11,6 +11,7 @@ it('decodes every closed authorization classification', () => {
   const classifications = [
     { kind: 'public' },
     { kind: 'authenticated_principal' },
+    { kind: 'protected' },
     { kind: 'context_permission', permission: 'module.access' },
     { kind: 'action_execution', provisioning: 'tenant_membership_default' },
     { kind: 'action_execution', provisioning: 'explicit' },
@@ -29,6 +30,8 @@ it('rejects omitted, unknown, excessive, and incompatible authorization fields',
     undefined,
     { kind: 'unknown' },
     { kind: 'public', provisioning: 'explicit' },
+    { kind: 'protected', provisioning: 'explicit' },
+    { kind: 'protected', permission: 'module.access' },
     { kind: 'context_permission' },
     { kind: 'action_execution' },
     { kind: 'action_execution', provisioning: 'everyone' },
@@ -68,6 +71,7 @@ it('requires role-compatible authorization and freezes nested classification', (
   expect(() =>
     defineTenantModuleEntrypoint({
       access: 'write',
+      // @ts-expect-error -- an Action is protected: an authenticated-principal page gate is not an Action.
       authorization: { kind: 'authenticated_principal' },
       entrypointKey: 'inventory.stock.reserve',
       moduleKey: 'inventory.stock',
@@ -77,10 +81,54 @@ it('requires role-compatible authorization and freezes nested classification', (
   expect(() =>
     defineTenantModuleEntrypoint({
       access: 'background',
+      // @ts-expect-error -- a worker is owner-local background, never a legacy Action classification.
       authorization: { kind: 'action_execution', provisioning: 'explicit' },
       entrypointKey: 'inventory.stock.project',
       moduleKey: 'inventory.stock',
       role: 'worker',
+    }),
+  ).toThrow();
+});
+
+it('accepts the v2 protected classification exactly where the role allows it (CUTOVER-PLAN §4.2)', () => {
+  const protectedAction = defineTenantModuleEntrypoint({
+    access: 'write',
+    authorization: { kind: 'protected' },
+    entrypointKey: 'inventory.stock.reserve',
+    moduleKey: 'inventory.stock',
+    role: 'action',
+  });
+  const protectedPage = defineSystemModuleEntrypoint({
+    access: 'read',
+    authorization: { kind: 'protected' },
+    entrypointKey: 'core.shell.page.assortment-home',
+    moduleKey: 'core.shell',
+    role: 'page',
+  });
+
+  expect(protectedAction.authorization).toEqual({ kind: 'protected' });
+  expect(protectedPage.authorization).toEqual({ kind: 'protected' });
+  expect(Object.isFrozen(protectedPage.authorization)).toBe(true);
+  // A worker is owner-local background, never a protected surface.
+  expect(() =>
+    defineTenantModuleEntrypoint({
+      access: 'background',
+      // @ts-expect-error -- a worker is owner-local background, never a protected surface.
+      authorization: { kind: 'protected' },
+      entrypointKey: 'inventory.stock.project',
+      moduleKey: 'inventory.stock',
+      role: 'worker',
+    }),
+  ).toThrow();
+  // A report may not issue credentials, and an API may.
+  expect(() =>
+    defineTenantModuleEntrypoint({
+      access: 'read',
+      // @ts-expect-error -- only an API entrypoint may be a capability issuer (O30).
+      authorization: { credential: 'session', kind: 'capability_issuance' },
+      entrypointKey: 'inventory.stock.report',
+      moduleKey: 'inventory.stock',
+      role: 'report',
     }),
   ).toThrow();
 });

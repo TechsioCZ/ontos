@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.inventory
 // @ontos-action-http-slug create-inventory-reservation
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/create-inventory-reservation.ts';
 
 export { CreateInventoryReservationPayloadSchema } from '../actions/create-inventory-reservation.ts';
-
 const CreateInventoryReservationActionHeadersSchema = Schema.Struct({
   'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
 });
@@ -28,6 +28,7 @@ export const CreateInventoryReservationActionForbiddenProblemSchema = makeProble
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -157,7 +158,7 @@ export const createInventoryReservationActionGroupDefinition = HttpApiGroup.make
       error: actionErrors,
       headers: CreateInventoryReservationActionHeadersSchema,
       payload: Schema.toEncoded(CreateInventoryReservationPayloadSchema),
-      success: CreateInventoryReservationResultSchema,
+      success: [ActionProposalAcceptedSchema, CreateInventoryReservationResultSchema],
     }),
   )
   .middleware(CreateInventoryReservationActionSchemaErrorMiddleware);

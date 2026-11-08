@@ -1,32 +1,26 @@
-// Governed server-side Party Registry intake for CRM clients (CRM.md §3/§4, ADR-0015).
-//
-// A salesperson has no Party Registry rights (its customer list is company-wide), yet every active CRM client must
-// carry a Party Registry identity. Right after a CRM command that made a client active has COMMITTED (Nový klient,
-// restore, approved AI proposal, SyncClientParties), the CRM server runs this reconciliation as the dedicated
-// non-human principal "CRM · zakládání klientů v Party Registry" (managed API key, scripts/demo/crm-party-intake.mts):
-//   1. reads the company's CRM clients without identity (demo.crm.read_all of that principal);
-//   2. reuses the matching current registry CUSTOMER (IČO, else name) or creates Party + CUSTOMER Counterparty +
-//      Contact Points through the registry's public Actions;
-//   3. stores the link with the CRM `LinkClientParty` Action, forwarding its own registry credential so the CRM
-//      re-reads the Counterparty before storing it.
-// Core authorizes and audits every step for that principal; the salesperson never receives registry access and the
-// browser never sends a registry claim. It runs outside the CRM transaction: a registry Action started inside an
-// open CRM Action transaction would wait on the same tenant row lock.
+// CRM client identity reconciliation uses its registered workload on purpose-only CRM operations.
+// The native per-client Action reads the exact owner snapshot, then CRM's server module credential
+// delegates for that same verified workload to Party Registry. Humans keep their ordinary CRM and
+// Party rights. Registry effects run before CRM's final CAS write, never inside its SQL transaction.
 import {
+  crmClientEvidenceReference,
   AddContactPointPayloadSchema,
   CounterpartyCustomerOnboardPayloadSchema,
   CreatePartyPayloadSchema,
+  ResolveDuplicateCandidateCreatePayloadSchema,
 } from '@app/party-registry/api';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import {
   addContactPointWithAuthorization,
   counterpartyCustomerOnboardWithAuthorization,
-  createPartyWithAuthorization,
+  executeCreateCrmClientPartyWithAuthorization,
   executeCustomerListWithAuthorization,
-  executeDuplicateCandidateDetailWithAuthorization,
+  executeCrmClientIntakeReviewWithAuthorization,
   resolveDuplicateCandidateCreateWithAuthorization,
 } from '@app/party-registry/api/client';
 import {
   Config,
+  Crypto,
   Context,
   DateTime,
   Effect,
@@ -34,21 +28,22 @@ import {
   Layer,
   Option,
   Path,
-  Random,
   Redacted,
   Result,
   Schema,
 } from 'effect';
+import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
+import type { OperationalScope } from '@app/core-runtime';
 import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
 
-import { CrmReferenceUnavailable, ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
+import { CrmReferenceUnavailable } from '../../shared/actions/apply-command.ts';
 import { VerifiedPartySchema } from '../../shared/commands/context.ts';
 import type { VerifiedParty } from '../../shared/commands/context.ts';
 import type { ClientSchema } from '../../shared/domain/clients.ts';
 import { EntityIdSchema, IcoSchema, RegistryCompanyIdSchema } from '../../shared/domain/common.ts';
 import type { ClientPartySync } from '../../shared/apis/apply-command-action.ts';
-import { executeApplyCommandWithAuthorization } from '../api/apply-command-action-client.ts';
-import { executeRecordsWithAuthorization } from '../api/records-consumer.ts';
+import { executeIntakeClientPartyWithAuthorization } from '../api/intake-client-party-action-client.ts';
+import { executePendingClientIntakeWithAuthorization } from '../api/pending-client-intake-client.ts';
 
 const REGISTRY = 'party-registry';
 const CRM = 'crm';
@@ -114,6 +109,19 @@ const contactPointsOf = (client: IntakeClient) => [
       ]),
   ...addressContactPoint(client.address),
 ];
+
+/**
+ * The Party candidate name fields for one CRM client. Party Registry derives `displayName` from
+ * `businessName` for organizations and from `firstName`/`lastName` for people, so the derived display
+ * name stays equal to the name the CRM recorded.
+ */
+export const candidateNameFields = (client: Pick<IntakeClient, 'kind' | 'name'>) => {
+  if (client.kind === 'organization') {
+    return { businessName: client.name };
+  }
+  const [first = '', ...rest] = client.name.trim().split(/\s+/u);
+  return rest.length === 0 ? { firstName: first } : { firstName: first, lastName: rest.join(' ') };
+};
 
 export const RegistryCustomerSchema = Schema.Struct({
   companyId: Schema.OptionFromNullOr(RegistryCompanyIdSchema),
@@ -189,10 +197,13 @@ export const sameIcoClientCustomer = (
  * (C01-02). A candidate proven by an official identifier (IČO / DIČ) needs an identity reviewer.
  */
 export const ambiguousCaseDecision = (detail: {
-  readonly evaluatedEvidence: readonly { readonly identifierType?: string | undefined }[];
+  readonly evaluatedEvidence?: readonly { readonly identifierType?: string | undefined }[];
   readonly lifecycleState: string;
 }): 'create' | 'review' =>
-  detail.lifecycleState === 'OPEN' && detail.evaluatedEvidence.every((entry) => entry.identifierType === undefined)
+  detail.lifecycleState === 'OPEN' &&
+  detail.evaluatedEvidence !== undefined &&
+  detail.evaluatedEvidence.length > 0 &&
+  detail.evaluatedEvidence.every((entry) => entry.identifierType === undefined)
     ? 'create'
     : 'review';
 
@@ -418,10 +429,6 @@ const localSetting = Effect.fn('Crm.partyIntake.localSetting')(
   Effect.orElseSucceed(() => Option.none<Redacted.Redacted>()),
 );
 
-const ReferenceCredentialsJsonSchema = Schema.fromJsonString(
-  Schema.Array(Schema.Struct({ audience: Schema.String, authorization: Schema.RedactedFromValue(Schema.String) })),
-);
-
 /**
  * Party Registry intake for one company. `identify` returns the registry identity of a client, `Option.none()` when
  * the registry holds a lookalike Party that needs an identity reviewer (the client stays unlinked; the správce sees
@@ -431,15 +438,63 @@ interface PartyIntakeRequest {
   readonly compositionRevision: string;
   /** Forwarded HTTP correlation header and idempotency-key input. */
   readonly correlationId: string;
+  readonly delegatedScope?: OperationalScope;
   readonly legalEntityId: string;
 }
+const crmCreatePayload = (client: IntakeClient, evidenceReference: string, now: string) => {
+  const organization = client.kind === 'organization';
+  return {
+    candidate: {
+      ...candidateNameFields(client),
+      evidenceRefs: [evidenceReference],
+      officialIdentifiers: [
+        ...(organization && validIco(client.regNo) ? [{ identifierType: 'ICO', value: client.regNo }] : []),
+        ...(organization && client.vatNo !== undefined && /^CZ\d{8,10}$/u.test(client.vatNo.toUpperCase())
+          ? [{ identifierType: 'CZ_DIC', value: client.vatNo.toUpperCase() }]
+          : []),
+      ],
+      partyType: organization ? 'ORGANIZATION' : 'PERSON',
+      provenance: { method: 'MANUAL_ENTRY', source: PROVENANCE_SOURCE },
+      subjectEvidence: [
+        {
+          basis: 'DIRECT_INTERACTION',
+          evidenceRef: evidenceReference,
+          kind: 'ACTOR_ATTESTATION',
+          observedSubject: organization ? 'ORGANIZATION' : 'PERSON',
+          statement: `CRM client ${client.name} entered by an authorized CRM user`,
+          subjectKey: evidenceReference,
+        },
+      ],
+      validFrom: now,
+    },
+  };
+};
+
 const makePartyIntake = (scope: PartyIntakeRequest) => {
   const { correlationId } = scope;
   let { compositionRevision } = scope;
-  let readOrdinal = 0;
 
   /** One single-use gateway assertion of the intake principal for `audience`. */
   const assertion = Effect.fn('Crm.partyIntake.assertion')(function* issueAssertion(audience: string) {
+    if (scope.delegatedScope !== undefined) {
+      const issued = yield* acquireDelegatedGatewayContext(
+        {
+          audience,
+          legalEntityScope: 'subject',
+          requestCorrelation: correlationId,
+          subject: { _tag: 'Assertion', scope: scope.delegatedScope },
+        },
+        yield* Crypto.Crypto,
+      ).pipe(Effect.mapError(registryDown));
+      if (issued.compositionRevision !== scope.compositionRevision) {
+        return yield* registryDown({ operation: 'intake-release-changed' });
+      }
+      return {
+        authorization: Redacted.make(issued.authorization),
+        credential: issued.authorization,
+        options: { baseUrl: issued.apiBaseUrl, compositionRevision: issued.compositionRevision },
+      };
+    }
     const key = yield* localSetting(KEY_VARIABLE);
     if (Option.isNone(key)) {
       return yield* unavailable(
@@ -490,66 +545,69 @@ const makePartyIntake = (scope: PartyIntakeRequest) => {
     operationKey: string,
   ) {
     const now = DateTime.formatIso(yield* DateTime.now);
-    const evidenceReference = `crm-client:${client.id}`.slice(0, 200);
-    const organization = client.kind === 'organization';
-    const createPayload = yield* Schema.decodeUnknownEffect(CreatePartyPayloadSchema)({
-      candidate: {
-        displayName: client.name,
-        evidenceRefs: [evidenceReference],
-        officialIdentifiers: [
-          ...(organization && validIco(client.regNo)
-            ? [{ identifierType: 'ICO', value: client.regNo, verification: 'UNVERIFIED' }]
-            : []),
-          ...(organization && client.vatNo !== undefined && /^CZ\d{8,10}$/u.test(client.vatNo.toUpperCase())
-            ? [{ identifierType: 'CZ_DIC', value: client.vatNo.toUpperCase(), verification: 'UNVERIFIED' }]
-            : []),
-        ],
-        partyType: organization ? 'ORGANIZATION' : 'PERSON',
-        provenance: { method: 'MANUAL_ENTRY', source: PROVENANCE_SOURCE },
-        subjectEvidence: [
-          {
-            basis: 'DIRECT_INTERACTION',
-            evidenceRef: evidenceReference,
-            kind: 'ACTOR_ATTESTATION',
-            observedSubject: organization ? 'ORGANIZATION' : 'PERSON',
-            statement: `CRM client ${client.name} entered by an authorized CRM user`,
-            subjectKey: evidenceReference,
-          },
-        ],
-        validFrom: now,
-      },
-    }).pipe(Effect.mapError(registryDown));
+    const originalScope = scope.delegatedScope;
+    if (originalScope === undefined || originalScope.legalEntityId !== scope.legalEntityId) {
+      return yield* unavailable('CRM identity intake requires its verified owner-server operation context');
+    }
+    const evidenceReference = crmClientEvidenceReference(
+      { legalEntityId: scope.legalEntityId, tenantId: originalScope.tenantId },
+      client.id,
+    );
+    const createPayload = yield* Schema.decodeUnknownEffect(CreatePartyPayloadSchema)(
+      crmCreatePayload(client, evidenceReference, now),
+    ).pipe(Effect.mapError(registryDown));
+    const sourceScope = scope.delegatedScope;
+    if (sourceScope === undefined || sourceScope.legalEntityId !== scope.legalEntityId) {
+      return yield* unavailable('CRM identity intake requires its verified owner-server operation context');
+    }
     const first = yield* assertion(REGISTRY);
-    const created = yield* createPartyWithAuthorization(createPayload, first.credential, {
-      ...first.options,
+    const created = yield* executeCreateCrmClientPartyWithAuthorization(
+      {
+        ...createPayload,
+        clientId: client.id,
+        sourceScope: { legalEntityId: scope.legalEntityId, tenantId: sourceScope.tenantId },
+      },
+      first.credential,
       correlationId,
-      idempotencyKey: `${operationKey}:party`,
-    }).pipe(Effect.mapError(registryDown));
+      {
+        ...first.options,
+        idempotencyKey: `${operationKey}:party`,
+      },
+    ).pipe(Effect.mapError(registryDown));
+    if (Schema.is(ActionProposalAcceptedSchema)(created)) {
+      return Option.none<VerifiedParty>();
+    }
     let partyRef = created.outcome === 'AMBIGUOUS' ? undefined : created.partyRef;
     if (created.outcome === 'AMBIGUOUS') {
       const second = yield* assertion(REGISTRY);
-      const detail = yield* executeDuplicateCandidateDetailWithAuthorization(
-        { caseRef: created.caseRef },
+      const detail = yield* executeCrmClientIntakeReviewWithAuthorization(
+        {
+          caseRef: created.caseRef,
+          clientId: client.id,
+          decisionRef: created.decisionRef,
+          sourceScope: { legalEntityId: scope.legalEntityId, tenantId: sourceScope.tenantId },
+        },
         second.credential,
         correlationId,
         second.options,
       ).pipe(Effect.mapError(registryDown));
-      // Only lookalikes (e.g. a client with the same name): a distinct new Party, never merged (C01-02).
-      // An official-identifier candidate waits for an identity reviewer.
-      if (ambiguousCaseDecision(detail) === 'review') {
+      if (detail.outcome === 'review') {
         return Option.none<VerifiedParty>();
       }
       const third = yield* assertion(REGISTRY);
       const resolved = yield* resolveDuplicateCandidateCreateWithAuthorization(
-        {
+        yield* Schema.decodeUnknownEffect(ResolveDuplicateCandidateCreatePayloadSchema)({
           caseRef: created.caseRef,
           expectedRevision: detail.revision,
           reason:
             'New CRM client; the candidate Parties share only a lookalike name or contact, no official identifier',
-        },
+        }).pipe(Effect.mapError(registryDown)),
         third.credential,
         { ...third.options, correlationId, idempotencyKey: `${operationKey}:resolve-create` },
       ).pipe(Effect.mapError(registryDown));
+      if (Schema.is(ActionProposalAcceptedSchema)(resolved)) {
+        return Option.none<VerifiedParty>();
+      }
       if (resolved.partyRef === null) {
         return Option.none<VerifiedParty>();
       }
@@ -580,6 +638,19 @@ const makePartyIntake = (scope: PartyIntakeRequest) => {
       correlationId,
       idempotencyKey: `${operationKey}:onboard`,
     }).pipe(Effect.mapError(registryDown));
+    if (Schema.is(ActionProposalAcceptedSchema)(onboarded)) {
+      return Option.none<VerifiedParty>();
+    }
+    if (
+      onboarded.legalEntityRef.resourceId !== scope.legalEntityId ||
+      (scope.delegatedScope !== undefined &&
+        (onboarded.partyRef.tenantId !== scope.delegatedScope.tenantId ||
+          onboarded.counterpartyRef.tenantId !== scope.delegatedScope.tenantId)) ||
+      onboarded.partyRef.resourceId !== partyRef.resourceId ||
+      onboarded.roleType !== 'CUSTOMER'
+    ) {
+      return yield* registryDown({ operation: 'intake-counterparty-scope' });
+    }
     const contactPoints = contactPointsOf(client);
     // Keep the public Action calls ordered. Malformed legacy contacts must not block the identity link.
     const addContact = Effect.fn('Crm.partyIntake.addContact')(
@@ -595,7 +666,6 @@ const makePartyIntake = (scope: PartyIntakeRequest) => {
             source: 'USER_ASSERTION',
           },
           validFrom: now,
-          verification: { state: 'UNVERIFIED' },
         });
         const { credential, options } = yield* assertion(REGISTRY);
         yield* addContactPointWithAuthorization(payload, credential, {
@@ -639,60 +709,70 @@ const makePartyIntake = (scope: PartyIntakeRequest) => {
     return yield* createCustomer(client, operationKey);
   });
 
-  /** The company's CRM clients as the intake principal sees them (read_all). */
-  const crmRecords = Effect.fn('Crm.partyIntake.records')(function* readCrmRecords() {
+  /** A purpose-only owner Read returns ids and link observations, never the general CRM document. */
+  const crmRecords = Effect.fn('Crm.partyIntake.pending')(function* pending(clientIds?: readonly string[]) {
     const crm = yield* assertion(CRM);
-    const nonce = yield* Random.nextInt;
-    readOrdinal += 1;
-    return yield* executeRecordsWithAuthorization(
-      { refreshToken: `crm-intake:${correlationId.slice(0, 150)}:${readOrdinal}:${nonce}` },
+    return yield* executePendingClientIntakeWithAuthorization(
+      clientIds === undefined
+        ? {}
+        : {
+            clientIds: yield* Schema.decodeUnknownEffect(Schema.Array(EntityIdSchema))(clientIds).pipe(
+              Effect.mapError(registryDown),
+            ),
+          },
       crm.credential,
       correlationId,
       crm.options,
     ).pipe(Effect.timeout('20 seconds'), Effect.mapError(registryDown));
   });
 
-  /** Stores the link through the CRM Action; the CRM re-reads the Counterparty with the forwarded credential. */
-  const linkClient = Effect.fn('Crm.partyIntake.link')(function* linkClient(
-    clientId: string,
-    party: VerifiedParty,
-    expectedRevision: number,
-    operationKey: string,
-  ) {
-    const crm = yield* assertion(CRM);
-    const registry = yield* assertion(REGISTRY);
-    const referenceCredentials = yield* Schema.encodeEffect(ReferenceCredentialsJsonSchema)([
-      { audience: REGISTRY, authorization: registry.authorization },
-    ]).pipe(Effect.mapError(registryDown));
-    const payload = yield* Schema.decodeEffect(ApplyCommandPayloadSchema)({
-      command: {
-        _tag: 'LinkClientParty',
-        clientId,
-        partyRef: { counterpartyId: party.counterpartyId, partyId: party.partyId },
-      },
-      expectedRevision,
-    }).pipe(Effect.mapError(registryDown));
-    const response = yield* executeApplyCommandWithAuthorization(payload, crm.credential, correlationId, {
-      ...crm.options,
-      idempotencyKey: `${operationKey}:link`,
-      referenceCredentials: Redacted.make(referenceCredentials),
-    }).pipe(Effect.timeout('20 seconds'), Effect.mapError(registryDown));
-    return response.revision;
-  });
-
-  /**
-   * Without a selection, links active clients. Explicit ids restrict the batch, including archived clients;
-   * an empty selection performs no writes. Completion is observed by another fresh governed CRM read.
-   */
   const reconcile = Effect.fn('Crm.partyIntake.reconcile')(function* reconcile(clientIds?: readonly string[]) {
-    return yield* reconcileClientPartyBatch(
-      crmRecords,
-      (client, taken, crmClients) =>
-        identify(client, taken, `crm-intake:${correlationId}:${client.id}`.slice(0, 180), crmClients),
-      (clientId, party, expectedRevision) =>
-        linkClient(clientId, party, expectedRevision, `crm-intake:${correlationId}:${clientId}`.slice(0, 180)),
-      clientIds,
+    const before = yield* crmRecords(clientIds);
+    const targets = before.items.filter((client) => !client.linked).slice(0, BATCH);
+    const outcome = yield* Effect.reduce(
+      targets,
+      () => ({ failed: 0, linked: 0, review: 0, revision: before.revision }),
+      Effect.fn('Crm.partyIntake.reconcileOne')(function* reconcileOne(state, client) {
+        const crm = yield* assertion(CRM);
+        const observed = yield* executeIntakeClientPartyWithAuthorization(
+          { clientId: client.id, expectedRevision: state.revision },
+          crm.credential,
+          correlationId,
+          { ...crm.options, idempotencyKey: `crm-intake:${correlationId}:${client.id}`.slice(0, 200) },
+        ).pipe(Effect.timeout('30 seconds'), Effect.mapError(registryDown), Effect.result);
+        if (Result.isFailure(observed)) {
+          return { ...state, failed: state.failed + 1 };
+        }
+        const response = observed.success;
+        return {
+          ...state,
+          linked: state.linked + (response.status === 'linked' ? 1 : 0),
+          review: state.review + (response.status === 'review' ? 1 : 0),
+          revision: response.revision,
+        };
+      }),
     );
+    const after = yield* crmRecords(clientIds).pipe(
+      Effect.filterOrFail(
+        (current) => current.revision >= before.revision + outcome.linked,
+        () => unavailable('Committed client identity links could not be observed in current owner state'),
+      ),
+    );
+    const linked = targets.filter((target) => after.items.some((item) => item.id === target.id && item.linked)).length;
+    const remaining = after.items.filter((item) => !item.linked).length;
+    const failed = Math.max(outcome.failed, targets.length - linked - outcome.review);
+    const complete = remaining === 0 && failed === 0 && outcome.review === 0;
+    let status: ClientPartySync['status'] = 'partial';
+    if (complete) {
+      status = linked === 0 ? 'unchanged' : 'complete';
+    }
+    return {
+      failed,
+      linked,
+      remaining,
+      review: outcome.review,
+      status,
+    } satisfies ClientPartySync;
   });
 
   return { identify, reconcile };

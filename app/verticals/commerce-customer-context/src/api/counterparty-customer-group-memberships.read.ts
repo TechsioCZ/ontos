@@ -19,7 +19,7 @@ const MODULE_KEY = 'commerce.customer-context';
 
 const counterpartyCustomerGroupMembershipsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'customer.group.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.counterparty-customer-group-memberships',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -60,6 +60,14 @@ const handleCounterpartyCustomerGroupMemberships = Effect.fn('CounterpartyCustom
 
 export const counterpartyCustomerGroupMembershipsRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.counterparty.list-customer-group-memberships',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'customer-groups', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'list',
     entrypoint: counterpartyCustomerGroupMembershipsEntrypoint,
     evidencePolicy: {
@@ -69,7 +77,6 @@ export const counterpartyCustomerGroupMembershipsRead = defineRead(
     inputSchema: CounterpartyCustomerGroupMembershipsRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.customer-context.api.counterparty-customer-group-memberships',
     resultSchema: CounterpartyCustomerGroupMembershipsResponseSchema,
@@ -77,5 +84,4 @@ export const counterpartyCustomerGroupMembershipsRead = defineRead(
   },
   { load: handleCounterpartyCustomerGroupMemberships },
   customerGroupReadServiceFactory,
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

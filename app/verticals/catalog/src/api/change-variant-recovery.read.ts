@@ -74,7 +74,7 @@ const recoverChangeVariant = Effect.fn('ChangeVariantRecoveryRead.recover')(func
 
 const changeVariantRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.change-variant-recovery' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.change-variant-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -82,6 +82,14 @@ const changeVariantRecoveryEntrypoint = defineTenantModuleEntrypoint({
 
 export const changeVariantRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.change-variant-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'variant', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: changeVariantRecoveryEntrypoint,
     evidencePolicy: {
@@ -91,7 +99,6 @@ export const changeVariantRecoveryRead = defineRead(
     inputSchema: ChangeVariantRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.change-variant-recovery',
     resultSchema: ChangeVariantRecoveryResponseSchema,
@@ -105,5 +112,4 @@ export const changeVariantRecoveryRead = defineRead(
     Effect.succeed({
       recover: (invocationId: string) => recoverChangeVariantResult(transaction, scope, invocationId),
     }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

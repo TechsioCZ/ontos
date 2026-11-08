@@ -1,3 +1,4 @@
+import { pendingProposalMessage } from '../../../../api/action-result.ts';
 // Product gallery editor: drop, pick or paste pictures; every finished upload, reorder and removal is saved at once.
 // The first image is the main one. Pictures go to Core Media through the merchandise Action; nothing technical
 // (addresses, paths, identifiers) is ever shown.
@@ -42,6 +43,9 @@ const failureMessage = (
 ) => {
   if (outcome.ok) {
     return '';
+  }
+  if (outcome.proposal !== undefined) {
+    return pendingProposalMessage(outcome.proposal) ?? '';
   }
   if (outcome.reason === 'forbidden') {
     return t('merchandise.pages.products.gallery.forbidden');

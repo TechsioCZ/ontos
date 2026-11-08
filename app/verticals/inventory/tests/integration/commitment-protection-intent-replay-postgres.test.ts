@@ -1,10 +1,5 @@
-import {
-  OwnerAuthorizationOverlay,
-  makeBusinessPermissionRelationshipMutationLive,
-  runAction,
-  ScopedRoutineInvocationError,
-  transactionalOwnerAuthorization,
-} from '@app/core-runtime';
+import { inventoryRegistration } from '../../vertical.registration.ts';
+import { OwnerAuthorizationOverlay, runAction, ScopedRoutineInvocationError } from '@app/core-runtime';
 import type { ScopedTransactionExecutor } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
@@ -176,7 +171,9 @@ const finalizeOwnerExecution = Effect.fn('ProtectionIntentReplay.finalizeOwnerEx
 );
 const incrementCall = (count: number) => count + 1;
 
-const makeScenario = Effect.fn('ProtectionIntentReplay.makeScenario')(function* makeScenario() {
+const makeScenario = Effect.fn('ProtectionIntentReplay.makeScenario')(function* makeScenario(
+  options: { readonly access?: 'allowed' | 'denied' } = {},
+) {
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     mode: 'empty',
     purpose: 'stabilization-1237-protection-intent',
@@ -250,12 +247,14 @@ const makeScenario = Effect.fn('ProtectionIntentReplay.makeScenario')(function* 
   yield* isolated.publishInitialComposition(snapshot);
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
+      access: options.access ?? 'allowed',
       actionKeys: [establishCommitmentProtectionAction.descriptor.actionKey],
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
       allowedAudiences: ['inventory'],
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: snapshot.composition.revision,
       moduleKeys: ['commerce.inventory'],
+      ownerRegistration: inventoryRegistration,
       runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     }),
     (value) => value.close().pipe(Effect.orDie),
@@ -401,9 +400,8 @@ const makeScenario = Effect.fn('ProtectionIntentReplay.makeScenario')(function* 
     protectionRef: protection.ref,
   };
   // Test-owned exact Establish admission only; production Import-only authorization is unchanged.
-  const ownerAuthorization = Layer.succeed(
-    OwnerAuthorizationOverlay,
-    transactionalOwnerAuthorization((transaction, input) =>
+  const ownerAuthorization = Layer.succeed(OwnerAuthorizationOverlay, {
+    authorize: (transaction, input) =>
       input.operation === 'action' &&
       input.operationKey === establishCommitmentProtectionAction.descriptor.actionKey &&
       input.owningModuleKey === 'commerce.inventory' &&
@@ -418,36 +416,9 @@ const makeScenario = Effect.fn('ProtectionIntentReplay.makeScenario')(function* 
               }),
             )
         : Effect.succeed('unavailable' as const),
-    ),
-  );
+  });
   const layer = fixture.layer.pipe(Layer.provide(ownerAuthorization));
   const principal = { ...fixture.manager, legalEntityId: fixture.legalEntityId };
-  const permission = yield* makeBusinessPermissionRelationshipMutationLive();
-  const businessTarget = {
-    kind: 'inventory_resource' as const,
-    resource: {
-      moduleId: 'commerce.inventory' as const,
-      resourceId: protection.ref.resourceId,
-      resourceType: protection.ref.resourceType,
-    },
-    tenantId: fixture.tenantId,
-  };
-  yield* permission.mutate({
-    operation: 'grant',
-    permission: 'inventory.commitment_protection.establish',
-    principal,
-    target: businessTarget,
-  });
-  yield* Effect.addFinalizer(() =>
-    permission
-      .mutate({
-        operation: 'revoke',
-        permission: 'inventory.commitment_protection.establish',
-        principal,
-        target: businessTarget,
-      })
-      .pipe(Effect.orDie),
-  );
   yield* fixture.grantResourceAccess(protection.ref, fixture.manager.principalId, 'writer');
   const clock = yield* TestClock.make();
   yield* clock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe(originalAt)));
@@ -573,20 +544,26 @@ it.live(
     Effect.scoped(
       Effect.gen(function* pendingReplay() {
         const scenario = yield* makeScenario();
+        // v2: the one access gate decides the establish capability (O67-Q2), so a principal it does
+        // not admit is refused before any owner work. The retired context/executor permission pair is
+        // gone (O62); a scripted gate denial is its replacement, and it writes no ledger row.
+        const refused = yield* makeScenario({ access: 'denied' });
         const denied = yield* runAction({
-          payload: scenario.payload,
-          principal: { ...scenario.fixture.denied, legalEntityId: scenario.fixture.legalEntityId },
+          payload: refused.payload,
+          principal: { ...refused.fixture.denied, legalEntityId: refused.fixture.legalEntityId },
           registration: establishCommitmentProtectionAction,
           transport: { correlationId: 'protection-denied', idempotencyKey: 'denied' },
-        }).pipe(Effect.provide(scenario.layer), Effect.flip);
-        expect(Predicate.isTagged(denied, 'OperationContextDenied')).toBe(true);
+        }).pipe(Effect.provide(refused.layer), Effect.flip);
+        expect(Predicate.isTagged(denied, 'ActionPermissionDenied')).toBe(true);
         const missingResourcePermission = yield* runAction({
-          payload: scenario.payload,
-          principal: scenario.fixture.legalEntityOnly,
+          payload: refused.payload,
+          principal: refused.fixture.legalEntityOnly,
           registration: establishCommitmentProtectionAction,
           transport: { correlationId: 'protection-missing-resource', idempotencyKey: 'missing-resource' },
-        }).pipe(Effect.provide(scenario.layer), Effect.flip);
+        }).pipe(Effect.provide(refused.layer), Effect.flip);
         expect(Predicate.isTagged(missingResourcePermission, 'ActionPermissionDenied')).toBe(true);
+        expect((yield* refused.observe()).ledger).toEqual([]);
+        expect((yield* refused.fixture.evidence(refused.coreEvidenceExecutor)).outbox).toEqual([]);
         expect((yield* scenario.observe()).ledger).toEqual([]);
         expect((yield* scenario.fixture.evidence(scenario.coreEvidenceExecutor)).outbox).toEqual([]);
         const first = yield* scenario.invoke('original');

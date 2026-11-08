@@ -3,8 +3,8 @@
 import type { MarketAffectedUseAssessmentResponse } from '@app/customer-market-retirement-contracts/market-affected-use-assessment';
 import type { StorefrontApplicationSummary } from '@app/storefront-registry/api/storefront-applications';
 import { DateTime, Match, Schema } from 'effect';
+import type { MarketRetirementAdmission } from '../../shared/apis/market-administration.ts';
 import type { MarketHistoryResponse } from '../../shared/apis/market-history.ts';
-import type { MarketRetirementOutcome } from '../../shared/domain/market-retirement-intent.ts';
 import type { MarketLifecycle } from '../../shared/market-contracts.ts';
 import type { CurrentAssociation, CurrentMarket, MarketChannel } from './eshops-model.ts';
 
@@ -109,20 +109,20 @@ export const lifecycleActions = (
 };
 
 export type RetirementView =
-  | { readonly kind: 'completed' }
-  | { readonly kind: 'failed'; readonly reason: Extract<MarketRetirementOutcome, { outcome: 'failed' }>['reason'] }
+  | { readonly kind: 'aborted' }
+  | { readonly kind: 'committed' }
   | { readonly kind: 'none' }
-  | { readonly kind: 'pending'; readonly stage: Extract<MarketRetirementOutcome, { outcome: 'pending' }>['stage'] };
+  | { readonly kind: 'pending' };
 
-export const retirementView = (outcome?: MarketRetirementOutcome): RetirementView =>
-  outcome === undefined
+/** The newest native retirement admission of the Market as the one status the detail screen shows. */
+export const retirementView = (retirement?: MarketRetirementAdmission): RetirementView =>
+  retirement === undefined
     ? { kind: 'none' }
-    : Match.value(outcome).pipe(
-        Match.discriminatorsExhaustive('outcome')({
-          completed: (): RetirementView => ({ kind: 'completed' }),
-          failed: ({ reason }): RetirementView => ({ kind: 'failed', reason }),
-          pending: ({ stage }): RetirementView => ({ kind: 'pending', stage }),
-        }),
+    : Match.value(retirement.status).pipe(
+        Match.when('PENDING', (): RetirementView => ({ kind: 'pending' })),
+        Match.when('COMMITTED', (): RetirementView => ({ kind: 'committed' })),
+        Match.when('ABORTED', (): RetirementView => ({ kind: 'aborted' })),
+        Match.exhaustive,
       );
 
 /** The type-the-code confirmation of a retirement: exact code, ignoring surrounding spaces and letter case. */

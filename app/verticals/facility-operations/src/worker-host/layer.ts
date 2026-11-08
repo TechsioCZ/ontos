@@ -7,10 +7,7 @@ import {
   makeDatabaseIdentityEnrollmentLive,
 } from '@app/core-runtime';
 import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
-import {
-  ResourceContainmentRelationshipMutationLive,
-  OutboxWorkerInfrastructureLive,
-} from '@app/core-runtime/outbox/worker';
+import { OutboxWorkerInfrastructureLive } from '@app/core-runtime/outbox/worker';
 
 export { CorePersistenceLive as outboxWorkerCorePersistenceLive } from '@app/core-runtime/outbox/worker';
 export { DatabaseConfigLive as outboxWorkerDatabaseConfigLive } from '@app/core-runtime/outbox/worker';
@@ -21,17 +18,12 @@ export const outboxWorkerDatabaseIdentityEnrollmentLive = makeDatabaseIdentityEn
 );
 
 /** Add owner-local repositories and services required by worker handlers here. */
-const outboxWorkerHandlerLayer = Layer.mergeAll(
-  CoreSearchWorkerSnapshotLive,
-  CoreSearchProjectionStoreLive,
-  ResourceContainmentRelationshipMutationLive,
-);
+const outboxWorkerHandlerLayer = Layer.mergeAll(CoreSearchWorkerSnapshotLive, CoreSearchProjectionStoreLive);
 
 export const outboxWorkerLayer: Layer.Layer<
   | Layer.Success<typeof OutboxWorkerInfrastructureLive>
   | Layer.Success<typeof CoreSearchWorkerSnapshotLive>
-  | Layer.Success<typeof CoreSearchProjectionStoreLive>
-  | Layer.Success<typeof ResourceContainmentRelationshipMutationLive>,
+  | Layer.Success<typeof CoreSearchProjectionStoreLive>,
   Layer.Error<typeof OutboxWorkerInfrastructureLive>,
   | Layer.Services<typeof OutboxWorkerInfrastructureLive>
   | Layer.Services<typeof CoreSearchWorkerSnapshotLive>

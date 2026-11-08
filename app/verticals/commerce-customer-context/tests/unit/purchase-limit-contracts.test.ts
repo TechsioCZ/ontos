@@ -2,8 +2,8 @@ import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { expect, it } from 'effect-rstest';
 import { Predicate, Schema } from 'effect';
-import { getActionBusinessPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
-import { getReadPermissionTargetResolver } from '../../../../packages/core-runtime/src/reads/definition.ts';
+import { getActionOwnerFactsResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getReadOwnerFactsResolver } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import { PurchaseLimitEvaluationRequestSchema } from '../../shared/apis/purchase-limit-evaluation.ts';
 import { PurchaseLimitPolicyReadRequestSchema } from '../../shared/apis/purchase-limit-policy-read.ts';
 import { OutboxPayloadSchema as CounterpartyPurchaseLimitChangedOutboxPayloadSchema } from '../../shared/outbox/commerce-customer-context-counterparty-purchase-limit-changed-v1.ts';
@@ -57,25 +57,16 @@ it('limit mutations require exact counterparty Purchase Limit management permiss
     change: { _tag: 'SET', policy: { _tag: 'UNLIMITED' } },
     principalRef,
   });
-  const defaultTarget = getActionBusinessPermissionTargetResolver(changeCounterpartyPurchaseLimitAction)?.(
-    defaultPayload,
-    scope,
-  );
-  const overrideTarget = getActionBusinessPermissionTargetResolver(changePrincipalPurchaseLimitOverrideAction)?.(
+  const defaultFacts = getActionOwnerFactsResolver(changeCounterpartyPurchaseLimitAction)?.(defaultPayload, scope);
+  const overrideFacts = getActionOwnerFactsResolver(changePrincipalPurchaseLimitOverrideAction)?.(
     overridePayload,
     scope,
   );
 
-  for (const target of [defaultTarget, overrideTarget]) {
-    expect(target).toEqual({
-      permission: 'counterparty.purchase_limit.manage',
-      target: {
-        counterpartyId: counterpartyRef.resourceId,
-        kind: 'counterparty',
-        legalEntityId,
-        tenantId,
-      },
-    });
+  // The v2 declaration gates the capability; the owner facts name the counterparty whose own
+  // purchase-limit grant the overlay then checks (O67-Q1, O70).
+  for (const facts of [defaultFacts, overrideFacts]) {
+    expect(facts).toEqual({ counterpartyId: counterpartyRef.resourceId });
   }
   expect(changeCounterpartyPurchaseLimitAction.descriptor.auditProfile).toBe('sensitive');
   expect(changeCounterpartyPurchaseLimitAction.descriptor.idempotency).toBe('required');
@@ -110,57 +101,30 @@ it('uses submit authority only when Storefront identity comes from trusted scope
     },
     storefrontId: 'storefront:tenant-a-b2b',
   });
-  const resolvePolicyTarget = getReadPermissionTargetResolver(purchaseLimitPolicyReadRead);
-  if (!Predicate.isFunction(resolvePolicyTarget)) {
-    throw new TypeError('Purchase Limit policy Read must declare a permission target');
+  // The legacy permission-target resolvers are gone (O62.4): each Read carries a v2 declaration and
+  // the owner facts that name the counterparty (and its Storefront) whose own grant the overlay
+  // checks (O67-Q1, O70). The Storefront is the request's own; the trusted-scope check that it came
+  // from the caller's scope is the Read's, not a resolver's.
+  expect(purchaseLimitPolicyReadRead.descriptor.accessDeclaration?.key).toBe(
+    'commerce.customer-context.purchase-limit-policy.read',
+  );
+  expect(purchaseLimitPolicyReadRead.descriptor.accessOwnerFacts).toBeDefined();
+  expect(purchaseLimitEvaluationRead.descriptor.accessDeclaration?.key).toBe(
+    'commerce.customer-context.purchase-limit.evaluate',
+  );
+  expect(purchaseLimitEvaluationRead.descriptor.accessOwnerFacts).toBeDefined();
+  const resolvePolicyFacts = getReadOwnerFactsResolver(purchaseLimitPolicyReadRead);
+  if (!Predicate.isFunction(resolvePolicyFacts)) {
+    throw new TypeError('Purchase Limit policy Read must declare owner facts');
   }
-  expect(resolvePolicyTarget(policyInput, scope)).toEqual({
-    businessPermission: {
-      permission: 'counterparty.purchase_limit.manage',
-      target: {
-        counterpartyId: counterpartyRef.resourceId,
-        kind: 'counterparty',
-        legalEntityId,
-        tenantId,
-      },
-    },
-    kind: 'business_permission',
-  });
-  const resolveEvaluationTarget = getReadPermissionTargetResolver(purchaseLimitEvaluationRead);
-  if (!Predicate.isFunction(resolveEvaluationTarget)) {
-    throw new TypeError('Purchase Limit evaluation Read must declare a permission target');
+  expect(resolvePolicyFacts(policyInput, scope)).toEqual({ counterpartyId: counterpartyRef.resourceId });
+  const resolveEvaluationFacts = getReadOwnerFactsResolver(purchaseLimitEvaluationRead);
+  if (!Predicate.isFunction(resolveEvaluationFacts)) {
+    throw new TypeError('Purchase Limit evaluation Read must declare owner facts');
   }
-  expect(resolveEvaluationTarget(evaluationInput, scope)).toEqual({
-    businessPermission: {
-      permission: 'counterparty.purchase.submit',
-      target: {
-        counterpartyId: counterpartyRef.resourceId,
-        kind: 'counterparty_storefront',
-        legalEntityId,
-        storefrontId: 'storefront:tenant-a-b2b',
-        tenantId,
-      },
-    },
-    kind: 'business_permission',
-  });
-  expect(
-    resolveEvaluationTarget(evaluationInput, {
-      ...scope,
-      trustedStorefrontId: 'storefront:tenant-a-b2b',
-    }),
-  ).toEqual({
-    businessPermission: {
-      permission: 'counterparty.purchase.submit',
-      target: {
-        counterpartyId: counterpartyRef.resourceId,
-        kind: 'counterparty_storefront',
-        legalEntityId,
-        storefrontId: 'storefront:tenant-a-b2b',
-        tenantId,
-      },
-    },
-    kind: 'business_permission',
-    trustedStorefrontId: 'storefront:tenant-a-b2b',
+  expect(resolveEvaluationFacts(evaluationInput, scope)).toEqual({
+    counterpartyId: counterpartyRef.resourceId,
+    storefrontId: 'storefront:tenant-a-b2b',
   });
 });
 

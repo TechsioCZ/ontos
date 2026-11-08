@@ -16,7 +16,7 @@ interface VisibilityServices {
 
 export const visibilityEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.assortment.api.visibility',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -37,6 +37,14 @@ const readVisibility = (
 
 export const visibilityRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.assortment.visibility.evaluate',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'decisions', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: visibilityEntrypoint,
     evidencePolicy: {
@@ -46,7 +54,6 @@ export const visibilityRead = defineRead(
     inputSchema: VisibilityRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.assortment.api.visibility',
     resultSchema: VisibilityResponseSchema,
@@ -57,5 +64,4 @@ export const visibilityRead = defineRead(
     Effect.succeed({
       evaluation: assortmentDecisionEvaluationForScope(transaction, scope),
     }),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

@@ -1,3 +1,4 @@
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { identity } from 'effect';
 import {
   MicroVerticalBuildMarkerSchema,
@@ -65,6 +66,7 @@ export const priceGroupCatalogFoundationApi = HttpApi.make('PriceGroupCatalogApi
 
 export const priceGroupCatalogApi = HttpApi.make('PriceGroupCatalogApi')
   .addHttpApi(priceGroupCatalogFoundationApi)
+  .addHttpApi(OwnerActionApprovalApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(CreatePriceGroupActionApi)
   .addHttpApi(CreatePriceGroupDefinitionRevisionActionApi)

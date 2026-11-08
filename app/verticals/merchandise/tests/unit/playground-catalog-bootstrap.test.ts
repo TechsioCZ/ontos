@@ -1,3 +1,4 @@
+import { merchandiseRegistration } from '../../vertical.registration.ts';
 import { NodeCrypto } from '@effect/platform-node';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
@@ -215,15 +216,13 @@ it.layer(NodeCrypto.layer)('Playground catalog bootstrap', (suite) => {
       }
     }),
   );
-  suite.effect('requires both explicit executor and tenant administrator permission before owner work', () =>
+  suite.effect('requires the registered administrator bootstrap operation before owner work', () =>
     Effect.gen(function* administratorGate() {
-      for (const permissions of [
-        { actionPermission: 'denied', tenantPermission: 'allowed' },
-        { actionPermission: 'allowed', tenantPermission: 'denied' },
-      ] as const) {
+      for (const grant of ['demo.merchandise.apply-command.write', 'demo.merchandise.catalog.manage']) {
         let calls = 0;
         const harness = yield* makeActionTestHarness({
-          ...permissions,
+          access: { 'demo.merchandise.bootstrap-playground-catalog.write': 'denied', [grant]: 'allowed' },
+          ownerRegistration: merchandiseRegistration,
           services: [
             bindActionTestServices(bootstrapPlaygroundCatalogAction, {
               bootstrap: () =>
@@ -255,7 +254,8 @@ it.layer(NodeCrypto.layer)('Playground catalog bootstrap', (suite) => {
     Effect.gen(function* auditAndReplay() {
       let calls = 0;
       const harness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
+        access: 'allowed',
+        ownerRegistration: merchandiseRegistration,
         services: [
           bindActionTestServices(bootstrapPlaygroundCatalogAction, {
             bootstrap: () =>
@@ -265,7 +265,6 @@ it.layer(NodeCrypto.layer)('Playground catalog bootstrap', (suite) => {
               }),
           }),
         ],
-        tenantPermission: 'allowed',
       });
       const request = {
         payload: begin,

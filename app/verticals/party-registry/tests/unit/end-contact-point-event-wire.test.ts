@@ -1,3 +1,4 @@
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { DateTime, Effect, Schema } from 'effect';
@@ -81,12 +82,10 @@ const contactPoint: PartyContactPoint = Schema.decodeUnknownSync(PartyContactPoi
         state: 'ACTIVE',
         validFrom: '2020-01-01T00:00:00.000Z',
         validTo: effectiveEnd,
-        verification: { state: 'UNVERIFIED' },
       },
     ],
     type: 'ADDRESS',
   },
-  verification: { state: 'UNVERIFIED' },
 });
 const targets = [{ type: 'WHOLE_CONTACT_POINT' }, { target: { purpose: 'BILLING' }, type: 'ADDRESS_PURPOSE' }] as const;
 
@@ -96,7 +95,8 @@ for (const target of targets) {
       Effect.gen(function* endEventWireBoundary() {
         const commands: EndContactPointCommand[] = [];
         const harness = yield* makeActionTestHarness({
-          actionPermission: 'allowed',
+          access: 'allowed',
+          ownerRegistration: partyRegistryBackendRegistration,
           services: [
             bindActionTestServices(endContactPointAction, {
               end: (command) =>
@@ -106,7 +106,6 @@ for (const target of targets) {
                 }),
             }),
           ],
-          tenantPermission: 'allowed',
         });
         const payload = yield* Schema.decodeEffect(EndContactPointPayloadSchema)({
           contactPointRef: contactPoint.contactPointRef,

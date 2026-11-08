@@ -2,15 +2,15 @@ import { TaskRefSchema } from '../../shared/resources/task.ts';
 import {
   WorkLifecycleConflict,
   WorkScopeMismatch,
-  WorkReferenceUnavailable,
   SingleWorkCommandSchema,
 } from '../../shared/actions/apply-command.ts';
 import { Effect, DateTime, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ContextAccess } from '@app/core-runtime';
+import { PrincipalIdSchema, RecordKeySchema } from '@app/core-runtime/access/ids';
+import type { ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
 import { withHistory } from '../../src/services/work-history.ts';
 import { AssignablePrincipals, AssigneeIneligible } from '@app/core-runtime/auth/assignable-principals';
-import type { ContextAccessService, OperationalScope } from '@app/core-runtime';
+import type { OperationalScope } from '@app/core-runtime';
 import {
   ContextRefSchema,
   StorefrontInquirySchema,
@@ -50,31 +50,25 @@ const seed = {
   },
   tasks: [],
 } as const;
-const resourceDecision = (id: string, allowed: readonly string[], unavailable: boolean) => {
-  if (unavailable) {
-    return 'unavailable' as const;
-  }
-  return allowed.includes(id) ? ('allowed' as const) : ('denied' as const);
+const assignedReach: ListAccessPredicate = {
+  groups: [
+    {
+      clauses: [
+        {
+          conditions: [
+            {
+              _tag: 'AssignedTo',
+              holder: { _tag: 'Principal', principalId: PrincipalIdSchema.make(scope.principalId) },
+            },
+          ],
+        },
+      ],
+    },
+  ],
 };
-const fakeAccess = (allowed: readonly string[], unavailable = false): ContextAccessService => ({
-  assortmentPermissions: () => Effect.succeed([]),
-  businessPermissions: () => Effect.succeed([]),
-  contextPermissions: ({ targets }) =>
-    Effect.succeed(
-      targets.map(({ moduleId, permission }) => ({ decision: 'denied' as const, key: `${moduleId}:${permission}` })),
-    ),
-  identityNamespaces: () => Effect.succeed([]),
-  legalEntities: () => Effect.succeed([]),
-  modules: () => Effect.succeed([]),
-  resources: ({ resources }) =>
-    Effect.succeed(
-      resources.map((ref) => ({
-        decision: resourceDecision(ref.resourceId, allowed, unavailable),
-        key: `${ref.moduleId}:${ref.resourceType}:${ref.resourceId}`,
-      })),
-    ),
-  tenants: () => Effect.succeed([]),
-});
+const targets: ListAccessPredicate = {
+  groups: [{ clauses: [{ conditions: [{ _tag: 'RecordKeyIn', recordKeys: [RecordKeySchema.make('allowed')] }] }] }],
+};
 
 it.effect('a restricted persona sees its own tasks, never another principal’s task', () =>
   Effect.gen(function* ownTasksOnly() {
@@ -97,9 +91,7 @@ it.effect('a restricted persona sees its own tasks, never another principal’s 
       },
       { now, resourceId: 'other', tenantId },
     );
-    const visible = yield* visibleWorkTasks(other.state.tasks, scope, false).pipe(
-      Effect.provideService(ContextAccess, fakeAccess([])),
-    );
+    const visible = yield* visibleWorkTasks(other.state.tasks, scope, assignedReach);
     expect(visible.map((task) => task.title)).toEqual(['Vlastní úkol']);
   }),
 );
@@ -120,9 +112,7 @@ it.effect('personal visibility compares the full tenant and principal identity',
       ...created.task,
       ownerPrincipalRef: { principalId: scope.principalId, tenantId: scope.authBindingId },
     };
-    expect(
-      yield* visibleWorkTasks([foreign], scope, false).pipe(Effect.provideService(ContextAccess, fakeAccess([]))),
-    ).toEqual([]);
+    expect(yield* visibleWorkTasks([foreign], scope, assignedReach)).toEqual([]);
   }),
 );
 
@@ -228,12 +218,12 @@ it.effect('UpdateTask assigns, preserves an omitted owner, and clears through st
       },
       {
         lookupAccess: { contracts: 'denied', customers: 'denied', opportunities: 'denied', properties: 'denied' },
+        predicate: { groups: [] },
         readAll: true,
         writeAll: true,
       },
       scope,
     ).pipe(
-      Effect.provideService(ContextAccess, fakeAccess([])),
       Effect.provideService(AssignablePrincipals, {
         read: () => Effect.succeed([]),
         resolveAssignee: () => Effect.fail(new AssigneeIneligible({ reason: 'A clear has no assignment target' })),
@@ -349,12 +339,12 @@ it.effect('projects departed task and project owners without rewriting their sto
       },
       {
         lookupAccess: { contracts: 'denied', customers: 'denied', opportunities: 'denied', properties: 'denied' },
+        predicate: { groups: [] },
         readAll: true,
         writeAll: true,
       },
       scope,
     ).pipe(
-      Effect.provideService(ContextAccess, fakeAccess([])),
       Effect.provideService(AssignablePrincipals, {
         read: () => Effect.succeed([available]),
         resolveAssignee: () => Effect.fail(new AssigneeIneligible({ reason: 'Not used by a records read' })),
@@ -397,12 +387,12 @@ it.effect('closed unlinked records keep historical provenance but never advertis
       },
       {
         lookupAccess: { contracts: 'denied', customers: 'denied', opportunities: 'denied', properties: 'denied' },
+        predicate: { groups: [] },
         readAll: true,
         writeAll: true,
       },
       scope,
     ).pipe(
-      Effect.provideService(ContextAccess, fakeAccess([])),
       Effect.provideService(AssignablePrincipals, {
         read: () => Effect.succeed([]),
         resolveAssignee: () => Effect.fail(new AssigneeIneligible({ reason: 'Not used by a records read' })),
@@ -484,16 +474,7 @@ it.effect('WAITING is in progress, overdue is derived, and resource filtering fa
     expect(taskIsOverdue({ ...task, state: 'DONE' }, '2026-10-05')).toBe(false);
     const foreignRef = yield* Schema.decodeEffect(TaskRefSchema)({ ...task.ref, resourceId: 'denied' });
     const foreign = { ...task, ref: foreignRef };
-    expect(
-      yield* visibleWorkTasks([task, foreign], scope, false).pipe(
-        Effect.provideService(ContextAccess, fakeAccess(['allowed'])),
-      ),
-    ).toEqual([task]);
-    expect(
-      yield* visibleWorkTasks([task, foreign], scope, false)
-        .pipe(Effect.provideService(ContextAccess, fakeAccess(['allowed'], true)))
-        .pipe(Effect.flip),
-    ).toBeInstanceOf(WorkReferenceUnavailable);
+    expect(yield* visibleWorkTasks([task, foreign], scope, targets)).toEqual([task]);
   }),
 );
 it.effect('UpdateTask keeps an absent due date, replaces a new one and removes it on wire null', () =>

@@ -2,82 +2,23 @@
 // Contract: app/scripts/demo/reset-demo.mts spawns this script with `--sales-demo` after party-registry,
 // with DATABASE_ADMIN_URL in the environment. It writes only the commerce_customer_context schema, through
 // the owner's own scoped routines, and restores the segment baseline:
-//   - the four segment groups from party-registry `customer-segment-definitions.ts` (reused by definition),
+//   - the four unchanged synthetic segment groups from the neutral demo fixture contract,
 //   - one COUNTERPARTY purchasing profile per seeded customer (reused by Counterparty),
 //   - exactly one current segment membership per seeded customer; any other segment membership of a seeded
 //     customer (for example one made in the UI) is deleted.
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
-import { customerSegmentDefinitions } from '@app/party-registry/api/client';
-import type { CustomerSegmentCode } from '@app/party-registry/api/client';
+import { customerSegmentDefinitions } from '@app/shared-contracts/demo/sales-customer-fixtures';
+import type { CustomerSegmentCode } from '@app/shared-contracts/demo/sales-customer-fixtures';
+import { loadSalesDemoCustomerRoles } from './sales-demo-input.mts';
 import { PgClient } from '@effect/sql-pg';
 import { Console, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { Reactivity } from 'effect/reactivity';
 
-import {
-  demoId,
-  salesDemoCustomerCounterpartyId,
-  salesDemoCustomers,
-  salesDemoLegalEntityId as legalEntityId,
-  salesDemoTenantId as tenantId,
-} from '../../party-registry/scripts/demo-customers.mts';
-
 class SegmentSeedError extends Schema.TaggedError<SegmentSeedError>()('SegmentSeedError', {
   reason: Schema.String,
 }) {}
-
-const SEED_KEY = 'sales-demo-segments';
-const actorPrincipalId = demoId('commerce.seed-principal', SEED_KEY);
-const invocationId = (operation: string) => demoId('commerce.seed-invocation', `${SEED_KEY}:${operation}`);
-
-/** Baseline segment per seeded customer, aligned with `salesDemoCustomers` order (40 entries). */
-const KEY = 'SALES_DEMO_KEY_ACCOUNTS';
-const B2B = 'SALES_DEMO_B2B_STANDARD';
-const RETAIL = 'SALES_DEMO_RETAIL';
-const PUBLIC = 'SALES_DEMO_PUBLIC_SECTOR';
-const baselineSegments: readonly CustomerSegmentCode[] = [
-  KEY,
-  RETAIL,
-  B2B,
-  B2B,
-  KEY,
-  PUBLIC,
-  RETAIL,
-  KEY,
-  B2B,
-  KEY,
-  B2B,
-  RETAIL,
-  PUBLIC,
-  B2B,
-  RETAIL,
-  PUBLIC,
-  B2B,
-  PUBLIC,
-  B2B,
-  RETAIL,
-  B2B,
-  B2B,
-  B2B,
-  KEY,
-  RETAIL,
-  RETAIL,
-  B2B,
-  B2B,
-  PUBLIC,
-  B2B,
-  B2B,
-  RETAIL,
-  PUBLIC,
-  RETAIL,
-  B2B,
-  PUBLIC,
-  KEY,
-  KEY,
-  B2B,
-  PUBLIC,
-];
 
 const ResourceIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('CommerceSeedResourceId'));
 const GroupRowSchema = Schema.Struct({
@@ -89,7 +30,6 @@ const GroupRowSchema = Schema.Struct({
   ),
   outcome: Schema.String,
 });
-const RoleRowSchema = Schema.Struct({ recorded_at: Schema.String, role_period_id: Schema.String });
 const ProfileRowSchema = Schema.Struct({
   outcome: Schema.String,
   payload: Schema.OptionFromNullOr(Schema.Struct({ profileRef: Schema.Struct({ resourceId: ResourceIdSchema }) })),
@@ -103,10 +43,12 @@ const single = <S extends Schema.Top>(schema: S, rows: readonly unknown[], conte
       )
     : Effect.fail(new SegmentSeedError({ reason: `${context}: expected one row, got ${rows.length}` }));
 
-const seedSegments = Effect.gen(function* seedSegments() {
-  if (baselineSegments.length !== salesDemoCustomers.length) {
-    return yield* new SegmentSeedError({ reason: 'Baseline segments no longer match the seeded customers' });
-  }
+const seedSegments = Effect.fn('CustomerContextSalesDemo.seedSegments')(function* seedSegments(
+  fixturePath: string,
+  roleHandoffPath: string,
+) {
+  const { input, roles } = yield* loadSalesDemoCustomerRoles(fixturePath, roleHandoffPath);
+  const { actorPrincipalId, legalEntityId, tenantId } = input;
   const connections = yield* loadDatabaseConnectionPair();
   if (!['localhost', '127.0.0.1', '[::1]'].includes(connections.admin.host)) {
     return yield* new SegmentSeedError({ reason: 'The sales-demo seed requires local PostgreSQL' });
@@ -144,7 +86,8 @@ const seedSegments = Effect.gen(function* seedSegments() {
             'Výchozí segment obchodního dema',
             recordedAt,
             actorPrincipalId,
-            invocationId(`group:${definition.businessCode}`),
+            input.groups.find(({ businessCode }) => businessCode === definition.businessCode)?.invocationId ??
+              (yield* new SegmentSeedError({ reason: 'Missing exact group invocation' })),
           ],
           `create group ${definition.businessCode}`,
         );
@@ -160,18 +103,12 @@ const seedSegments = Effect.gen(function* seedSegments() {
       const segmentGroupIds = [...groups.values()].map(({ groupId }) => groupId);
 
       let assigned = 0;
-      for (const [index, customer] of salesDemoCustomers.entries()) {
-        const counterpartyId = salesDemoCustomerCounterpartyId(customer.ico);
-        const roleRows = yield* query(
-          `select role_period_id::text as role_period_id,
-                  to_char(recorded_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as recorded_at
-             from party.counterparty_role_periods
-            where tenant_id = $1::uuid and legal_entity_id = $2::uuid and counterparty_id = $3::uuid
-              and role_type = 'CUSTOMER' and is_current and state = 'ACTIVE'`,
-          [tenantId, legalEntityId, counterpartyId],
-          `customer role ${customer.ico}`,
-        );
-        const role = yield* single(RoleRowSchema, roleRows, `customer role ${customer.ico} (run party-registry first)`);
+      for (const customer of input.customers) {
+        const { counterpartyId } = customer;
+        const role = roles.customers.find((observed) => observed.counterpartyId === counterpartyId);
+        if (role === undefined) {
+          return yield* new SegmentSeedError({ reason: 'Missing committed customer role observation' });
+        }
         const profileRows = yield* query(
           `select outcome, payload
              from commerce_customer_context.ensure_counterparty_profile(
@@ -180,10 +117,10 @@ const seedSegments = Effect.gen(function* seedSegments() {
             tenantId,
             legalEntityId,
             counterpartyId,
-            role.role_period_id,
-            role.recorded_at,
+            role.rolePeriodId,
+            DateTime.formatIso(role.roleRecordedAt),
             recordedAt,
-            invocationId(`profile:${customer.ico}`),
+            customer.profileInvocationId,
             actorPrincipalId,
           ],
           `profile ${customer.ico}`,
@@ -196,7 +133,7 @@ const seedSegments = Effect.gen(function* seedSegments() {
           return yield* new SegmentSeedError({ reason: `Profile ${customer.ico}: ${profile.outcome}` });
         }
         const profileId = profile.payload.value.profileRef.resourceId;
-        const target = groups.get(baselineSegments[index] ?? B2B);
+        const target = groups.get(customer.segmentCode);
         if (target === undefined) {
           return yield* new SegmentSeedError({ reason: `Unknown segment for ${customer.ico}` });
         }
@@ -223,7 +160,7 @@ const seedSegments = Effect.gen(function* seedSegments() {
             'Výchozí segment obchodního dema',
             recordedAt,
             actorPrincipalId,
-            invocationId(`membership:${customer.ico}`),
+            customer.membershipInvocationId,
           ],
           `assign ${customer.ico}`,
         );
@@ -243,10 +180,14 @@ const seedSegments = Effect.gen(function* seedSegments() {
 
 const command = Command.make(
   'commerce-customer-context-sales-demo-reset',
-  { salesDemo: Flag.Boolean('sales-demo').pipe(Flag.withDefault(false)) },
-  ({ salesDemo }) =>
+  {
+    fixture: Flag.String('fixture'),
+    roleHandoff: Flag.String('role-handoff'),
+    salesDemo: Flag.Boolean('sales-demo').pipe(Flag.withDefault(false)),
+  },
+  ({ fixture, roleHandoff, salesDemo }) =>
     salesDemo
-      ? Layer.build(Layer.effectDiscard(seedSegments).pipe(Layer.provide(Reactivity.layer))).pipe(
+      ? Layer.build(Layer.effectDiscard(seedSegments(fixture, roleHandoff)).pipe(Layer.provide(Reactivity.layer))).pipe(
           Effect.scoped,
           Effect.asVoid,
           Effect.tapError((failure) =>

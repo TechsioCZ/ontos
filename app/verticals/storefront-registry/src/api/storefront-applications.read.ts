@@ -14,7 +14,7 @@ const moduleKey = 'commerce.storefront-registry';
 
 const storefrontApplicationsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.storefront-registry.api.storefront-applications',
   moduleKey,
   role: 'api',
@@ -39,6 +39,14 @@ export const handleStorefrontApplications = Effect.fn('StorefrontApplicationsRea
 
 export const storefrontApplicationsRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.storefront-registry.storefront-applications.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'storefronts', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'list',
     entrypoint: storefrontApplicationsEntrypoint,
     evidencePolicy: {
@@ -48,7 +56,6 @@ export const storefrontApplicationsRead = defineRead(
     inputSchema: StorefrontApplicationsRequestSchema,
     legalEntityScope: 'optional',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.storefront-registry.api.storefront-applications',
     resultSchema: StorefrontApplicationsResponseSchema,
@@ -56,5 +63,4 @@ export const storefrontApplicationsRead = defineRead(
   },
   { load: handleStorefrontApplications },
   storefrontApplicationsPersistenceForScope,
-  () => ({ kind: 'module', moduleId: moduleKey }),
 );

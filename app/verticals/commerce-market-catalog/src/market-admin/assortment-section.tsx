@@ -9,7 +9,8 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
-import { Effect, Fiber } from 'effect';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+import { Effect, Fiber, Schema } from 'effect';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import type { CurrentMarket } from './eshops-model.ts';
@@ -25,13 +26,15 @@ import {
   searchProducts,
   writeFailure,
 } from './page-data.ts';
-import type { ExceptionsInput, MarketInput, WriteFailure } from './page-data.ts';
+import type { ExceptionsInput, MarketCommandResult, MarketInput, WriteFailure } from './page-data.ts';
 
 type SearchResult = Effect.Success<ReturnType<typeof searchProducts>>['products'];
 
 interface AssortmentSectionProps {
   readonly input: MarketInput;
   readonly market: CurrentMarket;
+  /** A change was parked for approval: nothing changed yet. */
+  readonly onAwaitingApproval: () => void;
   readonly onDone: (message: string) => void;
   readonly records: RecordsResponse | undefined;
   readonly recordsFailed: boolean;
@@ -42,15 +45,26 @@ interface AssortmentSectionProps {
 interface PriceListProps {
   readonly canManage: boolean;
   readonly market: CurrentMarket;
+  readonly onAwaitingApproval: () => void;
   readonly onDone: (message: string) => void;
   readonly refresh: Effect.Effect<void>;
   readonly revision: number;
 }
 
-/** The configured price list: edits autosave as one ConfigureMarket over the market's own revision. */
+const isProposal = Schema.is(ActionProposalAcceptedSchema);
+
+/** One price-list autosave: the market's new revision once committed; a change parked for approval is not saved. */
+export const priceListSaveResult = (result: MarketCommandResult): RevisionedSaveResult =>
+  isProposal(result) ? 'failed' : (result.marketRevision ?? 'saved');
+
+/**
+ * The configured price list: edits autosave as one ConfigureMarket over the market's own revision. An edit parked for
+ * approval is not saved: the draft stays unconfirmed on its base revision and the person is told it awaits approval.
+ */
 const PriceListEditor = ({
   canManage,
   market,
+  onAwaitingApproval,
   refresh,
   revision,
   settings,
@@ -71,9 +85,10 @@ const PriceListEditor = ({
         }),
         revision,
       ).pipe(
+        Effect.tap((result) => (isProposal(result) ? Effect.sync(onAwaitingApproval) : Effect.void)),
         Effect.match({
           onFailure: (reason): RevisionedSaveResult => (reason === 'conflict' ? 'conflict' : 'failed'),
-          onSuccess: (result): RevisionedSaveResult => result.marketRevision ?? 'saved',
+          onSuccess: priceListSaveResult,
         }),
       ),
     server: pricingFormOf(settings),
@@ -108,6 +123,7 @@ const PriceListEditor = ({
 const PriceList = ({
   canManage,
   market,
+  onAwaitingApproval,
   onDone,
   refresh,
   revision,
@@ -123,6 +139,7 @@ const PriceList = ({
         canManage={editable}
         key={market.marketRef.resourceId}
         market={market}
+        onAwaitingApproval={onAwaitingApproval}
         refresh={refresh}
         revision={revision}
         settings={settings}
@@ -143,6 +160,10 @@ const PriceList = ({
       revision,
       (outcome) => {
         setBusy(false);
+        if (outcome.ok && isProposal(outcome.value)) {
+          onAwaitingApproval();
+          return;
+        }
         if (outcome.ok) {
           onDone(text('detail.assortment.saved', { code: market.marketCode }));
           return;
@@ -362,6 +383,7 @@ const ProductSearch = ({
 export const AssortmentSection = ({
   input,
   market,
+  onAwaitingApproval,
   onDone,
   records,
   recordsFailed,
@@ -393,6 +415,11 @@ export const AssortmentSection = ({
         records.revision,
         (outcome) => {
           setPendingProduct(null);
+          if (outcome.ok && isProposal(outcome.value)) {
+            // Parked for approval: the offer is unchanged until someone approves it.
+            onAwaitingApproval();
+            return;
+          }
           if (outcome.ok) {
             browserRuntime.runFork(marketExceptionsData.refresh(page));
             onDone(
@@ -417,6 +444,7 @@ export const AssortmentSection = ({
       <PriceList
         canManage={canManage}
         market={market}
+        onAwaitingApproval={onAwaitingApproval}
         onDone={onDone}
         refresh={refreshSettings}
         revision={records.revision}

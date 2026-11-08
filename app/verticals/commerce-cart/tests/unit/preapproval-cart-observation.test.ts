@@ -1,34 +1,20 @@
 import { Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { preapprovalCartGrantMatches } from '../../src/services/preapproval-cart-observation.service.ts';
+import { preapprovalCartBuyerIsSubject } from '../../src/services/preapproval-cart-observation.service.ts';
 import { PreapprovalCartObservationRequestSchema } from '../../shared/apis/preapproval-cart-observation.ts';
 
-const grant = {
-  authenticationNamespaceId: 'service:preproposal',
-  legalEntityId: '33333333-3333-4333-8333-333333333333',
-  principalId: '11111111-1111-4111-8111-111111111111',
-  tenantId: '22222222-2222-4222-8222-222222222222',
-};
-it('requires an exact explicitly configured service identity independently of Cart buyer data', () => {
-  const service = { ...grant, authMethod: 'api_key' as const };
-  expect(preapprovalCartGrantMatches(service, grant)).toBe(true);
-  for (const input of [
-    { ...service, principalId: 'buyer' },
-    { ...service, authenticationNamespaceId: 'other' },
-    { ...service, tenantId: 'foreign' },
-    { ...service, legalEntityId: 'foreign' },
-    { ...service, impersonatedByPrincipalId: 'operator' },
-  ]) {
-    expect(preapprovalCartGrantMatches(input, grant)).toBe(false);
-  }
-  expect(preapprovalCartGrantMatches({ ...service, authMethod: 'session' }, grant)).toBe(false);
+const buyer = '11111111-1111-4111-8111-111111111111';
+const cartTenant = '22222222-2222-4222-8222-222222222222';
+it('observes a Cart only for its actual buyer as the acting subject', () => {
+  expect(preapprovalCartBuyerIsSubject(buyer, { principalId: buyer })).toBe(true);
+  expect(preapprovalCartBuyerIsSubject(buyer, { principalId: '33333333-3333-4333-8333-333333333333' })).toBe(false);
 });
 it('does not accept absent/latest revision or foreign resource type as an exact Cart selector', () => {
   const cartRef = {
     moduleId: 'commerce.cart',
-    resourceId: grant.principalId,
+    resourceId: buyer,
     resourceType: 'commerce.cart.cart',
-    tenantId: grant.tenantId,
+    tenantId: cartTenant,
   };
   expect(
     Option.isSome(

@@ -2,6 +2,8 @@
 // @ontos-action-http-owner demo.merchandise
 // @ontos-action-http-slug bootstrap-playground-catalog
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,6 +12,7 @@ import {
 } from '../actions/bootstrap-playground-catalog.ts';
 
 export { BootstrapPlaygroundCatalogPayloadSchema } from '../actions/bootstrap-playground-catalog.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const BootstrapPlaygroundCatalogActionInvalidProblemSchema = makeProblemDetailsSchema(
   'BootstrapPlaygroundCatalogActionInvalidProblem',
@@ -24,6 +27,7 @@ export const BootstrapPlaygroundCatalogActionForbiddenProblemSchema = makeProble
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -139,7 +143,7 @@ export const bootstrapPlaygroundCatalogActionGroupDefinition = HttpApiGroup.make
     HttpApiEndpoint.post('execute', '/merchandise/actions/bootstrap-playground-catalog', {
       error: actionErrors,
       payload: Schema.toEncoded(BootstrapPlaygroundCatalogPayloadSchema),
-      success: BootstrapPlaygroundCatalogResultSchema,
+      success: [ActionProposalAcceptedSchema, BootstrapPlaygroundCatalogResultSchema],
     }),
   )
   .middleware(BootstrapPlaygroundCatalogActionSchemaErrorMiddleware);

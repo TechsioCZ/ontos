@@ -1,3 +1,4 @@
+import { pendingProposalMessage } from '../../../../api/action-result.ts';
 // Autosave of one order edit. `EditOrder` names the order version it was made against, so after every save the
 // version the next save must name is read again from the register.
 import type { AutosaveOutcome } from '@app/admin-ui';
@@ -40,7 +41,7 @@ export const readOrderVersion = (orderId: Order['id']): Effect.Effect<OrderVersi
 
 /** A conflict means someone else edited the order, so the panel offers their version instead of retrying blindly. */
 const outcomeOf = (error: EditFailure): AutosaveOutcome =>
-  Predicate.isTagged(error, 'ApplyCommandActionConflictProblem') && error.code === 'merchandise_revision_conflict'
+  Predicate.isTagged(error, 'ManageCatalogActionConflictProblem') && error.code === 'merchandise_revision_conflict'
     ? 'conflict'
     : 'failed';
 
@@ -52,6 +53,7 @@ const outcomeOf = (error: EditFailure): AutosaveOutcome =>
 export const saveOrderEdit = (
   command: Extract<MerchandiseCommand, { readonly _tag: 'EditOrder' }>,
   version: { current: OrderVersion },
+  pending?: (message: string | null) => void,
 ): Effect.Effect<AutosaveOutcome> =>
   editOrder(command, version.current.revision).pipe(
     Effect.flatMap(() => readOrderVersion(command.id)),
@@ -62,7 +64,10 @@ export const saveOrderEdit = (
       return 'saved';
     }),
     Effect.match({
-      onFailure: outcomeOf,
+      onFailure: (error) => {
+        pending?.(pendingProposalMessage(error) ?? null);
+        return outcomeOf(error);
+      },
       onSuccess: (outcome) => outcome,
     }),
   );

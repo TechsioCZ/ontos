@@ -1,5 +1,5 @@
 import { ReadHandlerNotFound } from '@app/core-runtime';
-import { Effect, Match, Option, Predicate, Schema } from 'effect';
+import { Effect, Match, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { mapCommitmentProtectionVerificationDomainError } from '../../api/commitment-protection-verification-read-server.ts';
@@ -22,14 +22,8 @@ import {
 } from '../../shared/domain/inventory-effect-ledger.ts';
 import { PhysicalStockEffectRequestSchema } from '../../shared/domain/physical-stock-effect.ts';
 import { ReservationAuthorityEffectIdSchema } from '../../shared/domain/reservation-issuer-failure-fields.ts';
-import {
-  commitmentProtectionVerificationPermissionTarget,
-  commitmentProtectionVerificationRead,
-} from '../../src/api/commitment-protection-verification.read.ts';
-import {
-  inventoryEffectOutcomePermissionTarget,
-  inventoryEffectOutcomeRead,
-} from '../../src/api/inventory-effect-outcome.read.ts';
+import { commitmentProtectionVerificationRead } from '../../src/api/commitment-protection-verification.read.ts';
+import { inventoryEffectOutcomeRead } from '../../src/api/inventory-effect-outcome.read.ts';
 import type {
   InventoryEffectLedgerPersistence,
   InventoryEffectLedgerService,
@@ -115,34 +109,24 @@ const persistenceFor = (record?: typeof InventoryEffectLedgerRecordSchema.Type):
   save: unusedLedgerOperation,
 });
 
-it('binds both reads to the exact requested Inventory Resource', () => {
-  expect(commitmentProtectionVerificationRead.descriptor.permissionTarget).toBe('business_permission');
-  expect(inventoryEffectOutcomeRead.descriptor.permissionTarget).toBe('business_permission');
-  expect(Predicate.isFunction(getReadPermissionTargetResolver(commitmentProtectionVerificationRead))).toBe(true);
-  expect(Predicate.isFunction(getReadPermissionTargetResolver(inventoryEffectOutcomeRead))).toBe(true);
+it('decides both public effect reads through their own declarations', () => {
+  // The one gate decides each read's own scope-wide capability (O62); neither read carries a legacy
+  // permission target or a positional target resolver any more.
+  expect(commitmentProtectionVerificationRead.descriptor.accessDeclaration).toMatchObject({
+    key: 'commerce.inventory.commitment-protection.verify',
+    kind: 'read',
+    selectors: [],
+  });
+  expect(Object.keys(commitmentProtectionVerificationRead.descriptor)).not.toContain('permissionTarget');
+  expect(getReadPermissionTargetResolver(commitmentProtectionVerificationRead)).toBeUndefined();
 
-  const protectionRequest = Schema.decodeUnknownSync(CommitmentProtectionVerificationRequestSchema)({
-    attemptId: 'attempt-42',
-    protectionRef: {
-      moduleId: 'commerce.inventory',
-      resourceId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-      resourceType: 'commerce.inventory.commitment-protection',
-      tenantId,
-    },
-    reservationRef: {
-      moduleId: 'commerce.inventory',
-      resourceId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
-      resourceType: 'commerce.inventory.inventory-reservation',
-      tenantId,
-    },
+  expect(inventoryEffectOutcomeRead.descriptor.accessDeclaration).toMatchObject({
+    key: 'commerce.inventory.inventory-effect.read-outcome',
+    kind: 'read',
+    selectors: [],
   });
-
-  expect(commitmentProtectionVerificationPermissionTarget(protectionRequest, scope)).toMatchObject({
-    businessPermission: { target: { resource: protectionRequest.protectionRef, tenantId } },
-  });
-  expect(inventoryEffectOutcomePermissionTarget(effectRequest, scope)).toMatchObject({
-    businessPermission: { target: { resource: physicalRequest.positionRef, tenantId } },
-  });
+  expect(Object.keys(inventoryEffectOutcomeRead.descriptor)).not.toContain('permissionTarget');
+  expect(getReadPermissionTargetResolver(inventoryEffectOutcomeRead)).toBeUndefined();
 });
 
 it.effect('returns typed unresolved and indeterminate outcomes only under the original full intent', () =>

@@ -4,7 +4,7 @@ import { CoreSearchWorkerSnapshot } from '../search/worker-snapshot.ts';
 import type { CoreSearchWorkerSnapshotView } from '../search/worker-snapshot.ts';
 import type { OutboxWorkerHandlerContext } from '../outbox/definition.ts';
 import { legalEntities, principalCompanyMemberships, principals, tenants } from '../db/schema.ts';
-import { peopleSearchUnavailable } from './people-search-visibility.ts';
+import { peopleSearchUnavailable } from './people-search-contract.ts';
 
 export interface PeopleSearchSourcePerson {
   readonly displayName: string;

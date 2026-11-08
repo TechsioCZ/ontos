@@ -3,6 +3,7 @@ import { Effect, FileSystem, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
+  loadAdministrativeDatabaseConnection,
   loadDatabaseConfig,
   loadDatabaseConnectionPair,
   loadDatabaseIdentityConnections,
@@ -92,6 +93,47 @@ it.effect('keeps missing and malformed configuration in the typed error channel'
 
     expect(Predicate.isTagged(missing, 'DatabaseConfigError')).toBe(true);
     expect(Predicate.isTagged(malformed, 'DatabaseConfigError')).toBe(true);
+  }),
+);
+
+it.effect('loads an administrative connection without requiring or parsing runtime credentials', () =>
+  Effect.gen(function* administrativeOnly() {
+    const admin = yield* loadAdministrativeDatabaseConnection({
+      environment: {
+        DATABASE_ADMIN_URL: identityEnvironment.DATABASE_ADMIN_URL,
+        DATABASE_URL: 'not-a-runtime-connection',
+      },
+      envPath: missingEnvPath,
+    });
+    expect(admin.connectionString).toBe(identityEnvironment.DATABASE_ADMIN_URL);
+    expect(admin.user).toBe('ontos_admin');
+    const missingAdmin = yield* Effect.flip(
+      loadAdministrativeDatabaseConnection({
+        environment: { DATABASE_URL: identityEnvironment.DATABASE_URL },
+        envPath: missingEnvPath,
+      }),
+    );
+    expect(Predicate.isTagged(missingAdmin, 'DatabaseConfigError')).toBe(true);
+    expect(missingAdmin.reason).toContain('DATABASE_ADMIN_URL');
+  }),
+);
+
+it.effect('rejects malformed admin URLs and connection-identity overrides without exposing credentials', () =>
+  Effect.gen(function* administrativeIdentityRefusals() {
+    for (const connectionString of [
+      'https://ontos_admin:admin-secret@localhost/ontos',
+      'postgresql://ontos_admin:admin-secret@localhost/ontos?user=another-role',
+      'postgresql://ontos_admin:admin-secret@localhost/ontos?host=another-host',
+    ]) {
+      const error = yield* Effect.flip(
+        loadAdministrativeDatabaseConnection({
+          environment: { DATABASE_ADMIN_URL: connectionString },
+          envPath: missingEnvPath,
+        }),
+      );
+      expect(Predicate.isTagged(error, 'DatabaseConfigError')).toBe(true);
+      expect(error.reason).not.toContain('admin-secret');
+    }
   }),
 );
 

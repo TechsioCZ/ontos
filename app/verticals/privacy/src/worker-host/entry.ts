@@ -2,6 +2,7 @@
 // @ontos-outbox-worker-host-owner privacy.core
 import { makeDatabaseIdentityEnrollmentLive } from '@app/core-runtime';
 import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+import { privacyRegistration } from '../../vertical.registration.ts';
 import { NodeCrypto } from '@effect/platform-node';
 import { Layer } from 'effect';
 import { FetchHttpClient } from 'effect/http';
@@ -46,6 +47,7 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
     Layer.provideMerge(databaseIdentitiesLive),
     Layer.provide(NodeCrypto.layer),
   ),
+  ownerRegistration: privacyRegistration,
   registrations: outboxWorkers,
   subscriptions: extractOutboxWorkerSubscriptions(outboxWorkers),
 });

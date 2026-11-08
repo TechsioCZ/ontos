@@ -2,6 +2,7 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug record-consent-decision
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/record-consent-decision.ts';
 
 export { RecordConsentDecisionPayloadSchema } from '../actions/record-consent-decision.ts';
-
 export const RecordConsentDecisionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RecordConsentDecisionActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const RecordConsentDecisionActionForbiddenProblemSchema = makeProblemDeta
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -142,7 +143,7 @@ export const recordConsentDecisionActionGroupDefinition = HttpApiGroup.make('rec
     HttpApiEndpoint.post('execute', '/privacy/actions/record-consent-decision', {
       error: actionErrors,
       payload: Schema.toEncoded(RecordConsentDecisionPayloadSchema),
-      success: RecordConsentDecisionResultSchema,
+      success: [ActionProposalAcceptedSchema, RecordConsentDecisionResultSchema],
     }),
   )
   .middleware(RecordConsentDecisionActionSchemaErrorMiddleware);

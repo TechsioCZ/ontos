@@ -3,9 +3,14 @@ import { Effect, Schema, Predicate, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { defineAction } from '../../src/actions/definition.ts';
+import type { AnyActionRegistration } from '../../src/actions/definition.ts';
+import { defineOntosModuleManifest } from '../../src/modules/manifest.ts';
+import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { ActionAlreadyCommitted } from '../../src/actions/errors.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { makeActionTestHarness } from '../../src/testing/actions.ts';
+import { fixtureActionAccess } from '../support/access-declaration-fixtures.ts';
 
 const principal = {
   authBindingId: '10000000-0000-4000-8000-000000000001',
@@ -15,6 +20,17 @@ const principal = {
   tenantId: '30000000-0000-4000-8000-000000000001',
 } as const;
 
+/** Genuine historical metadata for this synthetic test owner, containing the exact Action under test. */
+const recoveryOwner = (action: AnyActionRegistration) => {
+  const moduleId = action.descriptor.owningModuleKey;
+  const base = makeModuleContractFixture({ appId: 'recovery-test', moduleId }).manifest;
+  const manifest = defineOntosModuleManifest({
+    ...base,
+    publicSurface: { ...base.publicSurface, actions: [action], api: {}, components: {} },
+  });
+  return defineVerticalRuntimeRegistration({ actions: [action], manifest, outboxWorkers: [] });
+};
+
 it.effect(
   'committed retry and explicit recovery return the same invocation without rerunning or replaying the result',
   () =>
@@ -22,6 +38,7 @@ it.effect(
       let executions = 0;
       const registration = defineAction(
         {
+          accessDeclaration: fixtureActionAccess('test.recovery'),
           accessEvidencePolicy: {
             captureMode: 'metadata_only',
             policyKey: 'test.recovery.read.v1',
@@ -56,6 +73,7 @@ it.effect(
       );
       const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
+        ownerRegistration: recoveryOwner(registration),
       });
       const request = {
         payload: { amount: 2 },
@@ -117,6 +135,7 @@ it.effect('lost commit acknowledgement recovers the committed invocation and fau
     let executions = 0;
     const registration = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('test.recovery'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'test.recovery.read.v1',
@@ -152,6 +171,7 @@ it.effect('lost commit acknowledgement recovers the committed invocation and fau
     const harness = yield* makeActionTestHarness({
       actionPermission: 'allowed',
       commitAcknowledgement: 'indeterminate-once',
+      ownerRegistration: recoveryOwner(registration),
     });
     const request = {
       payload: undefined,

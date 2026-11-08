@@ -1,30 +1,8 @@
-import { ObjectReference, SubjectReference } from '@authzed/authzed-node/v1/core';
-import {
-  CheckBulkPermissionsRequest,
-  CheckBulkPermissionsRequestItem,
-  CheckPermissionResponse_Permissionship,
-} from '@authzed/authzed-node/v1/permissions';
-import type { CheckBulkPermissionsPair } from '@authzed/authzed-node/v1/permissions';
-import { sha256 } from '@noble/hashes/sha2.js';
-import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { Hex } from 'effect/encoding';
-import {
-  Cause,
-  Clock,
-  Context,
-  Deferred,
-  Effect,
-  Exit,
-  Layer,
-  Option,
-  Request,
-  RequestResolver,
-  Result,
-  Schema,
-} from 'effect';
-import { logUnavailableMapping } from '../observability/unavailable-mapping.ts';
+import { v1 } from '@authzed/authzed-node';
+import { Cause, Context, Effect, Layer, Result, Schema } from 'effect';
 import type { Scope } from 'effect';
 
+import { logUnavailableMapping } from '../observability/unavailable-mapping.ts';
 import {
   SPICEDB_CHECK_TIMEOUT_MS,
   acquireSpiceDbClientResource,
@@ -35,16 +13,26 @@ import {
 import type { SpiceDbPermissionClient } from './client.ts';
 import type { SpiceDbConfigError } from './config-error.ts';
 import { loadSpiceDbConfig } from './config.ts';
-import { OpenDatabaseTransaction } from '../db/transaction-io-guard.ts';
 import type { SpiceDbConfigValue } from './config.ts';
-import { isTaxSellingLegalEntityPermission } from './business-permission.ts';
-import type { BusinessPermissionCode } from './business-permission.ts';
+import { isOwnerPermissionAccessTargetValid } from './owner-permission-contract.ts';
+import type { OwnerPermissionAccessTarget } from './owner-permission-contract.ts';
 import type { PrincipalRef } from './principal-ref.ts';
 import type {
   IdentityNamespacePermissionKey,
   LegalEntityPermissionKey,
   TenantPermissionKey,
 } from './context-permissions.ts';
+
+export {
+  createOwnerPermissionAccessTarget,
+  isOwnerPermissionAccessTargetMetadataValid,
+  isOwnerPermissionAccessTargetValid,
+} from './owner-permission-contract.ts';
+export type {
+  OwnerPermissionAccessTarget,
+  OwnerPermissionContract,
+  OwnerPermissionScope,
+} from './owner-permission-contract.ts';
 
 const ContextAccessDecisionSchema = Schema.Literals(['allowed', 'denied', 'unavailable']);
 export type ContextAccessDecision = typeof ContextAccessDecisionSchema.Type;
@@ -65,318 +53,7 @@ export interface ContextPermissionAccessTarget {
   readonly permission: string;
 }
 
-/**
- * Assortment authorization targets are intentionally separate from the legacy
- * BusinessAccessTarget family. Their meaning is an exact immutable policy
- * target, not a grant/revoke mutation target.
- */
-const AssortmentPermissionCodeSchema = Schema.Literals([
-  'assortment.binding.create',
-  'assortment.binding.end',
-  'assortment.boundary.create',
-  'assortment.boundary.end',
-  'assortment.configuration.read',
-  'assortment.decision.explain',
-  'assortment.rule.create',
-  'assortment.rule.revision.create',
-  'assortment.rule.retire',
-]);
-export type AssortmentPermissionCode = typeof AssortmentPermissionCodeSchema.Type;
-
-export interface AssortmentPermissionSelector {
-  readonly kind: 'ALL' | 'CATEGORY' | 'PRODUCT' | 'VARIANT' | 'PACKAGE_OPTION';
-  readonly target?: ResourceAccessTarget;
-}
-
-export interface AssortmentPermissionCommercialScope {
-  readonly channel: ResourceAccessTarget;
-  readonly market?: ResourceAccessTarget;
-  readonly storefront?: ResourceAccessTarget;
-}
-
-export type AssortmentPermissionSubject =
-  | Readonly<{ readonly kind: 'GUEST' }>
-  | Readonly<{
-      readonly kind: 'RETAIL_CUSTOMER_PROFILE' | 'COUNTERPARTY';
-      readonly ref: ResourceAccessTarget;
-    }>;
-
-export type AssortmentPermissionAdmissionSet =
-  | Readonly<{
-      readonly contentHash: string;
-      readonly entries: readonly [];
-      readonly memberCount: 0;
-      readonly setKind: 'EMPTY';
-    }>
-  | Readonly<{
-      readonly contentHash: string;
-      readonly entries: readonly AssortmentPermissionSelector[];
-      readonly memberCount: number;
-      readonly setKind: 'ENTRIES';
-    }>;
-
-export type AssortmentPermissionAccessTarget =
-  | Readonly<{
-      readonly kind: 'assortment_configuration';
-      readonly permission: 'assortment.configuration.read';
-      readonly resource: ResourceAccessTarget;
-      /** Declared by the owning module for this resource type, never taken from client input. */
-      readonly resourceScope: AssortmentConfigurationResourceScope;
-    }>
-  | Readonly<{
-      readonly catalogSelection: ResourceAccessTarget;
-      readonly commercialScope: AssortmentPermissionCommercialScope;
-      readonly kind: 'assortment_decision';
-      readonly permission: 'assortment.decision.explain';
-      readonly purpose: 'VISIBILITY' | 'PURCHASE';
-      readonly subject: AssortmentPermissionSubject;
-    }>
-  | Readonly<{
-      readonly effect: 'ALLOW' | 'DENY';
-      readonly kind: 'assortment_rule';
-      readonly mode: 'create';
-      readonly permission: 'assortment.rule.create';
-      readonly purpose: 'VISIBILITY' | 'PURCHASE';
-      readonly selector: AssortmentPermissionSelector;
-      readonly stableCode: string;
-    }>
-  | Readonly<{
-      readonly effect: 'ALLOW' | 'DENY';
-      readonly kind: 'assortment_rule';
-      readonly mode: 'revision_create';
-      readonly permission: 'assortment.rule.revision.create';
-      readonly purpose: 'VISIBILITY' | 'PURCHASE';
-      readonly selector: AssortmentPermissionSelector;
-      readonly stableRule: ResourceAccessTarget;
-    }>
-  | Readonly<{
-      readonly kind: 'assortment_rule';
-      readonly mode: 'retire';
-      readonly permission: 'assortment.rule.retire';
-      readonly stableRule: ResourceAccessTarget;
-    }>
-  | Readonly<{
-      readonly audience:
-        | Readonly<{ readonly kind: 'SHARED' }>
-        | Readonly<{ readonly group: ResourceAccessTarget; readonly kind: 'COMMERCE_CUSTOMER_GROUP' }>
-        | Readonly<{ readonly kind: 'SUBJECT'; readonly subject: AssortmentPermissionSubject }>;
-      readonly commercialScope: AssortmentPermissionCommercialScope;
-      readonly effectiveFrom: string;
-      readonly kind: 'assortment_binding';
-      readonly mode: 'create';
-      readonly permission: 'assortment.binding.create';
-      readonly ruleRevision: ResourceAccessTarget;
-    }>
-  | Readonly<{
-      readonly binding: ResourceAccessTarget;
-      readonly kind: 'assortment_binding';
-      readonly mode: 'end';
-      readonly permission: 'assortment.binding.end';
-    }>
-  | Readonly<{
-      readonly admissionSet: AssortmentPermissionAdmissionSet;
-      readonly commercialScope: AssortmentPermissionCommercialScope;
-      readonly effectiveFrom: string;
-      readonly kind: 'assortment_boundary';
-      readonly mode: 'create';
-      readonly permission: 'assortment.boundary.create';
-      readonly purpose: 'VISIBILITY' | 'PURCHASE';
-      readonly subject: Extract<
-        AssortmentPermissionSubject,
-        { readonly kind: 'RETAIL_CUSTOMER_PROFILE' | 'COUNTERPARTY' }
-      >;
-    }>
-  | Readonly<{
-      readonly boundary: ResourceAccessTarget;
-      readonly kind: 'assortment_boundary';
-      readonly mode: 'end';
-      readonly permission: 'assortment.boundary.end';
-    }>;
-
-export const AssortmentConfigurationResourceScopeSchema = Schema.Literals(['legal_entity', 'tenant']);
-export type AssortmentConfigurationResourceScope = typeof AssortmentConfigurationResourceScopeSchema.Type;
-
-const assortmentConfigurationResourceScope = (
-  target: Extract<AssortmentPermissionAccessTarget, { readonly kind: 'assortment_configuration' }>,
-): AssortmentConfigurationResourceScope | undefined => {
-  const { resource } = target;
-  return resource.moduleId.length > 0 &&
-    resource.resourceId.length > 0 &&
-    resource.resourceType.length > resource.moduleId.length + 1 &&
-    resource.resourceType.startsWith(`${resource.moduleId}.`) &&
-    Schema.is(AssortmentConfigurationResourceScopeSchema)(target.resourceScope)
-    ? target.resourceScope
-    : undefined;
-};
-
-const assortmentRefParts = (ref: ResourceAccessTarget): readonly string[] => [
-  ref.moduleId,
-  ref.resourceType,
-  ref.resourceId,
-];
-
-/**
- * Configuration targets name a resource type namespaced under its module. The
- * owning module declares that resource type's scope when it builds the target.
- */
-export const isAssortmentPermissionTargetValid = (target: AssortmentPermissionAccessTarget): boolean =>
-  target.kind === 'assortment_configuration'
-    ? assortmentConfigurationResourceScope(target) !== undefined
-    : target.kind !== 'assortment_boundary' ||
-      target.mode !== 'create' ||
-      (Array.isArray(target.admissionSet.entries) &&
-        Number.isInteger(target.admissionSet.memberCount) &&
-        /^[0-9a-f]{64}$/u.test(target.admissionSet.contentHash) &&
-        target.admissionSet.memberCount === target.admissionSet.entries.length &&
-        (target.admissionSet.setKind === 'EMPTY') === (target.admissionSet.entries.length === 0) &&
-        (target.purpose !== 'VISIBILITY' ||
-          target.admissionSet.entries.every(
-            (entry: AssortmentPermissionSelector) => entry.kind !== 'VARIANT' && entry.kind !== 'PACKAGE_OPTION',
-          )) &&
-        target.admissionSet.entries.every((entry: AssortmentPermissionSelector) =>
-          entry.kind === 'ALL'
-            ? entry.target === undefined
-            : entry.target !== undefined && assortmentRefParts(entry.target).every((part) => part.length > 0),
-        ));
-
-/** Configuration declared tenant-scoped needs no Legal Entity; every other target does, except rules. */
-export const assortmentPermissionTargetRequiresLegalEntity = (target: AssortmentPermissionAccessTarget): boolean => {
-  if (target.kind === 'assortment_configuration') {
-    return assortmentConfigurationResourceScope(target) !== 'tenant';
-  }
-  return target.kind !== 'assortment_rule';
-};
-
-export interface AssortmentPermissionAccessTargetWithTrustedStorefront {
-  readonly target: AssortmentPermissionAccessTarget;
-}
-
-export type BusinessAccessTarget =
-  | Readonly<{
-      kind: 'retail_profile';
-      legalEntityId: string;
-      profileId: string;
-      tenantId: string;
-    }>
-  | Readonly<{
-      counterpartyId: string;
-      kind: 'counterparty';
-      legalEntityId: string;
-      tenantId: string;
-    }>
-  | Readonly<{
-      counterpartyId: string;
-      kind: 'counterparty_storefront';
-      legalEntityId: string;
-      storefrontId: string;
-      tenantId: string;
-    }>
-  | Readonly<{
-      kind: 'pricing_catalog';
-      pricingCatalogId: string;
-      tenantId: string;
-    }>
-  | Readonly<{
-      kind: 'price_group';
-      priceGroupId: string;
-      pricingCatalogId: string;
-      tenantId: string;
-    }>
-  | Readonly<{
-      kind: 'inventory_resource';
-      resource: Readonly<{
-        moduleId: string;
-        resourceId: string;
-        resourceType: string;
-      }>;
-      tenantId: string;
-    }>
-  | Readonly<{
-      kind: 'tax_selling_legal_entity';
-      legalEntityId: string;
-      tenantId: string;
-    }>;
-
-const canonicalPricingAuthorizationResourceId = Schema.String.check(Schema.isUUID());
-
-/** Stable Pricing authorization identity. Business codes and display values are never valid targets. */
-export const PricingAuthorizationResourceIdSchema = canonicalPricingAuthorizationResourceId.pipe(
-  Schema.brand('PricingAuthorizationResourceId'),
-  Schema.decodeTo(canonicalPricingAuthorizationResourceId),
-);
-
-const canonicalInventoryAuthorizationResourceId = Schema.String.check(Schema.isUUID());
-const canonicalInventoryAuthorizationResourceType = Schema.String.check(
-  Schema.isPattern(/^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/u),
-);
-
-/** Durable Inventory resource identity. Location/item tuples and display keys are never valid targets. */
-export const InventoryAuthorizationResourceIdSchema = canonicalInventoryAuthorizationResourceId.pipe(
-  Schema.brand('InventoryAuthorizationResourceId'),
-  Schema.decodeTo(canonicalInventoryAuthorizationResourceId),
-);
-
-export const InventoryAuthorizationResourceTypeSchema = canonicalInventoryAuthorizationResourceType.pipe(
-  Schema.brand('InventoryAuthorizationResourceType'),
-  Schema.decodeTo(canonicalInventoryAuthorizationResourceType),
-);
-
-export interface BusinessPermissionAccessTarget {
-  readonly permission: BusinessPermissionCode;
-  readonly target: BusinessAccessTarget;
-}
-
-export const hasCanonicalPricingAuthorizationTargetIds = (target: BusinessAccessTarget): boolean =>
-  target.kind !== 'pricing_catalog' && target.kind !== 'price_group'
-    ? true
-    : Schema.is(PricingAuthorizationResourceIdSchema)(target.pricingCatalogId) &&
-      (target.kind !== 'price_group' || Schema.is(PricingAuthorizationResourceIdSchema)(target.priceGroupId));
-
-/** An inventory resource type is namespaced under the module that owns it. */
-export const hasCanonicalInventoryAuthorizationTarget = (target: BusinessAccessTarget): boolean =>
-  target.kind !== 'inventory_resource' ||
-  (target.resource.moduleId.length > 0 &&
-    target.resource.resourceType.startsWith(`${target.resource.moduleId}.`) &&
-    Schema.is(InventoryAuthorizationResourceIdSchema)(target.resource.resourceId) &&
-    Schema.is(InventoryAuthorizationResourceTypeSchema)(target.resource.resourceType));
-
-/** Keeps every business Permission family on its declared authorization target vocabulary. */
-export const isBusinessPermissionTargetCompatible = ({
-  permission,
-  target,
-}: BusinessPermissionAccessTarget): boolean => {
-  if (permission.startsWith('pricing.price_group.')) {
-    return target.kind === 'pricing_catalog' || target.kind === 'price_group';
-  }
-  if (permission.startsWith('retail.')) {
-    return target.kind === 'retail_profile';
-  }
-  if (permission.startsWith('inventory.')) {
-    return target.kind === 'inventory_resource';
-  }
-  if (isTaxSellingLegalEntityPermission(permission)) {
-    return target.kind === 'tax_selling_legal_entity';
-  }
-  return (
-    permission.startsWith('counterparty.') &&
-    (target.kind === 'counterparty' || target.kind === 'counterparty_storefront')
-  );
-};
-
 export interface ContextAccessService {
-  readonly assortmentPermissions?: (input: {
-    readonly legalEntityId?: string;
-    readonly principal: PrincipalRef;
-    readonly targets: readonly AssortmentPermissionAccessTargetWithTrustedStorefront[];
-    /** Storefront identity resolved by a trusted application boundary, never raw client input. */
-    readonly trustedStorefrontId?: string;
-  }) => Effect.Effect<readonly ContextAccessResult[]>;
-  readonly businessPermissions?: (input: {
-    readonly principal: PrincipalRef;
-    readonly targets: readonly BusinessPermissionAccessTarget[];
-    /** Storefront identity resolved by a trusted application boundary, never raw client input. */
-    readonly trustedStorefrontId?: string;
-  }) => Effect.Effect<readonly ContextAccessResult[]>;
   /**
    * Checks an exact named entrypoint permission in trusted Tenant/Legal Entity scope.
    * Optional for compatibility with older adapters; runtimes must treat absence as unavailable.
@@ -409,6 +86,13 @@ export interface ContextAccessService {
     readonly moduleIds: readonly string[];
     readonly principalId: string;
     readonly tenantId: string;
+  }) => Effect.Effect<readonly ContextAccessResult[]>;
+  readonly ownerPermissions?: (input: {
+    readonly legalEntityId?: string;
+    readonly principal: PrincipalRef;
+    readonly targets: readonly Readonly<{ readonly target: OwnerPermissionAccessTarget }>[];
+    /** Storefront identity resolved by a trusted application boundary, never raw client input. */
+    readonly trustedStorefrontId?: string;
   }) => Effect.Effect<readonly ContextAccessResult[]>;
   readonly resources: (input: {
     readonly legalEntityId: string;
@@ -449,17 +133,9 @@ interface BatchItem {
 
 const ContextAccessObjectIdParts = Schema.fromJsonString(Schema.Array(Schema.String));
 const encodeContextAccessObjectIdParts = Schema.encodeResult(ContextAccessObjectIdParts);
-const AssortmentDigestParts = Schema.fromJsonString(
-  Schema.Struct({
-    marker: Schema.String,
-    targets: Schema.Array(Schema.Array(Schema.String)),
-  }),
-);
-const encodeAssortmentDigestParts = Schema.encodeResult(AssortmentDigestParts);
-
 const principalReference = (principalId: string) =>
-  SubjectReference.create({
-    object: ObjectReference.create({
+  v1.SubjectReference.create({
+    object: v1.ObjectReference.create({
       objectId: principalId,
       objectType: 'principal',
     }),
@@ -490,211 +166,6 @@ export const toResourceAccessObjectId = (
 export const toTenantResourceAccessObjectId = (tenantId: string, resource: ResourceAccessTarget): string | undefined =>
   encodeObjectId([tenantId, resource.moduleId, resource.resourceType, resource.resourceId]);
 
-const businessTargetParts = (target: BusinessAccessTarget): readonly string[] => {
-  if (target.kind === 'retail_profile') {
-    return [target.tenantId, target.legalEntityId, target.kind, target.profileId];
-  }
-  if (target.kind === 'counterparty') {
-    return [target.tenantId, target.legalEntityId, target.kind, target.counterpartyId];
-  }
-  if (target.kind === 'counterparty_storefront') {
-    return [target.tenantId, target.legalEntityId, target.kind, target.counterpartyId, target.storefrontId];
-  }
-  if (target.kind === 'pricing_catalog') {
-    return [target.tenantId, target.kind, target.pricingCatalogId];
-  }
-  if (target.kind === 'price_group') {
-    return [target.tenantId, target.kind, target.pricingCatalogId, target.priceGroupId];
-  }
-  if (target.kind === 'tax_selling_legal_entity') {
-    return [target.tenantId, target.legalEntityId, target.kind];
-  }
-  return [
-    target.tenantId,
-    target.kind,
-    target.resource.moduleId,
-    target.resource.resourceType,
-    target.resource.resourceId,
-  ];
-};
-
-export const toBusinessPermissionAccessObjectId = (
-  permission: BusinessPermissionCode,
-  target: BusinessAccessTarget,
-): string | undefined =>
-  isBusinessPermissionTargetCompatible({ permission, target }) &&
-  hasCanonicalPricingAuthorizationTargetIds(target) &&
-  hasCanonicalInventoryAuthorizationTarget(target)
-    ? encodeObjectId([permission, ...businessTargetParts(target)])
-    : undefined;
-
-export const toBusinessPermissionAccessKey = ({ permission, target }: BusinessPermissionAccessTarget): string =>
-  [permission, ...businessTargetParts(target)].join(':');
-
-const assortmentScopeParts = (scope: AssortmentPermissionCommercialScope): readonly string[] => [
-  'channel',
-  ...assortmentRefParts(scope.channel),
-  'market',
-  ...(scope.market === undefined ? ['none'] : assortmentRefParts(scope.market)),
-  'storefront',
-  ...(scope.storefront === undefined ? ['none'] : assortmentRefParts(scope.storefront)),
-];
-
-const assortmentSelectorParts = (selector: AssortmentPermissionSelector): readonly string[] => [
-  selector.kind,
-  ...(selector.target === undefined ? ['none'] : assortmentRefParts(selector.target)),
-];
-
-const assortmentSubjectParts = (subject: AssortmentPermissionSubject): readonly string[] => [
-  subject.kind,
-  ...(subject.kind === 'GUEST' ? [] : assortmentRefParts(subject.ref)),
-];
-
-const assortmentTargetParts = (target: AssortmentPermissionAccessTarget): readonly string[] => {
-  if (target.kind === 'assortment_configuration') {
-    return [target.kind, ...assortmentRefParts(target.resource)];
-  }
-  if (target.kind === 'assortment_decision') {
-    return [
-      target.kind,
-      target.purpose,
-      ...assortmentRefParts(target.catalogSelection),
-      ...assortmentScopeParts(target.commercialScope),
-      ...assortmentSubjectParts(target.subject),
-    ];
-  }
-  if (target.kind === 'assortment_rule') {
-    if (target.mode === 'retire') {
-      return [target.kind, target.mode, ...assortmentRefParts(target.stableRule)];
-    }
-    return [
-      target.kind,
-      target.mode,
-      target.purpose,
-      target.effect,
-      ...(target.mode === 'create' ? [target.stableCode] : assortmentRefParts(target.stableRule)),
-      ...assortmentSelectorParts(target.selector),
-    ];
-  }
-  if (target.kind === 'assortment_binding') {
-    if (target.mode === 'end') {
-      return [target.kind, target.mode, ...assortmentRefParts(target.binding)];
-    }
-    let audience: readonly string[];
-    if (target.audience.kind === 'SHARED') {
-      audience = ['SHARED'];
-    } else if (target.audience.kind === 'COMMERCE_CUSTOMER_GROUP') {
-      audience = [target.audience.kind, ...assortmentRefParts(target.audience.group)];
-    } else {
-      audience = [target.audience.kind, ...assortmentSubjectParts(target.audience.subject)];
-    }
-    return [
-      target.kind,
-      target.mode,
-      ...assortmentRefParts(target.ruleRevision),
-      ...audience,
-      ...assortmentScopeParts(target.commercialScope),
-      target.effectiveFrom,
-    ];
-  }
-  if (target.mode === 'end') {
-    return [target.kind, target.mode, ...assortmentRefParts(target.boundary)];
-  }
-  return [
-    target.kind,
-    target.mode,
-    target.purpose,
-    ...assortmentSubjectParts(target.subject),
-    ...assortmentScopeParts(target.commercialScope),
-    target.effectiveFrom,
-    target.admissionSet.setKind,
-    String(target.admissionSet.memberCount),
-    target.admissionSet.contentHash,
-    ...target.admissionSet.entries.flatMap(assortmentSelectorParts),
-  ];
-};
-
-const assortmentScopeIdentity = (
-  tenantId: string,
-  legalEntityId: string | undefined,
-  target: AssortmentPermissionAccessTarget,
-): readonly string[] | undefined => {
-  if (tenantId.length === 0) {
-    return undefined;
-  }
-  if (assortmentPermissionTargetRequiresLegalEntity(target)) {
-    return legalEntityId === undefined || legalEntityId.length === 0
-      ? undefined
-      : [tenantId, 'legal_entity', legalEntityId];
-  }
-  return [tenantId, 'tenant'];
-};
-
-export const toAssortmentPermissionAccessKey = (
-  tenantId: string,
-  legalEntityId: string | undefined,
-  target: AssortmentPermissionAccessTarget,
-): string | undefined => {
-  if (!isAssortmentPermissionTargetValid(target)) {
-    return undefined;
-  }
-  const scopeIdentity = assortmentScopeIdentity(tenantId, legalEntityId, target);
-  return scopeIdentity === undefined
-    ? undefined
-    : [...scopeIdentity, target.permission, ...assortmentTargetParts(target)].join(':');
-};
-
-export const toAssortmentPermissionAccessObjectId = (
-  tenantId: string,
-  legalEntityId: string | undefined,
-  target: AssortmentPermissionAccessTarget,
-): string | undefined => {
-  const scopeIdentity = isAssortmentPermissionTargetValid(target)
-    ? assortmentScopeIdentity(tenantId, legalEntityId, target)
-    : undefined;
-  return scopeIdentity === undefined
-    ? undefined
-    : `asp_${Hex.encode(
-        sha256(
-          utf8ToBytes(
-            Result.getOrThrow(
-              encodeContextAccessObjectIdParts([...scopeIdentity, target.permission, ...assortmentTargetParts(target)]),
-            ),
-          ),
-        ),
-      )}`;
-};
-
-/**
- * Canonical digest for an ordered conjunctive Assortment authorization request.
- * The ordered target list is part of the meaning: Replace operations must retain
- * both the old exact target and the proposed exact target in audit/transport data.
- */
-export const toAssortmentPermissionAccessObjectIdForTargets = (
-  tenantId: string,
-  legalEntityId: string | undefined,
-  targets: readonly AssortmentPermissionAccessTarget[],
-): string | undefined => {
-  if (tenantId.length === 0 || targets.length === 0) {
-    return undefined;
-  }
-  const scopeIdentities: string[][] = [];
-  for (const target of targets) {
-    if (!isAssortmentPermissionTargetValid(target)) {
-      return undefined;
-    }
-    const scopeIdentity = assortmentScopeIdentity(tenantId, legalEntityId, target);
-    if (scopeIdentity === undefined) {
-      return undefined;
-    }
-    scopeIdentities.push([...scopeIdentity, target.permission, ...assortmentTargetParts(target)]);
-  }
-  const encoded = Result.getOrThrow(
-    encodeAssortmentDigestParts({ marker: 'assortment_permission_conjunction', targets: scopeIdentities }),
-  );
-  return `asp_${Hex.encode(sha256(utf8ToBytes(encoded)))}`;
-};
-
 export const toContextPermissionAccessKey = ({ moduleId, permission }: ContextPermissionAccessTarget): string =>
   `${moduleId}:${permission}`;
 
@@ -719,33 +190,18 @@ export const toIdentityNamespaceAccessObjectId = (
 const unavailable = (keys: readonly string[]): readonly ContextAccessResult[] =>
   keys.map((key) => ({ decision: 'unavailable' as const, key }));
 
-const classifyPair = (pair: CheckBulkPermissionsPair): ContextAccessDecision => {
+const classifyPair = (pair: v1.CheckBulkPermissionsPair): ContextAccessDecision => {
   if (pair.response.oneofKind !== 'item') {
     return 'unavailable';
   }
   const { permissionship } = pair.response.item;
-  if (permissionship === CheckPermissionResponse_Permissionship.HAS_PERMISSION) {
+  if (permissionship === v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION) {
     return 'allowed';
   }
-  if (permissionship === CheckPermissionResponse_Permissionship.NO_PERMISSION) {
+  if (permissionship === v1.CheckPermissionResponse_Permissionship.NO_PERMISSION) {
     return 'denied';
   }
   return 'unavailable';
-};
-
-const assortmentTargetHasTrustedStorefront = (
-  target: AssortmentPermissionAccessTarget,
-  trustedStorefrontId: string | undefined,
-): boolean => {
-  const storefront =
-    target.kind === 'assortment_decision' ||
-    (target.kind === 'assortment_binding' && target.mode === 'create') ||
-    (target.kind === 'assortment_boundary' && target.mode === 'create')
-      ? target.commercialScope.storefront
-      : undefined;
-  return storefront === undefined
-    ? true
-    : trustedStorefrontId !== undefined && trustedStorefrontId === storefront.resourceId;
 };
 
 const foldAlternativeDecisions = (decisions: readonly ContextAccessDecision[]): ContextAccessDecision => {
@@ -768,222 +224,29 @@ const resultsForBatchItems = (
   });
 
 const makeRequestItem = (item: BatchItem, principalId: string) =>
-  CheckBulkPermissionsRequestItem.create({
+  v1.CheckBulkPermissionsRequestItem.create({
     permission: item.permission,
-    resource: ObjectReference.create({
+    resource: v1.ObjectReference.create({
       objectId: item.resourceId,
       objectType: item.resourceType,
     }),
     subject: principalReference(principalId),
   });
 
-const sameObjectReference = (expected: ObjectReference | undefined, actual: ObjectReference | undefined): boolean =>
-  actual?.objectId === expected?.objectId && actual?.objectType === expected?.objectType;
+const sameObjectReference = (
+  expected: v1.ObjectReference | undefined,
+  actual: v1.ObjectReference | undefined,
+): boolean => actual?.objectId === expected?.objectId && actual?.objectType === expected?.objectType;
 
 const sameRequest = (
-  expected: CheckBulkPermissionsRequestItem,
-  actual: CheckBulkPermissionsRequestItem | undefined,
+  expected: v1.CheckBulkPermissionsRequestItem,
+  actual: v1.CheckBulkPermissionsRequestItem | undefined,
 ): boolean =>
   actual?.permission === expected.permission &&
   sameObjectReference(expected.resource, actual.resource) &&
   sameObjectReference(expected.subject?.object, actual.subject?.object);
 
-/**
- * The SpiceDB decisions one request has already asked for, keyed by the exact check (resource, permission and
- * subject), each settled once by whichever check asked first. Checks are fully consistent and a request reads the
- * same relationships throughout, so a later check of the same request reuses the decision instead of paying
- * another round trip; a check still in flight is joined, not repeated. It is request state only: nothing outlives
- * the effect that `withRequestPermissionDecisions` wraps, and an `unavailable` decision is never reused. Wrap
- * only work that writes no relationships.
- */
-interface PermissionDecisionRequest extends Request.Request<ContextAccessDecision> {
-  readonly item: CheckBulkPermissionsRequestItem;
-}
-
-const permissionDecisionRequest = Request.of<PermissionDecisionRequest>();
-
-interface RequestPermissionDecisionMemo {
-  readonly decisions: Map<string, Deferred.Deferred<ContextAccessDecision>>;
-  readonly resolvers: Map<SpiceDbPermissionClient, RequestResolver.RequestResolver<PermissionDecisionRequest>>;
-}
-
-// Concurrent reads share a bounded transport batch, never a timer or a cross-request queue.
-const PERMISSION_BATCH_SIZE = 256;
-
-const completePermissionDecisions = (
-  entries: readonly Request.Entry<PermissionDecisionRequest>[],
-  decisions: readonly ContextAccessDecision[],
-) =>
-  Effect.sync(() => {
-    for (const [index, entry] of entries.entries()) {
-      entry.completeUnsafe(Exit.succeed(decisions[index] ?? 'unavailable'));
-    }
-  });
-
-export const RequestPermissionDecisions = Context.Reference<Option.Option<RequestPermissionDecisionMemo>>(
-  '@app/core-runtime/permissions/context-access/RequestPermissionDecisions',
-  { defaultValue: Option.none },
-);
-
-/**
- * Shares SpiceDB decisions among every check `effect` makes (see `RequestPermissionDecisions`); inside work that
- * already shares them, `effect` joins the same decisions.
- */
-export const withRequestPermissionDecisions = <Value, Failure, Requirements>(
-  effect: Effect.Effect<Value, Failure, Requirements>,
-): Effect.Effect<Value, Failure, Requirements> =>
-  Effect.updateService(effect, RequestPermissionDecisions, (current) =>
-    Option.isSome(current)
-      ? current
-      : Option.some<RequestPermissionDecisionMemo>({ decisions: new Map(), resolvers: new Map() }),
-  );
-
-/** SpiceDB's own relationship notation; object types, ids and relations never contain `:`, `#` or `@`. */
-const requestIdentity = (request: CheckBulkPermissionsRequestItem): string =>
-  `${request.resource?.objectType}:${request.resource?.objectId}#${request.permission}@${request.subject?.object?.objectType}:${request.subject?.object?.objectId}#${request.subject?.optionalRelation ?? ''}`;
-
-/** Only the bounded gRPC status is diagnostic data; messages, metadata and request contents may contain secrets. */
-const rpcStatusCode = (code: number | undefined): number | 'unknown' =>
-  code !== undefined && Number.isInteger(code) && code >= 0 && code <= 16 ? code : 'unknown';
-
-interface OwnedDecision {
-  readonly deferred: Deferred.Deferred<ContextAccessDecision>;
-  readonly identity: string;
-  readonly request: CheckBulkPermissionsRequestItem;
-}
-
-/** Settles the checks this call asked for; an `unavailable` one is forgotten so a later check asks again. */
-const settleOwnedDecisions = (
-  memo: RequestPermissionDecisionMemo,
-  owned: readonly OwnedDecision[],
-  decisions: readonly ContextAccessDecision[],
-) =>
-  Effect.sync(() => {
-    for (const [index, entry] of owned.entries()) {
-      const decision = decisions[index] ?? 'unavailable';
-      if (decision === 'unavailable' && memo.decisions.get(entry.identity) === entry.deferred) {
-        memo.decisions.delete(entry.identity);
-      }
-      Deferred.doneUnsafe(entry.deferred, Effect.succeed(decision));
-    }
-  });
-
-/** Claims every check of `requests` this request has not asked for yet; the rest join their pending decision. */
-const claimDecisions = (memo: RequestPermissionDecisionMemo, requests: readonly CheckBulkPermissionsRequestItem[]) => {
-  const owned: OwnedDecision[] = [];
-  const pending = requests.map((request) => {
-    const identity = requestIdentity(request);
-    const known = memo.decisions.get(identity);
-    if (known !== undefined) {
-      return known;
-    }
-    const deferred = Deferred.makeUnsafe<ContextAccessDecision>();
-    memo.decisions.set(identity, deferred);
-    owned.push({ deferred, identity, request });
-    return deferred;
-  });
-  return { owned, pending };
-};
-
 export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAccessService => {
-  /** One CheckBulkPermissions call: a decision per request, or every one `unavailable` when the answer does not match. */
-  const decide = Effect.fn('ContextAccess.decide')(function* decideWithDiagnostics(
-    requests: readonly CheckBulkPermissionsRequestItem[],
-  ): Effect.fn.Return<readonly ContextAccessDecision[]> {
-    const startedAt = yield* Clock.currentTimeMillis;
-    const unavailableAll = requests.map((): ContextAccessDecision => 'unavailable');
-    const reportUnavailable = (
-      failureKind:
-        | 'timeout'
-        | 'client_failure'
-        | 'response_count_mismatch'
-        | 'response_request_mismatch'
-        | 'response_unavailable',
-      rpcCode?: number,
-      errorClass = 'SpiceDbResponse',
-    ) =>
-      Clock.currentTimeMillis.pipe(
-        Effect.flatMap((now) =>
-          // Error text is withheld here: SpiceDB diagnostics carry only the class, kind and status.
-          logUnavailableMapping('spicedb-permission-check', 'read-permission', errorClass, {
-            elapsedMs: now - startedAt,
-            failureKind,
-            operation: 'CheckBulkPermissions',
-            requestCount: requests.length,
-            rpcCode: rpcStatusCode(rpcCode),
-          }),
-        ),
-        Effect.as(unavailableAll),
-      );
-    return yield* client
-      .checkBulkPermissions(
-        CheckBulkPermissionsRequest.create({
-          consistency: fullyConsistent,
-          items: [...requests],
-          withTracing: false,
-        }),
-      )
-      .pipe(
-        Effect.flatMap((response) => {
-          if (response.pairs.length !== requests.length) {
-            return reportUnavailable('response_count_mismatch');
-          }
-          const decisions = response.pairs.map((pair, index) => {
-            const expected = requests[index];
-            return expected === undefined || !sameRequest(expected, pair.request) ? null : classifyPair(pair);
-          });
-          if (!decisions.every((decision): decision is ContextAccessDecision => decision !== null)) {
-            return reportUnavailable('response_request_mismatch');
-          }
-          if (decisions.some((decision) => decision === 'unavailable')) {
-            return reportUnavailable('response_unavailable').pipe(Effect.as(decisions));
-          }
-          return Effect.succeed(decisions);
-        }),
-        Effect.catchTag('SpiceDbPermissionClientError', (error) => {
-          const timedOut = Cause.isTimeoutError(error.cause);
-          return reportUnavailable(
-            timedOut ? 'timeout' : 'client_failure',
-            error.rpcCode,
-            timedOut ? 'TimeoutError' : 'ClientError',
-          );
-        }),
-      );
-  });
-
-  /**
-   * Joins existing decisions and coalesces distinct concurrent checks through a request-owned Effect resolver.
-   * No resolver or pending I/O crosses request boundaries. Inside a governed transaction the memo is bypassed,
-   * so the transaction guard still refuses the call.
-   */
-  const decideWithin = Effect.fn('ContextAccess.decideWithinRequest')(function* decideWithinRequest(
-    memo: RequestPermissionDecisionMemo,
-    requests: readonly CheckBulkPermissionsRequestItem[],
-  ) {
-    const { owned, pending } = claimDecisions(memo, requests);
-    if (owned.length > 0) {
-      let resolver = memo.resolvers.get(client);
-      if (resolver === undefined) {
-        resolver = RequestResolver.make<PermissionDecisionRequest>((entries) =>
-          decide(entries.map(({ request }) => request.item)).pipe(
-            Effect.flatMap((decisions) => completePermissionDecisions(entries, decisions)),
-          ),
-        ).pipe(RequestResolver.batchN(PERMISSION_BATCH_SIZE));
-        memo.resolvers.set(client, resolver);
-      }
-      const requestResolver = resolver;
-      yield* Effect.forEach(
-        owned,
-        (entry) =>
-          Effect.request(permissionDecisionRequest({ item: entry.request }), requestResolver).pipe(
-            Effect.flatMap((decision) => settleOwnedDecisions(memo, [entry], [decision])),
-          ),
-        { concurrency: PERMISSION_BATCH_SIZE, discard: true },
-      ).pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? settleOwnedDecisions(memo, owned, []) : Effect.void)));
-    }
-    return yield* Effect.forEach(pending, (deferred) => Deferred.await(deferred), { concurrency: pending.length });
-  });
-
   const checkBatch = (
     items: readonly BatchItem[],
     principalId: string,
@@ -1000,116 +263,46 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
       return Effect.succeed([]);
     }
     const requests = items.map((item) => makeRequestItem(item, principalId));
-    return Effect.all([Effect.service(RequestPermissionDecisions), Effect.service(OpenDatabaseTransaction)], {
-      concurrency: 2,
-    }).pipe(
-      Effect.flatMap(([memo, transaction]) =>
-        Option.isSome(memo) && Option.isNone(transaction) ? decideWithin(memo.value, requests) : decide(requests),
-      ),
-      Effect.map((decisions) => keys.map((key, index) => ({ decision: decisions[index] ?? 'unavailable', key }))),
-    );
+    return client
+      .checkBulkPermissions(
+        v1.CheckBulkPermissionsRequest.create({
+          consistency: fullyConsistent,
+          items: requests,
+          withTracing: false,
+        }),
+      )
+      .pipe(
+        Effect.map((response) => {
+          if (response.pairs.length !== requests.length) {
+            return unavailable(keys);
+          }
+          const seen = new Set<string>();
+          const decisions = response.pairs.map((pair, index) => {
+            const expected = requests[index];
+            const key = keys[index];
+            if (expected === undefined || key === undefined || !sameRequest(expected, pair.request) || seen.has(key)) {
+              return null;
+            }
+            seen.add(key);
+            return { decision: classifyPair(pair), key };
+          });
+          return decisions.every((decision): decision is ContextAccessResult => decision !== null)
+            ? decisions
+            : unavailable(keys);
+        }),
+        Effect.catchTag('SpiceDbPermissionClientError', ({ cause, rpcCode }) => {
+          const timeout = Cause.isTimeoutError(cause) || rpcCode === 4;
+          return logUnavailableMapping(
+            'spicedb-permission-check',
+            'read-permission',
+            timeout ? 'TimeoutError' : 'SpiceDbPermissionClientError',
+            { failureKind: timeout ? 'timeout' : 'client-error' },
+          ).pipe(Effect.as(unavailable(keys)));
+        }),
+      );
   };
 
   const service: ContextAccessService = {
-    assortmentPermissions: ({ legalEntityId, principal, targets, trustedStorefrontId }) => {
-      const invalid =
-        principal.principalId.length === 0 ||
-        principal.tenantId.length === 0 ||
-        targets.some(({ target }) => !isAssortmentPermissionTargetValid(target)) ||
-        new Set(targets.map(({ target }) => toAssortmentPermissionAccessKey(principal.tenantId, legalEntityId, target)))
-          .size !== targets.length ||
-        targets.some(
-          ({ target }) =>
-            assortmentPermissionTargetRequiresLegalEntity(target) &&
-            (legalEntityId === undefined || legalEntityId.length === 0),
-        ) ||
-        targets.some(({ target }) => {
-          const effectiveStorefront = trustedStorefrontId;
-          return (
-            !assortmentTargetHasTrustedStorefront(target, effectiveStorefront) ||
-            assortmentTargetParts(target).some((part) => part.length === 0)
-          );
-        });
-      if (invalid) {
-        return Effect.succeed(unavailable(targets.map(({ target }) => `${target.permission}:${target.kind}`)));
-      }
-      const items = targets.map((entry): BatchItem => ({
-        key: toAssortmentPermissionAccessKey(principal.tenantId, legalEntityId, entry.target) ?? '',
-        permission: 'use',
-        resourceId: toAssortmentPermissionAccessObjectId(principal.tenantId, legalEntityId, entry.target) ?? '',
-        resourceType: 'business_permission',
-      }));
-      return checkBatch(items, principal.principalId);
-    },
-    businessPermissions: ({ principal, targets, trustedStorefrontId }) => {
-      const alternatives = targets.map((target) => {
-        const hasTrustedTenant = target.target.tenantId === principal.tenantId;
-        const hasCompatibleTarget =
-          isBusinessPermissionTargetCompatible(target) &&
-          hasCanonicalPricingAuthorizationTargetIds(target.target) &&
-          hasCanonicalInventoryAuthorizationTarget(target.target);
-        const hasTrustedStorefront =
-          target.target.kind !== 'counterparty_storefront' ||
-          (trustedStorefrontId !== undefined && trustedStorefrontId === target.target.storefrontId);
-        const requestedKey = toBusinessPermissionAccessKey(target);
-        if (!hasTrustedTenant || !hasCompatibleTarget || !hasTrustedStorefront) {
-          const noItems: readonly BatchItem[] = [];
-          return { items: noItems, requestedKey };
-        }
-        const exactItem: BatchItem = {
-          key: requestedKey,
-          permission: 'use',
-          resourceId: toBusinessPermissionAccessObjectId(target.permission, target.target) ?? '',
-          resourceType: 'business_permission',
-        };
-        if (target.target.kind !== 'counterparty_storefront') {
-          return { items: [exactItem], requestedKey };
-        }
-        const counterpartyTarget: BusinessPermissionAccessTarget = {
-          permission: target.permission,
-          target: {
-            counterpartyId: target.target.counterpartyId,
-            kind: 'counterparty',
-            legalEntityId: target.target.legalEntityId,
-            tenantId: target.target.tenantId,
-          },
-        };
-        const counterpartyKey = toBusinessPermissionAccessKey(counterpartyTarget);
-        return {
-          items: [
-            exactItem,
-            {
-              key: counterpartyKey,
-              permission: 'use',
-              resourceId:
-                toBusinessPermissionAccessObjectId(counterpartyTarget.permission, counterpartyTarget.target) ?? '',
-              resourceType: 'business_permission',
-            },
-          ],
-          requestedKey,
-        };
-      });
-      if (alternatives.some(({ items }) => items.length === 0)) {
-        return Effect.succeed(unavailable(alternatives.map(({ requestedKey }) => requestedKey)));
-      }
-      const batchItems = alternatives.flatMap(({ items: alternativeItems }) => alternativeItems);
-      const uniqueBatchItems = [...new Map(batchItems.map((item) => [item.key, item])).values()];
-      return checkBatch(uniqueBatchItems, principal.principalId).pipe(
-        Effect.map((results) => {
-          const resultsByKey = new Map(results.map((result) => [result.key, result]));
-          return alternatives.map(({ items: targetItems, requestedKey }) => {
-            const targetResults = resultsForBatchItems(targetItems, resultsByKey);
-            return {
-              decision:
-                targetResults.length === targetItems.length
-                  ? foldAlternativeDecisions(contextAccessDecisions(targetResults))
-                  : ('unavailable' as const),
-              key: requestedKey,
-            };
-          });
-        }),
-      );
-    },
     contextPermissions: ({ legalEntityId, principalId, targets, tenantId }) =>
       checkBatch(
         targets.map((target) => ({
@@ -1150,6 +343,38 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
         })),
         principalId,
       ),
+    ownerPermissions: ({ legalEntityId, principal, targets, trustedStorefrontId }) => {
+      const tenantScope = { tenantId: principal.tenantId };
+      const legalEntityScope = legalEntityId === undefined ? tenantScope : { ...tenantScope, legalEntityId };
+      const scope = trustedStorefrontId === undefined ? legalEntityScope : { ...legalEntityScope, trustedStorefrontId };
+      const keys = targets.map(({ target }) => target.key);
+      if (
+        principal.principalId.length === 0 ||
+        targets.some(({ target }) => !isOwnerPermissionAccessTargetValid(target, scope))
+      ) {
+        return Effect.succeed(unavailable(keys));
+      }
+      const alternatives = targets.map(({ target }) => ({
+        items: [target.objectId, ...(target.alternativeObjectIds ?? [])].map((objectId): BatchItem => ({
+          key: objectId,
+          permission: 'use',
+          resourceId: objectId,
+          resourceType: 'business_permission',
+        })),
+        requestedKey: target.key,
+      }));
+      const batchItems = alternatives.flatMap(({ items }) => items);
+      const uniqueBatchItems = [...new Map(batchItems.map((item) => [item.key, item])).values()];
+      return checkBatch(uniqueBatchItems, principal.principalId).pipe(
+        Effect.map((results) => {
+          const resultsByKey = new Map(results.map((result) => [result.key, result]));
+          return alternatives.map(({ items, requestedKey }) => ({
+            decision: foldAlternativeDecisions(contextAccessDecisions(resultsForBatchItems(items, resultsByKey))),
+            key: requestedKey,
+          }));
+        }),
+      );
+    },
     resources: ({ legalEntityId, permission = 'read', principalId, resources, tenantId }) =>
       checkBatch(
         resources.map((resource) => ({
@@ -1186,13 +411,11 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
 
 const unavailableContextAccess = (): ContextAccessService => {
   const service: ContextAccessService = {
-    assortmentPermissions: ({ targets }) =>
-      Effect.succeed(unavailable(targets.map(({ target }) => `${target.permission}:${target.kind}`))),
-    businessPermissions: ({ targets }) => Effect.succeed(unavailable(targets.map(toBusinessPermissionAccessKey))),
     contextPermissions: ({ targets }) => Effect.succeed(unavailable(targets.map(toContextPermissionAccessKey))),
     identityNamespaces: ({ authenticationNamespaceIds }) => Effect.succeed(unavailable(authenticationNamespaceIds)),
     legalEntities: ({ legalEntityIds }) => Effect.succeed(unavailable(legalEntityIds)),
     modules: ({ moduleIds }) => Effect.succeed(unavailable(moduleIds)),
+    ownerPermissions: ({ targets }) => Effect.succeed(unavailable(targets.map(({ target }) => target.key))),
     resources: ({ resources }) =>
       Effect.succeed(
         unavailable(

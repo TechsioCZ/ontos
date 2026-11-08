@@ -12,7 +12,9 @@ import {
 import { PartyRefSchema } from '../resources/party.ts';
 
 export const UpdatePartyPayloadSchema = Schema.Struct({
-  displayName: Schema.optionalKey(PartyDisplayNameSchema),
+  businessName: Schema.optionalKey(PartyDisplayNameSchema),
+  firstName: Schema.optionalKey(PartyDisplayNameSchema),
+  lastName: Schema.optionalKey(PartyDisplayNameSchema),
   expectedRevision: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0)),
   externalEvidence: Schema.optionalKey(AresAppliedEvidenceSchema),
   partyRef: PartyRefSchema,
@@ -23,8 +25,11 @@ export const UpdatePartyPayloadSchema = Schema.Struct({
   validFrom: IsoTimestampSchema,
 }).check(
   Schema.makeFilter((input) =>
-    input.displayName === undefined && input.partyType === undefined
-      ? 'a display-name change or Party Type enrichment is required'
+    input.firstName === undefined &&
+    input.lastName === undefined &&
+    input.businessName === undefined &&
+    input.partyType === undefined
+      ? 'a name change or Party Type enrichment is required'
       : undefined,
   ),
 );

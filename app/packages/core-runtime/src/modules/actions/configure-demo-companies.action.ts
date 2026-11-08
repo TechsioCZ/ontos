@@ -65,6 +65,15 @@ const handleConfigureDemoCompanies = Effect.fn('ConfigureDemoCompanies.handle')(
 });
 export const configureDemoCompaniesAction = defineAction(
   {
+    // Demo company configuration is tenant administration of the selected companies (O43, O81).
+    accessDeclaration: {
+      key: 'core.identity.demo-companies.configure',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'core.identity.configure-demo-companies.access.v1',
@@ -75,7 +84,7 @@ export const configureDemoCompaniesAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.configure-demo-companies',
       moduleKey: 'core.identity',
       role: 'action',
@@ -87,7 +96,6 @@ export const configureDemoCompaniesAction = defineAction(
     policies: [],
     resultSchema: ConfigureDemoCompaniesResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_identity',
   },
   handleConfigureDemoCompanies,
   (transaction, scope) =>

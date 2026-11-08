@@ -1,3 +1,4 @@
+import { pendingProposalMessage } from '../../../../api/action-result.ts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { dialogCloseLabel } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -49,9 +50,10 @@ export const ResetDemoDialog = ({ onDismiss, onReset, open, revision }: ResetDem
           onFailure: (failure) => {
             setBusy(false);
             setError(
-              isRevisionConflict(failure)
-                ? 'Data se mezitím změnila (např. nová objednávka z e-shopu). Zavřete okno, načtěte stránku a zkuste to znovu.'
-                : 'Obnovení se nepodařilo, nic se nezměnilo. Zkuste to prosím znovu.',
+              pendingProposalMessage(failure) ??
+                (isRevisionConflict(failure)
+                  ? 'Data se mezitím změnila (např. nová objednávka z e-shopu). Zavřete okno, načtěte stránku a zkuste to znovu.'
+                  : 'Obnovení se nepodařilo, nic se nezměnilo. Zkuste to prosím znovu.'),
             );
           },
           onSuccess: () => {

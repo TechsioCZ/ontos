@@ -453,14 +453,20 @@ it.live('shares a still-pending compatible request even after the freshness wind
   }),
 );
 
-const datasetTarget = {
+const datasetTarget = Schema.decodeUnknownSync(ResolvedModuleTargetSchema)({
+  appId: 'dataset',
+  componentKey: 'dataset.core.page-dataset',
   compositionRevision: revision,
+  entrypointKey: 'dataset.core.page.dataset',
   federation: {
     expose: './Dataset',
     manifest: { sha256: 'b'.repeat(64), url: 'https://assets.example.test/dataset/mf-manifest.json' },
     remoteName: 'datasetFixture',
   },
-};
+  moduleId: 'dataset.core',
+  routeParameters: {},
+  writable: false,
+});
 
 it.live('restarts the entire declared dataset across a write', () =>
   Effect.gen(function* datasetWriteReproducer() {

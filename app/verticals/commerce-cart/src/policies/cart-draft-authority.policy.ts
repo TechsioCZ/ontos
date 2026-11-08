@@ -1,8 +1,8 @@
 import type {
+  OwnerAccessFacts,
   OwnerAuthorizationDecision,
   OwnerAuthorizationInput,
   OwnerAuthorizationOverlayService,
-  OwnerAuthorizationTarget,
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
 import type { CartDraftRejected } from '../../shared/domain/cart-draft.ts';
@@ -13,7 +13,6 @@ import {
   defineMicroverticalPolicy,
   denyPolicy,
   isVerifiedGatewayPrincipalContext,
-  transactionalOwnerAuthorization,
 } from '@app/core-runtime';
 import { InitializePopulationAuthorityPayloadSchema } from '../../shared/actions/initialize-population-authority.ts';
 import { CreateCartDraftPayloadSchema } from '../../shared/actions/create-cart-draft.ts';
@@ -89,87 +88,109 @@ const deniedOwnerDecision = (failure: CartDraftRejected): OwnerAuthorizationDeci
     ),
     Match.exhaustive,
   );
-const tenantAccessTarget = (target: OwnerAuthorizationTarget, tenantId: string) =>
-  target.kind === 'tenant' && target.permission === 'access' && target.tenantId === tenantId;
-const cartWriteTarget = (target: OwnerAuthorizationTarget) =>
-  target.kind === 'resource' &&
-  target.permission === 'write' &&
-  target.resource.moduleId === cartModuleKey &&
-  target.resource.resourceType === 'commerce.cart.cart';
-const populationReadTarget = (input: OwnerAuthorizationInput, target: OwnerAuthorizationTarget) =>
-  input.operationKey === populationReadKey &&
-  input.scope.legalEntityId === undefined &&
-  tenantAccessTarget(target, input.scope.tenantId);
-const matchingOwnerScope = (transaction: ScopedTransactionExecutor, input: OwnerAuthorizationInput) =>
-  input.owningModuleKey === cartModuleKey &&
-  transaction.scope.tenantId === input.scope.tenantId &&
-  transaction.scope.legalEntityId === input.scope.legalEntityId;
 
-type CartResourceTarget = Extract<OwnerAuthorizationTarget, { readonly kind: 'resource' }>;
-type OwnerAuthorityPlan =
+const cartResourceType = 'commerce.cart.cart';
+const targetModuleKey = `${cartModuleKey}.target.moduleKey` as const;
+const targetResourceType = `${cartModuleKey}.target.resourceType` as const;
+const targetResourceId = `${cartModuleKey}.target.resourceId` as const;
+
+/**
+ * The one Cart record a draft command acts on (O70). Facts are never authority: the gate decides the
+ * capability, and the transaction-scoped owner service proves that this exact Cart belongs to the
+ * acting Client, is OPEN and lives in the selected Legal Entity.
+ */
+export const cartTargetOwnerFacts = (
+  cartRef: Readonly<{ moduleId: string; resourceId: string }>,
+): OwnerAccessFacts => ({
+  [targetModuleKey]: cartRef.moduleId,
+  [targetResourceId]: cartRef.resourceId,
+  [targetResourceType]: cartResourceType,
+});
+
+const ownedCartTarget = (
+  facts: OwnerAccessFacts | undefined,
+): Readonly<{ moduleId: string; resourceId: string; resourceType: string }> | undefined => {
+  const moduleId = facts?.[targetModuleKey];
+  const resourceId = facts?.[targetResourceId];
+  const resourceType = facts?.[targetResourceType];
+  return moduleId === undefined || resourceId === undefined || resourceType === undefined
+    ? undefined
+    : { moduleId, resourceId, resourceType };
+};
+
+const matchingOwnerScope = (transaction: ScopedTransactionExecutor, input: OwnerAuthorizationInput) =>
+  transaction.scope.tenantId === input.scope.tenantId && transaction.scope.legalEntityId === input.scope.legalEntityId;
+
+export type CartOwnerAuthorityPlan =
   | { readonly kind: 'allowed' }
-  | { readonly kind: 'cart_write'; readonly resource: CartResourceTarget['resource'] }
+  | {
+      readonly kind: 'cart_write';
+      readonly resource: Readonly<{ moduleId: string; resourceId: string; resourceType: string }>;
+    }
   | { readonly kind: 'denied' }
   | { readonly kind: 'initialization' }
   | { readonly kind: 'population' };
-const deniedPlan: OwnerAuthorityPlan = { kind: 'denied' };
+const deniedPlan: CartOwnerAuthorityPlan = { kind: 'denied' };
+const allowedPlan: CartOwnerAuthorityPlan = { kind: 'allowed' };
 
-const planReadAuthority = (input: OwnerAuthorizationInput, target: OwnerAuthorizationTarget): OwnerAuthorityPlan => {
-  if (
-    (input.operationKey === finalReadKey || input.operationKey === preapprovalObservationReadKey) &&
-    input.scope.legalEntityId !== undefined &&
-    target.kind === 'module' &&
-    target.moduleId === cartModuleKey
-  ) {
-    // Core independently requires current module access. The transaction-scoped
-    // read service enforces exact service grants for consumption and matches the
-    // persisted buyer (or an explicit service grant) for source-revision recovery. The
-    // preapproval observation read is bound the same way: exact buyer or configured service.
-    return isVerifiedGatewayPrincipalContext(input.scope) ? { kind: 'allowed' } : deniedPlan;
+/**
+ * Read authority of the Cart surfaces. Both Cart reads are bound to the verified gateway principal:
+ * the transaction-scoped read service enforces exact service grants for consumption and matches the
+ * persisted buyer (or an explicit service grant) for source-revision recovery.
+ */
+const planReadAuthority = (input: OwnerAuthorizationInput): CartOwnerAuthorityPlan => {
+  if (input.operationKey === finalReadKey || input.operationKey === preapprovalObservationReadKey) {
+    return input.scope.legalEntityId !== undefined && isVerifiedGatewayPrincipalContext(input.scope)
+      ? allowedPlan
+      : deniedPlan;
   }
-  return populationReadTarget(input, target) ? { kind: 'population' } : deniedPlan;
+  if (input.operationKey === populationReadKey) {
+    return input.scope.legalEntityId === undefined ? { kind: 'population' } : deniedPlan;
+  }
+  return deniedPlan;
 };
-const planWriteAuthority = (input: OwnerAuthorizationInput, target: OwnerAuthorizationTarget): OwnerAuthorityPlan =>
-  (input.operationKey !== reviseKey && input.operationKey !== closeKey && input.operationKey !== finalizeKey) ||
-  target.kind !== 'resource' ||
-  !cartWriteTarget(target) ||
-  input.scope.legalEntityId === undefined
+
+const planWriteAuthority = (input: OwnerAuthorizationInput): CartOwnerAuthorityPlan => {
+  if (input.operationKey === initKey) {
+    return input.scope.legalEntityId === undefined ? { kind: 'initialization' } : deniedPlan;
+  }
+  if (input.operationKey === createKey) {
+    return input.scope.legalEntityId === undefined ? deniedPlan : { kind: 'population' };
+  }
+  if (input.operationKey !== reviseKey && input.operationKey !== closeKey && input.operationKey !== finalizeKey) {
+    return deniedPlan;
+  }
+  const resource = ownedCartTarget(input.ownerFacts);
+  return resource === undefined || input.scope.legalEntityId === undefined
     ? deniedPlan
-    : { kind: 'cart_write', resource: target.resource };
-const planOwnerAuthority = (
-  transaction: ScopedTransactionExecutor,
-  input: OwnerAuthorizationInput,
-): OwnerAuthorityPlan => {
-  if (!matchingOwnerScope(transaction, input)) {
-    return deniedPlan;
-  }
-  if (input.operation === 'action' && input.operationKey === initKey) {
-    return input.targets.length !== 0 || input.scope.legalEntityId !== undefined
-      ? deniedPlan
-      : { kind: 'initialization' };
-  }
-  if (input.operation === 'action' && input.operationKey === createKey) {
-    return input.targets.length !== 0 || input.scope.legalEntityId === undefined ? deniedPlan : { kind: 'population' };
-  }
-  const [target] = input.targets;
-  if (input.targets.length !== 1 || target === undefined) {
-    return deniedPlan;
-  }
-  return input.operation === 'read' ? planReadAuthority(input, target) : planWriteAuthority(input, target);
+    : { kind: 'cart_write', resource };
 };
+
+/**
+ * The pure owner plan of one Cart operation: which Cart-owned state must be proven before the
+ * command runs. It names no Core permission - the gate owns the capability (O62, O70).
+ */
+export const cartOwnerAuthorityPlan = (input: OwnerAuthorizationInput): CartOwnerAuthorityPlan =>
+  input.operation === 'read' ? planReadAuthority(input) : planWriteAuthority(input);
 
 const authorizeCartOwner = Effect.fn('CartDraftAuthorityPolicy.authorizeCartOwner')(
   function* authorizeCartOwnerEffect(transaction: ScopedTransactionExecutor, input: OwnerAuthorizationInput) {
-    const plan = planOwnerAuthority(transaction, input);
+    if (!matchingOwnerScope(transaction, input)) {
+      return 'denied' as const;
+    }
+    const plan = cartOwnerAuthorityPlan(input);
     if (plan.kind === 'denied') {
       return 'denied' as const;
+    }
+    if (plan.kind === 'allowed') {
+      return 'allowed' as const;
     }
     const authority = cartAuthorityForScope(transaction, input.scope);
     if (plan.kind === 'initialization') {
       yield* authority.assertInitializationAuthority();
     } else if (plan.kind === 'population') {
       yield* authority.assertPopulationAuthority();
-    } else if (plan.kind === 'cart_write') {
+    } else {
       yield* authority.assertCartWriteAuthority(plan.resource);
     }
     return 'allowed' as const;
@@ -177,8 +198,16 @@ const authorizeCartOwner = Effect.fn('CartDraftAuthorityPolicy.authorizeCartOwne
   Effect.catchTag('CartDraftRejected', (failure) => Effect.succeed(deniedOwnerDecision(failure))),
 );
 
-export const cartOwnerAuthorizationOverlay: OwnerAuthorizationOverlayService =
-  transactionalOwnerAuthorization(authorizeCartOwner);
+/**
+ * The Cart owner rule over its own state (O67-Q1, O70). A Cart deployment registers only its own
+ * module, so an entrypoint of another module is answered by the gate alone.
+ */
+export const cartOwnerAuthorizationOverlay: OwnerAuthorizationOverlayService = {
+  authorize: (transaction, input) =>
+    input.owningModuleKey === cartModuleKey
+      ? authorizeCartOwner(transaction, input)
+      : Effect.succeed('allowed' as const),
+};
 export const CartOwnerAuthorizationOverlayLive = Layer.succeed(
   OwnerAuthorizationOverlay,
   cartOwnerAuthorizationOverlay,

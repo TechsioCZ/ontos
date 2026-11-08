@@ -236,7 +236,9 @@ it.layer(Layer.merge(NodeCrypto.layer, outboxWorkerCompositionLayer(makeOutboxWo
             Effect.provideService(ContextAccess, Context.get(services, ContextAccess)),
             Effect.provideService(ActionAuthority, {
               checkActionAuthorities: (targets) => {
-                expect(targets).toEqual([]);
+                // The canonical question names the exact installed Action keys in the request's own scope;
+                // an empty composition publishes none, so no scalar identity is rebuilt here (O66).
+                expect(targets).toEqual({ actionKeys: [], scope });
                 return Effect.succeed([]);
               },
               checkActionProposalPermission: () => Effect.die('Activity must never check proposal authority'),
@@ -322,6 +324,16 @@ const executableComposition = () => {
           ...contract.manifest.publicSurface,
           actions: [
             {
+              // A protected Action entrypoint must carry its own capability (O62), so the fixture declares
+              // one under its owning module. The read's module visibility is this declaration's gate answer.
+              accessDeclaration: {
+                key: 'work.tasks.update.run',
+                kind: 'action',
+                modes: ['run'],
+                placement: { group: 'tasks', level: 'extended' },
+                risk: 'routine',
+                selectors: [],
+              },
               actionKey: 'work.tasks.update',
               auditProfile: 'standard',
               entrypoint: {
@@ -365,10 +377,13 @@ const executableComposition = () => {
 it.layer(Layer.merge(NodeCrypto.layer, outboxWorkerCompositionLayer(executableComposition())))(
   'Executable activity composition',
   (suite) => {
-    for (const [name, execute, moduleDecision, sqlCount] of [
+    // Canonical module visibility (O62, O67-Q5): a module is visible exactly when the gate admits an
+    // Action of its own, so the only axis is the Action answer. A principal that holds no legacy
+    // `module_access` tuple is seen through this answer alone — no `ContextAccess.modules` is consulted.
+    for (const [name, execute, propose, sqlCount] of [
       ['execution right', 'allowed', 'allowed', 4],
       ['proposal right alone', 'denied', 'allowed', 0],
-      ['execution without module access', 'allowed', 'denied', 0],
+      ['no Action right at all', 'denied', 'denied', 0],
     ] as const) {
       suite.effect(`activity independently checks ${name}`, () =>
         Effect.gen(function* executableAdmission() {
@@ -385,6 +400,8 @@ it.layer(Layer.merge(NodeCrypto.layer, outboxWorkerCompositionLayer(executableCo
           const services = yield* Layer.build(harness.layer);
           const contextAccess = Context.get(services, ContextAccess);
           const executeDecision: ActionPermissionDecision = execute;
+          const proposeDecision: ActionPermissionDecision = propose;
+          let moduleAccessReads = 0;
           const result = yield* harness.runtime
             .runRead({
               input: { request: {}, visibleModules: ['work.tasks'] },
@@ -395,30 +412,74 @@ it.layer(Layer.merge(NodeCrypto.layer, outboxWorkerCompositionLayer(executableCo
             .pipe(
               Effect.provideService(ContextAccess, {
                 ...contextAccess,
-                modules: (target) => {
-                  expect(target).toEqual({ legalEntityId, moduleIds: ['work.tasks'], principalId, tenantId });
-                  return Effect.succeed([{ decision: moduleDecision, key: 'work.tasks' }]);
+                // The legacy module tuple is never consulted: a v2-only principal still sees the module.
+                modules: () => {
+                  moduleAccessReads += 1;
+                  return Effect.die('Activity must not read legacy module_access');
                 },
               }),
               Effect.provideService(ActionAuthority, {
-                checkActionAuthorities: (targets) => {
-                  expect(targets).toEqual(
-                    moduleDecision === 'allowed'
-                      ? [{ actionKey: 'work.tasks.update', legalEntityId, principalId, tenantId }]
-                      : [],
-                  );
+                checkActionAuthorities: (query) => {
+                  // The canonical question names the exact installed Action keys in the request's own
+                  // resolved scope, never a rebuilt scalar identity (O66).
+                  expect(query).toEqual({ actionKeys: ['work.tasks.update'], scope });
                   return Effect.succeed(
-                    targets.map((target) => ({ ...target, execute: executeDecision, propose: 'allowed' as const })),
+                    query.actionKeys.map((actionKey) => ({
+                      actionKey,
+                      execute: executeDecision,
+                      propose: proposeDecision,
+                    })),
                   );
                 },
                 checkActionProposalPermission: () => Effect.die('Activity never uses proposal permission'),
               }),
             );
           expect(result).toEqual({ access: [], audit: [], names: [], proposalOnlyAgentIds: [], proposals: [] });
+          expect(moduleAccessReads).toBe(0);
           expect(harness.snapshot().ownerQueries).toHaveLength(sqlCount);
           expect(harness.snapshot().evidenceWrites).toBe(1);
         }),
       );
     }
+
+    // A principal with zero legacy `module_access` tuples but a v2 grant on the module's own Action sees
+    // the module: visibility comes from the gate's answer over the published carrier, nothing else.
+    suite.effect('sees a module for a v2-only principal that holds no legacy module tuple', () =>
+      Effect.gen(function* v2OnlyPrincipal() {
+        const harness = yield* makeReadTestHarness({
+          executeOwnerQuery: () => Effect.succeed([]),
+          operationTime,
+          ownerAuthorizationDecision: 'allowed',
+          permissionDecision: 'allowed',
+          scope,
+        });
+        const services = yield* Layer.build(harness.layer);
+        const contextAccess = Context.get(services, ContextAccess);
+        const result = yield* harness.runtime
+          .runRead({
+            input: { request: {}, visibleModules: ['work.tasks'] },
+            principal: scope,
+            registration: agentActivityRead,
+            transport,
+          })
+          .pipe(
+            Effect.provideService(ContextAccess, {
+              ...contextAccess,
+              modules: () => Effect.die('A v2-only principal holds no legacy module tuple'),
+            }),
+            Effect.provideService(ActionAuthority, {
+              checkActionAuthorities: () =>
+                Effect.succeed([
+                  { actionKey: 'work.tasks.update', execute: 'allowed' as const, propose: 'allowed' as const },
+                ]),
+              checkActionProposalPermission: () => Effect.die('Activity never uses proposal permission'),
+            }),
+          );
+        expect(result).toEqual({ access: [], audit: [], names: [], proposalOnlyAgentIds: [], proposals: [] });
+        // The module's own Action admitted the module, so its owner rows were read.
+        expect(harness.snapshot().ownerQueries).toHaveLength(4);
+        expect(harness.snapshot().evidenceWrites).toBe(1);
+      }),
+    );
   },
 );

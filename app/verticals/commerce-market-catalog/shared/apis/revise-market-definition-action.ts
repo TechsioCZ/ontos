@@ -2,6 +2,8 @@
 // @ontos-action-http-owner commerce.market-catalog
 // @ontos-action-http-slug revise-market-definition
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,6 +12,7 @@ import {
 } from '../actions/revise-market-definition.ts';
 
 export { ReviseMarketDefinitionPayloadSchema } from '../actions/revise-market-definition.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const ReviseMarketDefinitionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReviseMarketDefinitionActionInvalidProblem',
@@ -24,6 +27,7 @@ export const ReviseMarketDefinitionActionForbiddenProblemSchema = makeProblemDet
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -157,7 +161,7 @@ export const reviseMarketDefinitionActionGroupDefinition = HttpApiGroup.make('re
     HttpApiEndpoint.post('execute', '/commerce-market-catalog/actions/revise-market-definition', {
       error: actionErrors,
       payload: Schema.toEncoded(ReviseMarketDefinitionPayloadSchema),
-      success: ReviseMarketDefinitionResultSchema,
+      success: [ActionProposalAcceptedSchema, ReviseMarketDefinitionResultSchema],
     }),
   )
   .middleware(ReviseMarketDefinitionActionSchemaErrorMiddleware);

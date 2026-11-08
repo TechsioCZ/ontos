@@ -133,6 +133,19 @@ const prepareOrderRevalidationServices: ActionServicePreflight<
 
 export const revalidateOrderPurchaseApprovalAction = defineAction(
   {
+    accessActor: {
+      callers: ['commerce-order'],
+      reason: 'The Order service revalidates an order purchase approval for the buyer during order finalization',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.customer-context.order-purchase-approval.revalidate',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'purchasing-approval', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.revalidate-order-purchase-approval.access.v1',
@@ -144,7 +157,7 @@ export const revalidateOrderPurchaseApprovalAction = defineAction(
     domainEvents: { 'commerce.customer-context.approval-revalidated.v1': ApprovalRevalidatedEventSchema },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.revalidate-order-purchase-approval',
       moduleKey: MODULE_KEY,
       role: 'action',

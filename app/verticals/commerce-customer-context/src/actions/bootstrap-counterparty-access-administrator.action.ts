@@ -8,6 +8,7 @@ import {
   isTrustedSystemPrincipalContext,
   isVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime';
+import { reconcileAccessPortalAfterAttempt } from '@app/core-runtime/access/portal';
 import { Effect } from 'effect';
 import {
   BootstrapCounterpartyAccessAdministratorPayloadSchema,
@@ -22,6 +23,8 @@ import {
 import type { CounterpartyAccessPortService } from '../../shared/domain/access-port.ts';
 import { counterpartyAccessServicesForTransaction } from '../access-services.ts';
 import {
+  accessGrantEventFields,
+  accessGrantEventSubject,
   auditEvidence,
   deniedAccessAuditEvidence,
   principalRefFromContext,
@@ -30,13 +33,12 @@ import {
   requireAccessScope,
 } from './access-action-support.ts';
 import {
-  BootstrapCounterpartyAccessAdministratorCommerceCustomerContextCounterpartyAccessAdministratorBootstrapAuthorizationMutationRequestedV1OutboxPayloadSchema as AuthorizationMutationRequestedEventSchema,
-  createBootstrapCounterpartyAccessAdministratorCommerceCustomerContextCounterpartyAccessAdministratorBootstrapAuthorizationMutationRequestedV1OutboxMessage as createAuthorizationMutationRequestedOutboxMessage,
-} from './bootstrap-counterparty-access-administrator.commerce-customer-context-counterparty-access-administrator-bootstrap-authorization-mutation-requested-v1.outbox-message.ts';
+  BootstrapCounterpartyAccessAdministratorCommerceCustomerContextCounterpartyAccessAdministratorBootstrappedV1OutboxPayloadSchema as AdministratorBootstrappedEventSchema,
+  createBootstrapCounterpartyAccessAdministratorCommerceCustomerContextCounterpartyAccessAdministratorBootstrappedV1OutboxMessage as createAdministratorBootstrappedOutboxMessage,
+} from './bootstrap-counterparty-access-administrator.commerce-customer-context-counterparty-access-administrator-bootstrapped-v1.outbox-message.ts';
 
 const domainEvents = {
-  'commerce.customer-context.counterparty-access-administrator-bootstrap-authorization-mutation-requested.v1':
-    AuthorizationMutationRequestedEventSchema,
+  'commerce.customer-context.counterparty-access-administrator-bootstrapped.v1': AdministratorBootstrappedEventSchema,
 } as const;
 const accessManagementPermission = 'counterparty.access.manage' as const;
 
@@ -95,35 +97,40 @@ const handle = Effect.fn('BootstrapCounterpartyAccessAdministrator.handle')(func
       target: payload.recipient,
     }),
   );
-  if (result.outcome === 'RECONCILIATION_REQUIRED' && result.reconciliation.staged) {
+  if (result.outcome === 'APPLIED') {
+    const { grant } = result;
     const eventPayload = {
-      catalogVersion: result.grant.catalogVersion,
-      counterpartyRef: result.grant.counterpartyRef,
-      grantRef: result.grant.grantRef,
-      legalEntityId,
-      mutationId: result.reconciliation.mutationId,
-      operation: result.reconciliation.operation,
-      schemaVersion: '1' as const,
+      ...accessGrantEventFields(grant),
+      bootstrappedAt: grant.grantedAt,
+      bootstrappedBy: grant.grantedBy,
     };
     const event = yield* context.addDomainEvent({
-      eventType:
-        'commerce.customer-context.counterparty-access-administrator-bootstrap-authorization-mutation-requested.v1',
+      ...accessGrantEventSubject(grant),
+      eventType: 'commerce.customer-context.counterparty-access-administrator-bootstrapped.v1',
       payloadJson: eventPayload,
-      producerModuleKey: result.grant.grantRef.moduleId,
-      subjectModuleKey: result.grant.grantRef.moduleId,
-      subjectResourceId: result.grant.grantRef.resourceId,
-      subjectResourceType: result.grant.grantRef.resourceType,
     });
-    yield* context.addOutboxMessage(event, createAuthorizationMutationRequestedOutboxMessage(eventPayload));
+    yield* context.addOutboxMessage(event, createAdministratorBootstrappedOutboxMessage(eventPayload));
   }
   return result;
 });
 
 export const bootstrapCounterpartyAccessAdministratorAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.counterparty-access-administrator.bootstrap',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'counterparty-access', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.bootstrap-counterparty-access-administrator.access.v1',
+    },
+    accessWorkload: {
+      reason: 'A trusted system workload bootstraps a counterparty access administrator before any human can act',
+      workloads: ['commerce.storefront-client'],
     },
     actionKey: 'commerce.customer-context.bootstrap-counterparty-access-administrator',
     auditEvidenceSchema: AccessAuditEvidenceSchema,
@@ -144,7 +151,7 @@ export const bootstrapCounterpartyAccessAdministratorAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.bootstrap-counterparty-access-administrator',
       moduleKey: 'commerce.customer-context',
       role: 'action',
@@ -162,4 +169,7 @@ export const bootstrapCounterpartyAccessAdministratorAction = defineAction(
     counterpartyAccessServicesForTransaction(transaction, scope).pipe(
       Effect.map((port) => ({ bootstrap: port.bootstrapAdministrator })),
     ),
+  undefined,
+  // The administrator grant committed its portal access with it; the engine follows once it committed.
+  reconcileAccessPortalAfterAttempt(),
 );

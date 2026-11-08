@@ -1,216 +1,155 @@
+import { Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { toContextPermissionAccessObjectId } from '../../packages/core-runtime/src/permissions/context-access.ts';
-import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
-import { toSpiceDbActionGrantObjectId } from '../../packages/core-runtime/src/permissions/service.ts';
-import { demoLegalEntityId, demoTenantId, rentalDemoLegalEntityId } from '../demo/fixture-ids.mts';
+import type { CatalogSnapshotEntry } from '../../packages/core-runtime/src/access/model.ts';
+import { CatalogSnapshotEntrySchema } from '../../packages/core-runtime/src/access/model.ts';
+import { ModuleKeySchema } from '../../packages/core-runtime/src/access/ids.ts';
+import { PROPOSAL_REVIEW_CAPABILITY, policyRoleCells, policyRoleKeys } from '../demo/access-policy.mts';
 import {
-  agentBotPrincipal,
-  demoHumanAccounts,
-  demoPermissionRelationships,
-  principalRelationships,
-  siamparkRentalPersonas,
-  storefrontPrincipal,
+  crmDemoRoles,
+  crmReadCapability,
+  crmWriteCapability,
+  crmAssignCapability,
+  crmNavigationKeys,
+  demoRoles,
+  eshopDemoRoles,
+  rentalDemoRoles,
+  pipelineWriterKeys,
+  partyHumanWriterKeys,
 } from '../demo/permissions.mts';
-import type { DemoAction, DemoPermissionInstallation, DemoRelationship } from '../demo/permissions.mts';
+import type { DemoRole } from '../demo/permissions.mts';
 
-const principalId = 'operator-a';
-const lifecycleKey = 'core.identity.mutate-agent-proposals';
-const taskKey = 'work.tasks.apply-command';
-const taskModule = 'work.tasks';
-const billingKey = 'finance.billing.apply-command';
-const merchandiseKey = 'demo.merchandise.apply-command';
-const descriptor = (actionKey: string, owningModuleKey: string): DemoAction => ({
-  actionKey,
-  legalEntityScope: 'required',
-  owningModuleKey,
-  provisioning: 'explicit',
-});
-const lifecycle = descriptor(lifecycleKey, 'core.identity');
-const actions = [
-  lifecycle,
-  descriptor('core.identity.configure-agent', 'core.identity'),
-  descriptor(taskKey, taskModule),
-  descriptor(billingKey, 'finance.billing'),
-  descriptor(merchandiseKey, 'demo.merchandise'),
-];
-const publishedModuleKeys = [taskModule, 'finance.billing', 'demo.merchandise'];
-const installation: DemoPermissionInstallation = {
-  companies: [demoLegalEntityId, rentalDemoLegalEntityId].map((legalEntityId) => ({
-    legalEntityId,
-    status: 'active',
-    tenantId: demoTenantId,
-  })),
-  moduleStates: publishedModuleKeys.map((moduleKey) => ({ moduleKey, state: 'active', tenantId: demoTenantId })),
-  publishedModuleKeys,
-};
-const grantsFor = (rows: readonly DemoRelationship[], targetPrincipalId: string) => {
-  const roles = new Set(
-    rows
-      .filter(
-        (row) =>
-          row.resourceType === 'scoped_role' &&
-          row.relation === 'member' &&
-          row.subjectType === 'principal' &&
-          row.subjectId === targetPrincipalId,
-      )
-      .map((row) => row.resourceId),
-  );
-  return rows.filter(
-    (row) =>
-      row.resourceType === 'action_grant' &&
-      row.relation === 'role' &&
-      row.subjectType === 'scoped_role' &&
-      row.subjectRelation === 'member' &&
-      roles.has(row.subjectId),
-  );
-};
-const hasGrant = (
-  rows: readonly DemoRelationship[],
-  targetPrincipalId: string,
-  actionKey: string,
-  legalEntityId: string = demoLegalEntityId,
-) =>
-  grantsFor(rows, targetPrincipalId).some(
-    (row) => row.resourceId === toSpiceDbActionGrantObjectId({ actionKey, legalEntityId, tenantId: demoTenantId }),
-  );
-
-it('provisions human lifecycle execution explicitly while retaining each actual operator business grant boundary', () => {
-  const rows = demoPermissionRelationships(actions, installation);
-  const [, sales, accounting, warehouse] = demoHumanAccounts;
-  for (const human of demoHumanAccounts) {
-    expect(hasGrant(rows, human.principalId, lifecycleKey)).toBe(true);
-    expect(hasGrant(rows, human.principalId, 'core.identity.configure-agent')).toBe(false);
-  }
-  expect(hasGrant(rows, sales.principalId, taskKey)).toBe(true);
-  expect(hasGrant(rows, sales.principalId, billingKey)).toBe(false);
-  expect(hasGrant(rows, accounting.principalId, billingKey)).toBe(true);
-  expect(hasGrant(rows, accounting.principalId, taskKey)).toBe(false);
-  expect(hasGrant(rows, warehouse.principalId, merchandiseKey)).toBe(true);
-  expect(hasGrant(rows, warehouse.principalId, billingKey)).toBe(false);
-  expect(hasGrant(rows, warehouse.principalId, lifecycleKey, rentalDemoLegalEntityId)).toBe(false);
-  expect(hasGrant(rows, siamparkRentalPersonas[1].principalId, lifecycleKey, rentalDemoLegalEntityId)).toBe(true);
-  expect(hasGrant(rows, siamparkRentalPersonas[3].principalId, lifecycleKey, rentalDemoLegalEntityId)).toBe(false);
-  for (const principal of [agentBotPrincipal, storefrontPrincipal]) {
-    expect(grantsFor(rows, principal.principalId).length).toBeGreaterThan(0);
-    expect(
-      grantsFor(rows, principal.principalId).some(
-        (row) =>
-          row.resourceId ===
-          toSpiceDbActionGrantObjectId({
-            actionKey: lifecycleKey,
-            legalEntityId: demoLegalEntityId,
-            tenantId: demoTenantId,
-          }),
-      ),
-    ).toBe(false);
-  }
-});
-
-it('uses the existing exact company role, never a tenant, foreign company or direct principal executor', () => {
-  const roleKey = 'operations';
-  const rows = principalRelationships(
-    principalId,
-    {
-      label: 'Operator',
-      modules: { 'work.tasks': 'write' },
-      proposalReview: true,
-    },
-    actions,
-    demoLegalEntityId,
-    demoTenantId,
-    roleKey,
-  );
-  const grants = grantsFor(rows, principalId);
-  expect(new Set(grants.map((row) => row.resourceId))).toEqual(
-    new Set(
-      [taskKey, lifecycleKey].map((actionKey) =>
-        toSpiceDbActionGrantObjectId({ actionKey, legalEntityId: demoLegalEntityId, tenantId: demoTenantId }),
-      ),
-    ),
-  );
-  expect(
-    grants.every(
-      (row) =>
-        row.subjectId === toScopedRoleObjectId({ legalEntityId: demoLegalEntityId, roleKey, tenantId: demoTenantId }),
-    ),
-  ).toBe(true);
-  expect(
-    grants.some(
-      (row) => row.resourceId === toSpiceDbActionGrantObjectId({ actionKey: lifecycleKey, tenantId: demoTenantId }),
-    ),
-  ).toBe(false);
-  const foreign = principalRelationships(
-    principalId,
-    { label: 'Operator', modules: { 'work.tasks': 'write' }, proposalReview: true },
-    actions,
-    rentalDemoLegalEntityId,
-    'foreign-tenant',
-    roleKey,
-  );
-  expect(
-    grantsFor(foreign, principalId).some((row) => grants.some((grant) => grant.resourceId === row.resourceId)),
-  ).toBe(false);
-  expect(rows.some((row) => row.relation === 'executor')).toBe(false);
-});
-
-it('does not infer lifecycle review authority from a role name, label or business write access', () => {
-  const rows = principalRelationships(
-    principalId,
-    {
-      label: 'Administrator',
-      modules: { 'work.tasks': 'write' },
-    },
-    actions,
-    demoLegalEntityId,
-    demoTenantId,
-    'superadmin',
-  );
-  expect(hasGrant(rows, principalId, taskKey)).toBe(true);
-  expect(hasGrant(rows, principalId, lifecycleKey)).toBe(false);
-});
-
-it('lifecycle review policy does not confer missing business execution or named write permissions', () => {
-  const rows = principalRelationships(
-    principalId,
-    {
-      label: 'Reviewer',
-      modules: { 'work.tasks': 'read' },
-      proposalReview: true,
-    },
-    actions,
-  );
-  expect(hasGrant(rows, principalId, lifecycleKey)).toBe(true);
-  expect(hasGrant(rows, principalId, taskKey)).toBe(false);
-  expect(grantsFor(rows, principalId)).toHaveLength(1);
-  expect(rows.some((row) => row.relation === 'writer_role')).toBe(false);
-  const writePermissionId = toContextPermissionAccessObjectId(demoTenantId, demoLegalEntityId, {
-    moduleId: taskModule,
-    permission: 'work.tasks.write_all',
+const entry = (key: string, overrides: Partial<CatalogSnapshotEntry> = {}): CatalogSnapshotEntry =>
+  Schema.decodeUnknownSync(CatalogSnapshotEntrySchema)({
+    key,
+    kind: 'action',
+    modes: ['run', 'propose', 'approve'],
+    moduleKey: key.split('.').slice(0, 2).join('.'),
+    placement: { group: 'records', level: 'basic' },
+    risk: 'sensitive',
+    selectors: [],
+    ...overrides,
   });
-  expect(
-    rows.some(
-      (row) =>
-        row.resourceType === 'context_permission' &&
-        row.resourceId === writePermissionId &&
-        row.relation === 'role_grantee',
-    ),
-  ).toBe(false);
+
+/** Every module the reviewed Roles name, each with one routine read capability. */
+const modulesNamedByRoles = [
+  'commerce.customer-context',
+  'commerce.market-catalog',
+  'commerce.storefront-registry',
+  'core.identity',
+  'crm.activities',
+  'demo.crm',
+  'demo.merchandise',
+  'demo.sales-insights',
+  'demo.sales-pipeline',
+  'demo.tagging',
+  'demo.workforce',
+  'facility.operations',
+  'finance.billing',
+  'legal.agreements',
+  'party.registry',
+  'privacy.core',
+  'property.leasing',
+  'property.portfolio',
+  'work.tasks',
+] as const;
+const namedCapabilityKeys = [
+  ...pipelineWriterKeys,
+  ...partyHumanWriterKeys,
+  ...crmNavigationKeys,
+  crmReadCapability,
+  crmWriteCapability,
+  crmAssignCapability,
+  'commerce.customer-context.market-use.assess',
+  'commerce.customer-context.portal-enrollment.terminate',
+  'commerce.customer-context.profile-reconciliation.open',
+  'commerce.customer-context.profile-reconciliation.resolve',
+  'commerce.customer-context.retail-portal-profile-binding.recover',
+  'commerce.customer-context.retail-portal-profile-binding.revoke',
+  'privacy.core.processing-purpose.create',
+  'privacy.core.notice-version.create',
+] as const;
+const catalog: readonly CatalogSnapshotEntry[] = [
+  entry(PROPOSAL_REVIEW_CAPABILITY, { moduleKey: ModuleKeySchema.make('core.identity') }),
+  ...modulesNamedByRoles.map((moduleKey) =>
+    entry(`${moduleKey}.placeholder.read`, {
+      kind: 'read',
+      modes: ['run'],
+      moduleKey: ModuleKeySchema.make(moduleKey),
+      risk: 'routine',
+    }),
+  ),
+  ...namedCapabilityKeys.map((key) =>
+    entry(key, {
+      moduleKey: ModuleKeySchema.make(key.split('.').slice(0, 2).join('.')),
+      risk: 'sensitive',
+      ...(key === crmReadCapability
+        ? { kind: 'read' as const, modes: ['run'] as const, selectors: ['all', 'assigned', 'entrusted'] as const }
+        : { kind: 'action' as const, modes: ['run', 'propose', 'approve'] as const, selectors: [] }),
+    }),
+  ),
+];
+
+const reviewerRoles: readonly (readonly [string, DemoRole])[] = [
+  ['accountant', demoRoles.accountant],
+  ['headOfSales', demoRoles.headOfSales],
+  ['salesRep', demoRoles.salesRep],
+  ['warehouse', demoRoles.warehouse],
+  ['rental.accountant', rentalDemoRoles.accountant],
+  ['rental.headOfSales', rentalDemoRoles.headOfSales],
+  ['rental.salesRep', rentalDemoRoles.salesRep],
+  ['crmAdmin', crmDemoRoles.crmAdmin],
+  ['crmManager', crmDemoRoles.crmManager],
+  ['crmRep', crmDemoRoles.crmRep],
+  ['eshopAdmin', eshopDemoRoles.eshopAdmin],
+  ['eshopFulfilment', eshopDemoRoles.fulfilment],
+];
+
+it('grants the one reviewed proposal capability to every reviewer Role, at its declared approve mode', () => {
+  for (const [label, role] of reviewerRoles) {
+    expect(role.proposalReview).toBe(true);
+    expect(policyRoleKeys(role, catalog)).toContain(PROPOSAL_REVIEW_CAPABILITY);
+    const compiled = policyRoleCells(role, catalog);
+    expect(Result.isSuccess(compiled)).toBe(true);
+    if (Result.isSuccess(compiled)) {
+      const modes = compiled.success
+        .filter((cell) => cell.capabilityKey === PROPOSAL_REVIEW_CAPABILITY)
+        .map((cell) => cell.mode)
+        .toSorted();
+      expect({ label, modes }).toEqual({ label, modes: ['approve', 'propose', 'run'] });
+    }
+  }
 });
 
-it('requires the current exact explicit Core descriptor, never a similarly named or wrongly scoped Action', () => {
-  for (const descriptors of [
-    [],
-    [{ ...lifecycle, actionKey: `${lifecycleKey}-other` }],
-    [{ ...lifecycle, owningModuleKey: taskModule }],
-    [{ ...lifecycle, legalEntityScope: 'forbidden' as const }],
-    [{ ...lifecycle, legalEntityScope: 'optional' as const }],
-  ]) {
-    const rows = principalRelationships(
-      principalId,
-      { label: 'Reviewer', modules: { 'work.tasks': 'write' }, proposalReview: true },
-      descriptors,
-    );
-    expect(grantsFor(rows, principalId)).toEqual([]);
+it('never infers proposal review from a role name, a label or business write access', () => {
+  const plain: DemoRole = { label: 'Administrator', modules: { 'work.tasks': 'write' } };
+  expect(policyRoleKeys(plain, catalog)).not.toContain(PROPOSAL_REVIEW_CAPABILITY);
+  const compiled = policyRoleCells(plain, catalog);
+  expect(Result.isSuccess(compiled)).toBe(true);
+  if (Result.isSuccess(compiled)) {
+    expect(compiled.success.map((cell) => cell.capabilityKey)).toEqual(['work.tasks.placeholder.read']);
+  }
+});
+
+it('keeps the agent bot off the proposal lifecycle and off every read it does not declare', () => {
+  const agent: DemoRole = { actorKind: 'agent', label: 'Agent', modules: { 'work.tasks': 'write' } };
+  const compiled = policyRoleCells(agent, catalog, 'agent');
+  expect(Result.isSuccess(compiled)).toBe(true);
+  if (Result.isSuccess(compiled)) {
+    // The agent runs the routine capability of its module and never reaches a read or the proposal lifecycle.
+    expect(compiled.success.map(({ capabilityKey, mode }) => `${capabilityKey}:${mode}`)).toEqual([
+      'work.tasks.placeholder.read:run',
+    ]);
+  }
+  const reviewer: DemoRole = { label: 'Agent reviewer', modules: { 'work.tasks': 'write' }, proposalReview: true };
+  const reviewerCells = policyRoleCells(reviewer, catalog, 'agent');
+  expect(Result.isSuccess(reviewerCells)).toBe(true);
+  if (Result.isSuccess(reviewerCells)) {
+    expect(reviewerCells.success.map((cell) => cell.capabilityKey)).toContain(PROPOSAL_REVIEW_CAPABILITY);
+    expect(
+      reviewerCells.success
+        .filter((cell) => cell.capabilityKey === PROPOSAL_REVIEW_CAPABILITY)
+        .every((cell) => cell.mode === 'propose'),
+    ).toBe(true);
   }
 });

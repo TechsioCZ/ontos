@@ -1,5 +1,4 @@
 import type {
-  OrderFinalizationContext,
   OrderPaymentTermsFinalizationEvidence,
   OrderPaymentTermsFinalizationInput,
   OrderTaxFinalizationEvidence,
@@ -13,10 +12,12 @@ import {
 import { executeOrderServiceApprovalEvidenceWithAuthorization } from '@app/commerce-customer-context/api/order-service-approval-evidence/client';
 import { PaymentTermDefinitionSnapshotSchema } from '@app/payment-term-catalog-contracts/payment-term';
 import { executeCurrentPaymentTermsWithAuthorization } from '@app/payment-term-catalog-contracts/current-payment-terms/client';
-import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
+import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { executeFinalizeOrderTaxWithAuthorization, executeFinalOrderTaxWithAuthorization } from '@app/tax/api/client';
-import { Clock, Config, Context, DateTime, Effect, Layer, Option, Schema, Predicate } from 'effect';
+import { Clock, Config, Context, Crypto, DateTime, Effect, Layer, Option, Schema, Predicate } from 'effect';
 import { OrderCommitmentRejected } from '../../shared/domain/order-commitment.ts';
+import { delegationSubject } from '../services/order-module-call.ts';
+import type { OrderFinalizationCall } from '../services/order-module-call.ts';
 import {
   OrderPaymentTermsFinalizationEvidenceSchema,
   OrderTaxFinalizationEvidenceSchema,
@@ -24,7 +25,7 @@ import {
   OrderTaxHistoricalEvidenceSchema,
 } from '../../shared/domain/order-finalization-evidence.ts';
 
-type FinalizationScope = OrderFinalizationContext;
+type FinalizationScope = OrderFinalizationCall;
 export interface FinalizationTaxPaymentTermsService {
   readonly finalizeTax: (
     input: OrderTaxFinalizationIntent,
@@ -73,10 +74,8 @@ const sameTaxPurchase = Schema.toEquivalence(
   OrderTaxFinalizationIntentSchema.fields.request.fields.candidate.fields.purchase,
 );
 const configuration = Config.all({
-  apiKey: Config.Redacted('ONTOS_ORDER_FINALIZATION_GATEWAY_API_KEY'),
   customerContextBaseUrl: Config.schema(httpUrl, 'ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL'),
   paymentTermsBaseUrl: Config.schema(httpUrl, 'ONTOS_PAYMENT_TERM_CATALOG_API_BASE_URL'),
-  shellBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
   taxBaseUrl: Config.schema(httpUrl, 'ONTOS_TAX_API_BASE_URL'),
 });
 const sameRef = (
@@ -110,6 +109,7 @@ export const FinalizationTaxPaymentTermsLive = Layer.effect(
   FinalizationTaxPaymentTerms,
   Effect.gen(function* finalizationTaxPaymentTermsLayer() {
     const composition = yield* ActiveApplicationCompositionService;
+    const crypto = yield* Crypto.Crypto;
     const configured = yield* configuration.pipe(Effect.match({ onFailure: Option.none, onSuccess: Option.some }));
     const credential = Effect.fn('FinalizationTaxPaymentTerms.credential')(function* credential(
       audience: 'tax' | 'payment-term-catalog' | 'commerce-customer-context',
@@ -122,13 +122,17 @@ export const FinalizationTaxPaymentTermsLive = Layer.effect(
         Effect.flatMap(validateActiveApplicationCompositionSnapshot),
         Effect.mapError(unavailable),
       );
-      const issued = yield* issueApiKeyGatewayContext(
-        { audience, compositionRevision: active.composition.revision, legalEntityId: scope.legalEntityId },
+      const issued = yield* acquireDelegatedGatewayContext(
         {
-          apiKey: configured.value.apiKey,
-          baseUrl: configured.value.shellBaseUrl,
+          audience,
+          legalEntityScope: 'subject',
           requestCorrelation: scope.correlationId,
+          subject: delegationSubject(scope.caller, {
+            compositionRevision: active.composition.revision,
+            tenantId: scope.tenantId,
+          }),
         },
+        crypto,
       ).pipe(Effect.mapError(unavailable));
       if (
         issued.compositionRevision !== active.composition.revision ||
@@ -137,7 +141,7 @@ export const FinalizationTaxPaymentTermsLive = Layer.effect(
         return yield* unavailable('The owner gateway credential is expired or bound to a different composition');
       }
       return {
-        authorization: `Bearer ${issued.token}`,
+        authorization: issued.authorization,
         compositionRevision: active.composition.revision,
         configured: configured.value,
       };

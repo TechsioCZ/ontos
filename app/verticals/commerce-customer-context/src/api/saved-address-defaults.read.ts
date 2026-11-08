@@ -10,7 +10,7 @@ import type {
   SavedAddressDefaultsRequest,
   SavedAddressDefaultsResponse,
 } from '../../shared/apis/saved-address-defaults.ts';
-import { profileTarget } from './address-read-support.ts';
+import { addressBookProfileOwnerFacts } from './read-owner-facts.ts';
 import { addressReadServicesForTransaction } from '../persistence/address-persistence.ts';
 
 export interface SavedAddressDefaultsServices {
@@ -21,14 +21,23 @@ export interface SavedAddressDefaultsServices {
 }
 const savedAddressDefaultsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'authenticated_principal' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.saved-address-defaults',
   moduleKey: 'commerce.customer-context',
   role: 'api',
 });
 export const savedAddressDefaultsRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.saved-address.defaults-read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'address-book', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
+    accessOwnerFacts: addressBookProfileOwnerFacts,
     entrypoint: savedAddressDefaultsEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',
@@ -37,7 +46,6 @@ export const savedAddressDefaultsRead = defineRead(
     inputSchema: SavedAddressDefaultsRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: 'commerce.customer-context',
-    permissionTarget: 'business_permission',
     policies: [],
     readKey: 'commerce.customer-context.api.saved-address-defaults',
     resultSchema: SavedAddressDefaultsResponseSchema,
@@ -51,5 +59,4 @@ export const savedAddressDefaultsRead = defineRead(
   },
   (transaction, scope) =>
     Effect.succeed<SavedAddressDefaultsServices>(addressReadServicesForTransaction(transaction, scope)),
-  profileTarget,
 );

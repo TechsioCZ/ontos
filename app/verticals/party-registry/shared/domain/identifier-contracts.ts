@@ -9,8 +9,6 @@ export { OfficialIdentifierClaimConflict } from './identifier-errors/claim-confl
 export { OfficialIdentifierInvalid } from './identifier-errors/invalid.ts';
 
 const OfficialIdentifierTypeSchema = Schema.Literals(['ICO', 'CZ_DIC']);
-export const IdentifierVerificationSchema = Schema.Literals(['UNVERIFIED', 'VERIFIED', 'REJECTED']);
-export type IdentifierVerification = typeof IdentifierVerificationSchema.Type;
 
 export const isValidCzechIco = (value: string): boolean => {
   if (!/^[0-9]{8}$/u.test(value)) {
@@ -25,7 +23,6 @@ export const OfficialIdentifierInputSchema = Schema.Struct({
   identifierType: OfficialIdentifierTypeSchema,
   namespace: Schema.optionalKey(Schema.Never),
   value: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
-  verification: IdentifierVerificationSchema,
 }).check(
   Schema.makeFilter((input) => {
     const value = input.value.trim().toUpperCase();
@@ -51,28 +48,7 @@ export const normalizeOfficialIdentifier = (input: OfficialIdentifierInput): Nor
     identifierType: input.identifierType,
     namespace: input.identifierType === 'ICO' ? 'CZ:ICO' : 'CZ:DIC',
     normalizedValue,
-    verification: input.verification,
   };
-};
-
-export const qualifiesForExclusiveClaim = (
-  identifier: NormalizedOfficialIdentifier,
-  partyType: 'ORGANIZATION' | 'PERSON' | 'UNRESOLVED',
-  matchRuleVersion: string,
-): boolean =>
-  matchRuleVersion === 'party-exact-claims.v1' &&
-  identifier.verification === 'VERIFIED' &&
-  partyType === 'ORGANIZATION';
-
-export const qualifyingClaimKey = (
-  input: OfficialIdentifierInput,
-  partyType: 'ORGANIZATION' | 'PERSON' | 'UNRESOLVED',
-  matchRuleVersion: string,
-): string | undefined => {
-  const normalized = normalizeOfficialIdentifier(input);
-  return qualifiesForExclusiveClaim(normalized, partyType, matchRuleVersion)
-    ? [normalized.identifierType, normalized.namespace, normalized.normalizedValue].join('\u0000')
-    : undefined;
 };
 
 export const OfficialIdentifierAssertionStateSchema = Schema.Literals([
@@ -83,7 +59,19 @@ export const OfficialIdentifierAssertionStateSchema = Schema.Literals([
   'DISPUTED',
 ]);
 
-export const OfficialIdentifierAssertionSchema = Schema.Struct({
+/** Retained ICO digits must normalize to the canonical value they were asserted with. */
+const originalDigitsIssue = (assertion: {
+  readonly identifierType: string;
+  readonly normalizedValue?: string;
+  readonly originalInputDigits?: string | null;
+}): string | undefined =>
+  assertion.originalInputDigits === undefined ||
+  assertion.originalInputDigits === null ||
+  (assertion.identifierType === 'ICO' && assertion.originalInputDigits.padStart(8, '0') === assertion.normalizedValue)
+    ? undefined
+    : 'original ICO digits must normalize to the asserted canonical value';
+
+const officialIdentifierAssertionFields = {
   externalEvidence: Schema.optionalKey(Schema.toEncoded(Schema.OptionFromNullOr(AresAppliedEvidenceSchema))),
   identifierType: OfficialIdentifierTypeSchema,
   namespace: Schema.String,
@@ -98,14 +86,17 @@ export const OfficialIdentifierAssertionSchema = Schema.Struct({
   state: OfficialIdentifierAssertionStateSchema,
   validFrom: CanonicalUtcTimestampJsonSchema,
   validTo: Schema.toEncoded(Schema.OptionFromNullOr(CanonicalUtcTimestampJsonSchema)),
-  verification: IdentifierVerificationSchema,
-}).check(
-  Schema.makeFilter((assertion) =>
-    assertion.originalInputDigits === undefined ||
-    assertion.originalInputDigits === null ||
-    (assertion.identifierType === 'ICO' && assertion.originalInputDigits.padStart(8, '0') === assertion.normalizedValue)
-      ? undefined
-      : 'original ICO digits must normalize to the asserted canonical value',
-  ),
+};
+
+export const OfficialIdentifierAssertionSchema = Schema.Struct(officialIdentifierAssertionFields).check(
+  Schema.makeFilter(originalDigitsIssue),
 );
 export type OfficialIdentifierAssertion = typeof OfficialIdentifierAssertionSchema.Type;
+/**
+ * An official identifier as a read answers it: the value is a governed field class, so a caller
+ * without the value capability receives the assertion without it (O17, O58).
+ */
+export const OfficialIdentifierAssertionViewSchema = Schema.Struct({
+  ...officialIdentifierAssertionFields,
+  normalizedValue: Schema.optionalKey(Schema.String),
+}).check(Schema.makeFilter(originalDigitsIssue));

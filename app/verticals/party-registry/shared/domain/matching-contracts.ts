@@ -12,7 +12,6 @@ export { DuplicateCandidateConflict } from './duplicate-candidate-conflict.ts';
 export { PartyCreateRecoveryUnavailable } from './party-create-recovery-unavailable.ts';
 
 const MatchOutcomeSchema = Schema.Literals(['MATCHED', 'NO_MATCH', 'AMBIGUOUS']);
-type MatchOutcome = typeof MatchOutcomeSchema.Type;
 
 export const RuleKeySchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)).pipe(
   Schema.brand('RuleKey'),
@@ -35,23 +34,6 @@ const UtcTimestampStringSchema = Schema.String.check(
   }),
 );
 
-export const sortClaimKeys = (keys: readonly string[]): readonly string[] =>
-  [...new Set(keys)].toSorted((left, right) => left.localeCompare(right, 'en'));
-
-export const evaluateExactClaims = (partyIds: readonly string[]) => {
-  const resolved = [...new Set(partyIds)].toSorted();
-  let outcome: MatchOutcome = 'AMBIGUOUS';
-  if (resolved.length === 0) {
-    outcome = 'NO_MATCH';
-  } else if (resolved.length === 1) {
-    outcome = 'MATCHED';
-  }
-  return {
-    outcome,
-    partyIds: resolved,
-  } as const;
-};
-
 export const PartyMatchRequestSchema = Schema.Struct({
   candidate: PartyCandidateSchema,
 });
@@ -68,10 +50,14 @@ const MatchEvidenceExplanationSchema = Schema.Struct({
   // Review lineage is independent of the outcome-specific result caseRef.
   reviewedCaseRef: Schema.optionalKey(DuplicateCandidateCaseRefSchema),
   ruleKey: RuleKeySchema,
-  verification: Schema.optionalKey(Schema.Literals(['REJECTED', 'UNVERIFIED', 'VERIFIED'])),
+});
+/** Match evidence as a read answers it: its reason is a governed field class (O17, O58). */
+const MatchEvidenceExplanationViewSchema = Schema.Struct({
+  ...MatchEvidenceExplanationSchema.fields,
+  reason: Schema.optionalKey(MatchEvidenceExplanationSchema.fields.reason),
 });
 const MatchPreviewEvidenceSchema = Schema.Struct({
-  kind: Schema.Literals(['EXACT_CLAIM', 'WEAK_EVIDENCE']),
+  kind: Schema.Literal('WEAK_EVIDENCE'),
   partyRef: PartyRefSchema,
 });
 export const PartyMatchPreviewResponseSchema = Schema.Struct({
@@ -141,10 +127,15 @@ const PartyMatchDecisionRecordFieldsSchema = Schema.Struct({
   partyRef: Schema.toEncoded(Schema.OptionFromNullOr(PartyRefSchema)),
 });
 type DecisionRecord = typeof PartyMatchDecisionRecordFieldsSchema.Type;
+/** The reference and outcome facts both the record and its read view must keep consistent. */
+type DecisionFacts = Pick<
+  DecisionRecord,
+  'caseRef' | 'committedCreateOutcome' | 'decisionRef' | 'operation' | 'outcome' | 'partyRef'
+>;
 const isCreateOperation = (operation: DecisionRecord['operation']): boolean =>
   operation === 'CREATE' || operation === 'REVIEW_CREATE';
 
-const validateCreateOutcome = (record: DecisionRecord): string | undefined => {
+const validateCreateOutcome = (record: DecisionFacts): string | undefined => {
   const isCreate = isCreateOperation(record.operation);
   const expected = record.outcome === 'MATCHED' ? 'MATCHED_EXISTING' : record.outcome;
   if (isCreate && (record.committedCreateOutcome !== expected || record.outcome === 'NO_MATCH')) {
@@ -156,7 +147,7 @@ const validateCreateOutcome = (record: DecisionRecord): string | undefined => {
   return undefined;
 };
 
-const validateDecisionReferences = (record: DecisionRecord): string | undefined => {
+const validateDecisionReferences = (record: DecisionFacts): string | undefined => {
   if (record.outcome === 'AMBIGUOUS') {
     return record.partyRef === null && record.caseRef !== null
       ? undefined
@@ -173,6 +164,14 @@ const validateDecisionReferences = (record: DecisionRecord): string | undefined 
 export const PartyMatchDecisionRecordSchema = PartyMatchDecisionRecordFieldsSchema.check(
   Schema.makeFilter((record) => validateCreateOutcome(record) ?? validateDecisionReferences(record)),
 );
+/**
+ * A match decision as the read answers it: its evidence is a governed field class, so a caller without
+ * the evidence capability receives the decision without the evidence reasons (O17, O58).
+ */
+export const PartyMatchDecisionRecordViewSchema = Schema.Struct({
+  ...PartyMatchDecisionRecordFieldsSchema.fields,
+  evidenceExplanation: Schema.Array(MatchEvidenceExplanationViewSchema),
+}).check(Schema.makeFilter((record) => validateCreateOutcome(record) ?? validateDecisionReferences(record)));
 export const DuplicateCandidateDetailSchema = Schema.Struct({
   candidate: PartyCandidateSchema,
   candidateParties: Schema.Array(PartyRefSchema),
@@ -186,8 +185,22 @@ export const DuplicateCandidateDetailSchema = Schema.Struct({
   resolvedAt: Schema.toEncoded(Schema.OptionFromNullOr(UtcTimestampStringSchema)),
   revision: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0)),
 });
+/**
+ * A duplicate candidate case as the read answers it: the candidate identity and the review evidence
+ * are governed field classes, so a caller without the evidence capability receives the case without
+ * them (O17, O58).
+ */
+export const DuplicateCandidateDetailViewSchema = Schema.Struct({
+  ...DuplicateCandidateDetailSchema.fields,
+  candidate: Schema.Struct({
+    ...PartyCandidateSchema.fields,
+    officialIdentifiers: Schema.optionalKey(PartyCandidateSchema.fields.officialIdentifiers),
+  }),
+  evaluatedEvidence: Schema.optionalKey(DuplicateCandidateDetailSchema.fields.evaluatedEvidence),
+  resolutionReason: Schema.optionalKey(DuplicateCandidateDetailSchema.fields.resolutionReason),
+});
 
-const resolvedCreateResult = (record: DecisionRecord): typeof PartyCreateOutcomeSchema.Type | null => {
+const resolvedCreateResult = (record: DecisionFacts): typeof PartyCreateOutcomeSchema.Type | null => {
   if (
     record.partyRef !== null &&
     record.caseRef === null &&
@@ -204,9 +217,7 @@ const resolvedCreateResult = (record: DecisionRecord): typeof PartyCreateOutcome
 };
 
 /** No inference from LEGACY, matching or lifecycle records is safe for Create recovery. */
-export const committedCreateResult = (
-  record: typeof PartyMatchDecisionRecordSchema.Type,
-): typeof PartyCreateOutcomeSchema.Type | null => {
+export const committedCreateResult = (record: DecisionFacts): typeof PartyCreateOutcomeSchema.Type | null => {
   if (!isCreateOperation(record.operation)) {
     return null;
   }

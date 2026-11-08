@@ -18,7 +18,7 @@ import { findPartyContactPointRecord } from '../services/party-contact-point-per
 
 const partyContactPointDetailEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'party.registry.api.party-contact-point-detail',
   moduleKey: 'party.registry',
   role: 'api',
@@ -32,6 +32,32 @@ interface Services {
 
 export const partyContactPointDetailRead = defineRead(
   {
+    accessActor: {
+      callers: ['commerce-customer-context'],
+      reason: "Commerce Customer Context reads contact points for the buyer it relays, under that buyer's own rights.",
+      subject: 'rights',
+    },
+    accessDeclaration: {
+      key: 'party.registry.contact-point.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'contact-data', level: 'extended' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessTarget: (input) => ({ moduleKey: 'party.registry', recordKey: input.contactPointRef.resourceId }),
+    accessFieldGroups: [
+      {
+        fieldClass: 'personal_data',
+        fields: ['value'],
+        key: 'party.registry.contact-point-value.read',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'sensitive-fields', level: 'extended' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
     accessKind: 'detail',
     entrypoint: partyContactPointDetailEntrypoint,
     evidencePolicy: {
@@ -41,7 +67,6 @@ export const partyContactPointDetailRead = defineRead(
     inputSchema: PartyContactPointDetailRequestSchema,
     legalEntityScope: 'optional',
     owningModuleKey: 'party.registry',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'party.registry.api.party-contact-point-detail',
     resultSchema: PartyContactPointDetailResponseSchema,
@@ -78,5 +103,4 @@ export const partyContactPointDetailRead = defineRead(
     Effect.succeed({
       find: (contactPointId: string) => findPartyContactPointRecord(transaction, scope, contactPointId),
     }),
-  () => ({ kind: 'tenant', permission: 'read_party_identity' }),
 );

@@ -3,41 +3,10 @@
 // @ontos-module-id commerce.market-catalog
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { commerceMarketCatalogManifest } from './vertical.manifest.ts';
-// <generated-module-registration-imports>
-import { activateMarketAction } from './src/actions/activate-market.action.ts';
-import { associateStorefrontAction } from './src/actions/associate-storefront.action.ts';
-import { completeMarketRetirementWorker } from './src/workers/complete-market-retirement.worker.ts';
-import { createMarketAction } from './src/actions/create-market.action.ts';
-import { projectAssociationContainmentWorker } from './src/workers/project-association-containment.worker.ts';
-import { projectMarketActivatedToSearchWorker } from './src/workers/project-market-activated-to-search.worker.ts';
-import { projectMarketContainmentWorker } from './src/workers/project-market-containment.worker.ts';
-import { projectMarketCreatedToSearchWorker } from './src/workers/project-market-created-to-search.worker.ts';
-import { projectMarketDefinitionRevisedToSearchWorker } from './src/workers/project-market-definition-revised-to-search.worker.ts';
-import { projectMarketRetiredToSearchWorker } from './src/workers/project-market-retired-to-search.worker.ts';
-import { projectMarketSuspendedToSearchWorker } from './src/workers/project-market-suspended-to-search.worker.ts';
-import { rebuildSearchWorker } from './src/workers/rebuild-search.worker.ts';
-import { removeStorefrontAssociationAction } from './src/actions/remove-storefront-association.action.ts';
-import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
-import { retireMarketAction } from './src/actions/retire-market.action.ts';
-import { reviseMarketDefinitionAction } from './src/actions/revise-market-definition.action.ts';
-import { reviseStorefrontAssociationAction } from './src/actions/revise-storefront-association.action.ts';
-import { suspendMarketAction } from './src/actions/suspend-market.action.ts';
-// </generated-module-registration-imports>
+import { commerceMarketCatalogRuntimeDeclaration } from './vertical.runtime-declaration.ts';
 
 export const commerceMarketCatalogRegistration = defineVerticalRuntimeRegistration({
-  actions: [
-    // <generated-module-registration-actions>
-    activateMarketAction,
-    associateStorefrontAction,
-    createMarketAction,
-    removeStorefrontAssociationAction,
-    requestSearchRebuildAction,
-    retireMarketAction,
-    reviseMarketDefinitionAction,
-    reviseStorefrontAssociationAction,
-    suspendMarketAction,
-    // </generated-module-registration-actions>
-  ],
+  ...commerceMarketCatalogRuntimeDeclaration,
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
@@ -45,7 +14,8 @@ export const commerceMarketCatalogRegistration = defineVerticalRuntimeRegistrati
       'eligible-market-tuples': () => import('./src/api/eligible-market-tuples-client.ts'),
       'market-administration': () => import('./src/api/market-administration-client.ts'),
       'market-history': () => import('./src/api/market-history-client.ts'),
-      'market-retirement-status': () => import('./src/api/market-retirement-status-client.ts'),
+      'market-retirement-effect-recovery': () => import('./src/api/market-retirement-effect-recovery-client.ts'),
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       'pricing-current-market-evidence': () => import('./src/api/pricing-current-market-evidence-client.ts'),
       'resolve-commerce-market': () => import('./src/api/resolve-commerce-market-client.ts'),
       'verify-market-eligibility-v1': () => import('./src/api/verify-market-eligibility-v1-client.ts'),
@@ -72,19 +42,6 @@ export const commerceMarketCatalogRegistration = defineVerticalRuntimeRegistrati
     },
   },
   manifest: commerceMarketCatalogManifest,
-  outboxWorkers: [
-    // <generated-module-registration-workers>
-    completeMarketRetirementWorker,
-    projectAssociationContainmentWorker,
-    projectMarketActivatedToSearchWorker,
-    projectMarketContainmentWorker,
-    projectMarketCreatedToSearchWorker,
-    projectMarketDefinitionRevisedToSearchWorker,
-    projectMarketRetiredToSearchWorker,
-    projectMarketSuspendedToSearchWorker,
-    rebuildSearchWorker,
-    // </generated-module-registration-workers>
-  ],
 });
 
 // <generated-public-component-registrations>

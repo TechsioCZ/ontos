@@ -105,10 +105,7 @@ describe('revise Attribute Definition Action', () => {
   );
 
   it('requires exact permission and idempotency and declares typed failure', () => {
-    expect(reviseAttributeDefinitionAction.descriptor.entrypoint.authorization).toEqual({
-      kind: 'action_execution',
-      provisioning: 'explicit',
-    });
+    expect(reviseAttributeDefinitionAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
     expect(reviseAttributeDefinitionAction.descriptor.idempotency).toBe('required');
     expect(reviseAttributeDefinitionAction.descriptor.legalEntityScope).toBe('forbidden');
     expect(

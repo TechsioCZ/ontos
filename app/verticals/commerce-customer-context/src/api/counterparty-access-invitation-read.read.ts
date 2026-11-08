@@ -18,7 +18,8 @@ import type {
 import type { CounterpartyAccessPortService } from '../../shared/domain/access-port.ts';
 import { counterpartyAccessServicesForTransaction } from '../access-services.ts';
 import { scopeContains } from '../../shared/domain/access-contract.ts';
-import { counterpartyAccessReadPermissionTarget } from './access-read-support.ts';
+
+import { counterpartyScopeOwnerFacts } from './read-owner-facts.ts';
 
 export interface CounterpartyAccessInvitationReadServices {
   readonly getInvitation: CounterpartyAccessPortService['getInvitation'];
@@ -72,7 +73,7 @@ export const readCounterpartyAccessInvitationFromServices = (
 
 const counterpartyAccessInvitationReadEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'counterparty.access.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.counterparty-access-invitation-read',
   moduleKey: 'commerce.customer-context',
   role: 'api',
@@ -80,7 +81,16 @@ const counterpartyAccessInvitationReadEntrypoint = defineTenantModuleEntrypoint(
 
 export const counterpartyAccessInvitationReadRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.counterparty-access-invitation.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'counterparty-access', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
+    accessOwnerFacts: counterpartyScopeOwnerFacts,
     entrypoint: counterpartyAccessInvitationReadEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',
@@ -89,7 +99,6 @@ export const counterpartyAccessInvitationReadRead = defineRead(
     inputSchema: CounterpartyAccessInvitationReadRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: 'commerce.customer-context',
-    permissionTarget: 'business_permission',
     policies: [],
     readKey: 'commerce.customer-context.api.counterparty-access-invitation-read',
     resultSchema: CounterpartyAccessInvitationReadResponseSchema,
@@ -114,5 +123,4 @@ export const counterpartyAccessInvitationReadRead = defineRead(
     counterpartyAccessServicesForTransaction(transaction, scope).pipe(
       Effect.map((port) => ({ getInvitation: port.getInvitation })),
     ),
-  counterpartyAccessReadPermissionTarget,
 );

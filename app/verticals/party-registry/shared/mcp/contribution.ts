@@ -28,6 +28,8 @@ export const partyRegistryMcpContribution = defineOntosMcpContribution({
       destructive: true,
       title: { cs: 'Ukončit roli obchodního partnera', en: 'End a counterparty role' },
     },
+    // Only the declared CRM intake workload may create its owned Party decision; never a general agent tool.
+    'create-crm-client-party': OntosMcpHidden,
     'create-party': { title: { cs: 'Založit subjekt', en: 'Create a party' } },
     'create-party-relationship': { title: { cs: 'Vytvořit vztah mezi subjekty', en: 'Create a party relationship' } },
     'dismiss-duplicate-candidate': {
@@ -115,6 +117,8 @@ export const partyRegistryMcpContribution = defineOntosMcpContribution({
     'counterparty-role-history': {
       title: { cs: 'Historie rolí obchodního partnera', en: 'Counterparty role history' },
     },
+    // Only the declared CRM intake workload may retrieve its original owned review; never a general agent tool.
+    'crm-client-intake-review': OntosMcpHidden,
     'customer-list': { title: { cs: 'Seznam zákazníků', en: 'Customer list' } },
     'duplicate-candidate-detail': {
       title: { cs: 'Detail možného duplicitního subjektu', en: 'Duplicate candidate details' },

@@ -1,4 +1,9 @@
-import { ReadResultValidationError, ReadRuntime, TrustedPrincipalContextSchema } from '@app/core-runtime';
+import {
+  ReadResultValidationError,
+  ReadRuntime,
+  TrustedPrincipalContextSchema,
+  trustVerifiedGatewayPrincipalContext,
+} from '@app/core-runtime';
 import type { ReadRuntimeService } from '@app/core-runtime';
 import { Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -51,7 +56,24 @@ const address = {
 };
 const defaults = { delivery: savedAddressRef, profile, revision: 1 };
 const scope: CustomerOwnAddressBookScope = {
-  authority: { authBindingId, partyId, principalId, profileId },
+  authority: {
+    authBindingId,
+    partyId,
+    principal: trustVerifiedGatewayPrincipalContext(
+      Schema.decodeSync(TrustedPrincipalContextSchema)({
+        authBindingId,
+        authContextRef: 'better-auth-session:ontos.commerce.portal.better-auth.v1:owner-session',
+        authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+        authMethod: 'session',
+        legalEntityId,
+        principalId,
+        tenantId,
+      }),
+      'a'.repeat(64),
+    ),
+    principalId,
+    profileId,
+  },
   legalEntityId,
   sessionRef: 'better-auth-session:ontos.commerce.portal.better-auth.v1:owner-session',
   tenantId,

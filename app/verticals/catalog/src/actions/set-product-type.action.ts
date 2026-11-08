@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.catalog
 // @ontos-action-slug set-product-type
 import type { ActionHandlerContext, ActionServiceFactory, ActionServicePreflight } from '@app/core-runtime';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import {
   ActionTransactionError,
   OperationContextUnavailable,
@@ -14,7 +14,7 @@ import { SetProductTypePayloadSchema, SetProductTypeResultSchema } from '../../s
 import type { SetProductTypePayload } from '../../shared/actions/set-product-type.ts';
 import {
   CartOpenSelectionPopulationUnavailable,
-  cartOpenSelectionPopulationFromEnvironment,
+  cartOpenSelectionPopulationForScope,
   readCartOpenSelectionPopulation,
 } from '../../shared/domain/catalog-open-selection-population.ts';
 import type { CartOpenSelectionPopulationPort } from '../../shared/domain/catalog-open-selection-population.ts';
@@ -99,7 +99,7 @@ const makeSetProductTypeServices = Effect.fn('SetProductTypeAction.makeServices'
     readonly scope: Parameters<ActionServiceFactory<never>>[1];
   },
 ) {
-  const openSelections = preparedPopulation ?? (yield* cartOpenSelectionPopulationFromEnvironment);
+  const openSelections = preparedPopulation ?? Option.getOrUndefined(yield* cartOpenSelectionPopulationForScope(scope));
   const services = yield* productTypeAssignmentPersistenceForScope(
     transaction,
     scope,
@@ -154,7 +154,7 @@ const prepareSetProductTypeServices: ActionServicePreflight<
   const before = yield* context.transaction((transaction) =>
     readProductTypeAssignmentSnapshot(transaction, context.scope, selector),
   );
-  const source = yield* cartOpenSelectionPopulationFromEnvironment;
+  const source = Option.getOrUndefined(yield* cartOpenSelectionPopulationForScope(context.scope));
   if (source === undefined) {
     return yield* new ProductTypeAssignmentRejected({
       code: 'product_type_stale_impact_basis',
@@ -257,6 +257,14 @@ const prepareSetProductTypeServices: ActionServicePreflight<
 
 export const setProductTypeAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-type.set',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.set-product-type.access.v1',
@@ -268,7 +276,7 @@ export const setProductTypeAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: actionKey,
       moduleKey,
       role: 'action',

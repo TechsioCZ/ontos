@@ -1,3 +1,5 @@
+import { NodeCrypto } from '@effect/platform-node';
+import { getReadStages } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import type { OperationalScope } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
@@ -12,6 +14,7 @@ import type { MarketResolutionPersistence } from '../../src/persistence/market-r
 import { MarketResolutionPersistenceUnavailable } from '../../src/persistence/market-resolution-persistence.ts';
 import type { MarketSubjectRestrictionSnapshot } from '../../src/integrations/market-subject-restrictions.ts';
 import {
+  verifyMarketEligibilityV1Read,
   handleVerifyMarketEligibilityV1,
   prepareVerifyMarketEligibilityV1,
 } from '../../src/api/verify-market-eligibility-v1.read.ts';
@@ -151,6 +154,7 @@ const run = (
     Effect.flatMap((prepared) =>
       handleVerifyMarketEligibilityV1(verifyInput, { ...steps, prepared, services: persistence }),
     ),
+    Effect.provide(NodeCrypto.layer),
   );
 };
 
@@ -232,3 +236,18 @@ describe('verify market eligibility owner read', () => {
     }),
   );
 });
+
+it.effect('registers subject preparation and refuses an unadmitted Current-subject contract before owner SQL', () =>
+  Effect.gen(function* registeredVerification() {
+    const input = { observedProof: proof(at), originalRequest: request(at, true) };
+    const load = yield* getReadStages(verifyMarketEligibilityV1Read)(input, {
+      readKey: verifyMarketEligibilityV1Read.descriptor.readKey,
+      scope,
+      transaction: () => Effect.die('No after-commit owner transaction is needed'),
+    });
+    const finish = yield* load({
+      load: () => Effect.die('Current subject restrictions must be established before owner SQL'),
+    });
+    expect((yield* finish).result.state).toBe('UNAVAILABLE');
+  }).pipe(Effect.provide(NodeCrypto.layer)),
+);

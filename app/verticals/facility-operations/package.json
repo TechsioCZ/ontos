@@ -14,16 +14,12 @@
     "./outbox-worker-host": "./src/worker-host/entry.ts",
     "./outbox/facility-operations-search-rebuild-requested-v1": "./shared/outbox/facility-operations-search-rebuild-requested-v1.ts",
     "./outbox/facility-operations-search-refresh-requested-v1": "./shared/outbox/facility-operations-search-refresh-requested-v1.ts",
-    "./permissions/facility.operations.read_all": "./shared/permissions/facility-operations-read-all.ts",
-    "./permissions/facility.operations.read_operational": "./shared/permissions/facility-operations-read-operational.ts",
-    "./permissions/facility.operations.write_all": "./shared/permissions/facility-operations-write-all.ts",
-    "./permissions/facility.operations.write_operational": "./shared/permissions/facility-operations-write-operational.ts",
     "./resources/asset": "./shared/resources/asset.ts",
     "./resources/device": "./shared/resources/device.ts",
     "./resources/document": "./shared/resources/document.ts",
     "./resources/meter": "./shared/resources/meter.ts",
     "./Route": "./src/federation-entry.tsx",
-    "./ui/record-discussion": "./src/ui/record-discussion.tsx"
+    "./ui/record-discussion": "./src/components/record-discussion.tsx"
   },
   "scripts": {
     "build": "pnpm --dir ../.. exec ultramodern-create ultramodern routes-generate --app facility-operations --manifest-only && modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical facility-operations --target dist && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app facility-operations --target dist && modern deploy --skip-build --deploy-target node",

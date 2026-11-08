@@ -1,4 +1,13 @@
-import { ContextAccess } from '@app/core-runtime';
+import { inertAccessEnforcementPorts, makeTestBoundAccessGate } from '@app/core-runtime/testing/access-gate';
+import { ActionAlreadyCommitted } from '@app/core-runtime';
+import {
+  AccessDecisionGate,
+  AccessDecisionLog,
+  AccessIntent,
+  AccessPrincipalKindSource,
+  DecisionCheck,
+  LegalEntityCandidates,
+} from '@app/core-runtime/access/enforcement';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import {
   OutboxPayloadSchema,
@@ -6,7 +15,7 @@ import {
   outboxProducerModuleKey,
   outboxTopic,
 } from '@app/sales-pipeline/outbox/opportunity-stage-changed';
-import { DateTime, Effect, Layer, Schema } from 'effect';
+import { Context, DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ApplyCommandPayloadSchema, SalesPipelineCommandSchema } from '../../shared/actions/apply-command.ts';
@@ -15,6 +24,11 @@ import type { OpportunityStage } from '../../shared/model/opportunity.ts';
 import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
 import { evolveOpportunityState } from '../../src/services/persistence.service.ts';
 import type { AppliedCommand } from '../../src/services/persistence.service.ts';
+import { salesPipelineRegistration } from '../../vertical.registration.ts';
+import {
+  salesPipelineApplyCommandDeclaration,
+  salesPipelineEntrustGroup,
+} from '../../shared/model/access-declarations.ts';
 
 type CommandInput = typeof SalesPipelineCommandSchema.Encoded;
 
@@ -44,15 +58,20 @@ const productLine = {
   vatRate: 21 as const,
 };
 const freeTextLine = { productName: 'Montáž na místě', quantity: 1, unitPriceMinor: 120_000, vatRate: 21 as const };
-// The substituted owner services never reach ContextAccess; the requirement only comes from the production factory.
-const unusedContextAccessLayer = Layer.succeed(ContextAccess, {
-  businessPermissions: () => Effect.succeed([]),
-  legalEntities: () => Effect.succeed([]),
-  modules: () => Effect.succeed([]),
-  resources: () => Effect.succeed([]),
-  tenants: () => Effect.succeed([]),
-});
 
+/** The runtime binding and original preparation receive the same gate and explicit fail-closed ports. */
+const commandAuthority = (outcome: 'ALLOWED' | 'DENIED' | 'UNAVAILABLE' = 'ALLOWED') => {
+  const ports = inertAccessEnforcementPorts();
+  const gate = makeTestBoundAccessGate({ answers: { [salesPipelineApplyCommandDeclaration.key]: { outcome } } }, ports);
+  const context = Context.make(AccessDecisionGate, gate.accessDecision).pipe(
+    Context.add(AccessDecisionLog, ports.decisionLog),
+    Context.add(AccessIntent, ports.intent),
+    Context.add(AccessPrincipalKindSource, ports.principalKinds),
+    Context.add(DecisionCheck, ports.check),
+    Context.add(LegalEntityCandidates, ports.candidates),
+  );
+  return { ...gate, context };
+};
 const decodeCommand = Schema.decodeUnknownEffect(SalesPipelineCommandSchema);
 const decodePayload = Schema.decodeUnknownEffect(ApplyCommandPayloadSchema);
 const decodeMessagePayload = Schema.decodeUnknownEffect(OutboxPayloadSchema);
@@ -116,21 +135,38 @@ const stateWith = Effect.fn('stateWith')(function* stateWith(
 });
 
 const runCommand = Effect.fn('runCommand')(function* runCommand(state: SalesPipelineState, command: CommandInput) {
+  const gate = commandAuthority();
   const harness = yield* makeActionTestHarness({
-    actionPermission: 'allowed',
-    legalEntityPermission: 'allowed',
+    accessDecision: gate.bound,
+    ownerRegistration: salesPipelineRegistration,
     services: [bindActionTestServices(applyCommandAction, inMemoryServices(state, 7))],
-    tenantPermission: 'allowed',
   });
   const payload = yield* decodePayload({ command, expectedRevision: 7 });
-  const result = yield* harness.runtime
-    .runAction({
-      payload,
-      principal,
-      registration: applyCommandAction,
-      transport: { correlationId: 'sales-pipeline-outbox', idempotencyKey: `outbox-${command._tag}` },
-    })
-    .pipe(Effect.provide(unusedContextAccessLayer));
+  const input = {
+    payload,
+    principal,
+    registration: applyCommandAction,
+    transport: { correlationId: 'sales-pipeline-outbox', idempotencyKey: `outbox-${command._tag}` },
+  };
+  const result = yield* harness.runtime.runAction(input).pipe(Effect.provideContext(gate.context));
+  // The original preparation asks for LIST/read and write separately. These commands require
+  // only this Action's write capability; the fixture grants neither all reads nor unrelated writes.
+  expect(gate.accessDecision.askedLists).toHaveLength(1);
+  expect(gate.accessDecision.askedLists[0]?.carrier.accessDeclaration?.key).toBe(
+    'demo.sales-pipeline.api-records.read',
+  );
+  expect(gate.accessDecision.askedLists[0]?.scope).toMatchObject({ legalEntityId, tenantId });
+  expect(
+    gate.accessDecision.askedDecisions.every(
+      (question) =>
+        question.carrier.accessDeclaration?.key === salesPipelineApplyCommandDeclaration.key ||
+        question.carrier.accessDeclaration?.key === salesPipelineEntrustGroup.key,
+    ),
+  ).toBe(true);
+  const replay = yield* harness.runtime.runAction(input).pipe(Effect.provideContext(gate.context), Effect.flip);
+  expect(Schema.is(ActionAlreadyCommitted)(replay)).toBe(true);
+  expect(harness.snapshot().committed).toHaveLength(1);
+  expect(harness.snapshot().transactionCount).toBe(1);
   const [committed] = harness.snapshot().committed;
   const allEvidence = committed?.evidence;
   expect(
@@ -163,6 +199,8 @@ it.effect('ChangeOpportunityStage to WON commits exactly one stage-changed messa
     });
 
     expect(result.revision).toBe(8);
+    expect(result.opportunities[0]?.stageHistory.map(({ stage }) => stage)).toEqual(['NEGOTIATION', 'WON']);
+    expect(state.opportunities[0]?.stageHistory.map(({ stage }) => stage)).toEqual(['NEGOTIATION']);
     expect(evidence?.outboxMessages).toHaveLength(1);
     expect(evidence?.domainEvents).toHaveLength(1);
     const [collected] = evidence?.outboxMessages ?? [];
@@ -263,5 +301,52 @@ it.effect('a bulk stage change publishes one message per changed opportunity; ed
       patch: { title: 'Renamed deal' },
     });
     expect(edited.evidence?.outboxMessages).toEqual([]);
+  }),
+);
+
+it.effect('missing or unavailable write authority and denied entrusted fields cannot produce owner evidence', () =>
+  Effect.gen(function* refuseUnauthorizedMutation() {
+    for (const outcome of ['DENIED', 'UNAVAILABLE', 'ALLOWED'] as const) {
+      // ALLOWED names only the command capability, never its separately governed entrusted field.
+      const gate = commandAuthority(outcome);
+      const harness = yield* makeActionTestHarness({
+        accessDecision: gate.bound,
+        ownerRegistration: salesPipelineRegistration,
+        services: [
+          bindActionTestServices(applyCommandAction, {
+            apply: () => Effect.die('A refused command must never mutate owner state'),
+            loadRecords: () => Effect.die('A refused command must never read owner state'),
+          }),
+        ],
+      });
+      const payload = yield* decodePayload({
+        command: {
+          _tag: 'UpdateOpportunity',
+          id: opportunityA,
+          patch: { entrustedPrincipalRef: { principalId: principal.principalId, tenantId } },
+        },
+        expectedRevision: 7,
+      });
+      const failure = yield* harness.runtime
+        .runAction({
+          payload,
+          principal,
+          registration: applyCommandAction,
+          transport: { correlationId: 'outbox-denied', idempotencyKey: `outbox-denied-${outcome}` },
+        })
+        .pipe(Effect.provideContext(gate.context), Effect.flip);
+      expect(failure._tag).toBe(outcome === 'UNAVAILABLE' ? 'ActionPermissionCheckError' : 'ActionPermissionDenied');
+      expect(harness.snapshot().committed).toEqual([]);
+      expect(harness.snapshot().transactionCount).toBe(0);
+      expect(harness.snapshot().stages).not.toContain('handler_executed');
+      expect(gate.accessDecision.askedLists).toEqual([]);
+      if (outcome === 'ALLOWED') {
+        expect(
+          gate.accessDecision.askedDecisions.some(
+            (question) => question.carrier.accessDeclaration?.key === salesPipelineEntrustGroup.key,
+          ),
+        ).toBe(true);
+      }
+    }
   }),
 );

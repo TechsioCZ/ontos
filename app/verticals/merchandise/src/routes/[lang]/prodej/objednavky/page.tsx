@@ -1,3 +1,4 @@
+import { pendingProposalMessage } from '../../../../api/action-result.ts';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
@@ -237,9 +238,17 @@ const useOrdersPage = ({ context, legalEntityId }: OrdersPageContentProps) => {
     }
     void browserRuntime.runPromise(
       changeOrderStatuses(input).pipe(
-        Effect.flatMap(({ changed, failed }) =>
+        Effect.flatMap(({ changed, failed, proposals }) =>
           Effect.sync(() => {
-            toaster.create(statusChangeNotification(t, status, targets.length, changed, failed));
+            for (const proposal of proposals ?? []) {
+              toaster.create({
+                title: pendingProposalMessage(proposal) ?? 'Awaiting approval. No changes have been applied.',
+                type: 'info',
+              });
+            }
+            if (changed > 0 || failed > 0) {
+              toaster.create(statusChangeNotification(t, status, changed + failed, changed, failed));
+            }
             setSelectedOrders({});
             setBusy(false);
             setPendingCancel(null);

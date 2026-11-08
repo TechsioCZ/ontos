@@ -17,6 +17,11 @@ export interface ReplaceApplicabilityBindingActionClientOptions {
   readonly compositionRevision?: string;
   readonly gateway?: Parameters<typeof operationGateway.invoke>[1];
   readonly idempotencyKey: string;
+  /**
+   * O80: ask for a parked proposal instead of an immediate write. Omitted means the ordinary run, so a
+   * refusal is never turned into a proposal on the caller's behalf.
+   */
+  readonly intent?: 'propose';
   readonly [traceIdOption]?: string;
 }
 
@@ -38,7 +43,13 @@ interface MakeClientOptions {
 
 const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptions) =>
   makeGovernedEffectBffClient(
-    { api: ReplaceApplicabilityBindingActionApi, credential, defaultApiPrefix: '/assortment-api', requestCorrelation },
+    {
+      api: ReplaceApplicabilityBindingActionApi,
+      credential,
+      defaultApiPrefix: '/assortment-api',
+      intent: options.intent,
+      requestCorrelation,
+    },
     options,
   );
 

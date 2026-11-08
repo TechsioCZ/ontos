@@ -1,32 +1,17 @@
-import {
-  AuthorizationMutationReconciliationUnavailable,
-  BusinessPermissionCodeSchema,
-  toBusinessPermissionAccessKey,
-  AuthorizationMutationSagaError,
-  ContextAccess,
-  defineScopedRoutine,
-  PrincipalEligibility,
-  reconcileCommittedAuthorizationMutation,
-} from '@app/core-runtime';
+import { defineScopedRoutine, PrincipalEligibility } from '@app/core-runtime';
 import type {
-  AuthorizationMutationJournalEntry,
-  AuthorizationMutationReconcilerService,
-  BusinessAccessTarget,
-  BusinessPermissionRelationshipMutationService,
-  ContextAccessService,
   OperationalScope,
-  OutboxWorkerLegalEntityScope,
   PrincipalEligibilityService,
   ScopedRoutineDefinition,
   ScopedRoutineInputValues,
   ScopedRoutineInvocationError,
   ScopedRoutineParameter,
 } from '@app/core-runtime';
-import { TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
-import { Crypto, DateTime, Effect, Option, Result, Schema } from 'effect';
+import { accessPortalWritesForTransaction } from '@app/core-runtime/access/portal';
+import type { AccessPortalError, AccessPortalTransaction, AccessPortalWrites } from '@app/core-runtime/access/portal';
+import { Crypto, Effect, Option, Result, Schema } from 'effect';
 
 import type {
-  CounterpartyAccessDecision,
   CounterpartyAccessGrant,
   CounterpartyPermissionScope,
   CounterpartyRef,
@@ -59,17 +44,16 @@ import type {
 } from '../../shared/domain/invitation-contract.ts';
 import { CounterpartyPermissionCodeSchema } from '../../shared/domain/permission-catalog.ts';
 import { counterpartyInvitationClaimServicesForTransaction } from './invitation-claim-authority-persistence.ts';
+import { COUNTERPARTY_CUSTOMER_PORTAL_ROLE, COUNTERPARTY_INVITEE_PORTAL_ROLE } from '../portal-access/portal-roles.ts';
+import {
+  counterpartyAccessGrantSource,
+  counterpartyInvitationRedemptionSource,
+} from '../portal-access/portal-sources.ts';
 import type {
   CurrentOwnerAccessDecision,
   CurrentOwnerAccessDecisionInput,
   CurrentOwnerAccessDecisionReader,
 } from './invitation-claim-authority-persistence.ts';
-import { AccessAuthorizationMutationWorkerRejected } from '../workers/access-authorization-mutation-reconciliation.ts';
-import type {
-  AccessAuthorizationMutationReconciliationService,
-  AccessAuthorizationMutationRequest,
-  AccessAuthorizationMutationWorkerError,
-} from '../workers/access-authorization-mutation-reconciliation.ts';
 
 const timestampSchema = Schema.Union([Schema.Date, Schema.String]);
 const customerContextModuleKey = 'commerce.customer-context';
@@ -79,8 +63,6 @@ const counterpartyResourceType = 'party.registry.counterparty' as const;
 const invitationProofVersion = 'commerce-invitation-proof.v1' as const;
 const invitationUnavailableReason = 'The invitation is unavailable in scope';
 const invitationOutsideScopeReason = 'The invitation is outside the trusted scope';
-const AccessMutationOperationSchema = Schema.Literals(['grant', 'revoke']);
-type AccessMutationOperation = typeof AccessMutationOperationSchema.Type;
 /* oxlint-disable effect-native/no-nullable-schema-field -- Owner-routine result codecs intentionally decode SQL NULL; mapping below converts absence into omitted public fields. */
 const nullableTimestampSchema = Schema.NullOr(timestampSchema);
 
@@ -96,11 +78,11 @@ const AccessGrantRowSchema = Schema.Struct({
       Schema.Literals([
         'ALREADY_ACTIVE',
         'ALREADY_REVOKED',
+        'APPLIED',
         'CONFLICT',
         'LAST_ADMIN_PROTECTED',
-        'PENDING_GRANT',
-        'PENDING_REVOKE',
         'PROFILE_NOT_FOUND',
+        'REVOKED',
         'SCOPE_MISMATCH',
       ]),
     ),
@@ -111,29 +93,13 @@ const AccessGrantRowSchema = Schema.Struct({
   revision: Schema.Int,
   revoked_at: nullableTimestampSchema,
   revoked_by: Schema.NullOr(Schema.String),
-  state: Schema.Literals(['PENDING_GRANT', 'ACTIVE', 'PENDING_REVOKE', 'REVOKED', 'RECONCILIATION_REQUIRED']),
+  state: Schema.Literals(['ACTIVE', 'REVOKED']),
   storefront_resource_id: Schema.NullOr(Schema.String),
 });
 type AccessGrantRow = typeof AccessGrantRowSchema.Type;
 
-const AccessMutationIntentRowSchema = Schema.Struct({
-  ...AccessGrantRowSchema.fields,
-  action_invocation_id: Schema.NullOr(Schema.String),
-  mutation_id: Schema.NullOr(Schema.String),
-  mutation_operation: Schema.NullOr(AccessMutationOperationSchema),
-  mutation_staged: Schema.NullOr(Schema.Boolean),
-});
-type AccessMutationIntentRow = typeof AccessMutationIntentRowSchema.Type;
-
 /** The closed lifecycle vocabulary of `counterparty_access_invitations`, under either column name. */
-const InvitationLifecycleSchema = Schema.Literals([
-  'PENDING',
-  'CLAIMING',
-  'CLAIMED',
-  'REVOKED',
-  'EXPIRED',
-  'RECONCILIATION_REQUIRED',
-]);
+const InvitationLifecycleSchema = Schema.Literals(['PENDING', 'CLAIMING', 'CLAIMED', 'REVOKED', 'EXPIRED']);
 
 const InvitationRowFieldsSchema = Schema.Struct({
   claimed_at: nullableTimestampSchema,
@@ -160,7 +126,6 @@ const InvitationRowFieldsSchema = Schema.Struct({
         'CREATED',
         'EXPIRED',
         'INVALID',
-        'RECONCILIATION_REQUIRED',
         'RESENT',
         'REVOKED',
         'REVISION_CONFLICT',
@@ -207,11 +172,8 @@ const validateClaimingInvitationRow = (row: InvitationRow, exactProgress: boolea
   if (row.claimed_by_principal_id === null || !exactProgress) {
     return 'claiming invitation rows require claimant and exact Permission progress';
   }
-  const anyReconciliation = row.grant_progress.some(({ state }) => state === 'RECONCILIATION_REQUIRED');
   const allActive = row.grant_progress.every(({ state }) => state === 'ACTIVE');
-  return (row.state === 'CLAIMED' && allActive) ||
-    (row.state === 'RECONCILIATION_REQUIRED' && anyReconciliation) ||
-    (row.state === 'CLAIMING' && !anyReconciliation && !allActive)
+  return (row.state === 'CLAIMED' && allActive) || (row.state === 'CLAIMING' && !allActive)
     ? undefined
     : 'invitation row lifecycle must match exact grant progress';
 };
@@ -235,7 +197,6 @@ const InvitationRowSchema = InvitationRowFieldsSchema.check(Schema.makeFilter(va
 const InvitationMutationRowSchema = Schema.Struct({
   ...InvitationRowSchema.fields,
   mutation_id: Schema.NullOr(Schema.String),
-  mutation_staged: Schema.NullOr(Schema.Boolean),
 });
 type InvitationMutationRow = typeof InvitationMutationRowSchema.Type;
 /* oxlint-enable effect-native/no-nullable-schema-field */
@@ -270,8 +231,8 @@ const lockAccessGrantAuthorityRoutine = defineScopedRoutine({
   schema: 'commerce_customer_context',
 });
 
-const beginAccessGrantRoutine = defineScopedRoutine({
-  name: 'begin_access_grant',
+const grantAccessRoutine = defineScopedRoutine({
+  name: 'grant_access',
   ownerModuleKey: customerContextModuleKey,
   parameters: [
     { source: 'tenantId', type: 'uuid' },
@@ -285,13 +246,13 @@ const beginAccessGrantRoutine = defineScopedRoutine({
     { nullable: true, source: 'input', type: 'text' },
     { source: 'input', type: 'boolean' },
   ],
-  resultSchema: AccessMutationIntentRowSchema,
-  routineKey: 'counterparty-access.begin-grant',
+  resultSchema: AccessGrantRowSchema,
+  routineKey: 'counterparty-access.grant',
   schema: 'commerce_customer_context',
 });
 
-const beginAccessRevokeRoutine = defineScopedRoutine({
-  name: 'begin_access_revoke',
+const revokeAccessRoutine = defineScopedRoutine({
+  name: 'revoke_access',
   ownerModuleKey: customerContextModuleKey,
   parameters: [
     { source: 'tenantId', type: 'uuid' },
@@ -305,57 +266,8 @@ const beginAccessRevokeRoutine = defineScopedRoutine({
     { source: 'input', type: 'uuid' },
     { nullable: true, source: 'input', type: 'text' },
   ],
-  resultSchema: AccessMutationIntentRowSchema,
-  routineKey: 'counterparty-access.begin-revoke',
-  schema: 'commerce_customer_context',
-});
-
-const transitionAccessGrantRoutine = defineScopedRoutine({
-  name: 'transition_access_grant',
-  ownerModuleKey: customerContextModuleKey,
-  parameters: [
-    { source: 'tenantId', type: 'uuid' },
-    { source: 'legalEntityId', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'text' },
-    { source: 'input', type: 'text' },
-  ],
-  resultSchema: AccessMutationIntentRowSchema,
-  routineKey: 'counterparty-access.transition-grant',
-  schema: 'commerce_customer_context',
-});
-
-const ReconciliationRowSchema = Schema.Struct({
-  ...AccessGrantRowSchema.fields,
-  action_invocation_id: Schema.String,
-  mutation_id: Schema.String,
-  recovery_operation: AccessMutationOperationSchema,
-});
-
-const listAccessReconciliationRoutine = defineScopedRoutine({
-  name: 'list_access_reconciliation',
-  ownerModuleKey: customerContextModuleKey,
-  parameters: [
-    { source: 'tenantId', type: 'uuid' },
-    { source: 'legalEntityId', type: 'uuid' },
-    { source: 'input', type: 'integer' },
-  ],
-  resultSchema: ReconciliationRowSchema,
-  routineKey: 'counterparty-access.list-reconciliation',
-  schema: 'commerce_customer_context',
-});
-
-const readAccessReconciliationRoutine = defineScopedRoutine({
-  name: 'read_access_reconciliation',
-  ownerModuleKey: customerContextModuleKey,
-  parameters: [
-    { source: 'tenantId', type: 'uuid' },
-    { source: 'legalEntityId', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-  ],
-  resultSchema: ReconciliationRowSchema,
-  routineKey: 'counterparty-access.read-reconciliation',
+  resultSchema: AccessGrantRowSchema,
+  routineKey: 'counterparty-access.revoke',
   schema: 'commerce_customer_context',
 });
 
@@ -368,19 +280,6 @@ const InvitationClaimReconciliationRowSchema = Schema.Struct({
   claim_subject_principal_id: Schema.NullOr(Schema.String),
   source_action_invocation_id: Schema.String,
   verified_at: timestampSchema,
-});
-
-const readInvitationClaimReconciliationRoutine = defineScopedRoutine({
-  name: 'read_access_invitation_claim_reconciliation',
-  ownerModuleKey: customerContextModuleKey,
-  parameters: [
-    { source: 'tenantId', type: 'uuid' },
-    { source: 'legalEntityId', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-  ],
-  resultSchema: InvitationClaimReconciliationRowSchema,
-  routineKey: 'counterparty-access.read-invitation-claim-reconciliation',
-  schema: 'commerce_customer_context',
 });
 
 const readEnrollmentInvitationClaimRoutine = defineScopedRoutine({
@@ -397,45 +296,22 @@ const readEnrollmentInvitationClaimRoutine = defineScopedRoutine({
   schema: 'commerce_customer_context',
 });
 
-const InvitationClaimPermissionMutationRowSchema = Schema.Struct({
-  ...ReconciliationRowSchema.fields,
-  mutation_staged: Schema.Boolean,
+const InvitationRedemptionRowSchema = Schema.Struct({
+  claimant_principal_id: Schema.String,
+  proof_reference: Schema.String,
 });
 
-const stageInvitationClaimGrantsRoutine = defineScopedRoutine({
-  name: 'stage_access_invitation_claim_grants',
-  ownerModuleKey: customerContextModuleKey,
-  parameters: [
-    { source: 'tenantId', type: 'uuid' },
-    { source: 'legalEntityId', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'boolean' },
-  ],
-  resultSchema: InvitationClaimPermissionMutationRowSchema,
-  routineKey: 'counterparty-access.stage-invitation-claim-grants',
-  schema: 'commerce_customer_context',
-});
-
-// The finalizer's SQL projection does not republish the immutable root-only claim subject.
-const FinalizedInvitationClaimRowSchema = Schema.Struct({
-  ...InvitationRowSchema.fields,
-  attestation_reference: Schema.String,
-  claim_mutation_id: Schema.String,
-  operation_outcome: Schema.Literals(['ALREADY_CLAIMED', 'CLAIMED', 'PENDING_AUTHORIZATION']),
-  source_action_invocation_id: Schema.String,
-  verified_at: timestampSchema,
-});
-
-const finalizeInvitationClaimRoutine = defineScopedRoutine({
-  name: 'finalize_reconciled_access_invitation',
+/** Every principal that redeemed a claim proof of one invitation, with the proof it redeemed. */
+const readInvitationRedemptionsRoutine = defineScopedRoutine({
+  name: 'read_invitation_claim_redemptions',
   ownerModuleKey: customerContextModuleKey,
   parameters: [
     { source: 'tenantId', type: 'uuid' },
     { source: 'legalEntityId', type: 'uuid' },
     { source: 'input', type: 'uuid' },
   ],
-  resultSchema: FinalizedInvitationClaimRowSchema,
-  routineKey: 'counterparty-access.finalize-reconciled-invitation',
+  resultSchema: InvitationRedemptionRowSchema,
+  routineKey: 'counterparty-access.read-invitation-redemptions',
   schema: 'commerce_customer_context',
 });
 
@@ -525,35 +401,6 @@ const instant = (value: Date | string): string => (Schema.is(Schema.String)(valu
 const scopeStorefront = (scope: CounterpartyPermissionScope): string | null =>
   scope.kind === 'storefront' ? scope.storefrontKey : null;
 
-const accessDecision = (
-  result: { readonly decision: 'allowed' | 'denied' | 'unavailable' } | undefined,
-): CounterpartyAccessDecision => {
-  if (result?.decision === 'allowed') {
-    return 'ALLOWED';
-  }
-  return result?.decision === 'denied' ? 'DENIED' : 'UNAVAILABLE';
-};
-
-const businessTarget = (
-  scope: Readonly<{ readonly legalEntityId: string; readonly tenantId: string }>,
-  counterpartyId: string,
-  permissionScope: CounterpartyPermissionScope,
-): BusinessAccessTarget =>
-  permissionScope.kind === 'counterparty'
-    ? {
-        counterpartyId,
-        kind: 'counterparty',
-        legalEntityId: scope.legalEntityId,
-        tenantId: scope.tenantId,
-      }
-    : {
-        counterpartyId,
-        kind: 'counterparty_storefront',
-        legalEntityId: scope.legalEntityId,
-        storefrontId: permissionScope.storefrontKey,
-        tenantId: scope.tenantId,
-      };
-
 const accessUnavailable = (failure?: ScopedRoutineInvocationError) => {
   const unavailable = new CounterpartyAccessUnavailable({
     code: 'counterparty_access_unavailable',
@@ -567,6 +414,17 @@ const accessUnavailable = (failure?: ScopedRoutineInvocationError) => {
         value: failure,
       });
 };
+
+/** Core could not write the portal access a grant stands for, so the owner transaction rolls back with it. */
+const portalAccessUnavailable = (failure: AccessPortalError) =>
+  Object.defineProperty(
+    new CounterpartyAccessUnavailable({
+      code: 'counterparty_access_unavailable',
+      reason: `Counterparty Commerce Access could not write its portal access (${failure.code})`,
+    }),
+    'cause',
+    { configurable: false, enumerable: false, value: failure },
+  );
 
 type ViolationCode = ConstructorParameters<typeof CounterpartyAccessContractViolation>[0]['code'];
 const violation = (code: ViolationCode, reason: string) => new CounterpartyAccessContractViolation({ code, reason });
@@ -659,19 +517,9 @@ const ownerAccessDecisionFromRows = (
   const relevant = rows.filter(
     (row) => row.permission_code === input.permission && ownerGrantMatchesScope(row, input.scope),
   );
-  // A broad ACTIVE owner grant is authoritative for a narrower requested scope. A
-  // stale/revoked row for that narrower scope must not shadow the active grant; only
-  // when no active grant covers the request do pending/reconciliation states decide it.
-  if (relevant.some(({ state }) => state === 'ACTIVE')) {
-    return 'ALLOWED';
-  }
-  if (relevant.some(({ state }) => state === 'RECONCILIATION_REQUIRED')) {
-    return 'UNAVAILABLE';
-  }
-  if (relevant.some(({ state }) => state === 'PENDING_REVOKE' || state === 'PENDING_GRANT' || state === 'REVOKED')) {
-    return 'DENIED';
-  }
-  return 'DENIED';
+  // A broad ACTIVE owner grant is authoritative for a narrower requested scope, and a revoked
+  // row for that narrower scope never shadows it.
+  return relevant.some(({ state }) => state === 'ACTIVE') ? 'ALLOWED' : 'DENIED';
 };
 
 const ownerAccessDecisionFromResult =
@@ -695,9 +543,8 @@ const readOwnerGrantRows = (
     .pipe(Effect.result);
 
 /**
- * Read the owner-local current grant before consulting Core's relationship projection. A
- * pending revoke is an immediate deny, while reconciliation is indeterminate and therefore
- * unavailable. Historical revoked rows never restore authority.
+ * Decide a Counterparty-scoped capability from the owner-local grant rows alone. Only an ACTIVE
+ * grant allows; historical revoked rows never restore authority.
  */
 export const currentOwnerAccessForTransaction =
   (
@@ -772,20 +619,23 @@ const requireEligible = Effect.fn('AccessPersistence.requireEligible')(function*
 
 export interface CounterpartyAccessPersistenceContext {
   readonly claimAuthority: CounterpartyInvitationClaimAuthorityService;
-  readonly contextAccess: Pick<ContextAccessService, 'businessPermissions'>;
-  /** Current owner state is conjunctive with Core authorization for protected checks. */
+  /**
+   * The owner's own Counterparty grant rows are the only authority for a Counterparty-scoped
+   * capability (O67-Q1). Core's v2 gate decides the capability itself; it never sees the
+   * customer's per-Counterparty grant.
+   */
   readonly currentOwnerAccess?: CurrentOwnerAccessDecisionReader;
   readonly eligibility: PrincipalEligibilityService;
+  /**
+   * Core's portal access over the owner transaction: an ACTIVE grant is the grantee's portal role in this
+   * Legal Entity, and a REVOKED one ends it, in the same commit (O62, O75).
+   */
+  readonly portalAccess: AccessPortalWrites;
   readonly proofLifecycle: CounterpartyInvitationProofLifecycleService;
   readonly scope: OperationalScope & { readonly legalEntityId: string };
   readonly transaction: CounterpartyAccessScopedRoutineInvoker;
   /** Trusted gateway-derived storefront identity. Request payload values never populate it. */
   readonly trustedStorefrontId?: string | undefined;
-}
-
-interface AccessAuthorizationReconciliationContext {
-  readonly scope: Readonly<{ readonly legalEntityId: string; readonly tenantId: string }>;
-  readonly transaction: CounterpartyAccessScopedRoutineInvoker;
 }
 
 const isTrustedPermissionScope = (
@@ -834,37 +684,9 @@ const requireCurrentInviterAuthority = (
   counterpartyRef: CounterpartyRef,
   permissionScope: CounterpartyPermissionScope,
 ): Effect.Effect<void, CounterpartyAccessDomainError> => {
-  const check = dependencies.contextAccess.businessPermissions;
-  if (check === undefined || !isTrustedPermissionScope(dependencies, permissionScope)) {
-    return Effect.fail(accessUnavailable());
-  }
-  const verifyCoreAuthority = Effect.gen(function* recheckInviterAuthority() {
-    const [result] = yield* check({
-      principal: inviter,
-      targets: [
-        {
-          permission: accessManagementPermission,
-          target: businessTarget(dependencies.scope, counterpartyRef.resourceId, permissionScope),
-        },
-      ],
-      ...(permissionScope.kind === 'storefront' && dependencies.trustedStorefrontId !== undefined
-        ? { trustedStorefrontId: dependencies.trustedStorefrontId }
-        : {}),
-    });
-    if (result?.decision === 'allowed') {
-      return yield* Effect.void;
-    }
-    if (result?.decision === 'denied') {
-      return yield* violation(
-        'inviter_authority_denied',
-        'The inviter no longer holds Counterparty access management authority',
-      );
-    }
-    return yield* accessUnavailable();
-  });
-  if (dependencies.currentOwnerAccess === undefined) {
-    // Counterparty targets are owner-governed. A missing owner reader is an unavailable
-    // deployment seam, never permission to continue with Core's projection alone.
+  if (!isTrustedPermissionScope(dependencies, permissionScope) || dependencies.currentOwnerAccess === undefined) {
+    // The owner's grant rows are the only authority for a Counterparty-scoped capability, so a
+    // missing owner reader is an unavailable deployment seam, never an allow (O67-Q1).
     return Effect.fail(accessUnavailable());
   }
   return dependencies
@@ -876,7 +698,7 @@ const requireCurrentInviterAuthority = (
       scope: permissionScope,
     })
     .pipe(
-      Effect.flatMap((decision) => {
+      Effect.flatMap((decision): Effect.Effect<void, CounterpartyAccessDomainError> => {
         if (decision === 'DENIED') {
           return Effect.fail(
             violation(
@@ -888,7 +710,7 @@ const requireCurrentInviterAuthority = (
         if (decision === 'UNAVAILABLE') {
           return Effect.fail(accessUnavailable());
         }
-        return verifyCoreAuthority;
+        return Effect.void;
       }),
     );
 };
@@ -908,32 +730,6 @@ const firstGrant = <Row extends AccessGrantRow>(
   rows: readonly Row[],
 ): Effect.Effect<Row, CounterpartyAccessUnavailable> =>
   rows[0] === undefined ? Effect.fail(accessUnavailable()) : Effect.succeed(rows[0]);
-
-const transitionGrant = (
-  dependencies: AccessAuthorizationReconciliationContext,
-  grantId: string,
-  mutationId: string,
-  operation: 'grant' | 'revoke',
-  state: 'ACTIVE' | 'RECONCILIATION_REQUIRED' | 'REVOKED',
-) =>
-  dependencies.transaction
-    .invoke(transitionAccessGrantRoutine, [grantId, mutationId, operation, state])
-    .pipe(Effect.mapError(accessUnavailable), Effect.flatMap(firstGrant));
-
-const requireMutationIntent = <Operation extends 'grant' | 'revoke'>(
-  row: AccessMutationIntentRow,
-  operation: Operation,
-): Effect.Effect<
-  Readonly<{ mutationId: string; operation: Operation; staged: boolean }>,
-  CounterpartyAccessUnavailable
-> =>
-  row.mutation_id === null || row.mutation_operation !== operation || row.mutation_staged === null
-    ? Effect.fail(accessUnavailable())
-    : Effect.succeed({
-        mutationId: row.mutation_id,
-        operation,
-        staged: row.mutation_staged,
-      });
 
 const durableClaimRejection = (failure: CounterpartyAccessDomainError): InvitationClaimRejection | undefined => {
   if (!Schema.is(CounterpartyAccessContractViolation)(failure)) {
@@ -1006,6 +802,28 @@ const verifyOrPersistClaimRejection = (
     },
   );
 
+/** The grantee holds the Counterparty portal role while this grant row is ACTIVE (one source per row). */
+const followActiveGrant = (dependencies: CounterpartyAccessPersistenceContext, row: AccessGrantRow) =>
+  dependencies.portalAccess
+    .grant({
+      legalEntityId: dependencies.scope.legalEntityId,
+      principalId: row.principal_id,
+      role: COUNTERPARTY_CUSTOMER_PORTAL_ROLE,
+      source: counterpartyAccessGrantSource(row.grant_id),
+    })
+    .pipe(Effect.mapError(portalAccessUnavailable), Effect.asVoid);
+
+/** A REVOKED grant row ends exactly the portal assignment it stood for. */
+const followRevokedGrant = (dependencies: CounterpartyAccessPersistenceContext, row: AccessGrantRow) =>
+  dependencies.portalAccess
+    .revoke({
+      legalEntityId: dependencies.scope.legalEntityId,
+      principalId: row.principal_id,
+      role: COUNTERPARTY_CUSTOMER_PORTAL_ROLE,
+      source: counterpartyAccessGrantSource(row.grant_id),
+    })
+    .pipe(Effect.mapError(portalAccessUnavailable), Effect.asVoid);
+
 const grantAccess = (
   dependencies: CounterpartyAccessPersistenceContext,
   input: GrantCounterpartyAccessInput,
@@ -1026,7 +844,7 @@ const grantAccess = (
   return Effect.gen(function* persistAccessGrant() {
     yield* requireEligible(dependencies.eligibility, input.recipient);
     const rows = yield* dependencies.transaction
-      .invoke(beginAccessGrantRoutine, [
+      .invoke(grantAccessRoutine, [
         input.counterpartyRef.resourceId,
         input.recipient.principalId,
         input.permission,
@@ -1046,21 +864,16 @@ const grantAccess = (
       return { grant, outcome: 'CONFLICT' as const };
     }
     if (row.operation_outcome === 'ALREADY_ACTIVE') {
+      yield* followActiveGrant(dependencies, row);
       return { grant, outcome: 'ALREADY_ACTIVE' as const };
     }
-    const reconciliation = yield* requireMutationIntent(row, 'grant');
-    const completed = yield* transitionGrant(
-      dependencies,
-      row.grant_id,
-      reconciliation.mutationId,
-      'grant',
-      'RECONCILIATION_REQUIRED',
-    );
-    return {
-      grant: grantFromRow(dependencies.scope.tenantId, completed),
-      outcome: 'RECONCILIATION_REQUIRED' as const,
-      reconciliation,
-    };
+    // The owner's grant row is the whole authority (O67-Q1), so the grant is ACTIVE when its
+    // routine returns (O62).
+    if (row.operation_outcome !== 'APPLIED' || row.state !== 'ACTIVE') {
+      return yield* accessUnavailable();
+    }
+    yield* followActiveGrant(dependencies, row);
+    return { grant, outcome: 'APPLIED' as const };
   });
 };
 
@@ -1083,7 +896,7 @@ const revokeAccess = (
   }
   return Effect.gen(function* persistAccessRevoke() {
     const rows = yield* dependencies.transaction
-      .invoke(beginAccessRevokeRoutine, [
+      .invoke(revokeAccessRoutine, [
         input.counterpartyRef.resourceId,
         input.grantRef?.resourceId ?? null,
         input.recipient.principalId,
@@ -1103,21 +916,15 @@ const revokeAccess = (
       return { grant, outcome: 'SCOPE_MISMATCH' as const };
     }
     if (row.operation_outcome === 'ALREADY_REVOKED') {
+      yield* followRevokedGrant(dependencies, row);
       return { grant, outcome: 'ALREADY_REVOKED' as const };
     }
-    const reconciliation = yield* requireMutationIntent(row, 'revoke');
-    const completed = yield* transitionGrant(
-      dependencies,
-      row.grant_id,
-      reconciliation.mutationId,
-      'revoke',
-      'RECONCILIATION_REQUIRED',
-    );
-    return {
-      grant: grantFromRow(dependencies.scope.tenantId, completed),
-      outcome: 'RECONCILIATION_REQUIRED' as const,
-      reconciliation,
-    };
+    // A revoke is final in the owner transaction (O62, O67-Q1).
+    if (row.operation_outcome !== 'REVOKED' || row.state !== 'REVOKED') {
+      return yield* accessUnavailable();
+    }
+    yield* followRevokedGrant(dependencies, row);
+    return { grant, outcome: 'REVOKED' as const };
   });
 };
 
@@ -1226,7 +1033,6 @@ export const readEnrollmentInvitationClaimCurrent = Effect.fn('AccessPersistence
     transaction: CounterpartyAccessScopedRoutineInvoker,
     scope: { readonly legalEntityId: string; readonly tenantId: string },
     input: { readonly expectedAttestation?: string; readonly invitationId: string; readonly principalId: string },
-    contextAccess: ContextAccessService | undefined,
   ) {
     const rows = yield* transaction
       .invoke(readEnrollmentInvitationClaimRoutine, [input.invitationId, input.principalId])
@@ -1250,8 +1056,7 @@ export const readEnrollmentInvitationClaimCurrent = Effect.fn('AccessPersistence
       row.claim_subject_principal_id !== input.principalId ||
       row.claimed_by_principal_id !== input.principalId ||
       row.state !== 'CLAIMED' ||
-      (input.expectedAttestation !== undefined && input.expectedAttestation !== row.attestation_reference) ||
-      contextAccess?.businessPermissions === undefined
+      (input.expectedAttestation !== undefined && input.expectedAttestation !== row.attestation_reference)
     ) {
       return Option.some({ ...accepted, current: false });
     }
@@ -1269,35 +1074,10 @@ export const readEnrollmentInvitationClaimCurrent = Effect.fn('AccessPersistence
         }),
       { concurrency: 1 },
     );
-    if (ownerDecisions.some((decision) => decision !== 'ALLOWED')) {
-      return Option.some({ ...accepted, current: false });
-    }
-    const targets = yield* Effect.forEach(
-      invitation.intendedPermissions,
-      (permission) =>
-        Schema.decodeEffect(BusinessPermissionCodeSchema)(permission).pipe(
-          Effect.map((code) => ({
-            permission: code,
-            target: businessTarget(scope, row.counterparty_resource_id, invitation.scope),
-          })),
-          Effect.mapError((failure) => Object.defineProperty(accessUnavailable(), 'cause', { value: failure })),
-        ),
-      { concurrency: 1 },
-    );
-    const expectedKeys = targets.map(toBusinessPermissionAccessKey);
-    const decisions = yield* contextAccess.businessPermissions({
-      principal,
-      targets,
-      // This owner recovery read is bounded by the original accepted invitation scope, like its worker.
-      ...(invitation.scope.kind === 'storefront' ? { trustedStorefrontId: invitation.scope.storefrontKey } : {}),
-    });
-    const byKey = new Map(decisions.map((decision) => [decision.key, decision]));
-    const current =
-      expectedKeys.length > 0 &&
-      decisions.length === expectedKeys.length &&
-      byKey.size === expectedKeys.length &&
-      expectedKeys.every((key) => byKey.get(key)?.decision === 'allowed');
-    return Option.some({ ...accepted, current });
+    // The owner's own grant rows are the only authority left to re-read (O67-Q1): nothing is
+    // projected into a second permission store, so a granted claim is current exactly while
+    // every intended Permission still has its ACTIVE owner row.
+    return Option.some({ ...accepted, current: ownerDecisions.every((decision) => decision === 'ALLOWED') });
   },
 );
 
@@ -1347,16 +1127,9 @@ const mutateInvitation = (
     );
 };
 
-type InvitationClaimReconciliation = Readonly<{
-  readonly mutationId: string;
-  readonly operation: 'claim';
-  readonly staged: boolean;
-}>;
-
 type InvitationClaimStart =
   | Readonly<{ readonly invitation: CounterpartyAccessInvitation; readonly kind: 'ALREADY_CLAIMED' }>
   | Readonly<{
-      readonly claimReconciliation: InvitationClaimReconciliation;
       readonly inviter: PrincipalRef;
       readonly kind: 'READY';
       readonly row: InvitationMutationRow;
@@ -1387,15 +1160,10 @@ const prepareInvitationClaimStart = (
   if (row.operation_outcome === 'EXPIRED') {
     return { code: 'invitation_expired', kind: 'VIOLATION', reason: 'The invitation has expired' };
   }
-  if (row.mutation_id === null || row.mutation_staged === null) {
+  if (row.mutation_id === null) {
     return { kind: 'UNAVAILABLE' };
   }
   return {
-    claimReconciliation: {
-      mutationId: row.mutation_id,
-      operation: 'claim',
-      staged: row.mutation_staged,
-    },
     inviter: {
       principalId: row.invited_by,
       tenantId: dependencies.scope.tenantId,
@@ -1456,28 +1224,27 @@ const grantInvitationClaimPermissions = Effect.fn('AccessPersistence.grantInvita
   },
 );
 
-const claimFinishOperation = (grants: readonly { readonly outcome: string }[]) =>
+/**
+ * Every intended grant must be ACTIVE in this transaction. A conflicting grant fails the claim
+ * closed and the single owner transaction rolls back, leaving the invitation recoverable (O67-Q1).
+ */
+const requireActiveClaimGrants = (
+  grants: readonly { readonly outcome: string }[],
+): Effect.Effect<void, CounterpartyAccessUnavailable> =>
   grants.some(({ outcome }) => outcome !== 'APPLIED' && outcome !== 'ALREADY_ACTIVE')
-    ? ('FINISH_RECONCILIATION' as const)
-    : ('FINISH_CLAIM' as const);
+    ? Effect.fail(accessUnavailable())
+    : Effect.void;
 
-type InvitationClaimPermissionMutation = Readonly<{
-  readonly grantRef: CounterpartyAccessGrant['grantRef'];
-  readonly mutationId: string;
-  readonly operation: 'grant';
-  readonly permission: CounterpartyAccessGrant['permission'];
-  readonly staged: boolean;
-}>;
-
+/**
+ * Every claimed grant became ACTIVE in this transaction, so the invitation claim closes here. A
+ * claim that does not reach CLAIMED is an owner defect (O62, O67-Q1).
+ */
 const finishInvitationClaim = Effect.fn('AccessPersistence.finishInvitationClaim')(
   function* finishInvitationClaimEffect(
     dependencies: CounterpartyAccessPersistenceContext,
     input: ClaimCounterpartyAccessInvitationInput,
     row: InvitationMutationRow,
     attestation: VerifiedInvitationClaimAttestation,
-    claimReconciliation: InvitationClaimReconciliation,
-    operation: 'FINISH_CLAIM' | 'FINISH_RECONCILIATION',
-    permissionMutations: readonly InvitationClaimPermissionMutation[],
   ) {
     const completedRows = yield* dependencies.transaction
       .invoke(mutateAccessInvitationRoutine, [
@@ -1485,7 +1252,7 @@ const finishInvitationClaim = Effect.fn('AccessPersistence.finishInvitationClaim
         input.counterpartyRef.resourceId,
         scopeStorefront(input.scope),
         row.revision,
-        operation,
+        'FINISH_CLAIM',
         input.actor.principalId,
         input.actionInvocationId,
         input.reason ?? null,
@@ -1494,21 +1261,13 @@ const finishInvitationClaim = Effect.fn('AccessPersistence.finishInvitationClaim
       ])
       .pipe(Effect.mapError(accessUnavailable));
     const [completed] = completedRows;
-    if (completed === undefined) {
+    if (completed === undefined || completed.state !== 'CLAIMED') {
       return yield* accessUnavailable();
-    }
-    const invitation = invitationFromRow(dependencies.scope.tenantId, completed);
-    if (completed.state === 'CLAIMED') {
-      return { attestation, invitation, outcome: 'CLAIMED' as const };
     }
     return {
       attestation,
-      invitation,
-      outcome: 'RECONCILIATION_REQUIRED' as const,
-      reconciliation: {
-        ...claimReconciliation,
-        permissionMutations,
-      },
+      invitation: invitationFromRow(dependencies.scope.tenantId, completed),
+      outcome: 'CLAIMED' as const,
     };
   },
 );
@@ -1519,55 +1278,56 @@ const counterpartyAccessCheckInScope = (
   input: CounterpartyAccessCheckInput,
 ): boolean =>
   exactScope(scope, { counterpartyRef: input.counterpartyRef, principalRefs: [input.principal] }) &&
+  input.principal.principalId === scope.principalId &&
   (input.scope.kind === 'counterparty' || trustedStorefrontId === input.scope.storefrontKey);
 
 /**
- * Core's relationship decision for a Counterparty access check, read through SpiceDB before the owner
- * transaction opens. The port's `check` combines it with the owner-local grant inside the transaction.
+ * Every claim proof of the invitation that somebody redeemed admitted that person as an invitee, one Core
+ * assignment per proof. Once the invitation is claimed, resent or revoked, none of those proofs can be claimed
+ * any more — the claim consumed one, a resend revoked the earlier one, a revocation revoked them all — so every
+ * such assignment ends here, in the owner's transaction, not only the one a claim consumed.
  */
-export const counterpartyAccessCoreDecision = (
-  contextAccess: Pick<ContextAccessService, 'businessPermissions'>,
-  scope: OperationalScope & { readonly legalEntityId: string },
-  input: CounterpartyAccessCheckInput,
-): Effect.Effect<CounterpartyAccessDecision> => {
-  const check = contextAccess.businessPermissions;
-  if (check === undefined || !counterpartyAccessCheckInScope(scope, scope.trustedStorefrontId, input)) {
-    return Effect.succeed('UNAVAILABLE' as const);
-  }
-  return check({
-    principal: input.principal,
-    targets: [
-      { permission: input.permission, target: businessTarget(scope, input.counterpartyRef.resourceId, input.scope) },
-    ],
-    ...(input.scope.kind === 'storefront' && scope.trustedStorefrontId !== undefined
-      ? { trustedStorefrontId: scope.trustedStorefrontId }
-      : {}),
-  }).pipe(Effect.map(([result]) => accessDecision(result)));
-};
+const endInvitationRedemptions = (dependencies: CounterpartyAccessPersistenceContext, invitationId: string) =>
+  dependencies.transaction.invoke(readInvitationRedemptionsRoutine, [invitationId]).pipe(
+    Effect.mapError(accessUnavailable),
+    Effect.flatMap((redemptions) =>
+      Effect.forEach(
+        redemptions,
+        (redemption) =>
+          dependencies.portalAccess
+            .revoke({
+              legalEntityId: dependencies.scope.legalEntityId,
+              principalId: redemption.claimant_principal_id,
+              role: COUNTERPARTY_INVITEE_PORTAL_ROLE,
+              source: counterpartyInvitationRedemptionSource(invitationId, redemption.proof_reference),
+            })
+            .pipe(Effect.mapError(portalAccessUnavailable)),
+        // Each revocation locks its person and decides on what the one before it left.
+        { concurrency: 1, discard: true },
+      ),
+    ),
+  );
 
 export const counterpartyAccessPortForTransaction = (
   dependencies: CounterpartyAccessPersistenceContext,
 ): CounterpartyAccessPortService => {
   const service: CounterpartyAccessPortService = {
     bootstrapAdministrator: (input) => grantAccess(dependencies, input, true),
-    check: (input, coreDecision) => {
+    check: (input) => {
       if (!counterpartyAccessCheckInScope(dependencies.scope, dependencies.trustedStorefrontId, input)) {
         return Effect.succeed('UNAVAILABLE' as const);
       }
       if (dependencies.currentOwnerAccess === undefined) {
-        // The owner-local grant is conjunctive with Core's relationship projection. Do not
-        // silently downgrade to Core-only authorization when the owner adapter is absent.
+        // The registered Read's gate admits the caller. Its exact owner grant is still mandatory.
         return Effect.succeed('UNAVAILABLE' as const);
       }
-      return dependencies
-        .currentOwnerAccess({
-          counterpartyRef: input.counterpartyRef,
-          legalEntityId: dependencies.scope.legalEntityId,
-          permission: input.permission,
-          principal: input.principal,
-          scope: input.scope,
-        })
-        .pipe(Effect.map((decision) => (decision === 'ALLOWED' ? coreDecision : decision)));
+      return dependencies.currentOwnerAccess({
+        counterpartyRef: input.counterpartyRef,
+        legalEntityId: dependencies.scope.legalEntityId,
+        permission: input.permission,
+        principal: input.principal,
+        scope: input.scope,
+      });
     },
     claimInvitation: (input: ClaimCounterpartyAccessInvitationInput) => {
       if (
@@ -1595,9 +1355,10 @@ export const counterpartyAccessPortForTransaction = (
           return yield* accessUnavailable();
         }
         if (start.kind === 'ALREADY_CLAIMED') {
+          yield* endInvitationRedemptions(dependencies, input.invitationRef.resourceId);
           return { invitation: start.invitation, outcome: 'ALREADY_CLAIMED' as const };
         }
-        const { claimReconciliation, inviter } = start;
+        const { inviter } = start;
         const verification = yield* verifyOrPersistClaimRejection(dependencies, input, row, inviter);
         if (!verification.verified) {
           return {
@@ -1613,29 +1374,12 @@ export const counterpartyAccessPortForTransaction = (
             'The verified claim attestation does not match this invitation claim',
           );
         }
-        const grants = yield* grantInvitationClaimPermissions(dependencies, input, row, inviter);
-        const permissionMutations = grants.flatMap((result) =>
-          result.outcome === 'RECONCILIATION_REQUIRED'
-            ? [
-                {
-                  grantRef: result.grant.grantRef,
-                  mutationId: result.reconciliation.mutationId,
-                  operation: 'grant' as const,
-                  permission: result.grant.permission,
-                  staged: result.reconciliation.staged,
-                },
-              ]
-            : [],
+        yield* grantInvitationClaimPermissions(dependencies, input, row, inviter).pipe(
+          Effect.flatMap(requireActiveClaimGrants),
         );
-        return yield* finishInvitationClaim(
-          dependencies,
-          input,
-          row,
-          attestation,
-          claimReconciliation,
-          claimFinishOperation(grants),
-          permissionMutations,
-        );
+        const claimed = yield* finishInvitationClaim(dependencies, input, row, attestation);
+        yield* endInvitationRedemptions(dependencies, input.invitationRef.resourceId);
+        return claimed;
       });
     },
     createInvitation: Effect.fn('CounterpartyAccessPort.createInvitation')(function* createInvitation(
@@ -1743,11 +1487,15 @@ export const counterpartyAccessPortForTransaction = (
         legalEntityId: input.legalEntityId,
         scope: invitation.scope,
       });
+      // The rotation revoked the earlier proof, so the invitee access its redemption admitted ends with it.
+      yield* endInvitationRedemptions(dependencies, input.invitationRef.resourceId);
       return { invitation, outcome: 'RESENT' };
     }),
     revoke: (input) => revokeAccess(dependencies, input),
     revokeInvitation: (input) =>
       mutateInvitation(dependencies, input, 'REVOKE').pipe(
+        // The revocation revoked every proof of the invitation, and with them the invitee access they admitted.
+        Effect.tap(() => endInvitationRedemptions(dependencies, input.invitationRef.resourceId)),
         Effect.map((row) => ({
           invitation: invitationFromRow(dependencies.scope.tenantId, row),
           outcome: row.operation_outcome === 'ALREADY_REVOKED' ? ('ALREADY_REVOKED' as const) : ('REVOKED' as const),
@@ -1761,35 +1509,28 @@ export const counterpartyAccessPortForTransaction = (
  * Transaction-scoped production binding. It closes over Core's verified owner capability and
  * exposes only the public access port to handlers.
  */
-export const counterpartyAccessPortForScopedTransaction = Effect.fn(
-  'AccessPersistence.counterpartyAccessPortForScopedTransaction',
+export const counterpartyAccessPortForOwnerTransaction = Effect.fn(
+  'AccessPersistence.counterpartyAccessPortForOwnerTransaction',
 )(function* bindCounterpartyAccessPort(
   transaction: CounterpartyAccessScopedRoutineInvoker,
   scope: OperationalScope & { readonly legalEntityId: string },
-  prepared?: {
-    readonly contextAccess: Pick<ContextAccessService, 'businessPermissions'>;
-    readonly eligibility: PrincipalEligibilityService;
-  },
+  portalAccess: AccessPortalWrites,
 ) {
-  const liveContextAccess = yield* ContextAccess;
   const crypto = yield* Crypto.Crypto;
-  const liveEligibility = yield* PrincipalEligibility;
-  const contextAccess = prepared?.contextAccess ?? liveContextAccess;
-  const eligibility = prepared?.eligibility ?? liveEligibility;
+  const eligibility = yield* PrincipalEligibility;
   const proofDelivery = yield* CounterpartyInvitationProofDelivery;
   const currentOwnerAccess = lockingCurrentOwnerAccessForTransaction(transaction, scope);
   const { claimAuthority, proofLifecycle } = counterpartyInvitationClaimServicesForTransaction(
     transaction,
-    contextAccess,
     crypto,
     proofDelivery,
     currentOwnerAccess,
   );
   return counterpartyAccessPortForTransaction({
     claimAuthority,
-    contextAccess,
     currentOwnerAccess,
     eligibility,
+    portalAccess,
     proofLifecycle,
     scope,
     transaction,
@@ -1797,685 +1538,12 @@ export const counterpartyAccessPortForScopedTransaction = Effect.fn(
   });
 });
 
-const reconciliationEntry = (
-  dependencies: AccessAuthorizationReconciliationContext,
-  row: typeof ReconciliationRowSchema.Type,
-): AuthorizationMutationJournalEntry => {
-  const permissionScope: CounterpartyPermissionScope =
-    row.storefront_resource_id === null
-      ? { kind: 'counterparty' }
-      : { kind: 'storefront', storefrontKey: row.storefront_resource_id };
-  return {
-    attemptCount: 0,
-    businessTarget: businessTarget(dependencies.scope, row.counterparty_resource_id, permissionScope),
-    correlationId: row.action_invocation_id,
-    mutationId: row.mutation_id,
-    operation: row.recovery_operation,
-    permission: row.permission_code,
-    principal: { principalId: row.principal_id, tenantId: dependencies.scope.tenantId },
-    state: row.state,
-  };
-};
-
-const reconciliationFailure = (reason: string, cause?: unknown) => {
-  const failure = new AuthorizationMutationReconciliationUnavailable({ reason });
-  return cause === undefined ? failure : Object.defineProperty(failure, 'cause', { enumerable: false, value: cause });
-};
-
-const reconcileAccessEntry = (
-  dependencies: AccessAuthorizationReconciliationContext,
-  mutation: Pick<BusinessPermissionRelationshipMutationService, 'mutate'>,
-  row: typeof ReconciliationRowSchema.Type,
-) => {
-  const entry = reconciliationEntry(dependencies, row);
-  return reconcileCommittedAuthorizationMutation(entry, mutation, {
-    finalize: ({ mutationId, to }) =>
-      transitionGrant(dependencies, row.grant_id, mutationId, row.recovery_operation, to).pipe(
-        Effect.map((completed) => ({ ...entry, state: completed.state })),
-        Effect.mapError((cause) =>
-          Object.defineProperty(
-            new AuthorizationMutationSagaError({
-              code: 'authorization_mutation_finalization_indeterminate',
-              externalMutationMayHaveSucceeded: true,
-              reason: 'The access grant finalization remains indeterminate',
-              retryable: true,
-            }),
-            'cause',
-            { enumerable: false, value: cause },
-          ),
-        ),
-      ),
-  });
-};
-
-const reconcileAccessRow = (
-  dependencies: AccessAuthorizationReconciliationContext,
-  mutation: Pick<BusinessPermissionRelationshipMutationService, 'mutate'>,
-  row: typeof ReconciliationRowSchema.Type,
+/** The port of a governed Action: Core's portal writes run over the Action's own scoped transaction. */
+export const counterpartyAccessPortForScopedTransaction = (
+  transaction: CounterpartyAccessScopedRoutineInvoker & AccessPortalTransaction,
+  scope: OperationalScope & { readonly legalEntityId: string },
 ) =>
-  reconcileAccessEntry(dependencies, mutation, row).pipe(
-    Effect.as(true),
-    Effect.orElseSucceed(() => false),
-  );
-
-const finalizedAccessMutationResult = (
-  dependencies: AccessAuthorizationReconciliationContext,
-  mutationId: string,
-  operation: AccessMutationOperation,
-  outcome: 'ALREADY_FINAL' | 'FINALIZED',
-) =>
-  dependencies.transaction.invoke(readAccessReconciliationRoutine, [mutationId]).pipe(
-    Effect.flatMap(([finalized]) => {
-      if (finalized === undefined) {
-        return Effect.fail(reconciliationFailure('Finalized access evidence is unavailable'));
-      }
-      const terminalInstant = operation === 'grant' ? finalized.granted_at : finalized.revoked_at;
-      return terminalInstant === null
-        ? Effect.fail(reconciliationFailure('Terminal access mutation time is unavailable'))
-        : Effect.succeed({
-            grant: grantFromRow(dependencies.scope.tenantId, finalized),
-            mutationId,
-            occurredAt: DateTime.toDateUtc(DateTime.makeUnsafe(terminalInstant)),
-            operation,
-            outcome,
-            sourceActionInvocationId: finalized.action_invocation_id,
-          });
-    }),
-  );
-
-export const accessAuthorizationMutationReconciliationForTransaction = (
-  dependencies: AccessAuthorizationReconciliationContext,
-  mutation: Pick<BusinessPermissionRelationshipMutationService, 'mutate'>,
-) =>
-  Object.freeze({
-    reconcileOne: ({
-      counterpartyResourceId,
-      grantId,
-      mutationId,
-      operation,
-    }: {
-      readonly counterpartyResourceId: string;
-      readonly grantId: string;
-      readonly mutationId: string;
-      readonly operation: AccessMutationOperation;
-    }) =>
-      dependencies.transaction.invoke(readAccessReconciliationRoutine, [mutationId]).pipe(
-        Effect.mapError((cause) => reconciliationFailure('Access reconciliation storage is unavailable', cause)),
-        Effect.flatMap(([row]) => {
-          if (
-            row === undefined ||
-            row.recovery_operation !== operation ||
-            row.counterparty_resource_id !== counterpartyResourceId ||
-            row.grant_id !== grantId
-          ) {
-            return Effect.fail(reconciliationFailure('The access mutation is unavailable or no longer current'));
-          }
-          const grant = grantFromRow(dependencies.scope.tenantId, row);
-          return reconcileAccessEntry(dependencies, mutation, row).pipe(
-            Effect.flatMap((result) =>
-              finalizedAccessMutationResult(dependencies, mutationId, operation, result.outcome),
-            ),
-            Effect.orElseSucceed(() => ({
-              grant,
-              mutationId,
-              occurredAt: DateTime.toDateUtc(
-                DateTime.makeUnsafe(operation === 'grant' ? row.granted_at : (row.revoked_at ?? row.granted_at)),
-              ),
-              operation,
-              outcome: 'INDETERMINATE' as const,
-              sourceActionInvocationId: row.action_invocation_id,
-            })),
-          );
-        }),
-      ),
-  });
-
-/**
- * Worker-facing binding over the verified legal-entity fan-out scope. It exposes only the
- * routine invoker already scoped by Core and never asks the worker to construct Action services.
- */
-const accessAuthorizationMutationReconciliationForScopedWorker = (
-  scope: OutboxWorkerLegalEntityScope,
-  mutation: Pick<BusinessPermissionRelationshipMutationService, 'mutate'>,
-) =>
-  accessAuthorizationMutationReconciliationForTransaction(
-    {
-      scope: { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId },
-      transaction: scope.routineInvoker,
-    },
-    mutation,
-  );
-
-const workerRejected = (
-  code: 'RECONCILIATION_INDETERMINATE' | 'RECONCILIATION_UNAVAILABLE',
-  reason: string,
-  cause?: unknown,
-) => {
-  const failure = new AccessAuthorizationMutationWorkerRejected({ code, reason });
-  return cause === undefined ? failure : Object.defineProperty(failure, 'cause', { enumerable: false, value: cause });
-};
-
-type DurableClaimRoot = typeof InvitationClaimReconciliationRowSchema.Type;
-type DurableClaimRequest = Extract<AccessAuthorizationMutationRequest, { readonly operation: 'claim' }>;
-type DurableClaimPermission = DurableClaimRequest['permissionMutations'][number]['permission'];
-
-const claimSubjectPrincipalId = (root: DurableClaimRoot) =>
-  root.claim_subject_principal_id ?? root.claimed_by_principal_id;
-
-const claimRootPendingPermissions = (root: DurableClaimRoot) =>
-  new Set(
-    root.grant_progress.flatMap(({ permission, state }) =>
-      state === 'PENDING_GRANT' || state === 'RECONCILIATION_REQUIRED' ? [permission] : [],
-    ),
-  );
-
-const claimRootGrantIdsByPermission = (root: DurableClaimRoot) =>
-  new Map(
-    root.grant_progress.flatMap((progress) =>
-      'grantRef' in progress && progress.grantRef !== undefined
-        ? [[progress.permission, progress.grantRef.resourceId] as const]
-        : [],
-    ),
-  );
-
-const claimRequestPermissions = (request: DurableClaimRequest) =>
-  request.permissionMutations.map(({ permission }) => permission);
-
-const claimRequestMutationIds = (request: DurableClaimRequest) =>
-  request.permissionMutations.map(({ mutationId }) => mutationId);
-
-const claimRequestHasUniqueValues = (values: readonly string[]) => new Set(values).size === values.length;
-
-const claimRequestOperationsAreGrants = (request: DurableClaimRequest) =>
-  request.permissionMutations.every(({ operation }) => operation === 'grant');
-
-const claimRootRequestGrantRefsMatch = (
-  root: DurableClaimRoot,
-  request: DurableClaimRequest,
-  requestedPermissions: readonly DurableClaimPermission[],
-): boolean => {
-  const rootPermissionSet = new Set(root.requested_permission_codes);
-  const expectedGrantByPermission = claimRootGrantIdsByPermission(root);
-  const requestedGrantByPermission = new Map(
-    request.permissionMutations.map(({ grantRef, permission }) => [permission, grantRef.resourceId]),
-  );
-  return requestedPermissions.every((permission) => {
-    const expectedGrantId = expectedGrantByPermission.get(permission);
-    return (
-      rootPermissionSet.has(permission) &&
-      (expectedGrantId === undefined || requestedGrantByPermission.get(permission) === expectedGrantId)
-    );
-  });
-};
-
-const claimRootRequestMatchesRevokedRoot = (
-  root: DurableClaimRoot,
-  request: DurableClaimRequest,
-  requestedPermissions: readonly DurableClaimPermission[],
-): boolean => {
-  const rootPermissionSet = new Set(root.requested_permission_codes);
-  return (
-    claimRequestHasUniqueValues(requestedPermissions) &&
-    requestedPermissions.every((permission) => rootPermissionSet.has(permission)) &&
-    claimRequestOperationsAreGrants(request)
-  );
-};
-
-const claimRootRequestMatchesActiveRoot = (
-  root: DurableClaimRoot,
-  request: DurableClaimRequest,
-  requestedPermissions: readonly DurableClaimPermission[],
-): boolean => {
-  if (request.permissionMutations.length === 0) {
-    return true;
-  }
-  const pendingPermissions = claimRootPendingPermissions(root);
-  const requestedPermissionSet = new Set(requestedPermissions);
-  return (
-    requestedPermissions.length >= pendingPermissions.size &&
-    claimRequestHasUniqueValues(requestedPermissions) &&
-    claimRequestHasUniqueValues(claimRequestMutationIds(request)) &&
-    root.grant_progress
-      .filter(({ state }) => state === 'PENDING_GRANT' || state === 'RECONCILIATION_REQUIRED')
-      .every(({ permission }) => requestedPermissionSet.has(permission)) &&
-    claimRootRequestGrantRefsMatch(root, request, requestedPermissions) &&
-    claimRequestOperationsAreGrants(request)
-  );
-};
-
-const claimRootRequestMatchesProgress = (root: DurableClaimRoot, request: DurableClaimRequest): boolean => {
-  const requestedPermissions = claimRequestPermissions(request);
-  return root.state === 'REVOKED'
-    ? claimRootRequestMatchesRevokedRoot(root, request, requestedPermissions)
-    : claimRootRequestMatchesActiveRoot(root, request, requestedPermissions);
-};
-
-const claimRootRequestIdentityMatches = (root: DurableClaimRoot, request: DurableClaimRequest): boolean => {
-  const subjectPrincipalId = claimSubjectPrincipalId(root);
-  return (
-    root.claim_mutation_id === request.mutationId &&
-    root.counterparty_resource_id === request.counterpartyRef.resourceId &&
-    root.invitation_id === request.invitationRef.resourceId &&
-    subjectPrincipalId !== null &&
-    subjectPrincipalId !== undefined
-  );
-};
-
-const claimRootRequestScopeMatches = (root: DurableClaimRoot, request: DurableClaimRequest): boolean =>
-  request.scope.kind === 'counterparty'
-    ? root.storefront_resource_id === null
-    : root.storefront_resource_id === request.scope.storefrontKey;
-
-const claimRootMatchesRequest = (root: DurableClaimRoot, request: DurableClaimRequest): boolean =>
-  claimRootRequestIdentityMatches(root, request) &&
-  claimRootRequestMatchesProgress(root, request) &&
-  claimRootRequestScopeMatches(root, request);
-
-const claimInviterAuthorityDecision = (
-  contextAccess: Pick<ContextAccessService, 'businessPermissions'>,
-  scope: OutboxWorkerLegalEntityScope,
-  root: typeof InvitationClaimReconciliationRowSchema.Type,
-  ownerAccessReader?: typeof currentOwnerAccessForTransaction,
-) => {
-  const permissionScope: CounterpartyPermissionScope =
-    root.storefront_resource_id === null
-      ? { kind: 'counterparty' }
-      : { kind: 'storefront', storefrontKey: root.storefront_resource_id };
-  const verifyCoreAuthority = () => {
-    if (contextAccess.businessPermissions === undefined) {
-      return Effect.succeed('unavailable' as const);
-    }
-    return contextAccess
-      .businessPermissions({
-        principal: { principalId: root.invited_by, tenantId: scope.tenantId },
-        targets: [
-          {
-            permission: accessManagementPermission,
-            target: businessTarget(scope, root.counterparty_resource_id, permissionScope),
-          },
-        ],
-        ...(root.storefront_resource_id === null ? {} : { trustedStorefrontId: root.storefront_resource_id }),
-      })
-      .pipe(Effect.map(([decision]) => decision?.decision ?? ('unavailable' as const)));
-  };
-  if (ownerAccessReader === undefined) {
-    // Reconciliation must not repair or preserve owner-governed access from Core-only state.
-    return Effect.succeed('unavailable' as const);
-  }
-  return Effect.gen(function* claimInviterAuthorityDecisionEffect() {
-    const tenantId = yield* Schema.decodeEffect(TenantIdSchema)(scope.tenantId).pipe(
-      Effect.mapError((cause) =>
-        workerRejected('RECONCILIATION_UNAVAILABLE', 'The worker Tenant scope is malformed', cause),
-      ),
-    );
-    const decision = yield* ownerAccessReader(scope.routineInvoker, {
-      legalEntityId: scope.legalEntityId,
-      tenantId,
-    })({
-      counterpartyRef: {
-        moduleId: counterpartyModuleKey,
-        resourceId: root.counterparty_resource_id,
-        resourceType: counterpartyResourceType,
-        tenantId: scope.tenantId,
-      },
-      legalEntityId: scope.legalEntityId,
-      permission: accessManagementPermission,
-      principal: { principalId: root.invited_by, tenantId: scope.tenantId },
-      scope: permissionScope,
-    });
-    if (decision === 'DENIED') {
-      return 'denied' as const;
-    }
-    if (decision === 'UNAVAILABLE') {
-      return 'unavailable' as const;
-    }
-    return yield* verifyCoreAuthority();
-  });
-};
-
-const invitationClaimAttestation = (
-  scope: OutboxWorkerLegalEntityScope,
-  row: Omit<typeof FinalizedInvitationClaimRowSchema.Type, 'operation_outcome'>,
-  claimantPrincipalId: string,
-): VerifiedInvitationClaimAttestation => {
-  const permissionScope: CounterpartyPermissionScope =
-    row.storefront_resource_id === null
-      ? { kind: 'counterparty' }
-      : { kind: 'storefront', storefrontKey: row.storefront_resource_id };
-  return {
-    attestationReference: row.attestation_reference,
-    claimant: { principalId: claimantPrincipalId, tenantId: scope.tenantId },
-    counterpartyRef: {
-      moduleId: counterpartyModuleKey,
-      resourceId: row.counterparty_resource_id,
-      resourceType: counterpartyResourceType,
-      tenantId: scope.tenantId,
-    },
-    invitationRef: {
-      moduleId: customerContextModuleKey,
-      resourceId: row.invitation_id,
-      resourceType: 'commerce.customer-context.counterparty-access-invitation',
-      tenantId: scope.tenantId,
-    },
-    inviterAuthority: {
-      decision: 'ALLOWED',
-      inviter: { principalId: row.invited_by, tenantId: scope.tenantId },
-      permission: accessManagementPermission,
-      scope: permissionScope,
-    },
-    proofVersion: invitationProofVersion,
-    state: 'VERIFIED_AND_CONSUMED',
-    verifiedAt: instant(row.verified_at),
-  };
-};
-
-const claimPermissionRowsMatchRoot = (
-  root: typeof InvitationClaimReconciliationRowSchema.Type,
-  rows: readonly (typeof InvitationClaimPermissionMutationRowSchema.Type)[],
-  operation?: AccessMutationOperation,
-): boolean => {
-  const rootClaimSubjectPrincipalId = root.claim_subject_principal_id ?? root.claimed_by_principal_id;
-  // Normal claim staging is restricted to the currently pending progress identities. A
-  // compensation pass is different: it must discover every tuple whose GRANT journal points
-  // at this claim, including tuples that became ACTIVE before the revoke won the race.
-  const intended = new Set(
-    operation === 'revoke'
-      ? root.requested_permission_codes
-      : root.grant_progress.flatMap(({ permission, state }) =>
-          state === 'PENDING_GRANT' || state === 'RECONCILIATION_REQUIRED' ? [permission] : [],
-        ),
-  );
-  const grantIds = new Set(
-    root.grant_progress.flatMap((progress) =>
-      'grantRef' in progress && progress.grantRef !== undefined ? [progress.grantRef.resourceId] : [],
-    ),
-  );
-  const rowPermissions = rows.map(({ permission_code }) => permission_code);
-  const rowGrantIds = rows.map(({ grant_id }) => grant_id);
-  const rowMutationIds = rows.map(({ mutation_id }) => mutation_id);
-  return (
-    // Compensation may legitimately return fewer rows after a previous retry already revoked
-    // one of the claim-created grants. Every returned row still has to be an exact durable
-    // claim grant; it must never be selected merely because its permission is intended.
-    rowPermissions.length <= intended.size &&
-    new Set(rowPermissions).size === rowPermissions.length &&
-    new Set(rowGrantIds).size === rowGrantIds.length &&
-    new Set(rowMutationIds).size === rowMutationIds.length &&
-    rows.every(
-      (row) =>
-        row.counterparty_resource_id === root.counterparty_resource_id &&
-        row.principal_id === rootClaimSubjectPrincipalId &&
-        row.storefront_resource_id === root.storefront_resource_id &&
-        intended.has(row.permission_code) &&
-        (operation === 'revoke' || grantIds.size === 0 || grantIds.has(row.grant_id)) &&
-        row.mutation_id !== null &&
-        (operation === undefined || row.recovery_operation === operation),
-    )
-  );
-};
-
-const compensateInvitationClaim = (
-  scope: OutboxWorkerLegalEntityScope,
-  root: typeof InvitationClaimReconciliationRowSchema.Type,
-  mutation: Pick<BusinessPermissionRelationshipMutationService, 'mutate'>,
-): Effect.Effect<
-  Readonly<{ readonly outcome: 'COMPENSATED' | 'INDETERMINATE' }>,
-  AccessAuthorizationMutationWorkerError
-> =>
-  scope.routineInvoker.invoke(stageInvitationClaimGrantsRoutine, [root.claim_mutation_id, true]).pipe(
-    Effect.mapError((cause) =>
-      workerRejected('RECONCILIATION_UNAVAILABLE', 'Invitation claim compensation is unavailable', cause),
-    ),
-    Effect.filterOrFail(
-      (rows) => claimPermissionRowsMatchRoot(root, rows, 'revoke'),
-      () =>
-        workerRejected(
-          'RECONCILIATION_UNAVAILABLE',
-          'An invitation compensation mutation is not linked to the durable claim',
-        ),
-    ),
-    Effect.flatMap(
-      (
-        rows,
-      ): Effect.Effect<
-        Readonly<{ readonly outcome: 'COMPENSATED' | 'INDETERMINATE' }>,
-        AccessAuthorizationMutationWorkerError
-      > => {
-        if (rows.length === 0) {
-          // A claim can lose issuer authority before the owner creates its first grant row.
-          // Persist the same claimant/proof-bound rejection marker used by the synchronous
-          // path so the retry is idempotent and the invitation returns to PENDING instead of
-          // remaining forever in CLAIMING with no tuples left to compensate.
-          return scope.routineInvoker
-            .invoke(mutateAccessInvitationRoutine, [
-              root.invitation_id,
-              root.counterparty_resource_id,
-              root.storefront_resource_id,
-              root.revision,
-              'REJECT_CLAIM',
-              root.invited_by,
-              root.source_action_invocation_id,
-              'Compensate invitation claim after inviter authority was lost',
-              root.claim_subject_principal_id ?? root.claimed_by_principal_id,
-              root.attestation_reference,
-            ])
-            .pipe(
-              Effect.mapError((cause) =>
-                workerRejected('RECONCILIATION_UNAVAILABLE', 'Invitation claim reset is unavailable', cause),
-              ),
-              Effect.flatMap(([reset]) =>
-                reset?.operation_outcome === 'CLAIM_REJECTED'
-                  ? Effect.succeed({ outcome: 'COMPENSATED' as const })
-                  : Effect.fail(
-                      workerRejected(
-                        'RECONCILIATION_INDETERMINATE',
-                        'The invitation issuer no longer has access management authority',
-                      ),
-                    ),
-              ),
-            );
-        }
-        // A compensation staging call can return a mix of rows: a newly staged revoke
-        // is deliberately deferred until the next delivery, while an already staged
-        // row is safe to reconcile now. Do not let one newly staged row suppress the
-        // TOUCH compensation for every other row in the same claim.
-        const readyRows = rows.filter(({ mutation_staged: staged }) => !staged);
-        return Effect.forEach(
-          readyRows,
-          (row) => reconcileAccessRow({ scope, transaction: scope.routineInvoker }, mutation, row),
-          { concurrency: 1 },
-        ).pipe(Effect.as({ outcome: 'INDETERMINATE' as const }));
-      },
-    ),
-  );
-
-const stageInvitationClaimPermissions = (
-  scope: OutboxWorkerLegalEntityScope,
-  root: DurableClaimRoot,
-  request: DurableClaimRequest,
-) =>
-  scope.routineInvoker.invoke(stageInvitationClaimGrantsRoutine, [request.mutationId, false]).pipe(
-    Effect.mapError((cause) =>
-      workerRejected('RECONCILIATION_UNAVAILABLE', 'Invitation permission staging is unavailable', cause),
-    ),
-    Effect.filterOrFail(
-      (rows) => claimPermissionRowsMatchRoot(root, rows),
-      () =>
-        workerRejected(
-          'RECONCILIATION_UNAVAILABLE',
-          'A staged invitation permission mutation is not linked to the durable claim',
-        ),
-    ),
-  );
-
-const reconcileInvitationClaimPermissions = (
-  scope: OutboxWorkerLegalEntityScope,
-  rows: readonly (typeof InvitationClaimPermissionMutationRowSchema.Type)[],
-  mutation: Pick<BusinessPermissionRelationshipMutationService, 'mutate'>,
-) => {
-  if (rows.some(({ mutation_staged: staged }) => staged)) {
-    return Effect.succeed(false);
-  }
-  return Effect.forEach(
-    rows,
-    (row) => reconcileAccessRow({ scope, transaction: scope.routineInvoker }, mutation, row),
-    { concurrency: 1 },
-  ).pipe(Effect.map((results) => results.every(Boolean)));
-};
-
-const finalizeInvitationClaimForWorker = Effect.fn('AccessPersistence.finalizeInvitationClaimForWorker')(
-  function* finalizeInvitationClaimEffect(scope: OutboxWorkerLegalEntityScope, request: DurableClaimRequest) {
-    const [finalized] = yield* scope.routineInvoker
-      .invoke(finalizeInvitationClaimRoutine, [request.mutationId])
-      .pipe(
-        Effect.mapError((cause) =>
-          workerRejected('RECONCILIATION_UNAVAILABLE', 'Invitation claim finalization is unavailable', cause),
-        ),
-      );
-    if (
-      finalized === undefined ||
-      finalized.operation_outcome === 'PENDING_AUTHORIZATION' ||
-      finalized.claimed_at === null ||
-      finalized.claimed_by_principal_id === null
-    ) {
-      return { outcome: 'INDETERMINATE' as const };
-    }
-    const { operation_outcome: _, ...invitationEvidence } = finalized;
-    return {
-      outcome: finalized.operation_outcome === 'CLAIMED' ? ('FINALIZED' as const) : ('ALREADY_FINAL' as const),
-      terminal: {
-        attestation: invitationClaimAttestation(scope, invitationEvidence, finalized.claimed_by_principal_id),
-        completionId: finalized.claim_mutation_id,
-        invitation: invitationFromRow(scope.tenantId, invitationEvidence),
-        kind: 'INVITATION_CLAIM' as const,
-        occurredAt: DateTime.toDateUtc(DateTime.makeUnsafe(finalized.claimed_at)),
-        sourceActionInvocationId: finalized.source_action_invocation_id,
-      },
-    };
-  },
-);
-
-const reconcileDurableClaim = Effect.fn('AccessPersistence.reconcileDurableClaim')(
-  function* reconcileDurableClaimEffect(
-    scope: OutboxWorkerLegalEntityScope,
-    request: DurableClaimRequest,
-    root: DurableClaimRoot,
-    contextAccess: Pick<ContextAccessService, 'businessPermissions'>,
-    mutation: Pick<BusinessPermissionRelationshipMutationService, 'mutate'>,
-    ownerAccessReader?: typeof currentOwnerAccessForTransaction,
-  ) {
-    if (root.state === 'REVOKED') {
-      return yield* compensateInvitationClaim(scope, root, mutation);
-    }
-    const initialAuthority = yield* claimInviterAuthorityDecision(contextAccess, scope, root, ownerAccessReader);
-    if (initialAuthority !== 'allowed') {
-      return yield* compensateInvitationClaim(scope, root, mutation);
-    }
-    const pending = yield* stageInvitationClaimPermissions(scope, root, request);
-    const permissionsReconciled = yield* reconcileInvitationClaimPermissions(scope, pending, mutation);
-    if (!permissionsReconciled) {
-      return { outcome: 'INDETERMINATE' as const };
-    }
-    const terminalAuthority = yield* claimInviterAuthorityDecision(contextAccess, scope, root, ownerAccessReader);
-    if (terminalAuthority !== 'allowed') {
-      return yield* compensateInvitationClaim(scope, root, mutation);
-    }
-    return yield* finalizeInvitationClaimForWorker(scope, request);
-  },
-);
-
-const reconcileInvitationClaimForWorker = (
-  scope: OutboxWorkerLegalEntityScope,
-  request: Extract<AccessAuthorizationMutationRequest, { readonly operation: 'claim' }>,
-  contextAccess: Pick<ContextAccessService, 'businessPermissions'>,
-  mutation: Pick<BusinessPermissionRelationshipMutationService, 'mutate'>,
-  ownerAccessReader?: typeof currentOwnerAccessForTransaction,
-) =>
-  scope.routineInvoker.invoke(readInvitationClaimReconciliationRoutine, [request.mutationId]).pipe(
-    Effect.mapError((cause) =>
-      workerRejected('RECONCILIATION_UNAVAILABLE', 'Invitation claim evidence is unavailable', cause),
-    ),
-    Effect.flatMap(([root]) =>
-      root === undefined || !claimRootMatchesRequest(root, request)
-        ? Effect.fail(
-            workerRejected(
-              'RECONCILIATION_UNAVAILABLE',
-              'The invitation claim mutation is unavailable or outside the verified scope',
-            ),
-          )
-        : reconcileDurableClaim(scope, request, root, contextAccess, mutation, ownerAccessReader),
-    ),
-  );
-
-/** Production worker adapter. Every target fact is loaded from owner routines before mutation. */
-export const accessAuthorizationMutationReconciliationForWorker = (
-  contextAccess: Pick<ContextAccessService, 'businessPermissions'>,
-  mutation: Pick<BusinessPermissionRelationshipMutationService, 'mutate'>,
-  ownerAccessReader?: typeof currentOwnerAccessForTransaction,
-): AccessAuthorizationMutationReconciliationService => {
-  const service: AccessAuthorizationMutationReconciliationService = {
-    reconcile: (scope, request) => {
-      if (request.operation === 'claim') {
-        return reconcileInvitationClaimForWorker(scope, request, contextAccess, mutation, ownerAccessReader);
-      }
-      return accessAuthorizationMutationReconciliationForScopedWorker(scope, mutation)
-        .reconcileOne({
-          counterpartyResourceId: request.counterpartyRef.resourceId,
-          grantId: request.grantRef.resourceId,
-          mutationId: request.mutationId,
-          operation: request.operation,
-        })
-        .pipe(
-          Effect.mapError((cause) =>
-            workerRejected('RECONCILIATION_UNAVAILABLE', 'Access authorization reconciliation is unavailable', cause),
-          ),
-          Effect.map((result) => {
-            if (result.outcome === 'INDETERMINATE') {
-              return { outcome: 'INDETERMINATE' as const };
-            }
-            return {
-              outcome: result.outcome,
-              terminal: {
-                completionId: result.mutationId,
-                grant: result.grant,
-                kind: 'GRANT' as const,
-                occurredAt: result.occurredAt,
-                sourceActionInvocationId: result.sourceActionInvocationId,
-              },
-            };
-          }),
-        );
-    },
-  };
-  return Object.freeze(service);
-};
-
-export const accessAuthorizationReconcilerForTransaction = (
-  dependencies: AccessAuthorizationReconciliationContext,
-  mutation: Pick<BusinessPermissionRelationshipMutationService, 'mutate'>,
-): AuthorizationMutationReconcilerService => {
-  const service: AuthorizationMutationReconcilerService = {
-    reconcile: ({ limit, tenantId }: { readonly limit: number; readonly tenantId?: string | undefined }) => {
-      if (limit < 1 || limit > 100 || (tenantId !== undefined && tenantId !== dependencies.scope.tenantId)) {
-        return Effect.fail(reconciliationFailure('The reconciliation request is outside scope'));
-      }
-      return dependencies.transaction.invoke(listAccessReconciliationRoutine, [limit]).pipe(
-        Effect.mapError((cause) => reconciliationFailure('Access reconciliation storage is unavailable', cause)),
-        Effect.flatMap((rows) =>
-          Effect.forEach(rows, (row) => reconcileAccessRow(dependencies, mutation, row), {
-            concurrency: 1,
-          }),
-        ),
-        Effect.map((repaired) => ({
-          examined: repaired.length,
-          repaired: repaired.filter(Boolean).length,
-          stillIndeterminate: repaired.filter((value) => !value).length,
-        })),
-      );
-    },
-  };
-  return Object.freeze(service);
-};
+  counterpartyAccessPortForOwnerTransaction(transaction, scope, accessPortalWritesForTransaction(transaction, scope));
 
 /* oxlint-enable effect-native/no-dependency-parameters */
 /* oxlint-enable anti-slop/no-conditional-empty-object-spread */

@@ -4,7 +4,6 @@ import {
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
   defineRead,
-  defineReadResourcePermission,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import { Effect, Option } from 'effect';
@@ -24,7 +23,7 @@ const moduleKey = 'commerce.catalog';
 
 const catalogMediaCurrentEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.media' },
+  authorization: { kind: 'protected' },
   entrypointKey: readKey,
   moduleKey,
   role: 'api',
@@ -71,6 +70,14 @@ export const readCatalogMediaCurrent = Effect.fn('CatalogMediaCurrentRead.read')
 
 export const catalogMediaCurrentRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.catalog-media-current.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'catalog-media', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: catalogMediaCurrentEntrypoint,
     evidencePolicy: {
@@ -80,13 +87,8 @@ export const catalogMediaCurrentRead = defineRead(
     inputSchema: CatalogMediaCurrentRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'resource',
     policies: [],
     readKey: 'commerce.catalog.api.catalog-media-current',
-    resourcePermission: defineReadResourcePermission<CatalogMediaCurrentRequest>(({ target }) => ({
-      permission: 'read',
-      resource: target,
-    })),
     resultSchema: CatalogMediaCurrentResponseSchema,
     schemaVersion: '1',
   },
@@ -97,5 +99,4 @@ export const catalogMediaCurrentRead = defineRead(
       ),
   },
   (transaction, scope) => Effect.succeed(catalogMediaReadsForScope(transaction, scope)),
-  ({ target }) => ({ kind: 'resource', resource: target }),
 );

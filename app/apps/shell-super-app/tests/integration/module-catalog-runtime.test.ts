@@ -81,6 +81,14 @@ const PropertyRegistryUnitIdSchema = Schema.String.pipe(Schema.brand('PropertyRe
 const DocumentsCenterDocumentIdSchema = Schema.String.pipe(Schema.brand('DocumentsCenterDocumentId'));
 const PropertyAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'property.registry.fixture.action',
+      kind: 'action',
+      modes: ['run'],
+      placement: { group: 'fixtures', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'property.registry.rename-unit.access.v1',
@@ -91,10 +99,7 @@ const PropertyAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'property.registry.rename-unit',
       moduleKey: 'property.registry',
       role: 'action',

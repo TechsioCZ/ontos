@@ -12,7 +12,12 @@ import {
 import type { MerchandiseRights } from '../../src/api/agent-review.ts';
 
 const MISSING_BEFORE = 'Chybí původní hodnoty, změnu nelze automaticky vrátit.';
-const allRights: MerchandiseRights = { canEditOrders: true, canManageCatalog: true, canWrite: true };
+const allRights: MerchandiseRights = {
+  canEditOrders: true,
+  canManageCatalog: true,
+  canManageMarkets: true,
+  canWrite: true,
+};
 
 const review = (
   request: Partial<Parameters<typeof reviewProductProposal>[0]['request']> & { command: AgentCommand },
@@ -132,7 +137,9 @@ it('a catalog change needs catalog management, any change needs module write', (
   expect(blockedReasonOf(changePrice, { canManageCatalog: false, canWrite: true })).toBe(
     'Změny katalogu a cen schvaluje jen člověk se správou katalogu.',
   );
-  expect(blockedReasonOf(changePrice, { canManageCatalog: true, canWrite: true })).toBeUndefined();
+  expect(
+    blockedReasonOf(changePrice, { canManageCatalog: true, canManageMarkets: true, canWrite: true }),
+  ).toBeUndefined();
   expect(blockedReasonOf({ _tag: 'CreateOrder' }, { canWrite: false })).toBe(
     'V tomto modulu nemáte oprávnění k zápisu.',
   );

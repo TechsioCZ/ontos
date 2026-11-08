@@ -20,8 +20,8 @@ import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useEffect, useRef, useState } from 'react';
 import type { PriceListItem, VatRate } from '../../../../shared/apis/records.ts';
 import { lineDiscountMinor } from '../../../../shared/domain/invoice-totals.ts';
-import { invoiceLineKey, outcomeMessage, withOccurrenceKeys } from './finance-ui.tsx';
-import type { FinanceCommandDraft, FinanceViewModel } from './finance-ui.tsx';
+import { invoiceLineKey, isPendingApproval, outcomeNotice, withOccurrenceKeys } from './finance-ui.tsx';
+import type { FinanceCommandDraft, FinanceNotice, FinanceViewModel } from './finance-ui.tsx';
 import type { CommandOutcome } from './use-finance-records.ts';
 import { FinanceTableScroll } from './finance-table-scroll.tsx';
 import {
@@ -133,12 +133,17 @@ const PriceItemEditDialog = ({
   readonly vm: FinanceViewModel;
 }) => {
   const { t } = useModernI18n();
-  const [error, setError] = useState<string>();
+  const [error, setError] = useState<FinanceNotice>();
   const server = itemDraftOf(item);
   /** The version of the item the draft builds on: what it opened with, last saved or reloaded. */
   const base = useRef(server);
   const settle = (value: ItemDraft, outcome: CommandOutcome) => {
-    setError(outcome.ok || outcome.feedback === 'conflict' ? undefined : outcomeMessage(vm, outcome));
+    // The autosave status line already reports a conflict and a proposal waiting for approval.
+    setError(
+      outcome.ok || outcome.feedback === 'conflict' || isPendingApproval(outcome)
+        ? undefined
+        : outcomeNotice(vm, outcome),
+    );
     if (outcome.ok) {
       base.current = value;
     }
@@ -200,8 +205,8 @@ const PriceItemEditDialog = ({
     >
       <div className="flex flex-col gap-150">
         {error !== undefined && (
-          <StatusText showIcon size="sm" status="error">
-            {error}
+          <StatusText showIcon size="sm" status={error.status}>
+            {error.text}
           </StatusText>
         )}
         <PriceItemFields draft={autosave.draft} onBlur={handleBlur} onChange={handleChange} showErrors />
@@ -224,7 +229,7 @@ const priceListPanelSaveProgram = Effect.fn('Finance.save')(function* priceListP
   }
   const command = itemCommandOf(draft, undefined, vm.actorLabel);
   if (Option.isNone(command)) {
-    setError('Vyplňte název a cenu bez DPH (např. 1 500 nebo 1 500,50).');
+    setError({ status: 'error', text: 'Vyplňte název a cenu bez DPH (např. 1 500 nebo 1 500,50).' });
     return;
   }
   const outcome = yield* vm.execute(command.value, 'Položka ceníku přidána');
@@ -232,7 +237,7 @@ const priceListPanelSaveProgram = Effect.fn('Finance.save')(function* priceListP
     setDraft(undefined);
     setError(undefined);
   } else {
-    setError(outcomeMessage(vm, outcome));
+    setError(outcomeNotice(vm, outcome));
   }
 });
 
@@ -243,7 +248,7 @@ const usePriceListPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
   /** A new item being created; an existing item is edited (and autosaved) in its own dialog. */
   const [draft, setDraft] = useState<ItemDraft>();
   const [editingId, setEditingId] = useState<string>();
-  const [error, setError] = useState<string>();
+  const [error, setError] = useState<FinanceNotice>();
   const discounted = (vm.snapshot?.state.invoices ?? [])
     .flatMap((invoice) =>
       (invoice.businessState === 'VOIDED' ? [] : (invoice.lines ?? [])).flatMap((line) =>
@@ -453,15 +458,15 @@ export const PriceListPanel = (props: { readonly vm: FinanceViewModel }) => {
         {draft !== undefined && (
           <div className="flex flex-col gap-150">
             {error !== undefined && (
-              <StatusText showIcon size="sm" status="error">
-                {error}
+              <StatusText showIcon size="sm" status={error.status}>
+                {error.text}
               </StatusText>
             )}
             <PriceItemFields
               draft={draft}
               onBlur={noBlur}
               onChange={(patch) => setDraft({ ...draft, ...patch })}
-              showErrors={error !== undefined}
+              showErrors={error?.status === 'error'}
             />
           </div>
         )}

@@ -15,22 +15,34 @@ import { loader as loader_0 } from "../../routes/[lang]/page.data";
 import component_0 from "../../routes/[lang]/page";
 import { loader as loader_1 } from "../../routes/[lang]/$.data";
 import component_1 from "../../routes/[lang]/$";
-import component_2 from "../../routes/[lang]/login/page";
-import { loader as loader_2 } from "../../routes/[lang]/modules/[moduleId]/page.data";
-import component_3 from "../../routes/[lang]/modules/[moduleId]/page";
-import component_4 from "../../routes/[lang]/pripojit/page";
-import component_5 from "../../routes/[lang]/pripojit/souhlas/page";
-import { loader as loader_3 } from "../../routes/[lang]/profile/page.data";
-import component_6 from "../../routes/[lang]/profile/page";
-import { loader as loader_4 } from "../../routes/[lang]/resources/[moduleId]/[resourceType]/[resourceId]/page.data";
-import component_7 from "../../routes/[lang]/resources/[moduleId]/[resourceType]/[resourceId]/page";
-import { loader as loader_5 } from "../../routes/[lang]/search/page.data";
-import component_8 from "../../routes/[lang]/search/page";
-import component_9 from "../../routes/[lang]/set-password/page";
-import component_10 from "../../routes/layout";
+import { loader as loader_2 } from "../../routes/[lang]/access/agents/page.data";
+import component_2 from "../../routes/[lang]/access/agents/page";
+import { loader as loader_3 } from "../../routes/[lang]/access/approvals/page.data";
+import component_3 from "../../routes/[lang]/access/approvals/page";
+import { loader as loader_4 } from "../../routes/[lang]/access/changes/page.data";
+import component_4 from "../../routes/[lang]/access/changes/page";
+import { loader as loader_5 } from "../../routes/[lang]/access/people/page.data";
+import component_5 from "../../routes/[lang]/access/people/page";
+import { loader as loader_6 } from "../../routes/[lang]/access/roles/page.data";
+import component_6 from "../../routes/[lang]/access/roles/page";
+import { loader as loader_7 } from "../../routes/[lang]/access/why/page.data";
+import component_7 from "../../routes/[lang]/access/why/page";
+import component_8 from "../../routes/[lang]/login/page";
+import { loader as loader_8 } from "../../routes/[lang]/modules/[moduleId]/page.data";
+import component_9 from "../../routes/[lang]/modules/[moduleId]/page";
+import component_10 from "../../routes/[lang]/pripojit/page";
+import component_11 from "../../routes/[lang]/pripojit/souhlas/page";
+import { loader as loader_9 } from "../../routes/[lang]/profile/page.data";
+import component_12 from "../../routes/[lang]/profile/page";
+import { loader as loader_10 } from "../../routes/[lang]/resources/[moduleId]/[resourceType]/[resourceId]/page.data";
+import component_13 from "../../routes/[lang]/resources/[moduleId]/[resourceType]/[resourceId]/page";
+import { loader as loader_11 } from "../../routes/[lang]/search/page.data";
+import component_14 from "../../routes/[lang]/search/page";
+import component_15 from "../../routes/[lang]/set-password/page";
+import component_16 from "../../routes/layout";
 
 export const rootRoute = createRootRouteWithContext<ModernRouterContext>()({
-  component: component_10,
+  component: component_16,
   staticData: createRouteStaticData({
     modernRouteId: "layout",
   }),
@@ -59,10 +71,76 @@ const route__lang__$ = createRoute({
   }),
 });
 
+const route__lang__access_agents_page = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "$lang/access/agents",
+  component: component_2,
+  loader: modernLoaderToTanstack({ hasSplat: false }, loader_2),
+  staticData: createRouteStaticData({
+    modernRouteId: "(lang)/access/agents/page",
+    modernRouteLoader: loader_2,
+  }),
+});
+
+const route__lang__access_approvals_page = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "$lang/access/approvals",
+  component: component_3,
+  loader: modernLoaderToTanstack({ hasSplat: false }, loader_3),
+  staticData: createRouteStaticData({
+    modernRouteId: "(lang)/access/approvals/page",
+    modernRouteLoader: loader_3,
+  }),
+});
+
+const route__lang__access_changes_page = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "$lang/access/changes",
+  component: component_4,
+  loader: modernLoaderToTanstack({ hasSplat: false }, loader_4),
+  staticData: createRouteStaticData({
+    modernRouteId: "(lang)/access/changes/page",
+    modernRouteLoader: loader_4,
+  }),
+});
+
+const route__lang__access_people_page = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "$lang/access/people",
+  component: component_5,
+  loader: modernLoaderToTanstack({ hasSplat: false }, loader_5),
+  staticData: createRouteStaticData({
+    modernRouteId: "(lang)/access/people/page",
+    modernRouteLoader: loader_5,
+  }),
+});
+
+const route__lang__access_roles_page = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "$lang/access/roles",
+  component: component_6,
+  loader: modernLoaderToTanstack({ hasSplat: false }, loader_6),
+  staticData: createRouteStaticData({
+    modernRouteId: "(lang)/access/roles/page",
+    modernRouteLoader: loader_6,
+  }),
+});
+
+const route__lang__access_why_page = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "$lang/access/why",
+  component: component_7,
+  loader: modernLoaderToTanstack({ hasSplat: false }, loader_7),
+  staticData: createRouteStaticData({
+    modernRouteId: "(lang)/access/why/page",
+    modernRouteLoader: loader_7,
+  }),
+});
+
 const route__lang__login_page = createRoute({
   getParentRoute: () => rootRoute,
   path: "$lang/login",
-  component: component_2,
+  component: component_8,
   staticData: createRouteStaticData({
     modernRouteId: "(lang)/login/page",
   }),
@@ -71,18 +149,18 @@ const route__lang__login_page = createRoute({
 const route__lang__modules__moduleId__page = createRoute({
   getParentRoute: () => rootRoute,
   path: "$lang/modules/$moduleId",
-  component: component_3,
-  loader: modernLoaderToTanstack({ hasSplat: false }, loader_2),
+  component: component_9,
+  loader: modernLoaderToTanstack({ hasSplat: false }, loader_8),
   staticData: createRouteStaticData({
     modernRouteId: "(lang)/modules/(moduleId)/page",
-    modernRouteLoader: loader_2,
+    modernRouteLoader: loader_8,
   }),
 });
 
 const route__lang__pripojit_page = createRoute({
   getParentRoute: () => rootRoute,
   path: "$lang/pripojit/",
-  component: component_4,
+  component: component_10,
   staticData: createRouteStaticData({
     modernRouteId: "(lang)/pripojit/page",
   }),
@@ -91,7 +169,7 @@ const route__lang__pripojit_page = createRoute({
 const route__lang__pripojit_souhlas_page = createRoute({
   getParentRoute: () => rootRoute,
   path: "$lang/pripojit/souhlas",
-  component: component_5,
+  component: component_11,
   staticData: createRouteStaticData({
     modernRouteId: "(lang)/pripojit/souhlas/page",
   }),
@@ -100,46 +178,46 @@ const route__lang__pripojit_souhlas_page = createRoute({
 const route__lang__profile_page = createRoute({
   getParentRoute: () => rootRoute,
   path: "$lang/profile",
-  component: component_6,
-  loader: modernLoaderToTanstack({ hasSplat: false }, loader_3),
+  component: component_12,
+  loader: modernLoaderToTanstack({ hasSplat: false }, loader_9),
   staticData: createRouteStaticData({
     modernRouteId: "(lang)/profile/page",
-    modernRouteLoader: loader_3,
+    modernRouteLoader: loader_9,
   }),
 });
 
 const route__lang__resources__moduleId___resourceType___resourceId__page = createRoute({
   getParentRoute: () => rootRoute,
   path: "$lang/resources/$moduleId/$resourceType/$resourceId",
-  component: component_7,
-  loader: modernLoaderToTanstack({ hasSplat: false }, loader_4),
+  component: component_13,
+  loader: modernLoaderToTanstack({ hasSplat: false }, loader_10),
   staticData: createRouteStaticData({
     modernRouteId: "(lang)/resources/(moduleId)/(resourceType)/(resourceId)/page",
-    modernRouteLoader: loader_4,
+    modernRouteLoader: loader_10,
   }),
 });
 
 const route__lang__search_page = createRoute({
   getParentRoute: () => rootRoute,
   path: "$lang/search",
-  component: component_8,
-  loader: modernLoaderToTanstack({ hasSplat: false }, loader_5),
+  component: component_14,
+  loader: modernLoaderToTanstack({ hasSplat: false }, loader_11),
   staticData: createRouteStaticData({
     modernRouteId: "(lang)/search/page",
-    modernRouteLoader: loader_5,
+    modernRouteLoader: loader_11,
   }),
 });
 
 const route__lang__setPassword_page = createRoute({
   getParentRoute: () => rootRoute,
   path: "$lang/set-password",
-  component: component_9,
+  component: component_15,
   staticData: createRouteStaticData({
     modernRouteId: "(lang)/set-password/page",
   }),
 });
 
-export const routeTree = rootRoute.addChildren([route__lang__page, route__lang__$, route__lang__login_page, route__lang__modules__moduleId__page, route__lang__pripojit_page, route__lang__pripojit_souhlas_page, route__lang__profile_page, route__lang__resources__moduleId___resourceType___resourceId__page, route__lang__search_page, route__lang__setPassword_page]);
+export const routeTree = rootRoute.addChildren([route__lang__page, route__lang__$, route__lang__access_agents_page, route__lang__access_approvals_page, route__lang__access_changes_page, route__lang__access_people_page, route__lang__access_roles_page, route__lang__access_why_page, route__lang__login_page, route__lang__modules__moduleId__page, route__lang__pripojit_page, route__lang__pripojit_souhlas_page, route__lang__profile_page, route__lang__resources__moduleId___resourceType___resourceId__page, route__lang__search_page, route__lang__setPassword_page]);
 
 export const router = createRouter({
   ...modernTanstackRouterFastDefaults,

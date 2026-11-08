@@ -22,7 +22,7 @@ const moduleKey = 'commerce.catalog';
 
 export const productCategoryHistoryEntrypoint = defineTenantModuleEntrypoint({
   access: 'historical_read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.product-category-history' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.product-category-history',
   moduleKey,
   role: 'api',
@@ -61,6 +61,14 @@ export const readProductCategoryHistory = Effect.fn('ProductCategoryHistoryRead.
 
 export const productCategoryHistoryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-category-history.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product-category', level: 'extended' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: productCategoryHistoryEntrypoint,
     evidencePolicy: {
@@ -70,7 +78,6 @@ export const productCategoryHistoryRead = defineRead(
     inputSchema: ProductCategoryHistoryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: moduleKey,
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.product-category-history',
     resultSchema: ProductCategoryHistoryResponseSchema,
@@ -83,5 +90,4 @@ export const productCategoryHistoryRead = defineRead(
       ),
   },
   (transaction, scope) => categoryHistoryPersistenceForScope(transaction, scope),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

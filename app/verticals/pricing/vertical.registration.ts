@@ -4,9 +4,18 @@
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { pricingManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
+import { commercialFeeDefinitionRead } from './src/api/commercial-fee-definition.read.ts';
+import { commercialFeeResultLookupRead } from './src/api/commercial-fee-result-lookup.read.ts';
+import { commercialFeeScheduleRead } from './src/api/commercial-fee-schedule.read.ts';
+import { commitmentConfirmationVerificationRead } from './src/api/commitment-confirmation-verification.read.ts';
 import { compensateCurrencySupportRecoveryAction } from './src/actions/compensate-currency-support-recovery.action.ts';
+import { contractualDiscountResultLookupRead } from './src/api/contractual-discount-result-lookup.read.ts';
+import { currencySupportResultLookupRead } from './src/api/currency-support-result-lookup.read.ts';
+import { currentPricingDecisionRead } from './src/api/current-pricing-decision.read.ts';
+import { currentSupportedCurrenciesRead } from './src/api/current-supported-currencies.read.ts';
 import { defineCommercialFeeAction } from './src/actions/define-commercial-fee.action.ts';
 import { definePriceAction } from './src/actions/define-price.action.ts';
+import { exactPriceResolutionRead } from './src/api/exact-price-resolution.read.ts';
 import { manageCommitmentConfirmationAction } from './src/actions/manage-commitment-confirmation.action.ts';
 import { manageContractualDiscountAction } from './src/actions/manage-contractual-discount.action.ts';
 import { manageProductCommercialFeesBulkAction } from './src/actions/manage-product-commercial-fees-bulk.action.ts';
@@ -14,9 +23,16 @@ import { manageProductPricesBulkAction } from './src/actions/manage-product-pric
 import { manageQuantityTierAction } from './src/actions/manage-quantity-tier.action.ts';
 import { manageQuotationAction } from './src/actions/manage-quotation.action.ts';
 import { manageZeroFloorAuthorizationAction } from './src/actions/manage-zero-floor-authorization.action.ts';
+import { priceDefinitionRead } from './src/api/price-definition.read.ts';
+import { priceResultLookupRead } from './src/api/price-result-lookup.read.ts';
+import { priceScheduleRead } from './src/api/price-schedule.read.ts';
+import { quantityTierResultLookupRead } from './src/api/quantity-tier-result-lookup.read.ts';
+import { quotationResultLookupRead } from './src/api/quotation-result-lookup.read.ts';
+import { quotationVerificationRead } from './src/api/quotation-verification.read.ts';
 import { reviseCommercialFeeAction } from './src/actions/revise-commercial-fee.action.ts';
 import { revisePriceAction } from './src/actions/revise-price.action.ts';
 import { setSupportedCurrenciesAction } from './src/actions/set-supported-currencies.action.ts';
+import { zeroFloorAuthorizationResultLookupRead } from './src/api/zero-floor-authorization-result-lookup.read.ts';
 // </generated-module-registration-imports>
 export const pricingRegistration = defineVerticalRuntimeRegistration({
   actions: [
@@ -48,6 +64,7 @@ export const pricingRegistration = defineVerticalRuntimeRegistration({
       'current-pricing-decision': () => import('./src/api/current-pricing-decision-client.ts'),
       'current-supported-currencies': () => import('./src/api/current-supported-currencies-client.ts'),
       'exact-price-resolution': () => import('./src/api/exact-price-resolution-client.ts'),
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       'price-definition': () => import('./src/api/price-definition-client.ts'),
       'price-result-lookup': () => import('./src/api/price-result-lookup-client.ts'),
       'price-schedule': () => import('./src/api/price-schedule-client.ts'),
@@ -79,6 +96,26 @@ export const pricingRegistration = defineVerticalRuntimeRegistration({
   outboxWorkers: [
     // <generated-module-registration-workers>
     // </generated-module-registration-workers>
+  ],
+  reads: [
+    // <generated-module-registration-reads>
+    commercialFeeDefinitionRead,
+    commercialFeeResultLookupRead,
+    commercialFeeScheduleRead,
+    commitmentConfirmationVerificationRead,
+    contractualDiscountResultLookupRead,
+    currencySupportResultLookupRead,
+    currentPricingDecisionRead,
+    currentSupportedCurrenciesRead,
+    exactPriceResolutionRead,
+    priceDefinitionRead,
+    priceResultLookupRead,
+    priceScheduleRead,
+    quantityTierResultLookupRead,
+    quotationResultLookupRead,
+    quotationVerificationRead,
+    zeroFloorAuthorizationResultLookupRead,
+    // </generated-module-registration-reads>
   ],
 });
 

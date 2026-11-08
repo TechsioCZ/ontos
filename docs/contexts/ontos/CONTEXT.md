@@ -20,6 +20,15 @@ permission holder without resolving the Principal.
 governed read against a Resource and scope. A Party Relationship, Counterparty Role, selected
 context, profile membership, account session, or Business Policy result is not a Permission.
 
+**Business Permission Definition** — Owner-published meaning of a business Permission and its
+permitted authorization targets and scopes. Publishing a definition grants no Principal a Permission.
+One publishing Module may host definitions for several canonical business capabilities; its runtime
+or deployment identity does not reassign their business ownership or activate a dormant capability.
+
+**Authorization Target** — The exact object or scope against which an operation requires Current
+Permission, including an ordered conjunction when several targets are independently required.
+Deployment and build identity do not replace this target.
+
 **Business Policy** — Module-owned condition or decision evaluated from trusted context and business
 facts after authentication and authorization boundaries. It may allow, deny, require approval, or
 select a typed business outcome; it never creates identity, authentication, or Permission.
@@ -109,6 +118,26 @@ invisible forks are forbidden.
 
 **Build Revision** — Immutable source and artifact identity used for compatibility, canary, audit,
 and rollback. It is not a customer-selectable product version.
+
+**Public Operation Contract** — One owner's declared public operation identity and supported
+version. Its compatibility claim is distinct from the serialized deployment-contract format,
+artifact digest and Build Revision. Equal document formats do not establish operation compatibility;
+a different build alone does not create a new business owner or Permission target.
+
+**Intrinsic Module Requirement** — Required compatible capability that belongs to installation,
+activation and the module's governed execution closure. These requirements form the dependency DAG;
+reciprocal calls made by separate business operations do not themselves form an intrinsic cycle.
+
+**Operation Fact Requirement** — An owner-authored obligation to establish a fact when a particular
+operation or its real business branch needs it. The owner defines the condition, supported public
+contract or accepted owner-issued proof, and required evidence. A condition that does not apply is
+different from an applicable condition whose facts cannot be proved. Neither a caller flag nor a
+provider outage can waive the latter.
+
+**Composition Membership** — Presence in one authoritative Application Composition revision. It is
+separate from source implementation, Tenant module state, entrypoint availability and Permission.
+Absence from that composition alone proves neither absence of code nor extinction of historical
+business obligations.
 
 **OntOS Module Manifest** — Effect Schema-defined public module contract that exposes safe module
 semantics while excluding private tables, migrations, handlers, registrations, routes, fixtures,
@@ -206,20 +235,22 @@ or jurisdiction for a real-world Party. It is distinct from an OntOS Resource id
 Record Reference, and a provider-issued Connector Registry correlation.
 
 **Identifier Type** — Governed definition of one Official Identifier's business meaning,
-normalization, validation, applicability, namespace, multiplicity, collision, verification, and
+normalization, validation, applicability, namespace, multiplicity, collision, provenance, and
 matching semantics. A generic free-text OTHER value is not an Identifier Type.
 
 **Party Fact Assertion** — Provenance-backed statement about a Party-owned fact with recorded time,
-real-world validity where applicable, lifecycle state, and verification context. Current state is
-derived from accepted assertions; correction does not silently overwrite history.
+real-world validity where applicable, lifecycle state, and actual acceptance context. Current state is
+derived from accepted assertions; correction does not silently overwrite history. Acceptance does not
+classify the assertion as VERIFIED, UNVERIFIED, or REJECTED or guarantee factual truth.
 
 **Party Matching** — Tenant-scoped decision that compares a Party Candidate with existing Parties
 and returns MATCHED, NO_MATCH, or AMBIGUOUS under explicit Match Rules. It does not merge Parties or
 use a search result as identity authority.
 
 **Match Rule** — Versioned and explainable Party Matching policy that defines which normalized facts,
-provenance, verification, and conflicts permit a matching outcome. An opaque score is not a Match
-Rule.
+provenance, accepted identity decisions, and conflicts permit a matching outcome. Equal declared
+identifiers, names or contacts can nominate candidates but cannot alone establish identity. An opaque
+score is not a Match Rule.
 
 **Duplicate Candidate Case** — Durable Party Registry review case created when available evidence
 cannot safely choose an existing Party or permit a new Party. It is not the UNRESOLVED Party Type or
@@ -292,6 +323,74 @@ payload archive, trace store, or financial ledger.
 
 **Storage-level WORM / Object Lock** — Provider-enforced immutability of stored artifact bytes.
 Database rules may protect application behavior but cannot claim provider-enforced WORM.
+
+## Granular authorization
+
+These terms belong to the accepted granular authorization model
+([ADR-0030](../../adr/0030-granular-authorization.md)). In product language "company" is a Legal
+Entity.
+
+**Capability** — One declared permission made available in one scope (a company or the Tenant
+context) where its module is installed. Scope admins can always configure it, installed or not; a
+delegate only within its live delegation envelope. Nobody can use it without an adopted grant in an
+assigned Role. Uninstalling the module stops every use while keeping its configuration.
+_Avoid_: confusing it with capability issuance (credentials) or a module capability; the engine type
+is `access_capability`, and a Capability is never a grant and never a module boundary.
+
+**Access declaration** — A module's in-code statement of one protected entrypoint's permission:
+stable key, kind (action, read, field read, field write, export, admin), Risk tier, suggested
+placement, supported record scopes and modes. It never grants anything; it only creates a catalog
+entry.
+
+**Risk tier** — Routine, sensitive or critical classification of a declared permission. Sensitive
+covers personal data, financial visibility, exports, bulk changes and external communication;
+critical covers money movement, irreversible or legal effects, destructive operations and authority
+changes. Risk drives warnings, Adoption, approvals and agent limits, never an automatic grant.
+
+**Role** — A Tenant-defined job description, such as Účetní or Obchodník, defined once and
+assigned per company. A role's levels, switches and limits compile to exact permissions pinned to
+the catalog at save time; something new never slips into a level silently.
+_Avoid_: treating an admin or owner title as a Role; it is management power, not data access.
+
+**Role revision** — One immutable saved state of a Role, with provenance (template,
+customer-changed or manual). Editing a Role creates a new revision.
+
+**Assignment** — One holder (person or agent) × one Role revision × one scope × one period. Each
+Assignment is a distinct incarnation that is never reused: removing and re-adding a Role creates a
+new Assignment, so approvals and history tied to the old one never come back.
+
+**Delegation** — A bounded management envelope letting a person assign approved Roles within exact
+permissions, people, company and duration. A delegate can never escalate, self-assign, delegate
+further or gain the module's future permissions automatically.
+
+**Access change** — An item in Novinky v oprávněních describing what a module release added,
+changed, renamed or split, with suggested Roles and affected people. It makes the change
+configurable and visible, never usable.
+
+**Adoption** — An explicit decision that adds a new or changed permission to a Role. Routine items
+may be adopted in one batch per release; sensitive and critical items are adopted one by one with a
+named effect. Only Adoption plus an Assignment makes a permission usable.
+
+**Principal and agent** — In the authorization graph a Principal is a verified person: only
+Principals of kind human become v2 `principal` subjects. AI agents are the separate `agent` subject
+type, and service, integration and system Principals never appear in v2 relationships; they keep
+their workload classification, which is not an agent.
+_Avoid_: reading the general Principal entry (a person, integration, service, agent or system job)
+as authorization vocabulary, or treating an agent as a kind of Principal that can approve or
+administer.
+
+**Mandate** — A person's single-use approval of one exact proposed command. In the graph it is bound
+to the approver's exact execution and approval Assignments and their grants; the requester's exact
+Assignment is bound in Core and re-checked at execution. It expires, and lapses permanently when the
+bound authority is lost. Agents never hold or grant a Mandate.
+
+**Agent connection** — A person's revocable, time-bounded consent for one agent to act for them in
+one scope, with a ceiling on what the agent may reach. An agent's effective access is the
+intersection of the person's access, the agent's own access and the connection.
+
+**Scope fence** — The per-scope guard that lets only one access-changing operation alter a
+company's or Tenant context's access at a time. While a change is in progress, readers see the access
+state before the operation or after it, never a mix of old and new.
 
 ## External systems
 

@@ -325,7 +325,10 @@ const makeServer = (
             tenantStatus: 'active',
           }),
       },
-      { legalEntities: () => Effect.die('No selected Legal Entity belongs in this tenant-only fixture') },
+      {
+        decide: () => Effect.die('No support impersonation belongs in this workload fixture'),
+        selectableLegalEntities: () => Effect.die('No selected Legal Entity belongs in this tenant-only fixture'),
+      },
     ).pipe(Effect.provideService(Crypto.Crypto, testCrypto));
     const admitWorkload = (input: Parameters<typeof scopeResolver.resolve>[0]) =>
       scopeResolver.resolve(input).pipe(Effect.provideService(AuthenticationNamespaceRegistry, receivingRegistry));

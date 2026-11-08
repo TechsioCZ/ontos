@@ -4,11 +4,8 @@ import {
   invitePersonAction,
   PeopleDirectoryResultSchema,
   ReadRuntime,
-  RoleCatalogResultSchema,
-  roleCatalogRead,
   peopleDirectoryRead,
   setCompanyMembershipAction,
-  setScopedRoleMembershipAction,
 } from '@app/core-runtime';
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
@@ -17,13 +14,26 @@ import type {
   InvitePeopleRequest,
   PeopleListRequest,
   SetPeopleCompanyMembershipRequest,
-  SetPeopleRoleRequest,
 } from '../../shared/people-api.ts';
 
 interface PeopleCommandContext {
   readonly principal: TrustedPrincipalContext;
   readonly transport: { readonly correlationId: string; readonly idempotencyKey: string };
 }
+
+/*
+ * "Lidé" organisation data of the Shell: the directory of the selected scope and the two writes that
+ * describe a person's relationship to a company — the invitation that mints their login and the
+ * affiliation/status an administrator records.
+ *
+ * No direct SQL / graph writes here: the Core registrations own authorization and evidence.
+ *
+ * Rights are deliberately absent from this module. A person's roles and their role assignments are
+ * authority, and authority is only ever written through the canonical access-intent commands behind
+ * the access-administration BFF (`api/access-admin/people.ts`, `AccessPeopleCommands`). This module
+ * therefore publishes no role read and no role write: the Shell people surface reads roles and
+ * assignments from that BFF and nowhere else.
+ */
 
 /** No direct SQL / graph writes here: the Core registrations own authorization and evidence. */
 export const listPeople = Effect.fn('PeopleAdministration.listPeople')(function* listPeople(
@@ -51,14 +61,6 @@ export const setPeopleCompanyMembership = Effect.fn('PeopleAdministration.setPeo
   },
 );
 
-export const setPeopleScopedRole = Effect.fn('PeopleAdministration.setPeopleScopedRole')(function* setPeopleScopedRole(
-  context: PeopleCommandContext,
-  payload: SetPeopleRoleRequest,
-) {
-  const runtime = yield* ActionRuntime;
-  return yield* runtime.runAction({ ...context, payload, registration: setScopedRoleMembershipAction });
-});
-
 export const invitePeoplePerson = Effect.fn('invitePeoplePerson')(function* invitePeoplePerson(
   context: PeopleCommandContext,
   payload: InvitePeopleRequest,
@@ -66,18 +68,4 @@ export const invitePeoplePerson = Effect.fn('invitePeoplePerson')(function* invi
   const runtime = yield* ActionRuntime;
   const result = yield* runtime.runAction({ ...context, payload, registration: invitePersonAction });
   return yield* Schema.encodeEffect(invitePersonAction.descriptor.resultSchema)(result);
-});
-
-export const listPeopleRoleCatalog = Effect.fn('PeopleAdministration.listRoleCatalog')(function* listRoleCatalog(
-  principal: TrustedPrincipalContext,
-  correlationId: string,
-) {
-  const runtime = yield* ReadRuntime;
-  const result = yield* runtime.runRead({
-    input: {},
-    principal,
-    registration: roleCatalogRead,
-    transport: { correlationId },
-  });
-  return yield* Schema.encodeEffect(RoleCatalogResultSchema)(result);
 });

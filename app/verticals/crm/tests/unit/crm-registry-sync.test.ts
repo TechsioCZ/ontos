@@ -1,5 +1,5 @@
-import { NodePath } from '@effect/platform-node';
-import { ConfigProvider, DateTime, Effect, FileSystem, Layer, Option, Redacted, Schema } from 'effect';
+import { NodeCrypto, NodePath } from '@effect/platform-node';
+import { ConfigProvider, DateTime, Effect, FileSystem, Layer, Option, Schema } from 'effect';
 import { FetchHttpClient, HttpClient, HttpClientResponse } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 import { ApplyCommandResponseSchema } from '../../shared/apis/apply-command-action.ts';
@@ -10,10 +10,14 @@ import type { CrmCommandFailure, VerifiedParty } from '../../shared/commands/con
 import { ClientSchema } from '../../shared/domain/clients.ts';
 import type { Client } from '../../shared/domain/clients.ts';
 import { CrmReferenceUnavailable } from '../../shared/actions/apply-command.ts';
-import { RecordsRequestSchema } from '../../shared/apis/records.ts';
+import {
+  PendingClientIntakeRequestSchema,
+  PendingClientIntakeResponseSchema,
+} from '../../shared/apis/pending-client-intake.ts';
 import { CrmViewerSchema } from '../../shared/domain/access.ts';
 import { CrmStateSchema, initialCrmState } from '../../shared/domain/state.ts';
 import { commandResultOutcome } from '../../src/crm/client-party-sync-outcome.ts';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import {
   observeClientPartySync,
   PartyIntake,
@@ -23,6 +27,23 @@ import {
 import type { IntakeCrmClient } from '../../src/services/party-intake.ts';
 
 const at = '2026-10-27T09:00:00.000Z';
+it('never reports a parked command as a committed CRM write or completed Party link', () => {
+  const accepted = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
+    _tag: 'ActionProposalAccepted',
+    expiresAt: '2035-01-01T12:00:00Z',
+    proposalId: '10000000-0000-4000-8000-000000000001',
+  });
+  for (const command of [
+    { _tag: 'CreateClient', kind: 'organization', name: 'Proposed client' },
+    { _tag: 'SyncClientParties' },
+  ] as const) {
+    expect(commandResultOutcome(command, accepted, (key) => key)).toEqual({
+      entityIds: [],
+      message: 'crm.common.approvalRequired',
+      ok: false,
+    });
+  }
+});
 const viewer = Schema.decodeSync(CrmViewerSchema)({
   assign: true,
   principalId: 'crm-registry-sync-test',
@@ -105,6 +126,7 @@ const outcomeOf = (result: ApplyCommandResponse) =>
 const configuredIntake = (configuration: Readonly<Record<string, string>>) =>
   Layer.mergeAll(
     PartyIntakeLive,
+    NodeCrypto.layer,
     ConfigProvider.layer(
       ConfigProvider.fromUnknown({
         ONTOS_CRM_PARTY_INTAKE_API_KEY: 'fixture-intake-key',
@@ -271,6 +293,7 @@ describe('CRM registry-link completion', () => {
       Effect.provide(
         Layer.mergeAll(
           PartyIntakeLive,
+          NodeCrypto.layer,
           ConfigProvider.layer(ConfigProvider.fromUnknown({})),
           FileSystem.layerNoop({ readFileString: () => Effect.succeed('') }),
           NodePath.layer,
@@ -279,9 +302,9 @@ describe('CRM registry-link completion', () => {
     ),
   );
 
-  it.effect('uses fresh governed read bodies and fresh audience credentials before and after reconciliation', () =>
+  it.effect('uses purpose-only governed reads and fresh audience credentials before and after reconciliation', () =>
     Effect.gen(function* freshAuthoritativeReads() {
-      const refreshTokens: string[] = [];
+      const requestBodies: (typeof PendingClientIntakeRequestSchema.Type)[] = [];
       const credentials: string[] = [];
       let assertions = 0;
       const fetch: typeof globalThis.fetch = async (input, init) => {
@@ -296,21 +319,14 @@ describe('CRM registry-link completion', () => {
             token: `fixture-assertion-${assertions}`,
           });
         }
-        expect(url.pathname).toBe('/crm-api/reads/records');
-        const payload = Schema.decodeSync(Schema.fromJsonString(RecordsRequestSchema))(await request.text());
-        expect(payload.refreshToken).toBeDefined();
-        if (payload.refreshToken !== undefined) {
-          refreshTokens.push(Redacted.value(payload.refreshToken));
-        }
+        expect(url.pathname).toBe('/crm-api/reads/pending-client-intake');
+        const payload = Schema.decodeSync(Schema.fromJsonString(PendingClientIntakeRequestSchema))(
+          await request.text(),
+        );
+        requestBodies.push(payload);
+        expect(payload).toEqual({});
         credentials.push(request.headers.get('authorization') ?? '');
-        return Response.json({
-          assignmentCandidates: [],
-          departedPrincipalIds: [],
-          now: DateTime.makeUnsafe(at),
-          revision: 7,
-          state: initialCrmState,
-          viewer,
-        });
+        return Response.json(Schema.encodeSync(PendingClientIntakeResponseSchema)({ items: [], revision: 7 }));
       };
       const service = yield* PartyIntake;
       const result = yield* service
@@ -324,12 +340,12 @@ describe('CRM registry-link completion', () => {
       expect(result).toEqual({ failed: 0, linked: 0, remaining: 0, review: 0, status: 'unchanged' });
       expect(assertions).toBe(2);
       expect(credentials).toEqual(['Bearer fixture-assertion-1', 'Bearer fixture-assertion-2']);
-      expect(refreshTokens).toHaveLength(2);
-      expect(new Set(refreshTokens).size).toBe(2);
+      expect(requestBodies).toEqual([{}, {}]);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
           PartyIntakeLive,
+          NodeCrypto.layer,
           ConfigProvider.layer(
             ConfigProvider.fromUnknown({
               ONTOS_CRM_PARTY_INTAKE_API_KEY: 'fixture-intake-key',

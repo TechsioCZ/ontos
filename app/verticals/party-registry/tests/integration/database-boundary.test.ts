@@ -20,7 +20,6 @@ import {
   partyContactPoints,
   partyCorrections,
   partyFactAssertions,
-  partyIdentifierClaims,
   partyMatchDecisions,
   partyMerges,
   partyOfficialIdentifiers,
@@ -47,8 +46,6 @@ const partyOrganizationB = 'a3000000-0000-4000-8000-000000000004';
 const identifierA = 'a4000000-0000-4000-8000-000000000001';
 const identifierA2 = 'a4000000-0000-4000-8000-000000000002';
 const identifierB = 'a4000000-0000-4000-8000-000000000003';
-const claimA = 'a5000000-0000-4000-8000-000000000001';
-const claimB = 'a5000000-0000-4000-8000-000000000002';
 const emailA = 'a6000000-0000-4000-8000-000000000001';
 const emailA2 = 'a6000000-0000-4000-8000-000000000002';
 const addressA = 'a6000000-0000-4000-8000-000000000003';
@@ -96,7 +93,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             partyRelationships,
             partyContactPointPurposes,
             partyContactPoints,
-            partyIdentifierClaims,
             partyOfficialIdentifiers,
             partyFactAssertions,
             parties,
@@ -171,8 +167,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         provenanceSource: 'ARES',
         tenantId,
         validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
-        verificationState: 'VERIFIED',
-        verifiedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
       });
       const externalEvidence = {
         authorityPolicyKey: 'party_registry.ares_enrichment' as const,
@@ -228,40 +222,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                 externalEvidence: sql`${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({ ...externalEvidence, provider: null })}::jsonb`,
               })
               .where(eq(partyOfficialIdentifiers.officialIdentifierId, identifierA)),
-          ),
-        ),
-      ).toBe(true);
-      yield* admin.insert(partyIdentifierClaims).values([
-        {
-          identifierClaimId: claimA,
-          identifierTypeKey: 'ICO',
-          namespace: 'CZ:ICO',
-          normalizedValue: '00123456',
-          officialIdentifierId: identifierA,
-          partyId: partyOrganizationA,
-          tenantId: tenantA,
-        },
-        {
-          identifierClaimId: claimB,
-          identifierTypeKey: 'ICO',
-          namespace: 'CZ:ICO',
-          normalizedValue: '00123456',
-          officialIdentifierId: identifierB,
-          partyId: partyOrganizationB,
-          tenantId: tenantB,
-        },
-      ]);
-      expect(
-        hasPostgreSqlCode('23505')(
-          yield* Effect.flip(
-            admin.insert(partyIdentifierClaims).values({
-              identifierTypeKey: 'ICO',
-              namespace: 'CZ:ICO',
-              normalizedValue: '00123456',
-              officialIdentifierId: identifierA2,
-              partyId: partyOrganizationA2,
-              tenantId: tenantA,
-            }),
           ),
         ),
       ).toBe(true);
@@ -360,6 +320,68 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           ),
         ),
       ).toBe(true);
+      const registeredPurposes = yield* admin
+        .insert(partyContactPointPurposes)
+        .values([
+          { ...purposeEvidence, contactPointId: addressA, purposeKey: 'REGISTERED' },
+          {
+            ...purposeEvidence,
+            contactPointId: addressA2,
+            purposeKey: 'REGISTERED',
+            registryContext: 'ARES',
+            jurisdiction: 'CZ',
+            provenanceAuthoritative: true,
+            provenanceSource: 'EXTERNAL_EVIDENCE',
+            provenanceMethod: 'PROVIDER_OBSERVATION',
+            evidenceReference: 'ares:registered-address:1',
+          },
+        ])
+        .returning();
+      expect(registeredPurposes.map((purpose) => [purpose.registryContext, purpose.jurisdiction])).toEqual([
+        ['GENERAL', 'ZZ'],
+        ['ARES', 'CZ'],
+      ]);
+      expect(registeredPurposes[0]?.provenanceAuthoritative).toBe(false);
+      expect(registeredPurposes[0]?.evidenceReference).toBe(null);
+      expect(registeredPurposes[0]?.acceptedByPrincipalId).toBe(principalA);
+      for (const scope of [
+        { registryContext: 'GENERAL', jurisdiction: 'ZZ' },
+        { registryContext: 'ARES', jurisdiction: 'CZ' },
+      ]) {
+        expect(
+          hasPostgreSqlCode('23505')(
+            yield* Effect.flip(
+              admin.insert(partyContactPointPurposes).values({
+                ...purposeEvidence,
+                ...scope,
+                contactPointId: addressA2,
+                preferred: false,
+                purposeKey: 'REGISTERED',
+              }),
+            ),
+          ),
+        ).toBe(true);
+      }
+      for (const scope of [
+        { registryContext: 'GENERAL', jurisdiction: 'CZ', purposeKey: 'REGISTERED' },
+        { registryContext: 'ARES', jurisdiction: 'ZZ', purposeKey: 'REGISTERED' },
+        { registryContext: 'ARES', jurisdiction: 'SK', purposeKey: 'REGISTERED' },
+        { registryContext: 'OTHER', jurisdiction: 'CZ', purposeKey: 'REGISTERED' },
+        { registryContext: 'ARES', jurisdiction: 'CZ', purposeKey: 'CORRESPONDENCE' },
+      ]) {
+        expect(
+          hasPostgreSqlCode('23514')(
+            yield* Effect.flip(
+              admin.insert(partyContactPointPurposes).values({
+                ...purposeEvidence,
+                ...scope,
+                contactPointId: addressA2,
+                preferred: false,
+              }),
+            ),
+          ),
+        ).toBe(true);
+      }
       const otherTenantPurposes = yield* admin
         .insert(partyContactPointPurposes)
         .values({
@@ -815,7 +837,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         candidateCaseId: caseA,
         candidateFingerprint: 'a'.repeat(64),
         candidateSnapshot: {
-          names: ['Ambiguous'],
+          firstName: null,
+          lastName: null,
+          businessName: 'Ambiguous',
           provenance: { method: 'DOCUMENT_REVIEW', source: 'USER_ASSERTION' },
           validFrom: '2026-01-01T00:00:00.000Z',
         },
@@ -877,7 +901,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                   .values({
                     acceptedByActionInvocationId: actionA,
                     acceptedByPrincipalId: principalA,
-                    factKind: 'DISPLAY_NAME',
+                    factKind: 'BUSINESS_NAME',
                     normalizedValue: 'Wrong name',
                     partyId: partyOrganizationA,
                     policyVersion: 'party.fact.v1',

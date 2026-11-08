@@ -109,6 +109,15 @@ const handleReplaceAgentOperators = Effect.fn('ReplaceAgentOperatorsAction.handl
 
 export const replaceAgentOperatorsAction = defineAction(
   {
+    // Naming an agent's operators is identity administration of the agent's human oversight (O43, O81).
+    accessDeclaration: {
+      key: 'core.identity.agent-operators.replace',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'core.identity.replace-agent-operators.access.v1',
@@ -120,7 +129,7 @@ export const replaceAgentOperatorsAction = defineAction(
     domainEvents: principalLifecycleDomainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.replace-agent-operators',
       moduleKey: 'core.identity',
       role: 'action',

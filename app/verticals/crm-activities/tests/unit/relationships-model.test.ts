@@ -1,14 +1,15 @@
+import type { ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
+import { RecordKeySchema } from '@app/core-runtime/access/ids';
+import { ListAccessConditionSchema } from '@app/core-runtime/access/decision/list-access';
 import {
   ActivityRevisionConflict,
   ActivityReferenceIneligible,
   ActivityScopeMismatch,
   ActivityCommandSchema,
-  ActivityReferenceUnavailable,
 } from '../../shared/actions/apply-command.ts';
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ContextAccess } from '@app/core-runtime';
-import type { ContextAccessService, OperationalScope } from '@app/core-runtime';
+import type { OperationalScope } from '@app/core-runtime';
 import { ActivityRefSchema } from '../../shared/resources/activity.ts';
 import { evolveRelationshipsState, visibleActivities } from '../../src/services/persistence.service.ts';
 
@@ -83,42 +84,58 @@ const scope: OperationalScope = {
   principalId: command.ownerPrincipalRef.principalId,
   tenantId,
 };
-const fakeAccess = (wrongDecisionKey = false): ContextAccessService => ({
-  assortmentPermissions: () => Effect.succeed([]),
-  businessPermissions: () => Effect.succeed([]),
-  contextPermissions: ({ targets }) =>
-    Effect.succeed(
-      targets.map(({ moduleId, permission }) => ({
-        decision: 'denied' as const,
-        key: `${moduleId}:${permission}`,
-      })),
-    ),
-  identityNamespaces: () => Effect.succeed([]),
-  legalEntities: () => Effect.succeed([]),
-  modules: () => Effect.succeed([]),
-  resources: ({ resources }) =>
-    Effect.succeed(
-      resources.map((ref) => ({
-        decision: ref.resourceId === 'activity' ? ('allowed' as const) : ('denied' as const),
-        key: wrongDecisionKey ? 'unrelated-resource' : `${ref.moduleId}:${ref.resourceType}:${ref.resourceId}`,
-      })),
-    ),
-  tenants: () => Effect.succeed([]),
-});
-it.effect('an assigned Activity grant exposes only that Activity and rejects a mismatched authorization result', () =>
+it.effect('an explicit Activity reach exposes only that Activity and AND restrictions cannot widen it', () =>
   Effect.gen(function* filteredActivities() {
     const decoded = yield* Schema.decodeEffect(ActivityCommandSchema)(command);
     const change = yield* evolveRelationshipsState({ activities: [] }, decoded, input);
     const otherRef = yield* Schema.decodeEffect(ActivityRefSchema)({ ...change.activity.ref, resourceId: 'other' });
     const records = [change.activity, { ...change.activity, ref: otherRef }];
+    const reach: ListAccessPredicate = {
+      groups: [
+        {
+          clauses: [
+            { conditions: [{ _tag: 'RecordKeyIn' as const, recordKeys: [RecordKeySchema.make('activity')] as const }] },
+          ],
+        },
+      ],
+    };
+    expect(yield* visibleActivities(records, scope, reach)).toEqual([change.activity]);
     expect(
-      yield* visibleActivities(records, scope, false).pipe(Effect.provideService(ContextAccess, fakeAccess())),
-    ).toEqual([change.activity]);
+      yield* visibleActivities(records, scope, {
+        groups: [
+          ...reach.groups,
+          {
+            clauses: [
+              {
+                conditions: [
+                  Schema.decodeSync(ListAccessConditionSchema)({
+                    _tag: 'TeamMemberOf',
+                    teamIds: ['20000000-0000-4000-8000-000000000006'],
+                  }),
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    ).toEqual([]);
     expect(
-      yield* visibleActivities(records, scope, false).pipe(
-        Effect.provideService(ContextAccess, fakeAccess(true)),
-        Effect.flip,
+      yield* visibleActivities(
+        [
+          {
+            ...change.activity,
+            ref: {
+              ...change.activity.ref,
+              tenantId: Schema.decodeSync(ActivityRefSchema)({
+                ...change.activity.ref,
+                tenantId: '30000000-0000-4000-8000-000000000001',
+              }).tenantId,
+            },
+          },
+        ],
+        scope,
+        { groups: [] },
       ),
-    ).toBeInstanceOf(ActivityReferenceUnavailable);
+    ).toEqual([]);
   }),
 );

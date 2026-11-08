@@ -2,11 +2,14 @@
 // @ontos-action-http-owner legal.agreements
 // @ontos-action-http-slug apply-command
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { ApplyCommandPayloadSchema, ApplyCommandResultSchema } from '../actions/apply-command.ts';
 
 export { ApplyCommandPayloadSchema } from '../actions/apply-command.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const ApplyCommandActionInvalidProblemSchema = makeProblemDetailsSchema('ApplyCommandActionInvalidProblem', 400);
 export const ApplyCommandActionAuthenticationProblemSchema = makeProblemDetailsSchema(
@@ -18,6 +21,7 @@ export const ApplyCommandActionForbiddenProblemSchema = makeProblemDetailsSchema
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -133,7 +137,7 @@ export const applyCommandActionGroupDefinition = HttpApiGroup.make('applyCommand
     HttpApiEndpoint.post('execute', '/legal-agreements/actions/apply-command', {
       error: actionErrors,
       payload: Schema.toEncoded(ApplyCommandPayloadSchema),
-      success: ApplyCommandResultSchema,
+      success: [ActionProposalAcceptedSchema, ApplyCommandResultSchema],
     }),
   )
   .middleware(ApplyCommandActionSchemaErrorMiddleware);

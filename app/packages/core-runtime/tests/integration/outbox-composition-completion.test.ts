@@ -18,10 +18,10 @@ import {
   drainApplicationCompositionAuthority,
 } from '../../src/modules/application-composition-authority.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
-import { defineOutboxWorker, extractOutboxWorkerSubscriptions } from '../../src/outbox/definition.ts';
+import { defineOutboxWorker } from '../../src/outbox/definition.ts';
 import { makeOutboxRepository } from '../../src/outbox/repository.ts';
 import { makeIsolatedNativeDatabaseFixture } from '../../src/testing/isolated-native-database.ts';
-import { makeApplicationCompositionSnapshotFixture } from '../../src/testing/module-contract.ts';
+import { makeNativeOutboxWorkerFixture } from '../support/outbox-worker-native-fixture.ts';
 
 const producer = 'producer.fixture';
 const consumer = 'consumer.fixture';
@@ -55,14 +55,11 @@ const fixture = Effect.gen(function* completionFixture() {
     purpose: 'stabilization-1258-privacy-drain',
   });
   yield* isolated.migrateCoreSchema();
-  const snapshot = yield* makeApplicationCompositionSnapshotFixture([], 'core-outbox-completion');
+  const claimFixture = makeNativeOutboxWorkerFixture(workers);
+  const snapshot = yield* claimFixture.authority.load;
   yield* isolated.publishInitialComposition(snapshot);
   const { executor: admin } = yield* makeCoreDatabase(isolated.connections.admin);
   const { executor: runtime } = yield* makeCoreDatabase(isolated.connections.runtime);
-  // Core primitive tests declare actual validated test workers. Owner/public protocol proof is separate.
-  yield* admin
-    .update(applicationCompositionAuthority)
-    .set({ subscriptionsJson: extractOutboxWorkerSubscriptions(workers) });
   const tenantId = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
   yield* runtime.insert(tenants).values({
     defaultLocale: 'en',
@@ -120,7 +117,9 @@ const fixture = Effect.gen(function* completionFixture() {
   const claim = Effect.fn('CompletionTest.claim')(function* claim(index: number) {
     const registration = Option.getOrThrow(Option.fromNullishOr(workers[index]));
     const now = DateTime.makeUnsafe(yield* DateTime.nowAsDate).pipe(DateTime.add({ seconds: 1 }), DateTime.toDateUtc);
-    return Option.getOrThrow(yield* repository.claimNext([registration], 'completion-test', now, revision));
+    return Option.getOrThrow(
+      yield* claimFixture.bind([registration], repository.claimNext([registration], 'completion-test', now, revision)),
+    );
   });
   return { admin, claim, debt, insert, repository, revision, runtime };
 });

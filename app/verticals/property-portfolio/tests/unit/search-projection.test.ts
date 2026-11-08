@@ -1,16 +1,14 @@
 import type {
   CoreSearchProjectionHit,
+  OperationalScope,
   CoreSearchProjectionReplacement,
   CoreSearchQueryRuntimeService,
   OutboxWorkerHandlerContext,
-  ResourceContainmentRelationshipMutationInput,
 } from '@app/core-runtime';
 import {
   CoreSearchProjectionReplacementSchema,
   CoreSearchProjectionStore,
   CoreSearchQueryRuntime,
-  ResourceContainmentMutationUnavailable,
-  ResourceContainmentRelationshipMutation,
   CoreSearchProjectionHitSchema,
   createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
@@ -100,14 +98,7 @@ it.effect('projects properties AND units with company scope and only allowlisted
     expect(documents.map((document) => document.selectedLegalEntityId)).toEqual([legalEntityId, legalEntityId]);
     expect(documents[0]?.searchableText).toEqual(['Parková zahrada', 'PARK', 'Parková 12', 'Obytný dům']);
     expect(documents[1]?.title).toBe('Západní byt');
-    expect(documents[1]?.searchableText).toEqual([
-      'Západní byt',
-      'A101',
-      'Parková zahrada',
-      'PARK',
-      'Parková 12',
-      'Byt',
-    ]);
+    expect(documents[1]?.searchableText).toEqual(['Západní byt', 'A101', 'Byt']);
     const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(documents);
     expect(encoded).not.toContain('PRIVATE');
     expect(encoded).not.toContain('30000000-0000-4000-8000-000000000099');
@@ -125,11 +116,11 @@ it.effect('omits absent property type and unit kind instead of publishing empty 
     const snapshot = yield* fixture;
     const documents = yield* buildSearchDocuments(snapshot);
     expect(documents[0]?.searchableText).toEqual(['Parková zahrada', 'PARK', 'Parková 12']);
-    expect(documents[1]?.searchableText).toEqual(['Západní byt', 'A101', 'Parková zahrada', 'PARK', 'Parková 12']);
+    expect(documents[1]?.searchableText).toEqual(['Západní byt', 'A101']);
   }),
 );
 
-it.effect('publishes complete types once after containment and refreshes parent labels without an ingestion pass', () =>
+it.effect('publishes complete types once and refreshes property labels without an ingestion pass', () =>
   Effect.gen(function* replacementScenario() {
     const original = yield* fixture;
     const snapshot = {
@@ -145,8 +136,7 @@ it.effect('publishes complete types once after containment and refreshes parent 
     const store = makeInMemoryCoreSearchProjectionStore();
     const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
     const replacements: CoreSearchProjectionReplacement[] = [];
-    const order: string[] = [];
-    const project = (source: SearchSourceSnapshot, containmentAllowed = true) =>
+    const project = (source: SearchSourceSnapshot) =>
       projectSearchSnapshot(source, context, false).pipe(
         Effect.provideService(CoreSearchProjectionStore, {
           ...store,
@@ -156,25 +146,23 @@ it.effect('publishes complete types once after containment and refreshes parent 
                 Effect.orDie,
               );
               yield* store.replace(replacement, claim);
-              order.push('replace');
               replacements.push(replacement);
             }),
         }),
-        Effect.provideService(ResourceContainmentRelationshipMutation, {
-          touch: () => {
-            order.push('containment');
-            return containmentAllowed
-              ? Effect.void
-              : Effect.fail(new ResourceContainmentMutationUnavailable({ reason: 'Containment is unavailable' }));
-          },
-        }),
       );
     const search = (query: string) =>
-      loadOwnerSearch(scope, query, 'property.portfolio.unit').pipe(
-        Effect.provideService(CoreSearchQueryRuntime, runtime),
+      runtime.search(
+        {
+          includeArchived: false,
+          moduleId: 'property.portfolio',
+          query,
+          resourceType: 'property.portfolio.property',
+          selectedLegalEntityId: legalEntityId,
+          tenantId,
+        },
+        scope,
       );
     yield* project(snapshot);
-    expect(order).toEqual(['containment', 'replace', 'replace', 'replace']);
     expect(replacements.map(({ documents, resourceType }) => [resourceType, documents.length])).toEqual([
       ['property.portfolio.property', 1],
       ['property.portfolio.unit', 1],
@@ -210,9 +198,6 @@ it.effect('publishes complete types once after containment and refreshes parent 
       })),
       projectionVersion: '2',
     };
-    expect(Exit.isFailure(yield* Effect.exit(project(renamed, false)))).toBe(true);
-    expect(replacements.length).toBe(3);
-    expect((yield* search('OLD-PARENT-921')).length).toBe(1);
     yield* project(renamed);
     expect(replacements.length).toBe(6);
     expect(yield* search('OLD-PARENT-921')).toEqual([]);
@@ -230,38 +215,24 @@ it.effect('refreshes, removes stale units, isolates companies and refuses stale 
     let snapshot: SearchSourceSnapshot = yield* fixture;
     const store = makeInMemoryCoreSearchProjectionStore();
     const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
-    const touches: ResourceContainmentRelationshipMutationInput[] = [];
     const project = (claim: OutboxWorkerHandlerContext, rebuild: boolean) =>
-      projectSearchSnapshot(snapshot, claim, rebuild).pipe(
-        Effect.provideService(CoreSearchProjectionStore, store),
-        Effect.provideService(ResourceContainmentRelationshipMutation, {
-          touch: (input) =>
-            Effect.sync(() => {
-              touches.push(input);
-            }),
-        }),
-      );
-    const search = (query: string, selectedScope = scope) =>
-      loadOwnerSearch(selectedScope, query, 'property.portfolio.unit').pipe(
-        Effect.provideService(CoreSearchQueryRuntime, runtime),
+      projectSearchSnapshot(snapshot, claim, rebuild).pipe(Effect.provideService(CoreSearchProjectionStore, store));
+    const search = (query: string, selectedScope: OperationalScope = scope) =>
+      runtime.search(
+        {
+          includeArchived: false,
+          moduleId: 'property.portfolio',
+          query,
+          resourceType: 'property.portfolio.unit',
+          selectedLegalEntityId: selectedScope.legalEntityId,
+          tenantId: selectedScope.tenantId,
+        },
+        selectedScope,
       );
     yield* project(context, false);
     expect((yield* search('zapadni')).length).toBe(1);
-    expect(touches[0]?.relationships.length).toBe(2);
-    expect(yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(touches)).toContain('module_access');
-    expect(yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(touches)).not.toContain('"reader"');
-    expect(
-      yield* loadOwnerSearch({ ...scope, legalEntityId: otherCompany }, 'byt', 'property.portfolio.unit').pipe(
-        Effect.provideService(CoreSearchQueryRuntime, runtime),
-      ),
-    ).toEqual([]);
-    expect(
-      yield* loadOwnerSearch(
-        { ...scope, tenantId: '10000000-0000-4000-8000-000000000002' },
-        'byt',
-        'property.portfolio.unit',
-      ).pipe(Effect.provideService(CoreSearchQueryRuntime, runtime)),
-    ).toEqual([]);
+    expect(yield* search('byt', { ...scope, legalEntityId: otherCompany })).toEqual([]);
+    expect(yield* search('byt', { ...scope, tenantId: '10000000-0000-4000-8000-000000000002' })).toEqual([]);
     const old = snapshot;
     snapshot = {
       ...snapshot,
@@ -282,8 +253,16 @@ it.effect('refreshes, removes stale units, isolates companies and refuses stale 
     yield* project(rebuild, true);
     yield* project(rebuild, true);
     expect(
-      yield* loadOwnerSearch(scope, 'Park', 'property.portfolio.property').pipe(
-        Effect.provideService(CoreSearchQueryRuntime, runtime),
+      yield* runtime.search(
+        {
+          includeArchived: false,
+          moduleId: 'property.portfolio',
+          query: 'Park',
+          resourceType: 'property.portfolio.property',
+          selectedLegalEntityId: legalEntityId,
+          tenantId,
+        },
+        scope,
       ),
     ).toEqual([]);
   }),
@@ -317,7 +296,7 @@ it.effect('hides archived parents, archived units, disposed properties and retir
   }),
 );
 
-it.effect('discards forged cross-company/tenant hits and requires company and tenant in the wire schema', () =>
+it.effect('current scoped labels ignore foreign index rows and require company and tenant in the wire schema', () =>
   Effect.gen(function* scenario() {
     const snapshot = yield* fixture;
     const documents = yield* buildSearchDocuments(snapshot);
@@ -335,11 +314,16 @@ it.effect('discards forged cross-company/tenant hits and requires company and te
         return Effect.succeed(forged);
       },
     };
-    const result = yield* loadOwnerSearch(scope, 'Park', 'property.portfolio.property').pipe(
-      Effect.provideService(CoreSearchQueryRuntime, runtime),
-    );
+    const result = yield* loadOwnerSearch(
+      scope,
+      'Park',
+      'property.portfolio.property',
+      { groups: [] },
+      yield* Effect.fromNullishOr(snapshot.companies[0]?.state),
+      [],
+    ).pipe(Effect.provideService(CoreSearchQueryRuntime, runtime));
     expect(result).toEqual([{ ref: hit.ref, selectedLegalEntityId: legalEntityId, title: hit.title }]);
-    expect(seen[0]).toMatchObject({ selectedLegalEntityId: legalEntityId, tenantId });
+    expect(seen).toEqual([]);
     expect(Schema.is(PropertiesProviderResponseSchema)(result)).toBe(true);
     expect(Schema.is(PropertiesProviderResponseSchema)([{ ref: hit.ref, title: hit.title }])).toBe(false);
     expect(
@@ -355,13 +339,18 @@ it.effect('discards forged cross-company/tenant hits and requires company and te
     expect(
       Exit.isFailure(
         yield* Effect.exit(
-          loadOwnerSearch(withoutCompany, 'Park', 'property.portfolio.property').pipe(
-            Effect.provideService(CoreSearchQueryRuntime, runtime),
-          ),
+          loadOwnerSearch(
+            withoutCompany,
+            'Park',
+            'property.portfolio.property',
+            { groups: [] },
+            yield* Effect.fromNullishOr(snapshot.companies[0]?.state),
+            [],
+          ).pipe(Effect.provideService(CoreSearchQueryRuntime, runtime)),
         ),
       ),
     ).toBe(true);
-    expect(seen.length).toBe(1);
+    expect(seen).toEqual([]);
   }),
 );
 
@@ -400,7 +389,7 @@ it.effect('rejects orphan units, ambiguous parents and foreign parent refs even 
   }),
 );
 
-it.effect('rejects duplicate resource identities across companies before containment or publication', () =>
+it.effect('rejects duplicate resource identities across companies before publication', () =>
   Effect.gen(function* duplicateCompanyScenario() {
     const snapshot = yield* fixture;
     const company = yield* Effect.fromNullishOr(snapshot.companies[0]);

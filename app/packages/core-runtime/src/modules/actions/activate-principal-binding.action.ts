@@ -4,22 +4,21 @@
 import { DateTime, Effect, Option, Schema } from 'effect';
 
 import type { ActionHandlerContext } from '../../actions/context.ts';
-import type { DataAccessEventInput } from '../../actions/events.ts';
 import { defineAction } from '../../actions/definition.ts';
 import { ExternalIdentityActionAuditEvidenceSchema } from '../../auth/external-identity/audit.ts';
-import {
-  authenticationNamespaceRegistration,
-  externalIdentityRepositoryFromTransaction,
-} from '../../auth/external-identity/repository.ts';
+import { externalIdentityRepositoryFromTransaction } from '../../auth/external-identity/repository.ts';
 import { ExternalIdentityAdmission } from '../../auth/external-identity/resolve.ts';
-import { prepareIdentityNamespaceAuthorization } from '../../auth/external-identity/namespace-action-preparation.ts';
+import {
+  GrantedProvisioningNamespaces,
+  authorizeProvisioningNamespace,
+} from '../../auth/external-identity/namespace-authority.ts';
 import type {
   ActivateExternalIdentityInput,
   ActivateExternalIdentityResult,
   ExternalIdentityAdmissionContext,
-  ExternalIdentityRepositoryDependencies,
   ExternalIdentityRepositoryService,
 } from '../../auth/external-identity/repository.ts';
+import { AuthenticationNamespaceRegistry } from '../../auth/external-identity/verifier.ts';
 import {
   principalBindingLifecycleDomainEvents,
   PRINCIPAL_BINDING_ACTIVATED_EVENT_TYPE,
@@ -29,8 +28,6 @@ import {
   ActivatePrincipalBindingPayloadSchema,
   ActivatePrincipalBindingResultSchema,
 } from '../../auth/external-identity-contracts.ts';
-import { externalIdentityFailure } from '../../auth/external-identity/errors.ts';
-import { OperationContextUnavailable } from '../../operations/errors.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 import {
   ActivatePrincipalBindingCoreIdentityPrincipalBindingActivatedV1OutboxPayloadSchema,
@@ -42,7 +39,6 @@ export type ActivatePrincipalBindingPayload = Schema.Schema.Type<typeof Activate
 type Services = Readonly<{
   readonly activate: ExternalIdentityRepositoryService['activate'];
   readonly admission: Option.Option<ExternalIdentityAdmissionContext>;
-  readonly preparationAccess?: DataAccessEventInput;
 }>;
 
 const malformedResult = (cause: unknown): ExternalIdentityError =>
@@ -99,9 +95,6 @@ const handleActivatePrincipalBinding = Effect.fn('ActivatePrincipalBindingAction
       createActivatePrincipalBindingCoreIdentityPrincipalBindingActivatedV1OutboxMessage(eventPayload),
     );
   }
-  if (context.services.preparationAccess !== undefined) {
-    yield* context.recordDataAccess(context.services.preparationAccess);
-  }
   yield* context.recordDataAccess({
     accessKind: 'read',
     queryHash: `principal-binding:${decodedResult.authBindingId}`,
@@ -126,9 +119,16 @@ const handleActivatePrincipalBinding = Effect.fn('ActivatePrincipalBindingAction
 
 export const activatePrincipalBindingAction = defineAction(
   {
+    // Namespace and binding provisioning is a trusted machine (system-workload) capability checked by the
+    // identity-namespace provisioner and trusted admission; no human or agent holds it as a capability.
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'core.identity.activate-principal-binding.access.v1',
+    },
+    accessWorkload: {
+      reason:
+        'Activating a principal binding is a machine provisioning step that the identity-namespace provisioner runs after trusted admission; a human or agent capability would widen identity issuance (O29, O36, O59).',
+      workloads: ['core.identity-provider'],
     },
     actionKey: 'core.identity.activate-principal-binding',
     auditEvidenceSchema: ExternalIdentityActionAuditEvidenceSchema,
@@ -137,7 +137,7 @@ export const activatePrincipalBindingAction = defineAction(
     domainEvents: principalBindingLifecycleDomainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.activate-principal-binding',
       moduleKey: 'core.identity',
       role: 'action',
@@ -151,85 +151,24 @@ export const activatePrincipalBindingAction = defineAction(
     schemaVersion: '1',
   },
   handleActivatePrincipalBinding,
-  () =>
-    Effect.fail(
-      new OperationContextUnavailable({
-        code: 'operation_context_unavailable',
-        reason: 'Identity activation requires invocation-local namespace preparation',
-      }),
-    ),
-  {
-    prepareServices: Effect.fn('ActivatePrincipalBindingAction.prepareServices')(
-      function* prepareServices(payload, context) {
-        const selector = structuredClone(payload);
-        const binding = yield* context
-          .transaction((transaction) =>
-            externalIdentityRepositoryFromTransaction(transaction).loadForRead({
-              authBindingId: selector.authBindingId,
-              lookup: 'binding',
-              tenantId: context.scope.tenantId,
-            }),
-          )
-          .pipe(
-            Effect.catchTag('ExternalIdentityFailure', (failure) =>
-              Effect.fail(new ExternalIdentityError({ code: failure.code })),
-            ),
-          );
-        if (Option.isNone(binding)) {
-          return yield* new ExternalIdentityError({ code: 'identity_not_found' });
-        }
-        const { authenticationNamespaceId } = binding.value;
-        const registration = yield* authenticationNamespaceRegistration({}, authenticationNamespaceId).pipe(
-          Effect.mapError((failure) => new ExternalIdentityError({ code: failure.code })),
-        );
-        const preparedRegistration = structuredClone(registration);
-        const prepared = yield* prepareIdentityNamespaceAuthorization(authenticationNamespaceId, context).pipe(
-          Effect.mapError((failure) => new ExternalIdentityError({ code: failure.code })),
-        );
-        const admission = yield* Effect.serviceOption(ExternalIdentityAdmission);
-        return Effect.fn('ActivatePrincipalBindingAction.preparedServices')(
-          function* preparedServices(transaction, scope, compositionRevision) {
-            yield* prepared.bind(scope, compositionRevision);
-            const dependencies: ExternalIdentityRepositoryDependencies = {
-              authorizeNamespace: prepared.authorizeNamespace,
-              preparedRegistration,
-            };
-            const repository = externalIdentityRepositoryFromTransaction(transaction, dependencies);
-            const activate: Services['activate'] = Effect.fn('ActivatePrincipalBindingAction.activateExactBinding')(
-              function* activateExactBinding(input) {
-                if (
-                  input.invocationId !== context.actionInvocationId ||
-                  input.tenantId !== scope.tenantId ||
-                  input.authBindingId !== selector.authBindingId ||
-                  input.expectedRevision !== selector.expectedRevision
-                ) {
-                  return yield* externalIdentityFailure(
-                    'identity_unavailable',
-                    'The prepared identity activation does not match this invocation',
-                  );
-                }
-                const result = yield* repository.activate(input);
-                yield* prepared.authorizeNamespace(authenticationNamespaceId);
-                return result;
-              },
-            );
-            const services: Services = {
-              activate,
-              admission,
-              preparationAccess: {
-                accessKind: 'read',
-                queryHash: `principal-binding:${selector.authBindingId}`,
-                resultCount: 1,
-                servingModuleKey: 'core.identity',
-                targetModuleKey: 'core.identity',
-                targetResourceId: selector.authBindingId,
-                targetResourceType: 'principal-auth-binding',
-              },
-            };
-            return services;
-          },
-        );
-      },
-    ),
-  },
+  Effect.fn('ActivatePrincipalBindingAction.services')(function* makeServices(transaction, scope) {
+    const registry = yield* Effect.serviceOption(AuthenticationNamespaceRegistry);
+    const granted = yield* Effect.serviceOption(GrantedProvisioningNamespaces);
+    // The namespace qualification of a provisioning workload is not a SpiceDB grant (O29, O36, O59,
+    // O67-Q4): the gate admits only a trusted workload on this `accessWorkload` carrier, which may
+    // provision the namespace it is registered in or the exact namespace its trusted composition
+    // granted it for this request.
+    const dependencies = {
+      authorizeNamespace: (authenticationNamespaceId: string) =>
+        authorizeProvisioningNamespace({ authenticationNamespaceId, granted, scope }),
+    };
+    if (Option.isSome(registry)) {
+      Object.assign(dependencies, { registry: registry.value });
+    }
+    const repository = externalIdentityRepositoryFromTransaction(transaction, dependencies);
+    return {
+      activate: repository.activate,
+      admission: yield* Effect.serviceOption(ExternalIdentityAdmission),
+    };
+  }),
 );

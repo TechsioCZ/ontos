@@ -94,7 +94,7 @@ describe('Storefront Registry administration Actions', () => {
     for (const action of [registerStorefrontApplicationAction, reviseStorefrontApplicationAction]) {
       expect(action.descriptor.entrypoint).toMatchObject({
         access: 'write',
-        authorization: { kind: 'action_execution', provisioning: 'explicit' },
+        authorization: { kind: 'protected' },
         moduleKey: 'commerce.storefront-registry',
         role: 'action',
         scope: 'tenant',

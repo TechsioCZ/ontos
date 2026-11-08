@@ -5,6 +5,7 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Icon } from '@techsio/ui-kit/atoms/icon';
 import type { IconType } from '@techsio/ui-kit/atoms/icon';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
@@ -18,7 +19,7 @@ import { Sidebar } from '@techsio/ui-kit/organisms/sidebar';
 import type { SidebarExpandedChangeDetails, SidebarSide } from '@techsio/ui-kit/organisms/sidebar';
 import { useContext, useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
 import type { ComponentProps, CSSProperties, ReactNode } from 'react';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { withoutRecordedPageReads } from './browser-request-cache.ts';
@@ -70,9 +71,14 @@ interface DashboardLegalEntityItem {
   readonly legalName: string;
 }
 
+/** The access administration pages in navigation order. */
+const AccessAdministrationPageSchema = Schema.Literals(['roles', 'people', 'changes', 'approvals', 'why']);
+export type AccessAdministrationPage = typeof AccessAdministrationPageSchema.Type;
+
 export interface AuthenticatedDashboardLayoutProps {
   readonly children: ReactNode;
   readonly compositionRevision?: string;
+  readonly currentAccessPage?: AccessAdministrationPage;
   readonly currentEntrypointKey?: string;
   readonly currentLegalEntityId?: string;
   readonly currentModuleId?: string;
@@ -781,11 +787,43 @@ const DashboardHeaderSearch = ({ compositionRevision, hidden, onSearch, scopeKey
   );
 };
 
+/**
+ * Access administration is tenant work, so it is offered whether or not a company is selected. It is
+ * a Shell-owned destination group beside the module navigation, not a module contribution.
+ */
+const AccessAdministrationNavigation = ({
+  currentPage,
+}: {
+  readonly currentPage: AccessAdministrationPage | undefined;
+}) => {
+  const { t } = useModernI18n();
+  const label = t('shell.accessAdmin.accessible.navigation');
+
+  return (
+    <section aria-label={label} className="flex flex-col gap-150">
+      <Sidebar.GroupLabel>{t('shell.accessAdmin.navigation.label')}</Sidebar.GroupLabel>
+      <nav aria-label={label}>
+        <Sidebar.Menu>
+          {AccessAdministrationPageSchema.literals.map((page) => (
+            <Sidebar.Item key={page}>
+              <Link aria-current={currentPage === page ? 'page' : undefined} as={LocalizedLink} to={`/access/${page}`}>
+                {t(`shell.accessAdmin.navigation.${page}`)}
+              </Link>
+            </Sidebar.Item>
+          ))}
+        </Sidebar.Menu>
+      </nav>
+    </section>
+  );
+};
+
 /** Grouped navigation panel: labelled groups on desktop, icon rail when collapsed, drawer below lg. */
 const GroupedSidebarPanel = ({
+  accessNavigation,
   model,
   selectors,
 }: {
+  readonly accessNavigation: ReactNode;
   readonly model: ShellNavigationModel;
   readonly selectors: ReactNode;
 }) => {
@@ -819,6 +857,7 @@ const GroupedSidebarPanel = ({
             </Sidebar.Group>
           ))}
         </nav>
+        {accessNavigation}
       </Sidebar.Content>
       <Sidebar.Footer>
         <Sidebar.Expanded>{selectors}</Sidebar.Expanded>
@@ -1035,6 +1074,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
         </Header>
         <div className={props.logoutPending ? 'hidden' : 'flex min-h-0 flex-1'}>
           <GroupedSidebarPanel
+            accessNavigation={<AccessAdministrationNavigation currentPage={props.currentAccessPage} />}
             model={model}
             selectors={
               <DashboardContextSelectors

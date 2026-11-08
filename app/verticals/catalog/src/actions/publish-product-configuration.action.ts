@@ -6,7 +6,7 @@ import {
   prepareCatalogOpenSelectionPopulation,
   validatePreparedCatalogScope,
 } from '../services/catalog-open-selection-preflight.ts';
-import { Effect, Match, Schema } from 'effect';
+import { Effect, Match, Option, Schema } from 'effect';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import {
   PublishProductConfigurationPayloadSchema,
@@ -15,10 +15,15 @@ import {
 } from '../../shared/actions/publish-product-configuration.ts';
 import { productConfigurationPersistenceForScope } from '../persistence/product-configuration-persistence.ts';
 import type { ProductConfigurationPersistence } from '../persistence/product-configuration-persistence.ts';
-import { cartOpenSelectionPopulationFromEnvironment } from '../../shared/domain/catalog-open-selection-population.ts';
+import { cartOpenSelectionPopulationForScope } from '../../shared/domain/catalog-open-selection-population.ts';
 import { PRODUCT_CONFIGURATION_DEFINITION_RESOURCE_TYPE } from '../../shared/domain/configuration-definition.ts';
 import { productConfigurationSelectionImpactForScope } from '../persistence/catalog-selection-change-impact.ts';
-import type { ActionHandlerContext, ActionServiceFactory, ActionServicePreflight } from '@app/core-runtime';
+import type {
+  ActionHandlerContext,
+  ActionServiceFactory,
+  ActionServicePreparationContext,
+  ActionServicePreflight,
+} from '@app/core-runtime';
 import { captureCatalogActionResult } from '../persistence/catalog-action-result-snapshot.ts';
 import { OutboxPayloadSchema } from '../../shared/outbox/commerce-catalog-product-configuration-published-v1.ts';
 import { createPublishProductConfigurationCommerceCatalogProductConfigurationPublishedV1OutboxMessage } from './publish-product-configuration-commerce-catalog-product-configuration-published-v1.outbox-message.ts';
@@ -40,7 +45,7 @@ const publishProductConfigurationPersistenceServiceFactory = Effect.fn(
     readonly scope: Parameters<typeof productConfigurationPersistenceForScope>[1];
   },
 ) {
-  const configuredPopulation = population ?? (yield* cartOpenSelectionPopulationFromEnvironment);
+  const configuredPopulation = population ?? Option.getOrUndefined(yield* cartOpenSelectionPopulationForScope(scope));
   return productConfigurationPersistenceForScope(
     transaction,
     scope,
@@ -168,20 +173,37 @@ const publishProductConfigurationActionServices = (
     })),
   );
 
-const preparePublishProductConfigurationActionServices: ActionServicePreflight<
+const preparePublishProductConfigurationActionServices = Effect.fn('preparePublishProductConfigurationActionServices')(
+  function* prepareServices(
+    _payload: typeof PublishProductConfigurationPayloadSchema.Type,
+    context: ActionServicePreparationContext,
+  ) {
+    const population = yield* prepareCatalogOpenSelectionPopulation(context);
+    return (
+      transaction: Parameters<ActionServiceFactory<never>>[0],
+      scope: Parameters<ActionServiceFactory<never>>[1],
+      revision: Parameters<ActionServiceFactory<never>>[2],
+    ) =>
+      validatePreparedCatalogScope(context, scope, revision).pipe(
+        Effect.flatMap(() => publishProductConfigurationActionServices(transaction, { population, scope })),
+      );
+  },
+) satisfies ActionServicePreflight<
   typeof PublishProductConfigurationPayloadSchema.Type,
   Effect.Success<ReturnType<typeof publishProductConfigurationActionServices>>,
-  never
-> = Effect.fn('preparePublishProductConfigurationActionServices')(function* prepareServices(_payload, context) {
-  const population = yield* prepareCatalogOpenSelectionPopulation(context);
-  return (transaction, scope, revision) =>
-    validatePreparedCatalogScope(context, scope, revision).pipe(
-      Effect.flatMap(() => publishProductConfigurationActionServices(transaction, { population, scope })),
-    );
-});
+  typeof PublishProductConfigurationError.Type
+>;
 
 export const publishProductConfigurationAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-configuration.publish',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.publish-product-configuration.access.v1',
@@ -192,7 +214,7 @@ export const publishProductConfigurationAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.catalog.publish-product-configuration',
       moduleKey: MODULE_KEY,
       role: 'action',

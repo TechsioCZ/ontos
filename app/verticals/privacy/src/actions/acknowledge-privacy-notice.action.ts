@@ -47,6 +47,14 @@ const handleAcknowledgePrivacyNotice = Effect.fn('AcknowledgePrivacyNotice.handl
 
 export const acknowledgePrivacyNoticeAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.notice.acknowledge',
+      kind: 'action',
+      modes: ['run', 'propose'],
+      placement: { group: 'notices', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.acknowledge-privacy-notice.access.v1',
@@ -58,7 +66,7 @@ export const acknowledgePrivacyNoticeAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.acknowledge-privacy-notice',
       moduleKey: 'privacy.core',
       role: 'action',

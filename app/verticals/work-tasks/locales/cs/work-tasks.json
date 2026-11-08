@@ -31,6 +31,7 @@
         "start": "Zahájit",
         "complete": "Dokončit",
         "closedTask": "Dokončený nebo zrušený úkol nelze upravit.",
+        "approvalRequired": "Návrh čeká na schválení. Změna zatím nebyla provedena.",
         "loadingNames": "Načítání…",
         "cancel": "Zrušit",
         "saving": "Ukládám…",

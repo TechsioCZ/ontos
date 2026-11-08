@@ -12,6 +12,12 @@ declare module '@modern-js/plugin-i18n/runtime' {
   interface UltramodernCanonicalRoutes {
     '/': Record<string, never>;
     '/$': { '_splat'?: string };
+    '/access/agents': Record<string, never>;
+    '/access/approvals': Record<string, never>;
+    '/access/changes': Record<string, never>;
+    '/access/people': Record<string, never>;
+    '/access/roles': Record<string, never>;
+    '/access/why': Record<string, never>;
     '/login': Record<string, never>;
     '/modules/$moduleId': { "moduleId": string };
     '/pripojit': Record<string, never>;

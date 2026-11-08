@@ -55,6 +55,14 @@ export const markGtinUnresolvedAction: ActionRegistration<
   MarkGtinUnresolvedServices
 > = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.gtin-unresolved.mark',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'variant', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.mark-gtin-unresolved.access.v1',
@@ -66,7 +74,7 @@ export const markGtinUnresolvedAction: ActionRegistration<
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

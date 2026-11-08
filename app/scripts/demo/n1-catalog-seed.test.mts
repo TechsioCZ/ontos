@@ -2,7 +2,10 @@ import { Effect, Exit, FileSystem, Match, Schema } from 'effect';
 import { HttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
-import { ApplyCommandPayloadSchema } from '../../verticals/merchandise/shared/actions/apply-command.ts';
+import {
+  ApplyCommandPayloadSchema,
+  ManageMarketsPayloadSchema,
+} from '../../verticals/merchandise/shared/actions/apply-command.ts';
 import { ProductRecordSchema, RecordsRequestSchema } from '../../verticals/merchandise/shared/apis/records.ts';
 import {
   czkNetMinor,
@@ -142,7 +145,9 @@ const fakeCatalog = (fs: FileSystem.FileSystem, initial: readonly Product[] = []
           if (state.beforeCommitFailure) {
             return yield* new DemoSeedError({ reason: 'Synthetic failure before commit' });
           }
-          const { command } = yield* Schema.decodeUnknownEffect(Schema.toEncoded(ApplyCommandPayloadSchema))(input);
+          const { command } = yield* Schema.decodeUnknownEffect(
+            Schema.toEncoded(Schema.Union([ApplyCommandPayloadSchema, ManageMarketsPayloadSchema])),
+          )(input);
           const ids = yield* Match.value(command).pipe(
             Match.tag('CreateProduct', create),
             Match.tag('SetProductMarketOffer', (value) => offer(value.productId)),

@@ -211,7 +211,7 @@ export const readProductVariantSnapshot = Effect.fn('ProductVariantSnapshotRead.
 
 const productVariantSnapshotEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.product-variant-snapshot' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.product-variant-snapshot',
   moduleKey: catalogModuleKey,
   role: 'api',
@@ -219,6 +219,19 @@ const productVariantSnapshotEntrypoint = defineTenantModuleEntrypoint({
 
 export const productVariantSnapshotRead = defineRead(
   {
+    accessActor: {
+      callers: ['pricing'],
+      reason: 'The Pricing service reads the product variant snapshot for the buyer whose price decision it evaluates',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.catalog.product-variant-snapshot.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: productVariantSnapshotEntrypoint,
     evidencePolicy: {
@@ -228,7 +241,6 @@ export const productVariantSnapshotRead = defineRead(
     inputSchema: ProductVariantSnapshotRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: catalogModuleKey,
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.product-variant-snapshot',
     resultSchema: ProductVariantSnapshotResponseSchema,
@@ -245,5 +257,4 @@ export const productVariantSnapshotRead = defineRead(
       assess: catalogSelectionEvidenceForScope(transaction, scope).assess,
       source: productVariantSnapshotSourceForScope(transaction, scope),
     }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

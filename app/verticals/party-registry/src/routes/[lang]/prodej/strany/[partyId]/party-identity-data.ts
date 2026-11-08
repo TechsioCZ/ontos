@@ -7,9 +7,6 @@ import { executePartyOfficialIdentifierHistory } from '../../../../../api/party-
 import type { PartyContactPointsResponse } from '../../../../../../shared/apis/party-contact-points.ts';
 import type { PartyDetailResponse } from '../../../../../../shared/apis/party-detail.ts';
 import type { PartyOfficialIdentifierHistoryResponse } from '../../../../../../shared/apis/party-official-identifier-history.ts';
-import type { PartyContactPoint } from '../../../../../../shared/domain/contact-point.ts';
-import type { OfficialIdentifierAssertion } from '../../../../../../shared/domain/identifier-contracts.ts';
-import type { Party } from '../../../../../../shared/domain/identity-contracts.ts';
 import type { PartyRef } from '../../../../../../shared/resources/party.ts';
 
 export const PARTY_IDENTITY_KEY = 'party-registry.pages.partyIdentity';
@@ -42,7 +39,7 @@ export type PartyIdentitySection<Value> =
   | { readonly status: PartyIdentityRefusal };
 
 const PartyIdentityFactViewSchema = Schema.Struct({
-  factKind: Schema.Literals(['DISPLAY_NAME', 'PARTY_TYPE']),
+  factKind: Schema.Literals(['PARTY_TYPE', 'FIRST_NAME', 'LAST_NAME', 'BUSINESS_NAME']),
   recordedAt: Schema.DateTimeUtc,
   validFrom: Schema.DateTimeUtc,
   value: Schema.String,
@@ -67,21 +64,27 @@ const PartyIdentifierViewSchema = Schema.Struct({
   state: Schema.Literals(['ACTIVE', 'ENDED', 'SUPERSEDED', 'RETRACTED', 'DISPUTED']),
   validFrom: Schema.DateTimeUtc,
   validTo: Schema.OptionFromNullOr(Schema.DateTimeUtc),
-  value: Schema.String,
-  verification: Schema.Literals(['UNVERIFIED', 'VERIFIED', 'REJECTED']),
+  // A caller without the identifier-value capability receives the assertion without its value (O17, O58).
+  value: Schema.optionalKey(Schema.String),
 });
 export type PartyIdentifierView = typeof PartyIdentifierViewSchema.Type;
 
+/** A contact point as the read answers it; the value is absent without the value capability. */
+type PartyContactPointRead = PartyContactPointsResponse['items'][number];
+/** An identifier assertion as the read answers it; the value is absent without the value capability. */
+type PartyIdentifierRead = PartyOfficialIdentifierHistoryResponse['items'][number];
+
 export interface PartyContactView {
-  readonly contactType: PartyContactPoint['value']['type'];
+  readonly contactType: NonNullable<PartyContactPointRead['value']>['type'];
   readonly displayValue: string;
   readonly extension?: string;
   readonly preferred: boolean;
   readonly purposes: readonly string[];
-  readonly verification: PartyContactPoint['verification']['state'];
 }
 
-const displayNameOf = (party: Party): string | undefined => Option.getOrUndefined(party.displayName);
+/** The name is absent without the Party identity capability; it is never replaced by another field. */
+const displayNameOf = (party: PartyDetailResponse['party']): string | undefined =>
+  party.displayName === undefined ? undefined : Option.getOrUndefined(party.displayName);
 
 const addressText = (address: {
   readonly addressLine1: string | null;
@@ -95,8 +98,13 @@ const addressText = (address: {
     .filter((part): part is string => part !== null)
     .join(', ');
 
-const contactView = (contact: PartyContactPoint): PartyContactView => {
+const contactView = (contact: PartyContactPointRead): PartyContactView | undefined => {
   const { value } = contact;
+  // A caller without the contact-value capability receives the row without its value; it is withheld,
+  // never presented as an unverified value.
+  if (value === undefined) {
+    return undefined;
+  }
   const addressPurposes = value.type === 'ADDRESS' ? value.purposes.filter(({ current }) => current) : [];
   const extension = value.type === 'PHONE' ? (value.extension ?? undefined) : undefined;
   const view: PartyContactView = {
@@ -104,21 +112,21 @@ const contactView = (contact: PartyContactPoint): PartyContactView => {
     displayValue: value.type === 'ADDRESS' ? addressText(value.address) : value.displayValue,
     preferred: value.type === 'ADDRESS' ? addressPurposes.some(({ preferred }) => preferred) : value.preferred,
     purposes: addressPurposes.map(({ purpose }) => purpose),
-    verification: contact.verification.state,
   };
   return extension === undefined ? view : { ...view, extension };
 };
 
-const identifierView = (identifier: OfficialIdentifierAssertion): PartyIdentifierView => ({
-  current: identifier.state === 'ACTIVE' && identifier.validTo === null,
-  identifierType: identifier.identifierType,
-  recordedAt: DateTime.makeUnsafe(identifier.recordedAt),
-  state: identifier.state,
-  validFrom: DateTime.makeUnsafe(identifier.validFrom),
-  validTo: identifier.validTo === null ? Option.none() : Option.some(DateTime.makeUnsafe(identifier.validTo)),
-  value: identifier.normalizedValue,
-  verification: identifier.verification,
-});
+const identifierView = (identifier: PartyIdentifierRead): PartyIdentifierView => {
+  const view: PartyIdentifierView = {
+    current: identifier.state === 'ACTIVE' && identifier.validTo === null,
+    identifierType: identifier.identifierType,
+    recordedAt: DateTime.makeUnsafe(identifier.recordedAt),
+    state: identifier.state,
+    validFrom: DateTime.makeUnsafe(identifier.validFrom),
+    validTo: identifier.validTo === null ? Option.none() : Option.some(DateTime.makeUnsafe(identifier.validTo)),
+  };
+  return identifier.normalizedValue === undefined ? view : { ...view, value: identifier.normalizedValue };
+};
 
 const identifierOrder = (left: PartyIdentifierView, right: PartyIdentifierView): number => {
   if (left.current !== right.current) {
@@ -134,12 +142,10 @@ export const partyIdentityView = (detail: PartyDetailResponse): PartyIdentityVie
     aliasResolved: detail.resolution.kind === 'ALIAS',
     archived: Option.isSome(detail.party.archivedAt),
     createdAt: detail.party.createdAt,
-    facts: detail.currentFactAssertions.map((assertion) => ({
-      factKind: assertion.factKind,
-      recordedAt: assertion.recordedAt,
-      validFrom: assertion.validFrom,
-      value: assertion.value,
-    })),
+    // A fact whose value is withheld from this reader is not shown; its kind alone carries no identity value.
+    facts: detail.currentFactAssertions.flatMap(({ factKind, recordedAt, validFrom, value }) =>
+      value === undefined ? [] : [{ factKind, recordedAt, validFrom, value }],
+    ),
     partyType: detail.party.partyType,
     revision: detail.party.revision,
     updatedAt: detail.party.updatedAt,
@@ -296,7 +302,12 @@ export const loadPartyIdentityWithReaders = Effect.fn('PartyIdentityData.load')(
     { concurrency: 2 },
   );
   return {
-    contacts: mapSection(contacts, (value) => value.items.map(contactView)),
+    contacts: mapSection(contacts, (value) =>
+      value.items.flatMap((contact) => {
+        const view = contactView(contact);
+        return view === undefined ? [] : [view];
+      }),
+    ),
     identifiers: mapSection(identifiers, (value) => value.items.map(identifierView).toSorted(identifierOrder)),
     identity: { status: 'ready', value: identityView },
     status: 'identity',

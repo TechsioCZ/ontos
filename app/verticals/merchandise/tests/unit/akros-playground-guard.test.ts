@@ -1,3 +1,6 @@
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import { makeTestBoundAccessGate } from '@app/core-runtime/testing/access-gate';
+import { merchandiseRegistration } from '../../vertical.registration.ts';
 import { ReadPermissionDenied, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { NodeCrypto } from '@effect/platform-node';
@@ -8,8 +11,6 @@ import {
   AKROS_PLAYGROUND_LEGAL_ENTITY_ID,
   assertStorefrontScope,
   isStorefrontServiceKey,
-  staffCommandAllowed,
-  staffMarketCommandAllowed,
   storefrontReadRequest,
 } from '../../shared/actions/command-guard.ts';
 import { recordsRead } from '../../src/api/records.read.ts';
@@ -33,30 +34,6 @@ it.effect('keeps the new storefront key limited to guest order placement', () =>
   }),
 );
 
-it('preserves fulfilment restrictions and administrator catalog rights in the new tenant', () => {
-  for (const tag of ['CreateProduct', 'UpdateProduct', 'ChangePrice', 'UpdateCategory', 'BulkUpdateProducts']) {
-    expect(staffCommandAllowed(AKROS_PLAYGROUND_LEGAL_ENTITY_ID, false, tag)).toBe(false);
-    expect(staffCommandAllowed(AKROS_PLAYGROUND_LEGAL_ENTITY_ID, true, tag)).toBe(true);
-  }
-  for (const tag of ['RecordStockMovement', 'ChangeOrderStatus']) {
-    expect(staffCommandAllowed(AKROS_PLAYGROUND_LEGAL_ENTITY_ID, false, tag)).toBe(true);
-  }
-  expect(
-    staffMarketCommandAllowed(AKROS_PLAYGROUND_LEGAL_ENTITY_ID, {
-      administrator: false,
-      companyAdministrator: false,
-    }),
-  ).toBe(false);
-  expect(
-    staffMarketCommandAllowed(AKROS_PLAYGROUND_LEGAL_ENTITY_ID, {
-      administrator: false,
-      companyAdministrator: true,
-    }),
-  ).toBe(true);
-  // The destructive demo reset remains confined to the original fixture company.
-  expect(staffCommandAllowed(AKROS_PLAYGROUND_LEGAL_ENTITY_ID, true, 'ResetDemoData')).toBe(false);
-});
-
 it.layer(NodeCrypto.layer)('New AKROS storefront governed read boundary', (suite) => {
   suite.effect('rejects staff and order reads before accessing owner data', () =>
     Effect.gen(function* newTenantReadGuard() {
@@ -68,10 +45,14 @@ it.layer(NodeCrypto.layer)('New AKROS storefront governed read boundary', (suite
         principalId: '22222222-2222-4222-8222-222222222222',
         tenantId: 'bceaa540-13eb-5508-9ac0-9ed7e40a2ee9',
       });
+      const gate = makeTestBoundAccessGate({ defaultAnswer: { outcome: 'ALLOWED' } });
       const harness = yield* makeReadTestHarness({
+        access: 'allowed',
+        accessDecision: gate.bound,
         executeOwnerQuery: () => Effect.die('A storefront denial must not access owner data'),
         operationTime: new Date('2026-11-02T10:00:00.000Z'),
         ownerAuthorizationDecision: 'allowed',
+        ownerRegistration: merchandiseRegistration,
         permissionDecision: 'allowed',
         scope: { ...principal, correlationId: 'playground-read-guard' },
       });
@@ -83,7 +64,11 @@ it.layer(NodeCrypto.layer)('New AKROS storefront governed read boundary', (suite
             registration: recordsRead,
             transport: { correlationId: 'playground-read-guard' },
           })
-          .pipe(Effect.provide(harness.layer), Effect.flip);
+          .pipe(
+            Effect.provide(harness.layer),
+            Effect.provideService(AccessDecisionGate, gate.accessDecision),
+            Effect.flip,
+          );
         expect(Schema.is(ReadPermissionDenied)(failure)).toBe(true);
       }
       expect(harness.snapshot().ownerQueries).toEqual([]);

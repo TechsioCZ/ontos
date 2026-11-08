@@ -42,6 +42,15 @@ it('lets exactly one identity register gateway scope grants', () => {
   expect(registrars.map((identity) => identity.role)).toEqual(['shell_gateway_issuer']);
 });
 
+it('runs protected Actions only on the request identities', () => {
+  const runners = identities.filter((identity) => identity.runsActions);
+  expect(runners.map((identity) => identity.role)).toEqual(['ontos_runtime', 'party_registry_runtime']);
+  for (const identity of runners) {
+    expect(identity.scopeAuthority).not.toBe('none');
+    expect(identity.registersGatewayScopeGrants).toBe(false);
+  }
+});
+
 it('maps each gateway audience to exactly one gateway-grant role', () => {
   const audiences = identities.flatMap((identity) => identity.gatewayScopeAudiences);
   expectUnique(audiences);
@@ -90,6 +99,7 @@ const genericOwner = (prefix: string): DatabaseOwnerIdentityDescriptor => ({
     ownerModuleKey: `${prefix}.owner`,
     registersGatewayScopeGrants: false,
     role: `${prefix}_runtime`,
+    runsActions: true,
     scopeAuthority: 'gateway_grant',
     urlKey: `${prefix.toUpperCase()}_DATABASE_URL`,
   },
@@ -102,6 +112,7 @@ const genericOwner = (prefix: string): DatabaseOwnerIdentityDescriptor => ({
     ownerModuleKey: `${prefix}.owner`,
     registersGatewayScopeGrants: false,
     role: `${prefix}_worker`,
+    runsActions: false,
     scopeAuthority: 'session_setting',
     urlKey: `${prefix.toUpperCase()}_WORKER_DATABASE_URL`,
   },

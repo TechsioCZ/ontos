@@ -10,11 +10,13 @@ import type {
   PriceSourceAssertionId,
 } from '@app/pricing-contracts/domain/price-source-provenance';
 import { PriceRefSchema } from '@app/pricing-contracts/resources/price';
+import type { Crypto } from 'effect';
 import { DateTime, Effect, Match, Schema } from 'effect';
 
 import { DefinePricePayloadSchema, DefinePriceResultSchema } from '../../shared/actions/define-price.ts';
 import type { DefinePricePayload } from '../../shared/actions/define-price.ts';
 
+import { pricingAccessAmount } from '../services/access-amount.ts';
 import type { PricePersistence } from '../services/price-persistence.service.ts';
 import { PricePersistenceUnavailable, pricePersistenceForScope } from '../services/price-persistence.service.ts';
 import type { CurrencySupportPersistence } from '../persistence/currency-support-persistence.ts';
@@ -24,9 +26,13 @@ import { assertPreparedPricingScope } from '../integrations/commercial-fee-catal
 import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
 import { PriceIdentityKeySchema } from '@app/pricing-contracts/domain/price-definition';
 import { catalogSelectionAssessmentPortFromEnvironment } from '../integrations/catalog-selection-evidence.ts';
+import {
+  requirePricingCatalogOperation,
+  requirePricingCommercialContextOperation,
+} from '../integrations/pricing-operation-requirements.ts';
 import type { CatalogSelectionAssessmentPort } from '../integrations/catalog-selection-evidence.ts';
-import { PricingCatalogSelectionUnavailable } from '../../shared/domain/catalog-selection-gateway-credential.ts';
-import { PricingCommercialContextUnavailable } from '../../shared/domain/commercial-context-gateway-credential.ts';
+import { PricingCatalogSelectionUnavailable } from '../../shared/domain/pricing-catalog-selection-unavailable.ts';
+import { PricingCommercialContextUnavailable } from '../../shared/domain/pricing-commercial-context-unavailable.ts';
 import { commercialContextAssessmentPortFromEnvironment } from '../integrations/commercial-context-evidence.ts';
 import type { CommercialContextAssessmentPort } from '../integrations/commercial-context-evidence.ts';
 import { DefinePriceConflict } from './define-price-conflict.ts';
@@ -334,7 +340,14 @@ export const handleDefinePrice = Effect.fn('DefinePriceAction.handle')(function*
 
 /** Payload-derived owner selectors; original SQL source-authority and expected-state checks stay in commit. */
 export const prepareDefinePriceOwnerPorts = Effect.fn('DefinePriceAction.prepareOwnerPorts')(
-  function* prepareOwnerPorts(payloads: readonly DefinePricePayload[], context: ActionServicePreparationContext) {
+  function* prepareOwnerPorts(
+    payloads: readonly DefinePricePayload[],
+    context: ActionServicePreparationContext,
+    requirements: {
+      readonly catalog: Parameters<typeof requirePricingCatalogOperation>[0];
+      readonly market: Parameters<typeof requirePricingCommercialContextOperation>[0];
+    },
+  ) {
     const { legalEntityId } = context.scope;
     if (
       legalEntityId === undefined ||
@@ -353,6 +366,7 @@ export const prepareDefinePriceOwnerPorts = Effect.fn('DefinePriceAction.prepare
       compositionRevision: context.compositionRevision,
       legalEntityId,
       requestCorrelation: context.scope.correlationId,
+      scope: context.scope,
     };
     const [catalog, market] = yield* Effect.all(
       [
@@ -364,13 +378,21 @@ export const prepareDefinePriceOwnerPorts = Effect.fn('DefinePriceAction.prepare
     const observations = yield* Effect.forEach(
       payloads,
       Effect.fn('DefinePriceAction.observeOwnerPorts')(function* observe(payload) {
-        const selection = yield* Effect.result(catalog.assess(payload.identityKey.catalogSelection));
+        const selection = yield* Effect.result(
+          requirePricingCatalogOperation(requirements.catalog).pipe(
+            Effect.andThen(() => catalog.assess(payload.identityKey.catalogSelection)),
+          ),
+        );
         const commercialContext = yield* Effect.result(
-          market.assess({
-            assessedAt: DateTime.makeUnsafe(payload.effectiveFrom),
-            commercialScope: payload.identityKey.commercialScope,
-            tenantId: context.scope.tenantId,
-          }),
+          requirePricingCommercialContextOperation(requirements.market).pipe(
+            Effect.andThen(() =>
+              market.assess({
+                assessedAt: DateTime.makeUnsafe(payload.effectiveFrom),
+                commercialScope: payload.identityKey.commercialScope,
+                tenantId: context.scope.tenantId,
+              }),
+            ),
+          ),
         );
         return { commercialContext, payload, selection };
       }),
@@ -435,7 +457,7 @@ export const prepareDefinePriceOwnerPorts = Effect.fn('DefinePriceAction.prepare
 
 const definePriceServicesForScope: ActionServiceFactory<
   DefinePriceActionServices,
-  ExternalPriceInputBoundaryFactory
+  Crypto.Crypto | ExternalPriceInputBoundaryFactory
 > = (transaction, scope, compositionRevision) => {
   const { legalEntityId } = scope;
   if (legalEntityId === undefined) {
@@ -455,11 +477,13 @@ const definePriceServicesForScope: ActionServiceFactory<
           compositionRevision,
           legalEntityId,
           requestCorrelation: scope.correlationId,
+          scope,
         }),
         commercialContext: commercialContextAssessmentPortFromEnvironment({
           compositionRevision,
           legalEntityId,
           requestCorrelation: scope.correlationId,
+          scope,
         }),
         currencySupport: currencySupportPersistenceForScope(transaction, scope, compositionRevision),
         persistence: pricePersistenceForScope(transaction, scope),
@@ -501,8 +525,11 @@ const prepareDefinePriceServices = Effect.fn('DefinePriceAction.prepareServices'
   payload: DefinePricePayload,
   context: ActionServicePreparationContext,
 ) {
-  const owners = yield* prepareDefinePriceOwnerPorts([payload], context);
-  const factory: ActionServiceFactory<DefinePriceActionServices, ExternalPriceInputBoundaryFactory> = (
+  const owners = yield* prepareDefinePriceOwnerPorts([payload], context, {
+    catalog: 'commerce.pricing.requirement.define-price-catalog',
+    market: 'commerce.pricing.requirement.define-price-market',
+  });
+  const factory: ActionServiceFactory<DefinePriceActionServices, Crypto.Crypto | ExternalPriceInputBoundaryFactory> = (
     transaction,
     scope,
     revision,
@@ -523,6 +550,18 @@ const prepareDefinePriceServices = Effect.fn('DefinePriceAction.prepareServices'
 
 export const definePriceAction = defineAction(
   {
+    // O18: the governed amount is the configured price in minor units, derived server-side from
+    // the decoded payload; a caller-supplied total never governs the ceiling.
+    accessAmount: (payload: DefinePricePayload) => pricingAccessAmount(payload.monetaryAmount),
+    accessDeclaration: {
+      amountInput: 'derived.monetaryAmount',
+      key: 'commerce.pricing.price.define',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'prices', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.pricing.define-price.access.v1',
@@ -534,7 +573,7 @@ export const definePriceAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.pricing.define-price',
       moduleKey: MODULE_KEY,
       role: 'action',

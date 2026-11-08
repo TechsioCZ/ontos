@@ -385,7 +385,7 @@ export const buildKpis = (input: KpiInput): Kpi[] => {
     });
   }
 
-  // Open incidents: unresolved incidents/faults of the provoz agendas (security needs read_all).
+  // Open incidents: unresolved incidents/faults of the provoz agendas (security needs the restricted field group).
   if (ops?.incidents === undefined) {
     const base = unavailable(sources, 'incidents', ['ops']);
     kpis.push(ops === undefined ? base : { ...base, status: 'forbidden' });

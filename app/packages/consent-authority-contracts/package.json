@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@app/shared-contracts": "workspace:*",
+    "@noble/hashes": "2.2.0",
     "effect": "4.0.7"
   }
 }

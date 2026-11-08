@@ -21,6 +21,14 @@ import { AttachEngagementError, handleAttachEngagement } from './attach-engageme
 
 export const attachPersonEngagementAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.person-engagement.attach',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'engagements', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.attach-person-engagement.access.v1',
@@ -31,10 +39,7 @@ export const attachPersonEngagementAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.attach-person-engagement',
       moduleKey: 'party.registry',
       role: 'action',

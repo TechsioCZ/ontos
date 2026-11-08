@@ -2,12 +2,7 @@
 // @ontos-action-owner commerce.inventory
 // @ontos-action-slug stock-receipt
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { DateTime, Effect } from 'effect';
 
 import {
@@ -74,26 +69,22 @@ export const handleStockReceipt = Effect.fn('StockReceiptAction.handle')(functio
 
 export const stockReceiptAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.inventory.stock-position.receive',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'stock', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: `${ACTION_KEY}.access.v1` },
     actionKey: ACTION_KEY,
     auditProfile: 'standard',
-    businessPermission: defineActionBusinessPermission<StockReceiptPayload>((payload) => ({
-      permission: 'inventory.stock.receipt',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: payload.positionRef.moduleId,
-          resourceId: payload.positionRef.resourceId,
-          resourceType: payload.positionRef.resourceType,
-        },
-        tenantId: payload.positionRef.tenantId,
-      },
-    })),
     domainErrorSchema: StockReceiptErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: MODULE_KEY,
       role: 'action',
@@ -103,10 +94,6 @@ export const stockReceiptAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: StockReceiptPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<StockReceiptPayload>((payload) => ({
-      permission: 'write',
-      resource: payload.positionRef,
-    })),
     resultSchema: StockReceiptResultSchema,
     schemaVersion: '1',
   },

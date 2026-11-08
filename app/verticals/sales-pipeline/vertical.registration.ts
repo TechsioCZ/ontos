@@ -5,9 +5,10 @@ import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { salesPipelineManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
+import { recordsRead } from './src/api/records.read.ts';
 import { rebuildSearchWorker } from './src/workers/rebuild-search.worker.ts';
 import { refreshSearchWorker } from './src/workers/refresh-search.worker.ts';
-import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 // </generated-module-registration-imports>
 
 export const salesPipelineRegistration = defineVerticalRuntimeRegistration({
@@ -20,6 +21,7 @@ export const salesPipelineRegistration = defineVerticalRuntimeRegistration({
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       records: () => import('./src/api/records-client.ts'),
       // </generated-module-registration-apis>
     },
@@ -48,6 +50,11 @@ export const salesPipelineRegistration = defineVerticalRuntimeRegistration({
     rebuildSearchWorker,
     refreshSearchWorker,
     // </generated-module-registration-workers>
+  ],
+  reads: [
+    // <generated-module-registration-reads>
+    recordsRead,
+    // </generated-module-registration-reads>
   ],
 });
 

@@ -154,12 +154,14 @@ export const handleCreateProduct = Effect.fn('CreateProductAction.handle')(funct
     ),
   );
   const result = { ...created, classification };
-  const reasonEvidence = payload.reason === undefined ? {} : { reason: payload.reason };
-  yield* context.recordAuditEvidence(
-    classification.kind === 'INDEPENDENT_PRODUCT'
-      ? reasonEvidence
-      : { ...reasonEvidence, evidenceRefs: classification.evidenceRefs },
-  );
+  const evidence: Record<string, Schema.Schema.Type<typeof Schema.Json>> = {};
+  if (payload.reason !== undefined) {
+    evidence['reason'] = payload.reason;
+  }
+  if (classification.kind !== 'INDEPENDENT_PRODUCT') {
+    evidence['evidenceRefs'] = classification.evidenceRefs;
+  }
+  yield* context.recordAuditEvidence(evidence);
   yield* recordProductAccess(context, result.product.productRef.resourceId);
   yield* recordProductEvent(
     context,
@@ -172,6 +174,14 @@ export const handleCreateProduct = Effect.fn('CreateProductAction.handle')(funct
 
 export const createProductAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.create-product.access.v1',
@@ -183,7 +193,7 @@ export const createProductAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: MODULE_KEY,
       role: 'action',

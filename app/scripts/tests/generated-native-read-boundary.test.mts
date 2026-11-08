@@ -3,14 +3,14 @@ import { readFileSync } from 'node:fs';
 import { expect, it } from 'effect-rstest';
 
 import {
-  hasOwnerLocalReadFinishFactoryResult,
+  hasOwnerLocalReadServiceFactoryResult,
   hasOwnerLocalReadServiceFactory,
 } from '../generated-governed-http-boundary.mts';
 
 const owner = 'verticals/native-owner';
 const readFile = `${owner}/src/api/lookup.read.ts`;
 const dependencyFile = `${owner}/src/services/lookup.ts`;
-const defaultFinish = 'makeFinish()';
+const defaultFactory = 'services';
 const nativeCoreSpecifier = "'@app/core-runtime'";
 const foreignCoreSpecifier = "'@app/foreign-runtime'";
 const foreignEffectSpecifier = "'./fake-effect.ts'";
@@ -25,22 +25,23 @@ export const persistenceForScope = (
 });
 export const loadOwner = (transaction, scope, revision) => Effect.succeed({ transaction, scope, revision });
 `;
-const read = `import type { ReadFinishContext } from '@app/core-runtime';
+const read = `import type { ReadServiceFactory } from '@app/core-runtime';
 import { Effect } from 'effect';
 import { persistenceForScope, loadOwner } from '../services/lookup.ts';
-export const makeFinish = (
+export const makeServices = (
   load: typeof loadOwner = loadOwner,
-) => Effect.fn('Owner.finish')(function* finish(input: Request, context: ReadFinishContext<Prepared, void>) {
-  return yield* load(context.transaction, context.scope, context.prepared.revision);
+): ReadServiceFactory<OwnerPersistence> => Effect.fn('Owner.services')(function* services(transaction, scope) {
+  return yield* load(transaction, scope);
 });
+export const services = makeServices();
 `;
 const sourcesFor = (readSource = read, dependencySource = dependency) =>
   new Map([
     [readFile, readSource],
     [dependencyFile, dependencySource],
   ]);
-const acceptsFinish = (source = read, candidate = defaultFinish) =>
-  hasOwnerLocalReadFinishFactoryResult(sourcesFor(source), readFile, owner, candidate);
+const acceptsFactory = (source = read, candidate = defaultFactory) =>
+  hasOwnerLocalReadServiceFactoryResult(sourcesFor(source), readFile, owner, candidate);
 const acceptsService = (source = dependency) =>
   hasOwnerLocalReadServiceFactory(sourcesFor(read, source), readFile, owner, 'persistenceForScope');
 
@@ -69,10 +70,13 @@ const conditionalFactory = derivedDependency.replace(
 };`,
 );
 
-it('proves native scoped service factories and local finish makers with verified owner dependencies', () => {
+it('proves native scoped service factories with verified owner dependencies', () => {
   expect(acceptsService()).toBe(true);
-  expect(acceptsFinish()).toBe(true);
-  expect(acceptsFinish(read, 'makeFinish(loadOwner)')).toBe(true);
+});
+
+it('proves local service makers with verified owner dependencies', () => {
+  expect(acceptsFactory()).toBe(true);
+  expect(acceptsFactory(read.replace('services = makeServices()', 'services = makeServices(loadOwner)'))).toBe(true);
 });
 
 it('proves the native Read transaction parameter with direct, block, and conditional Effect factory results', () => {
@@ -169,50 +173,57 @@ for (const [name, before, after] of [
 }
 
 for (const [name, before, after] of [
-  ['missing Core context', 'ReadFinishContext<Prepared, void>', 'unknown'],
+  ['missing Core factory type', 'ReadServiceFactory<OwnerPersistence>', 'unknown'],
   ['foreign Core context', nativeCoreSpecifier, foreignCoreSpecifier],
   ['foreign Effect', "'effect'", foreignEffectSpecifier],
-  ['arbitrary return', "Effect.fn('Owner.finish')", 'fakeFactory'],
+  ['arbitrary return', "Effect.fn('Owner.services')", 'fakeFactory'],
   ['untyped dependency', 'load: typeof loadOwner', 'load: unknown'],
   ['mismatched dependency default', 'loadOwner = loadOwner', 'loadOwner = otherOwner'],
   ['private cross-owner import', "'../services/lookup.ts'", "'../../../foreign-owner/src/services/lookup.ts'"],
 ] as const) {
-  it(`rejects a finish maker with ${name}`, () => {
-    expect(acceptsFinish(read.replace(before, after))).toBe(false);
+  it(`rejects a service maker with ${name}`, () => {
+    expect(acceptsFactory(read.replace(before, after))).toBe(false);
+  });
+}
+
+for (const candidate of ['makeServices', 'makeServices()', 'services || fake', 'services as Callback']) {
+  it(`rejects an unproven factory binding ${candidate}`, () => {
+    expect(acceptsFactory(read, candidate)).toBe(false);
   });
 }
 
 for (const candidate of [
-  'makeFinish',
-  'makeFinish(untrusted)',
-  'makeFinish(loadOwner, loadOwner)',
-  'makeFinish() || fake',
-  'makeFinish() as Callback',
+  'makeServices(untrusted)',
+  'makeServices(loadOwner, loadOwner)',
+  'makeServices() || fake',
+  'makeServices() as Callback',
 ]) {
-  it(`rejects an unproven finish expression ${candidate}`, () => {
-    expect(acceptsFinish(read, candidate)).toBe(false);
+  it(`rejects an unproven service maker expression ${candidate}`, () => {
+    expect(acceptsFactory(read.replace('services = makeServices()', `services = ${candidate}`))).toBe(false);
   });
 }
 
 it('rejects absent, noncallable, shadowed, or mutated owner dependencies', () => {
-  expect(hasOwnerLocalReadFinishFactoryResult(new Map([[readFile, read]]), readFile, owner, defaultFinish)).toBe(false);
+  expect(hasOwnerLocalReadServiceFactoryResult(new Map([[readFile, read]]), readFile, owner, defaultFactory)).toBe(
+    false,
+  );
   for (const replacement of [
     'export const other =',
     'const loadOwner =',
     'export const loadOwner = null; const decoy =',
   ]) {
     const sources = sourcesFor(read, dependency.replace('export const loadOwner =', replacement));
-    expect(hasOwnerLocalReadFinishFactoryResult(sources, readFile, owner, defaultFinish)).toBe(false);
+    expect(hasOwnerLocalReadServiceFactoryResult(sources, readFile, owner, defaultFactory)).toBe(false);
   }
   for (const suffix of [
     '\nloadOwner = fake;',
-    '\nmakeFinish = fake;',
+    '\nmakeServices = fake;',
     '\nconst Effect = fake;',
-    '\nconst alias = makeFinish;',
+    '\nconst alias = makeServices;',
     '\nfunction decoy(Effect) {}',
     '\nfunction decoy(loadOwner) {}',
   ]) {
-    expect(acceptsFinish(read + suffix), suffix).toBe(false);
+    expect(acceptsFactory(read + suffix), suffix).toBe(false);
   }
   expect(acceptsService(`${dependency}\npersistenceForScope = fake;`)).toBe(false);
   expect(acceptsService(`${dependency}\nconst Effect = fake;`)).toBe(false);

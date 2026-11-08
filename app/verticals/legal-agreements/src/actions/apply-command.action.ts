@@ -85,74 +85,81 @@ const makeServices: ActionServiceFactory<ApplyCommandServices> = () =>
       reason: 'Command reference preparation is required',
     }),
   );
-export const prepareApplyCommandServices: ActionServicePreflight<
+export const prepareApplyCommandServices = Effect.fn('Agreements.prepareApplyCommandServices')(
+  function* prepareServices(payload: ApplyCommandPayload, context: ActionServicePreparationContext) {
+    const preparedAt = yield* DateTime.now;
+    if (context.scope.legalEntityId === undefined) {
+      return yield* new AgreementsConflict({ code: 'agreements_conflict', reason: 'legal_entity_required' });
+    }
+    const current = yield* context.transaction((transaction) =>
+      persistenceService(transaction, context.scope).pipe(Effect.flatMap((services) => services.load())),
+    );
+    if (current.revision !== payload.expectedRevision) {
+      return yield* new AgreementsConflict({ code: 'agreements_conflict', reason: 'stale_revision' });
+    }
+    const injected = yield* Effect.serviceOption(CommandReferenceValidators);
+    const validators = yield* Option.match(injected, {
+      onNone: () => makeAgreementsValidators(context.scope),
+      onSome: Effect.succeed,
+    });
+    const transition = yield* transitionAgreements(
+      current.snapshot,
+      payload.command,
+      { legalEntityId: context.scope.legalEntityId, tenantId: context.scope.tenantId },
+      validators,
+    );
+    return Effect.fn('Agreements.revalidatePreparedCommand')(function* revalidatePreparedCommand(
+      transaction: ScopedTransactionExecutor,
+      scope: OperationalScope,
+      compositionRevision: string,
+    ) {
+      const age = DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(preparedAt);
+      if (
+        age < 0 ||
+        age >= 30_000 ||
+        !samePrincipal(scope, context.scope) ||
+        scope.tenantId !== context.scope.tenantId ||
+        scope.legalEntityId !== context.scope.legalEntityId ||
+        scope.correlationId !== context.scope.correlationId ||
+        compositionRevision !== context.compositionRevision
+      ) {
+        return yield* new OperationContextUnavailable({
+          code: 'operation_context_unavailable',
+          reason: 'Prepared references expired or belong to another operation',
+        });
+      }
+      const persistence = yield* persistenceService(transaction, scope).pipe(
+        Effect.mapError((cause) =>
+          Object.defineProperty(
+            new OperationContextUnavailable({
+              code: 'operation_context_unavailable',
+              reason: 'Owner services are temporarily unavailable',
+            }),
+            'cause',
+            { configurable: false, enumerable: false, value: cause, writable: false },
+          ),
+        ),
+      );
+      return { ...persistence, prepared: { payload, transition } };
+    });
+  },
+) satisfies ActionServicePreflight<
   ApplyCommandPayload,
   ApplyCommandServices,
   AgreementsError,
   Crypto.Crypto | Effect.Services<ReturnType<typeof makeReferenceGatewayCredentialSource>>
-> = Effect.fn('Agreements.prepareApplyCommandServices')(function* prepareServices(
-  payload: ApplyCommandPayload,
-  context: ActionServicePreparationContext,
-) {
-  const preparedAt = yield* DateTime.now;
-  if (context.scope.legalEntityId === undefined) {
-    return yield* new AgreementsConflict({ code: 'agreements_conflict', reason: 'legal_entity_required' });
-  }
-  const current = yield* context.transaction((transaction) =>
-    persistenceService(transaction, context.scope).pipe(Effect.flatMap((services) => services.load())),
-  );
-  if (current.revision !== payload.expectedRevision) {
-    return yield* new AgreementsConflict({ code: 'agreements_conflict', reason: 'stale_revision' });
-  }
-  const injected = yield* Effect.serviceOption(CommandReferenceValidators);
-  const validators = yield* Option.match(injected, {
-    onNone: () => makeAgreementsValidators(context.scope),
-    onSome: Effect.succeed,
-  });
-  const transition = yield* transitionAgreements(
-    current.snapshot,
-    payload.command,
-    { legalEntityId: context.scope.legalEntityId, tenantId: context.scope.tenantId },
-    validators,
-  );
-  return Effect.fn('Agreements.revalidatePreparedCommand')(function* revalidatePreparedCommand(
-    transaction: ScopedTransactionExecutor,
-    scope: OperationalScope,
-    compositionRevision: string,
-  ) {
-    const age = DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(preparedAt);
-    if (
-      age < 0 ||
-      age >= 30_000 ||
-      !samePrincipal(scope, context.scope) ||
-      scope.tenantId !== context.scope.tenantId ||
-      scope.legalEntityId !== context.scope.legalEntityId ||
-      scope.correlationId !== context.scope.correlationId ||
-      compositionRevision !== context.compositionRevision
-    ) {
-      return yield* new OperationContextUnavailable({
-        code: 'operation_context_unavailable',
-        reason: 'Prepared references expired or belong to another operation',
-      });
-    }
-    const persistence = yield* persistenceService(transaction, scope).pipe(
-      Effect.mapError((cause) =>
-        Object.defineProperty(
-          new OperationContextUnavailable({
-            code: 'operation_context_unavailable',
-            reason: 'Owner services are temporarily unavailable',
-          }),
-          'cause',
-          { configurable: false, enumerable: false, value: cause, writable: false },
-        ),
-      ),
-    );
-    return { ...persistence, prepared: { payload, transition } };
-  });
-});
+>;
 
 export const applyCommandAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'legal.agreements.apply-command.write',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'legal-agreements', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'legal.agreements.apply-command.access.v1' },
     actionKey: 'legal.agreements.apply-command',
     auditProfile: 'standard',
@@ -160,7 +167,7 @@ export const applyCommandAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'legal.agreements.apply-command',
       moduleKey: OWNER_MODULE_KEY,
       role: 'action',

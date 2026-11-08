@@ -34,7 +34,7 @@ const toEpochMillis = (value: Date): number =>
 
 const catalogSourceResolutionEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.catalog-source-resolution' },
+  authorization: { kind: 'protected' },
   entrypointKey: readKey,
   moduleKey,
   role: 'api',
@@ -138,13 +138,20 @@ export const readCatalogSourceResolution = Effect.fn('CatalogSourceResolutionRea
 
 export const catalogSourceResolutionRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.catalog-source-resolution.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'catalog-source', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: catalogSourceResolutionEntrypoint,
     evidencePolicy: { captureMode: 'metadata_only', policyKey: `${readKey}.evidence.v1` },
     inputSchema: CatalogSourceResolutionRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: moduleKey,
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.catalog-source-resolution',
     resultSchema: CatalogSourceResolutionResponseSchema,
@@ -157,5 +164,4 @@ export const catalogSourceResolutionRead = defineRead(
       ),
   },
   (transaction, scope) => Effect.succeed(catalogSourceResolutionReadStoreForScope(transaction, scope)),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

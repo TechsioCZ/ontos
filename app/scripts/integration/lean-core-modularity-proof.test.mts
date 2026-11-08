@@ -1,15 +1,15 @@
-// pinned to the current demo authorization model; revisit with the pending authorization-model decision (research thread 'granular authorization models')
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
+import { makeDatabaseIdentityEnrollmentLive } from '../../packages/core-runtime/src/db/database-identities.ts';
+import { shellAuthenticationFrameworkLive } from '../../apps/shell-super-app/tests/support/shell-authentication.ts';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import nodePath from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { v1 } from '@authzed/authzed-node';
 import { NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import { defineEffectBff } from '@modern-js/bff-effect/effect-edge';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
   Config,
   ConfigProvider,
@@ -29,7 +29,11 @@ import { expect, it } from 'effect-rstest';
 import { decodeJwt } from 'jose';
 
 import { createSharedRuntimeConfig } from '../../module-federation.shared.ts';
-import { parseDatabaseConnectionPair } from '../../packages/core-runtime/src/db/config.ts';
+import {
+  DatabaseConfig,
+  parseDatabaseConfig,
+  parseDatabaseConnectionPair,
+} from '../../packages/core-runtime/src/db/config.ts';
 import { validateActiveApplicationCompositionSnapshot } from '../../packages/core-runtime/src/modules/active-application-composition.ts';
 import {
   lockApplicationCompositionPublication,
@@ -50,6 +54,27 @@ import {
 import { createShellRuntimeContract } from '../generate-ontos-shell-runtime-contract.mts';
 
 import { makeActionRepository } from '../../packages/core-runtime/src/actions/repository.ts';
+import {
+  TenantAccessBootstrap,
+  TenantAccessBootstrapLive,
+} from '../../packages/core-runtime/src/access/bootstrap/index.ts';
+import { AccessCatalogModulesSchema } from '../../packages/core-runtime/src/access/catalog/index.ts';
+import { AccessChangesStoreLive } from '../../packages/core-runtime/src/access/changes/persistence/drizzle-store.ts';
+import {
+  makeAccessProjectionCompiler,
+  makeAccessProjectionTransport,
+} from '../../packages/core-runtime/src/access/compiler/spice-db-compiler.ts';
+import { AccessCatalogSnapshotWriterLive } from '../../packages/core-runtime/src/access/intent/catalog-snapshot-writer.ts';
+import { AccessMembershipStoreLive } from '../../packages/core-runtime/src/access/intent/memberships.ts';
+import { AccessProjectionCompiler } from '../../packages/core-runtime/src/access/intent/projection-compiler.ts';
+import { AccessProjectionWriterLive } from '../../packages/core-runtime/src/access/intent/projection-writer.ts';
+import { TenantIntentLoaderLive } from '../../packages/core-runtime/src/access/intent/tenant-intent-loader.ts';
+import { LegalEntityIdSchema } from '../../packages/core-runtime/src/access/ids.ts';
+import { AccessWriteJournalStoreLive } from '../../packages/core-runtime/src/access/lifecycle/persistence/journal-store.ts';
+import { loadSpiceDbConfig } from '../../packages/core-runtime/src/access/spicedb-config.ts';
+import { TrustedPrincipalContextSchema } from '../../packages/core-runtime/src/actions/principal-context.ts';
+import { CoreDatabase, CoreDatabaseLive } from '../../packages/core-runtime/src/db/client.ts';
+import { AccessDecisionGate } from '../../packages/core-runtime/src/access/enforcement/contract.ts';
 import { ActionRuntime, makeActionRuntime } from '../../packages/core-runtime/src/actions/runtime.ts';
 import { AuthenticationNamespaceRegistrationSchema } from '../../packages/core-runtime/src/auth/external-identity-contracts.ts';
 import {
@@ -60,15 +85,23 @@ import {
   PrincipalManagementRepository,
   principalManagementRepositoryFromTransaction,
 } from '../../packages/core-runtime/src/auth/principal-management.ts';
-import { OAuthAuthenticationAuditLive } from '../../packages/core-runtime/src/auth/oauth-authentication-audit.ts';
-import { OAuthGrantRegistryLive } from '../../packages/core-runtime/src/auth/oauth-grant-registry-live.ts';
 import { PrincipalResolver, makePrincipalResolver } from '../../packages/core-runtime/src/auth/principal-resolver.ts';
-import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import {
   SupportRecoveryPrincipalContextResolver,
   makeSupportRecoveryPrincipalContextResolver,
 } from '../../packages/core-runtime/src/auth/support-recovery-principal-context.ts';
 import {
+  accessAssignments,
+  accessChangeDecisions,
+  accessChangeItems,
+  accessDecisionLogs,
+  accessGrantIncarnations,
+  accessMemberships,
+  accessOperationJournals,
+  accessRoleRevisions,
+  accessRoles,
+  accessScopeFences,
+  accessScopes,
   actionInvocations,
   applicationCompositionAuthority,
   auditEvents,
@@ -77,47 +110,24 @@ import {
   legalEntities,
   principalAuthBindings,
   principals,
+  tenantModuleStates,
   tenants,
 } from '../../packages/core-runtime/src/db/schema.ts';
 import {
   makeOperationalScopeRepository,
   makeOperationalScopeResolver,
 } from '../../packages/core-runtime/src/operations/context.ts';
-import {
-  DatabaseIdentityEnrollmentContext,
-  SHARED_RUNTIME_IDENTITY,
-} from '../../packages/core-runtime/src/db/database-identities.ts';
+import type { OperationalScope } from '../../packages/core-runtime/src/operations/context.ts';
 import { openActionRuntimeOptions } from '../../packages/core-runtime/tests/support/action-runtime-options.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../../packages/core-runtime/tests/support/database.ts';
+import type { TestDatabaseFromClient } from '../../packages/core-runtime/tests/support/database.ts';
 import { purgeFixtureRows } from '../../packages/core-runtime/tests/support/fixture-cleanup.ts';
-import {
-  buildActionAuthorizationRelationships,
-  buildIntrinsicSelfCredentialRelationships,
-  deriveScopedActionAuthorization,
-} from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
-import { bindSelfApiKeyAction } from '../../packages/core-runtime/src/modules/actions/bind-self-api-key.action.ts';
-import { buildPrincipalSelfCredentialUpdates } from '../../packages/core-runtime/src/permissions/action-authorization-lifecycle.ts';
-import {
-  ContextAccess,
-  toLegalEntityAccessObjectId,
-} from '../../packages/core-runtime/src/permissions/context-access.ts';
-import { loadSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
-import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
-import { newSpiceDbGrpcClient } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import {
   GatewayContextResponseSchema,
   GatewayContextV2ClaimsSchema,
 } from '../../packages/shared-contracts/src/gateway-context.ts';
 import { AuthConfig, loadAuthConfig } from '../../apps/shell-super-app/api/auth/config.ts';
-import {
-  AuthDatabase,
-  BetterAuthNativeAdapterLive,
-  makeAuthDatabase,
-} from '../../apps/shell-super-app/api/auth/db/client.ts';
-import { OAuthCredentialsLive } from '../../apps/shell-super-app/api/auth/db/oauth-credentials-live.ts';
-import { OAuthEndpointGuardDataLive } from '../../apps/shell-super-app/api/oauth-connections/grant-store.ts';
-import { OAuthConnectionHooksLive } from '../../apps/shell-super-app/api/oauth-connections/better-auth-hooks.ts';
-import { OAuthEndpointGuardsLive } from '../../apps/shell-super-app/api/auth/oauth-server/endpoint-guards.ts';
+import { AuthDatabase, makeAuthDatabase } from '../../apps/shell-super-app/api/auth/db/client.ts';
 import {
   account,
   apikey,
@@ -134,14 +144,13 @@ import {
   SupportImpersonationCorrelationId,
   SupportImpersonationStoreService,
 } from '../../apps/shell-super-app/api/auth/impersonation-service.ts';
-import { BetterAuthFrameworkLive } from '../../apps/shell-super-app/api/auth/better-auth-framework.ts';
-import { BetterAuthRuntimeLive } from '../../apps/shell-super-app/api/auth/better-auth-runtime.ts';
 import { AuthenticationService, makeAuthenticationService } from '../../apps/shell-super-app/api/auth/service.ts';
+import { makeShellTestAccessGate } from '../../apps/shell-super-app/tests/support/access-decision-double.ts';
 
 const gatewayAudience = 'party-registry';
-const leanCoreServices = Layer.merge(
+const nativeFixturePlatform = Layer.merge(
   NodeServices.layer,
-  Layer.succeed(DatabaseIdentityEnrollmentContext, APP_DATABASE_IDENTITY_ENROLLMENT),
+  makeDatabaseIdentityEnrollmentLive(APP_DATABASE_IDENTITY_ENROLLMENT),
 );
 
 class LeanCoreCompositionFixtureError extends Schema.TaggedError<LeanCoreCompositionFixtureError>()(
@@ -382,9 +391,13 @@ const acquireLeanCoreComposition = Effect.fn('LeanCoreProof.acquireComposition')
   expect(approved.composition.modules.map(({ deployment }) => deployment.appId)).toEqual([gatewayAudience]);
   expect(approved.composition.modules[0]?.federation.execution).toBe('server');
   return {
-    configuration: ConfigProvider.fromUnknown({ ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: `${origin}/active` }).pipe(
-      ConfigProvider.orElse(ConfigProvider.fromEnv()),
-    ),
+    adminDatabase,
+    adminUrl: connections.admin.connectionString,
+    // The lean composition enrolls no module deployment credential, so every verified key is a subject's key.
+    configuration: ConfigProvider.fromUnknown({
+      ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: `${origin}/active`,
+      ONTOS_GATEWAY_MODULE_BINDINGS: '[]',
+    }).pipe(ConfigProvider.orElse(ConfigProvider.fromEnv())),
     revision: approved.composition.revision,
     targetBuildMarker: moduleContract.deployment.buildMarker,
   };
@@ -421,48 +434,75 @@ const externalIdentityForbiddenProblemSchema = Schema.Struct({
   status: Schema.Literal(403),
 });
 
-type SpiceDbClient = ReturnType<typeof v1.NewClient>;
-type SpiceDbRelationshipOperation = v1.RelationshipUpdate_Operation;
+const catalogArtifactPath = nodePath.resolve(import.meta.dirname, '../../topology/authorization-catalog.json');
+const authorizationCatalogJson = Schema.fromJsonString(Schema.Struct({ modules: AccessCatalogModulesSchema }));
 
-const relationship = (
-  resourceType: string,
-  resourceId: string,
-  relation: string,
-  subjectType: string,
-  subjectId: string,
-  subjectRelation = '',
-) =>
-  v1.Relationship.create({
-    relation,
-    resource: v1.ObjectReference.create({
-      objectId: resourceId,
-      objectType: resourceType,
-    }),
-    subject: v1.SubjectReference.create({
-      object: v1.ObjectReference.create({
-        objectId: subjectId,
-        objectType: subjectType,
-      }),
-      optionalRelation: subjectRelation,
-    }),
-  });
+/**
+ * The tenant's first authority, written the way a tenant gets it: the bootstrap makes the staff principal
+ * the owner, a member of the tenant and of its company holding "Plný přístup" in both scopes, and reconciles
+ * that intent into SpiceDB through the single projection writer over the administrative pool.
+ */
+const bootstrapFixtureTenantAccess = Effect.fn('LeanCoreProof.bootstrapTenantAccess')(
+  function* bootstrapTenantAccess(input: {
+    readonly adminUrl: string;
+    readonly legalEntityId: string;
+    readonly scope: OperationalScope;
+  }) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const { modules } = yield* Schema.decodeEffect(authorizationCatalogJson)(
+      yield* fileSystem.readFileString(catalogArtifactPath),
+    );
+    const spiceDb = yield* loadSpiceDbConfig();
+    const databaseConfiguration = yield* parseDatabaseConfig({ DATABASE_URL: input.adminUrl });
+    const database = CoreDatabaseLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, databaseConfiguration)));
+    const engine = Layer.effect(
+      AccessProjectionCompiler,
+      Effect.acquireRelease(
+        Effect.sync(() => makeAccessProjectionTransport(spiceDb)),
+        (transport) => Effect.sync(() => transport.close()),
+      ).pipe(Effect.map((transport) => makeAccessProjectionCompiler(transport))),
+    );
+    const platform = Layer.mergeAll(database, engine);
+    const stores = Layer.mergeAll(
+      TenantIntentLoaderLive,
+      AccessWriteJournalStoreLive,
+      AccessMembershipStoreLive,
+      AccessChangesStoreLive,
+    ).pipe(Layer.provide(platform));
+    const catalog = AccessCatalogSnapshotWriterLive.pipe(Layer.provide(stores));
+    const writer = AccessProjectionWriterLive.pipe(Layer.provide(Layer.mergeAll(stores, platform)));
+    const bootstrap = TenantAccessBootstrapLive.pipe(Layer.provide(Layer.mergeAll(stores, platform, catalog, writer)));
+    const context = yield* Layer.build(bootstrap);
+    return yield* Context.get(context, TenantAccessBootstrap).bootstrapTenantAccess({
+      legalEntityIds: [LegalEntityIdSchema.make(input.legalEntityId)],
+      modules,
+      scope: input.scope,
+    });
+  },
+);
 
-const writeSpiceDbRelationships = (
-  client: SpiceDbClient,
-  relationships: readonly v1.Relationship[],
-  operation: SpiceDbRelationshipOperation,
-) =>
-  Effect.tryPromise(() =>
-    client.promises.writeRelationships(
-      v1.WriteRelationshipsRequest.create({
-        updates: relationships.map((item) =>
-          v1.RelationshipUpdate.create({
-            operation,
-            relationship: item,
-          }),
-        ),
-      }),
-    ),
+/** Access intent is append-only by trigger, so the fixture tenant's own rows are removed with triggers off. */
+const purgeFixtureAccessIntent = (adminDatabase: TestDatabaseFromClient<typeof coreRelations>, tenantId: string) =>
+  adminDatabase.transaction((transaction) =>
+    Effect.gen(function* purgeAccessIntent() {
+      yield* transaction.execute(sql`set local session_replication_role = 'replica'`);
+      yield* purgeFixtureRows(
+        [
+          accessDecisionLogs,
+          accessChangeDecisions,
+          accessChangeItems,
+          accessGrantIncarnations,
+          accessAssignments,
+          accessRoleRevisions,
+          accessRoles,
+          accessMemberships,
+          accessScopeFences,
+          accessOperationJournals,
+          accessScopes,
+          tenantModuleStates,
+        ].map((table) => transaction.delete(table).where(eq(table.tenantId, tenantId))),
+      );
+    }),
   );
 
 const cookieHeader = (setCookieHeaders: readonly string[]): string => {
@@ -516,40 +556,19 @@ it.live(
     const configuration = yield* loadAuthConfig();
     const coreClient = yield* makeTestPgClient(configuration.connectionString);
     const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
-    const authPersistence = yield* makeAuthDatabase({
-      connectionString: configuration.connectionString,
-      expectedRole: SHARED_RUNTIME_IDENTITY.role,
-    });
+    const authPersistence = yield* makeAuthDatabase(
+      yield* parseDatabaseConfig({ DATABASE_URL: configuration.connectionString }),
+    );
     const authDatabase = authPersistence.executor;
     const resolver = makePrincipalResolver(
       { executor: coreDatabase },
       { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID },
     );
-    const betterAuthRuntime = Layer.succeedContext(yield* Layer.build(BetterAuthRuntimeLive));
-    const oauthAuthenticationLayer = Layer.mergeAll(
-      BetterAuthNativeAdapterLive,
-      betterAuthRuntime,
-      BetterAuthNativeAdapterLive,
-      OAuthAuthenticationAuditLive,
-      OAuthEndpointGuardDataLive,
-      OAuthConnectionHooksLive.pipe(Layer.provide(OAuthGrantRegistryLive)),
-    ).pipe(
-      Layer.provide(Layer.mergeAll(OAuthGrantRegistryLive, OAuthCredentialsLive)),
-      Layer.provide(
-        Layer.mergeAll(
-          Layer.succeed(CoreDatabase, { executor: coreDatabase }),
-          Layer.succeed(AuthDatabase, authPersistence),
-        ),
-      ),
-    );
-    const authenticationFramework = BetterAuthFrameworkLive({ allowFixtureSignUp: true }).pipe(
-      Layer.provideMerge(oauthAuthenticationLayer),
-    );
-    const authenticationGuards = OAuthEndpointGuardsLive.pipe(Layer.provideMerge(authenticationFramework));
     const authentication = yield* makeAuthenticationService().pipe(
-      Effect.provide(authenticationGuards),
+      Effect.provide(shellAuthenticationFrameworkLive({ allowFixtureSignUp: true })),
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
+      Effect.provideService(CoreDatabase, { executor: coreDatabase }),
       Effect.provideService(PrincipalResolver, resolver),
     );
 
@@ -565,61 +584,8 @@ it.live(
     const supportTargetAuthBindingId = randomUUID();
     const supportTargetEmail = `lean-core-support-target-${randomUUID()}@example.test`;
 
-    const spiceDbConfiguration = yield* loadSpiceDbConfig();
-    const spiceDbClient = yield* Effect.acquireRelease(
-      Effect.sync(() => newSpiceDbGrpcClient(spiceDbConfiguration)),
-      (client) => Effect.sync(() => client.close()),
-    );
-    const legalEntityAccessObjectId = toLegalEntityAccessObjectId(tenantId, legalEntityId);
-    if (legalEntityAccessObjectId === undefined) {
-      return yield* Effect.die('The modularity fixture legal-entity object ID could not be encoded');
-    }
-    const { descriptor } = bindSelfApiKeyAction;
-    const { authorization } = descriptor.entrypoint;
-    if (authorization.kind !== 'action_execution' || authorization.provisioning !== 'principal_self_credentials') {
-      return yield* fixtureError(
-        'The self-key fixture requires Core intrinsic principal self-credential authorization',
-      );
-    }
-    const selfCredentialDescriptors = [
-      {
-        actionKey: descriptor.actionKey,
-        legalEntityScope: descriptor.legalEntityScope,
-        owningModuleKey: descriptor.owningModuleKey,
-        provisioning: authorization.provisioning,
-      },
-    ];
-    // Identity mutations resolve tenant context, not the Shell's selected legal entity.
-    const selfCredentialActions = deriveScopedActionAuthorization(selfCredentialDescriptors, [
-      { moduleKeys: ['core.identity'], tenantId },
-    ]);
-    const principalSelfCredentialRelationships = yield* Effect.forEach(
-      buildPrincipalSelfCredentialUpdates({
-        kind: 'human',
-        principalId,
-        status: 'active',
-        tenantActive: true,
-        tenantId,
-      }),
-      ({ relationship: item }) =>
-        item === undefined
-          ? Effect.fail(fixtureError('Core self-credential updates must contain their exact relationships'))
-          : Effect.succeed(item),
-      { concurrency: 1 },
-    );
-    const contextRole = toScopedRoleObjectId({ roleKey: 'lean-core-context-selection', tenantId });
-    const spiceDbRelationships = [
-      relationship('tenant', tenantId, 'member', 'principal', principalId),
-      relationship('scoped_role', contextRole, 'member', 'principal', principalId),
-      relationship('tenant', tenantId, 'context_role', 'scoped_role', contextRole, 'member'),
-      relationship('legal_entity', legalEntityAccessObjectId, 'tenant', 'tenant', tenantId),
-      relationship('legal_entity', legalEntityAccessObjectId, 'member', 'principal', principalId),
-      ...buildActionAuthorizationRelationships(selfCredentialActions),
-      ...buildIntrinsicSelfCredentialRelationships(selfCredentialDescriptors, selfCredentialActions),
-      ...principalSelfCredentialRelationships,
-    ];
     const cleanup = Effect.fnUntraced(function* cleanupLeanCoreModularityFixture() {
-      yield* writeSpiceDbRelationships(spiceDbClient, spiceDbRelationships, v1.RelationshipUpdate_Operation.DELETE);
+      yield* purgeFixtureAccessIntent(composition.adminDatabase, tenantId);
       yield* purgeFixtureRows([
         authDatabase.delete(supportImpersonationRecovery).where(eq(supportImpersonationRecovery.tenantId, tenantId)),
         coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
@@ -681,7 +647,22 @@ it.live(
       subjectType: 'user',
       tenantId,
     });
-    yield* writeSpiceDbRelationships(spiceDbClient, spiceDbRelationships, v1.RelationshipUpdate_Operation.TOUCH);
+    yield* coreDatabase.insert(tenantModuleStates).values({ moduleKey: 'core.identity', state: 'active', tenantId });
+    yield* bootstrapFixtureTenantAccess({
+      adminUrl: composition.adminUrl,
+      legalEntityId,
+      scope: {
+        ...(yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
+          authBindingId,
+          authContextRef: `session:lean-core-modularity:${principalId}`,
+          authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+          authMethod: 'session',
+          principalId,
+          tenantId,
+        })),
+        correlationId: 'lean-core-modularity-access-bootstrap',
+      },
+    });
 
     const shellApi = yield* Effect.tryPromise(() => import('../../apps/shell-super-app/api/index.ts'));
     const configuredShellApi = defineEffectBff({
@@ -863,43 +844,31 @@ it.live(
       provideAuthenticationNamespaceRegistry(
         effect.pipe(Effect.provideService(PrincipalManagementRepository, principalManagementRepository)),
       );
-    const allowedContextAccess = {
-      legalEntities: () => Effect.succeed([]),
-      modules: () => Effect.succeed([]),
-      resources: () => Effect.succeed([]),
-      tenants: ({ tenantIds }: { readonly permission: string; readonly tenantIds: readonly string[] }) =>
-        Effect.succeed(tenantIds.map((key) => ({ decision: 'allowed' as const, key }))),
-    };
-    const provideContextAccess = <Success, Failure, Requirements>(
-      effect: Effect.Effect<Success, Failure, Requirements>,
-    ) =>
-      provideAuthenticationNamespaceRegistry(effect.pipe(Effect.provideService(ContextAccess, allowedContextAccess)));
+    // Support recovery is the contract under proof, so every protected entrypoint it reaches is admitted.
+    const accessGate = makeShellTestAccessGate({ defaultAnswer: 'allowed' });
+    const provideAccessGate = <Success, Failure, Requirements>(effect: Effect.Effect<Success, Failure, Requirements>) =>
+      provideAuthenticationNamespaceRegistry(effect.pipe(Effect.provideService(AccessDecisionGate, accessGate)));
     const operationalScope = yield* makeOperationalScopeResolver(
       makeOperationalScopeRepository({ executor: coreDatabase }, APP_DATABASE_IDENTITY_ENROLLMENT),
-      allowedContextAccess,
+      accessGate,
     );
     const supportActionRuntime = makeActionRuntime(
       { executor: coreDatabase },
       makeActionRepository(yield* Crypto.Crypto),
       { checkActionPermission: () => Effect.succeed('allowed' as const) },
       operationalScope,
-      {
-        ...openActionRuntimeOptions,
-        contextAccess: allowedContextAccess,
-        databaseIdentities: APP_DATABASE_IDENTITY_ENROLLMENT,
-      },
+      { ...openActionRuntimeOptions, accessDecision: accessGate.bound },
     );
     const supportRecoveryPrincipal = makeSupportRecoveryPrincipalContextResolver(
       { executor: coreDatabase },
       { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID },
     );
     const supportConfiguration = { ...configuration, supportUserIds: [betterAuthUserId] };
-    const supportFramework = BetterAuthFrameworkLive().pipe(Layer.provideMerge(oauthAuthenticationLayer));
-    const supportGuards = OAuthEndpointGuardsLive.pipe(Layer.provideMerge(supportFramework));
     const supportAuthentication = yield* makeAuthenticationService().pipe(
-      Effect.provide(supportGuards),
+      Effect.provide(shellAuthenticationFrameworkLive({ allowFixtureSignUp: false })),
       Effect.provideService(AuthConfig, supportConfiguration),
       Effect.provideService(AuthDatabase, authPersistence),
+      Effect.provideService(CoreDatabase, { executor: coreDatabase }),
       Effect.provideService(PrincipalResolver, resolver),
     );
     const support = makeSupportImpersonationService(
@@ -913,7 +882,7 @@ it.live(
         Context.add(SupportImpersonationStoreService, makeSupportImpersonationStore(authDatabase)),
       ),
     );
-    const started = yield* provideContextAccess(
+    const started = yield* provideAccessGate(
       providePrincipalManagementRepository(
         support
           .start({
@@ -930,14 +899,14 @@ it.live(
       cookie: cookieHeader(started.setCookieHeaders),
       origin: configuration.baseUrl,
     });
-    const impersonated = yield* provideContextAccess(supportAuthentication.resolveTenantContext(impersonatedHeaders));
+    const impersonated = yield* provideAccessGate(supportAuthentication.resolveTenantContext(impersonatedHeaders));
     expect(impersonated.state).toBe('authenticated');
     if (impersonated.state === 'authenticated') {
       expect(impersonated.principal.authMethod).toBe('support_impersonation');
       expect(impersonated.principal.principalId).toBe(supportTargetPrincipalId);
       expect(impersonated.principal.impersonatedByPrincipalId).toBe(principalId);
     }
-    const stopped = yield* provideContextAccess(
+    const stopped = yield* provideAccessGate(
       providePrincipalManagementRepository(
         support
           .stop({
@@ -950,5 +919,5 @@ it.live(
     expect(stopped.checkpointPending).toBe(false);
 
     return yield* Effect.void;
-  }, Effect.provide(leanCoreServices)),
+  }, Effect.provide(nativeFixturePlatform)),
 );

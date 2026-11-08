@@ -2,11 +2,13 @@
 // @ontos-action-http-owner commerce.pricing
 // @ontos-action-http-slug manage-quotation
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware } from 'effect/http-api';
 import { ManageQuotationPayloadSchema, ManageQuotationResultSchema } from '../actions/manage-quotation.ts';
 
 export { ManageQuotationPayloadSchema } from '../actions/manage-quotation.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 const ManageQuotationActionHeadersSchema = Schema.Struct({
   'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
@@ -25,6 +27,7 @@ export const ManageQuotationActionForbiddenProblemSchema = makeProblemDetailsSch
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -149,7 +152,7 @@ export const manageQuotationActionGroupDefinition = HttpApiGroup.make('manageQuo
       error: actionErrors,
       headers: ManageQuotationActionHeadersSchema,
       payload: Schema.toEncoded(ManageQuotationPayloadSchema),
-      success: ManageQuotationResultSchema,
+      success: [ActionProposalAcceptedSchema, ManageQuotationResultSchema],
     }),
   )
   .middleware(ManageQuotationActionSchemaErrorMiddleware);

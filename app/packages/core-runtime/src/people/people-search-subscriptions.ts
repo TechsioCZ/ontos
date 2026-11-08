@@ -15,19 +15,6 @@ export const projectPeopleLifecycleSearchSubscription = Object.freeze({
   topic: 'core.identity.principal-lifecycle-changed.v1',
   workerKey: 'core.identity.project-people-lifecycle-search',
 });
-export const projectPeopleRoleSearchSubscription = Object.freeze({
-  consumerModuleKey: coreIdentity,
-  entrypoint: defineSystemModuleEntrypoint({
-    access: 'background',
-    authorization: { kind: 'owner_local_background' },
-    entrypointKey: 'core.identity.project-people-role-search',
-    moduleKey: coreIdentity,
-    role: 'worker',
-  }),
-  producerModuleKey: coreIdentity,
-  topic: 'core.identity.scoped-role-membership-changed.v1',
-  workerKey: 'core.identity.project-people-role-search',
-});
 export const rebuildPeopleSearchSubscription = Object.freeze({
   consumerModuleKey: coreIdentity,
   entrypoint: defineSystemModuleEntrypoint({

@@ -1,3 +1,4 @@
+import { committedResult } from '../../../../api/action-result.ts';
 import {
   addContactPoint,
   counterpartyCustomerOnboard,
@@ -11,7 +12,7 @@ import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { Effect } from 'effect';
 import type { Order } from '../../../../../shared/apis/records.ts';
 import { convertOrderCustomer } from '../../../../../shared/order-customer-conversion.ts';
-import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
+import { executeManageCatalog } from '../../../../api/manage-catalog-action-client.ts';
 
 const owners = {
   contact: (...args: Parameters<typeof addContactPoint>) => addContactPoint(...args).pipe(Effect.asVoid),
@@ -40,7 +41,7 @@ export const convertStaffOrderCustomer = Effect.fn('Merchandise.convertStaffOrde
   // Acquire the single-use assertion only after customer writes succeed, immediately before the link.
   // eslint-disable-next-line effect-native/no-sequential-independent-yields
   const referenceCredentials = yield* makeReferenceGatewayCredentials(['party-registry']);
-  return yield* executeApplyCommand(
+  return yield* executeManageCatalog(
     {
       command: { _tag: 'LinkOrderCustomer', ...customer, expectedPartyId: order.partyId, id: order.id },
       expectedRevision: revision,
@@ -51,5 +52,5 @@ export const convertStaffOrderCustomer = Effect.fn('Merchandise.convertStaffOrde
       idempotencyKey: `merchandise:order-customer:${order.id}:link:${revision}`,
       referenceCredentials,
     },
-  );
+  ).pipe(Effect.flatMap(committedResult));
 });

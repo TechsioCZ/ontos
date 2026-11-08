@@ -17,13 +17,7 @@ import type {
 } from '../../shared/actions/add-party-official-identifier.ts';
 import type { CorrectPartyFactPayload } from '../../shared/actions/correct-party-fact.ts';
 import type { UpdatePartyPayload, UpdatePartyResult } from '../../shared/actions/update-party.ts';
-import {
-  AresCanonicalRouteSchema,
-  aresRegisteredAddressMatches,
-  deriveAresEvidenceApplication,
-  deriveAresCorrectionReviewHandoffs,
-  makeAresAppliedEvidence,
-} from '../../shared/domain/ares-application.ts';
+import * as AresApplication from '../../shared/domain/ares-application.ts';
 import type {
   AresAppliedEvidence,
   AresCanonicalSnapshot,
@@ -58,10 +52,7 @@ export const makeOperationGateway = (acquire: OperationGatewayIssuer = issueGate
 
 export const operationGateway = makeOperationGateway();
 
-export {
-  deriveAresCorrectionReviewHandoffs,
-  prefillPartyCandidateFromAres,
-} from '../../shared/domain/ares-application.ts';
+export const { deriveAresCorrectionReviewHandoffs, prefillPartyCandidateFromAres } = AresApplication;
 
 export class AresApplySelectionInvalid extends Schema.TaggedError<AresApplySelectionInvalid>()(
   'AresApplySelectionInvalid',
@@ -262,7 +253,7 @@ const sameParty = (left: PartyRef, right: PartyRef): boolean =>
 
 const hasSupportedCanonicalRoute = (selection: AresApplySelection): boolean =>
   !(
-    !Schema.is(AresCanonicalRouteSchema)(selection.route) ||
+    !Schema.is(AresApplication.AresCanonicalRouteSchema)(selection.route) ||
     (selection.route === 'PARTY_UPDATE' && selection.fact !== 'BUSINESS_NAME') ||
     (selection.route === 'IDENTIFIER_ADD' && selection.fact !== 'ICO') ||
     (selection.route === 'CONTACT_POINT_ADD' && selection.fact !== 'REGISTERED_ADDRESS')
@@ -278,7 +269,7 @@ const validateSelection = (selection: AresApplySelection, partyRef: PartyRef | n
   if (partyRef === null) {
     return Effect.fail(invalidSelection('Enrichment requires one explicit existing Party'));
   } else if (selection.route === 'PARTY_CORRECTION') {
-    const expectedFactKind = selection.fact === 'BUSINESS_NAME' ? 'DISPLAY_NAME' : 'OFFICIAL_IDENTIFIER';
+    const expectedFactKind = selection.fact === 'BUSINESS_NAME' ? 'BUSINESS_NAME' : 'OFFICIAL_IDENTIFIER';
     if (selection.payload.factKind !== expectedFactKind) {
       return Effect.fail(invalidSelection('Correction review must nominate the selected supported fact'));
     }
@@ -319,7 +310,9 @@ const matchesObservation = (selection: ExecutableSelection, observation: AresSub
       { route: 'PARTY_UPDATE' },
       (selected) =>
         businessName !== null &&
-        selected.payload.displayName === businessName &&
+        selected.payload.businessName === businessName &&
+        selected.payload.firstName === undefined &&
+        selected.payload.lastName === undefined &&
         selected.payload.partyType === undefined,
     ),
     Match.when(
@@ -336,7 +329,7 @@ const matchesObservation = (selection: ExecutableSelection, observation: AresSub
         selected.payload.contactPoint.purposes[0]?.purpose === 'REGISTERED' &&
         selected.payload.contactPoint.purposes[0]?.registryContext?.jurisdiction === 'CZ' &&
         selected.payload.contactPoint.purposes[0]?.registryContext?.registryKey === 'ARES' &&
-        aresRegisteredAddressMatches(registeredAddress, selected.payload.contactPoint.address),
+        AresApplication.aresRegisteredAddressMatches(registeredAddress, selected.payload.contactPoint.address),
     ),
     Match.exhaustive,
   );
@@ -639,6 +632,9 @@ const loadCanonicalSnapshot = Effect.fn('AresApply.loadCanonicalSnapshot')(funct
     if (!sameParty(party.partyRef, partyRef) || detail.resolution.kind === 'ALIAS') {
       return yield* invalidSelection('Choose the canonical Party explicitly before applying ARES evidence');
     }
+    if (party.displayName === undefined) {
+      return yield* invalidSelection('Reading the Party name is required before applying ARES evidence');
+    }
     const [identifiers, contactPoints] = yield* Effect.all(
       [
         gateway.invoke(
@@ -663,27 +659,47 @@ const loadCanonicalSnapshot = Effect.fn('AresApply.loadCanonicalSnapshot')(funct
       ],
       { concurrency: 2 },
     );
-    const activeIdentifiers = identifiers.items.filter(
+    const currentIdentifiers = identifiers.items.filter(
       (identifier) =>
         identifier.state === 'ACTIVE' &&
         identifier.validFrom <= decidedAt &&
         (identifier.validTo === null || identifier.validTo > decidedAt),
     );
-    const registeredAddresses = contactPoints.items.flatMap((point) =>
-      point.current &&
-      point.value.type === 'ADDRESS' &&
-      point.value.purposes.some((purpose) => purpose.current && purpose.purpose === 'REGISTERED')
-        ? [structuredAddress(point.value.address)]
-        : [],
+    // A redacted identifier carries no value, so the identity comparison below cannot be complete.
+    const activeIdentifiers = currentIdentifiers.flatMap(({ normalizedValue, ...identifier }) =>
+      normalizedValue === undefined ? [] : [{ ...identifier, normalizedValue }],
     );
+    if (activeIdentifiers.length !== currentIdentifiers.length) {
+      return yield* invalidSelection(
+        'Reading the official identifier values is required before applying ARES evidence',
+      );
+    }
+    const registeredAddresses = contactPoints.items.flatMap((point) => {
+      if (!point.current || point.value?.type !== 'ADDRESS') {
+        return [];
+      }
+      const address = structuredAddress(point.value.address);
+      return point.value.purposes
+        .filter((purpose) => purpose.current && purpose.purpose === 'REGISTERED')
+        .map(({ provenance, registryContext }) => {
+          const current = { address, provenance };
+          return registryContext === undefined ? current : { ...current, registryContext };
+        });
+    });
+    // A redacted identity carries no business name, so the evidence has nothing to compare it with.
+    const { businessName } = party;
+    if (businessName === undefined) {
+      return yield* invalidSelection('Reading the Party identity is required before applying ARES evidence');
+    }
     const canonical: AresCanonicalSnapshot = {
       archived: Option.isSome(party.archivedAt),
-      displayName: Option.getOrNull(party.displayName),
+      businessName: Option.getOrNull(businessName),
       factEvidence: [
         ...detail.currentFactAssertions.flatMap((assertion) =>
+          assertion.value !== undefined &&
           assertion.isCurrent &&
           assertion.state === 'ACTIVE' &&
-          assertion.factKind === 'DISPLAY_NAME' &&
+          assertion.factKind === 'BUSINESS_NAME' &&
           sameParty(assertion.partyRef, partyRef) &&
           DateTime.toEpochMillis(assertion.validFrom) <= decisionEpochMillis &&
           (Option.isNone(assertion.validTo) || DateTime.toEpochMillis(assertion.validTo.value) > decisionEpochMillis)
@@ -712,17 +728,12 @@ const loadCanonicalSnapshot = Effect.fn('AresApply.loadCanonicalSnapshot')(funct
             : [],
         ),
       ],
-      icoValues: activeIdentifiers.flatMap(({ identifierType, normalizedValue }) =>
-        identifierType === 'ICO' ? [normalizedValue] : [],
-      ),
-      identityAmbiguous: activeIdentifiers.some(({ identifierType, normalizedValue, verification }) => {
+      icoValues: activeIdentifiers
+        .filter(({ identifierType }) => identifierType === 'ICO')
+        .map(({ normalizedValue }) => normalizedValue),
+      identityAmbiguous: activeIdentifiers.some(({ identifierType, normalizedValue }) => {
         const observedDic = Option.getOrNull(observation.subject.dic);
-        return (
-          identifierType === 'CZ_DIC' &&
-          verification === 'VERIFIED' &&
-          observedDic !== null &&
-          normalizedValue !== observedDic
-        );
+        return identifierType === 'CZ_DIC' && observedDic !== null && normalizedValue !== observedDic;
       }),
       partyType: party.partyType,
       registeredAddresses,
@@ -791,7 +802,7 @@ export const applyAresObservationWithActions = Effect.fn('ActionGateway.applyAre
     const application = yield* Effect.try({
       catch: (error) => invalidSelection('The trusted ARES evidence cannot be evaluated under the owner policy', error),
       try: () =>
-        deriveAresEvidenceApplication({
+        AresApplication.deriveAresEvidenceApplication({
           canonical,
           decidedAt,
           evidence: observationInput,
@@ -799,7 +810,8 @@ export const applyAresObservationWithActions = Effect.fn('ActionGateway.applyAre
           userConfirmed: request.userConfirmed,
         }),
     });
-    const correctionCandidates = canonical === null ? [] : deriveAresCorrectionReviewHandoffs(application, canonical);
+    const correctionCandidates =
+      canonical === null ? [] : AresApplication.deriveAresCorrectionReviewHandoffs(application, canonical);
     if (observationIsStale(supplied, observation, decisionTime)) {
       return {
         _tag: 'AresApplyDeferred' as const,
@@ -847,7 +859,7 @@ export const applyAresObservationWithActions = Effect.fn('ActionGateway.applyAre
         }
         // Logical as-of time of the confirmed observation, stable across delivery retries.
         // The standard Action records its trusted actual acceptance time independently.
-        const evidence = makeAresAppliedEvidence(
+        const evidence = AresApplication.makeAresAppliedEvidence(
           { ...application, decidedAt: supplied.servedAt, evidence: supplied },
           decision,
         );

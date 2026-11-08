@@ -1,10 +1,13 @@
-import { customerSegmentDefinitions } from '@app/party-registry/api/client';
-import type { CustomerSegmentCode, CustomerSegmentDefinition } from '@app/party-registry/api/client';
+import { customerSegmentDefinitions } from '@app/shared-contracts/demo/sales-customer-fixtures';
+import type {
+  CustomerSegmentCode,
+  CustomerSegmentDefinition,
+} from '@app/shared-contracts/demo/sales-customer-fixtures';
 import { expect, it } from 'effect-rstest';
 
 import { customerSegmentDefinitions as browserSegmentDefinitions } from '../../src/api/customer-segments-client.ts';
 
-it('publishes the unchanged segment identities and group fingerprints through the Party client', () => {
+it('publishes the unchanged segment identities and group fingerprints as neutral synthetic demo data', () => {
   const expected = [
     {
       businessCode: 'SALES_DEMO_KEY_ACCOUNTS',
@@ -43,6 +46,6 @@ it('publishes the unchanged segment identities and group fingerprints through th
   expect(customerSegmentDefinitions).toEqual(expected);
 });
 
-it('shares one definition set between the browser facade and the published seed contract', () => {
+it('shares one definition set between the browser facade and the neutral fixture contract', () => {
   expect(browserSegmentDefinitions).toBe(customerSegmentDefinitions);
 });

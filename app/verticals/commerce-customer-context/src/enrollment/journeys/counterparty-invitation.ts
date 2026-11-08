@@ -12,12 +12,12 @@ import { JourneyDefinitionSchema } from './journey-contracts.ts';
  * Principal Auth Binding this recipient is then known by, and the existing
  * `claim-counterparty-access-invitation` Action.
  *
- * There is deliberately no fifth "grant" transition: the claim owner already stages the
- * invitation's intended Permission mutations inside its own transaction, so a journey-level grant
+ * There is deliberately no fifth "grant" transition: the claim owner already grants the
+ * invitation's intended Permissions inside its own transaction, so a journey-level grant
  * loop would either duplicate those mutations or invent authority the invitation never carried.
  */
 
-/** Owner module that owns the Counterparty Access invitation claim and its staged grants. */
+/** Owner module that owns the Counterparty Access invitation claim and its grants. */
 export const COUNTERPARTY_ACCESS_OWNER_MODULE_KEY = 'commerce.customer-context';
 /** Stable transition identity of the existing claim-counterparty-access-invitation Action. */
 export const CLAIM_COUNTERPARTY_ACCESS_INVITATION_TRANSITION_KEY = 'counterparty-access-invitation.claim';

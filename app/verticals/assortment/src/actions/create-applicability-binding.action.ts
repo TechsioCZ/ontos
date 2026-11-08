@@ -2,7 +2,8 @@
 // @ontos-action-owner commerce.assortment
 // @ontos-action-slug create-applicability-binding
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionAssortmentPermissions, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { assortmentCurrentnessFacts } from '../services/assortment-currentness.ts';
 import { Effect, Schema } from 'effect';
 import {
   CreateApplicabilityBindingPayloadSchema,
@@ -17,7 +18,7 @@ import {
 } from '../../shared/domain/policy-errors.ts';
 import type { AssortmentPolicyPersistence } from '../services/policy-administration.service.ts';
 import { assortmentPolicyServiceFactory, bindingRef } from '../services/policy-administration.service.ts';
-import { bindingMeaningFingerprint, createBindingPermissionTarget } from './policy-administration-support.ts';
+import { bindingMeaningFingerprint, createBindingCurrentnessTarget } from './policy-administration-support.ts';
 import {
   CreateApplicabilityBindingCommerceAssortmentBindingCreatedV1OutboxPayloadSchema,
   createCreateApplicabilityBindingCommerceAssortmentBindingCreatedV1OutboxMessage,
@@ -101,21 +102,49 @@ export const handleCreateApplicabilityBinding = Effect.fn('CreateApplicabilityBi
 
 export const createApplicabilityBindingAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.assortment.applicability-binding.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'bindings', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.assortment.create-applicability-binding.access.v1',
     },
+    accessFieldGroups: [
+      {
+        fieldClass: 'personal_data',
+        fields: ['audience'],
+        key: 'commerce.assortment.applicability-binding.customer-subject',
+        kind: 'field_write',
+        modes: ['run'],
+        placement: { group: 'bindings-subject', level: 'manage' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+      {
+        fieldClass: 'assortment_policy',
+        fields: ['commercialScope', 'ruleRevisionRef'],
+        key: 'commerce.assortment.applicability-binding.policy-detail',
+        kind: 'field_write',
+        modes: ['run'],
+        placement: { group: 'bindings-policy', level: 'manage' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
+    accessOwnerFacts: (payload, scope) => assortmentCurrentnessFacts(createBindingCurrentnessTarget(payload, scope)),
     actionKey: 'commerce.assortment.create-applicability-binding',
-    assortmentPermissions: defineActionAssortmentPermissions<CreateApplicabilityBindingPayload>((payload, scope) => [
-      createBindingPermissionTarget(payload, scope),
-    ]),
     auditEvidenceSchema: AssortmentPolicyAuditEvidenceSchema,
     auditProfile: 'sensitive',
     domainErrorSchema: ActionErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.assortment.create-applicability-binding',
       moduleKey: 'commerce.assortment',
       role: 'action',

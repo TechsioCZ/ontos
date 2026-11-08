@@ -7,7 +7,7 @@ import { expect, it } from 'effect-rstest';
 
 import type { CustomerPaymentTermsState } from '../../shared/domain/payment-term-contracts.ts';
 import { PaymentTermsDependencyUnavailable } from '../../shared/domain/payment-term-errors.ts';
-import { stableRevision } from '../../src/integrations/order-finalization-pricing-context.ts';
+import { stableRevision } from '../../src/stable-revision.ts';
 import {
   bindPreparedPaymentTermCatalog,
   paymentTermsSnapshotUnchanged,

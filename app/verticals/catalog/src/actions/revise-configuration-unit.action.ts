@@ -52,6 +52,14 @@ const handleReviseConfigurationUnit = Effect.fn('ReviseConfigurationUnitAction.h
 
 export const reviseConfigurationUnitAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.configuration-unit.revise',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'configuration-unit', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.revise-configuration-unit.access.v1',
@@ -63,7 +71,7 @@ export const reviseConfigurationUnitAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

@@ -1,25 +1,25 @@
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { NodeCrypto } from '@effect/platform-node';
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Predicate, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import {
-  getActionHandler,
-  getActionResourcePermissionTargetResolver,
-} from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { activateMarketAction } from '../../src/actions/activate-market.action.ts';
 import { associateStorefrontAction } from '../../src/actions/associate-storefront.action.ts';
 import { CreateMarketPayloadSchema, createMarketAction } from '../../src/actions/create-market.action.ts';
 import { removeStorefrontAssociationAction } from '../../src/actions/remove-storefront-association.action.ts';
-import { RetireMarketPayloadSchema, retireMarketAction } from '../../src/actions/retire-market.action.ts';
-import type { RetireMarketServices } from '../../src/actions/retire-market.action.ts';
 import {
-  MarketRetirementIntentSnapshotSchema,
-  MarketRetirementRequestOutcomeSchema,
-} from '../../src/persistence/market-retirement-intent-persistence.ts';
+  MarketRetirementImpactAssessmentUnavailable,
+  RetireMarketPayloadSchema,
+  retireMarketAction,
+} from '../../src/actions/retire-market.action.ts';
+import type { RetireMarketServices } from '../../src/actions/retire-market.action.ts';
+import type { MarketRetirementImpactAssessment } from '../../shared/domain/market-retirement-impact.ts';
 import { reviseMarketDefinitionAction } from '../../src/actions/revise-market-definition.action.ts';
 import { reviseStorefrontAssociationAction } from '../../src/actions/revise-storefront-association.action.ts';
 import { suspendMarketAction } from '../../src/actions/suspend-market.action.ts';
-import type { MarketAdministrationService } from '../../src/services/market-administration.service.ts';
+import { MarketRetirementPostAttempt } from '../../src/services/market-retirement-post-attempt.ts';
+import { commerceMarketCatalogRegistration } from '../../vertical.registration.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const marketId = '22222222-2222-4222-8222-222222222222';
@@ -67,6 +67,7 @@ const createPayloadInput = {
 } as const;
 const createPayload = Schema.decodeUnknownSync(CreateMarketPayloadSchema)(createPayloadInput);
 const retirementEffectiveAt = '2026-12-01T00:00:00.000Z';
+const retirementReservationToken = '77777777-7777-4777-8777-777777777777';
 
 const retirementPayload = (expectedRevision = 3) =>
   Schema.decodeUnknownSync(RetireMarketPayloadSchema)({
@@ -77,56 +78,79 @@ const retirementPayload = (expectedRevision = 3) =>
     reason: 'Retire replaced Market.',
   });
 
-const intentId = '88888888-8888-4888-8888-888888888888';
-const requestedIntent = Schema.decodeUnknownSync(MarketRetirementIntentSnapshotSchema)({
-  actingPrincipalId: principalId,
-  actionInvocationId,
+const retirementImpactAssessment = (
+  overrides: Partial<MarketRetirementImpactAssessment> = {},
+): MarketRetirementImpactAssessment => ({
+  assessedMarketRef: retirementPayload().marketRef,
+  assessedMarketRevision: 3,
+  assessmentDigest: 'a'.repeat(64),
   effectiveAt: retirementEffectiveAt,
-  expectedDefinitionRevisionId: definitionRevisionId,
-  expectedRevision: 3,
-  intentId,
-  legalEntityId: sellerId,
-  marketId,
-  reason: 'Retire replaced Market.',
-  stage: 'REQUESTED',
-  tenantId,
+  providers: [
+    {
+      completenessEvidenceReference: 'customer-context:market-impact-completeness:17',
+      currentnessEvidenceReference: 'customer-context:market-impact-currentness:17',
+      effectiveAt: retirementEffectiveAt,
+      liveBlockingReferences: {
+        count: 0,
+        evidenceReference: 'customer-context:live-market-references:17',
+      },
+      nextBoundaryAt: '2027-01-01T00:00:00.000Z',
+      observedAt: '2026-11-30T23:59:59.000Z',
+      ownerModuleKey: 'commerce.customer-context',
+      ownerRevision: 'customer-context-policy:17',
+      retainedHistoryEvidence: {
+        count: 1,
+        evidenceReference: 'customer-context:retained-market-history:17',
+      },
+      versionToken: 'customer-context-market-impact:17',
+    },
+  ],
+  requiredProviderModuleKeys: ['commerce.customer-context'],
+  ...overrides,
 });
 
-const requestOutcome = Schema.decodeUnknownSync(MarketRetirementRequestOutcomeSchema);
+const reservedRetirementImpactAssessment = () => ({
+  ...retirementImpactAssessment(),
+  reservation: { token: retirementReservationToken, version: 7 },
+});
 
 const unexpected = () => Effect.die('unexpected Market administration service call');
-const unavailableServices: MarketAdministrationService = {
+// Direct handler units must never run Core's post-attempt settlement protocol.
+const directHandlerPostAttempt: typeof MarketRetirementPostAttempt.Service = {
+  abort: unexpected,
+  authorityFor: () => ({
+    assessRetirementImpact: unexpected,
+    cleanupOriginal: unexpected,
+    commitRetirementImpact: unexpected,
+    releaseRetirementImpact: unexpected,
+    reserveRetirementImpact: unexpected,
+  }),
+  decodeFailure: Effect.fail,
+  readState: unexpected(),
+  recover: unexpected,
+  resolveOriginalSource: unexpected,
+  unavailable: () =>
+    new MarketRetirementImpactAssessmentUnavailable({
+      code: 'market_retirement_impact_assessment_unavailable',
+      reason: 'Post-attempt settlement is outside the direct handler unit',
+    }),
+};
+const unavailableServices: RetireMarketServices = {
   associateStorefront: unexpected,
+  commit: unexpected,
   createMarket: unexpected,
+  lockPending: unexpected,
+  preparedRetirement: Effect.fail(
+    new MarketRetirementImpactAssessmentUnavailable({
+      code: 'market_retirement_impact_assessment_unavailable',
+      reason: 'No prepared admission',
+    }),
+  ),
   removeStorefrontAssociation: unexpected,
   reviseMarketDefinition: unexpected,
   reviseStorefrontAssociation: unexpected,
   transitionLifecycle: unexpected,
 };
-
-const retirementCollector = () =>
-  createActionCollector(
-    retireMarketAction.descriptor.domainEvents,
-    'commerce.market-catalog',
-    retireMarketAction.descriptor.accessEvidencePolicy,
-    retireMarketAction.descriptor.auditEvidenceSchema,
-  );
-
-const retirementContext = (collector: ReturnType<typeof retirementCollector>) => ({
-  actionInvocationId,
-  addDomainEvent: collector.addDomainEvent,
-  addOutboxMessage: collector.addOutboxMessage,
-  compositionRevision,
-  recordAuditEvidence: collector.recordAuditEvidence,
-  recordDataAccess: collector.recordDataAccess,
-  scope,
-});
-
-const retirementServices = (request: RetireMarketServices['request']): RetireMarketServices => ({
-  advance: unexpected,
-  read: unexpected,
-  request,
-});
 
 const collectCreate = (changed: boolean) =>
   Effect.gen(function* collectCreateEvidence() {
@@ -184,7 +208,7 @@ describe('Market administration Actions', () => {
     for (const action of actions) {
       expect(action.descriptor.entrypoint).toMatchObject({
         access: 'write',
-        authorization: { kind: 'action_execution', provisioning: 'explicit' },
+        authorization: { kind: 'protected' },
         moduleKey: 'commerce.market-catalog',
         role: 'action',
         scope: 'tenant',
@@ -194,17 +218,15 @@ describe('Market administration Actions', () => {
     }
   });
 
-  it('targets exact catalog authority and fails closed on a mismatched trusted seller scope', () => {
-    const resolve = getActionResourcePermissionTargetResolver(createMarketAction);
-    expect(resolve?.(createPayload, scope)).toEqual({
-      permission: 'write',
-      resource: {
-        moduleId: 'commerce.market-catalog',
-        resourceId: sellerId,
-        resourceType: 'commerce.market-catalog.market-catalog-root',
-      },
+  it('declares one scope-wide Market capability whose seller is the trusted legal-entity scope', () => {
+    // v2 expresses staff catalog authority as a scope-wide capability (Q2); the seller of a Market is
+    // the selected legal entity, so the trusted scope can never name another seller.
+    expect(createMarketAction.descriptor.accessDeclaration).toMatchObject({
+      key: 'commerce.market-catalog.market.create',
+      kind: 'action',
+      selectors: [],
     });
-    expect(() => resolve?.(createPayload, { ...scope, legalEntityId: marketId })).toThrow();
+    expect(createMarketAction.descriptor.legalEntityScope).toBe('required');
   });
 
   it.effect('emits audit, data-access, domain, and outbox evidence once and emits no event on replay', () =>
@@ -228,94 +250,138 @@ describe('Market administration Actions', () => {
     }),
   );
 
-  it.effect('records a pending durable retirement intent with its self-outbox request and no remote call', () =>
-    Effect.gen(function* pendingRetirement() {
-      const collector = retirementCollector();
-      const requests: unknown[] = [];
+  it.effect('runs only local transition and receipt writes after locking the exact prepared admission', () =>
+    Effect.gen(function* localRetirement() {
+      const calls: string[] = [];
+      const assessment = reservedRetirementImpactAssessment();
+      const collector = createActionCollector(
+        retireMarketAction.descriptor.domainEvents,
+        'commerce.market-catalog',
+        retireMarketAction.descriptor.accessEvidencePolicy,
+        retireMarketAction.descriptor.auditEvidenceSchema,
+      );
       const result = yield* getActionHandler(retireMarketAction)(retirementPayload(), {
-        ...retirementContext(collector),
-        services: retirementServices((command) => {
-          requests.push(command);
-          return Effect.succeed({ _tag: 'requested', intent: requestedIntent } as const);
-        }),
-      });
-      expect(result).toEqual({
-        marketRef,
-        outcome: 'pending',
-        retirementIntentId: intentId,
-        stage: 'REQUESTED',
-      });
-      expect(requests).toEqual([
-        {
-          actionInvocationId,
-          effectiveAt: retirementPayload().effectiveAt,
-          expectedCurrentDefinitionRevisionId: definitionRevisionId,
-          expectedRevision: 3,
-          marketId,
-          principalId,
-          reason: 'Retire replaced Market.',
-          recordedAt: expect.anything(),
+        actionInvocationId,
+        addDomainEvent: collector.addDomainEvent,
+        addOutboxMessage: collector.addOutboxMessage,
+        compositionRevision,
+        recordAuditEvidence: collector.recordAuditEvidence,
+        recordDataAccess: collector.recordDataAccess,
+        scope,
+        services: {
+          ...unavailableServices,
+          commit: (input) => {
+            calls.push('receipt');
+            expect(input.assessment.reservation).toEqual(assessment.reservation);
+            expect(input.result.lifecycle).toBe('RETIRED');
+            return Effect.void;
+          },
+          lockPending: (input) => {
+            calls.push('lock');
+            expect(input.sourceActionInvocationId).toBe(actionInvocationId);
+            return Effect.void;
+          },
+          preparedRetirement: Effect.succeed({ actionInvocationId, assessment }),
+          transitionLifecycle: (input) => {
+            calls.push('transition');
+            expect(input.retirementImpactAssessment).toEqual(assessment);
+            return Effect.succeed({
+              _tag: 'transitioned',
+              changed: true,
+              definitionRevisionId,
+              generation: 2,
+              lifecycle: 'RETIRED',
+              revision: 4,
+            } as const);
+          },
         },
-      ]);
-      const evidence = collector.snapshot();
-      expect(evidence.domainEvents.map(({ eventType }) => eventType)).toEqual([
-        'commerce.market-catalog.market-retirement-requested.v1',
-      ]);
-      expect(evidence.outboxMessages).toHaveLength(1);
-      expect(evidence.outboxMessages[0]?.message).toMatchObject({
-        payloadJson: { legalEntityId: sellerId, marketRef, retirementIntentId: intentId },
-        topic: 'commerce.market-catalog.market-retirement-requested.v1',
-      });
-      expect(evidence.auditEvidence).toMatchObject({
-        operation: 'REQUEST_RETIREMENT',
-        outcome: 'pending',
-        retirementIntentId: intentId,
-      });
-    }),
+      }).pipe(Effect.provideService(MarketRetirementPostAttempt, directHandlerPostAttempt));
+      expect(calls).toEqual(['lock', 'transition', 'receipt']);
+      expect(result).toMatchObject({ lifecycle: 'RETIRED', revision: 4 });
+      expect(collector.snapshot().domainEvents).toHaveLength(1);
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
-  it.effect('completes without a new intent when the Market is already retired at the observed revision', () =>
-    Effect.gen(function* alreadyRetired() {
-      const collector = retirementCollector();
-      const result = yield* getActionHandler(retireMarketAction)(retirementPayload(), {
-        ...retirementContext(collector),
-        services: retirementServices(() =>
-          Effect.succeed(requestOutcome({ _tag: 'already_retired', definitionRevisionId, revision: 3 })),
-        ),
-      });
-      expect(result).toEqual({
-        changed: false,
-        definitionRevisionRef,
-        lifecycle: 'RETIRED',
-        marketRef,
-        outcome: 'completed',
-        revision: 3,
-      });
-      expect(collector.snapshot().domainEvents).toHaveLength(0);
-      expect(collector.snapshot().outboxMessages).toHaveLength(0);
-    }),
-  );
-
-  it.effect('rejects a concurrent retirement, a stale revision, and an invalid transition before any event', () =>
-    Effect.gen(function* rejectedRetirement() {
-      const cases = [
-        [requestOutcome({ _tag: 'retirement_in_progress', intentId }), 'retirement_in_progress'],
-        [requestOutcome({ _tag: 'revision_conflict', actualRevision: 4 }), 'revision_conflict'],
-        [requestOutcome({ _tag: 'invalid_lifecycle_transition' }), 'invalid_lifecycle_transition'],
-        [requestOutcome({ _tag: 'not_found' }), 'cross_tenant_reference'],
-      ] as const;
-      for (const [outcome, code] of cases) {
-        const collector = retirementCollector();
+  for (const scenario of [
+    'missing',
+    'other-invocation',
+    'stale',
+    'provider-missing',
+    'live-reference',
+    'admission-closed',
+  ] as const) {
+    const expectedRejection = {
+      'admission-closed': 'MarketRetirementImpactAssessmentUnavailable',
+      'live-reference': 'MarketCommandRejected',
+      missing: 'MarketRetirementImpactAssessmentUnavailable',
+      'other-invocation': 'MarketRetirementImpactAssessmentUnavailable',
+      'provider-missing': 'MarketRetirementImpactAssessmentUnavailable',
+      stale: 'MarketRetirementImpactAssessmentStale',
+    } as const;
+    it.effect(`rejects ${scenario} before any local lifecycle write`, () =>
+      Effect.gen(function* rejectUnpreparedRetirement() {
+        const collector = createActionCollector(
+          retireMarketAction.descriptor.domainEvents,
+          'commerce.market-catalog',
+          retireMarketAction.descriptor.accessEvidencePolicy,
+          retireMarketAction.descriptor.auditEvidenceSchema,
+        );
+        let writes = 0;
+        let overrides: Partial<MarketRetirementImpactAssessment> = {};
+        if (scenario === 'stale') {
+          overrides = { assessedMarketRevision: 2 };
+        } else if (scenario === 'provider-missing') {
+          overrides = { providers: [] };
+        } else if (scenario === 'live-reference') {
+          overrides = {
+            providers: retirementImpactAssessment().providers.map((provider) => ({
+              ...provider,
+              liveBlockingReferences: { count: 1, evidenceReference: 'live-reference' },
+            })),
+          };
+        }
+        const assessment = {
+          ...reservedRetirementImpactAssessment(),
+          ...retirementImpactAssessment(overrides),
+        };
         const failure = yield* getActionHandler(retireMarketAction)(retirementPayload(), {
-          ...retirementContext(collector),
-          services: retirementServices(() => Effect.succeed(outcome)),
-        }).pipe(Effect.flip);
-        expect(Predicate.isTagged(failure, 'MarketCommandRejected')).toBe(true);
-        expect(failure).toMatchObject({ code });
+          actionInvocationId,
+          addDomainEvent: collector.addDomainEvent,
+          addOutboxMessage: collector.addOutboxMessage,
+          compositionRevision,
+          recordAuditEvidence: collector.recordAuditEvidence,
+          recordDataAccess: collector.recordDataAccess,
+          scope,
+          services: {
+            ...unavailableServices,
+            lockPending: () =>
+              scenario === 'admission-closed'
+                ? Effect.fail(
+                    new MarketRetirementImpactAssessmentUnavailable({
+                      code: 'market_retirement_impact_assessment_unavailable',
+                      reason: 'Admission is already closed',
+                    }),
+                  )
+                : Effect.void,
+            preparedRetirement:
+              scenario === 'missing'
+                ? unavailableServices.preparedRetirement
+                : Effect.succeed({
+                    actionInvocationId: scenario === 'other-invocation' ? definitionRevisionId : actionInvocationId,
+                    assessment,
+                  }),
+            transitionLifecycle: () => {
+              writes += 1;
+              return unexpected();
+            },
+          },
+        }).pipe(Effect.provideService(MarketRetirementPostAttempt, directHandlerPostAttempt), Effect.flip);
+        expect(Predicate.isTagged(failure, expectedRejection[scenario])).toBe(true);
+        expect(writes).toBe(0);
         expect(collector.snapshot().domainEvents).toHaveLength(0);
-      }
-    }),
-  );
+      }).pipe(Effect.provide(NodeCrypto.layer)),
+    );
+  }
 
   it.effect(
     'denies missing or unavailable executor/resource authority before transaction or owner service resolution',
@@ -335,11 +401,14 @@ describe('Market administration Actions', () => {
           registration: createMarketAction,
           transport: { correlationId: 'market-permission-gate', idempotencyKey: 'create-market-cz-main' },
         } as const;
-        for (const resourcePermission of ['denied', 'unavailable'] as const) {
-          const harness = yield* makeActionTestHarness({ actionPermission: 'allowed', resourcePermission });
+        for (const access of ['denied', 'unavailable'] as const) {
+          const harness = yield* makeActionTestHarness({
+            access,
+            ownerRegistration: commerceMarketCatalogRegistration,
+          });
           const failure = yield* harness.runtime.runAction(request).pipe(Effect.flip);
           expect(
-            resourcePermission === 'denied'
+            access === 'denied'
               ? Predicate.isTagged(failure, 'ActionPermissionDenied')
               : Predicate.isTagged(failure, 'ActionPermissionCheckError'),
           ).toBe(true);

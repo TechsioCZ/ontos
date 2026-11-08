@@ -48,6 +48,7 @@
   },
   "devDependencies": {
     "@app/party-registry-identity-contracts": "workspace:*",
+    "@app/shell-super-app": "workspace:*",
     "@modern-js/app-tools": "catalog:ultramodern",
     "@modern-js/app-tools-extensions": "catalog:ultramodern",
     "@modern-js/plugin-bff-build-extensions": "catalog:ultramodern",

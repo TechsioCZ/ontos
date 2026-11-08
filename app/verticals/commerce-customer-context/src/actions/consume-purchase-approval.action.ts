@@ -4,11 +4,10 @@
 import type { ActionHandlerContext, ActionServicePreflight, OperationalScope } from '@app/core-runtime';
 import {
   defineAction,
-  defineActionBusinessPermission,
   defineTenantModuleEntrypoint,
-  isTrustedSystemPrincipalContext,
   isVerifiedGatewayPrincipalContext,
   OperationContextUnavailable,
+  readVerifiedGatewayActor,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
 import { DateTime, Effect, Option, Schema } from 'effect';
@@ -36,8 +35,8 @@ import { PurchaseApprovalFinalBindingAuthority } from '../../shared/domain/purch
 import { purchasingApprovalPolicy } from '../policies/purchasing-approval.policy.ts';
 import {
   purchasingApprovalAuditInstantSchema,
+  purchasingApprovalOwnerFacts,
   recordPurchasingApprovalResourceAccess,
-  purchasingApprovalPermissionTarget,
   trustedPurchasingContext,
 } from './purchasing-approval-action-support.ts';
 import { createConsumePurchaseApprovalCommerceCustomerContextPurchaseApprovalConsumedV1OutboxMessage as createOutboxMessage } from './consume-purchase-approval-commerce-customer-context-purchase-approval-consumed-v1.outbox-message.ts';
@@ -124,18 +123,17 @@ const consumptionScopeAdmitted = (payload: ConsumePurchaseApprovalPayload, scope
   payload.orderRef.moduleId === 'commerce.order' &&
   payload.orderRef.resourceType === 'commerce.order.order' &&
   payload.orderRef.tenantId === scope.tenantId &&
-  (isTrustedSystemPrincipalContext(scope) ||
-    (scope.authMethod === 'api_key' && isVerifiedGatewayPrincipalContext(scope)));
+  isVerifiedGatewayPrincipalContext(scope) &&
+  readVerifiedGatewayActor(scope)?.appId === 'commerce-order' &&
+  scope.impersonatedByPrincipalId === undefined;
 
 const handleConsumePurchaseApproval = Effect.fn('ConsumePurchaseApprovalAction.handle')(function* handle(
   payload: ConsumePurchaseApprovalPayload,
   context: ActionHandlerContext<DomainEvents, ConsumePurchaseApprovalServices>,
 ) {
-  // Only a trusted Core system context or a redeemed gateway assertion may reach the Order-owner
-  // reconciliation seam. The provenance marker is important: checking authMethod alone would
-  // allow an arbitrary system/api-key-shaped object to claim commit authority. The HTTP boundary
-  // redeems the assertion for the commerce-customer-context audience before this handler runs;
-  // the public Order-owner port remains the only persistence capability exposed here.
+  // Only a verified gateway call whose actor is the Order module may reach the Order-owner reconciliation
+  // seam. The subject is the buyer (DESIGN D6), checked against the consumed request below; the verified
+  // actor names the calling module. The public Order-owner port remains the only persistence capability here.
   if (!consumptionScopeAdmitted(payload, context.scope)) {
     return yield* new ConsumePurchaseApprovalRejected({
       code: 'PERMISSION_DENIED',
@@ -155,6 +153,14 @@ const handleConsumePurchaseApproval = Effect.fn('ConsumePurchaseApprovalAction.h
       ),
     ),
   );
+  // The consumption is written inside this Action transaction; a failed check here rolls it back.
+  if (result.request.proposal.identity.buyer.principalId !== context.scope.principalId) {
+    return yield* new ConsumePurchaseApprovalRejected({
+      code: 'PERMISSION_DENIED',
+      reason: 'The trusted subject must be the buyer of the approval being consumed',
+      retryable: false,
+    });
+  }
   const completionRule = result.request.route.levels.find(
     ({ order }) => order === result.request.route.currentLevelOrder,
   )?.completionRule;
@@ -347,28 +353,35 @@ export const prepareConsumptionServices: ActionServicePreflight<
 
 export const consumePurchaseApprovalAction = defineAction(
   {
+    accessActor: {
+      callers: ['commerce-order'],
+      reason: 'The Order service consumes a purchase approval for the buyer after the order commitment it authorizes',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.customer-context.purchase-approval.consume',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'purchasing-approval', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.consume-purchase-approval.access.v1',
     },
+    accessOwnerFacts: (payload) =>
+      purchasingApprovalOwnerFacts({ counterpartyRef: payload.counterpartyRef, storefrontId: payload.storefrontId }),
     actionKey: 'commerce.customer-context.consume-purchase-approval',
     auditEvidenceSchema: ConsumePurchaseApprovalAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission((payload: ConsumePurchaseApprovalPayload, scope) =>
-      purchasingApprovalPermissionTarget({
-        counterpartyRef: payload.counterpartyRef,
-        permission: 'counterparty.approval.request.manage',
-        scope,
-        storefrontId: payload.storefrontId,
-      }),
-    ),
     domainErrorSchema: ConsumePurchaseApprovalRejected,
     domainEvents: {
       'commerce.customer-context.purchase-approval-consumed.v1': PurchaseApprovalConsumedEventSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.consume-purchase-approval',
       moduleKey: MODULE_KEY,
       role: 'action',

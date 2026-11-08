@@ -5,10 +5,6 @@ import { expect, it } from 'effect-rstest';
 import type { RetailPortalBindingResult } from '../../shared/actions/bind-retail-portal-profile.ts';
 import type { EnsureRetailCustomerProfileResult } from '../../shared/actions/ensure-retail-customer-profile.ts';
 import {
-  RETAIL_PORTAL_SELF_SERVICE_BASELINE,
-  RetailPortalPermissionCodeSchema,
-} from '../../shared/domain/profile-contracts.ts';
-import {
   EnrollmentActionInvocationIdSchema,
   EnrollmentAttemptIdSchema,
   EnrollmentModuleKeySchema,
@@ -408,6 +404,7 @@ const ensureResult = (state: EnsureRetailCustomerProfileResult['state']): Ensure
 const profileOwnerInput: RetailCustomerProfileOwnerInput = {
   compositionRevision: 'a'.repeat(64),
   effectiveAt,
+  originator: { actionInvocationId, compositionRevision: 'a'.repeat(64), tenantId },
   partyRef,
   requestCorrelation,
   sellingLegalEntityRef,
@@ -497,35 +494,25 @@ it.effect('surfaces a failed commit resolution as an unavailable owner effect', 
   }),
 );
 
-const permissionMutation = (permission: string, index: number, staged: boolean) => ({
-  mutationId: `9000000${String(index)}-0000-4000-8000-000000000001`,
-  operation: 'grant' as const,
-  permission: Schema.decodeUnknownSync(RetailPortalPermissionCodeSchema)(permission),
-  staged,
+/** A legacy persisted result without terminal authorization evidence cannot grant portal access. */
+const bindingResult = (): RetailPortalBindingResult => ({
+  authorizationOperation: 'grant',
+  bindingRef,
+  effectiveAt: '2026-09-19T10:00:00.000Z',
+  outcome: 'BINDING_ACTIVATED',
+  revision: 1,
+  state: 'ACTIVE',
 });
 
-const bindingResult = (staged: boolean, complete = true): RetailPortalBindingResult => {
-  const baseline = complete ? RETAIL_PORTAL_SELF_SERVICE_BASELINE : RETAIL_PORTAL_SELF_SERVICE_BASELINE.slice(1);
-  return {
-    authorizationOperation: 'grant',
-    authorizationState: 'PENDING_GRANT',
-    bindingRef,
-    effectiveAt: '2026-09-19T10:00:00.000Z',
-    outcome: 'BINDING_ACTIVATED',
-    permissionMutations: baseline.map((permission, index) => permissionMutation(permission, index, staged)),
-    revision: 1,
-    state: 'ACTIVE',
-  };
-};
-
 /** A terminal grant the owner already finalized; success also needs the exact Current access observation. */
-const activeBindingResult = (): RetailPortalBindingResult => ({ ...bindingResult(true), authorizationState: 'ACTIVE' });
+const activeBindingResult = (): RetailPortalBindingResult => ({ ...bindingResult(), authorizationState: 'ACTIVE' });
 const confirmCurrentBinding: RetailPortalBindingOwnerExecutors['confirmCurrentBinding'] = () => Effect.succeed(true);
 
 const bindingOwnerInput: RetailPortalBindingOwnerInput = {
   compositionRevision: 'a'.repeat(64),
   effectiveAt,
   enrollmentEvidenceRef: 'enrollment-evidence-1',
+  originator: { actionInvocationId, compositionRevision: 'a'.repeat(64), tenantId },
   principalRef,
   profileRef,
   reason: 'Retail self-enrollment',
@@ -536,12 +523,12 @@ const bindingOwnerInput: RetailPortalBindingOwnerInput = {
 const bindingExecutors = (
   overrides: Partial<RetailPortalBindingOwnerExecutors> = {},
 ): RetailPortalBindingOwnerExecutors => ({
-  bindProfile: () => Effect.succeed(bindingResult(true)),
-  commitResolution: () => Effect.succeed({ result: bindingResult(true), state: 'COMMITTED' }),
+  bindProfile: () => Effect.succeed(bindingResult()),
+  commitResolution: () => Effect.succeed({ result: bindingResult(), state: 'COMMITTED' }),
   ...overrides,
 });
 
-it.effect('keeps Retail enrollment reconciling while its complete baseline is only staged', () =>
+it.effect('keeps Retail enrollment reconciling when terminal authorization is absent', () =>
   Effect.gen(function* boundWithGrants() {
     const outcome = yield* retailPortalBindingOwnerEffect(bindingOwnerInput, bindingExecutors()).dispatch(transition);
     expect(outcome.status).toBe('FAILED');
@@ -550,11 +537,11 @@ it.effect('keeps Retail enrollment reconciling while its complete baseline is on
   }),
 );
 
-it.effect('treats a partially completed grant as a reconciliation halt, not portal access', () =>
+it.effect('treats missing terminal owner authorization as a reconciliation halt, not portal access', () =>
   Effect.gen(function* partialGrants() {
     const partial = yield* retailPortalBindingOwnerEffect(
       bindingOwnerInput,
-      bindingExecutors({ bindProfile: () => Effect.succeed(bindingResult(true, false)) }),
+      bindingExecutors({ bindProfile: () => Effect.succeed(bindingResult()) }),
     ).dispatch(transition);
     expect(partial.status).toBe('FAILED');
     expect(partial.outcomeCode).toBe(RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE);
@@ -562,15 +549,15 @@ it.effect('treats a partially completed grant as a reconciliation halt, not port
 
     const unstaged = yield* retailPortalBindingOwnerEffect(
       bindingOwnerInput,
-      bindingExecutors({ bindProfile: () => Effect.succeed(bindingResult(false)) }),
+      bindingExecutors({ bindProfile: () => Effect.succeed(bindingResult()) }),
     ).dispatch(transition);
     expect(unstaged.outcomeCode).toBe(RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE);
-    expect(retailPortalGrantsAreComplete(bindingResult(true))).toBe(false);
-    expect(retailPortalGrantsAreComplete(bindingResult(true, false))).toBe(false);
+    expect(retailPortalGrantsAreComplete(bindingResult())).toBe(false);
+    expect(retailPortalGrantsAreComplete(bindingResult())).toBe(false);
   }),
 );
 
-it.effect('keeps a committed pending binding reconciling after its Action answer was lost', () =>
+it.effect('keeps a committed binding without terminal authorization reconciling after its answer was lost', () =>
   Effect.gen(function* reconcileBinding() {
     const resolution = yield* retailPortalBindingOwnerEffect(bindingOwnerInput, bindingExecutors()).reconcile(
       reconciliationInput,

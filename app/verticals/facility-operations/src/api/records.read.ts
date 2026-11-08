@@ -14,6 +14,10 @@ import {
   persistenceService,
 } from '../services/persistence.service.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import {
+  facilityOperationsRecordsReadDeclaration,
+  facilityOperationsRecordsRestrictedGroup,
+} from '../../shared/domain/access-declarations.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
@@ -38,7 +42,7 @@ const readFailure = (
 const moduleKey = 'facility.operations';
 const recordsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'facility.operations.api.records',
   moduleKey,
   role: 'api',
@@ -60,6 +64,10 @@ const makeRecordsServices: ReadServiceFactory<Services> = (transaction, scope) =
 
 export const recordsRead = defineRead(
   {
+    // The parent read is the operational reach; the restricted field group is what a full reader is
+    // granted on top. Without it, only assigned calendar events and safe meter fields leave the owner.
+    accessDeclaration: facilityOperationsRecordsReadDeclaration,
+    accessFieldGroups: [facilityOperationsRecordsRestrictedGroup],
     accessKind: 'list',
     entrypoint: recordsEntrypoint,
     evidencePolicy: {
@@ -69,7 +77,6 @@ export const recordsRead = defineRead(
     inputSchema: RecordsRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'facility.operations.api.records',
     resultSchema: RecordsResponseSchema,
@@ -89,5 +96,4 @@ export const recordsRead = defineRead(
       ),
   },
   makeRecordsServices,
-  () => ({ kind: 'module', moduleId: moduleKey }),
 );

@@ -86,6 +86,14 @@ const ACTION_KEY = 'commerce.catalog.revise-product-unit' as const;
 
 export const reviseProductUnitAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-unit.revise',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product-unit', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.revise-product-unit.access.v1',
@@ -97,7 +105,7 @@ export const reviseProductUnitAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.catalog.revise-product-unit',
       moduleKey: 'commerce.catalog',
       role: 'action',

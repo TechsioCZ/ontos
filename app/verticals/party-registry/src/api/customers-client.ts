@@ -93,14 +93,12 @@ const officialIdentifiers = (input: CreateCustomerInput) => [
     Option.map(nonEmpty(input.companyId), (value) => ({
       identifierType: 'ICO' as const,
       value,
-      verification: 'UNVERIFIED' as const,
     })),
   ),
   ...Option.toArray(
     Option.map(nonEmpty(input.vatId), (value) => ({
       identifierType: 'CZ_DIC' as const,
       value: value.toUpperCase(),
-      verification: 'UNVERIFIED' as const,
     })),
   ),
 ];
@@ -211,7 +209,9 @@ export const createCustomer = Effect.fn('CustomersClient.createCustomer')(functi
   const created = yield* createParty(
     {
       candidate: {
-        displayName,
+        // The demo form collects one name; an organization carries it as its business name and a
+        // person as their given name, so the owner derives the same display name either way.
+        ...(person ? { firstName: displayName } : { businessName: displayName }),
         evidenceRefs: [evidenceReference],
         officialIdentifiers: person ? [] : officialIdentifiers(input),
         partyType,
@@ -271,7 +271,6 @@ export const createCustomer = Effect.fn('CustomersClient.createCustomer')(functi
             source: 'USER_ASSERTION',
           },
           validFrom: now,
-          verification: { state: 'UNVERIFIED' },
         },
         { correlationId: id, idempotencyKey: `${id}:contact:${index}` },
       ),
@@ -287,6 +286,8 @@ export const createCustomer = Effect.fn('CustomersClient.createCustomer')(functi
 
 export interface UpdateCustomerPatch {
   readonly displayName: string;
+  /** The canonical Party's type, so the one name maps to its business name or its given name. */
+  readonly partyType?: 'ORGANIZATION' | 'PERSON';
 }
 
 /**
@@ -299,9 +300,10 @@ export const updateCustomer = Effect.fn('CustomersClient.updateCustomer')(functi
 ) {
   const id = yield* requestId('customer-update');
   const now = yield* DateTime.now;
+  const name = patch.displayName.trim();
   return yield* updateParty(
     {
-      displayName: patch.displayName.trim(),
+      ...(patch.partyType === 'PERSON' ? { firstName: name } : { businessName: name }),
       expectedRevision: customer.partyRevision,
       partyRef: customer.partyRef,
       provenanceMethod: 'MANUAL_ENTRY',

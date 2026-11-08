@@ -29,6 +29,14 @@ const handleCreateCartDraft = Effect.fn('CreateCartDraftAction.handle')(function
 
 export const createCartDraftAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.cart.cart-draft.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'cart-drafts', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'commerce.cart.create-cart-draft.access.v1' },
     actionKey: 'commerce.cart.create-cart-draft',
     auditProfile: 'standard',
@@ -36,7 +44,7 @@ export const createCartDraftAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.cart.create-cart-draft',
       moduleKey: owningModuleKey,
       role: 'action',

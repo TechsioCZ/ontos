@@ -1,11 +1,20 @@
 import { defineTenantModuleEntrypoint } from '@app/core-runtime/module-entrypoint';
+import { defineRouteMeta } from '@app/core-runtime/route-meta';
 
-const routeMeta = {
+const routeMeta = defineRouteMeta({
+  accessDeclaration: {
+    key: 'property.portfolio.page-property-portfolio-home.read',
+    kind: 'read',
+    modes: ['run'],
+    placement: { group: 'property-portfolio', level: 'basic' },
+    risk: 'routine',
+    selectors: [],
+  },
   canonicalPath: '/',
   descriptionKey: 'property-portfolio.seo.description',
   entrypoint: defineTenantModuleEntrypoint({
     access: 'read',
-    authorization: { kind: 'context_permission', permission: 'module.access' },
+    authorization: { kind: 'protected' },
     entrypointKey: 'property.portfolio.page.property-portfolio-home',
     moduleKey: 'property.portfolio',
     role: 'page',
@@ -23,7 +32,7 @@ const routeMeta = {
   public: false,
   publicSurface: 'private-app-screen',
   titleKey: 'property-portfolio.title',
-} as const;
+});
 
 export default routeMeta;
 export { routeMeta };

@@ -12,7 +12,7 @@ const MODULE_KEY = 'commerce.pricing' as const;
 
 const priceScheduleEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'pricing.price.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.pricing.api.price-schedule',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -57,6 +57,15 @@ export const readPriceSchedule = Effect.fn('PriceScheduleRead.read')(function* r
 
 export const priceScheduleRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.pricing.price.read-schedule',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'prices', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+
     accessKind: 'detail',
     entrypoint: priceScheduleEntrypoint,
     evidencePolicy: {
@@ -66,7 +75,6 @@ export const priceScheduleRead = defineRead(
     inputSchema: PriceScheduleRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.pricing.api.price-schedule',
     resultSchema: PriceScheduleResponseSchema,
@@ -95,5 +103,4 @@ export const priceScheduleRead = defineRead(
       ),
   },
   (transaction, scope) => pricePersistenceForScope(transaction, scope),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

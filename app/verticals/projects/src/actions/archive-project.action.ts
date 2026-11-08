@@ -70,17 +70,26 @@ const handleArchiveProject = Effect.fn('ArchiveProject.record')(function* archiv
 });
 export const archiveProjectAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'projects.core.project.archive',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'projects', level: 'manage' },
+      risk: 'critical',
+      selectors: ['all'],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'projects.core.archive-project.access.v1',
     },
+    accessTarget: (payload) => ({ moduleKey: projectModuleKey, recordKey: payload.projectId }),
     actionKey: 'projects.core.archive-project',
     auditProfile: 'standard',
     domainErrorSchema: ArchiveProjectErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'projects.core.archive-project',
       moduleKey: projectModuleKey,
       role: 'action',

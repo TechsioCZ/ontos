@@ -1,11 +1,20 @@
 import { defineTenantModuleEntrypoint } from '@app/core-runtime/module-entrypoint';
+import { defineRouteMeta } from '@app/core-runtime/route-meta';
 
-const routeMeta = {
+const routeMeta = defineRouteMeta({
+  accessDeclaration: {
+    key: 'facility.operations.page-documents.read',
+    kind: 'read',
+    modes: ['run'],
+    placement: { group: 'facility-operations', level: 'basic' },
+    risk: 'routine',
+    selectors: [],
+  },
   canonicalPath: '/provoz/dokumenty',
   descriptionKey: 'facility-operations.seo.description',
   entrypoint: defineTenantModuleEntrypoint({
     access: 'read',
-    authorization: { kind: 'context_permission', permission: 'facility.operations.read_all' },
+    authorization: { kind: 'protected' },
     entrypointKey: 'facility.operations.page.documents',
     moduleKey: 'facility.operations',
     role: 'page',
@@ -23,7 +32,7 @@ const routeMeta = {
   public: false,
   publicSurface: 'private-app-screen',
   titleKey: 'facility-operations.documents.title',
-} as const;
+});
 
 export default routeMeta;
 export { routeMeta };

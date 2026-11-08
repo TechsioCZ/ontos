@@ -27,7 +27,7 @@ const lookupUnavailable = (cause: unknown): ReadHandlerUnavailable =>
 
 const priceResultLookupEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'authenticated_principal' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.pricing.api.price-result-lookup',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -98,6 +98,14 @@ const resolveCommitForScope = Effect.fn('PriceResultLookupRead.resolveCommitForS
 
 export const priceResultLookupRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.pricing.price.read-result',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'prices', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: priceResultLookupEntrypoint,
     evidencePolicy: {
@@ -107,7 +115,6 @@ export const priceResultLookupRead = defineRead(
     inputSchema: PriceResultLookupRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.pricing.api.price-result-lookup',
     resultSchema: PriceResultLookupResponseSchema,
@@ -129,5 +136,4 @@ export const priceResultLookupRead = defineRead(
       ),
   },
   pricePersistenceForScope,
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

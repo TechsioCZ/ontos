@@ -1,4 +1,5 @@
 /* eslint-disable effect-native/require-context-service-for-service-interface -- The public Context service is declared in cart-open-selection-population-service.ts to satisfy the one-class-per-file rule; owner: Catalog #479; tracking: #398; expires: 2027-03-31. */
+import type { OperationalScope } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
 import type { Crypto } from 'effect';
 
@@ -66,11 +67,20 @@ export interface CartOpenSelectionPopulationPort {
 }
 
 /**
- * Resolve the deployment-provided Cart owner port while preserving absence as `undefined`. An
- * unbound deployment remains fail-closed instead of manufacturing an empty population.
+ * Resolve the deployment-provided Cart owner port for one operation, binding the operation's scope so
+ * the Cart call acts for that subject. An unbound deployment yields `None`, which stays fail-closed
+ * instead of manufacturing an empty population.
  */
-export const cartOpenSelectionPopulationFromEnvironment: Effect.Effect<CartOpenSelectionPopulationPort | undefined> =
-  Effect.serviceOption(CartOpenSelectionPopulationService).pipe(Effect.map(Option.getOrUndefined));
+export const cartOpenSelectionPopulationForScope = (
+  scope: OperationalScope,
+): Effect.Effect<Option.Option<CartOpenSelectionPopulationPort>> =>
+  Effect.serviceOption(CartOpenSelectionPopulationService).pipe(
+    Effect.map(
+      Option.map((owner): CartOpenSelectionPopulationPort => ({
+        read: ({ tenantId }) => owner.read({ scope, tenantId }),
+      })),
+    ),
+  );
 
 /** Decode and scope-check the foreign owner response before Catalog trusts its completeness claim. */
 export const readCartOpenSelectionPopulation = Effect.fn('CartOpenSelectionPopulationPort.read')(function* read(

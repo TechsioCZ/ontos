@@ -3,7 +3,7 @@
 // @ontos-action-slug remove-counterparty-price-group
 /* eslint-disable effect-native/no-manual-tag-comparison, sonarjs/no-duplicate-string -- Generated Action shape narrows audited outcomes and repeats the canonical owner key; expires: 2027-03-01. */
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import {
   CustomerPriceGroupRemovedAuditEvidenceSchema,
@@ -33,6 +33,7 @@ import type {
 import { createRemoveCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupRemovedV1OutboxMessage } from './remove-counterparty-price-group.commerce-customer-context-counterparty-price-group-removed-v1.outbox-message.ts';
 import { priceGroupActionServicesForTransaction } from './price-group-action-services.ts';
 import { interpretPriceGroupRemovalResult } from './price-group-removal-result.ts';
+import { counterpartyOwnerFacts } from './owner-access-facts.ts';
 
 const RemoveCounterpartyPriceGroupErrorSchema = Schema.Union([
   CustomerPriceGroupAssignmentNotFound,
@@ -179,29 +180,29 @@ const handleRemoveCounterpartyPriceGroup = Effect.fn(
 
 export const removeCounterpartyPriceGroupAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.counterparty-price-group.remove',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'customer-pricing', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.remove-counterparty-price-group.access.v1',
     },
+    accessOwnerFacts: (payload) => counterpartyOwnerFacts(payload.counterpartyRef.resourceId),
     actionKey: 'commerce.customer-context.remove-counterparty-price-group',
     auditEvidenceSchema: CustomerPriceGroupRemovedAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission<RemoveCounterpartyPriceGroupPayload>((payload, scope) => ({
-      permission: 'counterparty.settings.price_group.manage',
-      target: {
-        counterpartyId: payload.counterpartyRef.resourceId,
-        kind: 'counterparty',
-        legalEntityId: scope.legalEntityId ?? '',
-        tenantId: scope.tenantId,
-      },
-    })),
     domainErrorSchema: RemoveCounterpartyPriceGroupErrorSchema,
     domainEvents: {
       'commerce.customer-context.counterparty-price-group-removed.v1': CounterpartyPriceGroupRemovedEventSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.remove-counterparty-price-group',
       moduleKey: 'commerce.customer-context',
       role: 'action',
@@ -215,8 +216,8 @@ export const removeCounterpartyPriceGroupAction = defineAction(
     schemaVersion: '1',
   },
   handleRemoveCounterpartyPriceGroup,
-  (transaction, scope, compositionRevision) =>
-    priceGroupActionServicesForTransaction(transaction, scope, compositionRevision).pipe(
+  (transaction, scope) =>
+    priceGroupActionServicesForTransaction(transaction, scope).pipe(
       Effect.map(({ now, profileValidation, store }) => ({ now, profileValidation, store })),
     ),
 );

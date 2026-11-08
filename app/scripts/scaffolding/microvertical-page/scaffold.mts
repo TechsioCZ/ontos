@@ -12,6 +12,7 @@ import {
   MODULE_MANIFEST_SHELL_PAGE_SLOT_START,
   MODULE_REGISTRATION_PAGE_SLOT_END,
   MODULE_REGISTRATION_PAGE_SLOT_START,
+  DEFAULT_ACCESS_RISK,
   asJsonObject,
   createMutationEffect as createSharedMutation,
   discoverOntosModuleEffect as discoverSharedModule,
@@ -22,15 +23,17 @@ import {
   insertSortedSlot,
   isModuleManifestImport,
   moduleFederationExposureSource,
-  maskNonCode,
   patchJsonObjectProperty,
   readJsonEffect as readSharedJson,
   readGeneratedSlotEntries,
+  renderAccessDeclaration,
+  renderReadAuthorizationLiteral,
   requireCanonicalSlug,
   requiredString,
   resolveContainedPath,
   toCamelCase,
   toPascalCase,
+  toReadAccessDeclarationKey,
   updateMutation,
 } from '../shared.mts';
 import type {
@@ -45,7 +48,6 @@ import type {
 import { tailwindPrefixForNamespace } from '../tailwind-prefix.mts';
 
 interface PageVerticalMetadata extends OntosVerticalMetadata {
-  readonly inlineLocales: boolean;
   readonly locales: readonly string[];
   readonly mfBoundaryId: string;
   readonly namespace: string;
@@ -210,12 +212,10 @@ const validateLocale = (
   namespace: string,
   packageExports: JsonObject,
   locale: string,
-  runtimeLocales: boolean,
 ): Effect.Effect<void, PageScaffoldError, FileSystem.FileSystem> =>
   Effect.gen(function* validateLocaleEffect() {
     const expectedExport = `./locales/${locale}/${namespace}.json`;
-    const localeExport = packageExports[`./locales/${locale}`];
-    if (localeExport !== expectedExport && !(localeExport === undefined && runtimeLocales)) {
+    if (packageExports[`./locales/${locale}`] !== expectedExport) {
       yield* pageScaffoldFailure(`vertical ${vertical.slug} is missing its generated ${locale} locale export`);
     }
     const localePath = resolveContainedPath(
@@ -273,40 +273,9 @@ const discoverPageVertical = (
     if (unsupportedLocale !== undefined) {
       return yield* pageScaffoldFailure(`page scaffold has no starter translation for locale ${unsupportedLocale}`);
     }
-    const runtimePath = resolveContainedPath(vertical.directory, 'src', 'modern.runtime.ts');
-    const runtimeSource = (yield* fileExists(runtimePath)) ? yield* readTextFile(runtimePath) : '';
-    const runtimeStructure = maskNonCode(runtimeSource);
-    const namespaceIdentifier = namespace.replaceAll('.', String.raw`\.`);
-    const namespaceImport =
-      /import\s*\{\s*ultramodernRouteNamespace\s*\}\s*from\s*['"]\.\/routes\/ultramodern-route-metadata['"]/u.exec(
-        runtimeSource,
-      );
-    const namespaceImportIsCode =
-      namespaceImport !== null && /^import\s*\{/u.test(runtimeStructure.slice(namespaceImport.index));
-    const runtimeLocales =
-      locales.every((locale) => {
-        const importPattern = new RegExp(
-          `import\\s+${locale}Resource\\s+from\\s+['"]\\.\\./locales/${locale}/${namespaceIdentifier}\\.json['"]`,
-          'u',
-        );
-        const bindingPattern = new RegExp(
-          `${locale}:\\s*\\{\\s*\\[ultramodernRouteNamespace\\]:\\s*${locale}Resource\\s*\\}`,
-          'u',
-        );
-        const importMatch = importPattern.exec(runtimeSource);
-        return (
-          importMatch !== null &&
-          /^import\s/u.test(runtimeStructure.slice(importMatch.index)) &&
-          bindingPattern.test(runtimeStructure)
-        );
-      }) &&
-      /defaultNS:\s*ultramodernRouteNamespace/u.test(runtimeStructure) &&
-      namespaceImportIsCode;
     const packageExports = asJsonObject(vertical.packageJson['exports'], `vertical ${vertical.slug} package exports`);
     yield* Effect.all(
-      locales.map((locale) =>
-        validateLocale(workspaceRoot, vertical, namespace, packageExports, locale, runtimeLocales),
-      ),
+      locales.map((locale) => validateLocale(workspaceRoot, vertical, namespace, packageExports, locale)),
       { concurrency: 'unbounded' },
     );
     const routeHeadPath = resolveContainedPath(
@@ -340,19 +309,17 @@ const discoverPageVertical = (
       'i18n',
       'resources.ts',
     );
-    const resourcesExist = yield* fileExists(resourcesPath);
-    if (!resourcesExist && !runtimeLocales) {
+    if (!(yield* fileExists(resourcesPath))) {
       return yield* pageScaffoldFailure(`vertical ${vertical.slug} generated i18n resources are missing`);
     }
-    const resourcesContent = resourcesExist ? yield* readTextFile(resourcesPath) : '';
-    if (resourcesExist && !resourcesContent.includes(`export const ${resourcesName} =`)) {
+    const resourcesContent = yield* readTextFile(resourcesPath);
+    if (!resourcesContent.includes(`export const ${resourcesName} =`)) {
       return yield* pageScaffoldFailure(
         `vertical ${vertical.slug} generated i18n resources must export ${resourcesName}`,
       );
     }
     return {
       ...vertical,
-      inlineLocales: !resourcesExist,
       locales,
       mfBoundaryId,
       namespace,
@@ -364,20 +331,6 @@ const renderPage = (vertical: PageVerticalMetadata, page: string, route: PageRou
   const componentName = `${toPascalCase(page)}Page`;
   const contentComponentName = `${componentName}Content`;
   const resourcesName = `${toCamelCase(vertical.slug)}I18nResources`;
-  const resourceImports = vertical.inlineLocales
-    ? vertical.locales
-        .map((locale) => {
-          const catalogPath = `../locales/${locale}/${vertical.namespace}.json`;
-          return `import ${locale}Resource from '${relativeFromRoute(route, catalogPath, 2)}';`;
-        })
-        .join('\n')
-    : `import { ${resourcesName} } from '${relativeFromRoute(route, 'i18n/resources', 2)}';`;
-  const resourceBindings = vertical.locales
-    .map((locale) => `  ${locale}: { '${vertical.namespace}': ${locale}Resource },`)
-    .join('\n');
-  const resourceDefinition = vertical.inlineLocales
-    ? `const ${resourcesName} = {\n${resourceBindings}\n} as const;\n\n`
-    : '';
   const keyRoot = `${vertical.namespace}.pages.${toCamelCase(page)}`;
   const prefix = vertical.tailwindPrefix;
   const schemaImport = route.isDynamic ? `import { Schema } from 'effect';\n` : '';
@@ -408,10 +361,10 @@ interface ${componentName}Props {
     : `<${contentComponentName} />`;
   return `import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 ${schemaImport}import { UltramodernRouteHead } from '${relativeFromRoute(route, 'ultramodern-route-head', 1)}';
-${resourceImports}
+import { ${resourcesName} } from '${relativeFromRoute(route, 'i18n/resources', 2)}';
 import '${relativeFromRoute(route, 'index.css', 1)}';
 
-${resourceDefinition}${props}${declaration}
+${props}${declaration}
   const { t } = useModernI18n();
   const headingId = '${page}-heading';
 
@@ -448,39 +401,26 @@ export default ${componentName};
 `;
 };
 
-const renderReadAuthorization = (config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>): string => {
-  if (config.authorization === 'context_permission') {
-    return `{ kind: 'context_permission', permission: '${config.permission ?? ''}' }`;
-  }
-  return `{ kind: '${config.authorization}' }`;
-};
+type PageAuthorizationConfig = Pick<PageScaffoldConfig, 'accessRisk' | 'authorization'>;
 
-const validateReadAuthorization = (
-  config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>,
-): Effect.Effect<void, PageScaffoldError, FileSystem.FileSystem> =>
-  Effect.gen(function* validateReadAuthorizationEffect() {
-    if (
-      config.authorization === 'context_permission' &&
-      (config.permission === undefined || !/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u.test(config.permission))
-    ) {
-      yield* pageScaffoldFailure('context_permission authorization requires a stable --permission value');
-    }
-    if (config.authorization !== 'context_permission' && config.permission !== undefined) {
-      yield* pageScaffoldFailure('--permission is valid only for context_permission authorization');
-    }
-  });
+const renderReadAuthorization = (config: PageAuthorizationConfig): string =>
+  renderReadAuthorizationLiteral(config.authorization);
 
-/** A page contribution's explicit tenant-only opt-in, absent by default so existing output is unchanged. */
-type PageWiringConfig = Pick<PageScaffoldConfig, 'authorization' | 'legalEntityScope' | 'permission'>;
-
-const pageWiring = (vertical: PageVerticalMetadata, page: string, route: PageRoute, config: PageWiringConfig) => {
+const pageWiring = (
+  vertical: PageVerticalMetadata,
+  page: string,
+  route: PageRoute,
+  config: PageAuthorizationConfig,
+) => {
   const componentName = `${toPascalCase(page)}Page`;
   const componentKey = `${vertical.moduleId}.page-${page}`;
   const contributionKey = `${vertical.moduleId}.page.${page}`;
   const entrypoint = `{ access: 'read', authorization: ${renderReadAuthorization(config)}, entrypointKey: '${contributionKey}', moduleKey: '${vertical.moduleId}', role: 'page', scope: 'tenant' }`;
-  // `legalEntityScope: 'optional'` is the only opt-in; its absence keeps the existing company requirement, so a
-  // page that does not opt in is generated byte-identically to before.
-  const legalEntityScope = config.legalEntityScope === 'optional' ? ", legalEntityScope: 'optional'" : '';
+  // Only a protected page carries a declaration; the navigation entry shares this entrypoint.
+  const accessDeclaration =
+    config.authorization === 'protected'
+      ? `accessDeclaration: { key: '${toReadAccessDeclarationKey(vertical.moduleId, page, 'view')}', kind: 'read', modes: ['run'], placement: { group: '${page}', level: 'basic' }, risk: '${config.accessRisk ?? DEFAULT_ACCESS_RISK}', selectors: [] }, `
+      : '';
   return {
     componentKey,
     componentName,
@@ -489,8 +429,8 @@ const pageWiring = (vertical: PageVerticalMetadata, page: string, route: PageRou
     manifestImport: `import { ${componentName} } from './src/routes/[lang]/${route.relativePath}/page.tsx';`,
     manifestNavigation: route.isDynamic
       ? undefined
-      : `navigationContribution({ contributionKey: '${vertical.moduleId}.navigation.${page}', entrypoint: ${entrypoint}, groupKey: 'shell.navigation.modules', icon: 'icon-[mdi--view-grid-outline]', label: { cs: 'Nová stránka', en: 'New Page' }, order: 100, pageKey: '${contributionKey}' }),`,
-    manifestPage: `pageContribution({ componentKey: '${componentKey}', contributionKey: '${contributionKey}', entrypoint: ${entrypoint}, expose: './Page${toPascalCase(page)}'${legalEntityScope}, routePath: '${route.canonicalPath}' }),`,
+      : `navigationContribution({ contributionKey: '${vertical.moduleId}.navigation.${page}', entrypoint: ${entrypoint}, groupKey: 'shell.navigation.modules', order: 100, pageKey: '${contributionKey}' }),`,
+    manifestPage: `pageContribution({ ${accessDeclaration}componentKey: '${componentKey}', contributionKey: '${contributionKey}', entrypoint: ${entrypoint}, expose: './Page${toPascalCase(page)}', routePath: '${route.canonicalPath}' }),`,
     registrationPage: `'page-${page}': () => import('./src/routes/[lang]/${route.relativePath}/page.tsx'),`,
   } as const;
 };
@@ -504,7 +444,7 @@ const patchPageWiring = (
   vertical: PageVerticalMetadata,
   page: string,
   route: PageRoute,
-  config: PageWiringConfig,
+  config: PageAuthorizationConfig,
 ): PageOwnerWiring => {
   const wiring = pageWiring(vertical, page, route, config);
   let manifest = insertSortedSlot(
@@ -551,14 +491,30 @@ const renderRouteMetadata = (
   vertical: PageVerticalMetadata,
   page: string,
   route: PageRoute,
-  config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>,
+  config: PageAuthorizationConfig,
 ): string => {
   const keyRoot = `${vertical.namespace}.pages.${toCamelCase(page)}`;
   const localisedPaths = vertical.locales.map((locale) => `    ${locale}: '${route.canonicalPath}',`).join('\n');
+  const accessDeclaration =
+    config.authorization === 'protected'
+      ? renderAccessDeclaration(
+          {
+            group: page,
+            key: toReadAccessDeclarationKey(vertical.moduleId, page, 'view'),
+            kind: 'read',
+            level: 'basic',
+            modes: ['run'],
+            risk: config.accessRisk ?? DEFAULT_ACCESS_RISK,
+            selectors: [],
+          },
+          '  ',
+        )
+      : '';
   return `import { defineTenantModuleEntrypoint } from '@app/core-runtime/module-entrypoint';
+import { defineRouteMeta } from '@app/core-runtime/route-meta';
 
-const routeMeta = {
-  canonicalPath: '${route.canonicalPath}',
+const routeMeta = defineRouteMeta({
+${accessDeclaration}  canonicalPath: '${route.canonicalPath}',
   descriptionKey: '${keyRoot}.description',
   entrypoint: defineTenantModuleEntrypoint({
     access: 'read',
@@ -579,7 +535,7 @@ ${localisedPaths}
   public: false,
   publicSurface: 'private-app-screen',
   titleKey: '${keyRoot}.title',
-} as const;
+});
 
 export default routeMeta;
 export { routeMeta };
@@ -899,7 +855,7 @@ const generatedWiringMatches = (
   vertical: PageVerticalMetadata,
   page: string,
   route: PageRoute,
-  config: PageWiringConfig,
+  config: PageAuthorizationConfig,
 ): Effect.Effect<boolean, PageScaffoldError, FileSystem.FileSystem> =>
   Effect.gen(function* generatedWiringMatchesEffect() {
     const wiring = pageWiring(vertical, page, route, config);
@@ -969,7 +925,7 @@ const generatedPageState = (
   routeDirectory: string,
   pagePath: string,
   routeMetadataPath: string,
-  config: PageWiringConfig,
+  config: PageAuthorizationConfig,
 ): Effect.Effect<GeneratedPageState, PageScaffoldError, FileSystem.FileSystem> =>
   Effect.gen(function* generatedPageStateEffect() {
     const entries = yield* readDirectoryEntries(routeDirectory);
@@ -1004,7 +960,6 @@ const planPageScaffold = (
   config: PageScaffoldConfig,
 ): Effect.Effect<ScaffoldPlan<PageScaffoldResult>, PageScaffoldError, FileSystem.FileSystem> =>
   Effect.gen(function* planPageScaffoldEffect() {
-    yield* validateReadAuthorization(config);
     const page = yield* Effect.try({
       catch: (cause) => pageScaffoldFailureFromUnknown(cause, 'page name is invalid'),
       try: () => requireCanonicalSlug(config.page, 'page'),

@@ -27,7 +27,7 @@ const lookupUnavailable = (cause: unknown): ReadHandlerUnavailable =>
 
 const quotationResultLookupEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'authenticated_principal' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.pricing.api.quotation-result-lookup',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -60,6 +60,14 @@ export const readQuotationResult = Effect.fn('QuotationResultLookupRead.read')(f
 
 export const quotationResultLookupRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.pricing.quotation.read-result',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'commercial-commitments', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: quotationResultLookupEntrypoint,
     evidencePolicy: {
@@ -69,7 +77,6 @@ export const quotationResultLookupRead = defineRead(
     inputSchema: QuotationResultLookupRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.pricing.api.quotation-result-lookup',
     resultSchema: QuotationResultLookupResponseSchema,
@@ -85,5 +92,4 @@ export const quotationResultLookupRead = defineRead(
       ),
   },
   (transaction, scope) => quotationPersistenceForScope(transaction, scope),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

@@ -3,178 +3,10 @@
 // @ontos-module-id commerce.catalog
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { catalogManifest } from './vertical.manifest.ts';
-// <generated-module-registration-imports>
-import { activateLocalOverrideAction } from './src/actions/activate-local-override.action.ts';
-import { activatePackageDefinitionAction } from './src/actions/activate-package-definition.action.ts';
-import { activatePackageOptionAction } from './src/actions/activate-package-option.action.ts';
-import { addProductCategoryAssignmentAction } from './src/actions/add-product-category-assignment.action.ts';
-import { assertSizeEquivalenceAction } from './src/actions/assert-size-equivalence.action.ts';
-import { assignCatalogMediaAction } from './src/actions/assign-catalog-media.action.ts';
-import { assignSkuAction } from './src/actions/assign-sku.action.ts';
-import { changeLocalOverrideAction } from './src/actions/change-local-override.action.ts';
-import { changeProductManufacturerAction } from './src/actions/change-product-manufacturer.action.ts';
-import { changeProductRelationshipAction } from './src/actions/change-product-relationship.action.ts';
-import { changeVariantAction } from './src/actions/change-variant.action.ts';
-import { confirmGtinAction } from './src/actions/confirm-gtin.action.ts';
-import { confirmVariantCombinationAction } from './src/actions/confirm-variant-combination.action.ts';
-import { correctGtinAction } from './src/actions/correct-gtin.action.ts';
-import { correctProductAction } from './src/actions/correct-product.action.ts';
-import { correctSkuAction } from './src/actions/correct-sku.action.ts';
-import { createAttributeDefinitionAction } from './src/actions/create-attribute-definition.action.ts';
-import { createBrandAction } from './src/actions/create-brand.action.ts';
-import { createConfigurationUnitAction } from './src/actions/create-configuration-unit.action.ts';
-import { createControlledAttributeValueAction } from './src/actions/create-controlled-attribute-value.action.ts';
-import { createPackageDefinitionAction } from './src/actions/create-package-definition.action.ts';
-import { createProductAction } from './src/actions/create-product.action.ts';
-import { createProductCategoryAction } from './src/actions/create-product-category.action.ts';
-import { createProductRelationshipAction } from './src/actions/create-product-relationship.action.ts';
-import { createProductTypeAction } from './src/actions/create-product-type.action.ts';
-import { createProductUnitAction } from './src/actions/create-product-unit.action.ts';
-import { createSetCompositionAction } from './src/actions/create-set-composition.action.ts';
-import { createVariantAction } from './src/actions/create-variant.action.ts';
-import { decideProductTypeUnnecessaryAction } from './src/actions/decide-product-type-unnecessary.action.ts';
-import { governProductAttributeApplicabilityAction } from './src/actions/govern-product-attribute-applicability.action.ts';
-import { governVariantAllowedValuesAction } from './src/actions/govern-variant-allowed-values.action.ts';
-import { governVariantAxesAction } from './src/actions/govern-variant-axes.action.ts';
-import { importSourceAssertionAction } from './src/actions/import-source-assertion.action.ts';
-import { markGtinUnresolvedAction } from './src/actions/mark-gtin-unresolved.action.ts';
-import { moveProductCategoryAction } from './src/actions/move-product-category.action.ts';
-import { promotePackageDefinitionAction } from './src/actions/promote-package-definition.action.ts';
-import { publishProductConfigurationAction } from './src/actions/publish-product-configuration.action.ts';
-import { reactivateBrandAction } from './src/actions/reactivate-brand.action.ts';
-import { reactivateControlledAttributeValueAction } from './src/actions/reactivate-controlled-attribute-value.action.ts';
-import { reactivateProductAction } from './src/actions/reactivate-product.action.ts';
-import { reactivateVariantAction } from './src/actions/reactivate-variant.action.ts';
-import { releaseLocalOverrideAction } from './src/actions/release-local-override.action.ts';
-import { removeCatalogMediaAction } from './src/actions/remove-catalog-media.action.ts';
-import { removeProductAttributeValuesAction } from './src/actions/remove-product-attribute-values.action.ts';
-import { removeProductCategoryAssignmentAction } from './src/actions/remove-product-category-assignment.action.ts';
-import { removeProductLocalizedFactsAction } from './src/actions/remove-product-localized-facts.action.ts';
-import { removeProductManufacturerAction } from './src/actions/remove-product-manufacturer.action.ts';
-import { removeProductRelationshipAction } from './src/actions/remove-product-relationship.action.ts';
-import { removeVariantAttributeOverrideAction } from './src/actions/remove-variant-attribute-override.action.ts';
-import { removeVariantLocalizedFactsAction } from './src/actions/remove-variant-localized-facts.action.ts';
-import { renameAttributeDefinitionAction } from './src/actions/rename-attribute-definition.action.ts';
-import { renameBrandAction } from './src/actions/rename-brand.action.ts';
-import { renameControlledAttributeValueAction } from './src/actions/rename-controlled-attribute-value.action.ts';
-import { renameProductCategoryAction } from './src/actions/rename-product-category.action.ts';
-import { renameSkuAction } from './src/actions/rename-sku.action.ts';
-import { reorderCatalogMediaAction } from './src/actions/reorder-catalog-media.action.ts';
-import { replaceProductSizesAction } from './src/actions/replace-product-sizes.action.ts';
-import { retireBrandAction } from './src/actions/retire-brand.action.ts';
-import { retireConfigurationUnitAction } from './src/actions/retire-configuration-unit.action.ts';
-import { retireControlledAttributeValueAction } from './src/actions/retire-controlled-attribute-value.action.ts';
-import { retireGtinAction } from './src/actions/retire-gtin.action.ts';
-import { retirePackageDefinitionAction } from './src/actions/retire-package-definition.action.ts';
-import { retirePackageOptionAction } from './src/actions/retire-package-option.action.ts';
-import { retireProductAction } from './src/actions/retire-product.action.ts';
-import { retireProductCategoryAction } from './src/actions/retire-product-category.action.ts';
-import { retireProductUnitAction } from './src/actions/retire-product-unit.action.ts';
-import { retireVariantAction } from './src/actions/retire-variant.action.ts';
-import { reviseAttributeDefinitionAction } from './src/actions/revise-attribute-definition.action.ts';
-import { reviseConfigurationUnitAction } from './src/actions/revise-configuration-unit.action.ts';
-import { revisePackageDefinitionAction } from './src/actions/revise-package-definition.action.ts';
-import { reviseProductTypeAction } from './src/actions/revise-product-type.action.ts';
-import { reviseProductUnitAction } from './src/actions/revise-product-unit.action.ts';
-import { reviseSetCompositionAction } from './src/actions/revise-set-composition.action.ts';
-import { setProductAttributeValuesAction } from './src/actions/set-product-attribute-values.action.ts';
-import { setProductBrandAction } from './src/actions/set-product-brand.action.ts';
-import { setProductLocalizedFactsAction } from './src/actions/set-product-localized-facts.action.ts';
-import { setProductManufacturerAction } from './src/actions/set-product-manufacturer.action.ts';
-import { setProductTypeAction } from './src/actions/set-product-type.action.ts';
-import { setProductUnitTargetDivisibilityAction } from './src/actions/set-product-unit-target-divisibility.action.ts';
-import { setVariantAttributeOverrideAction } from './src/actions/set-variant-attribute-override.action.ts';
-import { setVariantLocalizedFactsAction } from './src/actions/set-variant-localized-facts.action.ts';
-import { updateProductAction } from './src/actions/update-product.action.ts';
-// </generated-module-registration-imports>
+import { catalogRuntimeDeclaration } from './vertical.runtime-declaration.ts';
 
 export const catalogRegistration = defineVerticalRuntimeRegistration({
-  actions: [
-    // <generated-module-registration-actions>
-    activateLocalOverrideAction,
-    activatePackageDefinitionAction,
-    activatePackageOptionAction,
-    addProductCategoryAssignmentAction,
-    assertSizeEquivalenceAction,
-    assignCatalogMediaAction,
-    assignSkuAction,
-    changeLocalOverrideAction,
-    changeProductManufacturerAction,
-    changeProductRelationshipAction,
-    changeVariantAction,
-    confirmGtinAction,
-    confirmVariantCombinationAction,
-    correctGtinAction,
-    correctProductAction,
-    correctSkuAction,
-    createAttributeDefinitionAction,
-    createBrandAction,
-    createConfigurationUnitAction,
-    createControlledAttributeValueAction,
-    createPackageDefinitionAction,
-    createProductAction,
-    createProductCategoryAction,
-    createProductRelationshipAction,
-    createProductTypeAction,
-    createProductUnitAction,
-    createSetCompositionAction,
-    createVariantAction,
-    decideProductTypeUnnecessaryAction,
-    governProductAttributeApplicabilityAction,
-    governVariantAllowedValuesAction,
-    governVariantAxesAction,
-    importSourceAssertionAction,
-    markGtinUnresolvedAction,
-    moveProductCategoryAction,
-    promotePackageDefinitionAction,
-    publishProductConfigurationAction,
-    reactivateBrandAction,
-    reactivateControlledAttributeValueAction,
-    reactivateProductAction,
-    reactivateVariantAction,
-    releaseLocalOverrideAction,
-    removeCatalogMediaAction,
-    removeProductAttributeValuesAction,
-    removeProductCategoryAssignmentAction,
-    removeProductLocalizedFactsAction,
-    removeProductManufacturerAction,
-    removeProductRelationshipAction,
-    removeVariantAttributeOverrideAction,
-    removeVariantLocalizedFactsAction,
-    renameAttributeDefinitionAction,
-    renameBrandAction,
-    renameControlledAttributeValueAction,
-    renameProductCategoryAction,
-    renameSkuAction,
-    reorderCatalogMediaAction,
-    replaceProductSizesAction,
-    retireBrandAction,
-    retireConfigurationUnitAction,
-    retireControlledAttributeValueAction,
-    retireGtinAction,
-    retirePackageDefinitionAction,
-    retirePackageOptionAction,
-    retireProductAction,
-    retireProductCategoryAction,
-    retireProductUnitAction,
-    retireVariantAction,
-    reviseAttributeDefinitionAction,
-    reviseConfigurationUnitAction,
-    revisePackageDefinitionAction,
-    reviseProductTypeAction,
-    reviseProductUnitAction,
-    reviseSetCompositionAction,
-    setProductAttributeValuesAction,
-    setProductBrandAction,
-    setProductLocalizedFactsAction,
-    setProductManufacturerAction,
-    setProductTypeAction,
-    setProductUnitTargetDivisibilityAction,
-    setVariantAttributeOverrideAction,
-    setVariantLocalizedFactsAction,
-    updateProductAction,
-    // </generated-module-registration-actions>
-  ],
+  ...catalogRuntimeDeclaration,
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
@@ -235,6 +67,7 @@ export const catalogRegistration = defineVerticalRuntimeRegistration({
       'manufacturer-relation-history': () => import('./src/api/manufacturer-relation-history-client.ts'),
       'mark-gtin-unresolved-recovery': () => import('./src/api/mark-gtin-unresolved-recovery-client.ts'),
       'move-product-category-recovery': () => import('./src/api/move-product-category-recovery-client.ts'),
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       'package-definition-history': () => import('./src/api/package-definition-history-client.ts'),
       'package-option-history': () => import('./src/api/package-option-history-client.ts'),
       'pricing-purpose-equivalence': () => import('./src/api/pricing-purpose-equivalence-client.ts'),
@@ -335,10 +168,6 @@ export const catalogRegistration = defineVerticalRuntimeRegistration({
     },
   },
   manifest: catalogManifest,
-  outboxWorkers: [
-    // <generated-module-registration-workers>
-    // </generated-module-registration-workers>
-  ],
 });
 
 // <generated-public-component-registrations>

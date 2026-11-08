@@ -1,4 +1,5 @@
 import type { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { CapabilityKeySchema } from '@app/core-runtime/access/ids';
 import { staffAuthenticationNamespaceRegistryLayer } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { RetailPortalBindingResultSchema } from '../../shared/actions/bind-retail-portal-profile.ts';
 import {
@@ -12,14 +13,17 @@ import { ChildProcess } from 'effect/process';
 import {
   TrustedPrincipalContextSchema,
   defineScopedRoutine,
-  BusinessPermissionRelationshipMutation,
-  BusinessPermissionRelationshipMutationLive,
   parseDatabaseConnectionPair,
   OntosModuleDeploymentContractSchema,
+  OntosShellRuntimeContractSchema,
   canonicalizeApplicationComposition,
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
+import {
+  makeApplicationCompositionSnapshotFixture,
+  makeOwnerApplicationCompositionFixture,
+} from '@app/core-runtime/testing/module-contract';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
 import {
@@ -49,6 +53,7 @@ import { Socket } from 'effect/socket';
 
 const commerceAppId = 'commerce-customer-context';
 const commerceModuleId = 'commerce.customer-context';
+const temporalBundleDirectory = 'target-price-group-temporal';
 export const priceGroupTemporalProtocol = 'ontos.customer-price-group-temporal.fixture.v1' as const;
 const CreatedCatalogResponseTypeSchema = Schema.Literals(['CREATED_G1', 'CREATED_G2', 'CREATED_INCOMPATIBLE']);
 const bounded = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000));
@@ -100,6 +105,8 @@ export const PriceGroupTemporalBootstrapSchema = Schema.Struct({
     catalog: PriceGroupPreparedArtifactSchema,
     party: PriceGroupPreparedArtifactSchema,
   }).annotate(strict),
+  /** The Catalog capabilities its receiving gate refuses (see the Catalog fixture's own bootstrap). */
+  catalogDeniedCapabilityKeys: Schema.Array(CapabilityKeySchema),
   composition: ActiveApplicationCompositionSnapshotSchema,
   database: PriceGroupOwnedDatabaseCertificateSchema,
   identities: Schema.Struct({ issuerUrl: secret, partyUrl: secret }).annotate(strict),
@@ -219,7 +226,7 @@ export const guardPriceGroupPreparedArtifact = Effect.fn('PriceGroupTemporal.gua
     const path = yield* Path.Path;
     const entry = createRequire(new URL('../../package.json', import.meta.url)).resolve(ownerSpecifiers[owner]);
     const directory = yield* fs.realPath(path.dirname(path.dirname(path.dirname(entry))));
-    const cache = yield* fs.realPath(path.join(directory, '.cache/ontos-1248'));
+    const cache = yield* fs.realPath(path.join(directory, temporalBundleDirectory));
     const actualPath = yield* fs.realPath(artifact.artifact);
     yield* requireCondition(
       path.dirname(actualPath) === cache && /^[a-f0-9-]{36}\.mjs$/u.test(path.basename(actualPath)),
@@ -545,6 +552,23 @@ export const makePriceGroupTemporalComposition = Effect.fn('TemporalNative.actua
       readonly marker: { readonly appId: string; readonly buildMarker: string };
     }[],
   ) {
+    // Core's public native-operation fixture supplies the TEST Shell capability contract. The
+    // owner contracts below are still derived from their real declarations, never empty stand-ins.
+    // No browser build or deployed Shell artifact is claimed by this private transport fixture.
+    const { snapshot: initial } = yield* makeOwnerApplicationCompositionFixture({
+      appId: commerceAppId,
+      ownerRegistration: commerceCustomerContextRegistration,
+    });
+    const shellRuntime = {
+      contributionAbi: initial.composition.shell.contributionAbi,
+      coreCapabilities: initial.composition.shell.coreCapabilities,
+      deployment: initial.composition.shell.deployment,
+      schemaVersion: '2' as const,
+    };
+    const shellRuntimeDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
+      shellRuntime,
+    );
+    const shellFederationDocument = '{"name":"shell","shared":[]}';
     const documents = yield* Effect.forEach(
       owners,
       ({ contract, marker }) =>
@@ -567,6 +591,12 @@ export const makePriceGroupTemporalComposition = Effect.fn('TemporalNative.actua
     yield* server.serve(
       Effect.gen(function* serveExactTestMetadata() {
         const request = yield* HttpServerRequest.HttpServerRequest;
+        if (request.url === '/shell-super-app/ontos-shell-runtime.json') {
+          return HttpServerResponse.text(shellRuntimeDocument, { contentType: 'application/json' });
+        }
+        if (request.url === '/shell-super-app/mf-manifest.json') {
+          return HttpServerResponse.text(shellFederationDocument, { contentType: 'application/json' });
+        }
         const document = documents.find(({ appId }) => request.url === `/${appId}/mf-manifest.json`);
         return document === undefined
           ? HttpServerResponse.empty({ status: 404 })
@@ -581,8 +611,8 @@ export const makePriceGroupTemporalComposition = Effect.fn('TemporalNative.actua
           contract.deployment.appId === marker.appId && contract.deployment.buildMarker === marker.buildMarker,
           'actual-owner-build',
         );
-        const initial = yield* makeApplicationCompositionSnapshotFixture([marker.appId], marker.buildMarker);
-        const [module] = initial.composition.modules;
+        const ownerFixture = yield* makeApplicationCompositionSnapshotFixture([marker.appId], marker.buildMarker);
+        const [module] = ownerFixture.composition.modules;
         const document = documents.find(({ appId }) => appId === marker.appId);
         if (module === undefined || document === undefined) {
           return yield* failure('actual-owner-module');
@@ -616,12 +646,30 @@ export const makePriceGroupTemporalComposition = Effect.fn('TemporalNative.actua
           federation,
           moduleId: contract.manifest.module.id,
           publicContract: { id: contract.manifest.module.id, sha256, version: contract.schemaVersion },
+          requiredCoreCapabilities: contract.manifest.requirements?.coreCapabilities ?? [],
         };
       }),
       { concurrency: 1 },
     );
-    const initial = yield* makeApplicationCompositionSnapshotFixture([]);
-    const composition = { ...initial.composition, modules, revision: '0'.repeat(64) };
+    const composition = {
+      ...initial.composition,
+      modules,
+      revision: '0'.repeat(64),
+      shell: {
+        contributionAbi: shellRuntime.contributionAbi,
+        coreCapabilities: shellRuntime.coreCapabilities,
+        deployment: shellRuntime.deployment,
+        federationManifest: {
+          sha256: yield* temporalDigest(shellFederationDocument),
+          url: `http://127.0.0.1:${address.port}/shell-super-app/mf-manifest.json`,
+        },
+        runtimeContract: {
+          sha256: yield* temporalDigest(shellRuntimeDocument),
+          url: `http://127.0.0.1:${address.port}/shell-super-app/ontos-shell-runtime.json`,
+        },
+        sharedSingletons: initial.composition.shell.sharedSingletons,
+      },
+    };
     return yield* validateActiveApplicationCompositionSnapshot({
       ...initial,
       composition: { ...composition, revision: yield* temporalDigest(canonicalizeApplicationComposition(composition)) },
@@ -648,7 +696,7 @@ export const describePriceGroupTemporalOwner = Effect.fn('TemporalNative.describ
     const directory = path.dirname(path.dirname(path.dirname(entryPath)));
     const { buildIdentity, contract } = yield* temporalContract(directory, owner);
     const encode = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
-    const cache = path.join(directory, '.cache/ontos-1248');
+    const cache = path.join(directory, temporalBundleDirectory);
     yield* fs.makeDirectory(cache, { recursive: true });
     const artifact = path.join(cache, `${yield* nextId}.mjs`);
     yield* Effect.addFinalizer(() => Effect.orDie(fs.remove(artifact, { force: true })));
@@ -723,24 +771,25 @@ export const describePriceGroupTemporalOwner = Effect.fn('TemporalNative.describ
   },
 );
 
+const bindProfileParameters = [
+  { source: 'tenantId', type: 'uuid' },
+  { source: 'legalEntityId', type: 'uuid' },
+  { source: 'input', type: 'uuid' },
+  { source: 'input', type: 'uuid' },
+  { source: 'input', type: 'uuid' },
+  { source: 'input', type: 'text' },
+  { nullable: true, source: 'input', type: 'text' },
+  { nullable: true, source: 'input', type: 'integer' },
+  { source: 'input', type: 'text' },
+  { source: 'input', type: 'timestamptz' },
+  { source: 'input', type: 'text' },
+  { source: 'input', type: 'uuid' },
+  { source: 'input', type: 'uuid' },
+] as const;
 const bindProfile = defineScopedRoutine({
   name: 'mutate_retail_portal_binding',
   ownerModuleKey: commerceModuleId,
-  parameters: [
-    { source: 'tenantId', type: 'uuid' },
-    { source: 'legalEntityId', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'text' },
-    { nullable: true, source: 'input', type: 'text' },
-    { nullable: true, source: 'input', type: 'integer' },
-    { source: 'input', type: 'text' },
-    { source: 'input', type: 'timestamptz' },
-    { source: 'input', type: 'text' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-  ] as const,
+  parameters: bindProfileParameters,
   resultSchema: Schema.Struct({
     outcome: Schema.Literal('BINDING_ACTIVATED'),
     payload: RetailPortalBindingResultSchema,
@@ -748,7 +797,36 @@ const bindProfile = defineScopedRoutine({
   routineKey: 'test.price-group-period.native-binding',
   schema: 'commerce_customer_context',
 });
+
+/*
+ * The `before` case runs the Commerce schema as it stood before the current Price Group migration. Its bind
+ * still stages a PENDING_GRANT binding with one permission intent per baseline Permission, and its own
+ * finalize routines settle them; the current schema writes the binding ACTIVE in the bind itself.
+ */
 const NativeIdentitySchema = Schema.String.pipe(Schema.brand('NativeIdentity'));
+const stagedBindProfile = defineScopedRoutine({
+  name: 'mutate_retail_portal_binding',
+  ownerModuleKey: commerceModuleId,
+  parameters: bindProfileParameters,
+  resultSchema: Schema.Struct({
+    outcome: Schema.Literal('BINDING_ACTIVATED'),
+    payload: Schema.Struct({
+      authorizationState: Schema.Literal('PENDING_GRANT'),
+      bindingRef: Schema.Struct({ resourceId: NativeIdentitySchema }),
+      permissionMutations: Schema.Array(
+        Schema.Struct({
+          mutationId: NativeIdentitySchema,
+          operation: Schema.Literal('grant'),
+          permission: RetailPortalPermissionCodeSchema,
+          staged: Schema.Literal(true),
+        }),
+      ),
+      revision: Schema.Int,
+    }),
+  }),
+  routineKey: 'test.price-group-period.staged-native-binding',
+  schema: 'commerce_customer_context',
+});
 const readBindingIntent = defineScopedRoutine({
   name: 'read_retail_portal_profile_binding_permission_mutation',
   ownerModuleKey: commerceModuleId,
@@ -839,6 +917,7 @@ export const preparePriceGroupTemporalRetailAccess = Effect.fn('PriceGroupTempor
     readonly certificate: typeof PriceGroupOwnedDatabaseCertificateSchema.Type;
     readonly effectiveAt: string;
     readonly fixture: Effect.Success<ReturnType<typeof makeLiveOperationFixture>>;
+    readonly mode: (typeof PriceGroupTemporalBootstrapSchema.Type)['mode'];
     readonly profileRef: typeof RetailCustomerProfileRefSchema.Type;
   }) {
     const { effectiveAt, fixture, profileRef } = input;
@@ -851,57 +930,45 @@ export const preparePriceGroupTemporalRetailAccess = Effect.fn('PriceGroupTempor
     const crypto = yield* Crypto.Crypto;
     const invocationId = yield* crypto.randomUUIDv4();
     const namespace = staffAuthenticationNamespaceRegistryLayer([commerceAppId]);
-    const [created] = yield* fixture
-      .prepareOwner(
-        (transaction) =>
-          transaction.invoke(bindProfile, [
-            profileRef.resourceId,
-            fixture.manager.principalId,
-            authBindingId,
-            'native-price-group-read-authority',
-            null,
-            null,
-            'BIND',
-            effectiveAt,
-            'Native PriceGroup read authorization precondition',
-            invocationId,
-            fixture.manager.principalId,
-          ]),
-        'required',
-      )
+    const bindArguments = [
+      profileRef.resourceId,
+      fixture.manager.principalId,
+      authBindingId,
+      'native-price-group-read-authority',
+      null,
+      null,
+      'BIND',
+      effectiveAt,
+      'Native PriceGroup read authorization precondition',
+      invocationId,
+      fixture.manager.principalId,
+    ] as const;
+    if (input.mode === 'current') {
+      const [created] = yield* fixture
+        .prepareOwner((transaction) => transaction.invoke(bindProfile, bindArguments), 'required')
+        .pipe(Effect.provide(namespace));
+      return yield* requireCondition(
+        created?.payload.authorizationOperation === 'grant' && created.payload.authorizationState === 'ACTIVE',
+        'retail-binding-not-active',
+      );
+    }
+    const [staged] = yield* fixture
+      .prepareOwner((transaction) => transaction.invoke(stagedBindProfile, bindArguments), 'required')
       .pipe(Effect.provide(namespace));
-    if (created === undefined || created.payload.authorizationState !== 'PENDING_GRANT') {
+    if (staged === undefined) {
       return yield* failure('retail-binding-not-staged');
     }
-    const binding = created.payload;
+    const binding = staged.payload;
     const intents = binding.permissionMutations;
-    if (intents === undefined) {
-      return yield* failure('retail-binding-intents-missing');
-    }
     yield* requireCondition(
       intents.length === RETAIL_PORTAL_SELF_SERVICE_BASELINE.length &&
         new Set(intents.map((intent) => intent.permission)).size === intents.length &&
         RETAIL_PORTAL_SELF_SERVICE_BASELINE.every((permission) =>
           intents.some((intent) => intent.permission === permission),
-        ) &&
-        intents.every((intent) => intent.operation === 'grant' && intent.staged),
+        ),
       'retail-binding-exact-baseline',
     );
-    const business = Context.get(
-      yield* Layer.build(BusinessPermissionRelationshipMutationLive),
-      BusinessPermissionRelationshipMutation,
-    );
     for (const intent of intents) {
-      const grant = {
-        permission: intent.permission,
-        principal: { principalId: fixture.manager.principalId, tenantId: fixture.tenantId },
-        target: {
-          kind: 'retail_profile' as const,
-          legalEntityId: fixture.legalEntityId,
-          profileId: profileRef.resourceId,
-          tenantId: fixture.tenantId,
-        },
-      };
       yield* fixture
         .prepareOwner(
           (transaction) =>
@@ -912,20 +979,16 @@ export const preparePriceGroupTemporalRetailAccess = Effect.fn('PriceGroupTempor
                   current.payload.actionInvocationId === invocationId &&
                   current.payload.bindingId === binding.bindingRef.resourceId &&
                   current.payload.mutationId === intent.mutationId &&
-                  current.payload.operation === 'grant' &&
                   current.payload.permission === intent.permission &&
                   current.payload.principalId === fixture.manager.principalId &&
-                  current.payload.profileId === profileRef.resourceId &&
-                  current.payload.state === 'PENDING_GRANT',
+                  current.payload.profileId === profileRef.resourceId,
                 'retail-binding-intent-identity',
               );
-              yield* business.mutate({ ...grant, operation: 'grant' });
               yield* transaction.invoke(finalizeBindingIntent, [intent.mutationId, 'grant', 'ACTIVE']);
             }),
           'required',
         )
         .pipe(Effect.provide(namespace));
-      yield* Effect.addFinalizer(() => business.mutate({ ...grant, operation: 'revoke' }).pipe(Effect.orDie));
     }
     const authority = yield* fixture
       .prepareOwner(
@@ -946,13 +1009,11 @@ export const preparePriceGroupTemporalRetailAccess = Effect.fn('PriceGroupTempor
         'required',
       )
       .pipe(Effect.provide(namespace));
-    yield* requireCondition(
+    return yield* requireCondition(
       authority !== undefined &&
-        authority.payload.authorizationState === 'ACTIVE' &&
         authority.payload.pendingCount === 0 &&
         authority.payload.terminalCount === RETAIL_PORTAL_SELF_SERVICE_BASELINE.length,
       'retail-binding-authority-active',
     );
-    return binding;
   },
 );

@@ -3,7 +3,7 @@
 // @ontos-action-slug import-source-assertion
 /* oxlint-disable unicorn/no-array-method-this-argument -- Effect.forEach's curried overload takes concurrency options, not Array#forEach thisArg; expires: 2027-03-31. */
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 
 import {
@@ -88,29 +88,33 @@ export const handleImportSourceAssertion = Effect.fn('ImportSourceAssertionActio
 
 export const importSourceAssertionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.inventory.source-assertion.import',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'source-evidence', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.inventory.import-source-assertion.access.v1',
     },
+    // O70: the facts name the Stock Position the batch asserts against, so the owner overlay can hold
+    // that row and check its on-hand authority; they grant nothing and never reach the gate.
+    accessOwnerFacts: (payload: ImportSourceAssertionPayload) => ({
+      inventoryPositionModuleId: payload.authorizationTargetRef.moduleId,
+      inventoryPositionResourceId: payload.authorizationTargetRef.resourceId,
+      inventoryPositionResourceType: payload.authorizationTargetRef.resourceType,
+      inventoryPositionTenantId: payload.authorizationTargetRef.tenantId,
+    }),
     actionKey: ACTION_KEY,
     auditProfile: 'standard',
-    businessPermission: defineActionBusinessPermission<ImportSourceAssertionPayload>((payload, scope) => ({
-      permission: 'inventory.migration.manage',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: payload.authorizationTargetRef.moduleId,
-          resourceId: payload.authorizationTargetRef.resourceId,
-          resourceType: payload.authorizationTargetRef.resourceType,
-        },
-        tenantId: payload.authorizationTargetRef.tenantId === scope.tenantId ? scope.tenantId : '',
-      },
-    })),
     domainErrorSchema: ImportSourceAssertionErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: MODULE_KEY,
       role: 'action',

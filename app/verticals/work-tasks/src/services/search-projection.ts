@@ -2,12 +2,10 @@ import {
   CoreSearchProjectionDocumentSchema,
   CoreSearchProjectionReplacementSchema,
   CoreSearchProjectionStore,
-  ResourceContainmentRelationshipMutation,
   isVerifiedOutboxWorkerHandlerContext,
-  ownerResourceModuleContainment,
 } from '@app/core-runtime';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
-import { Array as Arr, Effect, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import type { SearchSnapshot } from './search-source.ts';
 import { loadSearchSnapshot } from './search-source.ts';
 import { searchUnavailable } from './search-read.ts';
@@ -34,7 +32,7 @@ export const buildSearchDocuments = Effect.fn('WorkTasks.searchDocuments')(funct
         return Effect.fail(searchUnavailable());
       }
       identities.add(record.ref.resourceId);
-      return Schema.decodeEffect(CoreSearchProjectionDocumentSchema)({
+      const document = {
         aliases: [],
         archived: record.archived,
         facets: [],
@@ -57,7 +55,14 @@ export const buildSearchDocuments = Effect.fn('WorkTasks.searchDocuments')(funct
         ],
         selectedLegalEntityId: record.legalEntityId,
         title: record.title,
-      }).pipe(Effect.mapError(searchUnavailable));
+      };
+      const assignedDocument =
+        record.ownerPrincipalRef === undefined
+          ? document
+          : { ...document, assignedPrincipalId: record.ownerPrincipalRef.principalId };
+      return Schema.decodeEffect(CoreSearchProjectionDocumentSchema)(assignedDocument).pipe(
+        Effect.mapError(searchUnavailable),
+      );
     },
     { concurrency: 1 },
   );
@@ -90,23 +95,8 @@ export const publishSearchSnapshot = Effect.fn('WorkTasks.publishSearch')(functi
     resourceType,
     tenantId: snapshot.tenantId,
   }).pipe(Effect.mapError(searchUnavailable));
-  const containment = yield* ResourceContainmentRelationshipMutation;
-  const relationships = yield* Effect.forEach(
-    documents,
-    (document) => {
-      const relationship = ownerResourceModuleContainment(
-        snapshot.tenantId,
-        document.selectedLegalEntityId ?? '',
-        document.ref,
-      );
-      return relationship === undefined ? Effect.fail(searchUnavailable()) : Effect.succeed(relationship);
-    },
-    { concurrency: 1 },
-  );
-  yield* Effect.forEach(Arr.chunksOf(relationships, 100), (batch) => containment.touch({ relationships: batch }), {
-    concurrency: 1,
-    discard: true,
-  }).pipe(Effect.mapError(searchUnavailable));
+  // Core Search enforces the caller's access list predicate and field projection; the owner writes no
+  // permission-graph containment edge.
   // Publish exactly once. Per-document ingests would expose a partial generation if replace fails.
   // Core replacement owns idempotence, tombstones, rebuild floors and the atomic failure boundary.
   const store = yield* CoreSearchProjectionStore;

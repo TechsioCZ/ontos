@@ -1,5 +1,7 @@
+import path from 'node:path';
 import { Array as EffectArray, Effect, FileSystem, Option, Schema } from 'effect';
 import { SyntaxKind } from '@typescript/native/unstable/ast';
+import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   GOVERNED_HTTP_API_ADDITION_SLOT_END,
   GOVERNED_HTTP_API_ADDITION_SLOT_START,
@@ -15,6 +17,8 @@ import {
   GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
   MODULE_MANIFEST_API_SLOT_END,
   MODULE_MANIFEST_API_SLOT_START,
+  MODULE_MANIFEST_OPERATION_SLOT_START,
+  MODULE_MANIFEST_OPERATION_SLOT_END,
   MODULE_MANIFEST_COMPONENT_SLOT_END,
   MODULE_MANIFEST_COMPONENT_SLOT_START,
   MODULE_MANIFEST_IMPORT_SLOT_END,
@@ -31,6 +35,11 @@ import {
   MODULE_MANIFEST_SHELL_SEARCH_SLOT_START,
   MODULE_REGISTRATION_API_SLOT_END,
   MODULE_REGISTRATION_API_SLOT_START,
+  MODULE_REGISTRATION_IMPORT_SLOT_START,
+  MODULE_REGISTRATION_IMPORT_SLOT_END,
+  MODULE_REGISTRATION_READ_SLOT_START,
+  MODULE_REGISTRATION_READ_SLOT_END,
+  MODULE_REGISTRATION_WORKER_SLOT_START,
   MODULE_REGISTRATION_COMPONENT_SLOT_END,
   MODULE_REGISTRATION_COMPONENT_SLOT_START,
   MODULE_REGISTRATION_REPORT_SLOT_END,
@@ -39,49 +48,52 @@ import {
   MODULE_REGISTRATION_SEARCH_SLOT_START,
   createOrAcceptGeneratedMutationEffect,
   createMutationEffect,
+  DEFAULT_ACCESS_RISK,
   asJsonObject,
   discoverOntosModuleEffect,
-  resolveDeclaredSearchResourceEffect,
-  readCanonicalSearchDescriptors,
-  SearchTenantPermissionSchema,
-  parseScaffoldMetadata,
-  metadataBindings,
-  hasCanonicalMetadataImport,
   ensureUniqueMutationPaths,
   generatedSlotContainsExactEntry,
   insertSortedSlot,
   insertModuleFederationExposure,
   isModuleManifestImport,
+  isModuleRegistrationImport,
+  maskNonCode,
   raiseScaffoldFailure,
   readGeneratedSlotEntries,
+  renderAccessDeclaration,
+  renderAccessTarget,
+  renderReadAuthorizationLiteral,
   requireCanonicalSlug,
+  SCAFFOLD_RECORD_KEY_FIELD,
   replaceGeneratedSlotEntry,
   resolveContainedPath,
   scaffoldFailure,
   stabilizeGovernedHttpApiAdditionSlot,
   toCamelCase,
   toPascalCase,
+  toReadAccessDeclarationKey,
   toTitle,
   tryScaffold,
   updateMutation,
   withExactDependencies,
 } from '../shared.mts';
-import { governedApiBinding, hasValidGovernedHttpCompositionRoot } from '../../generated-governed-http-boundary.mts';
+import { renderLegacyReadPermissionResolver, renderLegacyReadPermissionTarget } from '../read-permission-compat.mts';
 import {
-  governedReadSupport,
-  governedSupportImportOwner,
-  governedSupportImports,
-  isGovernedSupportLayer,
-} from './runtime-support.mts';
+  governedApiBinding,
+  hasRuntimeNamedSourceImport,
+  hasExistingOwnerReadHandlerMount,
+  hasValidGovernedHttpCompositionRoot,
+} from '../../generated-governed-http-boundary.mts';
 import { planActionBoundaryScaffold, renderActionGatewayClient } from '../microvertical-action-boundary/scaffold.mts';
+import { OWNER_APPROVAL_AUTHENTICATION_SUPPORT_IMPORT } from '../microvertical-action-boundary/owner-approval-publication.mts';
 import {
   hasGeneratedOperationGatewayContract,
   hasGeneratedGovernedClientContract,
-  hasGeneratedModuleApiReadContract,
   hasGeneratedModuleApiContract,
+  hasGeneratedModuleApiReadContract,
+  generatedModuleApiEntrypointReference,
   hasNamedImportBinding,
   hasGeneratedProviderApiContract,
-  hasGeneratedProviderReadContract,
   hasGeneratedOperationPrincipalContract,
   hasUniqueExactNamedImport,
   tokenizeGovernedClient,
@@ -173,6 +185,20 @@ const directTokenStringProperty = (tokens: readonly GovernedToken[], property: s
 
 const identityTokenKinds = new Set([SyntaxKind.Identifier, SyntaxKind.StringLiteral]);
 
+const governedPrincipalImport =
+  "import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';";
+const governedRedemptionImport =
+  "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';";
+const governedRedemptionDatabaseImport =
+  "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive, GatewayAssertionRedemptionDatabaseLive } from './auth/gateway-assertion-redemption.ts';";
+const normalizeSupportImport = (candidate: string) => candidate.replaceAll(/\s+/gu, ' ').replaceAll(/,\s*\}/gu, ' }');
+const supportedGovernedImports = new Set([
+  governedPrincipalImport,
+  OWNER_APPROVAL_AUTHENTICATION_SUPPORT_IMPORT,
+  governedRedemptionImport,
+  governedRedemptionDatabaseImport,
+]);
+
 const compositionIdentity = (source: string): string | undefined => {
   for (const pattern of [
     /^import \{ (?<value>[^}]+) \}/u,
@@ -194,6 +220,18 @@ const slotEntryIdentity = (source: string): string | undefined => {
   }
   const tokens = tokenizeGovernedClient(source);
   const [registrationProperty, registrationColon] = tokens;
+  if (
+    tokens.length === 2 &&
+    registrationProperty?.kind === SyntaxKind.Identifier &&
+    registrationColon?.kind === SyntaxKind.CommaToken
+  ) {
+    return `read:${registrationProperty.value}`;
+  }
+  const operationApiKey = directTokenStringProperty(tokens, 'apiKey');
+  const operationKey = directTokenStringProperty(tokens, 'operationKey');
+  if (operationApiKey !== undefined && operationKey !== undefined) {
+    return `operation:${operationApiKey}:${operationKey}`;
+  }
   if (
     registrationColon?.kind === SyntaxKind.ColonToken &&
     registrationProperty !== undefined &&
@@ -354,7 +392,12 @@ const discoverPublicContractPackage = Effect.fn('GovernedContributionScaffold.di
 const renderPublicContractShim = (specifier: string): string =>
   `${generatedHeader(MODULE_API_KIND)}\n// @ontos-public-contract ${specifier}\nexport * from '${specifier}';\n`;
 
-const renderApiContract = (name: string): string => {
+const apiRequestSchema = (config: ReadAuthorizationConfig): string =>
+  (config.accessSelectors ?? []).length === 0
+    ? 'Schema.Struct({})'
+    : `Schema.Struct({\n  ${SCAFFOLD_RECORD_KEY_FIELD}: Schema.String.check(Schema.isUUID())\n})`;
+
+const renderApiContract = (name: string, config: ReadAuthorizationConfig): string => {
   const type = toPascalCase(name);
   const value = `${toPascalCase(name)}Api`;
   return `${generatedHeader(MODULE_API_KIND)}
@@ -362,7 +405,7 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
-export const ${type}RequestSchema = Schema.Struct({});
+export const ${type}RequestSchema = ${apiRequestSchema(config)};
 export type ${type}Request = typeof ${type}RequestSchema.Type;
 export const ${type}ResponseSchema = Schema.Struct({ ok: Schema.Literal(true) });
 
@@ -405,32 +448,58 @@ export const ${value} = HttpApi.make('${value}').add(
 `;
 };
 
-const renderReadAuthorization = (
-  config: Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
+type ReadAuthorizationConfig = Pick<
+  GovernedContributionScaffoldConfig,
+  'accessRisk' | 'accessSelectors' | 'authorization'
+>;
+
+const renderReadAuthorization = (config: ReadAuthorizationConfig): string =>
+  renderReadAuthorizationLiteral(config.authorization);
+
+/** Only a protected read carries a declaration; the two unprotected kinds must not (O62). */
+const renderReadAccessDeclaration = (
+  config: ReadAuthorizationConfig,
+  moduleId: string,
+  slug: string,
+  verb: string,
 ): string => {
-  if (config.authorization === 'context_permission') {
-    if (config.permission === undefined || !/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u.test(config.permission)) {
-      return raiseScaffoldFailure('context_permission authorization requires a stable --permission value');
-    }
-    return `{ kind: 'context_permission', permission: '${config.permission}' }`;
+  if (config.authorization !== 'protected') {
+    return '';
   }
-  if (config.permission !== undefined) {
-    return raiseScaffoldFailure('--permission is valid only for context_permission authorization');
-  }
-  return `{ kind: '${config.authorization}' }`;
+  const selectors = config.accessSelectors ?? [];
+  const declaration = renderAccessDeclaration(
+    {
+      group: slug,
+      key: toReadAccessDeclarationKey(moduleId, slug, verb),
+      kind: 'read',
+      level: 'basic',
+      modes: ['run'],
+      risk: config.accessRisk ?? DEFAULT_ACCESS_RISK,
+      selectors,
+    },
+    '    ',
+  );
+  return selectors.length === 0 ? declaration : `${declaration}${renderAccessTarget(moduleId, '    ')}\n`;
 };
 
-const readAuthorizationExpectation = (
-  config: Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
-) =>
-  config.permission === undefined
-    ? { kind: config.authorization }
-    : { kind: config.authorization, permission: config.permission };
+/** The Shell contribution of a protected read repeats that read's declaration on one manifest line (O62). */
+const renderContributionAccessDeclaration = (
+  config: ReadAuthorizationConfig,
+  moduleId: string,
+  slug: string,
+  verb: string,
+): string => {
+  if (config.authorization !== 'protected') {
+    return '';
+  }
+  const selectors = (config.accessSelectors ?? []).map((selector) => `'${selector}'`).join(', ');
+  return `accessDeclaration: { key: '${toReadAccessDeclarationKey(moduleId, slug, verb)}', kind: 'read', modes: ['run'], placement: { group: '${slug}', level: 'basic' }, risk: '${config.accessRisk ?? DEFAULT_ACCESS_RISK}', selectors: [${selectors}] }, `;
+};
 
 const renderModuleApiRead = (
   vertical: OntosVerticalMetadata,
   name: string,
-  config: Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
+  config: ReadAuthorizationConfig,
 ): string => {
   const type = toPascalCase(name);
   return `${generatedHeader(MODULE_API_KIND)}
@@ -448,7 +517,7 @@ const ${toCamelCase(name)}Entrypoint = defineTenantModuleEntrypoint({
 
 export const ${toCamelCase(name)}Read = defineRead(
   {
-    accessKind: 'detail',
+${renderReadAccessDeclaration(config, vertical.moduleId, name, 'read')}    accessKind: 'detail',
     entrypoint: ${toCamelCase(name)}Entrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',
@@ -457,15 +526,13 @@ export const ${toCamelCase(name)}Read = defineRead(
     inputSchema: ${type}RequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: '${vertical.moduleId}',
-    permissionTarget: 'module',
-    policies: [],
+${renderLegacyReadPermissionTarget(config.authorization)}    policies: [],
     readKey: '${vertical.moduleId}.api.${name}',
     resultSchema: ${type}ResponseSchema,
     schemaVersion: '1',
   },
-  { load: () => Effect.succeed({ evidence: { resultCount: 1 }, result: { ok: true as const } }) },
-  () => Effect.succeed({}),
-  () => ({ kind: 'module', moduleId: '${vertical.moduleId}' }),
+  () => Effect.succeed({ evidence: { resultCount: 1 }, result: { ok: true as const } }),
+  () => Effect.succeed({})${renderLegacyReadPermissionResolver(config.authorization, vertical.moduleId)}
 );
 `;
 };
@@ -554,7 +621,7 @@ const renderProvider = (
   kind: ProviderContributionKind,
   vertical: OntosVerticalMetadata,
   name: string,
-  config: Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
+  config: ReadAuthorizationConfig,
 ): string => {
   const type = toPascalCase(name);
   const role = kind === REPORT_KIND ? REPORT_KIND : 'search';
@@ -584,7 +651,7 @@ const load${type} = (_input: ${inputType}) =>
 
 export const ${toCamelCase(name)}Read = defineRead(
   {
-    accessKind: '${kind === REPORT_KIND ? REPORT_KIND : 'search'}',
+${renderReadAccessDeclaration(config, vertical.moduleId, name, role)}    accessKind: '${kind === REPORT_KIND ? REPORT_KIND : 'search'}',
     entrypoint: ${toCamelCase(name)}Entrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',
@@ -593,23 +660,19 @@ export const ${toCamelCase(name)}Read = defineRead(
     inputSchema: ${inputSchema},
     legalEntityScope: 'required',
     owningModuleKey: '${vertical.moduleId}',
-    permissionTarget: 'module',
-    policies: [],
+${renderLegacyReadPermissionTarget(config.authorization)}    policies: [],
     readKey: '${vertical.moduleId}.${role}.${name}',
     resultSchema: ${resultSchema},
     schemaVersion: '1',
   },
-  {
-    load: (input, context) =>
-      context.services.load(input).pipe(
-        Effect.map((result) => ({
-          evidence: { resultCount: ${resultCount} },
-          result,
-        })),
-      ),
-  },
-  () => Effect.succeed({ load: load${type} }),
-  () => ({ kind: 'module', moduleId: '${vertical.moduleId}' }),
+  (input, context) =>
+    context.services.load(input).pipe(
+      Effect.map((result) => ({
+        evidence: { resultCount: ${resultCount} },
+        result,
+      })),
+    ),
+  () => Effect.succeed({ load: load${type} })${renderLegacyReadPermissionResolver(config.authorization, vertical.moduleId, { resultResolverFollows: kind === SEARCH_PROVIDER_KIND })}
 ${kind === SEARCH_PROVIDER_KIND ? '  (result) => result.map(({ ref }) => ref),\n' : ''});
 `;
 };
@@ -897,21 +960,38 @@ const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.pat
         isGovernedHttpHandlerLayerSlotEntry,
       );
       if (next.includes(GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START)) {
-        const supportOwners = readGeneratedSlotEntries(
+        const supportEntries = readGeneratedSlotEntries(
           next,
           GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
           GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
-        ).map(governedSupportImportOwner);
+        ).map(normalizeSupportImport);
         if (
-          supportOwners.includes(undefined) ||
-          governedSupportImports.some((expected) => supportOwners.filter((owner) => owner === expected).length > 1)
+          supportEntries.some((entry) => !supportedGovernedImports.has(entry)) ||
+          supportEntries.filter(
+            (entry) => entry === governedPrincipalImport || entry === OWNER_APPROVAL_AUTHENTICATION_SUPPORT_IMPORT,
+          ).length > 1 ||
+          supportEntries.filter(
+            (entry) => entry === governedRedemptionImport || entry === governedRedemptionDatabaseImport,
+          ).length > 1
         ) {
           return raiseScaffoldFailure(
             `generated owner slot contains unsupported developer content: ${GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START}`,
           );
         }
-        for (const supportImport of governedSupportImports) {
-          if (supportOwners.includes(supportImport)) {
+        for (const supportImport of [governedPrincipalImport, governedRedemptionImport]) {
+          if (
+            supportEntries.includes(supportImport) ||
+            (supportImport === governedPrincipalImport &&
+              supportEntries.includes(OWNER_APPROVAL_AUTHENTICATION_SUPPORT_IMPORT)) ||
+            (supportImport === governedRedemptionImport &&
+              (supportEntries.includes(governedRedemptionDatabaseImport) ||
+                hasRuntimeNamedSourceImport(
+                  next,
+                  'GovernedGatewayAssertionRedemptionLive',
+                  'GatewayAssertionRedemptionLive',
+                  './auth/gateway-assertion-redemption.ts',
+                )))
+          ) {
             continue;
           }
           next = insertSortedSlotIdempotently(
@@ -919,28 +999,18 @@ const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.pat
             GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
             GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
             supportImport,
-            (candidate) => governedSupportImportOwner(candidate) !== undefined,
+            (candidate) => supportedGovernedImports.has(normalizeSupportImport(candidate)),
           );
         }
       }
       if (next.includes(GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START)) {
-        const supportLayers = readGeneratedSlotEntries(
+        next = insertSortedSlotIdempotently(
           next,
           GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
           GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
+          'GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive, GovernedGatewayAssertionRedemptionLive)),',
+          (candidate) => candidate.startsWith('GovernedReadLayer.provide(') && candidate.endsWith('),'),
         );
-        if (supportLayers.length > 1 || supportLayers.some((entry) => !isGovernedSupportLayer(entry))) {
-          return raiseScaffoldFailure('generated owner slot contains unsupported governed runtime support layers');
-        }
-        if (supportLayers.length === 0) {
-          next = insertSortedSlotIdempotently(
-            next,
-            GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
-            GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
-            governedReadSupport,
-            isGovernedSupportLayer,
-          );
-        }
       }
       return next;
     });
@@ -968,6 +1038,7 @@ interface GovernedContributionSlots {
 
 const manifestOwnerSlots = [
   [MODULE_MANIFEST_API_SLOT_START, MODULE_MANIFEST_API_SLOT_END],
+  [MODULE_MANIFEST_OPERATION_SLOT_START, MODULE_MANIFEST_OPERATION_SLOT_END],
   [MODULE_MANIFEST_COMPONENT_SLOT_START, MODULE_MANIFEST_COMPONENT_SLOT_END],
   [MODULE_MANIFEST_REPORT_SLOT_START, MODULE_MANIFEST_REPORT_SLOT_END],
   [MODULE_MANIFEST_SEARCH_SLOT_START, MODULE_MANIFEST_SEARCH_SLOT_END],
@@ -978,6 +1049,7 @@ const manifestOwnerSlots = [
 
 const registrationOwnerSlots = [
   [MODULE_REGISTRATION_API_SLOT_START, MODULE_REGISTRATION_API_SLOT_END],
+  [MODULE_REGISTRATION_READ_SLOT_START, MODULE_REGISTRATION_READ_SLOT_END],
   [MODULE_REGISTRATION_COMPONENT_SLOT_START, MODULE_REGISTRATION_COMPONENT_SLOT_END],
   [MODULE_REGISTRATION_REPORT_SLOT_START, MODULE_REGISTRATION_REPORT_SLOT_END],
   [MODULE_REGISTRATION_SEARCH_SLOT_START, MODULE_REGISTRATION_SEARCH_SLOT_END],
@@ -988,7 +1060,7 @@ const slotLine = (
   vertical: OntosVerticalMetadata,
   name: string,
   resource: string | undefined,
-  config: Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
+  config: ReadAuthorizationConfig,
 ): GovernedContributionSlots => {
   const key = `${vertical.moduleId}.${name}`;
   if (kind === PUBLIC_COMPONENT_KIND) {
@@ -998,7 +1070,7 @@ const slotLine = (
         [
           MODULE_MANIFEST_SHELL_COMPONENT_SLOT_START,
           MODULE_MANIFEST_SHELL_COMPONENT_SLOT_END,
-          `publicComponentContribution({ componentKey: '${key}', contributionKey: '${vertical.moduleId}.component.${name}', entrypoint: { access: 'read', authorization: ${renderReadAuthorization(config)}, entrypointKey: '${vertical.moduleId}.component.${name}', moduleKey: '${vertical.moduleId}', role: 'public_component', scope: 'tenant' }, expose: './${toPascalCase(name)}' }),`,
+          `publicComponentContribution({ ${renderContributionAccessDeclaration({ ...config, accessSelectors: [] }, vertical.moduleId, name, 'view')}componentKey: '${key}', contributionKey: '${vertical.moduleId}.component.${name}', entrypoint: { access: 'read', authorization: ${renderReadAuthorization(config)}, entrypointKey: '${vertical.moduleId}.component.${name}', moduleKey: '${vertical.moduleId}', role: 'public_component', scope: 'tenant' }, expose: './${toPascalCase(name)}' }),`,
         ],
       ],
       registration: [
@@ -1014,8 +1086,14 @@ const slotLine = (
     return {
       manifest: [
         [MODULE_MANIFEST_API_SLOT_START, MODULE_MANIFEST_API_SLOT_END, `'${name}': ${toPascalCase(name)}Api,`],
+        [
+          MODULE_MANIFEST_OPERATION_SLOT_START,
+          MODULE_MANIFEST_OPERATION_SLOT_END,
+          `{ apiKey: '${name}', operationKey: '${toCamelCase(name)}.execute', registration: ${toCamelCase(name)}Read },`,
+        ],
       ],
       registration: [
+        [MODULE_REGISTRATION_READ_SLOT_START, MODULE_REGISTRATION_READ_SLOT_END, `${toCamelCase(name)}Read,`],
         [
           MODULE_REGISTRATION_API_SLOT_START,
           MODULE_REGISTRATION_API_SLOT_END,
@@ -1027,19 +1105,19 @@ const slotLine = (
   if (resource === undefined) {
     return raiseScaffoldFailure(`--resource is required for ${kind}`);
   }
-  const resourceKey = resource;
+  const resourceKey = `${vertical.moduleId}.${resource}`;
   if (kind === SEARCH_PROVIDER_KIND) {
     return {
       manifest: [
         [
           MODULE_MANIFEST_SEARCH_SLOT_START,
           MODULE_MANIFEST_SEARCH_SLOT_END,
-          `{ accessFiltering: 'resource_permission', key: '${key}', owningModuleId: '${vertical.moduleId}', resourceType: '${resourceKey}' },`,
+          `{ accessFiltering: 'resource_permission', accessKey: '${toReadAccessDeclarationKey(vertical.moduleId, name, 'search')}', key: '${key}', owningModuleId: '${vertical.moduleId}', resourceType: '${resourceKey}' },`,
         ],
         [
           MODULE_MANIFEST_SHELL_SEARCH_SLOT_START,
           MODULE_MANIFEST_SHELL_SEARCH_SLOT_END,
-          `searchContribution({ contributionKey: '${vertical.moduleId}.search.${name}', entrypoint: { access: 'read', authorization: ${renderReadAuthorization(config)}, entrypointKey: '${vertical.moduleId}.search.${name}', moduleKey: '${vertical.moduleId}', role: 'search', scope: 'tenant' }, searchKey: '${key}' }),`,
+          `searchContribution({ ${renderContributionAccessDeclaration(config, vertical.moduleId, name, 'search')}contributionKey: '${vertical.moduleId}.search.${name}', entrypoint: { access: 'read', authorization: ${renderReadAuthorization(config)}, entrypointKey: '${vertical.moduleId}.search.${name}', moduleKey: '${vertical.moduleId}', role: 'search', scope: 'tenant' }, searchKey: '${key}' }),`,
         ],
       ],
       registration: [
@@ -1061,7 +1139,7 @@ const slotLine = (
       [
         MODULE_MANIFEST_SHELL_REPORT_SLOT_START,
         MODULE_MANIFEST_SHELL_REPORT_SLOT_END,
-        `reportContribution({ contributionKey: '${vertical.moduleId}.report.${name}', entrypoint: { access: 'read', authorization: ${renderReadAuthorization(config)}, entrypointKey: '${vertical.moduleId}.report.${name}', moduleKey: '${vertical.moduleId}', role: 'report', scope: 'tenant' }, reportKey: '${key}' }),`,
+        `reportContribution({ ${renderContributionAccessDeclaration(config, vertical.moduleId, name, 'report')}contributionKey: '${vertical.moduleId}.report.${name}', entrypoint: { access: 'read', authorization: ${renderReadAuthorization(config)}, entrypointKey: '${vertical.moduleId}.report.${name}', moduleKey: '${vertical.moduleId}', role: 'report', scope: 'tenant' }, reportKey: '${key}' }),`,
       ],
     ],
     registration: [
@@ -1104,8 +1182,8 @@ const directStringArrayProperty = (source: string, property: string): readonly s
   return index === undefined ? undefined : readStringArray(tokens, index + 3);
 };
 
-// Owners may adapt accessFiltering/tenantPermission and report label/dimensions. These describe
-// presentation and report shape; the generated provider identity and resource ownership stay fixed.
+// Owners may adapt the report label/dimensions and request filters. These describe presentation and
+// report shape; the generated provider identity, access key and resource ownership stay fixed.
 const acceptsAdaptedProviderDescriptor = (start: string, current: string, expected: string): boolean => {
   if (start !== MODULE_MANIFEST_SEARCH_SLOT_START && start !== MODULE_MANIFEST_REPORT_SLOT_START) {
     return false;
@@ -1128,18 +1206,9 @@ const acceptsAdaptedProviderDescriptor = (start: string, current: string, expect
   ) {
     return false;
   }
-  const accessFiltering = directStringProperty(current, 'accessFiltering');
-  if (start === MODULE_MANIFEST_REPORT_SLOT_START) {
-    return (
-      accessFiltering === 'resource_permission' ||
-      (accessFiltering === 'tenant_scope' && directStringProperty(current, 'tenantPermission') !== undefined)
-    );
-  }
-  return (
-    (accessFiltering === 'resource_permission' && directStringProperty(current, 'tenantPermission') === undefined) ||
-    (accessFiltering === 'tenant_scope' &&
-      Schema.is(SearchTenantPermissionSchema)(directStringProperty(current, 'tenantPermission')))
-  );
+  // Search descriptors carry the deciding access key beside the coarse filter; reports carry none.
+  const expectedAccessKey = directStringProperty(expected, 'accessKey');
+  return expectedAccessKey === undefined || directStringProperty(current, 'accessKey') === expectedAccessKey;
 };
 
 const structurallyMatchesGeneratedEntry = (current: string, expected: string): boolean => {
@@ -1324,11 +1393,45 @@ const planOperationBoundary = Effect.fn('GovernedContributionScaffold.planOperat
   },
 );
 
+const readRole = (kind: typeof MODULE_API_KIND | ProviderContributionKind): 'api' | 'report' | 'search' => {
+  if (kind === MODULE_API_KIND) {
+    return 'api';
+  }
+  return kind === REPORT_KIND ? 'report' : 'search';
+};
+
+/** Line-anchored proof: a comment or a string literal never owns a whole line on its own. */
+const hasExactLine = (source: string, text: string): boolean => source.split('\n').some((line) => line.trim() === text);
+
+/**
+ * Codesmith owns these reads, so an existing file is accepted only while its identity, its
+ * classification and the declaration that classifies it are still exactly what the generator
+ * writes; the handler body stays the owner's to implement. Proven here rather than through the
+ * boundary tooling, whose v2 vocabulary lands with the contract-final lane (O62).
+ */
+const acceptsGeneratedRead = (
+  kind: typeof MODULE_API_KIND | ProviderContributionKind,
+  vertical: OntosVerticalMetadata,
+  name: string,
+  config: ReadAuthorizationConfig,
+): ((current: string) => boolean) => {
+  const role = readRole(kind);
+  const identity = `${vertical.moduleId}.${role}.${name}`;
+  return (current) =>
+    current.startsWith(`${generatedHeader(kind)}\n`) &&
+    hasExactLine(current, `export const ${toCamelCase(name)}Read = defineRead(`) &&
+    hasExactLine(current, `authorization: ${renderReadAuthorization(config)},`) &&
+    hasExactLine(current, `entrypointKey: '${identity}',`) &&
+    hasExactLine(current, `readKey: '${identity}',`) &&
+    current.split('\n').some((line) => line.trim().startsWith("legalEntityScope: '")) &&
+    hasExactLine(current, 'accessDeclaration: {') === (config.authorization === 'protected');
+};
+
 const acceptsGovernedArtifact = (
   kind: typeof MODULE_API_KIND | ProviderContributionKind,
   vertical: OntosVerticalMetadata,
   name: string,
-  config: Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
+  config: ReadAuthorizationConfig,
 ): ((current: string) => boolean) => {
   if (kind === MODULE_API_KIND) {
     return (current) =>
@@ -1338,15 +1441,7 @@ const acceptsGovernedArtifact = (
   if (!isProviderContribution(kind)) {
     return () => false;
   }
-  return (current) =>
-    current.startsWith(`${generatedHeader(kind)}\n`) &&
-    hasGeneratedProviderReadContract(
-      current,
-      vertical.moduleId,
-      name,
-      kind === REPORT_KIND ? 'report' : 'search',
-      readAuthorizationExpectation(config),
-    );
+  return acceptsGeneratedRead(kind, vertical, name, config);
 };
 
 const planGovernedTransport = Effect.fn('GovernedContributionScaffold.transport')(function* planGovernedTransport(
@@ -1462,7 +1557,7 @@ const renderGovernedContributionArtifact = (
     return renderPublicComponent(name);
   }
   if (kind === MODULE_API_KIND) {
-    return renderApiContract(name);
+    return renderApiContract(name, config);
   }
   return renderProvider(kind, vertical, name, config);
 };
@@ -1536,96 +1631,304 @@ const patchGovernedManifestImport = Effect.fn('GovernedContributionScaffold.mani
   },
 );
 
-const searchContributionHelper = (decoder: string): string =>
-  `searchContribution = (value: SearchContributionInput) => Result.getOrThrow(Schema.${decoder}(ShellSearchContributionSchema)(value))`;
-
-const searchContributionImportInsertion = (
-  program: ReturnType<typeof parseScaffoldMetadata>,
-  name: string,
+const ensureOperationBindingSlot = (
   source: string,
-): number | null | undefined => {
-  if (hasCanonicalMetadataImport(program, name, source)) {
-    return null;
+  property: string,
+  start: string,
+  end: string,
+  anchor: string,
+  anchorProperty: string,
+): string => {
+  if (source.includes(start) && source.includes(end)) {
+    return source;
   }
-  if (metadataBindings(program, name).length !== 0) {
-    return raiseScaffoldFailure(`search contribution import binding conflicts with ${name}`);
+  const structure = maskNonCode(source);
+  if (source.includes(start) || source.includes(end) || new RegExp(`\\b${property}\\s*:`, 'u').test(structure)) {
+    return raiseScaffoldFailure(`cannot initialize conflicting operation binding slot ${property}`);
   }
-  const compatibleImport = program.body.find(
-    (statement) =>
-      statement.type === 'ImportDeclaration' &&
-      statement.source.value === source &&
-      statement.importKind !== 'type' &&
-      statement.specifiers.some((specifier) => specifier.type === 'ImportSpecifier'),
-  );
-  return compatibleImport?.type === 'ImportDeclaration'
-    ? compatibleImport.specifiers.find((specifier) => specifier.type === 'ImportSpecifier')?.start
-    : undefined;
+  const anchorIndex = source.indexOf(anchor);
+  const prefix = structure.slice(0, anchorIndex);
+  const match = new RegExp(`\\b${anchorProperty}\\s*:\\s*[\\[{]\\s*$`, 'u').exec(prefix);
+  if (anchorIndex === -1 || match === null) {
+    return raiseScaffoldFailure(
+      `cannot initialize operation binding slot ${property} without its generated owner anchor`,
+    );
+  }
+  const insertion = match.index;
+  return `${source.slice(0, insertion)}${property}: [\n${start}\n${end}\n],\n${source.slice(insertion)}`;
 };
 
-const bindSearchContribution = (manifest: string): string => {
-  const program = parseScaffoldMetadata(manifest);
-  const alias = 'type SearchContributionInput = typeof ShellSearchContributionSchema.Encoded;';
-  const additions: string[] = [];
-  const importAdditions = new Map<number, string[]>();
-  for (const [name, source] of [
-    ['ShellSearchContributionSchema', '@app/core-runtime'],
-    ['Result', 'effect'],
-    ['Schema', 'effect'],
-  ] as const) {
-    const insertion = searchContributionImportInsertion(program, name, source);
-    if (insertion === null) {
-      continue;
-    }
-    if (insertion === undefined) {
-      additions.push(`import { ${name} } from '${source}';`);
-    } else {
-      importAdditions.set(insertion, [...(importAdditions.get(insertion) ?? []), name]);
-    }
+const patchOperationReadImport = (source: string, start: string, end: string, name: string): string => {
+  const binding = `${toCamelCase(name)}Read`;
+  const specifier = `./src/api/${name}.read.ts`;
+  if (hasUniqueExactNamedImport(source, binding, specifier)) {
+    return source;
   }
-  const aliases = metadataBindings(program, 'SearchContributionInput');
-  const [existingAlias] = aliases;
-  if (
-    aliases.length > 1 ||
-    (existingAlias !== undefined &&
-      !structurallyMatchesGeneratedEntry(manifest.slice(existingAlias.start, existingAlias.end), alias))
-  ) {
-    return raiseScaffoldFailure('search contribution type binding conflicts with SearchContributionInput');
+  if (hasNamedImportBinding(source, binding)) {
+    return raiseScaffoldFailure(`generated operation Read import conflicts with ${binding}`);
   }
-  if (aliases.length === 0) {
-    additions.push(alias);
-  }
-  const helpers = metadataBindings(program, 'searchContribution');
-  const [existingHelper] = helpers;
-  if (
-    helpers.length > 1 ||
-    (existingHelper !== undefined &&
-      !['decodeUnknownResult', 'decodeResult'].some((decoder) =>
-        structurallyMatchesGeneratedEntry(
-          manifest.slice(existingHelper.start, existingHelper.end),
-          searchContributionHelper(decoder),
-        ),
-      ))
-  ) {
-    return raiseScaffoldFailure('search contribution helper binding conflicts with searchContribution');
-  }
-  if (helpers.length === 0) {
-    additions.push(`const ${searchContributionHelper('decodeUnknownResult')};`);
-  }
-  if (additions.length === 0 && importAdditions.size === 0) {
-    return manifest;
-  }
-  let next = manifest;
-  for (const [offset, names] of [...importAdditions].toSorted(([left], [right]) => right - left)) {
-    next = `${next.slice(0, offset)}${names.join(', ')}, ${next.slice(offset)}`;
-  }
-  const insertion = next.indexOf(MODULE_MANIFEST_IMPORT_SLOT_START);
-  if (insertion === -1) {
-    return raiseScaffoldFailure('generated manifest import slot is missing');
-  }
-  return additions.length === 0
-    ? next
-    : `${next.slice(0, insertion)}${additions.join('\n')}\n\n${next.slice(insertion)}`;
+  return insertSortedSlotIdempotently(
+    source,
+    start,
+    end,
+    `import { ${binding} } from '${specifier}';`,
+    start === MODULE_REGISTRATION_IMPORT_SLOT_START ? isModuleRegistrationImport : isModuleManifestImport,
+  );
 };
+
+const route = (
+  source: string,
+  other: string,
+  start: string,
+  end: string,
+  line: string,
+  ownerSlots: readonly (readonly [string, string])[],
+) => {
+  if (source.includes(start) === other.includes(start)) {
+    return raiseScaffoldFailure(`shared owner slot must have exactly one authoritative source: ${start}`);
+  }
+  return source.includes(start) ? patchSlots(source, [[start, end, line]], ownerSlots) : source;
+};
+
+const patchSharedDeclarationOwners = Effect.fn('GovernedContributionScaffold.sharedOwners')(
+  function* patchSharedDeclarationOwners(
+    vertical: OntosVerticalMetadata,
+    kind: GovernedContributionKind,
+    name: string,
+    slots: GovernedContributionSlots,
+  ) {
+    const owner = vertical.runtimeDeclaration;
+    if (owner === undefined) {
+      return yield* scaffoldFailure('A shared declaration is required for shared owner mutation');
+    }
+    const isApi = kind === MODULE_API_KIND;
+    let declaration = owner.content;
+    let manifest = vertical.manifestContent;
+    let registration = vertical.registrationContent;
+    if (isApi) {
+      declaration = yield* tryScaffold('failed to initialize shared operation slots', () =>
+        ensureOperationBindingSlot(
+          ensureOperationBindingSlot(
+            declaration,
+            'operationContracts',
+            MODULE_MANIFEST_OPERATION_SLOT_START,
+            MODULE_MANIFEST_OPERATION_SLOT_END,
+            MODULE_MANIFEST_API_SLOT_START,
+            'api',
+          ),
+          'reads',
+          MODULE_REGISTRATION_READ_SLOT_START,
+          MODULE_REGISTRATION_READ_SLOT_END,
+          MODULE_REGISTRATION_WORKER_SLOT_START,
+          'outboxWorkers',
+        ),
+      );
+      declaration = yield* patchGovernedManifestImport(declaration, kind, name);
+      declaration = yield* tryScaffold('failed to patch shared operation Read import', () =>
+        patchOperationReadImport(declaration, MODULE_MANIFEST_IMPORT_SLOT_START, MODULE_MANIFEST_IMPORT_SLOT_END, name),
+      );
+    } else {
+      manifest = yield* patchGovernedManifestImport(manifest, kind, name);
+    }
+    for (const [start, end, line] of slots.manifest) {
+      const originalManifest = manifest;
+      const originalDeclaration = declaration;
+      manifest = yield* tryScaffold('failed to patch full UI manifest slot', () =>
+        route(originalManifest, originalDeclaration, start, end, line, manifestOwnerSlots),
+      );
+      declaration = yield* tryScaffold('failed to patch shared manifest slot', () =>
+        route(originalDeclaration, originalManifest, start, end, line, manifestOwnerSlots),
+      );
+    }
+    for (const [start, end, line] of slots.registration) {
+      const originalRegistration = registration;
+      const originalDeclaration = declaration;
+      registration = yield* tryScaffold('failed to patch full UI runtime slot', () =>
+        route(originalRegistration, originalDeclaration, start, end, line, registrationOwnerSlots),
+      );
+      declaration = yield* tryScaffold('failed to patch shared runtime slot', () =>
+        route(originalDeclaration, originalRegistration, start, end, line, registrationOwnerSlots),
+      );
+    }
+    return [
+      updateMutation(owner.path, owner.content, declaration),
+      updateMutation(vertical.manifestPath, vertical.manifestContent, manifest),
+      updateMutation(vertical.registrationPath, vertical.registrationContent, registration),
+    ].filter((mutation) => mutation !== undefined);
+  },
+);
+
+const planGovernedOwnerBindings = Effect.fn('GovernedContributionScaffold.ownerBindings')(
+  function* planGovernedOwnerBindings(
+    vertical: OntosVerticalMetadata,
+    kind: GovernedContributionKind,
+    name: string,
+    resource: string | undefined,
+    config: GovernedContributionScaffoldConfig,
+  ) {
+    const isApi = kind === MODULE_API_KIND;
+    if (vertical.runtimeDeclaration === undefined) {
+      let manifest = yield* patchGovernedManifestImport(vertical.manifestContent, kind, name);
+      let registrationSource = vertical.registrationContent;
+      if (isApi) {
+        manifest = yield* tryScaffold('failed to initialize operation contract bindings', () =>
+          patchOperationReadImport(
+            ensureOperationBindingSlot(
+              manifest,
+              'operationContracts',
+              MODULE_MANIFEST_OPERATION_SLOT_START,
+              MODULE_MANIFEST_OPERATION_SLOT_END,
+              MODULE_MANIFEST_REPORT_SLOT_START,
+              'reports',
+            ),
+            MODULE_MANIFEST_IMPORT_SLOT_START,
+            MODULE_MANIFEST_IMPORT_SLOT_END,
+            name,
+          ),
+        );
+        registrationSource = yield* tryScaffold('failed to initialize runtime Read bindings', () =>
+          patchOperationReadImport(
+            ensureOperationBindingSlot(
+              registrationSource,
+              'reads',
+              MODULE_REGISTRATION_READ_SLOT_START,
+              MODULE_REGISTRATION_READ_SLOT_END,
+              MODULE_REGISTRATION_WORKER_SLOT_START,
+              'outboxWorkers',
+            ),
+            MODULE_REGISTRATION_IMPORT_SLOT_START,
+            MODULE_REGISTRATION_IMPORT_SLOT_END,
+            name,
+          ),
+        );
+      }
+      const slots = yield* tryScaffold('failed to plan governed contribution owner slots', () =>
+        slotLine(kind, vertical, name, resource, config),
+      );
+      const registration = yield* tryScaffold('failed to patch governed contribution slots', () => {
+        manifest = patchSlots(manifest, slots.manifest, manifestOwnerSlots);
+        return patchSlots(registrationSource, slots.registration, registrationOwnerSlots);
+      });
+      const manifestMutation = yield* tryScaffold('failed to update module manifest', () =>
+        updateMutation(vertical.manifestPath, vertical.manifestContent, manifest),
+      );
+      const registrationMutation = yield* tryScaffold('failed to update module registration', () =>
+        updateMutation(vertical.registrationPath, vertical.registrationContent, registration),
+      );
+      return [manifestMutation, registrationMutation].filter((mutation) => mutation !== undefined);
+    }
+    const slots = yield* tryScaffold('failed to plan shared contribution slots', () =>
+      slotLine(kind, vertical, name, resource, config),
+    );
+    return yield* patchSharedDeclarationOwners(vertical, kind, name, slots);
+  },
+);
+
+/**
+ * Publishes an already mounted original Read without rerendering its native contract or client.
+ * Full phase, factory and transport validation remains mandatory in the combined boundary checker.
+ */
+const existingReadOwnerSources = Effect.fn('GovernedContributionScaffold.existingReadOwnerSources')(
+  function* existingReadOwnerSources(workspaceRoot: string, ownerPath: string, rootFile: string, root: string) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const sources = new Map([[rootFile, root]]);
+    const pending = [rootFile];
+    while (pending.length > 0) {
+      const file = pending.pop() ?? rootFile;
+      const source = sources.get(file) ?? '';
+      for (const match of source.matchAll(/\bfrom\s*['"](?<module>\.\.?\/[^'"]+\.ts)['"]/gu)) {
+        const module = match.groups?.['module'] ?? '';
+        const target = path.posix.normalize(path.posix.join(path.posix.dirname(file), module));
+        if (target.startsWith(`${ownerPath}/`) && !sources.has(target)) {
+          const content = yield* fileSystem
+            .readFileString(resolveContainedPath(workspaceRoot, target))
+            .pipe(Effect.mapError((cause) => scaffoldFailure(`failed to read original owner source ${target}`, cause)));
+          sources.set(target, content);
+          pending.push(target);
+        }
+      }
+    }
+    return sources;
+  },
+);
+
+export const planExistingReadPublication = Effect.fn('GovernedContributionScaffold.existingReadPublication')(
+  function* planExistingReadPublication(workspaceRoot: string, config: GovernedContributionScaffoldConfig) {
+    const name = yield* tryScaffold('existing Read name is invalid', () =>
+      requireCanonicalSlug(config.name, MODULE_API_KIND),
+    );
+    const vertical = yield* discoverOntosModuleEffect(workspaceRoot, config.vertical);
+    const fileSystem = yield* FileSystem.FileSystem;
+    const artifactPath = yield* tryScaffold('existing Read path is invalid', () =>
+      resolveContainedPath(vertical.directory, 'src', 'api', `${name}.read.ts`),
+    );
+    const readSource = (file: string) =>
+      fileSystem
+        .readFileString(file)
+        .pipe(
+          Effect.mapError((cause) => scaffoldFailure(`failed to read existing Read publication source ${file}`, cause)),
+        );
+    const { handler, read, server, shared } = yield* Effect.all({
+      handler: readSource(resolveContainedPath(vertical.directory, 'api', 'index.ts')),
+      read: readSource(artifactPath),
+      server: readSource(resolveContainedPath(vertical.directory, 'api', `${name}-read-server.ts`)),
+      shared: readSource(resolveContainedPath(vertical.directory, 'shared', 'api.ts')),
+    });
+    const readName = `${toCamelCase(name)}Read`;
+    const layer = `${toCamelCase(name)}ReadApiLive`;
+    const entrypoint = generatedModuleApiEntrypointReference(read, readName);
+    const imports = [
+      ['defineRead', '@app/core-runtime'],
+      ['defineTenantModuleEntrypoint', '@app/core-runtime'],
+    ] as const;
+    const ownerPath = path.relative(workspaceRoot, vertical.directory).split(path.sep).join('/');
+    const rootFile = `${ownerPath}/api/index.ts`;
+    const sources = yield* existingReadOwnerSources(workspaceRoot, ownerPath, rootFile, handler);
+    const context = { ownerPath, rootFile, sources };
+    const mounted = yield* tryScaffold(
+      'existing Read handler mount is invalid',
+      () =>
+        readGeneratedSlotEntries(
+          handler,
+          GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
+          GOVERNED_HTTP_HANDLER_LAYER_SLOT_END,
+        ).filter((entry) => hasExistingOwnerReadHandlerMount(entry, layer, context)).length === 1,
+    );
+    if (
+      entrypoint === undefined ||
+      !acceptsGeneratedRead(MODULE_API_KIND, vertical, name, config)(read) ||
+      !hasGeneratedModuleApiReadContract(
+        read,
+        vertical.moduleId,
+        name,
+        { kind: config.authorization },
+        entrypoint.name,
+      ) ||
+      !imports.every(([binding, module]) => hasRuntimeNamedSourceImport(read, binding, binding, module)) ||
+      !hasValidGovernedHttpCompositionRoot(shared, handler) ||
+      !hasRuntimeNamedSourceImport(handler, layer, layer, `./${name}-read-server.ts`) ||
+      !hasRuntimeNamedSourceImport(server, readName, readName, `../src/api/${name}.read.ts`) ||
+      !hasRuntimeNamedSourceImport(
+        server,
+        'makeGovernedReadHttpHandler',
+        'makeGovernedReadHttpHandler',
+        '@app/core-runtime/http/governed-read',
+      ) ||
+      !mounted
+    ) {
+      return yield* scaffoldFailure(
+        `existing Read ${vertical.moduleId}.api.${name} is not an original mounted Core registration`,
+      );
+    }
+    const mutations = yield* planGovernedOwnerBindings(vertical, MODULE_API_KIND, name, undefined, config);
+    yield* tryScaffold('existing Read publication mutation paths are invalid', () =>
+      ensureUniqueMutationPaths(mutations),
+    );
+    return { mutations, result: { artifactPath } };
+  },
+);
+
+export const existingReadPublicationGenerator = createCodesmithGenerator(planExistingReadPublication);
 
 export const planGovernedContributionScaffold = Effect.fn('GovernedContributionScaffold.plan')(
   function* planGovernedContributionScaffold(
@@ -1643,19 +1946,6 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
             requireCanonicalSlug(config.resource ?? '', 'resource'),
           );
     const vertical = yield* discoverOntosModuleEffect(workspaceRoot, config.vertical);
-    if (config.resourceType !== undefined && kind !== SEARCH_PROVIDER_KIND) {
-      return yield* scaffoldFailure('--resource-type is supported only for search providers');
-    }
-    if (kind === SEARCH_PROVIDER_KIND && resource === undefined) {
-      return yield* scaffoldFailure('--resource is required for search-provider');
-    }
-    let resourceKey = resource === undefined ? undefined : `${vertical.moduleId}.${resource}`;
-    if (kind === SEARCH_PROVIDER_KIND) {
-      yield* tryScaffold('canonical search descriptors are inconsistent', () =>
-        readCanonicalSearchDescriptors(vertical.manifestContent, vertical.moduleId),
-      );
-      resourceKey = yield* resolveDeclaredSearchResourceEffect(vertical, config.resourceType ?? resourceKey ?? '');
-    }
     const isComponent = kind === PUBLIC_COMPONENT_KIND;
     if (
       isComponent &&
@@ -1701,35 +1991,16 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
       const readMutation = yield* createOrAcceptGeneratedMutationEffect(
         readPath,
         readSource,
-        (current) =>
-          current.startsWith(`${generatedHeader(MODULE_API_KIND)}\n`) &&
-          hasGeneratedModuleApiReadContract(current, vertical.moduleId, name, readAuthorizationExpectation(config)),
+        acceptsGeneratedRead(MODULE_API_KIND, vertical, name, config),
       );
       mutations.push(...EffectArray.getSomes([readMutation]));
     }
     const transport = yield* planGovernedTransport(workspaceRoot, kind, vertical, name, publicContractPackage);
     const { clientPath, serverPath } = transport;
-    mutations.push(...transport.mutations);
-    let manifest = yield* patchGovernedManifestImport(vertical.manifestContent, kind, name);
-    if (kind === SEARCH_PROVIDER_KIND) {
-      manifest = yield* tryScaffold('failed to bind canonical search contribution helper', () =>
-        bindSearchContribution(manifest),
-      );
-    }
-    const slots = yield* tryScaffold('failed to plan governed contribution owner slots', () =>
-      slotLine(kind, vertical, name, resourceKey, config),
+    mutations.push(
+      ...transport.mutations,
+      ...(yield* planGovernedOwnerBindings(vertical, kind, name, resource, config)),
     );
-    const registration = yield* tryScaffold('failed to patch governed contribution slots', () => {
-      manifest = patchSlots(manifest, slots.manifest, manifestOwnerSlots);
-      return patchSlots(vertical.registrationContent, slots.registration, registrationOwnerSlots);
-    });
-    const manifestMutation = yield* tryScaffold('failed to update module manifest', () =>
-      updateMutation(vertical.manifestPath, vertical.manifestContent, manifest),
-    );
-    const registrationMutation = yield* tryScaffold('failed to update module registration', () =>
-      updateMutation(vertical.registrationPath, vertical.registrationContent, registration),
-    );
-    mutations.push(...[manifestMutation, registrationMutation].filter((mutation) => mutation !== undefined));
     if (isComponent) {
       mutations.push(yield* patchFederationExposure(vertical, name));
     }

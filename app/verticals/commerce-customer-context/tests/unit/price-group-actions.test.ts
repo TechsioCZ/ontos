@@ -1,8 +1,9 @@
 /* eslint-disable effect-native/no-manual-tag-comparison -- Contract assertions prove exact generated discriminant serialization; expires: 2027-03-01. */
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionHandler } from '@app/core-runtime/testing/actions';
 import {
   AssignCounterpartyPriceGroupPayloadSchema,
   assignCounterpartyPriceGroupAction,
@@ -112,10 +113,7 @@ describe('customer PriceGroup Actions', () => {
       removeCustomerPriceGroupAction,
       migrateCustomerPriceGroupAction,
     ]) {
-      expect(action.descriptor.entrypoint.authorization).toEqual({
-        kind: 'action_execution',
-        provisioning: 'explicit',
-      });
+      expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
       expect(action.descriptor.auditProfile).toBe('standard');
       expect(action.descriptor.idempotency).toBe('required');
       expect(action.descriptor.legalEntityScope).toBe('required');
@@ -201,11 +199,8 @@ describe('customer PriceGroup Actions', () => {
       removeCounterpartyPriceGroupAction,
       migrateCounterpartyPriceGroupAction,
     ]) {
-      expect(action.descriptor.businessPermission?.kind).toBe('business_permission');
-      expect(action.descriptor.entrypoint.authorization).toEqual({
-        kind: 'action_execution',
-        provisioning: 'explicit',
-      });
+      expect(action.descriptor.accessOwnerFacts).toBeDefined();
+      expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
       expect(action.descriptor.auditProfile).toBe('sensitive');
     }
 
@@ -373,7 +368,7 @@ describe('customer PriceGroup Actions', () => {
         },
       ).pipe(Effect.flip);
       expect(Schema.is(CustomerPriceGroupRetroactiveScheduleRejected)(migrateFailure)).toBe(true);
-    }),
+    }).pipe(Effect.provide(nodeCryptoLayer)),
   );
 
   it.effect('keeps scheduling time separate from Current catalog verification time', () =>

@@ -939,6 +939,9 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../shared-contracts
+      '@noble/hashes':
+        specifier: 2.2.0
+        version: 2.2.0
       effect:
         specifier: 4.0.7
         version: 4.0.7
@@ -982,6 +985,9 @@ importers:
 
   packages/customer-market-retirement-contracts:
     dependencies:
+      '@app/core-runtime':
+        specifier: workspace:*
+        version: link:../core-runtime
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../shared-contracts
@@ -1914,6 +1920,9 @@ importers:
         specifier: 19.3.1
         version: 19.3.1(react@19.3.1)
     devDependencies:
+      '@app/commerce-customer-context':
+        specifier: workspace:*
+        version: link:../commerce-customer-context
       '@app/shell-super-app':
         specifier: workspace:*
         version: link:../../apps/shell-super-app
@@ -3546,6 +3555,9 @@ importers:
       '@app/party-registry-identity-contracts':
         specifier: workspace:*
         version: link:../../packages/party-registry-identity-contracts
+      '@app/shell-super-app':
+        specifier: workspace:*
+        version: link:../../apps/shell-super-app
       '@modern-js/app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-app-tools@3.9.3-ultramodern.18(5e066cc21f12d8d7219f887513d3af32)'
@@ -3682,9 +3694,6 @@ importers:
       '@app/shell-super-app':
         specifier: workspace:*
         version: link:../../apps/shell-super-app
-      '@authzed/authzed-node':
-        specifier: 1.6.1
-        version: 1.6.1(patch_hash=e09ba889807720f24431c2f4e1666486dcb20a184b8b5ee3445c5e4deaeb5396)
       '@effect/tsgo':
         specifier: 0.67.0
         version: 0.67.0

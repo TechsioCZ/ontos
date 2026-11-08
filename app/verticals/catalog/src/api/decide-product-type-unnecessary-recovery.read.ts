@@ -66,10 +66,7 @@ const recoverDecideProductTypeUnnecessary = Effect.fn('DecideProductTypeUnnecess
 
 const decideProductTypeUnnecessaryRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: {
-    kind: 'context_permission',
-    permission: 'commerce.catalog.read.decide-product-type-unnecessary-recovery',
-  },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.decide-product-type-unnecessary-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -77,6 +74,14 @@ const decideProductTypeUnnecessaryRecoveryEntrypoint = defineTenantModuleEntrypo
 
 export const decideProductTypeUnnecessaryRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.decide-product-type-unnecessary-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: decideProductTypeUnnecessaryRecoveryEntrypoint,
     evidencePolicy: {
@@ -86,7 +91,6 @@ export const decideProductTypeUnnecessaryRecoveryRead = defineRead(
     inputSchema: DecideProductTypeUnnecessaryRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.decide-product-type-unnecessary-recovery',
     resultSchema: DecideProductTypeUnnecessaryRecoveryResponseSchema,
@@ -100,5 +104,4 @@ export const decideProductTypeUnnecessaryRecoveryRead = defineRead(
   },
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

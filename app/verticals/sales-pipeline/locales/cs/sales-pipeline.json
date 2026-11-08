@@ -219,6 +219,7 @@
           "bulkChanged": "Změněno {{changed}}, přeskočeno {{skipped}}"
         },
         "errors": {
+          "approvalRequired": "Změna čeká na schválení. Zatím nebyla provedena.",
           "closed": "Příležitost je uzavřená. Její fázi, údaje ani přiřazení již nelze měnit. Uzavřené příležitosti zůstanou při hromadné změně beze změny.",
           "conflict": "Záznam mezitím upravil někdo jiný. Načtěte ho znovu a změnu zopakujte.",
           "forbidden": "K této operaci nemáte oprávnění.",

@@ -1,3 +1,5 @@
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
+import { ShellGovernedReadDefinitions } from '../../api/modules/shell-governed-read-definitions.ts';
 // @rstest-environment node
 import { ContextAccess, ReadRuntime, TenantModuleStateService, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { ContextAccessDecision, ContextAccessService, TenantModuleStateRecord } from '@app/core-runtime';
@@ -12,7 +14,11 @@ import { toGrantRow } from '../../api/oauth-connections/grant-store.ts';
 import { CapturedShellCompositionCatalog } from '../../api/modules/captured-shell-catalog.ts';
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
 import { ShellCompositionFactoryLive } from '../../api/modules/shell-composition.ts';
-import { createShellGovernedReadsLayer, ShellGovernedReads } from '../../api/modules/shell-governed-reads.ts';
+import {
+  createShellGovernedReadsLayer,
+  createShellGovernedReadDefinitionsLayer,
+  ShellGovernedReads,
+} from '../../api/modules/shell-governed-reads.ts';
 import type { ShellGovernedReadsService } from '../../api/modules/shell-governed-reads.ts';
 import {
   makeShellSearch,
@@ -82,10 +88,18 @@ const contract = (moduleId: string, resourceType: string) => ({
         resourceDetails: [],
         search: [
           {
+            accessDeclaration: {
+              key: `${moduleId}.records.read`,
+              kind: 'read',
+              modes: ['run'],
+              placement: { group: 'records', level: 'basic' },
+              risk: 'routine',
+              selectors: [],
+            },
             contributionKey: `${moduleId}.search.contribution`,
             entrypoint: {
               access: 'read',
-              authorization: { kind: 'context_permission', permission: 'module.access' },
+              authorization: { kind: 'protected' },
               entrypointKey: `${moduleId}.search`,
               moduleKey: moduleId,
               role: 'search',
@@ -179,7 +193,7 @@ const fixture = Effect.fn('OAuthHostAdmission.fixture')(function* fixture(
     ],
   };
   const calls: HostCalls = { assertions: [], providers: [], selectors: [], system: 0 };
-  const harness = yield* makeReadTestHarness({
+  let harness = yield* makeReadTestHarness({
     compositionRevision: catalog.composition.revision,
     executeOwnerQuery: neverCalled,
     operationTime: new Date('2026-11-03T15:00:00Z'),
@@ -228,7 +242,7 @@ const fixture = Effect.fn('OAuthHostAdmission.fixture')(function* fixture(
       appId,
       compositionRevision,
       context,
-    }: Parameters<Parameters<typeof createShellGovernedReadsLayer>[1]['issueAssertion']>[0]) => {
+    }: Parameters<Parameters<typeof createShellGovernedReadDefinitionsLayer>[1]['issueAssertion']>[0]) => {
       calls.assertions.push(appId);
       expect(compositionRevision).toBe(catalog.composition.revision);
       expect(context).toEqual({ ...principal, correlationId });
@@ -241,14 +255,30 @@ const fixture = Effect.fn('OAuthHostAdmission.fixture')(function* fixture(
       search: ({ appId }: { readonly appId: string }) => {
         calls.providers.push(appId);
         const { kind: _kind, ...wire } = hit(appId === 'admission-alpha' ? alpha : beta);
-        return Effect.succeed([wire]);
+        return Effect.succeed(controls.recordAllowed ? [wire] : []);
       },
     },
   };
-  const layer = createShellGovernedReadsLayer(gateways, issuer, () => moduleStates).pipe(
+  const gate = makeTestAccessDecision({
+    get answers() {
+      return Object.fromEntries(
+        [alpha, beta].map((moduleId) => [
+          `${moduleId}.records.read`,
+          { outcome: controls.deniedModules.includes(moduleId) ? ('DENIED' as const) : ('ALLOWED' as const) },
+        ]),
+      );
+    },
+  });
+  const hostGate = {
+    ...gate,
+    decideMany: (questions: Parameters<typeof gate.decideMany>[0]) =>
+      gate.decideMany(controls.malformedModuleDecisions ? questions.slice(1) : questions),
+  };
+  const definitionsLayer = createShellGovernedReadDefinitionsLayer(gateways, issuer, () => moduleStates).pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(ReadRuntime, harness.runtime),
+        Layer.succeed(AccessDecisionGate, hostGate),
         Layer.succeed(ContextAccess, access),
         Layer.succeed(TenantModuleStateService, moduleStates),
         ShellCompositionFactoryLive,
@@ -261,6 +291,21 @@ const fixture = Effect.fn('OAuthHostAdmission.fixture')(function* fixture(
         }),
       ),
     ),
+  );
+  const registrations = yield* ShellGovernedReadDefinitions.pipe(Effect.provide(definitionsLayer));
+  harness = yield* makeReadTestHarness({
+    access: 'allowed',
+    applicationComposition: { load: makeCompositionSnapshot(catalog.contracts) },
+    compositionRevision: catalog.composition.revision,
+    executeOwnerQuery: () => Effect.die('Unexpected Shell owner SQL'),
+    expectedDeployment: catalog.composition.shell.deployment,
+    operationTime: new Date('2026-11-03T15:00:00Z'),
+    ownerAuthorizationDecision: ownerAuthorization,
+    scope: { ...principal, correlationId },
+    shellSystemReads: registrations,
+  });
+  const layer = createShellGovernedReadsLayer(registrations).pipe(
+    Layer.provide(Layer.succeed(ReadRuntime, harness.runtime)),
   );
   const reads = yield* ShellGovernedReads.pipe(Effect.provide(layer));
   const run = (overrides: Partial<SearchRequest> = {}) =>
@@ -277,7 +322,7 @@ const fixture = Effect.fn('OAuthHostAdmission.fixture')(function* fixture(
         Effect.provide(staffAuthenticationNamespaceRegistryLayer([catalog.composition.shell.deployment.appId])),
       );
   const direct = makeShellSearch(
-    { catalog: Effect.succeed(catalog), contextAccess: access, ...issuer, moduleStates },
+    { access: hostGate, catalog: Effect.succeed(catalog), ...issuer, moduleStates },
     gateways.search,
   );
   return { calls, catalog, controls, direct, harness, hit, principal, run };

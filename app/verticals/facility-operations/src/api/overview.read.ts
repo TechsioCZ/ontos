@@ -14,6 +14,7 @@ import {
   persistenceService,
 } from '../services/persistence.service.ts';
 import { OverviewRequestSchema, OverviewResponseSchema } from '../../shared/apis/overview.ts';
+import { facilityOperationsOverviewReadDeclaration } from '../../shared/domain/access-declarations.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
@@ -38,7 +39,7 @@ const readFailure = (
 const moduleKey = 'facility.operations';
 const overviewEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'facility.operations.api.overview',
   moduleKey,
   role: 'api',
@@ -61,6 +62,7 @@ const makeOverviewServices: ReadServiceFactory<Services> = (transaction, scope) 
 /** Přehled provozu / Moje agenda: deadlines, incidents, counts and search rows computed from the readable agendas. */
 export const overviewRead = defineRead(
   {
+    accessDeclaration: facilityOperationsOverviewReadDeclaration,
     accessKind: 'list',
     entrypoint: overviewEntrypoint,
     evidencePolicy: {
@@ -70,7 +72,6 @@ export const overviewRead = defineRead(
     inputSchema: OverviewRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'facility.operations.api.overview',
     resultSchema: OverviewResponseSchema,
@@ -90,5 +91,4 @@ export const overviewRead = defineRead(
       ),
   },
   makeOverviewServices,
-  () => ({ kind: 'module', moduleId: moduleKey }),
 );

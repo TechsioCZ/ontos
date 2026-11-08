@@ -35,6 +35,14 @@ const handleBootstrapPlaygroundCatalog = Effect.fn('Merchandise.handleBootstrapP
 
 export const bootstrapPlaygroundCatalogAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'demo.merchandise.bootstrap-playground-catalog.write',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'merchandise', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'demo.merchandise.bootstrap-playground-catalog.access.v1',
@@ -45,7 +53,7 @@ export const bootstrapPlaygroundCatalogAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'demo.merchandise.bootstrap-playground-catalog',
       moduleKey: MODULE,
       role: 'action',
@@ -57,7 +65,6 @@ export const bootstrapPlaygroundCatalogAction = defineAction(
     policies: [],
     resultSchema: BootstrapPlaygroundCatalogResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_identity',
   },
   handleBootstrapPlaygroundCatalog,
   playgroundBootstrapServices,

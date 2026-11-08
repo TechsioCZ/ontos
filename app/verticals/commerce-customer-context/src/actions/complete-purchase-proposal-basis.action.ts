@@ -6,7 +6,7 @@ import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 
 import {
   CompletePurchaseProposalBasisPayloadSchema,
-  CompletePurchaseProposalBasisResultSchema,
+  PurchaseProposalBasisSchema,
   CompletePurchaseProposalBasisRejected,
 } from '../../shared/actions/complete-purchase-proposal-basis.ts';
 import {
@@ -39,6 +39,19 @@ const handleCompletePurchaseProposalBasis = Effect.fn('CompletePurchaseProposalB
 
 export const completePurchaseProposalBasisAction = defineAction(
   {
+    accessActor: {
+      callers: ['pricing'],
+      reason: 'Pricing completes the purchase proposal basis for the buyer it prices',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.customer-context.purchase-proposal-basis.complete',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'purchasing-approval', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.complete-purchase-proposal-basis.access.v1',
@@ -49,10 +62,7 @@ export const completePurchaseProposalBasisAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'explicit',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.complete-purchase-proposal-basis',
       moduleKey: MODULE_KEY,
       role: 'action',
@@ -62,7 +72,7 @@ export const completePurchaseProposalBasisAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: CompletePurchaseProposalBasisPayloadSchema,
     policies: [],
-    resultSchema: CompletePurchaseProposalBasisResultSchema,
+    resultSchema: PurchaseProposalBasisSchema,
     schemaVersion: '1',
   },
   handleCompletePurchaseProposalBasis,

@@ -6,14 +6,13 @@ import type { ModulePageProps, PageData } from '@app/shared-contracts/page-data'
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { Effect, Fiber, Match, Option, Schedule, Schema } from 'effect';
+import { Effect, Match, Option, Schema } from 'effect';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 import csResource from '../../../../../../../locales/cs/commerce-market-catalog.json';
 import enResource from '../../../../../../../locales/en/commerce-market-catalog.json';
 import { MarketHistoryNotFoundProblemSchema } from '../../../../../../../shared/apis/market-history.ts';
-import type { MarketRetirementOutcome } from '../../../../../../../shared/domain/market-retirement-intent.ts';
-import type { MarketLifecycle } from '../../../../../../../shared/market-contracts.ts';
+import type { MarketLifecycleResult } from '../../../../../../../shared/action-contracts.ts';
 import { AssortmentSection } from '../../../../../../market-admin/assortment-section.tsx';
 import { definitionPeriodText } from '../../../../../../market-admin/definition-text.ts';
 import { EditMarketDialog, LifecycleDialog, RetireDialog } from '../../../../../../market-admin/market-dialogs.tsx';
@@ -39,7 +38,6 @@ import {
 import type { MarketInput } from '../../../../../../market-admin/page-data.ts';
 import { RevisionsSection } from '../../../../../../market-admin/revisions-section.tsx';
 import { StorefrontsSection } from '../../../../../../market-admin/storefronts-section.tsx';
-import { browserRuntime } from '../../../../../../runtime/browser-effect-runtime.ts';
 import { UltramodernRouteHead } from '../../../../../ultramodern-route-head';
 import '../../../../../index.css';
 
@@ -51,9 +49,6 @@ const commerceMarketCatalogI18nResources = {
 export const MarketDetailPageRouteParams = Schema.Struct({
   marketId: Schema.String.pipe(Schema.brand('MarketDetailPageMarketIdRouteParameter')),
 });
-
-/** A pending retirement is followed every few seconds until the owner worker completes or fails it. */
-const RETIREMENT_POLL = Schedule.spaced('4 seconds');
 
 /** The market of the route for the signed-in company; none outside the Shell or for an id no market can have. */
 const marketInputOf = (context: ModulePageProps['context'], marketId: string): Option.Option<MarketInput> =>
@@ -90,32 +85,21 @@ const useSnapshot = <I, A, E>(store: Pick<PageData<I, A, E>, 'snapshot' | 'subsc
 const NOT_FOUND = 'detail.notFound';
 const isNotFound = Schema.is(MarketHistoryNotFoundProblemSchema);
 
-/** The durable retirement of the market as one status line. */
-const RetirementStatus = ({
-  lifecycle,
-  retirement,
-}: {
-  readonly lifecycle: MarketLifecycle;
-  readonly retirement: RetirementView;
-}) => {
+/** The newest native retirement admission of the market as one status line. */
+const RetirementStatus = ({ retirement }: { readonly retirement: RetirementView }) => {
   const { text } = useMarketText();
   return Match.value(retirement).pipe(
     Match.discriminatorsExhaustive('kind')({
-      completed: () => (
+      aborted: () => null,
+      committed: () => (
         <StatusText showIcon status="success">
           {text('detail.retire.completed')}
         </StatusText>
       ),
-      failed: ({ reason }) =>
-        lifecycle === 'RETIRED' ? null : (
-          <StatusText showIcon status="warning">
-            {text('detail.retire.failed', { reason: text(`detail.retire.reasons.${reason}`) })}
-          </StatusText>
-        ),
       none: () => null,
-      pending: ({ stage }) => (
+      pending: () => (
         <StatusText showIcon status="default">
-          {text('detail.retire.pending', { stage: text(`detail.retire.stage.${stage}`) })}
+          {text('detail.retire.pending')}
         </StatusText>
       ),
     }),
@@ -235,20 +219,6 @@ const MarketDetailContent = ({ legalEntityId, marketId, tenantId }: MarketInput)
       marketCatalogData.refresh(legalEntityId),
       marketSettingsData.refresh(legalEntityId),
     );
-  // Follow a durable retirement (also one found again after a reload) until it completes or fails.
-  useEffect(() => {
-    const market = { legalEntityId, marketId, tenantId };
-    const fiber = browserRuntime.runFork(
-      pending ? Effect.repeat(administrationData.refresh(market), RETIREMENT_POLL) : Effect.void,
-    );
-    return () => {
-      browserRuntime.runFork(Fiber.interrupt(fiber));
-      if (pending) {
-        // The retirement settled: the lifecycle and the revisions changed.
-        refreshAll(marketHistoryData.refresh(market), marketCatalogData.refresh(legalEntityId));
-      }
-    };
-  }, [pending, legalEntityId, marketId, tenantId]);
   const handleBack = () => {
     void navigate({ to: `/${language}/prodej/eshopy` });
   };
@@ -256,6 +226,11 @@ const MarketDetailContent = ({ legalEntityId, marketId, tenantId }: MarketInput)
     setDialog(null);
     toaster.create({ title: message, type: 'success' });
     reloadMarket();
+  };
+  /** A change was parked for approval: nothing changed yet, so nothing is reloaded. */
+  const awaitingApproval = () => {
+    setDialog(null);
+    toaster.create({ title: text('approvalRequired'), type: 'warning' });
   };
   const closeDialog = () => setDialog(null);
   const backButton = (
@@ -287,12 +262,9 @@ const MarketDetailContent = ({ legalEntityId, marketId, tenantId }: MarketInput)
   }
   const canAdminister = state?.canAdminister === true && !pending;
   const associations = catalog.state === 'ready' ? marketAssociations(catalog.value.associations, marketId) : [];
-  const handleRequested = (outcome: MarketRetirementOutcome) => {
+  const handleRequested = (_result: MarketLifecycleResult) => {
     setDialog(null);
     toaster.create({ title: text('detail.retire.requested', { code: market.marketCode }), type: 'info' });
-    administrationData.update(input, (current) =>
-      current.market === undefined ? current : { ...current, market: { ...current.market, retirement: outcome } },
-    );
     reloadMarket();
   };
   return (
@@ -310,30 +282,48 @@ const MarketDetailContent = ({ legalEntityId, marketId, tenantId }: MarketInput)
         meta={<LifecycleBadge lifecycle={market.lifecycle} />}
         title={market.marketCode}
       />
-      <RetirementStatus lifecycle={market.lifecycle} retirement={retirement} />
+      <RetirementStatus retirement={retirement} />
       <DefinitionCard inForce={catalogMarket !== undefined} market={market} />
       <StorefrontsSection
         associations={associations}
         canAdminister={canAdminister}
         market={market}
+        onAwaitingApproval={awaitingApproval}
         onDone={done}
         storefronts={storefronts.state === 'ready' ? storefronts.value.applications : []}
       />
       <AssortmentSection
         input={input}
         market={market}
+        onAwaitingApproval={awaitingApproval}
         onDone={done}
         records={settings.state === 'ready' ? settings.value : undefined}
         recordsFailed={settings.state === 'failed'}
         refreshSettings={marketSettingsData.refresh(legalEntityId)}
       />
       <RevisionsSection currentRevision={market.revision} rows={revisionRows(history.value)} />
-      {dialog === 'edit' && <EditMarketDialog market={market} onClose={closeDialog} onDone={done} />}
+      {dialog === 'edit' && (
+        <EditMarketDialog market={market} onAwaitingApproval={awaitingApproval} onClose={closeDialog} onDone={done} />
+      )}
       {(dialog === 'activate' || dialog === 'suspend') && state !== undefined && (
-        <LifecycleDialog action={dialog} market={market} onClose={closeDialog} onDone={done} state={state} />
+        <LifecycleDialog
+          action={dialog}
+          market={market}
+          onAwaitingApproval={awaitingApproval}
+          onClose={closeDialog}
+          onDone={done}
+          state={state}
+        />
       )}
       {dialog === 'retire' && state !== undefined && (
-        <RetireDialog market={market} onClose={closeDialog} onDone={done} onRequested={handleRequested} state={state} />
+        <RetireDialog
+          market={market}
+          onAwaitingApproval={awaitingApproval}
+          onClose={closeDialog}
+          onDone={done}
+          onRequested={handleRequested}
+          state={state}
+        />
       )}
       <Toaster />
     </div>

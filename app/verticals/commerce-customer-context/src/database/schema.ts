@@ -87,7 +87,6 @@ export const COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY = [
   'profile_reconciliation_owner_outcomes',
   'privacy_measure_executions',
   'retail_customer_profiles',
-  'retail_portal_profile_binding_permission_mutations',
   'retail_portal_profile_binding_history',
   'retail_portal_profile_bindings',
   'saved_addresses',
@@ -317,6 +316,8 @@ export const portalEnrollmentAttempts = commerceCustomerContextSchema.table.with
     leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
     leaseOwner: text('lease_owner'),
     leaseToken: uuid('lease_token'),
+    /** The Action invocation that created the Attempt; later owner calls act for the subject it ran under. */
+    originatorActionInvocationId: uuid('originator_action_invocation_id'),
     portalEnrollmentAttemptId: uuid('portal_enrollment_attempt_id').defaultRandom().primaryKey(),
     providerSubjectId: text('provider_subject_id'),
     /** Immutable, credential-free registration intent; final contacts belong to Party Registry. */
@@ -685,78 +686,12 @@ export const retailPortalProfileBindings = commerceCustomerContextSchema.table.w
     ),
     check(
       'ccc_portal_bindings_authorization_state_ck',
-      sql`${table.authorizationState} in ('ACTIVE', 'REVOKED', 'PENDING_GRANT', 'PENDING_REVOKE', 'RECONCILIATION_REQUIRED')`,
+      sql`(${table.lifecycle} = 'ACTIVE' and ${table.authorizationOperation} = 'grant' and ${table.authorizationState} = 'ACTIVE') or (${table.lifecycle} = 'REVOKED' and ${table.authorizationOperation} = 'revoke' and ${table.authorizationState} = 'REVOKED')`,
     ),
     positiveRevision('ccc_portal_bindings_revision_ck', table.revision),
     trimmed('ccc_portal_bindings_enrollment_evidence_ck', table.enrollmentEvidenceRef),
     optionalTrimmed('ccc_portal_bindings_reason_ck', table.reason),
     ...scopedPolicies('ccc_portal_bindings_scope', table),
-  ],
-);
-
-/** One immutable, idempotent authorization intent per binding Permission transition. */
-const retailPortalProfileBindingPermissionMutations = commerceCustomerContextSchema.table.withRLS(
-  'retail_portal_profile_binding_permission_mutations',
-  {
-    retailPortalProfileBindingPermissionMutationId: uuid('retail_portal_profile_binding_permission_mutation_id')
-      .defaultRandom()
-      .primaryKey(),
-    ...scopeColumns(),
-    finalizedAt: timestamp('finalized_at', { withTimezone: true }),
-    operation: text('operation').notNull(),
-    permissionCode: text('permission_code').notNull(),
-    principalId: uuid('principal_id').notNull(),
-    retailCustomerProfileId: uuid('retail_customer_profile_id').notNull(),
-    retailPortalProfileBindingId: uuid('retail_portal_profile_binding_id').notNull(),
-    revision: integer('revision').default(1).notNull(),
-    state: text('state').notNull(),
-    ...operationAttribution(),
-  },
-  (table) => [
-    scopeIdentity(
-      'ccc_portal_binding_permission_mutations_scope_id_uk',
-      table,
-      table.retailPortalProfileBindingPermissionMutationId,
-    ),
-    unique('ccc_portal_binding_permission_mutations_idempotency_uk').on(
-      table.tenantId,
-      table.legalEntityId,
-      table.retailPortalProfileBindingId,
-      table.actionInvocationId,
-      table.operation,
-      table.permissionCode,
-    ),
-    foreignKey({
-      columns: [table.tenantId, table.legalEntityId, table.retailPortalProfileBindingId],
-      foreignColumns: [
-        retailPortalProfileBindings.tenantId,
-        retailPortalProfileBindings.legalEntityId,
-        retailPortalProfileBindings.retailPortalProfileBindingId,
-      ],
-      name: 'ccc_portal_binding_permission_mutations_binding_fk',
-    }).onDelete('restrict'),
-    foreignKey({
-      columns: [table.tenantId, table.legalEntityId, table.retailCustomerProfileId],
-      foreignColumns: [
-        retailCustomerProfiles.tenantId,
-        retailCustomerProfiles.legalEntityId,
-        retailCustomerProfiles.retailCustomerProfileId,
-      ],
-      name: 'ccc_portal_binding_permission_mutations_profile_fk',
-    }).onDelete('restrict'),
-    check('ccc_portal_binding_permission_mutations_operation_ck', sql`${table.operation} in ('grant', 'revoke')`),
-    check(
-      'ccc_portal_binding_permission_mutations_state_ck',
-      sql`${table.state} in ('PENDING_GRANT', 'PENDING_REVOKE', 'ACTIVE', 'REVOKED', 'RECONCILIATION_REQUIRED') and ((${table.operation} = 'grant' and ${table.state} in ('PENDING_GRANT', 'ACTIVE', 'RECONCILIATION_REQUIRED')) or (${table.operation} = 'revoke' and ${table.state} in ('PENDING_REVOKE', 'REVOKED', 'RECONCILIATION_REQUIRED')))`,
-    ),
-    positiveRevision('ccc_portal_binding_permission_mutations_revision_ck', table.revision),
-    check(
-      'ccc_portal_binding_permission_mutations_finalized_ck',
-      sql`(${table.state} in ('ACTIVE', 'REVOKED') and ${table.finalizedAt} is not null) or (${table.state} not in ('ACTIVE', 'REVOKED') and ${table.finalizedAt} is null)`,
-    ),
-    trimmed('ccc_portal_binding_permission_mutations_permission_ck', table.permissionCode),
-    optionalTrimmed('ccc_portal_binding_permission_mutations_reason_ck', table.reason),
-    ...scopedPolicies('ccc_portal_binding_permission_mutations_scope', table),
   ],
 );
 
@@ -1582,6 +1517,14 @@ export const marketRetirementReservations = commerceCustomerContextSchema.table.
   'market_retirement_reservations',
   {
     marketRetirementReservationId: uuid('market_retirement_reservation_id').defaultRandom().primaryKey(),
+    // Legacy reservations remain unbound; never infer their original actor from the last finisher.
+    compositionRevision: text('composition_revision'),
+    originalActorPrincipalId: uuid('original_actor_principal_id'),
+    originalAssessment: jsonb('original_assessment').$type<DatabaseJsonObject>(),
+    originalReason: text('original_reason'),
+    originalReservationVersion: integer('original_reservation_version'),
+    releaseGuardHash: text('release_guard_hash'),
+    sourceActionInvocationId: uuid('source_action_invocation_id'),
     ...scopeColumns(),
     assessmentDigest: text('assessment_digest').notNull(),
     evaluatedAt: timestamp('evaluated_at', { withTimezone: true }).notNull(),
@@ -1598,6 +1541,27 @@ export const marketRetirementReservations = commerceCustomerContextSchema.table.
   },
   (table) => [
     scopeIdentity('ccc_market_retirement_reservations_scope_id_uk', table, table.marketRetirementReservationId),
+    uniqueIndex('ccc_market_retirement_reservations_source_uk')
+      .on(table.tenantId, table.legalEntityId, table.originalActorPrincipalId, table.sourceActionInvocationId)
+      .where(sql`${table.sourceActionInvocationId} is not null`),
+    check(
+      'ccc_market_retirement_reservations_source_ck',
+      sql`(
+      ${table.sourceActionInvocationId} is null and ${table.originalActorPrincipalId} is null
+      and ${table.originalReason} is null and ${table.compositionRevision} is null
+      and ${table.releaseGuardHash} is null and ${table.originalReservationVersion} is null
+      and ${table.originalAssessment} is null
+    ) or (
+      ${table.sourceActionInvocationId} is not null and ${table.originalActorPrincipalId} is not null
+      and ${table.originalReason} is not null and length(btrim(${table.originalReason})) between 1 and 500
+      and ${table.originalReason} = btrim(${table.originalReason})
+      and ${table.compositionRevision} is not null and ${table.compositionRevision} ~ '^[a-f0-9]{64}$'
+      and ${table.releaseGuardHash} is not null and ${table.releaseGuardHash} ~ '^[a-f0-9]{64}$'
+      and ${table.originalReservationVersion} is not null and ${table.originalReservationVersion} = 1
+      and ${table.originalAssessment} is not null and jsonb_typeof(${table.originalAssessment}) = 'object'
+      and (${table.originalAssessment}->>'outcome') is not distinct from 'VERIFIED'
+    )`,
+    ),
     unique('ccc_market_retirement_reservations_action_uk').on(
       table.tenantId,
       table.legalEntityId,
@@ -1758,7 +1722,7 @@ const counterpartyCommerceAccessGrants = commerceCustomerContextSchema.table.wit
         table.permissionCode,
         sql`coalesce(${table.storefrontResourceId}, '')`,
       )
-      .where(sql`${table.lifecycle} in ('PENDING_GRANT', 'ACTIVE', 'PENDING_REVOKE', 'RECONCILIATION_REQUIRED')`),
+      .where(sql`${table.lifecycle} = 'ACTIVE'`),
     foreignKey({
       columns: [table.tenantId, table.counterpartyPurchasingProfileId],
       foreignColumns: [
@@ -1771,7 +1735,7 @@ const counterpartyCommerceAccessGrants = commerceCustomerContextSchema.table.wit
     optionalTrimmed('ccc_access_grants_storefront_ck', table.storefrontResourceId),
     check(
       'ccc_access_grants_lifecycle_ck',
-      sql`${table.lifecycle} in ('PENDING_GRANT', 'ACTIVE', 'PENDING_REVOKE', 'REVOKED', 'RECONCILIATION_REQUIRED') and ((${table.lifecycle} = 'REVOKED' and ${table.revokedAt} is not null) or (${table.lifecycle} <> 'REVOKED' and ${table.revokedAt} is null))`,
+      sql`(${table.lifecycle} = 'ACTIVE' and ${table.revokedAt} is null) or (${table.lifecycle} = 'REVOKED' and ${table.revokedAt} is not null)`,
     ),
     positiveRevision('ccc_access_grants_revision_ck', table.revision),
     optionalTrimmed('ccc_access_grants_reason_ck', table.reason),
@@ -1831,11 +1795,11 @@ const counterpartyAccessInvitations = commerceCustomerContextSchema.table.withRL
     ),
     check(
       'ccc_access_invitations_lifecycle_ck',
-      sql`${table.lifecycle} in ('PENDING', 'CLAIMING', 'CLAIMED', 'REVOKED', 'EXPIRED', 'RECONCILIATION_REQUIRED')`,
+      sql`${table.lifecycle} in ('PENDING', 'CLAIMING', 'CLAIMED', 'REVOKED', 'EXPIRED')`,
     ),
     check(
       'ccc_access_invitations_claim_ck',
-      sql`(${table.lifecycle} = 'CLAIMED' and ${table.claimedByPrincipalId} is not null and ${table.claimedAt} is not null) or (${table.lifecycle} in ('CLAIMING', 'RECONCILIATION_REQUIRED') and ${table.claimedByPrincipalId} is not null and ${table.claimedAt} is null) or (${table.lifecycle} in ('PENDING', 'EXPIRED') and ${table.claimedByPrincipalId} is null and ${table.claimedAt} is null) or (${table.lifecycle} = 'REVOKED' and ${table.claimedAt} is null)`,
+      sql`(${table.lifecycle} = 'CLAIMED' and ${table.claimedByPrincipalId} is not null and ${table.claimedAt} is not null) or (${table.lifecycle} = 'CLAIMING' and ${table.claimedByPrincipalId} is not null and ${table.claimedAt} is null) or (${table.lifecycle} in ('PENDING', 'EXPIRED') and ${table.claimedByPrincipalId} is null and ${table.claimedAt} is null) or (${table.lifecycle} = 'REVOKED' and ${table.claimedAt} is null)`,
     ),
     check(
       'ccc_access_invitations_revocation_ck',
@@ -2834,7 +2798,6 @@ const commerceCustomerContextDatabaseSchema = {
   purchaseProposalRevisions,
   retailCustomerProfiles,
   retailPortalProfileBindingHistory,
-  retailPortalProfileBindingPermissionMutations,
   retailPortalProfileBindings,
   savedAddresses,
 } as const;
@@ -2889,7 +2852,6 @@ export const COMMERCE_CUSTOMER_CONTEXT_TABLES = [
   profileReconciliationOwnerOutcomes,
   privacyMeasureExecutions,
   retailCustomerProfiles,
-  retailPortalProfileBindingPermissionMutations,
   retailPortalProfileBindingHistory,
   retailPortalProfileBindings,
   savedAddresses,

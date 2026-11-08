@@ -154,13 +154,13 @@ const IdentifierList = ({ identifiers }: { readonly identifiers: readonly PartyI
       {identifiers.map((identifier) => (
         <li
           className="flex flex-col gap-50"
-          key={`${identifier.identifierType}:${identifier.value}:${DateTime.formatIso(identifier.validFrom)}`}
+          key={`${identifier.identifierType}:${identifier.value ?? 'withheld'}:${DateTime.formatIso(identifier.validFrom)}`}
         >
           <p className="font-medium">
-            {t(`${PARTY_IDENTITY_KEY}.identifierTypes.${identifier.identifierType}`)}: {identifier.value}
+            {t(`${PARTY_IDENTITY_KEY}.identifierTypes.${identifier.identifierType}`)}:{' '}
+            {identifier.value ?? t(`${PARTY_IDENTITY_KEY}.withheld`)}
           </p>
           <p className="text-fg-secondary text-sm">
-            {t(`${PARTY_IDENTITY_KEY}.verification.${identifier.verification}`)} ·{' '}
             {t(`${PARTY_IDENTITY_KEY}.identifierStates.${identifier.state}`)} ·{' '}
             {t(`${PARTY_IDENTITY_KEY}.${identifier.current ? 'current' : 'ended'}`)}
           </p>
@@ -188,7 +188,6 @@ const ContactList = ({ contacts }: { readonly contacts: readonly PartyContactVie
             : t(`${PARTY_IDENTITY_KEY}.phoneExtension`, { extension: contact.extension });
         const extensionText = extensionLabel === undefined ? '' : ` · ${extensionLabel}`;
         const preferredLabel = contact.preferred ? t(`${PARTY_IDENTITY_KEY}.preferred`) : undefined;
-        const preferredText = preferredLabel === undefined ? '' : ` · ${preferredLabel}`;
         return (
           <li className="flex flex-col gap-50" key={`${contact.contactType}:${contact.displayValue}`}>
             <p className="font-medium">{t(`${PARTY_IDENTITY_KEY}.contactTypes.${contact.contactType}`)}</p>
@@ -202,10 +201,7 @@ const ContactList = ({ contacts }: { readonly contacts: readonly PartyContactVie
                 {contact.purposes.map((purpose) => t(`${PARTY_IDENTITY_KEY}.addressPurposes.${purpose}`)).join(', ')}
               </p>
             )}
-            <p className="text-fg-secondary text-sm">
-              {t(`${PARTY_IDENTITY_KEY}.verification.${contact.verification}`)}
-              {preferredText}
-            </p>
+            {preferredLabel === undefined ? null : <p className="text-fg-secondary text-sm">{preferredLabel}</p>}
           </li>
         );
       })}

@@ -1,7 +1,6 @@
 import { PgClient } from '@effect/sql-pg';
 import { Reactivity } from 'effect/reactivity';
-import { createHash, randomUUID } from 'node:crypto';
-import { rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
   FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
@@ -14,19 +13,15 @@ import {
   loadDatabaseConnectionPair,
   SHELL_GATEWAY_ISSUER_IDENTITY,
   ActiveApplicationCompositionSnapshotSchema,
-  BusinessPermissionRelationshipMutation,
-  BusinessPermissionRelationshipMutationLive,
   ContextAccessLive,
+  DatabaseIdentityEnrollmentContext,
   OntosModuleDeploymentContractSchema,
-  canonicalizeApplicationComposition,
   defineScopedRoutine,
-  validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeGatewayScopeGrantRegistrar, makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import {
   createPartyWithAuthorization,
   addContactPointWithAuthorization,
@@ -57,10 +52,6 @@ import { HttpServer, HttpServerResponse } from 'effect/http';
 import { assert, expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { RetailPortalBindingResultSchema } from '../../shared/actions/bind-retail-portal-profile.ts';
-import {
-  RETAIL_PORTAL_SELF_SERVICE_BASELINE,
-  RetailPortalPermissionCodeSchema,
-} from '../../shared/domain/profile-contracts.ts';
 import { AddSavedAddressPayloadSchema, UpdateSavedAddressPayloadSchema } from '../../shared/domain/address-actions.ts';
 import {
   AddressBookDomainErrorSchema,
@@ -79,7 +70,6 @@ import {
   profileReactivationEligibilityEvaluatorFactoryLive,
   profileReconfirmationPolicyUnavailableLive,
 } from '../../src/integrations/profile-reactivation-eligibility.ts';
-import { profileRetailPermissionReaderFactoryLive } from '../../src/integrations/retail-permission-reader.ts';
 import { profileCounterpartyRoleEligibilityResolverFactoryLive } from '../../src/profile-counterparty-role-eligibility.ts';
 import { partyRegistryGuestResolverFactoryLive } from '../../src/integrations/party-registry-guest-resolver.ts';
 import {
@@ -89,17 +79,23 @@ import {
 import { RetailPartyDetailExecutor } from '../../src/integrations/retail-party-detail-executor.ts';
 import { commerceCustomerContextOwnerAuthorizationOverlayLive } from '../../src/persistence/owner-authorization-overlay.ts';
 import { addressReadServicesForTransaction } from '../../src/persistence/address-persistence.ts';
+import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import {
+  describePriceGroupTemporalOwner,
+  makePriceGroupTemporalComposition,
+} from '../support/price-group-temporal-protocol.ts';
 
 const appRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT)),
   Layer.provideMerge(NodeCrypto.layer),
 );
 const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const MarkerSchema = Schema.Struct({ appId: Schema.Literal('party-registry'), buildMarker: Schema.String });
 const ReadySchema = Schema.Struct({ marker: MarkerSchema, port: Schema.Number, type: Schema.Literal('ready') });
-const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 
 const bindProfile = defineScopedRoutine({
   name: 'mutate_retail_portal_binding',
@@ -126,173 +122,24 @@ const bindProfile = defineScopedRoutine({
   routineKey: 'test.native-binding',
   schema: 'commerce_customer_context',
 });
-const NativeIdentitySchema = Schema.String.pipe(Schema.brand('NativeIdentity'));
-const readBindingIntent = defineScopedRoutine({
-  name: 'read_retail_portal_profile_binding_permission_mutation',
-  ownerModuleKey: 'commerce.customer-context',
-  parameters: [
-    { source: 'tenantId', type: 'uuid' },
-    { source: 'legalEntityId', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-  ] as const,
-  resultSchema: Schema.Struct({
-    outcome: Schema.Literal('AUTHORIZATION_AVAILABLE'),
-    payload: Schema.Struct({
-      actionInvocationId: NativeIdentitySchema,
-      bindingId: NativeIdentitySchema,
-      mutationId: NativeIdentitySchema,
-      operation: Schema.Literal('grant'),
-      permission: RetailPortalPermissionCodeSchema,
-      principalId: NativeIdentitySchema,
-      profileId: NativeIdentitySchema,
-      state: Schema.Literal('PENDING_GRANT'),
-    }),
-  }),
-  routineKey: 'profile.binding-authorization-intent-read',
-  schema: 'commerce_customer_context',
-});
-const BindingFinalizedOutcomeSchema = Schema.Literals(['AUTHORIZATION_FINALIZED', 'AUTHORIZATION_ALREADY_FINAL']);
-const finalizeBindingIntent = defineScopedRoutine({
-  name: 'finalize_retail_portal_profile_binding_permission_mutation',
-  ownerModuleKey: 'commerce.customer-context',
-  parameters: [
-    { source: 'tenantId', type: 'uuid' },
-    { source: 'legalEntityId', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'text' },
-    { source: 'input', type: 'text' },
-  ] as const,
-  resultSchema: Schema.Struct({
-    outcome: BindingFinalizedOutcomeSchema,
-    payload: Schema.Struct({ state: Schema.Literal('ACTIVE') }),
-  }),
-  routineKey: 'profile.binding-authorization-intent-finalize',
-  schema: 'commerce_customer_context',
-});
-const finalizeBinding = defineScopedRoutine({
-  name: 'finalize_retail_portal_binding_authorization',
-  ownerModuleKey: 'commerce.customer-context',
-  parameters: [
-    { source: 'tenantId', type: 'uuid' },
-    { source: 'legalEntityId', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'text' },
-    { source: 'input', type: 'integer' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'timestamptz' },
-    { source: 'input', type: 'text' },
-    { source: 'input', type: 'uuid' },
-  ] as const,
-  resultSchema: Schema.Struct({
-    outcome: BindingFinalizedOutcomeSchema,
-    payload: Schema.Struct({ authorizationState: Schema.Literal('ACTIVE') }),
-  }),
-  routineKey: 'profile.binding-authorization-finalize',
-  schema: 'commerce_customer_context',
-});
-const readBindingAuthority = defineScopedRoutine({
-  name: 'read_retail_portal_binding_authorization',
-  ownerModuleKey: 'commerce.customer-context',
-  parameters: [
-    { source: 'tenantId', type: 'uuid' },
-    { source: 'legalEntityId', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'text' },
-  ] as const,
-  resultSchema: Schema.Struct({
-    outcome: Schema.Literal('AUTHORIZATION_AVAILABLE'),
-    payload: Schema.Struct({
-      authorizationState: Schema.Literal('ACTIVE'),
-      pendingCount: Schema.Int,
-      terminalCount: Schema.Int,
-    }),
-  }),
-  routineKey: 'profile.binding-authorization-read',
-  schema: 'commerce_customer_context',
-});
 
 const preparePostalFutureEnd = Effect.fn('PostalFutureEnd.prepare')(function* preparePostalFutureEnd() {
-  // An executable owner fixture is process infrastructure, never a private cross-owner import.
-  const artifact = `${appRoot}verticals/party-registry/node_modules/.cache/ontos-1251/${randomUUID()}.mjs`;
-  yield* Effect.addFinalizer(() => Effect.promise(() => rm(artifact, { force: true })));
-  const bundle = yield* ChildProcess.make(
-    'mise',
-    [
-      'exec',
-      '--',
-      'pnpm',
-      'exec',
-      'esbuild',
-      'verticals/party-registry/tests/support/tenant-party-http.ts',
-      '--bundle',
-      '--platform=node',
-      '--format=esm',
-      '--packages=external',
-      `--outfile=${artifact}`,
-    ],
-    { cwd: appRoot, extendEnv: true, stderr: 'pipe', stdout: 'pipe' },
+  // Existing public metadata extraction and TEST entry share the same canonical compiled owner identity.
+  const { artifact, contract, marker } = yield* describePriceGroupTemporalOwner('party-registry');
+  const base = yield* makeEnrollmentApplicationCompositionSnapshot(ultramodernDeliveryUnit.buildMarker, []);
+  const ownContract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
+    base.composition.modules.find(({ deployment }) => deployment.appId === ultramodernDeliveryUnit.appId)
+      ?.contractDocument,
   );
-  const [bundleExit] = yield* Effect.all(
-    [bundle.exitCode, Stream.runDrain(bundle.stdout), Stream.runDrain(bundle.stderr)],
-    { concurrency: 3 },
-  );
-  expect(bundleExit).toBe(0);
-  const description = yield* ChildProcess.make(process.execPath, [artifact, '--describe'], {
-    cwd: appRoot,
-    extendEnv: true,
-    stderr: 'pipe',
-    stdout: 'pipe',
-  });
-  const [lines, descriptionExit] = yield* Effect.all(
-    [
-      description.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runCollect),
-      description.exitCode,
-      Stream.runDrain(description.stderr),
-    ],
-    { concurrency: 3 },
-  );
-  expect(descriptionExit).toBe(0);
-  const marker = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(MarkerSchema))(lines[0]);
-  const base = yield* makeEnrollmentApplicationCompositionSnapshot(marker.buildMarker, ['party-registry']);
-  const contract = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)(
-    makeModuleContractFixture({
-      appId: 'party-registry',
-      buildMarker: marker.buildMarker,
-      moduleId: 'party.registry',
-    }),
-  );
-  const contractDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
-    contract,
-  );
-  const composition = {
-    ...base.composition,
-    modules: base.composition.modules.map((module) =>
-      module.deployment.appId === 'party-registry'
-        ? {
-            ...module,
-            contract: { ...module.contract, sha256: hash(contractDocument) },
-            contractDocument,
-            moduleId: 'party.registry',
-            publicContract: {
-              id: 'party.registry',
-              sha256: hash(contractDocument),
-              version: contract.schemaVersion,
-            },
-          }
-        : module,
-    ),
-    revision: '0'.repeat(64),
-  };
-  const snapshot = yield* validateActiveApplicationCompositionSnapshot({
-    ...base,
-    composition: { ...composition, revision: hash(canonicalizeApplicationComposition(composition)) },
-  });
+  const snapshot = yield* makePriceGroupTemporalComposition([
+    { contract: ownContract, marker: ultramodernDeliveryUnit },
+    { contract, marker },
+  ]);
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     compositionSnapshot: snapshot,
     mode: 'schema-only',
     purpose: 'stabilization-1251-postal-future-end',
   });
-  yield* isolated.assertClonedSchema();
   const sourceConnections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
   const ownerSchema = yield* ChildProcess.make(
     'mise',
@@ -491,9 +338,11 @@ const preparePostalFutureEnd = Effect.fn('PostalFutureEnd.prepare')(function* pr
   );
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
+      access: 'allowed',
       actionExecutor: 'manager-only',
       actionKeys: [
         'party.registry.create-party',
+        'party.registry.resolve-duplicate-candidate-create',
         'party.registry.add-contact-point',
         'party.registry.end-contact-point',
         addSavedAddressAction.descriptor.actionKey,
@@ -502,9 +351,12 @@ const preparePostalFutureEnd = Effect.fn('PostalFutureEnd.prepare')(function* pr
       ],
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
       allowedAudiences: ['party-registry', 'commerce-customer-context'],
+      applicationComposition: { load: Effect.succeed(snapshot) },
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: snapshot.composition.revision,
+      expectedDeployment: ultramodernDeliveryUnit,
       moduleKeys: ['party.registry', 'commerce.customer-context'],
+      ownerRegistration: commerceCustomerContextRegistration,
       runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     }),
     (resource) => resource.close().pipe(Effect.orDie),
@@ -638,14 +490,14 @@ const preparePostalFutureEnd = Effect.fn('PostalFutureEnd.prepare')(function* pr
     retailFactory,
     partyRegistryGuestResolverFactoryLive,
     profileCounterpartyRoleEligibilityResolverFactoryLive,
-    profileRetailPermissionReaderFactoryLive.pipe(Layer.provide(ContextAccessLive)),
     profileReactivationEligibilityEvaluatorFactoryLive.pipe(Layer.provide(profileReconfirmationPolicyUnavailableLive)),
-    commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(
-      Layer.provide(profileRetailPermissionReaderFactoryLive),
-      Layer.provide(ContextAccessLive),
-    ),
+    commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(Layer.provide(ContextAccessLive)),
   );
-  const context = yield* Layer.build(fixture.layer.pipe(Layer.provideMerge(owners)));
+  const enrolled = yield* Effect.context<DatabaseIdentityEnrollmentContext>();
+  const context = Context.merge(
+    Context.merge(enrolled, authorizationContext),
+    yield* Layer.build(fixture.layer.pipe(Layer.provideMerge(owners))),
+  );
   const runtime = Context.get(context, ActionRuntime);
   // The layer owns infrastructure; no business producer runs until the case consumes this fixture.
   return { authorization, child, client, context, coreEvidenceExecutor, fixture, options, principal, runtime };
@@ -666,9 +518,9 @@ const postalFutureEnd = Effect.fn('PostalFutureEnd.native')(function* postalFutu
   const created = yield* createPartyWithAuthorization(
     {
       candidate: {
-        displayName: 'Postal future End owner',
+        businessName: 'Postal future End owner',
         evidenceRefs: ['native-postal-owner-proof'],
-        officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
+        officialIdentifiers: [{ identifierType: 'ICO', value: '27074358' }],
         partyType: 'ORGANIZATION',
         provenance: { method: 'REVIEWED_DOCUMENT', source: 'postal-future-end-native' },
         subjectEvidence: [
@@ -721,9 +573,7 @@ const postalFutureEnd = Effect.fn('PostalFutureEnd.native')(function* postalFutu
     .prepareOwner(
       (transaction) =>
         Effect.gen(function* bindExactRetailProfile() {
-          const at = bindingEffectiveAt;
           // Initial TEST authority attribution, not represented as a Core Action invocation.
-          const bindingInvocationId = randomUUID();
           const [binding] = yield* transaction.invoke(bindProfile, [
             profile.profileRef.resourceId,
             fixture.manager.principalId,
@@ -732,84 +582,18 @@ const postalFutureEnd = Effect.fn('PostalFutureEnd.native')(function* postalFutu
             null,
             null,
             'BIND',
-            at,
+            bindingEffectiveAt,
             'Native postal source permission proof',
-            bindingInvocationId,
+            randomUUID(),
             fixture.manager.principalId,
           ]);
           assert.isOk(binding !== undefined);
-          return { at, binding: binding.payload, bindingInvocationId };
+          return binding.payload;
         }),
       'required',
     )
     .pipe(Effect.provideContext(context));
-  const profileId = profile.profileRef.resourceId;
-  const mutationContext = yield* Layer.build(BusinessPermissionRelationshipMutationLive);
-  const business = Context.get(mutationContext, BusinessPermissionRelationshipMutation);
-  const intents = prepared.binding.permissionMutations;
-  assert.isOk(intents !== undefined);
-  expect(intents).toHaveLength(RETAIL_PORTAL_SELF_SERVICE_BASELINE.length);
-  expect(new Set(intents.map(({ permission }) => permission))).toEqual(new Set(RETAIL_PORTAL_SELF_SERVICE_BASELINE));
-  for (const intent of intents) {
-    const grant = {
-      permission: intent.permission,
-      principal: { principalId: fixture.manager.principalId, tenantId: fixture.tenantId },
-      target: {
-        kind: 'retail_profile' as const,
-        legalEntityId: fixture.legalEntityId,
-        profileId,
-        tenantId: fixture.tenantId,
-      },
-    };
-    yield* fixture
-      .prepareOwner(
-        (transaction) =>
-          Effect.gen(function* reconcileExactBindingIntent() {
-            const [current] = yield* transaction.invoke(readBindingIntent, [intent.mutationId]);
-            expect(current?.payload).toMatchObject({
-              actionInvocationId: prepared.bindingInvocationId,
-              bindingId: prepared.binding.bindingRef.resourceId,
-              mutationId: intent.mutationId,
-              operation: 'grant',
-              permission: intent.permission,
-              principalId: fixture.manager.principalId,
-              profileId,
-              state: 'PENDING_GRANT',
-            });
-            yield* business.mutate({ ...grant, operation: 'grant' });
-            yield* transaction.invoke(finalizeBindingIntent, [intent.mutationId, 'grant', 'ACTIVE']);
-          }),
-        'required',
-      )
-      .pipe(Effect.provideContext(context));
-    yield* Effect.addFinalizer(() => business.mutate({ ...grant, operation: 'revoke' }).pipe(Effect.orDie));
-  }
-  yield* fixture
-    .prepareOwner(
-      (transaction) =>
-        Effect.gen(function* finalizeExactBindingAuthority() {
-          yield* transaction.invoke(finalizeBinding, [
-            prepared.binding.bindingRef.resourceId,
-            'grant',
-            prepared.binding.revision,
-            prepared.bindingInvocationId,
-            prepared.at,
-            'Native purchase permission proof',
-            fixture.manager.principalId,
-          ]);
-          const [authority] = yield* transaction.invoke(readBindingAuthority, [
-            prepared.binding.bindingRef.resourceId,
-            'grant',
-          ]);
-          expect(authority?.payload).toMatchObject({
-            authorizationState: 'ACTIVE',
-            pendingCount: 0,
-            terminalCount: RETAIL_PORTAL_SELF_SERVICE_BASELINE.length,
-          });
-        }),
-      'required',
-    )
-    .pipe(Effect.provideContext(context));
+  expect(prepared).toMatchObject({ authorizationOperation: 'grant', authorizationState: 'ACTIVE', state: 'ACTIVE' });
 
   yield* fixture.grantResourceAccess(profile.profileRef, principal.principalId);
   const add = (value: typeof AddSavedAddressPayloadSchema.Type) =>
@@ -863,12 +647,6 @@ const postalFutureEnd = Effect.fn('PostalFutureEnd.native')(function* postalFutu
       privacyClassification: 'BUSINESS_SENSITIVE',
       provenance,
       validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
-      verification: {
-        method: 'MANUAL_CONFIRMATION',
-        state: 'VERIFIED',
-        verifiedAt: yield* DateTime.now,
-        verifierReference: 'native-postal-source-verifier',
-      },
     },
     yield* authorization(),
     yield* options,
@@ -901,12 +679,6 @@ const postalFutureEnd = Effect.fn('PostalFutureEnd.native')(function* postalFutu
       privacyClassification: 'BUSINESS_SENSITIVE',
       provenance,
       validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
-      verification: {
-        method: 'MANUAL_CONFIRMATION',
-        state: 'VERIFIED',
-        verifiedAt: yield* DateTime.now,
-        verifierReference: 'native-postal-source-verifier',
-      },
     },
     yield* authorization(),
     yield* options,
@@ -949,12 +721,6 @@ const postalFutureEnd = Effect.fn('PostalFutureEnd.native')(function* postalFutu
       privacyClassification: 'BUSINESS_SENSITIVE',
       provenance,
       validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
-      verification: {
-        method: 'MANUAL_CONFIRMATION',
-        state: 'VERIFIED',
-        verifiedAt: yield* DateTime.now,
-        verifierReference: 'native-postal-source-verifier',
-      },
     },
     yield* authorization(),
     yield* options,
@@ -1006,12 +772,6 @@ const postalFutureEnd = Effect.fn('PostalFutureEnd.native')(function* postalFutu
       privacyClassification: 'BUSINESS_SENSITIVE',
       provenance,
       validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
-      verification: {
-        method: 'MANUAL_CONFIRMATION',
-        state: 'VERIFIED',
-        verifiedAt: yield* DateTime.now,
-        verifierReference: 'native-postal-source-verifier',
-      },
     },
     yield* authorization(),
     yield* options,
@@ -1088,12 +848,6 @@ const postalFutureEnd = Effect.fn('PostalFutureEnd.native')(function* postalFutu
       privacyClassification: 'BUSINESS_SENSITIVE',
       provenance,
       validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
-      verification: {
-        method: 'MANUAL_CONFIRMATION',
-        state: 'VERIFIED',
-        verifiedAt: yield* DateTime.now,
-        verifierReference: 'native-postal-source-verifier',
-      },
     },
     yield* authorization(),
     yield* options,
@@ -1169,7 +923,7 @@ const postalFutureEnd = Effect.fn('PostalFutureEnd.native')(function* postalFutu
   expect(retained.address.origin).toEqual(origin);
   // Change the real owner state after Party answered and before the guarded write. The
   // injected transport delegates to the genuine Party owner; it does not invent evidence.
-  const racingClient: typeof executePartyContactPointDetail = (request, correlation) =>
+  const racingClient = (request: Parameters<typeof client>[0], correlation: string) =>
     client(request, correlation).pipe(
       Effect.tap(() =>
         add({

@@ -1,5 +1,15 @@
+import type { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
+import {
+  OwnerActionApprovalSchemaErrorLive,
+  makeOwnerActionApprovalApiLive,
+} from '@app/core-runtime/access/approvals/owner-http';
+import {
+  ActionMandateDispatcher,
+  makeOwnerActionApprovalsLive,
+} from '@app/core-runtime/access/approvals/owner-runtime';
 import { customerOwnConsentReadApiLive, customerOwnConsentUpdateApiLive } from './portal-auth/consent/http.ts';
 import { customerOwnPasswordChangeApiLive } from './portal-auth/password-change/http.ts';
+import { commerceCustomerContextRegistration } from '../vertical.registration.ts';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import type { HttpServerRequest } from 'effect/http';
 import {
@@ -45,7 +55,7 @@ import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import type {
@@ -56,12 +66,24 @@ import type {
   ReadRuntime,
 } from '@app/core-runtime';
 import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
+  TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
+import {
+  makeAccessProjectionCompiler,
+  makeDeferredAccessProjectionTransport,
+} from '@app/core-runtime/access/compiler/spice-db-compiler';
+import { AccessProjectionCompiler } from '@app/core-runtime/access/intent/projection-compiler';
+import { AccessProjectionWriterLive } from '@app/core-runtime/access/intent/projection-writer';
+import { AccessWriteJournalStoreLive } from '@app/core-runtime/access/lifecycle/persistence/journal-store';
+import { AccessPortalAdmissionsLive, AccessPortalProjectionLive } from '@app/core-runtime/access/portal/runtime';
+import { loadSpiceDbConfig } from '@app/core-runtime/access/spicedb-config';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
@@ -70,12 +92,7 @@ import {
   PartyRegistryRetailPartyResolverFactory,
   preparedRetailPartyResolution,
 } from '../src/integrations/party-registry-retail-party-resolver.ts';
-import {
-  RetailEnrollmentBindingAuthority,
-  RetailEnrollmentBindingCapability,
-  prepareRetailEnrollmentBinding,
-} from '../src/integrations/retail-enrollment-binding.ts';
-import { retailEnrollmentBindingAuthorityLive } from '../src/integrations/retail-enrollment-binding-live.ts';
+import { retailEnrollmentTargetIdentityLive } from '../src/integrations/retail-enrollment-binding-live.ts';
 import { CommercePortalAuthDatabaseLive } from '../src/portal-auth/persistence/portal-auth-database.ts';
 import { CommercePortalAuthAuditLive } from '../src/portal-auth/audit/audit.ts';
 import { CommercePortalAuthAccountLookupLive } from '../src/portal-auth/persistence/portal-auth-account-lookup.ts';
@@ -162,7 +179,10 @@ import {
   gatewayAssertionRedemptionPgClient,
 } from '../src/auth/gateway-assertion-redemption-runtime.ts';
 // <generated-governed-http-handler-support-imports>
-import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
+import {
+  ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive,
+  authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal,
+} from './auth/action-principal.ts';
 import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
 import {
@@ -173,7 +193,6 @@ import { commerceCustomerContextOwnerAuthorizationOverlayLive } from '../src/per
 import { commerceCustomerContextInvitationClaimActionAuthorizationPreflightLive } from '../src/persistence/invitation-claim-action-preflight.ts';
 import { profileReconfirmationPolicyUnavailableLive } from '../src/integrations/profile-reactivation-eligibility.ts';
 import { profileCounterpartyRoleEligibilityResolverFactoryLive } from '../src/profile-counterparty-role-eligibility.ts';
-import { profileRetailPermissionReaderFactoryLive } from '../src/integrations/retail-permission-reader.ts';
 import { purchaseLimitPersistenceLayer } from '../src/persistence/purchase-limit-persistence.ts';
 import { purchaseProposalBasisCurrentnessLive as purchaseLimitEvaluationCurrentnessLive } from '../src/services/purchase-proposal-basis.service.ts';
 import { purchaseApprovalCurrentnessFactoryLive } from '../src/persistence/purchase-approval-currentness-persistence.ts';
@@ -247,7 +266,7 @@ import { invoiceRecipientResolutionReadApiLive } from './invoice-recipient-resol
 import { marketAffectedUseAssessmentReadApiLive } from './market-affected-use-assessment-read-server.ts';
 import { marketBootstrapPolicyCurrentReadApiLive } from './market-bootstrap-policy-current-read-server.ts';
 import { marketBootstrapResolutionReadApiLive } from './market-bootstrap-resolution-read-server.ts';
-import { marketRetirementReservationReadApiLive } from './market-retirement-reservation-read-server.ts';
+import { marketRetirementReservationRecoveryReadApiLive } from './market-retirement-reservation-recovery-read-server.ts';
 import { marketSubjectRestrictionsCurrentReadApiLive } from './market-subject-restrictions-current-read-server.ts';
 import { migrateCounterpartyPriceGroupActionApiLive } from './migrate-counterparty-price-group-action-server.ts';
 import { migrateCustomerPriceGroupActionApiLive } from './migrate-customer-price-group-action-server.ts';
@@ -584,8 +603,15 @@ const runtimeObservabilityLive = Layer.mergeAll(
 );
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
+const accessEnforcementLive = AccessDecisionLive.pipe(
+  Layer.provideMerge(AccessEnforcementPortsLive),
+  Layer.provide(TenantIntentLoaderLive),
+  Layer.provide(CorePersistenceLive),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(commercePortalAuthPlatformCryptoLive),
+);
 const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
-  Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive)),
+  Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive, accessEnforcementLive)),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
 const compositionHttpClientLive = FetchHttpClient.layer.pipe(
@@ -594,6 +620,18 @@ const compositionHttpClientLive = FetchHttpClient.layer.pipe(
 const compositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(Layer.provide(compositionHttpClientLive));
 const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
   Layer.provide(compositionSourceLive),
+);
+const readRuntimeCoreLive = makeReadRuntimeLive(ultramodernDeliveryUnit, commerceCustomerContextRegistration).pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      CorePersistenceLive,
+      ContextAccessLive,
+      moduleEntrypointGatewayLive,
+      operationalScopeResolverLive,
+      accessEnforcementLive,
+    ),
+  ),
+  Layer.provide(activeApplicationCompositionLive),
 );
 
 const productionOwnerRuntimeServicesLive = commerceCustomerContextOwnerRuntimeServicesLive.pipe(
@@ -624,11 +662,6 @@ const productionPurchaseLimitCurrentnessLive = Layer.mergeAll(
     Layer.provide(ContextAccessLive),
   ),
 );
-const readRuntimeCoreLive = ReadRuntimeLive.pipe(
-  Layer.provide(
-    Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
-  ),
-);
 
 /**
  * Publish the request's owner capability with its matching preflight/execution. The Action wrapper
@@ -644,6 +677,7 @@ const commerceEnrollmentActionRuntimeLive: Layer.Layer<
   ActionRuntime,
   never,
   | ActionRuntime
+  | ActionMandateDispatcher
   | ActionAuthorizationPreflight
   | CommerceEnrollmentOwnerTransitionPreparation
   | ActiveApplicationCompositionService
@@ -651,12 +685,14 @@ const commerceEnrollmentActionRuntimeLive: Layer.Layer<
 > = Layer.effect(
   ActionRuntime,
   Effect.gen(function* commerceEnrollmentActionRuntime() {
-    const bindingAuthority = yield* RetailEnrollmentBindingAuthority;
     const existingRuntime = yield* ActionRuntime;
     const existingPreflight = yield* ActionAuthorizationPreflight;
     const preparation = yield* CommerceEnrollmentOwnerTransitionPreparation;
     const compositions = yield* ActiveApplicationCompositionService;
-    const dependencies = yield* Effect.context<Layer.Services<ReturnType<typeof makeActionRuntimeLive>>>();
+    const dispatcher = yield* ActionMandateDispatcher;
+    const dependencies = yield* Effect.context<
+      Layer.Services<ReturnType<typeof makeActionRuntimeLive>> | ActionMandateDispatcher
+    >();
     const runAction: ActionRuntimeService['runAction'] = (input) =>
       Effect.scoped(
         Effect.gen(function* runEnrollmentAwareAction() {
@@ -669,23 +705,22 @@ const commerceEnrollmentActionRuntimeLive: Layer.Layer<
           const retailParty = yield* preparedRetailPartyResolution.pipe(
             Effect.provideService(ActiveApplicationCompositionService, compositions),
           );
-          const binding = prepareRetailEnrollmentBinding(bindingAuthority);
-          yield* Effect.addFinalizer(() => Effect.sync(binding.clear));
           const preflight = composeActionAuthorizationPreflights([
             execution.preflight,
-            binding.preflight,
             retailParty.preflight,
             existingPreflight,
           ]);
           const runtimeContext = yield* Layer.buildWithScope(
-            Layer.fresh(makeActionRuntimeLive(ultramodernDeliveryUnit)),
+            Layer.fresh(makeActionRuntimeLive(ultramodernDeliveryUnit, commerceCustomerContextRegistration)),
             scope,
-          ).pipe(Effect.provideContext(Context.add(dependencies, ActionAuthorizationPreflight, preflight)));
+          ).pipe(
+            Effect.provideContext(Context.add(dependencies, ActionAuthorizationPreflight, preflight)),
+            Effect.provideService(ActionMandateDispatcher, dispatcher),
+          );
           return yield* Context.get(runtimeContext, ActionRuntime)
             .runAction(input)
             .pipe(
               Effect.provideService(CommerceEnrollmentPreparedOwnerCapability, execution.capability),
-              Effect.provideService(RetailEnrollmentBindingCapability, binding.capability),
               Effect.provideService(PartyRegistryRetailPartyResolverFactory, retailParty.factory),
             );
         }),
@@ -704,8 +739,21 @@ const actionRuntimeDependenciesLive = Layer.mergeAll(
   moduleEntrypointGatewayLive,
   operationalScopeResolverLive,
 );
-const actionRuntimeCoreLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
-  Layer.provide(commerceCustomerContextInvitationClaimActionAuthorizationPreflightLive),
+const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(
+  ultramodernDeliveryUnit,
+  commerceCustomerContextRegistration,
+).pipe(
+  Layer.provide(
+    Layer.mergeAll(commerceCustomerContextInvitationClaimActionAuthorizationPreflightLive, accessEnforcementLive),
+  ),
+  Layer.provide(actionRuntimeDependenciesLive),
+);
+
+const actionRuntimeCoreLive = makeActionRuntimeLive(ultramodernDeliveryUnit, commerceCustomerContextRegistration).pipe(
+  Layer.provideMerge(ownerActionApprovalsLive),
+  Layer.provide(
+    Layer.mergeAll(commerceCustomerContextInvitationClaimActionAuthorizationPreflightLive, accessEnforcementLive),
+  ),
   Layer.provide(actionRuntimeDependenciesLive),
 );
 /** Real owner preflight, assembled independently so runtime requirements remain explicit. */
@@ -768,20 +816,19 @@ const deploymentCustomerAuthorityLive = Layer.unwrap(
     ),
   ),
 );
-const deploymentRetailEnrollmentBindingAuthorityLive = Layer.unwrap(
+const deploymentRetailEnrollmentTargetIdentityLive = Layer.unwrap(
   Effect.all({ core: coreIdentityTransportConfigured, realm: portalAuthRealmConfigured }, { concurrency: 2 }).pipe(
     Effect.map(({ core, realm }) =>
       core && realm
-        ? retailEnrollmentBindingAuthorityLive.pipe(
+        ? retailEnrollmentTargetIdentityLive.pipe(
             Layer.provide(
               Layer.mergeAll(
                 commerceCoreIdentityRealmLive,
-                commerceEnrollmentOwnerTransactionRunnerProductionLive,
                 commercePortalAuthAccountLookupRealmLive.pipe(Layer.provide(CommercePortalAuthConfigLive)),
               ),
             ),
           )
-        : Layer.succeed(RetailEnrollmentBindingAuthority, null),
+        : Layer.empty,
     ),
   ),
 );
@@ -861,10 +908,10 @@ const deploymentEnrollmentCommitResolutionLive = Layer.unwrap(
  * serves and the Attempt simply stops where that route left it.
  */
 const commerceEnrollmentOwnerEffectRegistryRealmLive = CommerceEnrollmentOwnerEffectRegistryLive.pipe(
+  Layer.provide(commercePortalAuthPlatformCryptoLive),
   Layer.provide(
     Layer.mergeAll(
       ContextAccessLive,
-      profileRetailPermissionReaderFactoryLive.pipe(Layer.provide(ContextAccessLive)),
       commercePortalAuthAccountLookupRealmLive.pipe(Layer.provide(CommercePortalAuthConfigLive)),
       commercePortalAuthAccountCreationReconciliationRealmLive,
       commerceCoreIdentityRealmLive,
@@ -925,13 +972,32 @@ const deploymentEnrollmentAccountLookupLive = Layer.unwrap(
     ),
   ),
 );
+/**
+ * The engine transport Core's single projection writer writes through. It opens on the first portal write and
+ * closes with the runtime, so this backend starts and answers readiness without reaching SpiceDB.
+ */
+const accessProjectionCompilerLive = Layer.effect(
+  AccessProjectionCompiler,
+  makeDeferredAccessProjectionTransport(loadSpiceDbConfig()).pipe(Effect.map(makeAccessProjectionCompiler)),
+);
+/**
+ * Core's portal access of this deployment: the projection every portal-writing Action reconciles through
+ * once it committed, and the admissions the invitation claim commits in Core's own transaction.
+ */
+const accessPortalRuntimeLive = Layer.mergeAll(
+  AccessPortalProjectionLive.pipe(
+    Layer.provide(AccessProjectionWriterLive),
+    Layer.provide(Layer.mergeAll(TenantIntentLoaderLive, AccessWriteJournalStoreLive, accessProjectionCompilerLive)),
+  ),
+  AccessPortalAdmissionsLive,
+).pipe(Layer.provide(Layer.mergeAll(CorePersistenceLive, commercePortalAuthPlatformCryptoLive)));
 /** The owner preflight remains an explicit input to the enrollment-aware runtime. */
 const actionRuntimeAwaitingOwnerPreflight = commerceEnrollmentActionRuntimeLive.pipe(
-  Layer.provide(deploymentRetailEnrollmentBindingAuthorityLive.pipe(Layer.provide(DatabaseConfigLive))),
+  Layer.provideMerge(ownerActionApprovalsLive),
   Layer.provideMerge(activeApplicationCompositionLive),
   Layer.provideMerge(ContextAccessLive),
   Layer.provideMerge(PurchaseApprovalFinalBindingAuthorityLive.pipe(Layer.provide(activeApplicationCompositionLive))),
-  Layer.provide(Layer.mergeAll(actionRuntimeCoreLive, actionRuntimeDependenciesLive)),
+  Layer.provide(Layer.mergeAll(actionRuntimeCoreLive, actionRuntimeDependenciesLive, accessEnforcementLive)),
   Layer.provideMerge(commerceEnrollmentPreparedOwnerCapabilityLive),
   Layer.provideMerge(productionOwnerRuntimeServicesLive),
   Layer.provideMerge(productionOwnerAuthorizationOverlayLive),
@@ -942,6 +1008,9 @@ const actionRuntimeAwaitingOwnerPreflight = commerceEnrollmentActionRuntimeLive.
   // Scoped owner factories execute after receiving; their declared Crypto requirement must remain
   // visible in the runtime context, exactly as for the Read runtime.
   Layer.provideMerge(commercePortalAuthPlatformCryptoLive),
+  // Every portal-writing Action reconciles after its attempt, and the invitation claim admits its
+  // recipient, through the runtime context the governed routes run with.
+  Layer.provideMerge(accessPortalRuntimeLive),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, databaseIdentitiesLive)),
 );
 const actionRuntimeAwaitingOwnerPreparation = actionRuntimeAwaitingOwnerPreflight.pipe(
@@ -984,7 +1053,7 @@ const productionActionRuntimeLive = commerceCustomerContextActionRuntime.pipe(
  * installs, and each side of the decision stays provable without a process-global environment.
  */
 export const commerceCustomerContextActionRuntimeAwaitingOwnerPreflight: Layer.Layer<
-  ActionRuntime,
+  ActionRuntime | OwnerActionApprovals,
   Layer.Error<typeof productionActionRuntimeLive>,
   CommerceEnrollmentOwnerTransitionPreparation | ActionAuthorizationPreflight
 > = actionRuntimeAwaitingOwnerPreflight.pipe(
@@ -1010,7 +1079,7 @@ export const configuredGatewayAssertionRedemptionLive = GovernedGatewayAssertion
 
 type CommerceCustomerContextApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof productionReadRuntimeLive>>,
-  actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof productionActionRuntimeLive>>,
+  actionRuntime: Layer.Layer<ActionRuntime | OwnerActionApprovals, Layer.Error<typeof productionActionRuntimeLive>>,
   gatewayAssertionRedemption: Layer.Layer<
     GatewayAssertionRedemptionService,
     Layer.Error<typeof configuredGatewayAssertionRedemptionLive>
@@ -1078,7 +1147,9 @@ export const makeCommerceCustomerContextApiRuntime = (
     deploymentEnrollmentAccountLookupLive,
     // Invitation claims digest the one-time secret and dispatch an owner Action in the same transaction.
     commercePortalAuthPlatformCryptoLive,
-    deploymentCustomerAuthorityLive.pipe(Layer.provide(Layer.mergeAll(contextAccess, ownerTransactionRunnerLive))),
+    deploymentCustomerAuthorityLive.pipe(
+      Layer.provide(Layer.mergeAll(governedReadRuntimeLive, ownerTransactionRunnerLive)),
+    ),
     contextAccess,
     moduleEntrypointGatewayLive.pipe(Layer.provide(databaseConfiguration)),
     ownerTransactionRunnerLive,
@@ -1113,6 +1184,10 @@ export const makeCommerceCustomerContextApiRuntime = (
     customerOwnPasswordChangeApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
     customerOwnProfileReadApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
     customerOwnProfileUpdateApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
+    makeOwnerActionApprovalApiLive(commerceCustomerContextApi, authenticateOwnerApprovalPrincipal).pipe(
+      GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
+      GovernedReadLayer.provide(governedActionRuntimeLive),
+    ),
     // <generated-governed-http-handler-layers>
     addSavedAddressActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     archiveCustomerGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -1121,7 +1196,10 @@ export const makeCommerceCustomerContextApiRuntime = (
     assignCustomerGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     assignCustomerPriceGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     attributeGuestRetailCustomerActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    bindRetailPortalProfileActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    bindRetailPortalProfileActionApiLive.pipe(
+      GovernedReadLayer.provide(governedActionRuntimeLive),
+      Layer.provide(deploymentRetailEnrollmentTargetIdentityLive.pipe(Layer.provide(databaseConfiguration))),
+    ),
     bootstrapCounterpartyAccessAdministratorActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     changeCounterpartyPurchaseLimitActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     changeCustomerPaymentTermsActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -1174,7 +1252,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     marketAffectedUseAssessmentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     marketBootstrapPolicyCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     marketBootstrapResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    marketRetirementReservationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    marketRetirementReservationRecoveryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     marketSubjectRestrictionsCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     migrateCounterpartyPriceGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     migrateCustomerPriceGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -1261,6 +1339,7 @@ export const makeCommerceCustomerContextApiRuntime = (
         RequestSchemaProblemLive,
         compositionSourceLive,
         compositionHttpClientLive,
+        commercePortalAuthPlatformCryptoLive,
         databaseIdentitiesLive,
       ),
     ),

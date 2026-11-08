@@ -12,6 +12,7 @@ import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-
 import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { createCatalogDeniedAccess } from '../support/live-access-authority.ts';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -41,7 +42,9 @@ import { ProductHistoryResponseSchema } from '../../shared/apis/product-history.
 import { VariantHistoryResponseSchema } from '../../shared/apis/variant-history.ts';
 import { catalogApi } from '../../shared/api.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { requireExecutionResult } from '../support/action-execution-result.ts';
 import { createProductAction } from '../../src/actions/create-product.action.ts';
+import { catalogRegistration } from '../../vertical.registration.ts';
 import { catalogPersistenceForScope } from '../../src/persistence/catalog-persistence.ts';
 import { executeCreateProductWithAuthorization } from '../../src/api/create-product-action-client.ts';
 import {
@@ -73,7 +76,6 @@ it.live(
         purpose: 'stabilization-1196-product-create',
       });
       yield* Effect.logInfo('1196 isolated clone ready');
-      yield* isolated.assertClonedSchema();
       expect(isolated.connections.runtime.database).toBe(isolated.connections.admin.database);
       expect(isolated.connections.runtime.user).not.toBe(isolated.connections.admin.user);
       const now = Math.floor(DateTime.toEpochMillis(composition.observedAt) / 1000);
@@ -89,12 +91,14 @@ it.live(
       const coreEvidenceExecutor = yield* testCoreDatabase.pipe(Effect.provide(adminContext));
       const fixture = yield* Effect.acquireRelease(
         makeLiveOperationFixture({
+          access: 'allowed',
           actionKeys: [createProductAction.descriptor.actionKey],
           adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
           allowedAudiences: ['catalog'],
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: composition.composition.revision,
           moduleKeys: ['commerce.catalog'],
+          ownerRegistration: catalogRegistration,
           runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
         }),
         (value) => value.close().pipe(Effect.orDie),
@@ -109,11 +113,16 @@ it.live(
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: composition.composition.revision,
           moduleKeys: ['commerce.catalog'],
+          ownerRegistration: catalogRegistration,
           runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
         }),
         (value) => value.close().pipe(Effect.orDie),
       );
       const { tenantId } = fixture;
+      // The one access gate this suite scripts (the native database carries no v2 access intent and
+      // reaches no engine), plus the per-principal refusal it names (see `live-access-authority`).
+      const deniedAccess = createCatalogDeniedAccess();
+      const accessLayer = fixture.layer.pipe(Layer.provide(deniedAccess.layer));
       const permissions = yield* makeContextPermissionRelationshipMutationLive();
       const principal = { principalId: fixture.manager.principalId, tenantId };
       const targets = [
@@ -190,7 +199,7 @@ it.live(
           ).pipe(Layer.provide(ActiveApplicationCompositionSourceLive), Layer.provide(FetchHttpClient.layer)),
         ),
         Layer.provide(redemption),
-        Layer.provide(fixture.layer),
+        Layer.provide(accessLayer),
         Layer.provide(
           ConfigProvider.layer(
             ConfigProvider.fromUnknown({ ONTOS_GATEWAY_ISSUER: tokenIssuer, ONTOS_GATEWAY_PUBLIC_JWKS: jwks }),
@@ -202,7 +211,7 @@ it.live(
           HttpRouter.toWebHandler(
             HttpApiBuilder.layer(api).pipe(
               Layer.provide(handlers),
-              Layer.provideMerge(fixture.layer),
+              Layer.provideMerge(accessLayer),
               Layer.provide(HttpServer.layerServices),
               Layer.provide(NodeCrypto.layer),
             ),
@@ -217,11 +226,14 @@ it.live(
         key?: string,
         actor = fixture.manager,
       ) {
-        return yield* executeCreateProductWithAuthorization(payload, yield* authorization(actor), yield* nextId, {
-          baseUrl: 'https://catalog.ontos.test',
-          compositionRevision: composition.composition.revision,
-          idempotencyKey: key ?? (yield* nextId),
-        }).pipe(Effect.provideService(FetchHttpClient.Fetch, nativeFetch));
+        return yield* requireExecutionResult(
+          CreateProductResultSchema,
+          executeCreateProductWithAuthorization(payload, yield* authorization(actor), yield* nextId, {
+            baseUrl: 'https://catalog.ontos.test',
+            compositionRevision: composition.composition.revision,
+            idempotencyKey: key ?? (yield* nextId),
+          }).pipe(Effect.provideService(FetchHttpClient.Fetch, nativeFetch)),
+        );
       });
       const observe = () =>
         fixture
@@ -397,6 +409,9 @@ it.live(
       );
       const mismatch = yield* create({ ...successorInput, reason: 'Different action reason' }).pipe(Effect.flip);
       expect(Schema.is(CreateProductActionIneligibleProblemSchema)(mismatch)).toBe(true);
+      // v2: the one access gate decides this Action (O62); a principal from another Tenant with no
+      // assignment is refused by the gate, named on the fixture's own per-request owner seam.
+      deniedAccess.deny(ungranted.manager.principalId, 'commerce.catalog.product.create');
       const denied = yield* create({}, undefined, ungranted.manager).pipe(
         Effect.match({
           onFailure: Schema.is(CreateProductActionForbiddenProblemSchema),

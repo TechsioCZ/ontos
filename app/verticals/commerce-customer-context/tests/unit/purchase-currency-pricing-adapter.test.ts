@@ -3,12 +3,18 @@ import {
   CurrentSupportedCurrenciesSuccessSchema,
   CurrentSupportedCurrenciesV2CompatibilitySuccessSchema,
 } from '@app/pricing-contracts';
-import { Effect, Layer, Redacted, Schema } from 'effect';
+import type { GatewayDelegationRequest } from '@app/shared-contracts/gateway-context-server';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
+import { Effect, Redacted, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { PurchaseCurrencyDependencyUnavailable } from '../../shared/domain/purchase-currency-dependency.ts';
-import { PurchaseCurrencyPricingGatewayCredentialService } from '../../shared/domain/purchase-currency-pricing-gateway-credential.ts';
 import { purchaseCurrencyPricingPortFromEnvironment } from '../../src/integrations/purchase-currency-pricing.ts';
+import {
+  fakeDelegatedAcquire,
+  issuedDelegatedContext,
+  originatorSubject,
+} from '../support/delegated-gateway-acquisition.fixture.ts';
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
 const effectiveAt = '2026-09-22T09:59:59.000Z';
@@ -16,21 +22,10 @@ const observedAt = '2026-09-22T10:00:00.000Z';
 const supportRootId = '30000000-0000-4000-8000-000000000001';
 const supportRevisionId = '31000000-0000-4000-8000-000000000001';
 const verificationRef = `commerce.pricing.currency-support-proof:${supportRevisionId}`;
-const purchasingContext = {
-  cartId: 'cart-1',
-  channelId: 'web',
-  marketId: 'cz',
-  sellingLegalEntityId: '40000000-0000-4000-8000-000000000001',
-  storefrontId: 'tenant-a-cz',
-  tenantId,
-};
-const credentialLayer = Layer.succeed(PurchaseCurrencyPricingGatewayCredentialService, {
-  issue: () =>
-    Effect.succeed({
-      baseUrl: new URL('https://shell.example.test/owner-api'),
-      credential: Redacted.make('Bearer pricing-owner-issued'),
-    }),
-});
+const issued = issuedDelegatedContext({ compositionRevision: 'a'.repeat(64), token: 'pricing-owner-issued' });
+const acquisitions: GatewayDelegationRequest[] = [];
+const acquire = fakeDelegatedAcquire(issued, acquisitions);
+const subject = originatorSubject('a'.repeat(64), tenantId);
 const currentResponse = Schema.decodeSync(CurrentSupportedCurrenciesSuccessSchema)({
   completenessEvidence: {
     nextApplicabilityBoundary: '2026-10-01T00:00:00.000Z',
@@ -96,14 +91,14 @@ describe('Purchase Currency Pricing production adapter', () => {
       const calls: unknown[] = [];
       const port = yield* purchaseCurrencyPricingPortFromEnvironment(
         {
-          compositionRevision: 'a'.repeat(64),
-          legalEntityId: purchasingContext.sellingLegalEntityId,
           requestCorrelation: 'pricing-test',
+          subject,
         },
         (payload, credential, correlation, options) => {
           calls.push({ correlation, credential: Redacted.value(credential), options, payload });
           return Effect.succeed(currentResponse);
         },
+        acquire,
       );
       const result = yield* port.resolveCurrent({
         effectiveAt,
@@ -118,10 +113,13 @@ describe('Purchase Currency Pricing production adapter', () => {
           payload: { effectiveAt, tenantId },
         },
       ]);
+      expect(acquisitions).toEqual([
+        { audience: 'pricing', legalEntityScope: 'tenant', requestCorrelation: 'pricing-test', subject },
+      ]);
       expect(result).toEqual(currentSupportEvidence);
       expect(result.currentnessEvidence.evaluatedAt).not.toBe(result.effectiveAt);
       expect(result.observedAt).not.toBe(result.effectiveAt);
-    }).pipe(Effect.provide(credentialLayer)),
+    }).pipe(Effect.provide(nodeCryptoLayer)),
   );
 
   it.effect('maps every non-current owner outcome to the typed Pricing dependency failure', () =>
@@ -151,11 +149,11 @@ describe('Purchase Currency Pricing production adapter', () => {
         );
         const port = yield* purchaseCurrencyPricingPortFromEnvironment(
           {
-            compositionRevision: 'a'.repeat(64),
-            legalEntityId: purchasingContext.sellingLegalEntityId,
             requestCorrelation: 'pricing-test',
+            subject,
           },
           () => Effect.succeed(response),
+          acquire,
         );
         const failure = yield* port
           .resolveCurrent({
@@ -166,24 +164,24 @@ describe('Purchase Currency Pricing production adapter', () => {
         expect(Schema.is(PurchaseCurrencyDependencyUnavailable)(failure)).toBe(true);
         expect(failure).toMatchObject({ code, retryable: true });
       }
-    }).pipe(Effect.provide(credentialLayer)),
+    }).pipe(Effect.provide(nodeCryptoLayer)),
   );
 
   it.effect('fails typed when a malformed Current response claims an empty support set', () =>
     Effect.gen(function* malformedCurrentSupport() {
       const port = yield* purchaseCurrencyPricingPortFromEnvironment(
         {
-          compositionRevision: 'a'.repeat(64),
-          legalEntityId: purchasingContext.sellingLegalEntityId,
           requestCorrelation: 'pricing-test',
+          subject,
         },
         () => Effect.succeed({ ...currentResponse, supportedCurrencies: [] }),
+        acquire,
       );
       const failure = yield* port.resolveCurrent({ effectiveAt, tenantId }).pipe(Effect.flip);
 
       expect(Schema.is(PurchaseCurrencyDependencyUnavailable)(failure)).toBe(true);
       expect(failure).toMatchObject({ code: 'pricing_currency_support_unverifiable', retryable: true });
-    }).pipe(Effect.provide(credentialLayer)),
+    }).pipe(Effect.provide(nodeCryptoLayer)),
   );
 
   it.effect('fails closed when the read-only v2 compatibility success lacks canonical owner evidence', () => {
@@ -202,16 +200,16 @@ describe('Purchase Currency Pricing production adapter', () => {
     return Effect.gen(function* compatibilityCannotAuthorizePurchase() {
       const port = yield* purchaseCurrencyPricingPortFromEnvironment(
         {
-          compositionRevision: 'a'.repeat(64),
-          legalEntityId: purchasingContext.sellingLegalEntityId,
           requestCorrelation: 'pricing-test',
+          subject,
         },
         () => Effect.succeed(compatibilityResponse),
+        acquire,
       );
       const failure = yield* port.resolveCurrent({ effectiveAt, tenantId }).pipe(Effect.flip);
 
       expect(Schema.is(PurchaseCurrencyDependencyUnavailable)(failure)).toBe(true);
       expect(failure).toMatchObject({ code: 'pricing_currency_support_unverifiable', retryable: true });
-    }).pipe(Effect.provide(credentialLayer));
+    }).pipe(Effect.provide(nodeCryptoLayer));
   });
 });

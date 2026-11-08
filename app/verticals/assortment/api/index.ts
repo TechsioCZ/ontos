@@ -1,3 +1,10 @@
+import type { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
+import {
+  OwnerActionApprovalSchemaErrorLive,
+  makeOwnerActionApprovalApiLive,
+} from '@app/core-runtime/access/approvals/owner-http';
+import { assortmentRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
   defineDatabaseIdentityEnrollment,
@@ -7,16 +14,19 @@ import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import type { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
 import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
+  TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
@@ -30,9 +40,12 @@ import { FetchHttpClient } from 'effect/http';
 import { assortmentApi, assortmentMarkerSchema, assortmentOperationContexts } from '../shared/api.ts';
 import type { OperationContext } from '../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
-import { assortmentOwnerAuthorizationOverlayLive } from '../src/services/owner-authorization-current.ts';
+import { assortmentOwnerAuthorizationOverlayLive } from '../src/services/assortment-currentness.ts';
 // <generated-governed-http-handler-support-imports>
-import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
+import {
+  ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive,
+  authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal,
+} from './auth/action-principal.ts';
 import {
   GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
   GatewayAssertionRedemptionDatabaseLive,
@@ -97,10 +110,22 @@ const compositionHttpClientLive = FetchHttpClient.layer.pipe(
   Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
 );
 const compositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(Layer.provide(compositionHttpClientLive));
+const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
+  Layer.provide(compositionSourceLive),
+);
+
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
+const accessEnforcementLive = AccessDecisionLive.pipe(
+  Layer.provideMerge(AccessEnforcementPortsLive),
+  Layer.provide(TenantIntentLoaderLive),
+  Layer.provide(CorePersistenceLive),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(nodeCryptoLayer),
+  Layer.provide(databaseIdentitiesLive),
+);
 const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
-  Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive)),
+  Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive, accessEnforcementLive)),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
 const readRuntimeDependenciesLive = Layer.mergeAll(
@@ -108,16 +133,20 @@ const readRuntimeDependenciesLive = Layer.mergeAll(
   ContextAccessLive,
   moduleEntrypointGatewayLive,
   operationalScopeResolverLive,
+  accessEnforcementLive,
 );
 
 /** Installs owner Current checks without replacing Core's separate exact Permission checks. */
 export const withAssortmentOwnerAuthorizationOverlay = Layer.provide(assortmentOwnerAuthorizationOverlayLive);
-
-const productionReadRuntimeLive = withAssortmentOwnerAuthorizationOverlay(ReadRuntimeLive).pipe(
+const productionReadRuntimeLive = withAssortmentOwnerAuthorizationOverlay(
+  makeReadRuntimeLive(ultramodernDeliveryUnit, assortmentRegistration),
+).pipe(
   Layer.provide(readRuntimeDependenciesLive),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(activeApplicationCompositionLive),
   Layer.provide(databaseIdentitiesLive),
 );
+
 const actionAuthorizationPreflightDatabaseLive = ActionAuthorizationPreflightDatabaseLive.pipe(
   Layer.provideMerge(CorePersistenceLive),
 );
@@ -130,14 +159,29 @@ const actionRuntimeDependenciesLive = Layer.mergeAll(
   moduleEntrypointGatewayLive,
   operationalScopeResolverLive,
 );
-const actionRuntimeCoreLive = withAssortmentOwnerAuthorizationOverlay(
-  makeActionRuntimeLive(ultramodernDeliveryUnit),
+const ownerActionApprovalsLive = withAssortmentOwnerAuthorizationOverlay(
+  makeOwnerActionApprovalsLive(ultramodernDeliveryUnit, assortmentRegistration),
 ).pipe(
   Layer.provide(
     Layer.mergeAll(
       actionAuthorizationPreflightDatabaseLive,
       actionRuntimeDependenciesLive,
-      ActiveApplicationCompositionConfigLive.pipe(Layer.provide(compositionSourceLive)),
+      activeApplicationCompositionLive,
+      accessEnforcementLive,
+    ),
+  ),
+);
+
+const actionRuntimeCoreLive = withAssortmentOwnerAuthorizationOverlay(
+  makeActionRuntimeLive(ultramodernDeliveryUnit, assortmentRegistration),
+).pipe(
+  Layer.provideMerge(ownerActionApprovalsLive),
+  Layer.provide(
+    Layer.mergeAll(
+      actionAuthorizationPreflightDatabaseLive,
+      actionRuntimeDependenciesLive,
+      activeApplicationCompositionLive,
+      accessEnforcementLive,
     ),
   ),
 );
@@ -158,7 +202,7 @@ const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedempt
 
 type AssortmentApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof productionReadRuntimeLive>>,
-  actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof productionActionRuntimeLive>>,
+  actionRuntime: Layer.Layer<ActionRuntime | OwnerActionApprovals, Layer.Error<typeof productionActionRuntimeLive>>,
   gatewayAssertionRedemption: Layer.Layer<
     GatewayAssertionRedemptionService,
     Layer.Error<typeof productionGatewayAssertionRedemptionLive>
@@ -174,6 +218,10 @@ export const makeAssortmentApiRuntime = (...args: AssortmentApiRuntimeArguments)
   );
   const apiHandlersLive = Layer.mergeAll(
     assortmentReadinessLayer,
+    makeOwnerActionApprovalApiLive(assortmentApi, authenticateOwnerApprovalPrincipal).pipe(
+      GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
+      GovernedReadLayer.provide(governedActionRuntimeLive),
+    ),
     // <generated-governed-http-handler-layers>
     configurationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     createApplicabilityBindingActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

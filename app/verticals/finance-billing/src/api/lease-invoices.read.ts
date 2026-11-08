@@ -25,7 +25,7 @@ const readKey = 'finance.billing.api.lease-invoices';
 
 const leaseInvoicesEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: readKey,
   moduleKey,
   role: 'api',
@@ -197,6 +197,14 @@ const handleLeaseInvoices = Effect.fn('LeaseInvoicesRead.handle')(function* hand
 
 export const leaseInvoicesRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'finance.billing.api-lease-invoices.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'finance-billing', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'list',
     domainErrorSchema: ReadInputValidationError,
     entrypoint: leaseInvoicesEntrypoint,
@@ -207,7 +215,6 @@ export const leaseInvoicesRead = defineRead(
     inputSchema: LeaseInvoicesRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'finance.billing.api.lease-invoices',
     resultSchema: LeaseInvoicesResponseSchema,
@@ -215,5 +222,4 @@ export const leaseInvoicesRead = defineRead(
   },
   { load: handleLeaseInvoices },
   makeLeaseInvoicesServices,
-  () => ({ kind: 'module', moduleId: moduleKey }),
 );

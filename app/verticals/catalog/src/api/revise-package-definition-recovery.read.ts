@@ -63,7 +63,7 @@ const recoverRevisePackageDefinition = Effect.fn('RevisePackageDefinitionRecover
 
 const revisePackageDefinitionRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.revise-package-definition-recovery' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.revise-package-definition-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -71,6 +71,14 @@ const revisePackageDefinitionRecoveryEntrypoint = defineTenantModuleEntrypoint({
 
 export const revisePackageDefinitionRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.revise-package-definition-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'package-definition', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: revisePackageDefinitionRecoveryEntrypoint,
     evidencePolicy: {
@@ -80,7 +88,6 @@ export const revisePackageDefinitionRecoveryRead = defineRead(
     inputSchema: RevisePackageDefinitionRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.revise-package-definition-recovery',
     resultSchema: RevisePackageDefinitionRecoveryResponseSchema,
@@ -94,5 +101,4 @@ export const revisePackageDefinitionRecoveryRead = defineRead(
   },
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

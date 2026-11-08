@@ -1,3 +1,4 @@
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { ActionAlreadyCommitted } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { Effect, Schema } from 'effect';
@@ -11,6 +12,7 @@ import type { CustomerPriceGroupAssignment } from '../../shared/domain/price-gro
 import type { CustomerPriceGroupAssignmentStorePort } from '../../shared/domain/price-group-ports.ts';
 import { assignCustomerPriceGroupAction } from '../../src/actions/assign-customer-price-group.action.ts';
 import { removeCustomerPriceGroupAction } from '../../src/actions/remove-customer-price-group.action.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 
 const tenantId = '12480000-0000-4000-8000-000000000001';
 const principal = {
@@ -73,8 +75,7 @@ const compatibility = {
   verifiedAt: from,
 };
 const permissions = {
-  actionPermission: 'allowed',
-  resourcePermission: 'allowed',
+  access: 'allowed',
 } as const;
 
 it.effect('retains the finite request rather than a truncated replay row, and does not duplicate a committed key', () =>
@@ -100,6 +101,7 @@ it.effect('retains the finite request rather than a truncated replay row, and do
       },
     };
     const harness = yield* makeActionTestHarness({
+      ownerRegistration: commerceCustomerContextRegistration,
       ...permissions,
       services: [bindActionTestServices(assignCustomerPriceGroupAction, services)],
     });
@@ -133,7 +135,7 @@ it.effect('retains the finite request rather than a truncated replay row, and do
     const replay = yield* Effect.flip(harness.runtime.runAction(request));
     expect(Schema.is(ActionAlreadyCommitted)(replay)).toBe(true);
     expect(harness.snapshot().committed).toHaveLength(1);
-  }),
+  }).pipe(Effect.provide(nodeCryptoLayer)),
 );
 
 it.effect('collects worst escaped identifiers and open schedules below the actual 4096 byte cap', () =>
@@ -160,6 +162,7 @@ it.effect('collects worst escaped identifiers and open schedules below the actua
       },
     };
     const harness = yield* makeActionTestHarness({
+      ownerRegistration: commerceCustomerContextRegistration,
       ...permissions,
       services: [bindActionTestServices(assignCustomerPriceGroupAction, services)],
     });
@@ -182,7 +185,7 @@ it.effect('collects worst escaped identifiers and open schedules below the actua
       Schema.decodeUnknownSync(CustomerPriceGroupAssignedAuditEvidenceSchema)(custom),
     );
     expect(new TextEncoder().encode(encoded).byteLength).toBeLessThanOrEqual(4096);
-  }),
+  }).pipe(Effect.provide(nodeCryptoLayer)),
 );
 
 it.effect('records exact cancellation instants without imposing a nonempty interval', () =>
@@ -200,6 +203,7 @@ it.effect('records exact cancellation instants without imposing a nonempty inter
       },
     };
     const harness = yield* makeActionTestHarness({
+      ownerRegistration: commerceCustomerContextRegistration,
       ...permissions,
       services: [bindActionTestServices(removeCustomerPriceGroupAction, services)],
     });
@@ -231,7 +235,7 @@ it.effect('records exact cancellation instants without imposing a nonempty inter
         requestedEffectiveAt: from,
       }),
     ).toBe(true);
-  }),
+  }).pipe(Effect.provide(nodeCryptoLayer)),
 );
 
 it('does not infer an original open schedule from legacy evidence', () => {

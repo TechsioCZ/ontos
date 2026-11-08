@@ -7,22 +7,22 @@ import {
 } from '@app/core-runtime';
 import { Effect, Match } from 'effect';
 import type { ReadServiceFactory } from '@app/core-runtime';
+import type {
+  SalesPipelinePersistenceUnavailable,
+  SalesPipelineReferenceUnavailable,
+} from '../../shared/actions/apply-command.ts';
 import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
 import {
   finishSalesPipelineRecords,
   salesPipelineRecordsGrants,
   persistenceService,
 } from '../services/persistence.service.ts';
+import { salesPipelineRecordsReadDeclaration } from '../../shared/model/access-declarations.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
-const readFailure = (
-  failure:
-    | Effect.Error<ReturnType<typeof salesPipelineRecordsGrants>>
-    | Effect.Error<ReturnType<Services['loadRecords']>>
-    | Effect.Error<ReturnType<typeof finishSalesPipelineRecords>>,
-) =>
+const readFailure = (failure: SalesPipelinePersistenceUnavailable | SalesPipelineReferenceUnavailable) =>
   Match.value(failure).pipe(
     Match.tag(
       'SalesPipelinePersistenceUnavailable',
@@ -39,7 +39,7 @@ const readFailure = (
 const moduleKey = 'demo.sales-pipeline';
 const recordsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'demo.sales-pipeline.api.records',
   moduleKey,
   role: 'api',
@@ -61,6 +61,7 @@ const makeRecordsServices: ReadServiceFactory<Services> = (transaction, scope) =
 
 export const recordsRead = defineRead(
   {
+    accessDeclaration: salesPipelineRecordsReadDeclaration,
     accessKind: 'list',
     entrypoint: recordsEntrypoint,
     evidencePolicy: {
@@ -70,7 +71,6 @@ export const recordsRead = defineRead(
     inputSchema: RecordsRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'demo.sales-pipeline.api.records',
     resultSchema: RecordsResponseSchema,
@@ -78,7 +78,7 @@ export const recordsRead = defineRead(
   },
   {
     prepare: (_input, context) => salesPipelineRecordsGrants(context.scope).pipe(Effect.mapError(readFailure)),
-    load: (input, context) => context.services.loadRecords(input).pipe(Effect.mapError(readFailure)),
+    load: (input, context) => context.services.loadRecords(context.prepared, input).pipe(Effect.mapError(readFailure)),
     finish: (input: RecordsRequest, context) =>
       finishSalesPipelineRecords(input, context.loaded, context.prepared, context.scope).pipe(
         Effect.mapError(readFailure),
@@ -86,5 +86,4 @@ export const recordsRead = defineRead(
       ),
   },
   makeRecordsServices,
-  () => ({ kind: 'module', moduleId: moduleKey }),
 );

@@ -171,6 +171,14 @@ export const handleCorrectProduct = Effect.fn('CorrectProductAction.execute')(fu
 
 export const correctProductAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product.correct',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.correct-product.access.v1',
@@ -182,7 +190,7 @@ export const correctProductAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: MODULE_KEY,
       role: 'action',

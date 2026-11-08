@@ -25,7 +25,7 @@ export const SearchLabelsRequestSchema = Schema.Struct({
 });
 export type SearchLabelsRequest = typeof SearchLabelsRequestSchema.Type;
 export const SearchLabelSchema = Schema.Struct({
-  label: PartyDisplayNameSchema,
+  label: Schema.optionalKey(PartyDisplayNameSchema),
   resourceRef: SearchLabelSourceRefSchema,
   // This is the canonical Party revision, not an observation time or a publication version.
   sourceRevision: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0)),

@@ -3,7 +3,7 @@
 // @ontos-action-slug assign-counterparty-price-group
 /* eslint-disable effect-native/no-manual-tag-comparison, sonarjs/no-duplicate-string -- Generated Action shape uses explicit public outcome narrowing and canonical owner keys; expires: 2027-03-01. */
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import {
   CustomerPriceGroupAssignedAuditEvidenceSchema,
@@ -38,8 +38,8 @@ import type {
 } from '../../shared/domain/price-group-ports.ts';
 import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain/price-group-ports.ts';
 import { createAssignCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupAssignedV1OutboxMessage } from './assign-counterparty-price-group.commerce-customer-context-counterparty-price-group-assigned-v1.outbox-message.ts';
-import { priceGroupActionServicesForTransaction } from './price-group-action-services.ts';
-import { preparePriceGroupActionServices } from './price-group-action-preparation.ts';
+import { assignCounterpartyPriceGroupServicesForTransaction } from './price-group-action-services.ts';
+import { counterpartyOwnerFacts } from './owner-access-facts.ts';
 
 export { AssignCounterpartyPriceGroupPayloadSchema } from '../../shared/actions/assign-counterparty-price-group.ts';
 export type { AssignCounterpartyPriceGroupPayload } from '../../shared/actions/assign-counterparty-price-group.ts';
@@ -348,29 +348,29 @@ const handleAssignCounterpartyPriceGroup = Effect.fn(
 
 export const assignCounterpartyPriceGroupAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.counterparty-price-group.assign',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'customer-pricing', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.assign-counterparty-price-group.access.v1',
     },
+    accessOwnerFacts: (payload) => counterpartyOwnerFacts(payload.counterpartyRef.resourceId),
     actionKey: 'commerce.customer-context.assign-counterparty-price-group',
     auditEvidenceSchema: CustomerPriceGroupAssignedAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission<AssignCounterpartyPriceGroupPayload>((payload, scope) => ({
-      permission: 'counterparty.settings.price_group.manage',
-      target: {
-        counterpartyId: payload.counterpartyRef.resourceId,
-        kind: 'counterparty',
-        legalEntityId: scope.legalEntityId ?? '',
-        tenantId: scope.tenantId,
-      },
-    })),
     domainErrorSchema: AssignCounterpartyPriceGroupErrorSchema,
     domainEvents: {
       'commerce.customer-context.counterparty-price-group-assigned.v1': CounterpartyPriceGroupAssignedEventSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.assign-counterparty-price-group',
       moduleKey: 'commerce.customer-context',
       role: 'action',
@@ -384,6 +384,5 @@ export const assignCounterpartyPriceGroupAction = defineAction(
     schemaVersion: '1',
   },
   handleAssignCounterpartyPriceGroup,
-  priceGroupActionServicesForTransaction,
-  { prepareServices: preparePriceGroupActionServices },
+  assignCounterpartyPriceGroupServicesForTransaction,
 );

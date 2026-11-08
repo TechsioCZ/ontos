@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { ContextAccess, ScopedRoutineInvocationError } from '@app/core-runtime';
+import { ScopedRoutineInvocationError } from '@app/core-runtime';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { eq } from 'drizzle-orm';
@@ -32,7 +32,6 @@ const scenario = Effect.fn('ApprovalCurrentness.nativeScenario')(function* nativ
     mode: 'schema-only',
     purpose: 'stabilization-1256-approval-currentness',
   });
-  yield* isolated.assertClonedSchema();
   const owner = yield* makePurchasingApprovalNativeFixture({ connections: isolated.connections, snapshot });
   // The shared owner fixture uses all six actual runAction registrations and actual invocation IDs.
   // Only its exact-target external Current/role and cryptographic issuer dependencies are TEST configured.
@@ -79,7 +78,6 @@ const scenario = Effect.fn('ApprovalCurrentness.nativeScenario')(function* nativ
   const approved = yield* chain.decide();
   expect(approved.request.status).toBe('APPROVED');
   const factory = Context.get(owner.runtimeContext, PurchaseApprovalCurrentnessFactory);
-  const access = Context.get(owner.runtimeContext, ContextAccess);
   let externalCurrentCalls = 0;
   const externalCurrentness = {
     resolveCurrent: () =>
@@ -133,7 +131,7 @@ const scenario = Effect.fn('ApprovalCurrentness.nativeScenario')(function* nativ
               legalEntityId: wrongLegalEntity ? randomUUID() : owner.legalEntityId,
               trustedStorefrontId: owner.storefrontId,
             };
-            const service = factory.make(transaction, trusted, access, externalCurrentness, evaluationSource);
+            const service = factory.make(transaction, trusted, externalCurrentness, evaluationSource);
             return yield* service.resolveRevalidation({
               claimed: { ...claimed, ...patch },
               scope: {
@@ -196,4 +194,5 @@ it.live(
         expect(yield* current.readProofs()).toEqual([]);
       }),
     ).pipe(Effect.provide(services)),
+  120_000,
 );

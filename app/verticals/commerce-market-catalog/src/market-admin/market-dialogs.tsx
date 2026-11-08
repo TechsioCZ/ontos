@@ -2,16 +2,17 @@
 // Vyřadit (impact summary, type-the-code confirmation, durable retirement intent).
 import { executeMarketAffectedUseAssessment } from '@app/customer-market-retirement-contracts/market-affected-use-assessment/client';
 import { MarketAffectedUseAssessmentRequestSchema } from '@app/customer-market-retirement-contracts/market-affected-use-assessment';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { DateTime, Effect, Fiber, Schema } from 'effect';
 import { useEffect, useState } from 'react';
+import type { MarketLifecycleResult } from '../../shared/action-contracts.ts';
 import { ActivateMarketPayloadSchema } from '../../shared/actions/activate-market.ts';
 import { RetireMarketPayloadSchema } from '../../shared/actions/retire-market.ts';
 import { ReviseMarketDefinitionPayloadSchema } from '../../shared/actions/revise-market-definition.ts';
 import { SuspendMarketPayloadSchema } from '../../shared/actions/suspend-market.ts';
 import type { MarketAdministrationState } from '../../shared/apis/market-administration.ts';
-import type { MarketRetirementOutcome } from '../../shared/domain/market-retirement-intent.ts';
 import { executeActivateMarket } from '../api/activate-market-action-client.ts';
 import { executeRetireMarket } from '../api/retire-market-action-client.ts';
 import { executeReviseMarketDefinition } from '../api/revise-market-definition-action-client.ts';
@@ -26,15 +27,19 @@ import type { RetirementImpact } from './market-detail-model.ts';
 import { DialogFrame } from './dialog-frame.tsx';
 import { failureText, useMarketText } from './market-ui.tsx';
 import { requestId, runMarketAction, writeFailure } from './page-data.ts';
-import type { WriteFailure } from './page-data.ts';
+import type { WriteFailure, WriteOutcome } from './page-data.ts';
+
+const isProposal = Schema.is(ActionProposalAcceptedSchema);
 
 interface MarketDialogProps {
   readonly market: CurrentMarket;
+  /** The change was parked for approval: nothing changed yet. */
+  readonly onAwaitingApproval: () => void;
   readonly onClose: () => void;
   readonly onDone: (message: string) => void;
 }
 
-export const EditMarketDialog = ({ market, onClose, onDone }: MarketDialogProps) => {
+export const EditMarketDialog = ({ market, onAwaitingApproval, onClose, onDone }: MarketDialogProps) => {
   const { text } = useMarketText();
   const [form, setForm] = useState<MarketDefinitionForm>(() => definitionFormOf(market));
   const [reason, setReason] = useState('');
@@ -60,6 +65,10 @@ export const EditMarketDialog = ({ market, onClose, onDone }: MarketDialogProps)
       executeReviseMarketDefinition,
       (outcome) => {
         setBusy(false);
+        if (outcome.ok && isProposal(outcome.value)) {
+          onAwaitingApproval();
+          return;
+        }
         if (outcome.ok) {
           onDone(text('detail.editDialog.saved', { code: market.marketCode }));
           return;
@@ -112,14 +121,25 @@ const lifecycleInput = (state: MarketAdministrationState, reason: string, effect
   reason: reason.trim(),
 });
 
-export const LifecycleDialog = ({ action, market, onClose, onDone, state }: LifecycleDialogProps) => {
+export const LifecycleDialog = ({
+  action,
+  market,
+  onAwaitingApproval,
+  onClose,
+  onDone,
+  state,
+}: LifecycleDialogProps) => {
   const { text } = useMarketText();
   const [reason, setReason] = useState(() => text(`detail.lifecycle.${action}Reason`));
   const [showIssues, setShowIssues] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<WriteFailure | null>(null);
-  const done = (outcome: { readonly ok: true } | { readonly ok: false; readonly reason: WriteFailure }) => {
+  const done = (outcome: WriteOutcome<object>) => {
     setBusy(false);
+    if (outcome.ok && isProposal(outcome.value)) {
+      onAwaitingApproval();
+      return;
+    }
     if (outcome.ok) {
       onDone(
         text(action === 'activate' ? 'detail.lifecycle.activated' : 'detail.lifecycle.suspended', {
@@ -208,12 +228,12 @@ const loadImpact = (state: MarketAdministrationState) =>
   );
 
 interface RetireDialogProps extends MarketDialogProps {
-  /** The Action's durable outcome: the screen polls the intent until it completes. */
-  readonly onRequested: (outcome: MarketRetirementOutcome) => void;
+  /** The native result the Action returned: the Market's new lifecycle state, or a committed settlement still pending. */
+  readonly onRequested: (result: MarketLifecycleResult) => void;
   readonly state: MarketAdministrationState;
 }
 
-export const RetireDialog = ({ market, onClose, onRequested, state }: RetireDialogProps) => {
+export const RetireDialog = ({ market, onAwaitingApproval, onClose, onRequested, state }: RetireDialogProps) => {
   const { text } = useMarketText();
   const [impact, setImpact] = useState<ImpactState>({ kind: 'loading' });
   const [typed, setTyped] = useState('');
@@ -245,7 +265,13 @@ export const RetireDialog = ({ market, onClose, onRequested, state }: RetireDial
       (outcome) => {
         setBusy(false);
         if (outcome.ok) {
-          onRequested(outcome.value);
+          const result = outcome.value;
+          if (isProposal(result)) {
+            // Parked for approval: no retirement intent exists until someone approves it.
+            onAwaitingApproval();
+            return;
+          }
+          onRequested(result);
           return;
         }
         setFailure(outcome.reason);

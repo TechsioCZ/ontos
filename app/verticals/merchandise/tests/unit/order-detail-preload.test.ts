@@ -1,3 +1,4 @@
+import { executeCleanupDemo } from '../../src/api/cleanup-demo-action-client.ts';
 import { afterAll, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { Deferred, Effect, Exit, Fiber, Schema } from 'effect';
 import { createElement } from 'react';
@@ -12,9 +13,9 @@ import {
   StockMovementSchema,
 } from '../../shared/apis/records.ts';
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
-import { ApplyCommandActionConflictProblemSchema } from '../../shared/apis/apply-command-action.ts';
+import { ManageCatalogActionConflictProblemSchema } from '../../shared/apis/manage-catalog-action.ts';
 import { executeRecords } from '../../src/api/records-consumer.ts';
-import { executeApplyCommand } from '../../src/api/apply-command-action-client.ts';
+import { executeManageCatalog } from '../../src/api/manage-catalog-action-client.ts';
 import {
   editOrder,
   firstOrdersPage,
@@ -26,7 +27,8 @@ import {
 } from '../../src/routes/[lang]/prodej/objednavky/orders-records.ts';
 
 rstest.mock('../../src/api/records-consumer.ts');
-rstest.mock('../../src/api/apply-command-action-client.ts');
+rstest.mock('../../src/api/manage-catalog-action-client.ts');
+rstest.mock('../../src/api/cleanup-demo-action-client.ts');
 // Execute the first-render branch without running effects. Customer coverage also mounts real React hooks.
 rstest.mock('react', () => ({
   ...rstest.requireActual<typeof ReactRuntime>('react'),
@@ -225,12 +227,12 @@ it.effect('a write preserves the caller revision, invalidates the row and refetc
     yield* ordersPageData.read(source);
     yield* preloadOrderDetails(source, base);
     rstest
-      .mocked(executeApplyCommand)
+      .mocked(executeManageCatalog)
       .mockReturnValue(
         Effect.succeed(Schema.decodeSync(ApplyCommandResultSchema)({ entityIds: [order.id], revision: 8 })),
       );
     yield* editOrder({ _tag: 'EditOrder', id: order.id, note: 'Changed' }, 7);
-    expect(rstest.mocked(executeApplyCommand).mock.calls[0]?.[0].expectedRevision).toBe(7);
+    expect(rstest.mocked(executeManageCatalog).mock.calls[0]?.[0].expectedRevision).toBe(7);
     expect(orderDetailData.snapshot(detail)).toBe(pageDataPending);
     rstest.mocked(executeRecords).mockClear();
     yield* orderDetailData.read(detail);
@@ -243,27 +245,27 @@ it.effect('reset and rejected writes also invalidate details without changing th
     yield* ordersPageData.read(source);
     yield* preloadOrderDetails(source, base);
     rstest
-      .mocked(executeApplyCommand)
+      .mocked(executeCleanupDemo)
       .mockReturnValue(Effect.succeed(Schema.decodeSync(ApplyCommandResultSchema)({ entityIds: [], revision: 8 })));
     yield* resetDemoData('Reset proof', 7);
     expect(orderDetailData.snapshot(detail)).toBe(pageDataPending);
-    expect(rstest.mocked(executeApplyCommand).mock.calls[0]?.[0]).toEqual({
+    expect(rstest.mocked(executeCleanupDemo).mock.calls[0]?.[0]).toEqual({
       command: { _tag: 'ResetDemoData', confirmation: 'OBNOVIT', reason: 'Reset proof' },
       expectedRevision: 7,
     });
     yield* orderDetailData.read(detail);
-    const conflict = yield* Schema.decodeEffect(ApplyCommandActionConflictProblemSchema)({
-      _tag: 'ApplyCommandActionConflictProblem',
+    const conflict = yield* Schema.decodeEffect(ManageCatalogActionConflictProblemSchema)({
+      _tag: 'ManageCatalogActionConflictProblem',
       code: 'merchandise_revision_conflict',
       detail: 'Changed',
       status: 409,
       title: 'Conflict',
       type: 'urn:test:conflict',
     });
-    rstest.mocked(executeApplyCommand).mockReturnValue(Effect.fail(conflict));
+    rstest.mocked(executeManageCatalog).mockReturnValue(Effect.fail(conflict));
     yield* Effect.exit(editOrder({ _tag: 'EditOrder', id: order.id, note: 'Not saved' }, 7));
     expect(orderDetailData.snapshot(detail)).toBe(pageDataPending);
-    expect(rstest.mocked(executeApplyCommand).mock.calls[1]?.[0].expectedRevision).toBe(7);
+    expect(rstest.mocked(executeManageCatalog).mock.calls[0]?.[0].expectedRevision).toBe(7);
   }),
 );
 

@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.market-catalog
 // @ontos-action-slug revise-market-definition
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 import {
   MarketCommandRejected,
@@ -100,6 +100,14 @@ const handleReviseMarketDefinition = Effect.fn('ReviseMarketDefinitionAction.han
 
 export const reviseMarketDefinitionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.market-catalog.market-definition.revise',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'markets', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.market-catalog.revise-market-definition.access.v1',
@@ -111,7 +119,7 @@ export const reviseMarketDefinitionAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.market-catalog.revise-market-definition',
       moduleKey: 'commerce.market-catalog',
       role: 'action',
@@ -121,10 +129,6 @@ export const reviseMarketDefinitionAction = defineAction(
     owningModuleKey: 'commerce.market-catalog',
     payloadSchema: ReviseMarketDefinitionPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<ReviseMarketDefinitionPayload>(({ marketRef }) => ({
-      permission: 'write',
-      resource: marketRef,
-    })),
     resultSchema: ReviseMarketDefinitionResultSchema,
     schemaVersion: '1',
   },

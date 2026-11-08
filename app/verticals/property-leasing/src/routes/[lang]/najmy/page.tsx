@@ -30,7 +30,9 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import { withNativeLabels } from '@app/admin-ui/select-template';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { DateTime, Effect, Match, Option, Predicate } from 'effect';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
+import { DateTime, Effect, Match, Option, Predicate, Schema } from 'effect';
 import { useEffect, useEffectEvent, useId, useReducer, useRef, useState } from 'react';
 
 import type { OccupancyCommand, Feedback } from '../../../../shared/actions/apply-command.ts';
@@ -205,6 +207,8 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
   const [kindFilter, setKindFilter] = useState<'ALL' | 'LONG_TERM_LEASE' | 'SHORT_STAY'>('ALL');
   const [collision, setCollision] = useState<{ readonly href: string; readonly text: string }>();
   const [createError, setCreateError] = useState<string>();
+  /** The person's last change that was parked for approval instead of being applied. */
+  const [proposal, setProposal] = useState<ActionProposalAccepted>();
   const selected = snapshot?.occupancies.find((record) => record.occupancyRef.resourceId === linkedResourceId);
   const related = useLeaseRelated(
     selected === undefined || snapshot === undefined
@@ -306,11 +310,27 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
       )} bylo odmítnuto, tento záznam zůstává ve stavu ${stateLabel}.`,
     };
   };
+  /** Opens the record a committed command created or changed, once the reloaded records hold it. */
+  const openCommitted = (resourceId: string | undefined) => {
+    const current = leaseRecords.snapshot(leaseInput);
+    const record =
+      current.state === 'ready'
+        ? current.value.records.occupancies.find((item) => item.occupancyRef.resourceId === resourceId)
+        : undefined;
+    if (record !== undefined && linkedResourceId !== record.occupancyRef.resourceId) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('resourceId', record.occupancyRef.resourceId);
+      url.searchParams.delete('create');
+      url.searchParams.delete('unitId');
+      window.location.assign(url);
+    }
+  };
   const runCommand = (command: OccupancyCommand) => {
     if (snapshot === undefined) {
       return;
     }
     setCollision(undefined);
+    setProposal(undefined);
     setActionFeedback('saving');
     run(
       Effect.all(
@@ -331,24 +351,15 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
             referenceCredentials,
           }).pipe(Effect.ensuring(Effect.sync(invalidateLeaseRelated))),
         ),
-        Effect.tap(() => reload()),
-        Effect.tap((result) => {
-          const current = leaseRecords.snapshot(leaseInput);
-          const record =
-            current.state === 'ready'
-              ? current.value.records.occupancies.find(
-                  (item) => item.occupancyRef.resourceId === result.resourceRef?.resourceId,
-                )
-              : undefined;
-          if (record !== undefined && linkedResourceId !== record.occupancyRef.resourceId) {
-            const url = new URL(window.location.href);
-            url.searchParams.set('resourceId', record.occupancyRef.resourceId);
-            url.searchParams.delete('create');
-            url.searchParams.delete('unitId');
-            window.location.assign(url);
-          }
-          return Effect.void;
-        }),
+        // A change parked for approval changed nothing yet: no reload and no record to open.
+        Effect.flatMap((result) =>
+          Schema.is(ActionProposalAcceptedSchema)(result)
+            ? Effect.succeed(Option.some(result))
+            : reload().pipe(
+                Effect.andThen(Effect.sync(() => openCommitted(result.resourceRef?.resourceId))),
+                Effect.as(Option.none<ActionProposalAccepted>()),
+              ),
+        ),
         Effect.match({
           // A refused command keeps the loaded records on screen; only reads clear them.
           onFailure: (failure) => {
@@ -356,7 +367,10 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
             setCollision(next === 'conflict' ? collisionFor(command) : undefined);
             setActionFeedback(next);
           },
-          onSuccess: () => setActionFeedback(undefined),
+          onSuccess: (parked) => {
+            setProposal(Option.getOrUndefined(parked));
+            setActionFeedback(undefined);
+          },
         }),
       ),
     );
@@ -377,6 +391,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
             { _tag: 'UpdateCounterpartyDossier', counterpartyRef: entry.counterpartyRef, ...changes },
             expectedRevision,
             unchanged,
+            setProposal,
           );
     };
   /** S01-01: a firm or person becomes a counterparty of this company with its first timeline note. */
@@ -385,6 +400,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
       return;
     }
     setCreateError(undefined);
+    setProposal(undefined);
     setActionFeedback('saving');
     type CustomerRequest = Parameters<typeof createCustomer>[0];
     const request: { -readonly [Key in keyof CustomerRequest]: CustomerRequest[Key] } = {
@@ -427,7 +443,10 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
                 { idempotencyKey, referenceCredentials },
               ),
             ),
-            Effect.as(created),
+            Effect.map((result) => ({
+              created,
+              parked: Schema.is(ActionProposalAcceptedSchema)(result) ? result : undefined,
+            })),
           ),
         ),
         Effect.match({
@@ -442,7 +461,13 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
             setCreateError(message);
             setActionFeedback(status === 403 ? 'forbidden' : undefined);
           },
-          onSuccess: (created) => {
+          onSuccess: ({ created, parked }) => {
+            if (parked !== undefined) {
+              // The leasing counterparty and its first note exist only once the proposal is approved.
+              setProposal(parked);
+              setActionFeedback(undefined);
+              return;
+            }
             const url = new URL(window.location.href);
             url.search = '';
             url.searchParams.set('counterpartyId', created.counterpartyRef.resourceId);
@@ -732,11 +757,13 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     peopleCount,
     properties,
     propertyOf,
+    proposal,
     related,
     rentEditorOpen,
     rentMonthly,
     rentPaymentDay,
     rentService,
+    reportProposal: setProposal,
     retry,
     runCommand,
     saveDraft,
@@ -780,6 +807,11 @@ const stateBadge = {
   DRAFT: 'outline',
 } as const;
 type PageState = ReturnType<typeof useRecordsPage>;
+/** Tells the person their last change was parked for approval and has not been applied. */
+const ProposalNotice = ({ state }: { readonly state: ReturnType<typeof useRecordsPage> }) =>
+  state.proposal === undefined ? null : (
+    <output aria-live="polite">{state.t('property-leasing.demo.approvalRequired')}</output>
+  );
 const RentFields = ({ state }: { readonly state: ReturnType<typeof useRecordsPage> }) => (
   <div className="propertyleasing:grid propertyleasing:gap-4 propertyleasing:md:grid-cols-3">
     <FormInput
@@ -826,6 +858,7 @@ const RentTermsPanel = ({ occupancy, state }: { readonly occupancy: Occupancy; r
       { _tag: 'SetRentTerms', occupancyRef: occupancy.occupancyRef, rentTerms },
       expectedRevision,
       rentUnchangedSince(occupancy.occupancyRef.resourceId, base.current),
+      state.reportProposal,
     ).pipe(Effect.tap((result) => Effect.sync(() => rememberSaved(value, result))));
   const autosave = useAutosaveDraft<RentDraft, never>({
     equals: sameRentDraft,
@@ -1188,6 +1221,7 @@ const OccupancyRelations = ({ model, state }: OccupancyDetailProps) => {
               { _tag: 'UpdateTenantDossier', occupancyRef: selected.occupancyRef, ...changes },
               expectedRevision,
               unchanged,
+              state.reportProposal,
             )
           }
           onUpdate={(changes) =>
@@ -1456,6 +1490,7 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
     >
       <div className="propertyleasing:space-y-4 propertyleasing:py-2">
         {feedback !== 'ready' && <output aria-live="polite">{t(`property-leasing.demo.feedback.${feedback}`)}</output>}
+        <ProposalNotice state={state} />
         <div className="propertyleasing:space-y-4">
           {editingId.length === 0 && (
             <div className="propertyleasing:grid propertyleasing:gap-4 propertyleasing:md:grid-cols-2">
@@ -1663,6 +1698,7 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
     <>
       <UltramodernRouteHead />
       <section className="propertyleasing:w-full propertyleasing:min-w-0 propertyleasing:max-w-none propertyleasing:space-y-6 propertyleasing:p-0 propertyleasing:text-(--color-page-fg)">
+        <ProposalNotice state={state} />
         {state.linkedCounterpartyId !== undefined && state.linkedResourceId === undefined ? (
           <CounterpartyDossierView
             busy={busy}

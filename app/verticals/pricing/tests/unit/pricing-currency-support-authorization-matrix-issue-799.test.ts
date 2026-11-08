@@ -20,6 +20,7 @@ import {
   currentSupportedCurrenciesRead,
   resolveCurrentSupportedCurrencies,
 } from '../../src/api/current-supported-currencies.read.ts';
+import { pricingRegistration } from '../../vertical.registration.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const foreignTenantId = '22222222-2222-4222-8222-222222222222';
@@ -150,14 +151,21 @@ const pricePayload = Schema.decodeSync(DefinePricePayloadSchema)({
 
 describe('Pricing Currency Support authorization matrix (#799)', () => {
   it('keeps Currency Support Tenant-scoped while Price writes remain Selling-Legal-Entity-scoped', () => {
-    expect(currentSupportedCurrenciesRead.descriptor.entrypoint.authorization).toEqual({
-      kind: 'context_permission',
-      permission: 'pricing.currency_support.read',
+    expect(currentSupportedCurrenciesRead.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    expect(currentSupportedCurrenciesRead.descriptor.accessDeclaration).toMatchObject({
+      key: 'commerce.pricing.currency-support.read-current',
+      kind: 'read',
+      selectors: [],
+    });
+    expect(currentSupportedCurrenciesRead.descriptor.accessActor).toMatchObject({
+      callers: ['commerce-customer-context'],
+      subject: 'identity',
     });
     expect(currentSupportedCurrenciesRead.descriptor.legalEntityScope).toBe('forbidden');
-    expect(setSupportedCurrenciesAction.descriptor.entrypoint.authorization).toEqual({
-      kind: 'action_execution',
-      provisioning: 'explicit',
+    expect(setSupportedCurrenciesAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    expect(setSupportedCurrenciesAction.descriptor.accessDeclaration).toMatchObject({
+      key: 'commerce.pricing.currency-support.set',
+      kind: 'action',
     });
     expect(setSupportedCurrenciesAction.descriptor.legalEntityScope).toBe('forbidden');
     expect(definePriceAction.descriptor.legalEntityScope).toBe('required');
@@ -207,7 +215,8 @@ describe('Pricing Currency Support authorization matrix (#799)', () => {
       for (const authority of ['TENANT_MEMBERSHIP', 'BUYER', 'APPROVER'] as const) {
         let ownerCalls = 0;
         const harness = yield* makeActionTestHarness({
-          actionPermission: 'denied',
+          access: 'denied',
+          ownerRegistration: pricingRegistration,
           services: [
             bindActionTestServices(
               setSupportedCurrenciesAction,
@@ -241,7 +250,8 @@ describe('Pricing Currency Support authorization matrix (#799)', () => {
     Effect.gen(function* exactOperatorAuthority() {
       let acceptedWrites = 0;
       const allowed = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
+        access: 'allowed',
+        ownerRegistration: pricingRegistration,
         services: [
           bindActionTestServices(
             setSupportedCurrenciesAction,
@@ -263,7 +273,8 @@ describe('Pricing Currency Support authorization matrix (#799)', () => {
 
       let rejectedWrites = 0;
       const launchGate = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
+        access: 'allowed',
+        ownerRegistration: pricingRegistration,
         services: [
           bindActionTestServices(
             setSupportedCurrenciesAction,

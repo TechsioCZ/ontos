@@ -1,4 +1,6 @@
-import type { ContextAccessService, TenantModuleState } from '@app/core-runtime';
+import { makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
+import type { ShellAccessGate } from '../../api/modules/shell-access-decisions.ts';
+import type { TenantModuleState } from '@app/core-runtime';
 import { ReadInputValidationError } from '@app/core-runtime';
 import { corePeopleSystemSearchProvider } from '@app/core-runtime/people/search';
 import { Effect, Result, Schema } from 'effect';
@@ -99,10 +101,18 @@ const moduleContract = (moduleId: string, appId: string, resourceType: string) =
         resourceDetails: [],
         search: [
           {
+            accessDeclaration: {
+              key: `${moduleId}.records.read`,
+              kind: 'read',
+              modes: ['run'],
+              placement: { group: 'records', level: 'basic' },
+              risk: 'routine',
+              selectors: [],
+            },
             contributionKey: `${moduleId}.search.contribution`,
             entrypoint: {
               access: 'read',
-              authorization: { kind: 'context_permission', permission: 'module.access' },
+              authorization: { kind: 'protected' },
               entrypointKey: `${moduleId}.search`,
               moduleKey: moduleId,
               role: 'search',
@@ -126,38 +136,25 @@ const catalogEffect = makeInstalledModuleCatalogLoader(
   ]),
 );
 
-const allowedModules: ContextAccessService['modules'] = ({ moduleIds }) =>
-  Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key })));
-
-const allowedResources: ContextAccessService['resources'] = ({ resources }) =>
-  Effect.succeed(
-    resources.map(({ moduleId, resourceId, resourceType }) => ({
-      decision: 'allowed' as const,
-      key: `${moduleId}:${resourceType}:${resourceId}`,
-    })),
-  );
-
-const access = (options: {
-  readonly modules?: ContextAccessService['modules'];
-  readonly resources?: ContextAccessService['resources'];
-}): ContextAccessService => ({
-  legalEntities: () => Effect.succeed([]),
-  modules: options.modules ?? allowedModules,
-  resources: options.resources ?? allowedResources,
-  tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision: 'allowed' as const, key }))),
-});
+const allowedSearchGate = () =>
+  makeTestAccessDecision({
+    answers: {
+      [`${alphaModule}.records.read`]: { outcome: 'ALLOWED' },
+      [`${betaModule}.records.read`]: { outcome: 'ALLOWED' },
+    },
+  });
 
 const dependencies = (
   catalog: Effect.Success<typeof catalogEffect>,
   options: {
-    readonly contextAccess?: ContextAccessService;
+    readonly access?: ShellAccessGate;
     readonly states?: Readonly<Record<string, TenantModuleState>>;
   } = {},
 ) => {
   let assertion = 0;
   return {
+    access: options.access ?? allowedSearchGate(),
     catalog: Effect.succeed(catalog),
-    contextAccess: options.contextAccess ?? access({}),
     issueAssertion: () => {
       assertion += 1;
       return Effect.succeed(`Bearer phase1-${assertion}`);
@@ -195,7 +192,8 @@ const resourceHit = (
   return relevance === undefined ? hit : { ...hit, relevance };
 };
 
-const titles = (results: readonly ShellSearchResult[]): readonly string[] => results.map(({ title }) => title);
+const titles = (results: readonly ShellSearchResult[]): readonly string[] =>
+  results.flatMap(({ title }) => (title === undefined ? [] : [title]));
 
 const decodeRelevance = (input: { readonly score?: number; readonly version?: string }) =>
   Schema.decodeUnknownResult(ShellSearchRelevanceSchema)(input);
@@ -206,6 +204,9 @@ it.effect('a legacy request without resourceTypes asks every admitted owner and 
     const asked: string[] = [];
     const result = yield* makeShellSearch(dependencies(catalog), {
       search: ({ searchKey }) => {
+        if (searchKey === undefined) {
+          return Effect.die('Approved search provider has no search key');
+        }
         asked.push(searchKey);
         return Effect.succeed([
           searchKey === `${alphaModule}.search`
@@ -260,17 +261,26 @@ it.effect('resourceTypes narrows owner and permission work to the requested admi
     const catalog = yield* catalogEffect;
     const asked: string[] = [];
     const moduleChecks: (readonly string[])[] = [];
+    const gate = allowedSearchGate();
     const result = yield* makeShellSearch(
       dependencies(catalog, {
-        contextAccess: access({
-          modules: (input) => {
-            moduleChecks.push(input.moduleIds);
-            return allowedModules(input);
+        access: {
+          ...gate,
+          decideMany: (input) => {
+            moduleChecks.push(
+              input.flatMap(({ carrier }) =>
+                carrier.accessDeclaration?.key === `${alphaModule}.records.read` ? [alphaModule] : [],
+              ),
+            );
+            return gate.decideMany(input);
           },
-        }),
+        },
       }),
       {
         search: ({ searchKey }) => {
+          if (searchKey === undefined) {
+            return Effect.die('Approved search provider has no search key');
+          }
           asked.push(searchKey);
           return Effect.succeed([resourceHit(alphaModule, alphaType, 'alpha-1', 'Alfa')]);
         },
@@ -404,7 +414,7 @@ it.effect(
     }),
 );
 
-it.effect('counterparty collision is sanitized by record permission and only then ordered by relevance', () =>
+it.effect('owner-filtered counterparty results exclude private collision refs before Shell relevance ordering', () =>
   Effect.gen(function* collision() {
     const catalog = yield* catalogEffect;
     const collisionRef = (resourceId: string) => ({
@@ -420,39 +430,24 @@ it.effect('counterparty collision is sanitized by record permission and only the
       ref: collisionRef('alpha-1'),
       relevance: { score: 10, version: '1' as const },
     };
-    const result = yield* makeShellSearch(
-      dependencies(catalog, {
-        contextAccess: access({
-          resources: ({ resources }) =>
-            Effect.succeed(
-              resources.map(({ moduleId, resourceId, resourceType }) => ({
-                decision: resourceId.startsWith('denied') ? ('denied' as const) : ('allowed' as const),
-                key: `${moduleId}:${resourceType}:${resourceId}`,
-              })),
-            ),
-        }),
-      }),
-      {
-        search: () =>
-          Effect.succeed([
-            {
-              ...counterparty,
-              collision: {
-                counterpartyRefs: [collisionRef('denied-1')],
-                kind: 'CANONICAL_PARTY_COUNTERPARTY_COLLISION',
-              },
-            },
-            resourceHit(alphaModule, alphaType, 'alpha-2', 'Alfa', { score: 500, version: '1' }),
-          ]),
-      },
-    ).search(context, { query: 'record', resourceTypes: [alphaType] });
-    // One readable collision ref cannot stay a collision. Sanitization happens before the global order, so the
-    // surviving counterparty keeps its verified relevance and follows the stronger resource hit.
+    const result = yield* makeShellSearch(dependencies(catalog), {
+      search: () =>
+        Effect.succeed([
+          {
+            ...counterparty,
+            privateCollisionRefs: [collisionRef('denied-1')],
+          },
+          resourceHit(alphaModule, alphaType, 'alpha-2', 'Alfa', { score: 500, version: '1' }),
+        ]),
+    }).search(context, { query: 'record', resourceTypes: [alphaType] });
+    // The owner filters its records; Shell projects only the public DTO, never private collision metadata.
+    // The surviving counterparty keeps its verified relevance and follows the stronger resource hit.
     expect(result.results.map(({ title }) => title)).toEqual(['Alfa', 'Eva Bílá']);
     const [, visible] = result.results;
     expect(visible?.kind).toBe('counterparty');
     expect(visible === undefined || visible.kind !== 'counterparty' ? undefined : visible.collision).toBeUndefined();
     expect(visible?.relevance).toEqual({ score: 10, version: '1' });
+    expect(JSON.stringify(result)).not.toContain('denied-1');
   }),
 );
 
@@ -493,14 +488,11 @@ it.effect('an unadmitted type never reaches its owner and cannot widen a search'
     let betaCalls = 0;
     const result = yield* makeShellSearch(
       dependencies(catalog, {
-        contextAccess: access({
-          modules: ({ moduleIds }) =>
-            Effect.succeed(
-              moduleIds.map((key) => ({
-                decision: key === betaModule ? ('denied' as const) : ('allowed' as const),
-                key,
-              })),
-            ),
+        access: makeTestAccessDecision({
+          answers: {
+            [`${alphaModule}.records.read`]: { outcome: 'ALLOWED' },
+            [`${betaModule}.records.read`]: { outcome: 'DENIED' },
+          },
         }),
       }),
       {

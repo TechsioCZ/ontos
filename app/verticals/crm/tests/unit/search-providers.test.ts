@@ -1,21 +1,32 @@
+import type { ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
+import { parseCrmSearchPredicate } from '../../src/search/record-access.ts';
+import { crmRegistration } from '../../vertical.registration.ts';
 import {
+  ContextAccess,
   CoreSearchProjectionHitSchema,
   CoreSearchProjectionStore,
   CoreSearchQueryRuntime,
-  ContextAccess,
   createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
+  ReadHandlerUnavailable,
+  ReadPermissionDenied,
 } from '@app/core-runtime';
 import { CoreSearchRelevanceSchema } from '@app/core-runtime/search-contract';
 import type { CoreSearchRelevance } from '@app/core-runtime/search-contract';
 import { NodeCrypto } from '@effect/platform-node';
-import { Context, DateTime, Effect, Exit, Layer, Schema } from 'effect';
-import type { ContextAccessService } from '@app/core-runtime';
+import { Cause, Context, DateTime, Effect, Exit, Layer, Option, Schema } from 'effect';
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
+import {
+  PrincipalIdSchema as AccessPrincipalIdSchema,
+  RecordKeySchema,
+  CurrencyCodeSchema,
+} from '@app/core-runtime/access/ids';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { CrmStateSchema } from '../../shared/domain/state.ts';
 import { crmSearchQuery } from '../../shared/domain/search-contact-classification.ts';
 import { clientsRead, loadCrmSearch } from '../../src/search/clients.provider.ts';
 import { contactsRead } from '../../src/search/contacts.provider.ts';
+import { recordsRead } from '../../src/api/records.read.ts';
 import { expect, it } from 'effect-rstest';
 import { ClientsProviderRequestSchema, ClientsProviderResponseSchema } from '../../shared/apis/clients-search.ts';
 import type { ClientsProviderResponse } from '../../shared/apis/clients-search.ts';
@@ -100,6 +111,7 @@ interface ReaderScenario {
   readonly expectedTitle?: string;
   readonly indexCount?: number;
   readonly indexState?: typeof state;
+  readonly missingPredicate?: boolean;
   readonly ownerSnapshot?:
     | 'missing'
     | 'deleted'
@@ -113,8 +125,10 @@ interface ReaderScenario {
     | 'missing-salesperson'
     | 'inactive-salesperson'
     | 'different-principal';
+  readonly predicate?: ListAccessPredicate;
   readonly query?: string;
   readonly readable?: boolean;
+  readonly readOutcome?: 'DENIED' | 'UNAVAILABLE';
   readonly refreshBroadGrant?: boolean;
   readonly resourceType: 'demo.crm.client' | 'demo.crm.contact';
   readonly selectedCompanyId?: string;
@@ -189,6 +203,74 @@ const ownerStateFor = (encoded: typeof CrmStateSchema.Encoded, scenario: ReaderS
   return stored;
 };
 
+const crmListingDecision = (scenario: ReaderScenario, broad: boolean) =>
+  makeTestAccessDecision({
+    answers: {
+      'demo.crm.api-records.read': {
+        outcome: scenario.readOutcome ?? (scenario.readable === false ? 'DENIED' : 'ALLOWED'),
+        predicate:
+          scenario.predicate ??
+          (broad
+            ? { groups: [] }
+            : {
+                groups: [
+                  {
+                    clauses: [
+                      {
+                        conditions: [
+                          {
+                            _tag: 'AssignedTo',
+                            holder: {
+                              _tag: 'Principal',
+                              principalId: AccessPrincipalIdSchema.make(scope.principalId),
+                            },
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              }),
+      },
+    },
+  });
+
+const assertSearchProjectionSql = (
+  sql: string,
+  params: readonly unknown[],
+  predicate: ListAccessPredicate | undefined,
+) => {
+  expect(sql).toContain('"demo_crm"."crm_states"');
+  expect(sql).toContain("c - 'note' - 'partyRef' - 'segment'");
+  expect(sql).toContain("contact - 'note'");
+  expect(sql).toContain('jsonb_strip_nulls');
+  for (const condition of predicate?.groups.flatMap(({ clauses }) => clauses.flatMap(({ conditions }) => conditions)) ??
+    []) {
+    if (condition._tag === 'RecordKeyIn') {
+      expect(sql).toContain(' in (');
+      for (const recordKey of condition.recordKeys) {
+        expect(params).toContain(recordKey);
+      }
+    }
+  }
+};
+const assertDeniedSearch = (outcome: Exit.Exit<unknown, unknown>, scenario: ReaderScenario) => {
+  expect(Exit.isFailure(outcome)).toBe(true);
+  if (Exit.isFailure(outcome)) {
+    const failure = Option.getOrUndefined(Cause.findErrorOption(outcome.cause));
+    expect(
+      scenario.readOutcome === 'UNAVAILABLE'
+        ? Schema.is(ReadHandlerUnavailable)(failure)
+        : Schema.is(ReadPermissionDenied)(failure),
+    ).toBe(true);
+  }
+};
+const searchMustFail = (scenario: ReaderScenario) =>
+  scenario.entrypointAllowed === false ||
+  scenario.readable === false ||
+  scenario.readOutcome !== undefined ||
+  scenario.missingPredicate === true;
+
 const runGovernedProvider = Effect.fn('Crm.testGovernedSearch')(function* runGovernedProvider(
   scenario: ReaderScenario,
 ) {
@@ -234,38 +316,48 @@ const runGovernedProvider = Effect.fn('Crm.testGovernedSearch')(function* runGov
   expect(JSON.stringify(indexed)).not.toMatch(/@|777111|606333|private/u);
   let ownerLoads = 0;
   const harness = yield* makeReadTestHarness({
+    access: {
+      'demo.crm.search-clients.read': scenario.entrypointAllowed === false ? 'denied' : 'allowed',
+      'demo.crm.search-contacts.read': scenario.entrypointAllowed === false ? 'denied' : 'allowed',
+    },
     compositionRevision: 'a'.repeat(64),
-    executeOwnerQuery: ({ scope: sqlScope, sql }) => {
+    executeOwnerQuery: ({ params, scope: sqlScope, sql }) => {
       expect(sqlScope).toEqual({ legalEntityId: selectedCompanyId, tenantId: scope.tenantId });
       ownerLoads += 1;
-      expect(sql).toContain('"demo_crm"."crm_states"');
+      assertSearchProjectionSql(sql, params, scenario.predicate);
+      expect(params).toContain(scope.tenantId);
+      expect(params).toContain(selectedCompanyId);
       return Effect.succeed(
-        scenario.ownerSnapshot === 'missing' || selectedCompanyId !== companyId ? [] : [{ revision: 1, state: stored }],
+        scenario.ownerSnapshot === 'missing' || selectedCompanyId !== companyId
+          ? []
+          : [{ legalEntityId: selectedCompanyId, state: stored, tenantId: scope.tenantId }],
       );
     },
     operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
     ownerAuthorizationDecision: 'allowed',
-    permissionDecision: scenario.entrypointAllowed === false ? 'denied' : 'allowed',
+    ownerRegistration: crmRegistration,
+    permissionDecision: 'allowed',
     scope: principal,
   });
-  const services = yield* Layer.build(harness.layer);
-  const access = Context.get(services, ContextAccess);
-  // Mutate only this harness's boundary fake; its real ReadRuntime retains the exact same object.
+  Object.assign(Context.get(yield* Layer.build(harness.layer), ContextAccess), {
+    contextPermissions: () => Effect.die('Retired permission authority was invoked'),
+    modules: () => Effect.die('Retired module authority was invoked'),
+    resources: () => Effect.die('Retired resource authority was invoked'),
+  });
   let { broad } = scenario;
-  const decisions: Pick<ContextAccessService, 'contextPermissions' | 'resources'> = {
-    contextPermissions: ({ targets }) =>
-      Effect.succeed(
-        targets.map(({ moduleId, permission }) => ({
-          decision:
-            scenario.readable !== false && permission === (broad ? 'demo.crm.read_all' : 'demo.crm.read_assigned')
-              ? ('allowed' as const)
-              : ('denied' as const),
-          key: `${moduleId}:${permission}`,
-        })),
-      ),
-    resources: () => Effect.die('Canonical CRM records visibility must not add generic resource.read'),
+  const gate = makeTestAccessDecision({ defaultAnswer: { outcome: 'DENIED' } });
+  const ownerGate = {
+    ...gate,
+    list: (question: Parameters<typeof gate.list>[0]) => {
+      expect(question.carrier).toBe(recordsRead.descriptor);
+      expect(question.scope.principalId).toBe(scope.principalId);
+      expect(question.scope.legalEntityId).toBe(selectedCompanyId);
+      const current = crmListingDecision(scenario, broad);
+      return current
+        .list(question)
+        .pipe(Effect.map((answer) => (scenario.missingPredicate === true ? { decision: answer.decision } : answer)));
+    },
   };
-  Object.assign(access, decisions);
   const input = { input: { query }, principal, transport: { correlationId: scope.correlationId } };
   const checkCurrentResult = (result: ClientsProviderResponse | ContactsProviderResponse) => {
     if (scenario.expectedTitle !== undefined) {
@@ -283,6 +375,7 @@ const runGovernedProvider = Effect.fn('Crm.testGovernedSearch')(function* runGov
   let indexReads = 0;
   const invoke = run.pipe(
     Effect.provide(harness.layer),
+    Effect.provideService(AccessDecisionGate, ownerGate),
     Effect.provideService(CoreSearchQueryRuntime, {
       search: (searchInput, trustedScope) => {
         indexReads += 1;
@@ -292,9 +385,17 @@ const runGovernedProvider = Effect.fn('Crm.testGovernedSearch')(function* runGov
     }),
   );
   const outcome = yield* Effect.exit(invoke);
-  expect(ownerLoads).toBe(scenario.entrypointAllowed === false ? 0 : 1);
-  expect(indexReads).toBe(scenario.entrypointAllowed === false ? 0 : 1);
-  expect(Exit.isSuccess(outcome)).toBe(scenario.expectedCount !== null);
+  const denied = searchMustFail(scenario);
+  if (!denied && Exit.isFailure(outcome)) {
+    yield* Effect.failCause(outcome.cause);
+    return;
+  }
+  expect(ownerLoads).toBe(Number(!denied));
+  expect(indexReads).toBe(Number(!denied));
+  expect(Exit.isSuccess(outcome)).toBe(!denied);
+  if (denied) {
+    assertDeniedSearch(outcome, scenario);
+  }
   if (Exit.isSuccess(outcome)) {
     expect(outcome.value).toBe(scenario.expectedCount);
     expect(harness.snapshot().evidenceWrites).toBe(1);
@@ -845,4 +946,78 @@ it.effect('governed lookup never searches notes or strips arbitrary free text in
       ),
     { concurrency: 1, discard: true },
   ).pipe(Effect.scoped, Effect.provide(NodeCrypto.layer)),
+);
+
+const target = (key: string) => ({
+  _tag: 'RecordKeyIn' as const,
+  recordKeys: [RecordKeySchema.make(key)] as const,
+});
+
+it.effect('actual CRM search records LIST keeps full AND/OR target intersection without widening assigned reach', () =>
+  Effect.gen(function* recordPredicates() {
+    const assigned = {
+      _tag: 'AssignedTo' as const,
+      holder: { _tag: 'Principal' as const, principalId: AccessPrincipalIdSchema.make(scope.principalId) },
+    };
+    for (const resourceType of ['demo.crm.client', 'demo.crm.contact'] as const) {
+      for (const [predicate, expectedCount] of [
+        [
+          { groups: [{ clauses: [{ conditions: [assigned] }] }, { clauses: [{ conditions: [target('client-1')] }] }] },
+          1,
+        ],
+        [
+          { groups: [{ clauses: [{ conditions: [assigned] }] }, { clauses: [{ conditions: [target('missing')] }] }] },
+          0,
+        ],
+        [{ groups: [{ clauses: [{ conditions: [target('missing')] }, { conditions: [target('client-1')] }] }] }, 1],
+        [
+          {
+            groups: [
+              { clauses: [{ conditions: [{ _tag: 'AllInScope' }] }] },
+              { clauses: [{ conditions: [target('missing')] }] },
+            ],
+          },
+          0,
+        ],
+        [
+          {
+            groups: [
+              {
+                clauses: [
+                  {
+                    conditions: [
+                      {
+                        _tag: 'AmountWithinCeiling',
+                        ceiling: { currency: CurrencyCodeSchema.make('CZK'), limitMinor: 10 },
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          0,
+        ],
+      ] as const) {
+        yield* runGovernedProvider({ assigned: true, broad: false, expectedCount, predicate, resourceType });
+      }
+      for (const readOutcome of ['DENIED', 'UNAVAILABLE'] as const) {
+        yield* runGovernedProvider({ assigned: true, broad: true, expectedCount: null, readOutcome, resourceType });
+      }
+      yield* runGovernedProvider({
+        assigned: true,
+        broad: true,
+        expectedCount: null,
+        missingPredicate: true,
+        resourceType,
+      });
+    }
+    for (const malformed of [
+      { groups: [{ clauses: [] }] },
+      { groups: [{ clauses: [{ conditions: [] }] }] },
+      { groups: [], unsupported: true },
+    ]) {
+      expect(Schema.isSchemaError(yield* parseCrmSearchPredicate(malformed).pipe(Effect.flip))).toBe(true);
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeCrypto.layer)),
 );

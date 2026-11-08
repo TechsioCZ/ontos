@@ -2,7 +2,6 @@ import {
   ActionAuthorizationPreflight,
   ActionAuthorizationPreflightDatabase,
   ActionPermissionCheckError,
-  ContextAccess,
   makeActionAuthorizationPreflightPermit,
   PrincipalEligibility,
   scopedRoutineInvokerFromTransaction,
@@ -20,12 +19,9 @@ import { Effect, Layer, Result, Schema } from 'effect';
 
 import { ClaimCounterpartyAccessInvitationPayloadSchema } from '../../shared/actions/claim-counterparty-access-invitation.ts';
 import { CounterpartyAccessContractViolation } from '../../shared/domain/access-error.ts';
-import {
-  readVerifiedInvitationClaimProof,
-  verifyInvitationInviterCoreAuthority,
-} from './invitation-claim-authority-persistence.ts';
+import { readVerifiedInvitationClaimProof } from './invitation-claim-authority-persistence.ts';
 import { readCounterpartyAccessInvitationForScope, snapshotCurrentOwnerAccess } from './access-persistence.ts';
-import { stableRevision } from '../integrations/order-finalization-pricing-context.ts';
+import { stableRevision } from '../stable-revision.ts';
 import type { CounterpartyAccessDomainError } from '../../shared/domain/access-error.ts';
 
 const claimActionKey = 'commerce.customer-context.claim-counterparty-access-invitation';
@@ -81,7 +77,7 @@ const decodedClaimPayload = (
   return Result.isSuccess(decoded) ? decoded.success : undefined;
 };
 
-/** Check the remote projection only between two matching, independently released owner snapshots. */
+/** Recheck current principal status between two exact, independently released owner snapshots. */
 export const verifyInvitationClaimSnapshotSequence = Effect.fn('InvitationClaimActionPreflight.verifySnapshotSequence')(
   function* verifySnapshotSequence<Snapshot, ReadFailure, CheckFailure>(
     load: () => Effect.Effect<Snapshot, ReadFailure>,
@@ -101,7 +97,6 @@ const runInvitationClaimPreflight = Effect.fn('InvitationClaimActionPreflight.ru
   function* runInvitationClaimPreflight(
     // oxlint-disable-next-line effect-native/no-dependency-parameters -- The operation captures the already-yielded Core preflight database seam; expires: 2027-03-31.
     database: ActionAuthorizationPreflightDatabaseService,
-    contextAccess: Pick<(typeof ContextAccess)['Service'], 'businessPermissions'>,
     // oxlint-disable-next-line effect-native/no-dependency-parameters -- The operation captures the already-yielded eligibility service for this owner-local preflight; expires: 2027-03-31.
     eligibility: (typeof PrincipalEligibility)['Service'],
     input: ActionAuthorizationPreflightInput,
@@ -184,12 +179,28 @@ const runInvitationClaimPreflight = Effect.fn('InvitationClaimActionPreflight.ru
     );
     const load = () => database.transaction(snapshotInScopedTransaction);
     yield* verifyInvitationClaimSnapshotSequence(load, (snapshot) =>
-      verifyInvitationInviterCoreAuthority(contextAccess, {
-        counterpartyRef: payload.counterpartyRef,
-        inviter: snapshot.proof.inviter,
-        legalEntityId,
-        scope: payload.scope,
-      }),
+      eligibility.resolve(snapshot.proof.inviter).pipe(
+        Effect.flatMap(
+          (current): Effect.Effect<void, ActionPermissionCheckError | CounterpartyAccessContractViolation> => {
+            if (current.decision === 'unavailable') {
+              return Effect.fail(actionPermissionCheckUnavailable());
+            }
+            if (
+              current.decision !== 'eligible' ||
+              current.principal.principalId !== snapshot.proof.inviter.principalId ||
+              current.principal.tenantId !== snapshot.proof.inviter.tenantId
+            ) {
+              return Effect.fail(
+                new CounterpartyAccessContractViolation({
+                  code: 'inviter_authority_denied',
+                  reason: 'The invitation grantor is no longer an active principal',
+                }),
+              );
+            }
+            return Effect.void;
+          },
+        ),
+      ),
     );
     const rechecked = yield* eligibility.resolve(payload.claimant);
     if (rechecked.decision === 'unavailable') {
@@ -209,7 +220,6 @@ const runInvitationClaimPreflight = Effect.fn('InvitationClaimActionPreflight.ru
 export const makeInvitationClaimActionAuthorizationPreflight = (
   // oxlint-disable-next-line effect-native/no-dependency-parameters -- The factory captures the already-yielded Core preflight database seam; expires: 2027-03-31.
   database: ActionAuthorizationPreflightDatabaseService,
-  contextAccess: Pick<(typeof ContextAccess)['Service'], 'businessPermissions'>,
   // oxlint-disable-next-line effect-native/no-dependency-parameters -- The factory captures the already-yielded eligibility service for this owner-local preflight; expires: 2027-03-31.
   eligibility: (typeof PrincipalEligibility)['Service'],
 ): ActionAuthorizationPreflightService =>
@@ -222,7 +232,7 @@ export const makeInvitationClaimActionAuthorizationPreflight = (
       if (payload === undefined || !payloadMatchesTrustedClaim(payload, input)) {
         return Effect.succeed({ outcome: 'denied' } as const);
       }
-      return runInvitationClaimPreflight(database, contextAccess, eligibility, input, payload).pipe(
+      return runInvitationClaimPreflight(database, eligibility, input, payload).pipe(
         Effect.map(() => ({
           outcome: 'allowed' as const,
           permit: makeActionAuthorizationPreflightPermit({
@@ -244,10 +254,10 @@ export const makeInvitationClaimActionAuthorizationPreflight = (
 export const commerceCustomerContextInvitationClaimActionAuthorizationPreflightLive = Layer.effect(
   ActionAuthorizationPreflight,
   Effect.gen(function* makeInvitationClaimPreflightLive() {
-    const [database, contextAccess, eligibility] = yield* Effect.all(
-      [ActionAuthorizationPreflightDatabase, ContextAccess, PrincipalEligibility] as const,
+    const [database, eligibility] = yield* Effect.all(
+      [ActionAuthorizationPreflightDatabase, PrincipalEligibility] as const,
       { concurrency: 1 },
     );
-    return makeInvitationClaimActionAuthorizationPreflight(database, contextAccess, eligibility);
+    return makeInvitationClaimActionAuthorizationPreflight(database, eligibility);
   }),
 );

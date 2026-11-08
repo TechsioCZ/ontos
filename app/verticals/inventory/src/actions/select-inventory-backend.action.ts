@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.inventory
 // @ontos-action-slug select-inventory-backend
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect } from 'effect';
 
 import {
@@ -43,29 +43,25 @@ export const handleSelectInventoryBackend = Effect.fn('SelectInventoryBackendAct
 
 export const selectInventoryBackendAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.inventory.backend-configuration.select',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'backend-configuration', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.inventory.select-inventory-backend.access.v1',
     },
     actionKey: ACTION_KEY,
     auditProfile: 'standard',
-    businessPermission: defineActionBusinessPermission<SelectInventoryBackendPayload>((payload, scope) => ({
-      permission: 'inventory.migration.manage',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: payload.authorizationTargetRef.moduleId,
-          resourceId: payload.authorizationTargetRef.resourceId,
-          resourceType: payload.authorizationTargetRef.resourceType,
-        },
-        tenantId: payload.authorizationTargetRef.tenantId === scope.tenantId ? scope.tenantId : '',
-      },
-    })),
     domainErrorSchema: SelectInventoryBackendErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: MODULE_KEY,
       role: 'action',

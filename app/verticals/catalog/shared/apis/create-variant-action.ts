@@ -2,11 +2,13 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug create-variant
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { CreateVariantPayloadSchema, CreateVariantResultSchema } from '../actions/create-variant.ts';
 
 export { CreateVariantPayloadSchema } from '../actions/create-variant.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const CreateVariantActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreateVariantActionInvalidProblem',
@@ -21,6 +23,7 @@ export const CreateVariantActionForbiddenProblemSchema = makeProblemDetailsSchem
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -131,7 +134,7 @@ export const CreateVariantActionApi = HttpApi.make('CreateVariantActionApi').add
       HttpApiEndpoint.post('execute', '/catalog/actions/create-variant', {
         error: actionErrors,
         payload: Schema.toEncoded(CreateVariantPayloadSchema),
-        success: CreateVariantResultSchema,
+        success: [ActionProposalAcceptedSchema, CreateVariantResultSchema],
       }),
     )
     .middleware(CreateVariantActionSchemaErrorMiddleware),

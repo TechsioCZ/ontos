@@ -24,6 +24,7 @@
       }
     },
     "demo": {
+      "approvalRequired": "Návrh čeká na schválení. Změna zatím nebyla provedena.",
       "feedback": {
         "loading": "Načítání…",
         "saving": "Ukládání…",

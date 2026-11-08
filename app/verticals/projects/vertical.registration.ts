@@ -3,31 +3,14 @@
 // @ontos-module-id projects.core
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { projectsManifest } from './vertical.manifest.ts';
-// <generated-module-registration-imports>
-import { archiveProjectAction } from './src/actions/archive-project.action.ts';
-import { createProjectAction } from './src/actions/create-project.action.ts';
-import { moveProjectAction } from './src/actions/move-project.action.ts';
-import { rebuildSearchWorker } from './src/workers/rebuild-search.worker.ts';
-import { refreshSearchWorker } from './src/workers/refresh-search.worker.ts';
-import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
-import { unarchiveProjectAction } from './src/actions/unarchive-project.action.ts';
-import { updateProjectAction } from './src/actions/update-project.action.ts';
-// </generated-module-registration-imports>
+import { projectsRuntimeDeclaration } from './vertical.runtime-declaration.ts';
 
 export const projectsRegistration = defineVerticalRuntimeRegistration({
-  actions: [
-    // <generated-module-registration-actions>
-    archiveProjectAction,
-    createProjectAction,
-    moveProjectAction,
-    requestSearchRebuildAction,
-    unarchiveProjectAction,
-    updateProjectAction,
-    // </generated-module-registration-actions>
-  ],
+  ...projectsRuntimeDeclaration,
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       'project-owner-candidates': () => import('./src/api/project-owner-candidates-client.ts'),
       'read-project': () => import('./src/api/read-project-client.ts'),
       // </generated-module-registration-apis>
@@ -52,12 +35,6 @@ export const projectsRegistration = defineVerticalRuntimeRegistration({
     },
   },
   manifest: projectsManifest,
-  outboxWorkers: [
-    // <generated-module-registration-workers>
-    rebuildSearchWorker,
-    refreshSearchWorker,
-    // </generated-module-registration-workers>
-  ],
 });
 
 // <generated-public-component-registrations>

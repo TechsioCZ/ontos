@@ -25,6 +25,7 @@ export interface SeedCustomerSpec {
   readonly evidenceKey: string;
   readonly name: string;
   readonly partyType?: 'ORGANIZATION' | 'PERSON';
+  readonly personName?: { readonly firstName: string; readonly lastName: string };
 }
 const defaultCustomer: SeedCustomerSpec = {
   evidenceKey: 'customer',
@@ -84,6 +85,10 @@ export const ensureSeedCustomer = (
 ) =>
   Effect.gen(function* ensureCustomer() {
     const { partyType = 'ORGANIZATION' } = spec;
+    if (partyType === 'PERSON' && spec.personName === undefined) {
+      return yield* new DemoSeedError({ reason: 'A person fixture requires explicit given and family names.' });
+    }
+    const subjectName = partyType === 'PERSON' ? spec.personName : { businessName: spec.name };
     const customerEvidenceReference =
       spec.evidenceKey === defaultCustomer.evidenceKey
         ? defaultEvidenceReference
@@ -116,7 +121,7 @@ export const ensureSeedCustomer = (
         CreatePartyPayloadJsonSchema,
         {
           candidate: {
-            displayName: spec.name,
+            ...subjectName,
             evidenceRefs: [customerEvidenceReference],
             officialIdentifiers: [],
             partyType,

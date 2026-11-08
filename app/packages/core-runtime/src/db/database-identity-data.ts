@@ -17,9 +17,11 @@ export const SHARED_RUNTIME_IDENTITY: DatabaseIdentity = freezeIdentity({
   ownerModuleKey: null,
   registersGatewayScopeGrants: false,
   role: 'ontos_runtime',
+  runsActions: true,
   scopeAuthority: 'session_setting',
   urlKey: 'DATABASE_URL',
 });
+
 export const SHELL_GATEWAY_ISSUER_IDENTITY: DatabaseIdentity = freezeIdentity({
   cloudflareHyperdrive: {
     binding: 'GATEWAY_ISSUER_HYPERDRIVE',
@@ -31,9 +33,11 @@ export const SHELL_GATEWAY_ISSUER_IDENTITY: DatabaseIdentity = freezeIdentity({
   ownerModuleKey: null,
   registersGatewayScopeGrants: true,
   role: 'shell_gateway_issuer',
+  runsActions: false,
   scopeAuthority: 'none',
   urlKey: 'SHELL_GATEWAY_ISSUER_DATABASE_URL',
 });
+
 export const BEARER_ASSERTION_ROLE_SETTINGS = Object.freeze([
   'log_parameter_max_length=0',
   'log_parameter_max_length_on_error=0',

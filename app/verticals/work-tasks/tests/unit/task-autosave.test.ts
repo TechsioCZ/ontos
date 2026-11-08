@@ -1,11 +1,17 @@
 import { startAutosave } from '@app/admin-ui';
 import type { AutosaveOutcome } from '@app/admin-ui';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { Effect, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 import { ApplyCommandActionConflictProblemSchema } from '../../shared/apis/apply-command-action.ts';
 import { TaskSchema } from '../../shared/apis/records.ts';
-import { initialValues, sameFormValues, taskAutosaveOutcome } from '../../src/routes/[lang]/ukoly/task-form-values.ts';
+import {
+  initialValues,
+  sameFormValues,
+  taskAutosaveOutcome,
+  taskAutosaveResult,
+} from '../../src/routes/[lang]/ukoly/task-form-values.ts';
 import type { FormValues } from '../../src/routes/[lang]/ukoly/task-form-values.ts';
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
@@ -113,6 +119,54 @@ describe('task edit panel autosave', () => {
       controller.change({ ...saved, priority: 'NORMAL' });
       yield* TestClock.adjust('1 second');
       expect(sent).toHaveLength(1);
+    }),
+  );
+
+  const proposal = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
+    _tag: 'ActionProposalAccepted',
+    expiresAt: '2026-11-08T12:00:00.000Z',
+    proposalId: '10000000-0000-4000-8000-000000000001',
+  });
+
+  it('reports a draft parked for approval as proposed; only a committed save moves the revision', () => {
+    expect(taskAutosaveResult(proposal)).toBe('proposed');
+    expect(taskAutosaveResult({ revision: 7 })).toBe(7);
+  });
+
+  it.effect('shows a parked draft as pending and never proposes it again on blur, retry or close', () =>
+    Effect.gen(function* parkedOnce() {
+      const { controller, sent } = yield* panel('proposed');
+      const edited = { ...saved, description: 'Zavolat správci budovy' };
+      controller.change(edited);
+      controller.flush();
+      yield* Effect.yieldNow;
+      expect(controller.status()).toBe('proposed');
+      expect(controller.confirmed()).toBe(saved);
+      // Blur, the retry control and the panel's close all flush; none of them sends the parked draft.
+      controller.flush();
+      controller.retry();
+      controller.flush();
+      yield* TestClock.adjust('1 second');
+      expect(sent).toEqual([edited]);
+      expect(controller.status()).toBe('proposed');
+    }),
+  );
+
+  it.effect('still saves a committed edit and still retries a real failure', () =>
+    Effect.gen(function* controls() {
+      const committed = yield* panel('saved');
+      committed.controller.change({ ...saved, title: 'Saved task, revised' });
+      committed.controller.flush();
+      yield* Effect.yieldNow;
+      expect(committed.controller.status()).toBe('saved');
+      const failing = yield* panel('failed');
+      failing.controller.change({ ...saved, title: 'Saved task, revised' });
+      failing.controller.flush();
+      yield* Effect.yieldNow;
+      expect(failing.controller.status()).toBe('error');
+      failing.controller.retry();
+      yield* Effect.yieldNow;
+      expect(failing.sent).toHaveLength(2);
     }),
   );
 });

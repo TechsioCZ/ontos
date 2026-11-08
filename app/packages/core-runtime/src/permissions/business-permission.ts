@@ -1,7 +1,6 @@
 import { Predicate, Result, Schema } from 'effect';
 
-const dottedPermissionPattern =
-  /^(?:(?!assortment\.)[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+|assortment\.(?:binding\.(?:create|end)|boundary\.(?:create|end)|configuration\.read|decision\.explain|rule\.(?:create|revision\.create|retire)))$/u;
+const dottedPermissionPattern = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/u;
 const dottedEntrypointPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9_-]*)+$/u;
 const schemaVersionPattern = /^[1-9][0-9]*$/u;
 const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
@@ -11,21 +10,7 @@ export const BusinessPermissionCodeSchema = Schema.String.check(Schema.isPattern
   Schema.decodeTo(Schema.String),
 );
 
-export const BusinessPermissionScopeKindSchema = Schema.Literals([
-  'assortment_binding',
-  'assortment_boundary',
-  'assortment_configuration',
-  'assortment_decision',
-  'assortment_rule',
-  'counterparty',
-  'counterparty_storefront',
-  'inventory_resource',
-  'module',
-  'price_group',
-  'pricing_catalog',
-  'retail_profile',
-  'tax_selling_legal_entity',
-]);
+export const BusinessPermissionScopeKindSchema = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9_]*$/u));
 export const BusinessPermissionAuditSensitivitySchema = Schema.Literals(['sensitive', 'standard']);
 
 export type BusinessPermissionCode = typeof BusinessPermissionCodeSchema.Type;
@@ -72,51 +57,6 @@ const freezeDescriptor = (descriptor: BusinessPermissionDescriptor): Readonly<Bu
     protectedEntrypoints: Object.freeze([...descriptor.protectedEntrypoints]),
   });
 
-/**
- * TAX management authority is seller-specific (#950 F24-F28): it targets one exact Selling Legal Entity. TAX reads
- * stay module-scoped context Permissions, which Core already binds to the trusted Legal Entity.
- */
-const taxSellingLegalEntityPermissions: ReadonlySet<string> = new Set(['tax.rule.manage']);
-export const isTaxSellingLegalEntityPermission = (permission: string): boolean =>
-  taxSellingLegalEntityPermissions.has(permission);
-
-const usesIncompatibleTaxScope = (descriptor: BusinessPermissionDescriptor): boolean =>
-  isTaxSellingLegalEntityPermission(descriptor.key)
-    ? descriptor.allowedScopeKinds.some((scope) => scope !== 'tax_selling_legal_entity')
-    : descriptor.allowedScopeKinds.includes('tax_selling_legal_entity');
-
-const usesIncompatibleTargetScope = (descriptor: BusinessPermissionDescriptor): boolean => {
-  const pricingPermission = descriptor.key.startsWith('pricing.price_group.');
-  const inventoryPermission = descriptor.key.startsWith('inventory.');
-  const retailPermission = descriptor.key.startsWith('retail.');
-  const counterpartyPermission = descriptor.key.startsWith('counterparty.');
-  const assortmentPermission = descriptor.key.startsWith('assortment.');
-  const taxPermission = isTaxSellingLegalEntityPermission(descriptor.key);
-  const modulePermission =
-    !pricingPermission &&
-    !inventoryPermission &&
-    !retailPermission &&
-    !counterpartyPermission &&
-    !assortmentPermission &&
-    !taxPermission;
-  const moduleScope = descriptor.allowedScopeKinds.includes('module');
-  const hasPricingScope = descriptor.allowedScopeKinds.some(
-    (scope) => scope === 'pricing_catalog' || scope === 'price_group',
-  );
-  const hasInventoryScope = descriptor.allowedScopeKinds.includes('inventory_resource');
-
-  return (
-    (pricingPermission &&
-      descriptor.allowedScopeKinds.some((scope) => scope !== 'pricing_catalog' && scope !== 'price_group')) ||
-    (!pricingPermission && hasPricingScope) ||
-    (inventoryPermission && descriptor.allowedScopeKinds.some((scope) => scope !== 'inventory_resource')) ||
-    (!inventoryPermission && hasInventoryScope) ||
-    usesIncompatibleTaxScope(descriptor) ||
-    (modulePermission && !moduleScope) ||
-    (!modulePermission && moduleScope)
-  );
-};
-
 export const defineBusinessPermission = (
   input: BusinessPermissionDescriptor,
 ): Readonly<BusinessPermissionDescriptor> => {
@@ -131,9 +71,7 @@ export const defineBusinessPermission = (
   if (descriptor.allowedScopeKinds.length === 0) {
     return invalid(`business permission ${descriptor.key} must allow at least one scope kind`);
   }
-  if (usesIncompatibleTargetScope(descriptor)) {
-    return invalid(`business permission ${descriptor.key} uses an incompatible target scope`);
-  }
+
   for (const values of [descriptor.authorityGroups, descriptor.protectedEntrypoints]) {
     if (new Set(values).size !== values.length) {
       return invalid(`business permission ${descriptor.key} contains duplicate catalog metadata`);

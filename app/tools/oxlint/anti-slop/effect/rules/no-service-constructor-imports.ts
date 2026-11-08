@@ -863,6 +863,10 @@ function ordinaryProcessUse(node: Syntax, source: ProcessSource): boolean {
   if (slot === "stdin") return ordinaryStdinUse(member, source);
   if (["pid", "ppid", "execPath", "exitCode"].includes(slot ?? "")) return true;
   if (slot === "exit") return directProcessCall(member, source) !== null;
+  if (slot === "cwd") {
+    const call = directProcessCall(member, source);
+    return call !== null && call.arguments.length === 0;
+  }
   const operation = processMember(member, source);
   const call = operation === null ? null : directProcessCall(operation, source);
   if (slot === "argv") return staticProcessMember(operation ?? undefined) === "includes" && call !== null &&
@@ -1033,6 +1037,10 @@ function closedProcessSource(program: ESTree.Program, source: ProcessSource, cap
     if (node.type === "MemberExpression") {
       const key = processMemberKey(node);
       const property = asNode(node.property);
+      const object = asNode(node.object);
+      const processBinding = object?.type === "Identifier" ? source.references.get(object) : undefined;
+      if (object?.type === "Identifier" && object.name === "process" && key === "cwd" && processBinding !== null &&
+        (processBinding === undefined || capabilities.bindings.get(processBinding) !== "process")) return false;
       // Unknown computed acquisition can conceal a constructor/prototype; numeric array indices cannot.
       if ((REFLECTIVE_MEMBERS.has(key ?? "") && !localErrorCauseMetadata(node, source)) || (node.computed && key === null &&
         !(property !== null && unwrap(property).type === "Literal" && typeof unwrap(property).value === "number") &&
@@ -1399,21 +1407,75 @@ function bffImportedType(node: Syntax, imported: string, imports: readonly BffIm
   const arguments_ = node.typeArguments?.params ?? node.typeParameters?.params;
   return arguments_?.length === 1 && arguments_[0].type === "TSTypeQuery" && arguments_[0].exprName.type === "Identifier" && arguments_[0].exprName.name === api.name;
 }
-function bffLayerExpression(node: Syntax, source: ProcessSource, imports: readonly BffImport[], layers: ReadonlySet<Syntax>, mode: "handlers" | "transport"): boolean {
-  const immutableArgument = (argument: Syntax): boolean => {
-    const binding = bffBinding(argument, source);
-    return binding !== null && bffImmutable(binding, source, imports);
-  };
+/** An injected tuple element is a Layer only when its immutable rest tuple names an actual Core runtime service. */
+function bffRuntimeLayerParameter(binding: Syntax, source: ProcessSource, imports: readonly BffImport[]): boolean {
+  if (bffReferences(binding, source).some((reference) => bffBindingWritten(reference, source))) return false;
+  const pattern = source.parents.get(binding);
+  const declaration = pattern === undefined ? undefined : source.parents.get(pattern);
+  const statement = declaration === undefined ? undefined : source.parents.get(declaration);
+  if (pattern?.type !== "ArrayPattern" || declaration?.type !== "VariableDeclarator" || declaration.id !== pattern ||
+    statement?.type !== "VariableDeclaration" || statement.kind !== "const" || pattern.elements.some((element: Syntax) => element?.type !== "Identifier")) return false;
+  const tupleBinding = bffBinding(declaration.init, source);
+  const rest = tupleBinding === null ? undefined : source.parents.get(tupleBinding);
+  const factory = rest === undefined ? undefined : source.parents.get(rest);
+  if (tupleBinding === null || rest?.type !== "RestElement" || factory === undefined || !isFunction(factory) ||
+    factory.params.length !== 1 || factory.params[0] !== rest || factory.typeParameters != null ||
+    bffReferences(tupleBinding, source).some((reference) => reference !== declaration.init)) return false;
+  let root = factory;
+  while (source.parents.has(root)) root = source.parents.get(root)!;
+  const annotation = rest.typeAnnotation?.typeAnnotation ?? rest.argument.typeAnnotation?.typeAnnotation;
+  if (root.type !== "Program" || annotation?.type !== "TSTypeReference" || annotation.typeName.type !== "Identifier") return false;
+  const aliases = root.body.flatMap((node: Syntax) => {
+    const entry = node.type === "ExportNamedDeclaration" ? node.declaration : node;
+    return entry?.type === "TSTypeAliasDeclaration" && entry.id.name === annotation.typeName.name ? [entry] : [];
+  });
+  const tuple = aliases.length === 1 && aliases[0].typeAnnotation?.type === "TSTypeOperator" && aliases[0].typeAnnotation.operator === "readonly" ? aliases[0].typeAnnotation.typeAnnotation : undefined;
+  const elements = tuple?.type === "TSTupleType" ? tuple.elementTypes : undefined;
+  if (elements?.length !== pattern.elements.length) return false;
+  const item = elements[pattern.elements.indexOf(binding)];
+  const layer = item?.type === "TSNamedTupleMember" ? item.elementType : item;
+  if (layer?.type !== "TSTypeReference" || layer.typeName.type !== "TSQualifiedName" || layer.typeName.left.type !== "Identifier" || layer.typeName.right.name !== "Layer") return false;
+  const layerImport = imports.find((entry) => entry.binding.name === layer.typeName.left.name && entry.imported === "Layer" && ["effect", "@modern-js/bff-effect/effect-edge"].includes(entry.source));
+  const role = (layer.typeArguments?.params ?? layer.typeParameters?.params)?.[0];
+  return layerImport !== undefined && role?.type === "TSTypeReference" && role.typeName.type === "Identifier" &&
+    imports.some((entry) => entry.binding.name === role.typeName.name && entry.source === "@app/core-runtime" &&
+      ["ReadRuntime", "ActionRuntime", "GatewayAssertionRedemptionService"].includes(entry.imported));
+}
+function bffLayerExpression(node: Syntax, source: ProcessSource, imports: readonly BffImport[], layers: ReadonlySet<Syntax>, mode: "handlers" | "transport", filename: string, owner: string): boolean {
   const layerMember = (value: Syntax, name: string): boolean => {
     const object = asNode(value.object);
     const binding = object === null ? null : bffBinding(object, source);
     return value.type === "MemberExpression" && !value.computed && !value.optional && value.property.name === name && binding !== null && layers.has(binding);
   };
-  const transform = (value: Syntax): boolean => {
+  const immutableArgument = (argument: Syntax, depth = 0): boolean => {
+    if (depth > 32) return false;
+    const value = unwrap(argument);
+    const binding = bffBinding(value, source);
+    if (binding !== null) return bffImmutable(binding, source, imports) || bffRuntimeLayerParameter(binding, source, imports);
+    if (value.type !== "CallExpression" || value.optional || value.arguments.some((entry: Syntax) => entry.type === "SpreadElement")) return false;
+    const callee = asNode(value.callee);
+    if (callee === null) return false;
+    if (callee.type === "MemberExpression" && !callee.computed && !callee.optional && callee.property.name === "pipe") {
+      const handler = bffBinding(callee.object, source);
+      const origin = imports.find((entry) => entry.binding === handler && !entry.typeOnly && entry.source.startsWith("."));
+      const resolved = origin === undefined ? null : resolveModule(filename, origin.source);
+      try {
+        if (handler === null || resolved === null || !bffImmutable(handler, source, imports) ||
+          nodePath.relative(realpathSync(owner), realpathSync(resolved)).startsWith("..")) return false;
+      } catch { return false; }
+      return value.arguments.length > 0 && value.arguments.every((entry: Syntax) => transform(unwrap(entry), depth + 1));
+    }
+    const merge = layerMember(callee, "merge");
+    const mergeAll = layerMember(callee, "mergeAll");
+    const provide = layerMember(callee, "provide") || layerMember(callee, "provideMerge");
+    return ((mergeAll && value.arguments.length > 0) || ((merge || provide) && value.arguments.length === 2)) &&
+      value.arguments.every((entry: Syntax) => immutableArgument(entry, depth + 1));
+  };
+  const transform = (value: Syntax, depth = 0): boolean => {
     if (layerMember(value, "orDie")) return true;
     const callee = asNode(value.callee);
     return value.type === "CallExpression" && !value.optional && callee !== null &&
-      (layerMember(callee, "provide") || layerMember(callee, "provideMerge")) && value.arguments.length === 1 && immutableArgument(value.arguments[0]);
+      (layerMember(callee, "provide") || layerMember(callee, "provideMerge")) && value.arguments.length === 1 && immutableArgument(value.arguments[0], depth + 1);
   };
   let base = unwrap(node);
   if (base.type === "CallExpression" && !base.optional && base.callee.type === "MemberExpression" && !base.callee.computed &&
@@ -1545,10 +1607,10 @@ function ownsGovernedBff(program: ESTree.Program, importedName: string, filename
   const handlerBinding = handlers === undefined ? null : bffBinding(handlers, source);
   const handlerInitializer = handlerBinding === null ? null : bffConst(handlerBinding, source);
   if (handlerInitializer === null || bffReferences(handlerBinding!, source).some((reference) => reference !== handlers) ||
-    !bffLayerExpression(handlerInitializer, source, imports, layers, "handlers")) return false;
+    !bffLayerExpression(handlerInitializer, source, imports, layers, "handlers", filename, owner)) return false;
   const transport = properties.get("transport");
   if (transport !== undefined) {
-    if (!bffLayerExpression(transport, source, imports, layers, "transport")) return false;
+    if (!bffLayerExpression(transport, source, imports, layers, "transport", filename, owner)) return false;
     const inspectTransport = unwrap(transport);
     const base = inspectTransport.type === "CallExpression" && inspectTransport.callee.type === "MemberExpression" &&
       inspectTransport.callee.property.name === "pipe" ? unwrap(inspectTransport.callee.object) : inspectTransport;

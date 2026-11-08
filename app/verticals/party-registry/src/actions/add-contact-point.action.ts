@@ -16,14 +16,12 @@ import {
 import {
   PartyContactPointSchema,
   assertAddressPurposeRules,
-  assertVerificationRules,
   normalizeContactPointInput,
 } from '../../shared/domain/contact-point.ts';
 import type {
   ContactPointInput,
   ContactPointPrivacyClassification,
   ContactPointProvenance,
-  ContactPointVerification,
   PartyContactPoint,
 } from '../../shared/domain/contact-point.ts';
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
@@ -57,7 +55,6 @@ export interface AddContactPointCommand {
   readonly privacyClassification: ContactPointPrivacyClassification;
   readonly provenance: ContactPointProvenance;
   readonly validFrom: string;
-  readonly verification: ContactPointVerification;
 }
 
 interface Services {
@@ -84,7 +81,6 @@ const validateAndNormalize = (payload: AddContactPointPayload) =>
         { cause },
       ),
     try: () => {
-      assertVerificationRules(payload.verification);
       if (payload.contactPoint.type === 'ADDRESS') {
         assertAddressPurposeRules(payload.contactPoint.purposes, payload.provenance);
       }
@@ -142,6 +138,22 @@ const handleAddContactPoint = Effect.fn('AddContactPointAction.handleAddContactP
 
 export const addContactPointAction = defineAction(
   {
+    accessActor: {
+      callers: ['crm'],
+      subject: 'rights',
+      subjectWorkloads: ['demo.crm.party-intake'],
+      reason:
+        'CRM reconciles owner-held client identities through native Party operations under its bound intake workload; humans retain existing rights.',
+    },
+    accessDeclaration: {
+      key: 'party.registry.contact-point.add',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'contact-data', level: 'extended' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessTarget: (payload) => ({ moduleKey: 'party.registry', recordKey: payload.partyRef.resourceId }),
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.add-contact-point.access.v1',
@@ -154,10 +166,7 @@ export const addContactPointAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.add-contact-point',
       moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
@@ -169,7 +178,6 @@ export const addContactPointAction = defineAction(
     policies: [],
     resultSchema: AddContactPointResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_party_identity',
   },
   handleAddContactPoint,
   (transaction, scope) =>

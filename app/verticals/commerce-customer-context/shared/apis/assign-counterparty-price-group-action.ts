@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.customer-context
 // @ontos-action-http-slug assign-counterparty-price-group
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/assign-counterparty-price-group.ts';
 
 export { AssignCounterpartyPriceGroupPayloadSchema } from '../actions/assign-counterparty-price-group.ts';
-
 export const AssignCounterpartyPriceGroupActionInvalidProblemSchema = makeProblemDetailsSchema(
   'AssignCounterpartyPriceGroupActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const AssignCounterpartyPriceGroupActionForbiddenProblemSchema = makeProb
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -163,7 +164,7 @@ export const assignCounterpartyPriceGroupActionGroupDefinition = HttpApiGroup.ma
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/assign-counterparty-price-group', {
       error: actionErrors,
       payload: Schema.toEncoded(AssignCounterpartyPriceGroupPayloadSchema),
-      success: AssignCounterpartyPriceGroupResultSchema,
+      success: [ActionProposalAcceptedSchema, AssignCounterpartyPriceGroupResultSchema],
     }),
   )
   .middleware(AssignCounterpartyPriceGroupActionSchemaErrorMiddleware);

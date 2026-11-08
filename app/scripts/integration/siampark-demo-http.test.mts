@@ -1,3 +1,4 @@
+import { ActionProposalAcceptedSchema } from '../../packages/core-runtime/src/actions/proposal-accepted.ts';
 import { randomUUID } from 'node:crypto';
 
 import { shellComposition } from '@app/shell-super-app/api/client';
@@ -175,6 +176,7 @@ const readLiveFinance = Effect.fn('NajemparkLiveHttp.readFinance')(function* fin
   return yield* readInvoices({}, grant.credential, correlation(), grant.options);
 });
 
+const directExecutionExpected = 'Expected direct execution, not an accepted proposal';
 const applyAgreementCommand = Effect.fn('NajemparkLiveHttp.applyAgreementCommand')(function* agreementAction(
   session: LiveSession,
   expectedRevision: number,
@@ -188,11 +190,15 @@ const applyAgreementCommand = Effect.fn('NajemparkLiveHttp.applyAgreementCommand
     PROPERTY_PORTFOLIO,
   ]);
   const grant = yield* authorize(session, LEGAL_AGREEMENTS);
-  return yield* executeAgreementCommand(payload, grant.credential, correlation(), {
+  const result = yield* executeAgreementCommand(payload, grant.credential, correlation(), {
     ...grant.options,
     idempotencyKey: correlation(),
     referenceCredentials: providers,
   });
+  if (Schema.is(ActionProposalAcceptedSchema)(result)) {
+    return yield* Effect.die(directExecutionExpected);
+  }
+  return result;
 });
 const applyOccupancyCommand = Effect.fn('NajemparkLiveHttp.applyOccupancyCommand')(function* occupancyAction(
   session: LiveSession,
@@ -207,11 +213,15 @@ const applyOccupancyCommand = Effect.fn('NajemparkLiveHttp.applyOccupancyCommand
     LEGAL_AGREEMENTS,
   ]);
   const grant = yield* authorize(session, PROPERTY_LEASING);
-  return yield* executeOccupancyCommand(payload, grant.credential, correlation(), {
+  const result = yield* executeOccupancyCommand(payload, grant.credential, correlation(), {
     ...grant.options,
     idempotencyKey: correlation(),
     referenceCredentials: providers,
   });
+  if (Schema.is(ActionProposalAcceptedSchema)(result)) {
+    return yield* Effect.die(directExecutionExpected);
+  }
+  return result;
 });
 
 const applyFinanceCommand = Effect.fn('NajemparkLiveHttp.applyFinanceCommand')(function* applyLiveFinanceCommand(
@@ -223,11 +233,15 @@ const applyFinanceCommand = Effect.fn('NajemparkLiveHttp.applyFinanceCommand')(f
   const payload = yield* Schema.decodeEffect(FinancePayloadSchema)({ command, expectedRevision });
   const grant = yield* authorize(session, FINANCE_BILLING);
   const providers = yield* referenceCredentials(session, providerAudiences);
-  return yield* executeFinanceCommand(payload, grant.credential, correlation(), {
+  const result = yield* executeFinanceCommand(payload, grant.credential, correlation(), {
     ...grant.options,
     idempotencyKey: correlation(),
     referenceCredentials: providers,
   });
+  if (Schema.is(ActionProposalAcceptedSchema)(result)) {
+    return yield* Effect.die(directExecutionExpected);
+  }
+  return result;
 });
 
 const prepareGoldenLease = Effect.fn('NajemparkLiveHttp.prepareGoldenLease')(function* goldenLeaseBaseline(
@@ -560,6 +574,9 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Nájempark l
         idempotencyKey: correlation(),
         referenceCredentials: taskProviders,
       });
+      if (Schema.is(ActionProposalAcceptedSchema)(task)) {
+        return yield* Effect.die('Expected a committed follow-up task, not an accepted proposal');
+      }
       const followUpTask = task.task;
       if (followUpTask === undefined) {
         return yield* new LiveDemoPrerequisiteUnavailable({ reason: 'The follow-up command returned no Work Task.' });
@@ -583,6 +600,9 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Nájempark l
         idempotencyKey: correlation(),
         referenceCredentials: activityProviders,
       });
+      if (Schema.is(ActionProposalAcceptedSchema)(recorded)) {
+        return yield* Effect.die('Expected a recorded activity, not an accepted proposal');
+      }
       const finalGrant = yield* authorize(session, CRM_ACTIVITIES);
       const after = yield* readActivities(
         { counterpartyId: contract.counterpartyRef.resourceId },

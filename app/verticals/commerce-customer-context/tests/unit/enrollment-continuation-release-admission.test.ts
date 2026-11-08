@@ -415,7 +415,10 @@ it.effect('opens a new composition for the same owner while each existing pass r
       );
       expect(claimsB).toStrictEqual([Option.some(1)]);
       expect(yield* Effect.flip(passB.advance(attemptInput))).toBeInstanceOf(CommerceEnrollmentAttemptUnavailable);
-      expect(scripted.calls.routines).toStrictEqual(['read_portal_enrollment_attempt']);
+      expect(scripted.calls.routines).toStrictEqual([
+        'read_portal_enrollment_attempt',
+        'read_portal_enrollment_originator',
+      ]);
       expect(scripted.calls.registry).toBe(0);
       expect(scripted.calls.subject).toBe(0);
       expect(scripted.calls.owner).toBe(0);
@@ -535,6 +538,7 @@ it.effect('requires native readmission before resolving a parked Attempt from an
       expect(yield* Effect.flip(pass.advance(attemptInput))).toBeInstanceOf(CommerceEnrollmentAttemptUnavailable);
       expect(scripted.calls.routines).toStrictEqual([
         'read_portal_enrollment_attempt',
+        'read_portal_enrollment_originator',
         'admit_portal_enrollment_attempt',
       ]);
       expect(scripted.calls.registry).toBe(0);
@@ -569,10 +573,12 @@ it.effect('re-reads native admitted authority before any owner preparation under
       Effect.flatMap((continuation) => continuation.advance(attemptInput)),
       Effect.provide(scripted.layer),
     );
-    expect(scripted.calls.routines.slice(0, 3)).toStrictEqual([
+    expect(scripted.calls.routines.slice(0, 5)).toStrictEqual([
       'read_portal_enrollment_attempt',
+      'read_portal_enrollment_originator',
       'admit_portal_enrollment_attempt',
       'read_portal_enrollment_attempt',
+      'read_portal_enrollment_originator',
     ]);
     expect(scripted.calls.durableClaims[0]).toMatchObject({ composition_revision: release.composition.revision });
     expect(scripted.calls.owner).toBe(1);

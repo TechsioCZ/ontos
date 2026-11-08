@@ -108,6 +108,14 @@ export const handleGovernVariantAllowedValues = Effect.fn('GovernVariantAllowedV
 
 export const governVariantAllowedValuesAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.variant-allowed-values.govern',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.govern-variant-allowed-values.access.v1',
@@ -123,7 +131,7 @@ export const governVariantAllowedValuesAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: actionKey,
       moduleKey,
       role: 'action',

@@ -12,7 +12,7 @@ import { readUnavailable, requireReadValue, readDetailResult } from './read-outc
 
 const duplicateCandidateDetailEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'party.registry.api.duplicate-candidate-detail',
   moduleKey: 'party.registry',
   role: 'api',
@@ -23,6 +23,35 @@ interface Services {
 const duplicateCandidateUnavailable = readUnavailable('Duplicate Candidate persistence is unavailable');
 export const duplicateCandidateDetailRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'party.registry.duplicate-candidate.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'identity-review', level: 'extended' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessTarget: (input) => ({ moduleKey: 'party.registry', recordKey: input.caseRef.resourceId }),
+    accessFieldGroups: [
+      {
+        fieldClass: 'personal_data',
+        fields: [
+          'candidate.businessName',
+          'candidate.firstName',
+          'candidate.lastName',
+          'candidate.officialIdentifiers',
+          'candidate.subjectEvidence',
+          'evaluatedEvidence',
+          'resolutionReason',
+        ],
+        key: 'party.registry.identity-review-evidence.read',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'sensitive-fields', level: 'extended' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
     accessKind: 'detail',
     entrypoint: duplicateCandidateDetailEntrypoint,
     evidencePolicy: {
@@ -32,7 +61,6 @@ export const duplicateCandidateDetailRead = defineRead(
     inputSchema: DuplicateCandidateDetailRequestSchema,
     legalEntityScope: 'optional',
     owningModuleKey: 'party.registry',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'party.registry.api.duplicate-candidate-detail',
     resultSchema: DuplicateCandidateDetailResponseSchema,
@@ -55,5 +83,4 @@ export const duplicateCandidateDetailRead = defineRead(
     Effect.succeed({
       find: (caseId: string) => findDuplicateCandidateCase(transaction, scope.tenantId, caseId),
     }),
-  () => ({ kind: 'tenant', permission: 'review_party_identity' }),
 );

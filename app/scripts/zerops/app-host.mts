@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
+import { makeDatabaseIdentityEnrollmentLive } from '../../packages/core-runtime/src/db/database-identities.ts';
+import { TenantIntentLoaderLive } from '../../packages/core-runtime/src/access/intent/tenant-intent-loader.ts';
 import { startProcessObservability } from './process-observability.mts';
 import { observeRuntimeJob } from '../../packages/core-runtime/src/observability/runtime-jobs.ts';
 import { ProcessDatabasePoolsLive } from './process-database-pools.mts';
@@ -48,7 +51,6 @@ import {
   Schema,
   Scope,
   Stream,
-  Struct,
 } from 'effect';
 import { FetchHttpClient, HttpClient, HttpServer, HttpServerRequest, HttpServerResponse, UrlParams } from 'effect/http';
 import { ChildProcess } from 'effect/process';
@@ -84,10 +86,12 @@ import { STAGE_CIMD_FIXTURE_PATH, stageCimdFixtureResponse } from './stage-cimd-
 import { listDeadOutboxDeliveries } from '../../packages/core-runtime/src/outbox/dead-delivery-resolution.ts';
 import { startupDeadOutboxInventory, withOutboxDeadStartupGate } from './outbox-dead-startup-gate.mts';
 import {
-  provisionReleaseActionAuthorization,
-  recordReleaseActionAuthorization,
-} from './release-action-authorization.mts';
-import type { ReleaseActionAuthorizationStatus } from './release-action-authorization.mts';
+  recordReleaseAccessVerification,
+  releaseAccessVerificationFailure,
+  releaseAccessVerificationStatus,
+  verifyReleaseAccess,
+} from './release-access-verification.mts';
+import type { ReleaseAccessVerificationError } from './release-access-verification.mts';
 
 const OUTBOX_HOST_ID = 'outbox-worker-host';
 const OUTBOX_HEALTH_PORT = 4100;
@@ -672,19 +676,10 @@ const observeOwners = Effect.fn('AppHost.observeOwners')(function* observeOwners
   });
 });
 
-/** The release step's result, kept on the container for after-the-fact proof. */
-const recordActionAuthorizationStatus = (
-  snapshot: ActiveApplicationCompositionSnapshot,
-  result: Omit<ReleaseActionAuthorizationStatus, 'finishedAt' | 'revision'>,
-) =>
+/** The release step's proof, kept on the container so a blocked or admitted release is readable afterwards. */
+const recordReleaseAccessStatus = (status: Omit<Parameters<typeof recordReleaseAccessVerification>[1], 'finishedAt'>) =>
   DateTime.now.pipe(
-    Effect.flatMap((finishedAt) =>
-      recordReleaseActionAuthorization(workspaceRoot, {
-        ...result,
-        finishedAt,
-        revision: snapshot.composition.revision,
-      }),
-    ),
+    Effect.flatMap((finishedAt) => recordReleaseAccessVerification(workspaceRoot, { ...status, finishedAt })),
   );
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -779,38 +774,41 @@ export const runAppHost = Effect.gen(function* runAppHost() {
       return snapshot.composition.revision;
     }).pipe(observeRuntimeJob('composition-publish'));
   const publish = observeOwners(units, publicOrigin).pipe(Effect.flatMap(publishSnapshot));
-  // Every active Tenant and company gets the canonical provisioner's Action edges for this release before it takes the
-  // authority. The step adds missing edges and revokes stale ones (see release-action-authorization.mts). A failure
-  // stops this release before publication, as a failed migration does: the old release stays admitted and the deploy
-  // fails visibly.
-  const provisionActionAuthorization = (snapshot: ActiveApplicationCompositionSnapshot) =>
-    Effect.gen(function* provisionReleaseSnapshot() {
-      // The settings the N1 release grants child receives: owner secrets over the container environment.
+  // Before this release takes the authority, every active Tenant's canonical access must be proven: its scopes, its
+  // owner membership, and a SpiceDB projection that equals PostgreSQL intent (see release-access-verification.mts).
+  // The proof is read-only — it never writes, revokes or re-grants — and it is not ignored. A Tenant without v2 intent,
+  // which is what the retired demo tooling left behind, fails the release here with the exact Tenant and the canonical
+  // remediation, instead of publishing a release that locks its people out.
+  const verifyReleaseAccessIntent = (snapshot: ActiveApplicationCompositionSnapshot) =>
+    Effect.gen(function* verifyReleaseSnapshot() {
+      // The settings this step receives: the owner secrets over the container environment.
       const inherited = yield* ConfigProvider.ConfigProvider;
       const owned = Object.entries(processEnvironment([SHELL_ID, ...ownerIds], ownerSecrets, derived).environment);
       const provider = ConfigProvider.fromUnknown(
         Object.fromEntries(owned.filter((entry): entry is [string, string] => entry[1] !== undefined)),
       ).pipe(ConfigProvider.orElse(inherited));
-      return yield* provisionReleaseActionAuthorization(snapshot, provider);
+      return yield* verifyReleaseAccess(provider);
     }).pipe(
       Effect.tap((result) =>
         Effect.andThen(
           Console.log(
-            `[app-host] release Action authorization: tenants=${String(result.tenants)} companies=${String(result.companies)} desired=${String(result.desired)} touched=${String(result.touched)} revoked=${String(result.revoked)}`,
+            `[app-host] release access verification: tenants=${String(result.tenants)} verified=${String(result.verified)} tuples=${String(result.tuples)}`,
           ),
-          recordActionAuthorizationStatus(snapshot, { ...result, outcome: 'applied' }),
+          recordReleaseAccessStatus(releaseAccessVerificationStatus(snapshot.composition.revision, result)),
         ),
       ),
-      Effect.tapError((problem) =>
+      Effect.tapError((problem: ReleaseAccessVerificationError) =>
         Effect.andThen(
           Console.error(
-            `[app-host] RELEASE ACTION AUTHORIZATION FAILED; composition ${snapshot.composition.revision} not published: ${problem.reason}`,
+            `[app-host] RELEASE ACCESS VERIFICATION FAILED; composition ${snapshot.composition.revision} not published: ${problem.reason}. ${problem.remediation}`,
           ),
-          recordActionAuthorizationStatus(snapshot, { outcome: 'failed', reason: problem.reason }),
+          recordReleaseAccessStatus(releaseAccessVerificationFailure(snapshot.composition.revision, problem)),
         ),
       ),
-      Effect.mapError((problem) => failure(`release Action authorization failed: ${problem.reason}`)),
-      observeRuntimeJob('release-action-authorization'),
+      Effect.mapError((problem) =>
+        failure(`release access verification failed: ${problem.reason}. ${problem.remediation}`),
+      ),
+      observeRuntimeJob('release-access-verification'),
     );
 
   // ONTOS_APP_HOST_PUBLISH=false starts and observes every unit without migrating or taking the authority, so a new
@@ -851,42 +849,19 @@ export const runAppHost = Effect.gen(function* runAppHost() {
       { concurrency: 'unbounded' },
     );
     const releaseSnapshot = yield* observeOwners(units, publicOrigin);
-    yield* provisionActionAuthorization(releaseSnapshot);
+    yield* verifyReleaseAccessIntent(releaseSnapshot);
     const revision = yield* publishSnapshot(releaseSnapshot);
     // From this commit on the old release refuses every governed request and closes its public port, so this one
     // serves internal callers and reports ready to the Zerops balancer at once.
     yield* openPublicPort;
     yield* Ref.set(published, true);
     yield* closePublicPortWhenSuperseded(revision).pipe(Effect.forkChild);
-    // The canonical SpiceDB schema and the stage service grants follow the published release. A failure is logged
-    // loudly but does not stop a release whose data is already served. Like the migrator, the reconciliation is
-    // supervisor work: it installs the stage service principals with the database administrator identity.
-    yield* runChild(
-      'service-grants',
-      node,
-      ['scripts/demo/reconcile-stage-service-grants.mts', '--apply'],
-      workspaceRoot,
-      Struct.omit(processEnvironment([SHELL_ID, ...ownerIds], ownerSecrets, derived).environment, [
-        'DATABASE_ADMIN_URL',
-      ]),
-    ).pipe(
-      Effect.tapError((problem) => Console.error(`[app-host] service grant reconciliation failed: ${problem.reason}`)),
-      Effect.ignore,
-    );
-    // The N1 storefront grants ride the same release path as the demo grants: an additive TOUCH of the reviewed N1
-    // desired set, never a revoke. A failure is logged loudly and does not stop a release whose data is already served.
-    yield* runChild(
-      'n1-service-grants',
-      node,
-      ['scripts/demo/n1-release-grants.mts'],
-      workspaceRoot,
-      Struct.omit(processEnvironment([SHELL_ID, ...ownerIds], ownerSecrets, derived).environment, [
-        'DATABASE_ADMIN_URL',
-      ]),
-    ).pipe(
-      Effect.tapError((problem) => Console.error(`[app-host] N1 grant reconciliation failed: ${problem.reason}`)),
-      Effect.ignore,
-    );
+    // The release step writes no authorization relationship. Authorization v2 (ADR-0030) projects every tuple from
+    // PostgreSQL intent through the one Core writer, so the retired `scoped_role`/`action`/`context_permission`
+    // reconciliation would only fail here. Live intent is seeded by the operator-gated stage bootstrap
+    // (`apps/shell-super-app/scripts/bootstrap-stage-accounts.mts`); the engine's canonical schema arrives with the
+    // deployment's SpiceDB bootstrap file, and a live schema or tuple retirement is its own approved operation. The
+    // release proves the projected access before it publishes (`verifyReleaseAccessIntent` above) and never mutates it.
     const outbox = yield* startChild(OUTBOX_HOST_ID, node, [OUTBOX_HOST_BUNDLE], workspaceRoot, {
       ...processEnvironment([OUTBOX_HOST_ID, ...ownerIds], ownerSecrets, derived).environment,
       // The host's email trigger authenticates to the Shell's dispatch endpoint with the Shell's own secret.
@@ -912,10 +887,12 @@ if (import.meta.main) {
   const program = runAppHost.pipe(
     Effect.scoped,
     Effect.provide(NodeHttpServer.layer(createServer, { host: '127.0.0.1', port: CONTROL_PORT })),
+    Effect.provide(TenantIntentLoaderLive),
     // Every authority transition re-observes legacy owner completion, as the operator publisher does.
     Effect.provide(
       Layer.merge(ApplicationCompositionAuthorityAdminDatabaseLive, ApplicationCompositionLegacyOwnersLive),
     ),
+    Effect.provide(makeDatabaseIdentityEnrollmentLive(APP_DATABASE_IDENTITY_ENROLLMENT)),
     Effect.provide(FetchHttpClient.layer),
     Effect.provide(NodeServices.layer),
     Effect.provide(ProcessDatabasePoolsLive),

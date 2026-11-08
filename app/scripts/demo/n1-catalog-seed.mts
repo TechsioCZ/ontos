@@ -14,6 +14,8 @@ import { FetchHttpClient } from 'effect/http';
 
 import {
   ApplyCommandResultSchema,
+  ApplyCommandPayloadSchema,
+  ManageMarketsPayloadSchema,
   MerchandiseCommandSchema,
 } from '../../verticals/merchandise/shared/actions/apply-command.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../verticals/merchandise/shared/apis/records.ts';
@@ -77,7 +79,9 @@ const Manifest = Schema.Struct({
 const Request = Schema.toEncoded(RecordsRequestSchema);
 const Response = Schema.toEncoded(RecordsResponseSchema);
 const CommandSchema = Schema.toEncoded(MerchandiseCommandSchema);
-const Payload = Schema.Struct({ command: CommandSchema, expectedRevision: Schema.Int });
+const CreatePayload = Schema.toEncoded(ApplyCommandPayloadSchema);
+const MarketPayload = Schema.toEncoded(ManageMarketsPayloadSchema);
+const Payload = Schema.Union([CreatePayload, MarketPayload]);
 const Result = Schema.toEncoded(ApplyCommandResultSchema);
 const Summary = Schema.Struct({
   applied: Schema.Boolean,
@@ -349,7 +353,10 @@ const apply = (client: Client, directory: string, key: string, payload: typeof P
         mode: 0o600,
       });
     }
-    return yield* client.call(audience, actionPath, Payload, frozen, Result, true);
+    if (Schema.is(CreatePayload)(frozen)) {
+      return yield* client.call(audience, actionPath, CreatePayload, frozen, Result, true);
+    }
+    return yield* client.call(audience, '/merchandise/actions/manage-markets', MarketPayload, frozen, Result, true);
   });
 
 export interface N1SeedOptions {

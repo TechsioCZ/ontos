@@ -442,7 +442,21 @@ const DeviceFormSession = ({
     <DeviceEditPanel device={device} onClose={onClose} open={open} run={run} />
   );
 
-/** Creates the work-tasks task and stores its reference on the incident. Returns whether both succeeded. */
+/**
+ * `linked`: task created and its reference stored on the incident. `pending_approval`: a proposal was
+ * parked (task or link) and nothing has been applied yet, so no task reference is stored.
+ */
+export const TaskLinkOutcomeSchema = Schema.Literals(['failed', 'linked', 'pending_approval']);
+export type TaskLinkOutcome = typeof TaskLinkOutcomeSchema.Type;
+
+const linkOutcomeOf = (outcome: CommandOutcome): TaskLinkOutcome => {
+  if (outcome.ok) {
+    return 'linked';
+  }
+  return outcome.reason === 'approval_required' ? 'pending_approval' : 'failed';
+};
+
+/** Creates the work-tasks task and stores its reference on the incident. */
 export const linkNewTask = Effect.fn('FacilityOperations.linkNewTask')(function* linkNewTask(input: {
   readonly description: string;
   readonly device: SecurityDevice;
@@ -475,14 +489,14 @@ export const linkNewTask = Effect.fn('FacilityOperations.linkNewTask')(function*
     input.device,
     input.tenantId,
   );
-  if (!task.ok) {
-    return false;
+  if (task.status !== 'created') {
+    return task.status;
   }
   const linked = yield* runCommand(
     { _tag: 'SecurityIncidentLinkTask', incidentId: input.incidentId, task: task.task },
     input.revision,
   );
-  return linked.ok;
+  return linkOutcomeOf(linked);
 });
 
 /** S11-01: report a fault and, in the same step, create the linked service task in work-tasks. */
@@ -556,9 +570,10 @@ const submitSecurityFault = Effect.fn('Facility.submitSecurityFault')(function* 
     }
     incidentId = parsedId.success;
   }
+  const reportedTitle = k('report.done');
   if (!withTask || incidentId === undefined) {
     setBusy(false);
-    toast.create({ title: k('report.done'), type: 'success' });
+    toast.create({ title: reportedTitle, type: 'success' });
     onSaved(device.id);
     return;
   }
@@ -576,9 +591,17 @@ const submitSecurityFault = Effect.fn('Facility.submitSecurityFault')(function* 
   });
   setBusy(false);
   toast.create(
-    created
-      ? { title: k('report.doneWithTask'), type: 'success' }
-      : { description: k('report.taskFailed'), title: k('report.done'), type: 'warning' },
+    (
+      {
+        failed: { description: k('report.taskFailed'), title: reportedTitle, type: 'warning' },
+        linked: { title: k('report.doneWithTask'), type: 'success' },
+        pending_approval: {
+          description: t('facility-operations.common.errors.approval_required'),
+          title: reportedTitle,
+          type: 'info',
+        },
+      } satisfies Record<TaskLinkOutcome, Parameters<typeof toast.create>[0]>
+    )[created],
   );
   onSaved(device.id);
 });

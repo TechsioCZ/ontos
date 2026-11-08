@@ -1,13 +1,10 @@
-import {
-  ContextAccess,
-  ReadHandlerUnavailable,
-  ReadPermissionDenied,
-  ReadPermissionUnavailable,
-  TrustedPrincipalContextSchema,
-} from '@app/core-runtime';
-import type { ContextAccessResult, ContextAccessService, OperationalScope } from '@app/core-runtime';
+import { RecordKeySchema } from '@app/core-runtime/access/ids';
+import type { ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
+import { ReadHandlerUnavailable, TrustedPrincipalContextSchema } from '@app/core-runtime';
+import type { OperationalScope } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import type { ReadTestHarnessOptions } from '@app/core-runtime/testing/reads';
+import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '@app/party-registry-identity-contracts';
 import { NodeCrypto } from '@effect/platform-node';
 import { DateTime, Effect, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -17,12 +14,12 @@ import { SearchLabelsRequestSchema, SearchLabelsResponseSchema } from '../../sha
 import type { SearchLabelSourceRef } from '../../shared/apis/search-labels.ts';
 import type { CounterpartyRef } from '../../shared/resources/counterparty.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
-import { counterpartyReadRead } from '../../src/api/counterparty-read.read.ts';
 import {
-  authorizePartySearchLabels,
   deduplicateSearchLabelRefs,
   searchLabelsRead,
+  selectAuthorizedSearchLabels,
 } from '../../src/api/search-labels.read.ts';
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -62,8 +59,24 @@ const wireRow = {
   revision: 7,
   tenant_id: tenantId,
 };
-const resourceKey = `party.registry:party.registry.counterparty:${counterpartyId}`;
 const allowedResult = { labels: [{ label, resourceRef: ref, sourceRevision: 7 }] };
+const wholeScope: ListAccessPredicate = { groups: [] };
+const restrictedTo = ([first, ...rest]: readonly [string, ...string[]]): ListAccessPredicate => ({
+  groups: [
+    {
+      clauses: [
+        {
+          conditions: [
+            {
+              _tag: 'RecordKeyIn',
+              recordKeys: [RecordKeySchema.make(first), ...rest.map((key) => RecordKeySchema.make(key))],
+            },
+          ],
+        },
+      ],
+    },
+  ],
+});
 const operationTime = DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-03T12:00:00Z'));
 const runtimeRequest = (refs: readonly SearchLabelSourceRef[]) => ({
   input: { refs },
@@ -71,177 +84,96 @@ const runtimeRequest = (refs: readonly SearchLabelSourceRef[]) => ({
   registration: searchLabelsRead,
   transport: { correlationId: scope.correlationId },
 });
-const makeHarness = (executeOwnerQuery: ReadTestHarnessOptions['executeOwnerQuery']) =>
+const makeHarness = (
+  executeOwnerQuery: ReadTestHarnessOptions['executeOwnerQuery'],
+  access: ReadTestHarnessOptions['access'] = 'allowed',
+) =>
   makeReadTestHarness({
+    access,
+    databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
     executeOwnerQuery,
     operationTime,
     ownerAuthorizationDecision: 'allowed',
-    permissionDecision: 'allowed',
-    legalEntityPermissionDecisions: { read_counterparty: 'denied' },
+    ownerRegistration: partyRegistryBackendRegistration,
+    scope,
+  });
+const isUnavailable = Schema.is(ReadHandlerUnavailable);
+
+const select = (input: {
+  readonly deniedFieldPaths?: readonly (readonly string[])[];
+  readonly listAccess?: ListAccessPredicate;
+  readonly refs?: readonly SearchLabelSourceRef[];
+  readonly rows?: Parameters<typeof selectAuthorizedSearchLabels>[0]['rows'];
+}) =>
+  selectAuthorizedSearchLabels({
+    deniedFieldPaths: input.deniedFieldPaths,
+    listAccess: input.listAccess ?? wholeScope,
+    refs: input.refs ?? [ref],
+    rows: input.rows ?? [row],
     scope,
   });
 
-const authority = (
-  company: ContextAccessResult['decision'] = 'denied',
-  resource: ContextAccessResult['decision'] = 'allowed',
-) => {
-  const resourceCalls: Parameters<ContextAccessService['resources']>[0][] = [];
-  const companyCalls: Parameters<ContextAccessService['legalEntities']>[0][] = [];
-  const access: ContextAccessService = {
-    legalEntities: (input) => {
-      companyCalls.push(input);
-      return Effect.succeed([{ decision: company, key: legalEntityId }]);
-    },
-    modules: () => Effect.die('Owner must not substitute module access for source authority'),
-    resources: (input) => {
-      resourceCalls.push(input);
-      return Effect.succeed(
-        input.resources.map((target) => ({
-          decision: resource,
-          key: `${target.moduleId}:${target.resourceType}:${target.resourceId}`,
-        })),
-      );
-    },
-    tenants: () => Effect.die('No blanket tenant Party permission may be required'),
-  };
-  return { access, companyCalls, resourceCalls };
-};
-const run = (
-  access: ContextAccessService,
-  rows: Parameters<typeof authorizePartySearchLabels>[2] = [row],
-  refs: readonly SearchLabelSourceRef[] = [ref],
-  currentScope = scope,
-) => authorizePartySearchLabels({ refs }, currentScope, rows).pipe(Effect.provideService(ContextAccess, access));
-const isUnavailable = Schema.is(ReadHandlerUnavailable);
-
-it.effect('resource-only authority checks the real current-company Counterparty, not the Party ID', () =>
-  Effect.gen(function* resourceOnly() {
-    const { access, companyCalls, resourceCalls } = authority();
-    expect(yield* run(access)).toEqual(allowedResult);
-    expect(companyCalls).toEqual([
-      { legalEntityIds: [legalEntityId], permission: 'read_counterparty', principalId: scope.principalId, tenantId },
-    ]);
-    expect(resourceCalls).toEqual([
-      {
-        legalEntityId,
-        permission: 'read',
-        principalId: scope.principalId,
-        tenantId,
-        resources: [
-          { moduleId: 'party.registry', resourceId: counterpartyId, resourceType: 'party.registry.counterparty' },
-        ],
-      },
-    ]);
-    expect(counterpartyId).not.toBe(partyId);
-  }),
-);
-
-it.effect('company read_counterparty independently authorizes only its associated display label', () =>
-  Effect.gen(function* companyOnly() {
-    const { access, resourceCalls } = authority('allowed', 'denied');
-    expect(yield* run(access)).toEqual(allowedResult);
-    expect(resourceCalls).toEqual([]);
-    expect(yield* run(access, [])).toEqual({ labels: [] });
-  }),
-);
-
-it.effect('denied, missing and canonically withdrawn names have identical empty responses', () =>
-  Effect.gen(function* undiscoverable() {
-    expect(yield* run(authority('denied', 'denied').access)).toEqual({ labels: [] });
-    expect(yield* run(authority().access, [])).toEqual({ labels: [] });
-    expect(yield* run(authority('allowed').access, [{ ...row, label: Option.none() }])).toEqual({ labels: [] });
-  }),
-);
-
-it.effect('uncertain authority never becomes an empty or partial complete success', () =>
-  Effect.gen(function* uncertainAuthority() {
-    for (const [company, resource] of [
-      ['denied', 'unavailable'],
-      ['unavailable', 'denied'],
-      ['unavailable', 'unavailable'],
-    ] as const) {
-      expect(isUnavailable(yield* run(authority(company, resource).access).pipe(Effect.flip))).toBe(true);
-    }
-    expect(isUnavailable(yield* run(authority('unavailable').access, []).pipe(Effect.flip))).toBe(true);
-    expect(yield* run(authority('unavailable', 'allowed').access)).toEqual(allowedResult);
-  }),
-);
-
-it.effect('mixed allowed and indeterminate resource decisions never release a partial batch', () =>
-  Effect.gen(function* partialAuthority() {
-    const secondCounterpartyId = '30000000-0000-4000-8000-000000000002';
-    const access: ContextAccessService = {
-      ...authority().access,
-      resources: (input) =>
-        Effect.succeed(
-          input.resources.map((target) => ({
-            decision: target.resourceId === counterpartyId ? ('allowed' as const) : ('unavailable' as const),
-            key: `${target.moduleId}:${target.resourceType}:${target.resourceId}`,
-          })),
-        ),
-    };
-    expect(
-      isUnavailable(
-        yield* run(
-          access,
-          [row, { ...row, partyId: otherId, counterpartyId: secondCounterpartyId }],
-          [ref, { ...ref, resourceId: otherId }],
-        ).pipe(Effect.flip),
-      ),
-    ).toBe(true);
-  }),
-);
-
-it.effect('missing, duplicate, excess or mismatched permission responses fail unavailable', () =>
-  Effect.gen(function* malformedAuthority() {
-    const invalid: readonly (readonly ContextAccessResult[])[] = [
-      [],
-      [{ key: otherId, decision: 'allowed' }],
-      [
-        { key: resourceKey, decision: 'allowed' },
-        { key: resourceKey, decision: 'allowed' },
+it.effect('the gate alone decides the label: an allowed row and its declared field answer the name', () =>
+  Effect.sync(() => {
+    expect(select({})).toEqual(allowedResult);
+    expect(select({ refs: [ref, counterpartyRef], rows: [row] })).toEqual({
+      labels: [
+        { label, resourceRef: ref, sourceRevision: 7 },
+        { label, resourceRef: counterpartyRef, sourceRevision: 7 },
       ],
-    ];
-    for (const decisions of invalid) {
-      expect(
-        isUnavailable(
-          yield* run({ ...authority().access, resources: () => Effect.succeed(decisions) }).pipe(Effect.flip),
-        ),
-      ).toBe(true);
-    }
-    expect(
-      isUnavailable(yield* run({ ...authority().access, legalEntities: () => Effect.succeed([]) }).pipe(Effect.flip)),
-    ).toBe(true);
+    });
   }),
 );
 
-it.effect('foreign refs are omitted; wrong-company, cross-tenant and unrequested associations fail closed', () =>
-  Effect.gen(function* scopeIsolation() {
-    expect(yield* run(authority().access, [], [{ ...ref, tenantId: otherId }])).toEqual({ labels: [] });
+it.effect('the gate row filter bounds which Counterparties contribute a label', () =>
+  Effect.sync(() => {
+    expect(select({ listAccess: restrictedTo([counterpartyId]) })).toEqual(allowedResult);
+    expect(select({ listAccess: restrictedTo([otherId]) })).toEqual({ labels: [] });
+  }),
+);
+
+it.effect('a denied identity field class withholds the name without failing the read', () =>
+  Effect.sync(() => {
+    expect(select({ deniedFieldPaths: [['labels', 'label']] })).toEqual({ labels: [] });
+    expect(select({ deniedFieldPaths: [['labels']] })).toEqual({ labels: [] });
+    expect(select({ deniedFieldPaths: [['other']] })).toEqual(allowedResult);
+  }),
+);
+
+it.effect('empty, foreign and withdrawn names answer the same empty result', () =>
+  Effect.sync(() => {
+    expect(select({ refs: [], rows: [] })).toEqual({ labels: [] });
+    expect(select({ rows: [] })).toEqual({ labels: [] });
+    expect(select({ rows: [{ ...row, label: Option.none() }] })).toEqual({ labels: [] });
+    expect(select({ refs: [{ ...ref, tenantId: otherId }], rows: [] })).toEqual({ labels: [] });
+  }),
+);
+
+it.effect('a faulty association adapter fails closed instead of widening the result', () =>
+  Effect.sync(() => {
     for (const invalidRow of [
       { ...row, legalEntityId: otherId },
       { ...row, tenantId: otherId },
       { ...row, partyId: otherId },
     ]) {
-      expect(isUnavailable(yield* run(authority('allowed').access, [invalidRow]).pipe(Effect.flip))).toBe(true);
+      expect(select({ rows: [invalidRow] })).toEqual({ labels: [] });
     }
+    expect(select({ rows: [row, row] })).toEqual({ labels: [] });
+    expect(select({ rows: [row, { ...row, counterpartyId: otherId }] })).toEqual({ labels: [] });
     const { legalEntityId: _company, ...unselectedScope } = scope;
-    expect(isUnavailable(yield* run(authority().access, [], [], unselectedScope).pipe(Effect.flip))).toBe(true);
-  }),
-);
-
-it.effect('duplicate or ambiguous Party-to-Counterparty mappings are unavailable', () =>
-  Effect.gen(function* ambiguousAssociation() {
-    expect(isUnavailable(yield* run(authority('allowed').access, [row, row]).pipe(Effect.flip))).toBe(true);
     expect(
-      isUnavailable(
-        yield* run(authority('allowed').access, [row, { ...row, counterpartyId: otherId }]).pipe(Effect.flip),
-      ),
-    ).toBe(true);
+      selectAuthorizedSearchLabels({
+        deniedFieldPaths: [],
+        listAccess: wholeScope,
+        refs: [ref],
+        rows: [row],
+        scope: unselectedScope,
+      }),
+    ).toEqual({ labels: [] });
   }),
 );
 
-it('accepts typed Party and Counterparty refs, bounds raw batches to 100, and declares no query', () => {
+it('accepts typed Party and Counterparty refs, bounds raw batches to 100, and declares only refs', () => {
   expect(Schema.is(SearchLabelsRequestSchema)({ refs: Array.from({ length: 100 }, () => ref) })).toBe(true);
   expect(Schema.is(SearchLabelsRequestSchema)({ refs: Array.from({ length: 101 }, () => ref) })).toBe(false);
   expect(Schema.is(SearchLabelsRequestSchema)({ refs: [ref, counterpartyRef] })).toBe(true);
@@ -254,29 +186,34 @@ it('accepts typed Party and Counterparty refs, bounds raw batches to 100, and de
   }
   expect(Object.keys(SearchLabelsRequestSchema.fields)).toEqual(['refs']);
   expect(Schema.is(SearchLabelsResponseSchema)(allowedResult)).toBe(true);
-  expect(searchLabelsRead.descriptor.entrypoint.authorization).toEqual({
-    kind: 'context_permission',
-    permission: 'module.access',
+  expect(searchLabelsRead.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+  expect(searchLabelsRead.descriptor.accessDeclaration).toMatchObject({
+    key: 'party.registry.search-label.read',
+    kind: 'read',
+    selectors: ['all'],
+  });
+  expect(searchLabelsRead.descriptor.accessFieldGroups?.[0]).toMatchObject({
+    fieldClass: 'personal_data',
+    fields: ['labels.label'],
+    key: 'party.registry.search-label-value.read',
+    kind: 'field_read',
   });
   expect(searchLabelsRead.descriptor.legalEntityScope).toBe('required');
 });
 
-it.effect('deduplication retains distinct requested types and one association can produce both typed labels', () =>
-  Effect.gen(function* typedIdentity() {
+it.effect('deduplication retains distinct requested types and one association produces both typed labels', () =>
+  Effect.sync(() => {
     expect(
       deduplicateSearchLabelRefs([ref, counterpartyRef, ref, counterpartyRef, { ...ref, tenantId: otherId }], tenantId),
     ).toEqual([ref, counterpartyRef]);
     const sameIdOtherType = { ...counterpartyRef, resourceId: partyId };
     expect(deduplicateSearchLabelRefs([ref, sameIdOtherType], tenantId)).toEqual([ref, sameIdOtherType]);
-    const { access, resourceCalls } = authority();
-    expect(yield* run(access, [row], [ref, counterpartyRef, ref, counterpartyRef])).toEqual({
+    expect(select({ refs: [ref, counterpartyRef, ref, counterpartyRef], rows: [row] })).toEqual({
       labels: [
         { label, resourceRef: ref, sourceRevision: 7 },
         { label, resourceRef: counterpartyRef, sourceRevision: 7 },
       ],
     });
-    expect(resourceCalls).toHaveLength(1);
-    expect(resourceCalls[0]?.resources).toHaveLength(1);
   }),
 );
 
@@ -367,40 +304,29 @@ it.layer(NodeCrypto.layer)('governed Party label runtime', (suite) => {
     }),
   );
 
-  suite.effect(
-    'CURRENT CORE BLOCKER: company-only authority cannot bypass the module gate in label or canonical Counterparty reads',
-    () =>
-      Effect.gen(function* actualAdmissionBlocker() {
-        for (const permissionDecision of ['denied', 'unavailable'] as const) {
-          const harness = yield* makeReadTestHarness({
-            executeOwnerQuery: () => Effect.die('Module-gated request must not load owner data'),
-            operationTime,
-            ownerAuthorizationDecision: 'allowed',
-            permissionDecision,
-            legalEntityPermissionDecisions: { access: 'allowed', read_counterparty: 'allowed' },
-            scope,
-          });
-          const environment = yield* Layer.build(harness.layer);
-          const labelFailure = yield* harness.runtime
-            .runRead(runtimeRequest([ref, counterpartyRef]))
-            .pipe(Effect.provideContext(environment), Effect.flip);
-          const canonicalFailure = yield* harness.runtime
-            .runRead({
-              input: { counterpartyRef },
-              principal: scope,
-              registration: counterpartyReadRead,
-              transport: { correlationId: scope.correlationId },
-            })
-            .pipe(Effect.provideContext(environment), Effect.flip);
-          const matches =
-            permissionDecision === 'denied' ? Schema.is(ReadPermissionDenied) : Schema.is(ReadPermissionUnavailable);
-          expect(matches(labelFailure)).toBe(true);
-          expect(matches(canonicalFailure)).toBe(true);
-          expect(harness.snapshot().stages).toContain('scope_validated');
-          expect(harness.snapshot().stages).toContain('module_state_checked');
-          expect(harness.snapshot().ownerQueries).toHaveLength(0);
-        }
-      }),
+  suite.effect('a denied identity field class withholds the name while the read still succeeds', () =>
+    Effect.gen(function* deniedField() {
+      const harness = yield* makeHarness(() => Effect.succeed([wireRow]), {
+        'party.registry.search-label.read': 'allowed',
+        'party.registry.search-label-value.read': 'denied',
+      });
+      const environment = yield* Layer.build(harness.layer);
+      expect(yield* harness.runtime.runRead(runtimeRequest([ref])).pipe(Effect.provideContext(environment))).toEqual({
+        labels: [],
+      });
+    }),
+  );
+
+  suite.effect('a denied declaration fails the read before any owner data loads', () =>
+    Effect.gen(function* deniedDeclaration() {
+      const harness = yield* makeHarness(() => Effect.die('Denied request must not load owner data'), 'denied');
+      const environment = yield* Layer.build(harness.layer);
+      const failure = yield* harness.runtime
+        .runRead(runtimeRequest([ref, counterpartyRef]))
+        .pipe(Effect.provideContext(environment), Effect.flip);
+      expect(failure).toMatchObject({ code: 'read_permission_denied' });
+      expect(harness.snapshot().ownerQueries).toHaveLength(0);
+    }),
   );
 
   suite.effect('persistence failure remains unavailable and writes no successful evidence', () =>
@@ -446,33 +372,6 @@ it.layer(NodeCrypto.layer)('governed Party label runtime', (suite) => {
           ),
         ).toBe(true);
       }
-    }),
-  );
-
-  suite.effect('every independent request re-reads canonical source and current authority without a result cache', () =>
-    Effect.gen(function* currentLabels() {
-      let count = 0;
-      let currentLabel: string | null = 'Original';
-      const harness = yield* makeHarness(() => {
-        count += 1;
-        return Effect.succeed([{ ...wireRow, current_display_name: currentLabel, revision: 7 + count }]);
-      });
-      const access = authority('allowed');
-      const environment = yield* Layer.build(Layer.merge(harness.layer, Layer.succeed(ContextAccess, access.access)));
-      const results = [];
-      for (const current of ['Original', 'Corrected', null]) {
-        currentLabel = current;
-        const result = yield* harness.runtime.runRead(runtimeRequest([ref])).pipe(Effect.provideContext(environment));
-        results.push(result.labels);
-      }
-      expect(count).toBe(3);
-      expect(access.companyCalls).toHaveLength(3);
-      expect(harness.snapshot().evidenceWrites).toBe(3);
-      expect(results).toEqual([
-        [{ label: 'Original', resourceRef: ref, sourceRevision: 8 }],
-        [{ label: 'Corrected', resourceRef: ref, sourceRevision: 9 }],
-        [],
-      ]);
     }),
   );
 

@@ -1,102 +1,87 @@
 #!/usr/bin/env node
 /**
- * The Commerce portal's service identity. Idempotent; runs against the local demo or, through the stage forwarders,
- * against stage (`ONTOS_SHELL_URL`, `DATABASE_ADMIN_URL`, SpiceDB from the environment).
+ * The Commerce portal's service identity and the demo stack's portal transport configuration. LOCAL ONLY,
+ * idempotent. Runs against the local demo (`ONTOS_SHELL_URL`, `DATABASE_ADMIN_URL`).
  *
- *   node scripts/demo/commerce-portal.mts                          # principal + grants + managed key + Shell data
- *   node scripts/demo/commerce-portal.mts --env-file <path>        # write the values to another env file
+ *   node scripts/demo/commerce-portal.mts                       # identities + managed keys + app/.env values
+ *   node scripts/demo/commerce-portal.mts --env-file <path>     # write the values to another env file
  *
- * Stage, per Tenant workload (principal and grants come from that Tenant's provisioning, e.g. akros-playground-provision):
+ * Authorization v2 (ADR-0030) separated identity from authority: a principal row is identity, a managed key is
+ * transport, and authority is either a Role Assignment (people) or a registered workload binding (a machine a
+ * carrier admits). This script writes only the first two plus the demo stack's gateway *configuration* — it
+ * writes no SpiceDB relationship and names no Role.
  *
- *   node scripts/demo/commerce-portal.mts --workload akros-playground --key-file <owner-only path>
- *       # issue (or reuse) the workload's managed key into the file; the key is never printed
- *   node scripts/demo/commerce-portal.mts --workload akros-playground --key-file <path> --bundle <in> --bundle-out <out>
- *       # add the Tenant's COMMERCE_TENANT_CREDENTIALS entry and its Shell and Commerce verification grants
+ * The portal principal's authority is the reviewed workload binding the canonical seed writes
+ * (`pnpm demo:reset-permissions`): its enrollment journey runs as `commerce.storefront-client`, and its
+ * binding reserve/activate path runs as `core.identity-provider`. The service principals whose carriers declare
+ * no workload key are reported as blockers, never granted a Role (a service cast as a person).
  *
- * One non-human principal per Tenant; in the demo Tenant `commerce-portal`, member of the AKROS company only:
- *
- *   - its managed API key is both the Core identity transport credential and the vertical's gateway credential for
- *     owner calls: the Tenant's entry of `COMMERCE_TENANT_CREDENTIALS` (`coreIdentityApiKey`, `gatewayApiKey`);
- *   - module read access, tenant Party identity management for match/create, and counterparty management only in
- *     the selling company, plus executor grants for exactly the Actions the enrollment owners run;
- *   - the Shell's `ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT` names it as the attester of the portal namespace and
- *     grants it the reserve/activate/status/read/resolve/gateway-context workload operations.
- *
- * Every value lands in the env file (default `app/.env`, mode 600) so the next start of the Shell and the vertical
- * reads it; the key is never printed.
+ * Values written to `app/.env` (consumed by `scripts/demo/up.sh`):
+ *   COMMERCE_CORE_IDENTITY_BASE_URL, COMMERCE_TENANT_CREDENTIALS, ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT,
+ *   COMMERCE_PORTAL_AUTH_VERIFICATION_WORKLOAD_GRANTS, ONTOS_PRIVACY_GATEWAY_API_KEY,
+ *   COMMERCE_MARKETING_ACTOR_PRINCIPAL_ID. Secrets stay in the file; the key is never printed.
  */
 import { randomUUID } from 'node:crypto';
 
 import { NodeServices } from '@effect/platform-node';
 import { eq } from 'drizzle-orm';
-import {
-  Config,
-  ConfigProvider,
-  Console,
-  Effect,
-  Exit,
-  FileSystem,
-  Layer,
-  Option,
-  Path,
-  Redacted,
-  Schema,
-} from 'effect';
+import { Config, Console, Effect, Exit, FileSystem, Layer, Option, Path, Redacted, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
-import { decodeJwt } from 'jose';
-import { issueApiKeyGatewayContext } from '../../packages/shared-contracts/src/gateway-context-api-key.ts';
-import { GatewayContextClaimsSchema } from '../../packages/shared-contracts/src/gateway-context.ts';
+
 import { DatabaseConfig, parseDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
-import { principals } from '../../packages/core-runtime/src/db/schema.ts';
 import { AuthDatabase, AuthDatabaseFromDatabaseConfigLive } from '../../apps/shell-super-app/api/auth/db/client.ts';
 import { apikey } from '../../apps/shell-super-app/api/auth/db/schema.ts';
-import { ExternalIdentityProviderConfigurationSchema } from '../../apps/shell-super-app/api/auth/external-identity-provider.ts';
-import { CommercePortalAuthVerificationWorkloadGrantsSchema } from '../../verticals/commerce-customer-context/api/portal-auth/verification-http/workload-grants.ts';
-import { discoverCurrentActions } from '../provision-current-action-authorization.mts';
-import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } from '../siampark/reset-configuration.mts';
-import { writeBootstrapRelationships } from './bootstrap-relationships.mts';
-import {
-  ActiveApplicationCompositionConfigLive,
-  ActiveApplicationCompositionService,
-} from '../../packages/core-runtime/src/modules/active-application-composition.ts';
-import { ActiveApplicationCompositionSourceLive } from '../../packages/core-runtime/src/modules/active-application-composition-source.node.ts';
 import { demoTenantId } from './fixture-ids.mts';
 import {
+  ensureMachinePrincipals,
+  MachineIdentityError,
+  machineIdentityEnvironment,
+  shellIsServing,
+  workspaceRootOf,
+} from './machine-identity.mts';
+import {
   COMMERCE_PORTAL_NAMESPACE,
-  commercePortalActionKeys,
   commercePortalPrincipal,
-  commercePortalRelationships,
-  demoCommercePortalWorkload,
-  privacyConsentAuthorityRelationships,
+  kavarnaMarketAuthorityPrincipal,
+  marketRetirementPrincipal,
   privacyConsentPrincipal,
+  STOREFRONT_CLIENT_WORKLOAD,
+  unmappedServicePrincipals,
 } from './permissions.mts';
-import type { CommercePortalWorkload } from './permissions.mts';
-import { akrosPlaygroundCommercePortal } from './akros-playground-policy.mts';
-import { n1CommercePortal, N1_STAGE_ORIGIN } from './n1-stage-grants.mts';
 
-const STAFF_NAMESPACE = 'ontos.staff.better-auth.v1';
 const SHELL_AUDIENCE = 'shell-super-app';
 const PARTY_REGISTRY_AUDIENCE = 'party-registry';
 const COMMERCE_AUDIENCE = 'commerce-customer-context';
 const GATEWAY_CONTEXT_AUDIENCES = [COMMERCE_AUDIENCE, PARTY_REGISTRY_AUDIENCE, 'privacy'] as const;
 const BINDING_OPERATIONS = ['activate', 'read', 'reserve', 'resolve', 'status'] as const;
+const STAFF_NAMESPACE = 'ontos.staff.better-auth.v1';
+const CREDENTIALS_VARIABLE = 'COMMERCE_TENANT_CREDENTIALS';
+const ENV_FILE = '.env';
+const OPERATOR_EMAIL = 'obchod@demo.ontos';
 
-/** Every Tenant workload this repository provisions, by the name operators pass as `--workload`. */
-export const commercePortalWorkloads = {
-  'akros-playground': { operatorEmail: 'admin@akros.playground', workload: akrosPlaygroundCommercePortal },
-  demo: { operatorEmail: 'obchod@demo.ontos', workload: demoCommercePortalWorkload },
-  n1: { operatorEmail: 'admin@n1.ontos.demo', workload: n1CommercePortal },
-} as const satisfies Readonly<
-  Record<string, { readonly operatorEmail: string; readonly workload: CommercePortalWorkload }>
->;
-type WorkloadName = keyof typeof commercePortalWorkloads;
-/** The demo workload stays first: it is the provider deployment's attester. */
-const workloadNames: readonly WorkloadName[] = ['demo', 'akros-playground', 'n1'];
+/** One Tenant's Commerce portal workload: a principal of the tenant and the key it transports (O73). */
+export interface CommercePortalWorkload {
+  readonly apiKeyName: string;
+  readonly displayName: string;
+  readonly legalEntityId: string;
+  readonly principalId: string;
+  readonly tenantId: string;
+}
+
+/** The demo tenant's portal workload. Its authority is the registered binding, never this row. */
+export const demoCommercePortalWorkload: CommercePortalWorkload = {
+  apiKeyName: commercePortalPrincipal.apiKeyName,
+  displayName: commercePortalPrincipal.displayName,
+  legalEntityId: commercePortalPrincipal.legalEntityId,
+  principalId: commercePortalPrincipal.principalId,
+  tenantId: demoTenantId,
+};
 
 /**
- * The Shell's external identity provider deployment data for the portal namespace: per Tenant, its own workload
- * Principal holds exactly the binding operations and gateway-context audiences, in that Tenant only.
+ * The Shell's external identity provider deployment for the portal namespace: per Tenant, its own workload
+ * Principal holds exactly the binding operations and gateway-context audiences, in that Tenant only. This is
+ * the provider's workload-grant configuration (a canonical v2 boundary), not a SpiceDB relationship.
  */
 export const commercePortalExternalIdentityDeployment = (
   workloads: readonly [CommercePortalWorkload, ...CommercePortalWorkload[]] = [demoCommercePortalWorkload],
@@ -106,14 +91,6 @@ export const commercePortalExternalIdentityDeployment = (
     attesterPrincipalId: attester.principalId,
     authenticationNamespaceId: COMMERCE_PORTAL_NAMESPACE,
     grants: workloads.flatMap(({ principalId, tenantId }) => {
-      const bindingOperations =
-        tenantId === n1CommercePortal.tenantId
-          ? (['activate', 'read', 'reserve', 'resolve'] as const)
-          : BINDING_OPERATIONS;
-      const audiences =
-        tenantId === n1CommercePortal.tenantId
-          ? ([GATEWAY_CONTEXT_AUDIENCES[0], PARTY_REGISTRY_AUDIENCE] as const)
-          : GATEWAY_CONTEXT_AUDIENCES;
       const workload = {
         receivingAudience: SHELL_AUDIENCE,
         targetAuthenticationNamespaceId: COMMERCE_PORTAL_NAMESPACE,
@@ -122,8 +99,8 @@ export const commercePortalExternalIdentityDeployment = (
         workloadPrincipalId: principalId,
       };
       return [
-        ...bindingOperations.map((operation) => ({ ...workload, operation })),
-        ...audiences.map((targetAudience) => ({
+        ...BINDING_OPERATIONS.map((operation) => ({ ...workload, operation })),
+        ...GATEWAY_CONTEXT_AUDIENCES.map((targetAudience) => ({
           ...workload,
           operation: 'gateway-context' as const,
           targetAudience,
@@ -134,12 +111,8 @@ export const commercePortalExternalIdentityDeployment = (
   };
 };
 
-export const commercePortalVerificationWorkloadGrants = (
-  deployment: Pick<
-    Schema.Codec.Encoded<typeof ExternalIdentityProviderConfigurationSchema>,
-    'authenticationNamespaceId' | 'grants' | 'providerEndpointAudience'
-  > = commercePortalExternalIdentityDeployment(),
-) => ({
+/** Commerce's verification grants: the provider workload each Tenant's portal authenticates as. */
+export const commercePortalVerificationWorkloadGrants = (deployment = commercePortalExternalIdentityDeployment()) => ({
   grants: deployment.grants
     .filter(
       (grant) =>
@@ -163,78 +136,9 @@ export const commercePortalVerificationWorkloadGrants = (
       workloadAuthenticationNamespaceId: grant.workloadAuthenticationNamespaceId,
       workloadPrincipalId: grant.workloadPrincipalId,
     })),
-  providerEndpointAudience: GATEWAY_CONTEXT_AUDIENCES[0],
+  providerEndpointAudience: COMMERCE_AUDIENCE,
 });
 
-class CommercePortalError extends Schema.TaggedError<CommercePortalError>()('CommercePortalError', {
-  reason: Schema.String,
-}) {}
-const fail = (reason: string) => new CommercePortalError({ reason });
-const metadataUnavailable = () => fail('Commerce release secrets require valid Shell provider workload metadata');
-
-/** Run on the assembled bundle before upload; the receiving owner grant is never a manual extra. */
-export const commercePortalReleaseSecrets = Effect.fn('CommercePortal.releaseSecrets')(function* releaseSecrets(
-  bundle: Readonly<Record<string, Readonly<Record<string, string>>>>,
-): Effect.fn.Return<Readonly<Record<string, Readonly<Record<string, string>>>>, CommercePortalError> {
-  const commerce = bundle['commerce-customer-context'];
-  const shell = bundle['shell-super-app'];
-  if (commerce === undefined || shell === undefined) {
-    return yield* fail('Commerce release secrets require the Commerce and Shell units');
-  }
-  const deployment = yield* Schema.decodeUnknownEffect(
-    Schema.fromJsonString(ExternalIdentityProviderConfigurationSchema),
-    {
-      onExcessProperty: 'error',
-    },
-  )(shell.ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT).pipe(Effect.mapError(metadataUnavailable));
-  const grants = commercePortalVerificationWorkloadGrants(deployment);
-  if (deployment.authenticationNamespaceId !== COMMERCE_PORTAL_NAMESPACE || grants.grants.length === 0) {
-    return yield* metadataUnavailable();
-  }
-  const verification = yield* Schema.decodeEffect(CommercePortalAuthVerificationWorkloadGrantsSchema)(grants).pipe(
-    Effect.mapError(metadataUnavailable),
-  );
-  const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(CommercePortalAuthVerificationWorkloadGrantsSchema))(
-    verification,
-  ).pipe(Effect.mapError(metadataUnavailable));
-  return {
-    ...bundle,
-    'commerce-customer-context': {
-      ...commerce,
-      COMMERCE_PORTAL_AUTH_VERIFICATION_WORKLOAD_GRANTS: encoded,
-    },
-  };
-});
-
-const operatorPasswords = {
-  'akros-playground': Config.Redacted('ONTOS_AKROS_PLAYGROUND_PASSWORD').pipe(
-    Config.withDefault(Redacted.make('password1234')),
-  ),
-  demo: Config.Redacted('ONTOS_DEMO_PASSWORD').pipe(Config.withDefault(Redacted.make('password1234'))),
-  n1: Config.Redacted('ONTOS_N1_PASSWORD'),
-} satisfies Readonly<Record<WorkloadName, Config.Config<Redacted.Redacted>>>;
-const shellConfig = Config.all({
-  compositionUrl: Config.String('ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL').pipe(
-    Config.withDefault('http://127.0.0.1:3041/active'),
-  ),
-  shellUrl: Config.String('ONTOS_SHELL_URL').pipe(Config.withDefault('http://localhost:3020')),
-});
-
-const post = (url: string, body: Schema.Json, headers: Readonly<Record<string, string>>) =>
-  Effect.gen(function* postJson() {
-    const client = yield* HttpClient.HttpClient;
-    return yield* client.execute(
-      HttpClientRequest.post(url).pipe(
-        HttpClientRequest.setHeaders({ 'x-correlation-id': randomUUID(), ...headers }),
-        HttpClientRequest.bodyJsonUnsafe(body),
-      ),
-    );
-  }).pipe(Effect.timeout('20 seconds'));
-
-const CompositionSchema = Schema.Struct({ composition: Schema.Struct({ revision: Schema.String }) });
-const IssuedKeySchema = Schema.Struct({ secret: Schema.RedactedFromValue(Schema.String.check(Schema.isMinLength(1))) });
-const SECURE_COOKIE_PREFIX = '__Secure-';
-const CREDENTIALS_VARIABLE = 'COMMERCE_TENANT_CREDENTIALS';
 const TenantCredentialsSchema = Schema.Record(
   Schema.String,
   Schema.Struct({
@@ -243,6 +147,26 @@ const TenantCredentialsSchema = Schema.Record(
   }),
 );
 const TenantCredentialsJson = Schema.fromJsonString(TenantCredentialsSchema);
+const SignInBodySchema = Schema.Struct({ email: Schema.String, password: Schema.Redacted(Schema.String) });
+const IssueKeyBodySchema = Schema.Struct({
+  name: Schema.String,
+  principalId: Schema.toEncoded(Schema.String.pipe(Schema.brand('MachinePrincipalId'))),
+  scope: Schema.Literal('tenant-managed'),
+});
+const CompositionSchema = Schema.Struct({ composition: Schema.Struct({ revision: Schema.String }) });
+const IssuedKeySchema = Schema.Struct({ secret: Schema.RedactedFromValue(Schema.String.check(Schema.isMinLength(1))) });
+const GatewayBodySchema = Schema.Struct({
+  audience: Schema.String,
+  compositionRevision: Schema.String,
+  legalEntityId: Schema.toEncoded(Schema.String.pipe(Schema.brand('LegalEntityId'))),
+});
+const SECURE_COOKIE_PREFIX = '__Secure-';
+const shellConfig = Config.all({
+  compositionUrl: Config.String('ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL').pipe(
+    Config.withDefault('http://127.0.0.1:3041/active'),
+  ),
+  shellUrl: Config.String('ONTOS_SHELL_URL').pipe(Config.withDefault('http://localhost:3020')),
+});
 
 const envLine = /^(?<key>[A-Z][A-Z0-9_]*)=(?<value>.*)$/u;
 const readEnv = (text: string): ReadonlyMap<string, string> =>
@@ -270,118 +194,59 @@ const writeEnv = Effect.fn('CommercePortal.writeEnv')(function* writeEnv(
   yield* fs.chmod(envFile, 0o600);
 });
 
-/** Inspect only a fresh Shell response: the receiving owner still verifies the signed assertion. */
-export const verifyN1CommercePortalKey = Effect.fn('CommercePortal.verifyN1Key')(function* verifyN1Key(
-  key: Redacted.Redacted,
-  shellUrl: string,
-  compositionRevision: string,
-) {
-  for (const audience of [PARTY_REGISTRY_AUDIENCE, COMMERCE_AUDIENCE] as const) {
-    const response = yield* issueApiKeyGatewayContext(
-      { audience, compositionRevision, legalEntityId: n1CommercePortal.legalEntityId },
-      { apiKey: key, baseUrl: `${shellUrl}/shell-super-app-api`, requestCorrelation: randomUUID() },
-    ).pipe(Effect.mapError(() => fail('N1 Commerce workload gateway verification failed; credentials withheld')));
-    const claims = yield* Effect.try({
-      catch: () => fail('N1 Commerce workload assertion metadata is invalid; credentials withheld'),
-      try: () => decodeJwt(response.token),
-    }).pipe(
-      Effect.flatMap(Schema.decodeUnknownEffect(GatewayContextClaimsSchema)),
-      Effect.mapError(() => fail('N1 Commerce workload assertion metadata is invalid; credentials withheld')),
+const postJson = <S extends Schema.Top>(
+  url: string,
+  schema: S,
+  body: S['Type'],
+  headers: Readonly<Record<string, string>>,
+) =>
+  Effect.gen(function* postJsonRequest() {
+    const client = yield* HttpClient.HttpClient;
+    const request = yield* HttpClientRequest.schemaBodyJson(schema)(
+      HttpClientRequest.post(url).pipe(HttpClientRequest.setHeaders({ 'x-correlation-id': randomUUID(), ...headers })),
+      body,
     );
-    if (
-      claims.principal.authMethod !== 'api_key' ||
-      claims.principal.principalId !== n1CommercePortal.principalId ||
-      claims.principal.tenantId !== n1CommercePortal.tenantId ||
-      claims.principal.legalEntityId !== n1CommercePortal.legalEntityId ||
-      claims.aud !== audience ||
-      claims.compositionRevision !== compositionRevision ||
-      response.compositionRevision !== compositionRevision
-    ) {
-      return yield* fail('N1 Commerce workload identity or scope mismatch; credentials withheld');
-    }
-  }
-  return yield* Effect.void;
-});
+    return yield* client.execute(request);
+  }).pipe(Effect.timeout('20 seconds'));
 
-/** Validate the named N1 target before acquiring privileged database services. */
-export const validateN1CommercePortalEnvironment = Config.all({
-  environment: Config.schema(Schema.Literal('stage'), 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'),
-  shellUrl: Config.schema(Schema.Literal(N1_STAGE_ORIGIN), 'ONTOS_SHELL_URL'),
-}).pipe(
-  Effect.mapError(() => fail('N1 Commerce provisioning requires the explicit Stage environment and N1 Shell origin')),
-);
-
-/** Reuses a key that still mints a gateway assertion, otherwise issues one through the Shell. */
-const ensureKey = Effect.fn('CommercePortal.key')(function* ensureKey(
-  previous: Redacted.Redacted | undefined,
-  identity: { readonly apiKeyName: string; readonly legalEntityId: string; readonly principalId: string },
-  audience: 'party-registry' | 'commerce-customer-context',
-  operator: WorkloadName = 'demo',
-) {
-  const { operatorEmail } = commercePortalWorkloads[operator];
-  const client = yield* HttpClient.HttpClient;
-  const { compositionUrl, shellUrl } = yield* shellConfig;
-  const revision = yield* client.get(compositionUrl).pipe(
-    Effect.timeout('10 seconds'),
-    Effect.flatMap(HttpClientResponse.schemaBodyJson(CompositionSchema)),
-    Effect.map(({ composition }) => composition.revision),
-    Effect.mapError(() => fail(`composition ${compositionUrl} is not available; start the demo first`)),
-  );
-  if (previous !== undefined) {
-    if (operator === 'n1') {
-      yield* verifyN1CommercePortalKey(previous, shellUrl, revision);
-      yield* Console.log('commerce-portal: N1 API key identity verified and reused');
-      return previous;
-    }
-    const works = yield* post(
-      `${shellUrl}/shell-super-app-api/auth/api-key/gateway-context`,
-      {
-        audience,
-        compositionRevision: revision,
-        legalEntityId: identity.legalEntityId,
-      },
-      { 'content-type': 'application/json', 'x-api-key': Redacted.value(previous) },
-    ).pipe(
-      Effect.map(({ status }) => status === 200),
-      Effect.orElseSucceed(() => false),
-    );
-    if (works) {
-      yield* Console.log('commerce-portal: API key reused');
-      return previous;
-    }
-  }
-  const signIn = yield* post(
-    `${shellUrl}/shell-super-app-api/auth/sign-in`,
-    { email: operatorEmail, password: Redacted.value(yield* operatorPasswords[operator]) },
-    { 'content-type': 'application/json', origin: shellUrl },
-  );
-  if (signIn.status !== 200) {
-    return yield* fail(`Sign-in as ${operatorEmail} failed with HTTP ${signIn.status}`);
-  }
-  const aliases = Object.entries(Cookies.toRecord(signIn.cookies)).flatMap(([name, value]) =>
+/** The Shell signs sessions into a `__Secure-` cookie the API-key instance reads without the prefix. */
+const sessionCookieHeader = (cookies: Cookies.Cookies) => {
+  const aliases = Object.entries(Cookies.toRecord(cookies)).flatMap(([name, value]) =>
     name.startsWith(SECURE_COOKIE_PREFIX) ? [[name.slice(SECURE_COOKIE_PREFIX.length), value] as const] : [],
   );
-  const cookie = Cookies.toCookieHeader(Cookies.setAllUnsafe(signIn.cookies, aliases));
-  const issued = yield* post(
-    `${shellUrl}/shell-super-app-api/auth/identity/api-keys/managed`,
-    { name: identity.apiKeyName, principalId: identity.principalId, scope: 'tenant-managed' },
-    {
-      'content-type': 'application/json',
-      cookie,
-      'idempotency-key': `commerce-portal-${randomUUID()}`,
-      origin: shellUrl,
-    },
+  return Cookies.toCookieHeader(Cookies.setAllUnsafe(cookies, aliases));
+};
+
+const compositionRevision = (compositionUrl: string) =>
+  Effect.gen(function* readCompositionRevision() {
+    const client = yield* HttpClient.HttpClient;
+    const response = yield* client.get(compositionUrl).pipe(Effect.timeout('10 seconds'));
+    const { composition } = yield* HttpClientResponse.schemaBodyJson(CompositionSchema)(response);
+    return composition.revision;
+  }).pipe(
+    Effect.mapError(
+      () =>
+        new MachineIdentityError({
+          reason: 'The active composition is not available; start the demo before issuing portal keys',
+        }),
+    ),
   );
-  if (issued.status !== 200) {
-    return yield* fail(`API key issue failed with HTTP ${issued.status}; credentials withheld`);
-  }
-  const { secret } = yield* HttpClientResponse.schemaBodyJson(IssuedKeySchema)(issued);
-  if (operator === 'n1') {
-    yield* verifyN1CommercePortalKey(secret, shellUrl, revision);
-  }
-  yield* Console.log('commerce-portal: API key issued');
-  return secret;
-});
+
+const keyWorks = (
+  shellUrl: string,
+  apiKey: Redacted.Redacted,
+  revision: string,
+  target: { readonly audience: string; readonly legalEntityId: string },
+) =>
+  postJson(
+    `${shellUrl}/shell-super-app-api/auth/api-key/gateway-context`,
+    GatewayBodySchema,
+    { audience: target.audience, compositionRevision: revision, legalEntityId: target.legalEntityId },
+    { 'x-api-key': Redacted.value(apiKey) },
+  ).pipe(
+    Effect.map(({ status }) => status === 200),
+    Effect.orElseSucceed(() => false),
+  );
 
 /** Gateway assertions are single-use; lift Better Auth's per-key request limit (as for the other service keys). */
 const liftKeyRateLimit = (apiKeyName: string) =>
@@ -390,299 +255,191 @@ const liftKeyRateLimit = (apiKeyName: string) =>
     yield* executor.update(apikey).set({ rateLimitEnabled: false, requestCount: 0 }).where(eq(apikey.name, apiKeyName));
   });
 
-const workspaceRoot = new URL('../..', import.meta.url);
-
-const main = (existing: ReadonlyMap<string, string>, configuration?: Readonly<Record<string, string>>) =>
-  Effect.gen(function* runCommercePortal() {
-    const path = yield* Path.Path;
-    const root = yield* path.fromFileUrl(workspaceRoot);
-    const environment = { ...configuration, ...resetChildEnvironment(yield* resetEnvironment) };
-    yield* validateResetEnvironment(environment);
-    const { executor } = yield* AuthDatabase;
-    yield* executor
-      .insert(principals)
-      .values({
-        displayName: commercePortalPrincipal.displayName,
-        kind: 'service',
-        principalId: commercePortalPrincipal.principalId,
-        status: 'active',
-        tenantId: demoTenantId,
-      })
-      .onConflictDoUpdate({
-        set: { displayName: commercePortalPrincipal.displayName, status: 'active' },
-        target: principals.principalId,
+/** Reuses a key that still mints a gateway assertion, otherwise issues one through the Shell. */
+const ensureKey = (input: {
+  readonly audience: string;
+  readonly existing: ReadonlyMap<string, string>;
+  readonly identity: { readonly apiKeyName: string; readonly legalEntityId: string; readonly principalId: string };
+  readonly password: Redacted.Redacted;
+  readonly shellUrl: string;
+  readonly variable: string;
+}) =>
+  Effect.gen(function* ensurePortalKey() {
+    const { compositionUrl, shellUrl } = yield* shellConfig;
+    const revision = yield* compositionRevision(compositionUrl);
+    const previous = input.existing.get(input.variable);
+    if (previous !== undefined && previous.length > 0) {
+      const works = yield* keyWorks(shellUrl, Redacted.make(previous), revision, {
+        audience: input.audience,
+        legalEntityId: input.identity.legalEntityId,
       });
-    const source = yield* ActiveApplicationCompositionService;
-    const actions = yield* discoverCurrentActions(yield* source.load);
-    const missing = commercePortalActionKeys.filter((key) => !actions.some(({ actionKey }) => actionKey === key));
-    if (missing.length > 0) {
-      return yield* fail(`Published Commerce enrollment Actions missing: ${missing.join(', ')}`);
+      if (works) {
+        return Redacted.make(previous);
+      }
     }
-    const relationships = yield* Effect.try(() => commercePortalRelationships(actions));
-    yield* writeBootstrapRelationships(root, environment, relationships);
-    yield* Console.log(
-      `commerce-portal: principal ${commercePortalPrincipal.principalId}, ${relationships.length} relationships`,
+    const signIn = yield* postJson(
+      `${shellUrl}/shell-super-app-api/auth/sign-in`,
+      SignInBodySchema,
+      { email: OPERATOR_EMAIL, password: input.password },
+      { origin: shellUrl },
     );
-    yield* liftKeyRateLimit(commercePortalPrincipal.apiKeyName);
-    const previous = Option.getOrUndefined(
-      Option.flatMapNullishOr(
-        Schema.decodeUnknownOption(TenantCredentialsJson)(existing.get(CREDENTIALS_VARIABLE) ?? ''),
-        (credentials) => credentials[demoTenantId]?.coreIdentityApiKey,
-      ),
-    );
-    const key = yield* ensureKey(previous, commercePortalPrincipal, PARTY_REGISTRY_AUDIENCE);
-    yield* liftKeyRateLimit(commercePortalPrincipal.apiKeyName);
-    const { shellUrl } = yield* shellConfig;
-    yield* executor
-      .insert(principals)
-      .values({
-        displayName: privacyConsentPrincipal.displayName,
-        kind: 'service',
-        principalId: privacyConsentPrincipal.principalId,
-        status: 'active',
-        tenantId: demoTenantId,
-      })
-      .onConflictDoUpdate({
-        set: { displayName: privacyConsentPrincipal.displayName, status: 'active' },
-        target: principals.principalId,
+    if (signIn.status !== 200) {
+      return yield* new MachineIdentityError({
+        reason: `Sign-in as ${OPERATOR_EMAIL} failed with HTTP ${String(signIn.status)}`,
       });
-    const privacyRelationships = yield* Effect.try(() => privacyConsentAuthorityRelationships(actions));
-    yield* writeBootstrapRelationships(root, environment, privacyRelationships);
-    const previousPrivacyKey = existing.get('ONTOS_PRIVACY_GATEWAY_API_KEY');
-    const privacyKey = Redacted.value(
-      yield* ensureKey(
-        previousPrivacyKey === undefined || previousPrivacyKey === '' ? undefined : Redacted.make(previousPrivacyKey),
-        privacyConsentPrincipal,
-        'commerce-customer-context',
-      ),
-    );
-    yield* liftKeyRateLimit(privacyConsentPrincipal.apiKeyName);
-    const deployment = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))(
-      commercePortalExternalIdentityDeployment(),
-    );
-    const verificationGrants = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))(
-      commercePortalVerificationWorkloadGrants(),
-    );
-    const credentials = yield* Schema.encodeEffect(TenantCredentialsJson)({
-      [demoTenantId]: { coreIdentityApiKey: key, gatewayApiKey: key },
-    });
-    return new Map([
-      ['COMMERCE_CORE_IDENTITY_BASE_URL', `${shellUrl}/shell-super-app-api`],
-      [CREDENTIALS_VARIABLE, credentials],
-      ['ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT', deployment],
-      ['COMMERCE_PORTAL_AUTH_VERIFICATION_WORKLOAD_GRANTS', verificationGrants],
-      ['ONTOS_PRIVACY_GATEWAY_API_KEY', privacyKey],
-      ['COMMERCE_MARKETING_ACTOR_PRINCIPAL_ID', commercePortalPrincipal.principalId],
-    ]);
-  });
-
-type OwnerBundle = Readonly<Record<string, Readonly<Record<string, string>>>>;
-
-/**
- * Adds one Tenant's workload key to `COMMERCE_TENANT_CREDENTIALS` and derives, from every Tenant in that map, the
- * Shell's per-Tenant workload grants and Commerce's verification grants. A map entry for a Tenant this repository does
- * not provision is refused rather than granted.
- */
-export const commercePortalTenantBundle = Effect.fn('CommercePortal.tenantBundle')(function* tenantBundle(
-  bundle: OwnerBundle,
-  name: WorkloadName,
-  key: Redacted.Redacted,
-): Effect.fn.Return<OwnerBundle, CommercePortalError> {
-  const commerce = bundle['commerce-customer-context'];
-  const shell = bundle['shell-super-app'];
-  if (commerce === undefined || shell === undefined) {
-    return yield* fail('The owner bundle requires the Commerce and Shell units');
-  }
-  const current = commerce[CREDENTIALS_VARIABLE];
-  const existing =
-    current === undefined
-      ? {}
-      : yield* Schema.decodeUnknownEffect(TenantCredentialsJson)(current).pipe(
-          Effect.mapError(() => fail(`${CREDENTIALS_VARIABLE} in the owner bundle is malformed`)),
-        );
-  const { workload } = commercePortalWorkloads[name];
-  const credentials = {
-    ...existing,
-    [workload.tenantId]: { coreIdentityApiKey: key, gatewayApiKey: key },
-  };
-  const known = workloadNames.map((candidate) => commercePortalWorkloads[candidate].workload);
-  const unknown = Object.keys(credentials).filter((tenantId) => !known.some((row) => row.tenantId === tenantId));
-  if (unknown.length > 0) {
-    return yield* fail(`${CREDENTIALS_VARIABLE} names Tenants without a provisioned workload: ${unknown.join(', ')}`);
-  }
-  const [first, ...rest] = known.filter(({ tenantId }) => tenantId in credentials);
-  if (first === undefined) {
-    return yield* fail('No Tenant workload is configured');
-  }
-  const deployment = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))(
-    commercePortalExternalIdentityDeployment([first, ...rest]),
-  ).pipe(Effect.mapError(() => fail('The Shell provider deployment could not be encoded')));
-  const encoded = yield* Schema.encodeEffect(TenantCredentialsJson)(credentials).pipe(
-    Effect.mapError(() => fail(`${CREDENTIALS_VARIABLE} could not be encoded`)),
-  );
-  return yield* commercePortalReleaseSecrets({
-    ...bundle,
-    'commerce-customer-context': { ...commerce, [CREDENTIALS_VARIABLE]: encoded },
-    'shell-super-app': { ...shell, ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT: deployment },
-  });
-});
-
-const OwnerBundleJson = Schema.fromJsonString(
-  Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.String)),
-);
-
-/** Stage: issue or reuse one Tenant workload's managed key, kept only in an owner-only file. */
-const persistWorkloadKey = (name: WorkloadName, keyFile: string) =>
-  Effect.gen(function* writeWorkloadKey() {
-    const fs = yield* FileSystem.FileSystem;
-    const { workload } = commercePortalWorkloads[name];
-    const previous = (yield* fs.exists(keyFile)) ? (yield* fs.readFileString(keyFile)).trim() : '';
-    yield* liftKeyRateLimit(workload.apiKeyName);
-    const key = yield* ensureKey(
-      previous === '' ? undefined : Redacted.make(previous),
-      workload,
-      PARTY_REGISTRY_AUDIENCE,
-      name,
-    );
-    yield* liftKeyRateLimit(workload.apiKeyName);
-    yield* fs.writeFileString(keyFile, `${Redacted.value(key)}\n`, { mode: 0o600 });
-    yield* fs.chmod(keyFile, 0o600);
-    yield* Console.log(`commerce-portal: ${name} workload key -> ${keyFile}`);
-  });
-
-/** Stage: write the owner bundle with the Tenant's credential entry and grants; the values are never printed. */
-const persistTenantBundle = (name: WorkloadName, keyFile: string, input: string, output: string) =>
-  Effect.gen(function* writeTenantBundle() {
-    const fs = yield* FileSystem.FileSystem;
-    const key = (yield* fs.readFileString(keyFile)).trim();
-    if (key.length < 16) {
-      return yield* fail(`The ${name} workload key file is empty`);
     }
-    const bundle = yield* Schema.decodeUnknownEffect(OwnerBundleJson)(yield* fs.readFileString(input)).pipe(
-      Effect.mapError(() => fail('The owner bundle must be a JSON record of owner units')),
+    const issued = yield* postJson(
+      `${shellUrl}/shell-super-app-api/auth/identity/api-keys/managed`,
+      IssueKeyBodySchema,
+      { name: input.identity.apiKeyName, principalId: input.identity.principalId, scope: 'tenant-managed' },
+      {
+        cookie: sessionCookieHeader(signIn.cookies),
+        'idempotency-key': `commerce-portal-${input.identity.apiKeyName}-${randomUUID()}`,
+        origin: shellUrl,
+      },
     );
-    const updated = yield* commercePortalTenantBundle(bundle, name, Redacted.make(key));
-    const text = yield* Schema.encodeEffect(OwnerBundleJson)(updated).pipe(
-      Effect.mapError(() => fail('The owner bundle could not be encoded')),
-    );
-    yield* fs.writeFileString(output, text, { flag: 'wx', mode: 0o600 });
-    return yield* Console.log(`commerce-portal: ${name} workload added; owner bundle -> ${output}`);
+    if (issued.status !== 200) {
+      const detail = yield* issued.text;
+      return yield* new MachineIdentityError({
+        reason: `API key issuance failed with HTTP ${String(issued.status)}: ${detail.slice(0, 300)}`,
+      });
+    }
+    const { secret } = yield* HttpClientResponse.schemaBodyJson(IssuedKeySchema)(issued);
+    return secret;
   });
 
-const environmentLive = ConfigProvider.layer(
-  Effect.gen(function* loadOperatorConfiguration() {
-    const path = yield* Path.Path;
-    const root = yield* path.fromFileUrl(workspaceRoot);
-    const file = yield* ConfigProvider.fromDotEnv({ path: path.join(root, '.env') });
-    return ConfigProvider.orElse(ConfigProvider.fromEnv(), file);
-  }),
-);
 const adminDatabaseConfigLive = Layer.effect(
   DatabaseConfig,
   Config.Redacted('DATABASE_ADMIN_URL').pipe(
     Effect.flatMap((url) => parseDatabaseConfig({ DATABASE_URL: Redacted.value(url) })),
-  ),
-);
-export const commercePortalServicesLive = Layer.mergeAll(
-  AuthDatabaseFromDatabaseConfigLive.pipe(Layer.provide(adminDatabaseConfigLive)),
-  FetchHttpClient.layer,
-  ActiveApplicationCompositionConfigLive.pipe(
-    Layer.provide(ActiveApplicationCompositionSourceLive),
-    Layer.provide(FetchHttpClient.layer),
+    Effect.mapError(() => new MachineIdentityError({ reason: 'DATABASE_ADMIN_URL is not a local PostgreSQL URL' })),
   ),
 );
 
-/** Compose once at the caller's executable root; both services and the program share the explicit configuration. */
-export const commercePortalProvisionLive = (environment: Readonly<Record<string, string>>) =>
-  commercePortalServicesLive.pipe(Layer.provideMerge(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))));
-
-/** Provision without dotenv I/O; callers supply commercePortalProvisionLive(environment) at their executable root. */
-export const provisionCommercePortal = (
-  environment: Readonly<Record<string, string>>,
-  existing: ReadonlyMap<string, string> = new Map(),
-) => main(existing, environment).pipe(Effect.scoped);
+/** Identity, transport and gateway configuration for the demo portal. Writes no relationship and no Role. */
+export const provisionCommercePortal = (existing: ReadonlyMap<string, string> = new Map()) =>
+  Effect.gen(function* runCommercePortal() {
+    const path = yield* Path.Path;
+    const root = yield* path.fromFileUrl(workspaceRootOf(import.meta.url));
+    const { password, shellUrl } = yield* machineIdentityEnvironment(root);
+    yield* ensureMachinePrincipals([
+      {
+        displayName: commercePortalPrincipal.displayName,
+        kind: 'service' as const,
+        legalEntityId: commercePortalPrincipal.legalEntityId,
+        principalId: commercePortalPrincipal.principalId,
+        tenantId: demoTenantId,
+      },
+      {
+        displayName: privacyConsentPrincipal.displayName,
+        kind: 'service' as const,
+        legalEntityId: privacyConsentPrincipal.legalEntityId,
+        principalId: privacyConsentPrincipal.principalId,
+        tenantId: demoTenantId,
+      },
+      {
+        displayName: marketRetirementPrincipal.displayName,
+        kind: 'service' as const,
+        legalEntityId: marketRetirementPrincipal.legalEntityId,
+        principalId: marketRetirementPrincipal.principalId,
+        tenantId: demoTenantId,
+      },
+      {
+        displayName: kavarnaMarketAuthorityPrincipal.displayName,
+        kind: 'service' as const,
+        legalEntityId: kavarnaMarketAuthorityPrincipal.legalEntityId,
+        principalId: kavarnaMarketAuthorityPrincipal.principalId,
+        tenantId: demoTenantId,
+      },
+    ]);
+    if (!(yield* shellIsServing(shellUrl))) {
+      return yield* new MachineIdentityError({
+        reason: `The Shell at ${shellUrl} is not serving; its managed-key endpoint is how these identities are issued. Start the stack and re-run.`,
+      });
+    }
+    yield* liftKeyRateLimit(commercePortalPrincipal.apiKeyName);
+    const portalKey = yield* ensureKey({
+      audience: PARTY_REGISTRY_AUDIENCE,
+      existing,
+      identity: commercePortalPrincipal,
+      password,
+      shellUrl,
+      variable: CREDENTIALS_VARIABLE,
+    });
+    yield* liftKeyRateLimit(commercePortalPrincipal.apiKeyName);
+    yield* liftKeyRateLimit(privacyConsentPrincipal.apiKeyName);
+    const privacyKey = yield* ensureKey({
+      audience: COMMERCE_AUDIENCE,
+      existing,
+      identity: privacyConsentPrincipal,
+      password,
+      shellUrl,
+      variable: 'ONTOS_PRIVACY_GATEWAY_API_KEY',
+    });
+    yield* liftKeyRateLimit(privacyConsentPrincipal.apiKeyName);
+    const credentials = yield* Schema.encodeEffect(TenantCredentialsJson)({
+      [demoTenantId]: { coreIdentityApiKey: portalKey, gatewayApiKey: portalKey },
+    });
+    const deployment = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))(
+      commercePortalExternalIdentityDeployment(),
+    );
+    const verification = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))(
+      commercePortalVerificationWorkloadGrants(),
+    );
+    const values = new Map<string, string>([
+      ['COMMERCE_CORE_IDENTITY_BASE_URL', `${shellUrl}/shell-super-app-api`],
+      [CREDENTIALS_VARIABLE, credentials],
+      ['ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT', deployment],
+      ['COMMERCE_PORTAL_AUTH_VERIFICATION_WORKLOAD_GRANTS', verification],
+      ['ONTOS_PRIVACY_GATEWAY_API_KEY', Redacted.value(privacyKey)],
+      ['COMMERCE_MARKETING_ACTOR_PRINCIPAL_ID', commercePortalPrincipal.principalId],
+    ]);
+    yield* Console.log(
+      `commerce-portal: portal + privacy identities ready; authority is the reviewed binding (${STOREFRONT_CLIENT_WORKLOAD}); run \`pnpm demo:reset-permissions\`.`,
+    );
+    for (const blocker of unmappedServicePrincipals) {
+      yield* Console.log(
+        `commerce-portal blocker: ${blocker.principalId} has no v2 authority — ${blocker.reason} Carrier: ${blocker.carrier}.`,
+      );
+    }
+    return values;
+  });
 
 const persistConfiguration = (envFileOption: string | undefined) =>
   Effect.gen(function* writePortalConfiguration() {
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
-    const root = yield* path.fromFileUrl(workspaceRoot);
-    const envFile = envFileOption ?? path.join(root, '.env');
+    const root = yield* path.fromFileUrl(workspaceRootOf(import.meta.url));
+    const envFile = envFileOption ?? path.join(root, ENV_FILE);
     const existing = (yield* fs.exists(envFile))
       ? readEnv(yield* fs.readFileString(envFile))
       : new Map<string, string>();
-    yield* writeEnv(envFile, yield* main(existing));
-    yield* Console.log(`commerce-portal: Core identity transport and Shell provider data -> ${envFile}`);
+    yield* writeEnv(envFile, yield* provisionCommercePortal(existing));
+    return yield* Console.log(
+      `commerce-portal: Core identity transport and Shell provider data -> ${envFile} (key never printed)`,
+    );
   });
-
-const selectedRun = (flags: {
-  readonly bundle: Option.Option<string>;
-  readonly bundleOut: Option.Option<string>;
-  readonly envFile: Option.Option<string>;
-  readonly keyFile: Option.Option<string>;
-  readonly workload: Option.Option<WorkloadName>;
-}) => {
-  if (Option.isNone(flags.workload)) {
-    return persistConfiguration(Option.getOrUndefined(flags.envFile));
-  }
-  const name = flags.workload.value;
-  if (Option.isNone(flags.keyFile)) {
-    return Effect.fail(fail('--workload requires --key-file'));
-  }
-  return Option.isNone(flags.bundle) && Option.isNone(flags.bundleOut)
-    ? persistWorkloadKey(name, flags.keyFile.value)
-    : Effect.fail(fail('--bundle and --bundle-out go together'));
-};
-
-const failureReport = (failure: { readonly _tag: string }) =>
-  Console.error(
-    Schema.is(CommercePortalError)(failure)
-      ? `Commerce portal identity failed: ${failure.reason}`
-      : `Commerce portal identity failed (${failure._tag}); secrets withheld`,
-  );
 
 const command = Command.make(
   commercePortalPrincipal.apiKeyName,
-  {
-    bundle: Flag.String('bundle').pipe(Flag.optional),
-    bundleOut: Flag.String('bundle-out').pipe(Flag.optional),
-    envFile: Flag.String('env-file').pipe(Flag.optional),
-    keyFile: Flag.String('key-file').pipe(Flag.optional),
-    workload: Flag.Literals('workload', workloadNames).pipe(Flag.optional),
-  },
-  (flags) => {
-    // The bundle step is file-only: it runs on the operator's machine without the database or the Shell.
-    if (
-      Option.isSome(flags.workload) &&
-      Option.isSome(flags.keyFile) &&
-      Option.isSome(flags.bundle) &&
-      Option.isSome(flags.bundleOut)
-    ) {
-      return persistTenantBundle(
-        flags.workload.value,
-        flags.keyFile.value,
-        flags.bundle.value,
-        flags.bundleOut.value,
-      ).pipe(Effect.asVoid, Effect.tapError(failureReport));
-    }
-    const configuredServices = Option.isNone(flags.workload)
-      ? commercePortalServicesLive.pipe(Layer.provideMerge(environmentLive))
-      : commercePortalServicesLive;
-    return Effect.gen(function* configuredProvision() {
-      if (Option.isSome(flags.workload) && flags.workload.value === 'n1') {
-        yield* validateN1CommercePortalEnvironment;
-      }
-      yield* Layer.build(
-        Layer.effectDiscard(selectedRun(flags).pipe(Effect.scoped)).pipe(Layer.provide(configuredServices)),
-      );
-    }).pipe(Effect.scoped, Effect.asVoid, Effect.tapError(failureReport));
-  },
+  { envFile: Flag.String('env-file').pipe(Flag.optional) },
+  ({ envFile }) => persistConfiguration(Option.getOrUndefined(envFile)),
 );
+
 if (import.meta.main) {
-  const runtimeLive = Layer.effectDiscard(Command.run(command, { version: '1.0.0' })).pipe(
-    Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv())),
-    Layer.provide(NodeServices.layer),
+  const exit = await Effect.runPromiseExit(
+    Command.run(command, { version: '1.0.0' }).pipe(
+      Effect.provide(AuthDatabaseFromDatabaseConfigLive.pipe(Layer.provide(adminDatabaseConfigLive))),
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provide(NodeServices.layer),
+      Effect.tapError((problem) =>
+        Console.error(
+          Schema.is(MachineIdentityError)(problem)
+            ? `commerce-portal failed: ${problem.reason}`
+            : `commerce-portal failed (${problem._tag})`,
+        ),
+      ),
+    ),
   );
-  const exit = await Effect.runPromiseExit(Effect.scoped(Layer.build(runtimeLive)));
   process.exitCode = Exit.isFailure(exit) ? 1 : 0;
 }

@@ -1,17 +1,11 @@
-import { Array as Arr, Context, Effect, Layer, Option, Schema } from 'effect';
+import { Context, Effect, Layer, Option, Schema } from 'effect';
 import type { OutboxWorkerHandlerContext } from '../outbox/definition.ts';
 import { validateCoreSearchProjectionWorkerContext, CoreSearchProjectionDocumentSchema } from '../search/projection.ts';
 import { CoreSearchProjectionStore } from '../search/projection-store.ts';
-import {
-  ResourceContainmentRelationshipMutation,
-  ownerResourceModuleContainment,
-} from '../permissions/resource-containment-mutation.ts';
-import type { ResourceContainmentRelationship } from '../permissions/resource-containment-mutation.ts';
-import { toLegalEntityAccessObjectId, toResourceAccessObjectId } from '../permissions/context-access.ts';
 import { PeopleSearchSource } from './people-search-source.ts';
 import type { PeopleSearchSourceSnapshot } from './people-search-source.ts';
 import { personRef, personIdentity } from './person-identity.ts';
-import { PeopleSearchVisibility, peopleSearchUnavailable } from './people-search-visibility.ts';
+import { peopleSearchUnavailable } from './people-search-contract.ts';
 
 const corePeopleModuleId = 'core.identity';
 export const buildPeopleSearchDocuments = Effect.fn('PeopleSearch.buildDocuments')(function* build(
@@ -45,34 +39,6 @@ export const buildPeopleSearchDocuments = Effect.fn('PeopleSearch.buildDocuments
   );
 });
 
-export const peopleContainment = (
-  tenantId: string,
-  legalEntityId: string,
-  ref: { readonly moduleId: string; readonly resourceId: string; readonly resourceType: string },
-): readonly ResourceContainmentRelationship[] => {
-  const module = ownerResourceModuleContainment(tenantId, legalEntityId, ref);
-  const resourceId = toResourceAccessObjectId(tenantId, legalEntityId, ref);
-  const companyId = toLegalEntityAccessObjectId(tenantId, legalEntityId);
-  const identity = personIdentity(ref.resourceId);
-  if (
-    module === undefined ||
-    resourceId === undefined ||
-    companyId === undefined ||
-    ref.moduleId !== corePeopleModuleId ||
-    ref.resourceType !== 'core.identity.person' ||
-    Option.isNone(identity) ||
-    identity.value.legalEntityId !== legalEntityId
-  ) {
-    return [];
-  }
-  const resource = { objectId: resourceId, objectType: 'resource' } as const;
-  return [
-    module,
-    { container: { objectId: companyId, objectType: 'legal_entity' }, relation: 'people_company', resource },
-    { container: { objectId: tenantId, objectType: 'tenant' }, relation: 'people_tenant', resource },
-  ];
-};
-
 export class PeopleSearchProjector extends Context.Service<
   PeopleSearchProjector,
   {
@@ -87,8 +53,6 @@ export const PeopleSearchProjectorLive = Layer.effect(
   Effect.gen(function* liveProjector() {
     const source = yield* PeopleSearchSource;
     const store = yield* CoreSearchProjectionStore;
-    const containment = yield* ResourceContainmentRelationshipMutation;
-    const visibility = yield* PeopleSearchVisibility;
     return {
       project: Effect.fn('PeopleSearchProjector.project')(function* project(context: OutboxWorkerHandlerContext) {
         yield* validateCoreSearchProjectionWorkerContext(context, {
@@ -99,25 +63,8 @@ export const PeopleSearchProjectorLive = Layer.effect(
         if (snapshot.tenantId !== context.tenantId) {
           return yield* peopleSearchUnavailable();
         }
-        const visible = yield* visibility.visible(
-          snapshot.tenantId,
-          snapshot.people.map(({ principalId }) => principalId),
-        );
-        const documents = yield* buildPeopleSearchDocuments({
-          ...snapshot,
-          people: snapshot.people.filter(({ principalId }) => visible.has(principalId)),
-        });
-        // All source SQL transactions have closed before touching external containment.
-        const relationships = documents.flatMap(({ ref, selectedLegalEntityId }) =>
-          peopleContainment(snapshot.tenantId, selectedLegalEntityId ?? '', ref),
-        );
-        if (relationships.length !== documents.length * 3) {
-          return yield* peopleSearchUnavailable();
-        }
-        yield* Effect.forEach(Arr.chunksOf(relationships, 99), (batch) => containment.touch({ relationships: batch }), {
-          concurrency: 1,
-          discard: true,
-        }).pipe(Effect.mapError(peopleSearchUnavailable));
+        // The projection is a candidate index; the read revalidates every hit against current authority.
+        const documents = yield* buildPeopleSearchDocuments(snapshot);
         yield* store
           .replace(
             {

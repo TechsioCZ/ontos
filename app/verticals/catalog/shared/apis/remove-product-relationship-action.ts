@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug remove-product-relationship
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,6 +11,7 @@ import {
 } from '../actions/remove-product-relationship.ts';
 
 export { RemoveProductRelationshipPayloadSchema } from '../actions/remove-product-relationship.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const RemoveProductRelationshipActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RemoveProductRelationshipActionInvalidProblem',
@@ -24,6 +26,7 @@ export const RemoveProductRelationshipActionForbiddenProblemSchema = makeProblem
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -133,7 +136,7 @@ export const RemoveProductRelationshipActionApi = HttpApi.make('RemoveProductRel
       HttpApiEndpoint.post('execute', '/catalog/actions/remove-product-relationship', {
         error: actionErrors,
         payload: Schema.toEncoded(RemoveProductRelationshipPayloadSchema),
-        success: RemoveProductRelationshipResultSchema,
+        success: [ActionProposalAcceptedSchema, RemoveProductRelationshipResultSchema],
       }),
     )
     .middleware(RemoveProductRelationshipActionSchemaErrorMiddleware),

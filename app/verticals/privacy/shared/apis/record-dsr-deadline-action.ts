@@ -2,12 +2,12 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug record-dsr-deadline
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { RecordDsrDeadlinePayloadSchema, RecordDsrDeadlineResultSchema } from '../actions/record-dsr-deadline.ts';
 
 export { RecordDsrDeadlinePayloadSchema } from '../actions/record-dsr-deadline.ts';
-
 export const RecordDsrDeadlineActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RecordDsrDeadlineActionInvalidProblem',
   400,
@@ -21,6 +21,7 @@ export const RecordDsrDeadlineActionForbiddenProblemSchema = makeProblemDetailsS
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -139,7 +140,7 @@ export const recordDsrDeadlineActionGroupDefinition = HttpApiGroup.make('recordD
     HttpApiEndpoint.post('execute', '/privacy/actions/record-dsr-deadline', {
       error: actionErrors,
       payload: Schema.toEncoded(RecordDsrDeadlinePayloadSchema),
-      success: RecordDsrDeadlineResultSchema,
+      success: [ActionProposalAcceptedSchema, RecordDsrDeadlineResultSchema],
     }),
   )
   .middleware(RecordDsrDeadlineActionSchemaErrorMiddleware);

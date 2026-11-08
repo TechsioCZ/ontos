@@ -15,6 +15,9 @@ it('declares the Party identity page as the record destination of its own Party 
 });
 
 it('keeps the Party identity page out of navigation, so no sidebar item is invented', () => {
-  expect(navigation.map(({ pageKey }) => pageKey)).toEqual(['party.registry.page.customers']);
+  expect(navigation.map(({ pageKey }) => pageKey)).toEqual([
+    'party.registry.page.contacts',
+    'party.registry.page.customers',
+  ]);
   expect(navigation.some(({ pageKey }) => pageKey === 'party.registry.page.party-identity')).toBe(false);
 });

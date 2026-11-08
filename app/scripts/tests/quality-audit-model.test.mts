@@ -499,7 +499,7 @@ it.live(
         },
       },
     };
-    const native = yield* runPinnedKnip(root, consumerPath, { config: base, consumerSource: '' }).pipe(
+    const native = yield* runPinnedKnip(root, consumerPath, { config: base, consumerFiles: [] }).pipe(
       Effect.provide(NodeServices.layer),
     );
     expect(native.status, native.stderr).toBe(1);
@@ -1212,6 +1212,69 @@ it.live(
 );
 
 it.live(
+  'native AST function scopes preserve resolver provenance and reject shadowed declarations expressions and arrows',
+  Effect.fn(function* nativeAstFunctionScopes() {
+    const root = yield* fixture();
+    const anchor = path.join(root, '.resolver-fixture/node_modules/owner/index.js');
+    const resolve = `require.resolve('@rspack/core', { paths: [${JSON.stringify(anchor)}] });`;
+    const cases = [
+      ['declaration', `function capture() { ${resolve} }`, true],
+      ['named-expression', `const capture = function named() { ${resolve} };`, true],
+      ['anonymous-expression', `const capture = function() { ${resolve} };`, true],
+      ['arrow', `const capture = () => { ${resolve} };`, true],
+      ['anonymous-default', `export default function() { ${resolve} }`, true],
+      ['declaration-parameter', `function capture(require) { ${resolve} }`, false],
+      ['expression-parameter', `const capture = function named(require) { ${resolve} };`, false],
+      ['anonymous-parameter', `const capture = function(require) { ${resolve} };`, false],
+      ['arrow-parameter', `const capture = (require) => { ${resolve} };`, false],
+      ['expression-self', `const capture = function require() { ${resolve} };`, false],
+    ] satisfies readonly (readonly [string, string, boolean])[];
+    for (const [name, source] of cases) {
+      write(root, `src/ast-${name}.ts`, [...requirePrelude, source].join('\n'));
+    }
+    const contract = 'verticals/catalog/shared/domain/ast-exports.ts';
+    write(root, 'verticals/catalog/package.json', '{"name":"@fixture/catalog","type":"module"}');
+    write(
+      root,
+      contract,
+      [
+        'export default function() {}',
+        'export function namedFunction() {}',
+        'export class NamedClass {}',
+        'export enum NamedEnum { member }',
+        'export const anonymousExpression = function() {};',
+      ].join('\n'),
+    );
+    const anonymousClass = 'verticals/catalog/shared/domain/ast-anonymous-class.ts';
+    write(root, anonymousClass, 'export default class {}');
+    const model = yield* buildKnipModel(root, {
+      workspaces: {
+        '.': { entry: [], node: false, project: [sourcePattern] },
+        'verticals/*': { entry: [], node: false, project: [sourcePattern, 'shared/**/*.ts'] },
+      },
+    }).pipe(Effect.provide(NodeServices.layer));
+    for (const [name, , allowed] of cases) {
+      const evidence = model.evidence.filter(
+        (fact) => fact.source === `src/ast-${name}.ts` && fact.kind === 'resolver',
+      );
+      expect(evidence, name).toHaveLength(allowed ? 1 : 0);
+      if (allowed) {
+        expect(evidence[0]).toMatchObject({
+          anchor,
+          resolved: path.join(root, '.resolver-fixture/node_modules/owner/node_modules/@rspack/core/index.js'),
+          target: rspackPackageName,
+          workspace: '.',
+        });
+      }
+    }
+    expect(
+      model.evidence.filter((fact) => fact.source === contract && fact.kind === 'export').map((fact) => fact.target),
+    ).toEqual(['namedFunction', 'NamedClass', 'NamedEnum', 'anonymousExpression'].map((name) => `${contract}#${name}`));
+    expect(model.evidence.some((fact) => fact.source === anonymousClass && fact.kind === 'export')).toBe(false);
+  }),
+);
+
+it.live(
   'native subprocess consumers prove working directories and called parameter values without hiding neighbors',
   Effect.fn(function* nativeSubprocessConsumers() {
     const root = yield* fixture();
@@ -1246,6 +1309,12 @@ it.live(
       'duplicate-cwd',
       'getter-cwd',
       'mutated-driver',
+      'object-driver-write',
+      'array-driver-write',
+      'rest-driver-write',
+      'object-path-write',
+      'mutable-destructured-driver',
+      'updated-driver',
       'unused-default',
       'overridden-default',
     ].map((name) => `scripts/${name}.fixture.mts`);
@@ -1259,6 +1328,7 @@ it.live(
         "import { spawn as execute } from 'node:child_process';",
         nativeChildNamespaceImport,
         nativePathImport,
+        'let { unrelated } = unknownValue; ({ unrelated } = anotherValue); void unrelated;',
         "execute(process.execPath, ['--experimental-strip-types', paths.resolve('../../scripts/native.fixture.mts'), paths.resolve('../../scripts/data.fixture.mts')], { stdio: 'pipe' });",
         `{ const execute = () => {}; ${nativeInvocation('local-driver')} }`,
         `function shadow(execute) { ${nativeInvocation(shadowDriverCase)} } shadow(() => {});`,
@@ -1274,6 +1344,12 @@ it.live(
         nativeInvocation('duplicate-cwd', nodeExecutableExpression, "{ cwd: '.', cwd: '/different' }"),
         nativeInvocation('getter-cwd', nodeExecutableExpression, "{ get cwd() { return '.'; } }"),
         `const driver = execute; driver.custom = true; driver(process.execPath, [${scriptArgument('mutated-driver')}]);`,
+        `const objectDriver = execute; ({ driver: objectDriver } = unknownDriver); objectDriver(process.execPath, [${scriptArgument('object-driver-write')}]);`,
+        `const arrayDriver = execute; [arrayDriver] = unknownDrivers; arrayDriver(process.execPath, [${scriptArgument('array-driver-write')}]);`,
+        `const restDriver = execute; [...restDriver] = unknownDrivers; restDriver(process.execPath, [${scriptArgument('rest-driver-write')}]);`,
+        `const objectPath = paths; ({ path: objectPath } = unknownPath); execute(process.execPath, [objectPath.resolve('../../scripts/object-path-write.fixture.mts')]);`,
+        `let { spawn: mutableDriver } = child; mutableDriver(process.execPath, [${scriptArgument('mutable-destructured-driver')}]);`,
+        `const updatedDriver = execute; updatedDriver++; updatedDriver(process.execPath, [${scriptArgument('updated-driver')}]);`,
         `const unused = (file = '../../scripts/unused-default.fixture.mts') => execute(process.execPath, [file]);`,
         `const overridden = (file = '../../scripts/overridden-default.fixture.mts') => execute(process.execPath, [file]); overridden('../../scripts/native.fixture.mts');`,
       ].join('\n'),
@@ -2094,13 +2170,13 @@ it.live(
     expect(model.evidence.some((fact) => fact.reason === rstestEnvironmentReason && fact.target === 'happy-dom')).toBe(
       true,
     );
-    for (const [consumerSource, expectedUnused] of [
-      [model.consumerSource, false],
-      ['', true],
+    for (const [consumerFiles, expectedUnused] of [
+      [model.consumerFiles, false],
+      [model.consumerFiles.map((file) => ({ ...file, source: '' })), true],
     ] as const) {
       const run = yield* runPinnedKnip(root, consumerPath, {
         ...model,
-        consumerSource,
+        consumerFiles,
       }).pipe(Effect.provide(NodeServices.layer));
       expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(1);
       expect(run.stderr).toBe('');
@@ -2814,9 +2890,10 @@ it.live(
     expect(report.issues.find((issue) => issue.file === producer)?.exports.map((item) => item.name)).toEqual([
       unusedNeighborName,
     ]);
-    const disconnected = yield* runPinnedKnip(root, consumerPath, { ...model, consumerSource: '' }).pipe(
-      Effect.provide(NodeServices.layer),
-    );
+    const disconnected = yield* runPinnedKnip(root, consumerPath, {
+      ...model,
+      consumerFiles: model.consumerFiles.map((file) => ({ ...file, source: '' })),
+    }).pipe(Effect.provide(NodeServices.layer));
     const disconnectedReport = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(
       disconnected.stdout,
     );
@@ -2989,7 +3066,6 @@ it.live(
     }
     // Parse actual operator bodies as source data, never import or execute their behavior.
     const operators = [
-      'scripts/demo/migrate-domain-regroup-authorization.mts',
       'scripts/demo/mcp-oauth-e2e/dev-session.mts',
       'scripts/demo/mcp-oauth-e2e/prove-agent-entity.mts',
       'scripts/demo/prove-agent-entity.mts',
@@ -3288,9 +3364,10 @@ it.live(
     expect(
       report.issues.find((issue) => issue.file === `${owner}/scripts/weights.d.mts`)?.exports.map((item) => item.name),
     ).toEqual(['unusedDeclaration']);
-    const disconnected = yield* runPinnedKnip(root, consumerPath, { ...model, consumerSource: '' }).pipe(
-      Effect.provide(NodeServices.layer),
-    );
+    const disconnected = yield* runPinnedKnip(root, consumerPath, {
+      ...model,
+      consumerFiles: model.consumerFiles.map((file) => ({ ...file, source: '' })),
+    }).pipe(Effect.provide(NodeServices.layer));
     const native = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(disconnected.stdout);
     expect(native.issues.filter((issue) => issue.files.length > 0).map((issue) => issue.file)).toContain(
       `${owner}/scripts/weights.d.mts`,

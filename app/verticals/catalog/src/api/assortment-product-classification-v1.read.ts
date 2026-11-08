@@ -17,10 +17,7 @@ import type { AssortmentProductClassificationV1Source } from '../persistence/ass
 
 const assortmentProductClassificationV1Entrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: {
-    kind: 'context_permission',
-    permission: 'commerce.catalog.read.assortment-product-classification-v1',
-  },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.assortment-product-classification-v1',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -53,6 +50,14 @@ export const readAssortmentProductClassificationV1 = (
 
 export const assortmentProductClassificationV1Read = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.assortment-product-classification-v1.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product-category', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: assortmentProductClassificationV1Entrypoint,
     evidencePolicy: {
@@ -62,7 +67,6 @@ export const assortmentProductClassificationV1Read = defineRead(
     inputSchema: AssortmentProductClassificationV1RequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.assortment-product-classification-v1',
     resultSchema: AssortmentProductClassificationV1ResponseSchema,
@@ -76,5 +80,4 @@ export const assortmentProductClassificationV1Read = defineRead(
   },
   (transaction: ScopedTransactionExecutor, scope: OperationalScope) =>
     Effect.succeed(assortmentProductClassificationV1SourceForScope(transaction, scope)),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

@@ -1,9 +1,10 @@
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
-import { Effect, Exit, Predicate, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
 import { requestSearchRebuildAction } from '../../src/actions/request-search-rebuild.action.ts';
 import { facilitySearchChanged } from '../../src/services/facility-search-projection.ts';
+import { facilityOperationsRegistration } from '../../vertical.registration.ts';
 import { scope } from './facility-search-fixtures.ts';
 
 const request = {
@@ -29,13 +30,16 @@ it.effect('governed rebuild commits one linked event and outbox request and repl
   Effect.gen(function* rebuild() {
     const { descriptor } = requestSearchRebuildAction;
     expect(descriptor.actionKey).toBe('facility.operations.request-search-rebuild');
-    expect(descriptor.tenantPermission?.({})).toBe('manage_identity');
+    expect(descriptor.accessDeclaration).toMatchObject({
+      key: 'facility.operations.request-search-rebuild.write',
+      kind: 'action',
+      selectors: [],
+    });
     expect(descriptor.legalEntityScope).toBe('optional');
-    expect(descriptor.entrypoint.authorization).toEqual({ kind: 'action_execution', provisioning: 'explicit' });
+    expect(descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
     const harness = yield* makeActionTestHarness({
-      actionPermission: 'allowed',
-      legalEntityAccess: 'allowed',
-      tenantPermission: 'allowed',
+      access: { 'facility.operations.request-search-rebuild.write': 'allowed' },
+      ownerRegistration: facilityOperationsRegistration,
     });
     const result = yield* harness.runtime.runAction(request);
     expect(result.status).toBe('QUEUED');
@@ -53,15 +57,21 @@ it.effect('governed rebuild commits one linked event and outbox request and repl
   }),
 );
 
-it.effect('requires both explicit Action execution and tenant administration before queueing anything', () =>
-  Effect.gen(function* deniedRebuild() {
-    for (const permissions of [
-      { actionPermission: 'denied', tenantPermission: 'allowed' },
-      { actionPermission: 'allowed', tenantPermission: 'denied' },
-    ] as const) {
-      const harness = yield* makeActionTestHarness({ ...permissions, legalEntityAccess: 'allowed' });
-      expect(Exit.isFailure(yield* Effect.exit(harness.runtime.runAction(request)))).toBe(true);
+for (const access of ['denied', 'unavailable'] as const) {
+  it.effect(`${access} rebuild capability queues no event or message`, () =>
+    Effect.gen(function* deniedRebuild() {
+      const harness = yield* makeActionTestHarness({
+        access: { 'facility.operations.request-search-rebuild.write': access },
+        ownerRegistration: facilityOperationsRegistration,
+      });
+      expect(
+        Predicate.isTagged(
+          yield* harness.runtime.runAction(request).pipe(Effect.flip),
+          access === 'denied' ? 'ActionPermissionDenied' : 'ActionPermissionCheckError',
+        ),
+      ).toBe(true);
+      expect(harness.snapshot().transactionCount).toBe(0);
       expect(harness.snapshot().committed).toEqual([]);
-    }
-  }),
-);
+    }),
+  );
+}

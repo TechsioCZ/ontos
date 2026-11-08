@@ -1,11 +1,13 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
+import { CatchBoundary, useLoaderData, useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Effect, Option } from 'effect';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { moduleEntrypointLoadIdentity } from '../../../module-entrypoint-loader.ts';
 import { ModulePageSkeleton } from '../../../module-page-skeleton.tsx';
+import { ModuleRenderFailure } from '../../../module-render-failure.tsx';
 import { modulePageProps, peekRemotePage, prepareModulePage, remotePageIdentity } from '../../../remote-page-loader.ts';
 import type { RemoteState } from '../../../remote-page-loader.ts';
 import { ShellStatusPanel, shellStatusTitleKey } from '../../../shell-status-panel.tsx';
@@ -85,6 +87,17 @@ interface ModuleTargetViewProps {
   readonly initialModel: ModuleTargetPageModel;
 }
 
+// Framework integration adapter: raw error and boundary.reset are intentionally unused.
+const ModuleRenderError = () => {
+  const navigate = useNavigate();
+  const handleReload = () => {
+    void browserRuntime.runPromiseExit(
+      Effect.tryPromise(() => navigate({ reloadDocument: true, to: '.' })).pipe(Effect.timeout('10 seconds')),
+    );
+  };
+  return <ModuleRenderFailure onReload={handleReload} />;
+};
+
 export const ModuleTargetView = ({ initialModel }: ModuleTargetViewProps) => {
   const { t } = useModernI18n();
   const model = initialModel;
@@ -111,7 +124,12 @@ export const ModuleTargetView = ({ initialModel }: ModuleTargetViewProps) => {
   const status = controls.reloadRequired ? 'reload_required' : model.state;
   const content =
     model.state === 'resolved' && !controls.reloadRequired ? (
-      <ResolvedTarget model={model} />
+      <CatchBoundary
+        errorComponent={ModuleRenderError}
+        getResetKey={() => moduleEntrypointLoadIdentity(model.target).result}
+      >
+        <ResolvedTarget model={model} />
+      </CatchBoundary>
     ) : (
       <ShellStatusPanel status={status} />
     );

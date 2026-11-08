@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
 import {
-  ContextAccess,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfig,
@@ -11,6 +10,8 @@ import {
   PrincipalResolver,
   SHARED_RUNTIME_IDENTITY,
 } from '@app/core-runtime';
+import { AccessDecisionGate } from '../../../../packages/core-runtime/src/access/enforcement/contract.ts';
+import { makeScriptedBoundAccessGate } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
 import { ResendEmailDeliveryConfig, ResendEmailDeliveryLive } from '@app/email-delivery/resend';
 import { FetchHttpClient } from 'effect/http';
 import { eq } from 'drizzle-orm';
@@ -79,19 +80,6 @@ const emailDeliveryConfiguration = Layer.succeed(ResendEmailDeliveryConfig, {
   apiKey: Redacted.make('re_commerce_portal_auth_cross_realm_test'),
   endpoint: 'https://api.resend.com/emails',
   from: 'no-reply@commerce.example.test',
-});
-
-const allowedContextResults = (keys: readonly string[]) =>
-  Effect.succeed(keys.map((key) => ({ decision: 'allowed' as const, key })));
-
-const openContextAccess = Layer.succeed(ContextAccess, {
-  legalEntities: ({ legalEntityIds }) => allowedContextResults(legalEntityIds),
-  modules: ({ moduleIds }) => allowedContextResults(moduleIds),
-  resources: ({ resources }) =>
-    allowedContextResults(
-      resources.map(({ moduleId, resourceId, resourceType }) => `${moduleId}:${resourceType}:${resourceId}`),
-    ),
-  tenants: ({ tenantIds }) => allowedContextResults(tenantIds),
 });
 
 const cookieHeader = (setCookieHeaders: readonly string[]): string =>
@@ -301,12 +289,15 @@ it.live('refuses a Commerce portal session presented to the staff Shell realm', 
       const shell = yield* shellAuthentication();
       const customer = yield* makePortalSession(runtime);
 
+      const deniedGate = makeScriptedBoundAccessGate('denied');
       const current = yield* shell.authentication
         .currentSession(new Headers({ cookie: customer.cookie, origin: SHELL_ORIGIN }))
-        .pipe(Effect.provide(openContextAccess));
+        .pipe(Effect.provideService(AccessDecisionGate, deniedGate.accessDecision));
 
       // The staff realm does not know this token: it resolves no identity and grants no admission.
       expect(current.identity).toBeNull();
+      expect(deniedGate.accessDecision.askedDecisions).toEqual([]);
+      expect(deniedGate.accessDecision.askedLists).toEqual([]);
     }),
   ),
 );

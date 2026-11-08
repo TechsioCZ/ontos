@@ -1,3 +1,4 @@
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { identity } from 'effect';
 import {
@@ -49,6 +50,7 @@ export const assortmentFoundationApi = HttpApi.make('AssortmentApiFoundation').a
 
 export const assortmentApi = HttpApi.make('AssortmentApi')
   .addHttpApi(assortmentFoundationApi)
+  .addHttpApi(OwnerActionApprovalApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(ConfigurationApi)
   .addHttpApi(CreateApplicabilityBindingActionApi)

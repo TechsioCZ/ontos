@@ -2,6 +2,8 @@ import { Context } from 'effect';
 import type { Effect, Schema } from 'effect';
 import type { OperationalScope } from '../operations/context.ts';
 import type { OutboxWorkerHandlerContext } from '../outbox/definition.ts';
+import type { CoreSearchAuthorization } from './visibility.ts';
+
 import type {
   CoreSearchProjectionDocument,
   CoreSearchProjectionInvalid,
@@ -29,10 +31,13 @@ export interface CoreSearchProjectionStoreService {
    * Candidate access is Core-private: the query runtime strips searchable evidence before return.
    * The unchanged scope is installed before reading. A selected entity must match a sealed entity;
    * tenant-wide scopes may select any entity, and global queries remain valid in selected scopes.
+   * The owner's `listAccess` filter belongs to the query itself: an implementation must apply it
+   * before text matching, ordering, counting and limiting, never to an already-materialized page.
    */
   readonly queryCandidates: (
     input: CoreSearchQuery,
     scope: OperationalScope,
+    authorization?: CoreSearchAuthorization,
   ) => Effect.Effect<readonly CoreSearchProjectionDocument[], CoreSearchProjectionUnavailableInstance>;
   /**
    * Replaces one tenant/module/resource projection as one physical rebuild unit. Implementations

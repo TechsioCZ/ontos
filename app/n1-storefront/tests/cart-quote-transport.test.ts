@@ -26,6 +26,7 @@ interface BackendOptions {
   readonly mintStatus?: number;
   readonly nativeForbidden?: boolean;
   readonly outcome?: "VALID" | "REJECTED";
+  readonly proposal?: boolean;
   readonly readStatus?: number;
   readonly responseConfigured?: boolean;
   readonly responseCurrency?: "CZK" | "EUR";
@@ -122,7 +123,7 @@ const backend = (options: BackendOptions = {}) => {
       return Promise.resolve(
         Response.json(
           {
-            _tag: "ApplyCommandActionForbiddenProblem",
+            _tag: "PlaceStorefrontOrderActionForbiddenProblem",
             code: "action_permission_denied",
             detail: upstreamMarker,
             status: 403,
@@ -150,6 +151,18 @@ const backend = (options: BackendOptions = {}) => {
             headers: { "x-private-upstream": upstreamMarker },
             status: options.actionStatus,
           },
+        ),
+      );
+    }
+    if (options.proposal === true) {
+      return Promise.resolve(
+        Response.json(
+          {
+            _tag: "ActionProposalAccepted",
+            expiresAt: "2026-11-08T12:00:00.000Z",
+            proposalId: "60000000-0000-4000-8000-000000000001",
+          },
+          { status: 202 },
         ),
       );
     }
@@ -193,6 +206,25 @@ const request = (body: string, requestOrigin = origin) =>
   });
 
 describe("governed cart quote transport", () => {
+  it.effect("never reports a parked native proposal as a confirmed quote", () =>
+    Effect.gen(function* parkedQuote() {
+      const owner = backend({ proposal: true });
+      const response = yield* Effect.promise(() =>
+        cartQuoteWeb.handler(
+          request(JSON.stringify(input)),
+          Context.make(FetchHttpClient.Fetch, owner.fetch),
+        ),
+      );
+      expect(response.status).toBe(503);
+      const body = yield* Effect.promise(() => response.json());
+      expect(body).not.toHaveProperty("outcome");
+      expect(
+        owner.calls.filter((call) =>
+          new URL(call.url).pathname.endsWith("/place-storefront-order"),
+        ),
+      ).toHaveLength(1);
+    }),
+  );
   it.effect(
     "uses fresh N1 identity, revision and assertion for an explicitly non-saving quote",
     () =>
@@ -216,6 +248,9 @@ describe("governed cart quote transport", () => {
         });
         expect(owner.calls).toHaveLength(4);
         const action = owner.calls.at(-1);
+        expect(new URL(action?.url ?? "https://unexpected.example").pathname).toBe(
+          "/shell-super-app-api/gateway/merchandise/merchandise/actions/place-storefront-order",
+        );
         expect(action?.headers.get("authorization")).toBe("Bearer fresh-quote-assertion");
         expect(action?.headers.get("x-api-key")).toBeNull();
         expect(action?.headers.get("idempotency-key")).toMatch(/^n1-quote-/u);
@@ -520,7 +555,7 @@ for (const scenario of [
         secretMarker,
         "cart-test-key",
         "fresh-quote-assertion",
-        "ApplyCommandActionForbiddenProblem",
+        "PlaceStorefrontOrderActionForbiddenProblem",
         "action_permission_denied",
         "urn:test:quote-forbidden",
       ]) {

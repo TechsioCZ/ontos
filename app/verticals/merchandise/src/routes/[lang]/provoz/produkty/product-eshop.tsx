@@ -153,7 +153,7 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, product, revision }
           setError(
             outcome.reason === 'rejected'
               ? 'Sklad varianty nesmí klesnout pod nulu.'
-              : failure(outcome.reason, onReload),
+              : failure(outcome.reason, onReload, outcome.proposal),
           );
           return;
         }
@@ -351,7 +351,7 @@ const useVariantsPanel = ({
     runCommand({ _tag: 'UpdateProduct', id: product.id, patch: { variants } }, revision, (outcome) => {
       setBusy(false);
       if (!outcome.ok) {
-        setServerError(failure(outcome.reason, onReload));
+        setServerError(failure(outcome.reason, onReload, outcome.proposal));
         return;
       }
       setSubmitted(false);
@@ -773,7 +773,7 @@ const useEshopPanel = ({
           setServerError('Adresu produktu už používá jiný produkt. Zvolte jinou adresu, nic se neuložilo.');
           return;
         }
-        setServerError(failure(outcome.reason, onReload));
+        setServerError(failure(outcome.reason, onReload, outcome.proposal));
         return;
       }
       onCommitted('Nastavení e-shopu uloženo.');
@@ -785,7 +785,7 @@ const useEshopPanel = ({
     runCommand({ _tag: 'ArchiveDemoProduct', id: product.id, reason: archiveReason.trim() }, revision, (outcome) => {
       setBusy(false);
       if (!outcome.ok) {
-        setServerError(failure(outcome.reason, onReload));
+        setServerError(failure(outcome.reason, onReload, outcome.proposal));
         return;
       }
       onCommitted('DEMO produkt archivován. Audit a skladové pohyby zachovány.');

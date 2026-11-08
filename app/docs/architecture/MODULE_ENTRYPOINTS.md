@@ -2,7 +2,7 @@
 
 Entrypoint `tenant`/`system` scope is independent from the descriptor's required/optional/forbidden legal-entity scope. Both must be explicit. Missing, malformed, denied, or indeterminate operation context fails closed before private implementation resolution as defined by [Governed Data Access and Operation Scope](./DATA_ACCESS.md).
 
-This document defines the Core-owned invariant for loading or dispatching OntOS Business Module entrypoints. It applies to Actions, pages, public components, module APIs, search providers, reports, and Outbox Workers. The gate is separate from authentication, SpiceDB authorization, and business Policy; passing module state never grants another kind of access.
+This document defines the Core-owned invariant for loading or dispatching OntOS Business Module entrypoints. It applies to Actions, pages, public components, module APIs, search providers, reports, and Outbox Workers. The gate is separate from authentication, the access decision gate, and business Policy; passing module state never grants another kind of access.
 
 ## Structured entrypoints
 
@@ -53,7 +53,7 @@ Snapshots are request-scoped, never process-global, browser-authoritative, TTL-b
 
 ## Runtime ordering
 
-Actions validate payload and trusted context, acquire/check state, and only then hash the request, create an invocation, call SpiceDB, evaluate Policies, or resolve the handler. A business Action rechecks `write` under the Core transaction after locking its invocation and tenant and before collector creation or handler resolution. A pre-invocation denial creates no evidence. A locked recheck failure rolls back and leaves the invocation open for existing retry semantics. The explicit system entrypoint for `core.modules.change-tenant-module-state` remains recoverable.
+Actions validate payload and trusted context, acquire/check state, and only then hash the request, create an invocation, call the access decision gate, evaluate Policies, or resolve the handler. A business Action rechecks `write` under the Core transaction after locking its invocation and tenant and before collector creation or handler resolution. A pre-invocation denial creates no evidence. A locked recheck failure rolls back and leaves the invocation open for existing retry semantics. The explicit system entrypoint for `core.modules.change-tenant-module-state` remains recoverable.
 
 Outbox claim eligibility evaluates the consumer with `background` semantics inside the existing atomic claim query. Producer state never authorizes a consumer. Ineligible or missing state leaves delivery pending with no claim or attempt. Private Worker handler resolution follows a successful eligible claim.
 
@@ -65,7 +65,64 @@ The Shell first establishes exactly one trusted tenant and active legal entity. 
 
 Generated exact page routes may use safe canonical named-parameter templates such as `/contacts/customers/:id/edit`; their owner and Shell filesystem routes use `[id]`. Dynamic templates are not normal navigation items. The generated connector selects only its declared parameter names and bounds each string value before calling the generic page loader. The generic loader keeps that plain record separate from the resolved target and never adds it to the module contract, target-resolution BFF input, trusted principal context, tenant/legal-entity context, module-state gate, or permission decision. Only after authentication, legal-entity selection, exact page resolution, lifecycle and permission success, approved lazy-client lookup, and successful remote loading may the Shell pass the record to the owner component. The owner treats every value as untrusted business input and validates it again before any domain read or Action.
 
-Search filters safe providers through the same context/state/module checks, then bulk-filters ResourceRefs by resource permission. Core repeats result-level resource authorization before a generated provider response can leave the receiving BFF. Zero providers/results is successful, mixed provider success is partial `200`, and total provider failure is retryable. Resource detail and timeline providers run only after catalog/type/state/module/resource gates and a fresh audience-scoped assertion for each attempt. Media attachment remains unavailable even when declared in a manifest until Codesmith generates and registers its Action; no provider mutation callback is part of the read gateway.
+Search filters safe providers through the same context/state/module checks, then decides each provider with the access gate over the manifest `accessKey`. Row-level filtering happens inside the owner query through the list predicate; Core repeats result-level authorization before a generated provider response can leave the receiving BFF. Zero providers/results is successful, mixed provider success is partial `200`, and total provider failure is retryable. Resource detail and timeline providers run only after catalog/type/state/module/resource gates and a fresh audience-scoped assertion for each attempt. Media attachment remains unavailable even when declared in a manifest until Codesmith generates and registers its Action; no provider mutation callback is part of the read gateway.
+
+## Browser load sharing and capacity
+
+The Shell derives load identity only from an approved resolved target. The artifact identity includes
+Composition Revision, app, module, remote name, immutable manifest URL and digest. The result identity
+also includes the exact expose, component key and entrypoint key. App and module identify the owner.
+Canonical tuple encoding keeps these fields unambiguous. Route parameters, Tenant, Principal,
+business data and permission decisions are never part of a shared load record.
+
+Equivalent in-flight result requests share raw Module Federation exports. Different exposes remain
+separate results; the existing Module Federation SDK owns its underlying container sharing. Each
+caller independently validates its requested export contract and owns its deadline and cancellation.
+A caller timeout or abort cannot replace another caller's result. If every waiter abandons queued
+work, it is removed before dispatch. Once an uncancellable SDK operation starts, its record and
+physical permit remain until the actual promise settles, including asynchronous factory completion.
+A later equivalent caller can join that operation. Settled Shell records are removed; this creates no
+permanent export or authorization cache.
+
+The browser runtime allows at most eight physical operations, at most two for one owner, and selects
+queued owners in round-robin order. Equivalent waiters consume no additional physical permit. This
+limits one stalled owner's capacity impact; it cannot promise progress after all eight slots are
+occupied by distinct uncancellable operations. A caller-visible timeout never frees one of those
+slots. Recovery then requires actual settlement or a full document reload. A new document must obtain
+fresh authentication, context, permissions and an approved Composition before loading its own pinned
+target. Existing document pinning, fail-closed outcomes and the prohibition on forced hot replacement
+remain in force.
+
+## Local remote render failures
+
+The Shell places the existing router React error boundary around resolved remote content inside its
+own layout. A supported remote render or lifecycle exception leaves Shell framing and navigation
+available and shows a localized, accessible failure with a full-document reload action. Displayed
+content does not expose the thrown error, stack or another tenant's data. The boundary reset key is
+the exact approved result identity described above, including revision and expose/component identity.
+
+A boundary reset grants no entrypoint access. Authentication, current Tenant/Principal, Permission
+and Module State rejection remain authoritative outside this render boundary. Recovery reloads the
+document through the existing router path and resolves the target through fresh normal gates; it
+never directly resets and rerenders a previously allowed component. A context or target change must
+not restore old rendered business content. Existing document revision pinning and typed timeout,
+unavailable, forbidden and reload-required states retain their meanings.
+
+Remote modules remain trusted first-party code in the same browser realm. This boundary covers the
+supported synchronous React render/lifecycle exceptions. It does not isolate asynchronous rejections,
+event-handler failures, native DOM mutation exceptions outside the renderer's boundary-aware
+callbacks, infinite JavaScript execution, memory exhaustion or browser/tab crashes.
+Shell SSR continues to render neutral framing/loading content without executing a foreign remote.
+
+## Dependency requirements at actual execution
+
+An owner's intrinsic requirements and conditional operation requirements have different runtime meanings. Derive intrinsic transitive closure from the admitted Composition and include its distinct tenant module keys in the existing boundary snapshot and Action transaction recheck. Worker eligibility adds the same requirements to the existing claim predicate. This does not add a state query for each provider, automatically activate providers, or change unrelated persisted module states. Conditional providers do not enter this intrinsic closure or a global eager state snapshot.
+
+Production owner roots bind their actual deployment identity and genuine owner `VerticalRuntimeRegistration` through `makeActionRuntimeLive` and `makeReadRuntimeLive`. The Read and Action layers use the same existing authoritative Composition service; constructing a runtime does not fetch that source. An owner-authored empty intrinsic declaration can avoid unrelated catalog work, but missing runtime metadata is not evidence of an empty declaration. Admission verifies the receiver build, same revision and owner projection before execution. Core's explicit system entrypoints retain their own governed ownership and availability boundary.
+
+In an actual required branch, the registered default factory wraps the existing owner port with `requireModuleOperation(requirementKey)`. The key is fixed by owner code. Core checks the exact actual consumer registration, admitted revision and required/provided public operation version under a private execution-scoped lease. The facade returns `void`, never a grant, credential, business fact or reusable receipt; there is no public tag, constructor or caller-supplied identity/revision override. Missing, foreign, forged or closed execution context fails closed. Nested executions restore their parent context and concurrent executions remain isolated.
+
+Keep business conditions and failure meanings with the owner. A complete zero assignment set, local address branch, original-effect receipt or accepted owner-issued proof does not become a new network call merely because metadata declares a relationship. A required provider failure cannot become fabricated absence or a default. The provider's normal receiving permissions, trusted scope, Current/completeness and material evidence checks still apply independently. Calling a registered service factory directly is not proof of execution through Core and cannot mint its operation lease.
 
 ## Generator and registration enforcement
 
@@ -73,8 +130,20 @@ Codesmith output is the starting point for Actions, MicroVertical pages, and Wor
 
 API, public-component, search, and report business artifacts may not be introduced until an approved generator can patch registration atomically and an approved gateway adapter exists. Extend Codesmith first with disposable compile, overwrite, traversal, and no-partial-write tests. Repository checks reject missing/mismatched registration, raw remote loads, private cross-vertical imports, direct private handler access, and public exports of private implementations.
 
+## Static ownership checks
+
+`pnpm module-entrypoints:check`, `pnpm database-access:check`, and `pnpm lean-core:check` enforce the source boundaries alongside the contract checks. Ownership follows the explicit module identity and resolved implementation origin. A package name, `contracts` path, public barrel, or type-only import does not make a private handler, Worker, registration, repository, table, or business transaction public.
+
+The checks cover supported literal imports through relative paths, configured aliases, declared workspace package exports, reexport chains, and actual workspace symlinks. Genuine public descriptors, schemas, typed clients, and public reexports retain their existing contract requirements. Selecting an approved public declaration does not authorize a private function exported beside it. Owner-local implementations remain permitted within their own boundary.
+
+Approved business-neutral Core database routines are consumed through their declared public Core boundary. Importing a routine's private implementation does not confer that capability. These static checks provide evidence for the supported source forms; they do not prove database grants, arbitrary dynamic SQL isolation, or runtime authorization. Receiving permissions, governed execution, and database isolation remain independent requirements.
+
 ## Authorization classification and inventory
 
-Every descriptor must declare exactly one authorization classification. `public` is an intentional authorization result, not the route-discovery `public` or `indexable` flag. Protected descriptors use `authenticated_principal`, `context_permission` with a stable permission, `action_execution` with a provisioning intent, `owner_local_background`, or API-only `capability_issuance` with its credential kind. Role-incompatible and excess fields fail decoding and generation.
+Every descriptor must declare exactly one authorization classification. `public` is an intentional authorization result, not the route-discovery `public` or `indexable` flag. A `protected` descriptor carries its own `accessDeclaration` or `accessWorkload` (an Action or a governed read may carry both); `authenticated_principal` and `owner_local_background` carry none; an API may be a `capability_issuance` issuer with its credential kind. A protected entrypoint without a carrier is a definition-time error. Role-incompatible and excess fields fail decoding and generation.
+
+Page route metadata is wrapped in `defineRouteMeta`, so a protected page carries its declaration beside its entrypoint and cannot drift from it. See [Granular Authorization](./AUTHORIZATION.md) for the carrier contract.
 
 `pnpm authorization:inventory:check` is the single repository derivation pass. It reconciles generated route metadata with runtime descriptors, current Action registrations, Outbox workers, and both Shell gateway issuers, then writes the non-secret deterministic artifact at `.codex/reports/authorization/protected-entrypoints.json`. Duplicate, missing, stale, ambiguous, or unclassified entries fail the check.
+
+Shell's four system Reads (composition, module target, search, and resource detail/timeline) bind the actual opaque `defineRead` values once at trusted runtime construction. Core accepts only that closed named shape with the exact Shell owner, Read and system-entrypoint identities; a copied descriptor or another registration cannot borrow a binding. Each invocation still passes its normal permissions and an authoritative snapshot matching the compiled Shell deployment and the request's captured Composition Revision. This host binding creates no provider-operation requirement authority or execution lease and is not a general Core Read allowlist.

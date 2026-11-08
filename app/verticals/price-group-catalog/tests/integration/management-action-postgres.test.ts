@@ -8,6 +8,8 @@ import { expect, it } from 'effect-rstest';
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
 import {
+  accessScopeFences,
+  accessScopes,
   coreRelations,
   outboxAttempts,
   outboxDeliveries,
@@ -17,16 +19,17 @@ import {
   tenants,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { openActionRuntimeOptions } from '../../../../packages/core-runtime/tests/support/action-runtime-options.ts';
+import { makeScriptedBoundAccessGate } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
 import {
   makeTestDatabaseFromClient,
   testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { testOperationalScopeResolver } from '../../../../packages/core-runtime/tests/fixtures/operational-scope.ts';
-import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/permissions/owner-authorization-overlay.ts';
+import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/access/enforcement/owner-overlay.ts';
 import type { ContextAccessService } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
-import { toBusinessPermissionAccessKey } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import { createPriceGroupAction } from '../../src/actions/create-price-group.action.ts';
 import { retirePriceGroupAction } from '../../src/actions/retire-price-group.action.ts';
+import { priceGroupCatalogRegistration } from '../../vertical.registration.ts';
 import {
   priceGroupCatalogLedger,
   priceGroupCatalogRelations,
@@ -42,6 +45,7 @@ import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-
 const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = randomUUID();
+const accessScopeId = randomUUID();
 const principalId = randomUUID();
 const authBindingId = randomUUID();
 const authenticationNamespaceId = 'test.price-group-management-action.v1';
@@ -63,16 +67,16 @@ const allowedPermission = {
 };
 
 const contextAccess: ContextAccessService = {
-  businessPermissions: (input) =>
-    Effect.succeed(
-      input.targets.map((target) => ({
-        decision: 'allowed' as const,
-        key: toBusinessPermissionAccessKey(target),
-      })),
-    ),
   legalEntities: ({ legalEntityIds }) =>
     Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
   modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
+  ownerPermissions: (input) =>
+    Effect.succeed(
+      input.targets.map((target) => ({
+        decision: 'allowed' as const,
+        key: target.target.key,
+      })),
+    ),
   resources: ({ resources }) =>
     Effect.succeed(
       resources.map(({ moduleId, resourceId, resourceType }) => ({
@@ -143,6 +147,8 @@ it.live('commits a scheduled retirement with server-trusted acceptance chronolog
             yield* transaction.delete(priceGroupCatalogLedger).where(eq(priceGroupCatalogLedger.tenantId, tenantId));
             yield* transaction.delete(principalAuthBindings).where(eq(principalAuthBindings.tenantId, tenantId));
             yield* transaction.delete(principals).where(eq(principals.tenantId, tenantId));
+            yield* transaction.delete(accessScopeFences).where(eq(accessScopeFences.tenantId, tenantId));
+            yield* transaction.delete(accessScopes).where(eq(accessScopes.tenantId, tenantId));
             yield* transaction.delete(tenants).where(eq(tenants.tenantId, tenantId));
           }),
         );
@@ -156,6 +162,10 @@ it.live('commits a scheduled retirement with server-trusted acceptance chronolog
         status: 'active',
         tenantId,
       });
+      // The runner re-decides the Action under the tenant context scope's shared fence, so seed the
+      // scope with a Ready fence as Core bootstrap does.
+      yield* admin.insert(accessScopes).values({ scopeId: accessScopeId, tenantContextId: tenantId, tenantId });
+      yield* admin.insert(accessScopeFences).values({ revision: 1, scopeId: accessScopeId, state: 'Ready', tenantId });
       yield* admin.insert(principals).values({
         displayName: 'Scheduled retirement operator',
         kind: 'human',
@@ -181,10 +191,12 @@ it.live('commits a scheduled retirement with server-trusted acceptance chronolog
         testOperationalScopeResolver,
         {
           ...openActionRuntimeOptions,
+          accessDecision: makeScriptedBoundAccessGate('allowed').bound,
           contextAccess,
           databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
 
           ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
+          ownerRegistration: priceGroupCatalogRegistration,
         },
       );
       const [clock] = yield* admin.execute<DatabaseClockRow>(sql`select clock_timestamp() as "currentTime"`, 'objects');

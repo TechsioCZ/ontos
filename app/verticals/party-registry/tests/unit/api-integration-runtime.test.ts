@@ -8,15 +8,20 @@ import {
 } from '@app/core-runtime';
 import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
 import {
+  OwnerActionApprovalApi,
+  OwnerActionApprovalAuthenticationSchema,
+  OwnerActionApprovalRequestSchema,
+} from '@app/core-runtime/access/approvals/owner-api';
+import {
   decodeTrustedPrincipalContext,
   preserveSystemPrincipalContextTrust,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/application-composition-source';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
+import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
-import { Arbitrary, ConfigProvider, Context, Crypto, Effect, Layer, Schema } from 'effect';
+import { Arbitrary, Clock, ConfigProvider, Context, Crypto, Effect, Layer, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
@@ -31,6 +36,8 @@ import type { PartySearchProjectionGatewayService } from '../../shared/domain/se
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { AresSubjectService } from '../../src/integrations/ares/ares-subject.service.ts';
 import type { AresSubjectServiceContract } from '../../src/integrations/ares/ares-subject.service.ts';
+import { makeRootOwnerApprovals } from '../support/root-owner-approvals.ts';
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 
 const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 
@@ -56,10 +63,11 @@ const commaSeparatedHeader = (value: string | null): readonly string[] =>
 const makeAssertion = () =>
   Effect.gen(function* signRuntimeAssemblyAssertion() {
     const issuer = 'https://shell.runtime-assembly.test';
-    const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
-      [ultramodernApiMarker.appId],
-      ultramodernApiMarker.buildMarker,
-    );
+    const { snapshot: compositionSnapshot } = yield* makeOwnerApplicationCompositionFixture({
+      appId: ultramodernApiMarker.appId,
+      buildMarker: ultramodernApiMarker.buildMarker,
+      ownerRegistration: partyRegistryBackendRegistration,
+    });
     const compositionDocument = yield* Schema.encodeEffect(
       Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
     )(compositionSnapshot);
@@ -71,6 +79,7 @@ const makeAssertion = () =>
       use: 'sig',
     };
     const jti = yield* nextUuid;
+    const issuedAt = Math.floor((yield* Clock.currentTimeMillis) / 1000);
     const token = yield* Effect.promise(() =>
       new SignJWT({
         compositionRevision: compositionSnapshot.composition.revision,
@@ -86,8 +95,8 @@ const makeAssertion = () =>
         .setIssuer(issuer)
         .setAudience('party-registry')
         .setSubject(principal.principalId)
-        .setIssuedAt()
-        .setExpirationTime('5m')
+        .setIssuedAt(issuedAt)
+        .setExpirationTime(issuedAt + 300)
         .setJti(jti)
         .sign(privateKey),
     );
@@ -147,6 +156,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     () =>
       Effect.gen(function* verifyRuntimeAssemblyAndCors() {
         const assertion = yield* makeAssertion();
+        const ownerApprovals = yield* makeRootOwnerApprovals(assertion.compositionSnapshot, {
+          ...principal,
+          correlationId: 'party-runtime-assembly-test',
+        });
         let redemptionCalls = 0;
         let actionCalls = 0;
         let actionExecutionCalls = 0;
@@ -221,6 +234,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                         tenantId: readPrincipal.tenantId,
                       },
                       scope,
+                      { hiddenTextFields: [], listAccess: { groups: [] } },
                     )
                     .pipe(Effect.orDie, Effect.andThen(Effect.die('Party search substitute completed unexpectedly')));
                 }
@@ -237,6 +251,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                         tenantId: readPrincipal.tenantId,
                       },
                       scope,
+                      { hiddenTextFields: [], listAccess: { groups: [] } },
                     )
                     .pipe(
                       Effect.orDie,
@@ -275,6 +290,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           ),
         );
         const actionRuntimeLayer = Layer.mergeAll(
+          Layer.succeedContext(ownerApprovals),
           Layer.succeed(ActionRuntime, actionRuntime),
           assertionConfigurationLive,
           Layer.succeed(
@@ -335,7 +351,14 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         yield* Schema.decodeUnknownEffect(PartyDetailAuthenticationProblemSchema)(
           yield* Effect.promise(() => unauthenticatedRead.json()),
         );
-        const endpoints = Object.values(partyRegistryApi.groups).flatMap((group) => Object.values(group.endpoints));
+        // Native addHttpApi merges annotations on the group, preserving its endpoint identities.
+        expect(partyRegistryApi.groups.ownerActionApprovals.endpoints).toBe(
+          OwnerActionApprovalApi.groups.ownerActionApprovals.endpoints,
+        );
+        const endpoints = Object.values(partyRegistryApi.groups).flatMap((group) =>
+          Object.values(group.endpoints).map((endpoint) => ({ endpoint, group })),
+        );
+        let platformAuthenticationDenials = 0;
         const headers = {
           authorization: `Bearer ${assertion.token}`,
           'content-type': 'application/json',
@@ -354,7 +377,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           source: 'runtime-assembly-proof',
         };
         const candidate = {
-          displayName: 'Runtime assembly proof',
+          businessName: 'Runtime assembly proof',
           evidenceRefs: ['document:verified'],
           officialIdentifiers: [],
           partyType: 'ORGANIZATION',
@@ -382,7 +405,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           privacyClassification: 'PUBLIC',
           provenance: contactPointProvenance,
           validFrom: '2026-09-07T00:00:00.000Z',
-          verification: { state: 'UNVERIFIED' },
         } as const;
         const invalidContactResponseRequest = new Request('http://localhost/party-registry/actions/add-contact-point', {
           body: yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
@@ -434,7 +456,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             identifier: {
               identifierType: 'ICO',
               value: '27074358',
-              verification: 'VERIFIED',
             },
             partyRef,
             provenanceMethod: 'DOCUMENT',
@@ -465,6 +486,11 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             validTo: '2026-09-07T00:00:00.000Z',
           },
           '/party-registry/actions/create-party': { candidate },
+          '/party-registry/actions/create-crm-client-party': {
+            candidate,
+            clientId: 'runtime-client',
+            sourceScope: { tenantId: principal.tenantId, legalEntityId: 'a5000000-0000-4000-8000-000000000001' },
+          },
           // Sampled DateTimeUtc values include extended years that the canonical ISO wire format rejects.
           '/party-registry/actions/create-party-relationship': {
             fromPartyRef: partyRef,
@@ -494,7 +520,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           },
           '/party-registry/actions/match-party': { candidate },
           '/party-registry/actions/update-party': {
-            displayName: 'Updated runtime assembly proof',
+            businessName: 'Updated runtime assembly proof',
             expectedRevision: 1,
             partyRef,
             provenanceMethod: 'DOCUMENT',
@@ -509,9 +535,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           },
           '/party-registry/actions/update-party-official-identifier': {
             change: {
-              expectedVerification: 'UNVERIFIED',
-              type: 'SET_VERIFICATION',
-              verification: 'VERIFIED',
+              type: 'END_VALIDITY',
+              validTo: '2026-10-01T00:00:00.000Z',
             },
             evidenceRefs: ['document:verified'],
             officialIdentifierRef: {
@@ -534,9 +559,31 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             },
           },
           '/reads/party-match': { candidate },
+          '/reads/crm-client-intake-review': {
+            clientId: 'runtime-client',
+            sourceScope: { tenantId: principal.tenantId, legalEntityId: 'a5000000-0000-4000-8000-000000000001' },
+            caseRef: {
+              moduleId: 'party.registry',
+              resourceType: 'party.registry.duplicate-candidate-case',
+              resourceId: 'a8000000-0000-4000-8000-000000000001',
+              tenantId: principal.tenantId,
+            },
+            decisionRef: {
+              moduleId: 'party.registry',
+              resourceType: 'party.registry.party-match-decision',
+              resourceId: 'a8000000-0000-4000-8000-000000000002',
+              tenantId: principal.tenantId,
+            },
+          },
         } as const;
-        for (const [index, endpoint] of endpoints.entries()) {
+        for (const [index, { endpoint, group }] of endpoints.entries()) {
           const callsBefore: number = actionCalls + actionExecutionCalls + readCalls;
+          const redemptionsBefore = redemptionCalls;
+          const isOwnerApproval = group.endpoints === OwnerActionApprovalApi.groups.ownerActionApprovals.endpoints;
+          const requestHeaders = new Headers({
+            ...headers,
+            'idempotency-key': `runtime-assembly-${index + 1}`,
+          });
           const rawPayloadSchema = endpoint.payload.get('application/json')?.schemas[0];
           // Runtime HTTP descriptors erase codec types. These wire codecs require no services.
           const payloadSchema =
@@ -544,7 +591,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               ? undefined
               : Schema.make<Schema.Codec<unknown, unknown>>(rawPayloadSchema.ast);
           const manualPayload = Object.entries(manualPayloads).find(([path]) => path === endpoint.path)?.[1];
-          const payload =
+          const sampledPayload =
             payloadSchema === undefined
               ? undefined
               : (manualPayload ??
@@ -554,25 +601,44 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                     seed: index + 1,
                   }))[0],
                 )));
+          // An audience-valid assertion cannot authenticate a different request composition.
+          const payload = isOwnerApproval
+            ? {
+                ...(yield* Schema.decodeUnknownEffect(OwnerActionApprovalRequestSchema)(sampledPayload)),
+                compositionRevision: '0'.repeat(64),
+              }
+            : sampledPayload;
           const request =
             payload === undefined
               ? new Request(`http://localhost${endpoint.path}`, {
-                  headers: {
-                    ...headers,
-                    'idempotency-key': `runtime-assembly-${index + 1}`,
-                  },
+                  headers: requestHeaders,
                   method: endpoint.method,
                 })
               : new Request(`http://localhost${endpoint.path}`, {
                   body: yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(payload),
-                  headers: {
-                    ...headers,
-                    'idempotency-key': `runtime-assembly-${index + 1}`,
-                  },
+                  headers: requestHeaders,
                   method: endpoint.method,
                 });
+          const unauthenticatedApprovalRequest = isOwnerApproval ? request.clone() : undefined;
           const response = yield* Effect.promise(() => runtime.handler(request));
-          if (endpoint.path === '/party-registry/readiness') {
+          if (isOwnerApproval) {
+            expect(response.status).toBe(401);
+            yield* Schema.decodeUnknownEffect(OwnerActionApprovalAuthenticationSchema)(
+              yield* Effect.promise(() => response.json()),
+            );
+            expect(actionCalls + actionExecutionCalls + readCalls).toBe(callsBefore);
+            expect(redemptionCalls).toBe(redemptionsBefore + 1);
+            assert.isOk(unauthenticatedApprovalRequest !== undefined);
+            unauthenticatedApprovalRequest.headers.delete('authorization');
+            const missingAuthentication = yield* Effect.promise(() => runtime.handler(unauthenticatedApprovalRequest));
+            expect(missingAuthentication.status).toBe(401);
+            yield* Schema.decodeUnknownEffect(OwnerActionApprovalAuthenticationSchema)(
+              yield* Effect.promise(() => missingAuthentication.json()),
+            );
+            expect(actionCalls + actionExecutionCalls + readCalls).toBe(callsBefore);
+            expect(redemptionCalls).toBe(redemptionsBefore + 1);
+            platformAuthenticationDenials += 1;
+          } else if (endpoint.path === '/party-registry/readiness') {
             expect(response.status).toBe(200);
             expect(actionCalls + actionExecutionCalls + readCalls).toBe(callsBefore);
           } else {
@@ -586,6 +652,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             ).toBe(callsBefore + 1);
           }
         }
+        expect(platformAuthenticationDenials).toBe(2);
         expect(compositionLoads).toBe(1);
         assert.isOk(redemptionCalls > 0);
         assert.isOk(actionCalls > 0);
@@ -607,10 +674,11 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         };
         const preflight = yield* Effect.promise(() =>
           runtime.handler(
-            new Request('http://localhost/party-registry/readiness', {
+            new Request('http://localhost/party-registry/actions/create-party', {
               headers: {
-                'access-control-request-headers': 'Authorization, X-Correlation-Id, X-Ontos-Composition-Revision',
-                'access-control-request-method': 'GET',
+                'access-control-request-headers':
+                  'Authorization, X-Action-Intent, X-Correlation-Id, X-Ontos-Composition-Revision',
+                'access-control-request-method': 'POST',
                 origin: 'http://localhost:3020',
               },
               method: 'OPTIONS',
@@ -627,6 +695,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         );
         expect(commaSeparatedHeader(preflight.headers.get('access-control-allow-headers'))).toContain(
           'X-Ontos-Composition-Revision',
+        );
+        expect(commaSeparatedHeader(preflight.headers.get('access-control-allow-headers'))).toContain(
+          'X-Action-Intent',
         );
         expect({
           actionCalls,

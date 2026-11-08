@@ -1,8 +1,7 @@
 import { Duration, Effect, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
-import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
-import { getActionBusinessPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionOwnerPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
 
 import {
   InventoryBackendConfigurationSchema,
@@ -24,8 +23,6 @@ import {
   selectInventoryBackendAction,
 } from '../../src/actions/select-inventory-backend.action.ts';
 import { inventoryBackendConfigurationCurrentRead } from '../../src/api/inventory-backend-configuration-current.read.ts';
-
-const compositionRevision = 'a'.repeat(64);
 
 const tenantId = '0199ffff-ffff-7fff-bfff-ffffffffffff';
 const customerConfigurationId = 'customer-configuration-1';
@@ -71,31 +68,19 @@ const makeMemoryPersistence = () => {
 };
 
 describe('Inventory Backend configuration', () => {
-  it('requires Inventory Migration permission for the exact configuration target', () => {
-    const scope = trustVerifiedGatewayPrincipalContext(
-      {
-        authBindingId: '0199ffff-ffff-7fff-bfff-fffffffffffd',
-        authContextRef: 'test:inventory-backend-configuration',
-        authMethod: 'api_key',
-        correlationId: 'inventory-backend-configuration',
-        principalId: '0199ffff-ffff-7fff-bfff-fffffffffffc',
-        tenantId,
-      },
-      compositionRevision,
-    );
-
-    expect(getActionBusinessPermissionTargetResolver(selectInventoryBackendAction)?.(externalPayload, scope)).toEqual({
-      permission: 'inventory.migration.manage',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: authorizationTargetRef.moduleId,
-          resourceId: authorizationTargetRef.resourceId,
-          resourceType: authorizationTargetRef.resourceType,
-        },
-        tenantId,
-      },
+  it('declares the scope-wide backend-authority capability instead of a per-configuration target', () => {
+    // O20/O31: choosing the authoritative backend is the Action's own critical capability, and
+    // O67-Q2 makes it scope-wide, so no per-configuration business target survives the cutover.
+    expect(selectInventoryBackendAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    expect(selectInventoryBackendAction.descriptor.accessDeclaration).toMatchObject({
+      key: 'commerce.inventory.backend-configuration.select',
+      kind: 'admin',
+      modes: ['run'],
+      risk: 'critical',
+      selectors: [],
     });
+    expect(selectInventoryBackendAction.descriptor.legalEntityScope).toBe('forbidden');
+    expect(getActionOwnerPermissionTargetResolver(selectInventoryBackendAction)).toBeUndefined();
   });
 
   it('accepts exactly one backend selection and rejects unsupported WMS capability claims', () => {

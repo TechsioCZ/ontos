@@ -295,6 +295,12 @@ export const loadDatabaseConfig = (
     options,
   );
 
+/** Selected migration and verification operations load only their administrative connection, not runtime credentials. */
+export const loadAdministrativeDatabaseConnection = (
+  options: Pick<LoadDatabaseIdentityConnectionsOptions, 'environment' | 'envPath'> = {},
+): Effect.Effect<DatabaseConfigValue, DatabaseConfigError> =>
+  loadWithProvider((provider) => readAdminDatabaseUrl(provider, true), options);
+
 export const loadDatabaseConnectionPair = (
   options: LoadDatabaseConnectionPairOptions = {},
 ): Effect.Effect<DatabaseConnectionPair, DatabaseConfigError> => {

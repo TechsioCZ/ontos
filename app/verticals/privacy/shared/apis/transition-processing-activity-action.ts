@@ -2,6 +2,7 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug transition-processing-activity
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/transition-processing-activity.ts';
 
 export { TransitionProcessingActivityPayloadSchema } from '../actions/transition-processing-activity.ts';
-
 export const TransitionProcessingActivityActionInvalidProblemSchema = makeProblemDetailsSchema(
   'TransitionProcessingActivityActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const TransitionProcessingActivityActionForbiddenProblemSchema = makeProb
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -145,7 +146,7 @@ export const transitionProcessingActivityActionGroupDefinition = HttpApiGroup.ma
     HttpApiEndpoint.post('execute', '/privacy/actions/transition-processing-activity', {
       error: actionErrors,
       payload: Schema.toEncoded(TransitionProcessingActivityPayloadSchema),
-      success: TransitionProcessingActivityResultSchema,
+      success: [ActionProposalAcceptedSchema, TransitionProcessingActivityResultSchema],
     }),
   )
   .middleware(TransitionProcessingActivityActionSchemaErrorMiddleware);

@@ -1,13 +1,10 @@
 import {
   CoreSearchProjectionStore,
   CoreSearchQueryRuntime,
-  ResourceContainmentRelationshipMutation,
-  ResourceContainmentMutationUnavailable,
   createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
-  toModuleAccessObjectId,
 } from '@app/core-runtime';
-import type { CoreSearchQueryRuntimeService, ResourceContainmentRelationshipMutationInput } from '@app/core-runtime';
+import type { CoreSearchQueryRuntimeService } from '@app/core-runtime';
 import { Effect, Exit } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { AssetRefSchema } from '../../shared/resources/asset.ts';
@@ -74,16 +71,9 @@ it.effect(
     Effect.gen(function* lifecycle() {
       const store = makeInMemoryCoreSearchProjectionStore();
       const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
-      const touches: ResourceContainmentRelationshipMutationInput[] = [];
       const publish = (source: FacilitySearchSnapshot) =>
         publishFacilitySearch(workerContext('rebuild'), source).pipe(
           Effect.provideService(CoreSearchProjectionStore, store),
-          Effect.provideService(ResourceContainmentRelationshipMutation, {
-            touch: (input) =>
-              Effect.sync(() => {
-                touches.push(input);
-              }),
-          }),
         );
       yield* publish(snapshot);
       expect((yield* searchFacilityAsset(runtime, 'cerpadlo')).length).toBe(1);
@@ -97,11 +87,6 @@ it.effect(
           Effect.provideService(CoreSearchQueryRuntime, runtime),
         )).length,
       ).toBe(1);
-      expect(
-        touches
-          .flatMap((t) => t.relationships)
-          .every((r) => r.container.objectId === toModuleAccessObjectId(tenantId, company, 'facility.operations')),
-      ).toBe(true);
       for (const foreignScope of [
         { ...scope, legalEntityId: otherCompany },
         { ...scope, tenantId: otherCompany },
@@ -138,36 +123,16 @@ it.effect(
     }),
 );
 
-it.effect('does not publish any index data when containment fails or the snapshot belongs to a different tenant', () =>
+it.effect('does not publish any index data when the snapshot belongs to a different tenant', () =>
   Effect.gen(function* failClosed() {
     const store = makeInMemoryCoreSearchProjectionStore();
     const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
-    let touched = false;
     const result = yield* Effect.exit(
       publishFacilitySearch(workerContext('rebuild'), { ...snapshot, tenantId: otherCompany }).pipe(
         Effect.provideService(CoreSearchProjectionStore, store),
-        Effect.provideService(ResourceContainmentRelationshipMutation, {
-          touch: () =>
-            Effect.sync(() => {
-              touched = true;
-            }),
-        }),
       ),
     );
     expect(Exit.isFailure(result)).toBe(true);
-    expect(touched).toBe(false);
-    const denied = yield* Effect.exit(
-      publishFacilitySearch(workerContext('rebuild'), snapshot).pipe(
-        Effect.provideService(CoreSearchProjectionStore, store),
-        Effect.provideService(ResourceContainmentRelationshipMutation, {
-          touch: () =>
-            Effect.fail(
-              new ResourceContainmentMutationUnavailable({ reason: 'Test relationship service unavailable' }),
-            ),
-        }),
-      ),
-    );
-    expect(Exit.isFailure(denied)).toBe(true);
     expect(
       yield* loadFacilitySearch(scope, 'asset', 'cerpadlo', AssetRefSchema).pipe(
         Effect.provideService(CoreSearchQueryRuntime, runtime),
@@ -191,7 +156,6 @@ it.effect('publishes the whole snapshot when a valid device has no serial, inclu
     const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
     yield* publishFacilitySearch(workerContext('rebuild'), serialless).pipe(
       Effect.provideService(CoreSearchProjectionStore, store),
-      Effect.provideService(ResourceContainmentRelationshipMutation, { touch: () => Effect.void }),
     );
     const assets = yield* loadFacilitySearch(scope, 'asset', 'cerpadlo', AssetRefSchema).pipe(
       Effect.provideService(CoreSearchQueryRuntime, runtime),
@@ -212,7 +176,6 @@ it.effect('returns verified Core relevance v1 for exact, prefix and identifier f
     const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
     yield* publishFacilitySearch(workerContext('rebuild'), snapshot).pipe(
       Effect.provideService(CoreSearchProjectionStore, store),
-      Effect.provideService(ResourceContainmentRelationshipMutation, { touch: () => Effect.void }),
     );
     expect((yield* searchFacilityAsset(runtime, 'Čerpadlo'))[0]?.relevance).toEqual({ score: 900, version: '1' });
     expect((yield* searchFacilityAsset(runtime, 'čerp'))[0]?.relevance).toEqual({ score: 800, version: '1' });
@@ -232,7 +195,6 @@ it.effect('finds allowed asset and current-file evidence only inside its company
     const publish = (value: FacilitySearchSnapshot) =>
       publishFacilitySearch(workerContext('rebuild'), value).pipe(
         Effect.provideService(CoreSearchProjectionStore, store),
-        Effect.provideService(ResourceContainmentRelationshipMutation, { touch: () => Effect.void }),
       );
     yield* publish(source);
     for (const query of ['ASSET-SERIAL-42', 'zizkov', 'kontrola', '2027-03-14']) {

@@ -36,6 +36,7 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     './PageOverview': './src/routes/[lang]/provoz/prehled/page.tsx',
     './PagePurchasing': './src/routes/[lang]/provoz/nakupy/page.tsx',
     './PageSecurity': './src/routes/[lang]/provoz/bezpecnost/page.tsx',
+    './RecordDiscussion': './src/components/record-discussion.tsx',
     './Route': './src/federation-entry.tsx',
   },
   filename: 'remoteEntry.js',

@@ -1,10 +1,10 @@
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import {
   ContextAccess,
   LegalEntityContext,
   ReadPermissionDenied,
   ReadRuntime,
   TrustedPrincipalContextSchema,
-  withRequestPermissionDecisions,
 } from '@app/core-runtime';
 import { Deferred, Effect, Exit, Layer, Result, Schema } from 'effect';
 import { HttpServerRequest } from 'effect/http';
@@ -92,7 +92,7 @@ const documentTest = Effect.fn('test.documentContext')(function* documentTest(
     }
     return peopleStarted.pipe(Effect.as(denied));
   });
-  const response = yield* withRequestPermissionDecisions(documentContextHandler(request, {})).pipe(
+  const response = yield* documentContextHandler(request, {}).pipe(
     Effect.provide(
       Layer.mergeAll(
         Layer.succeed(
@@ -104,6 +104,7 @@ const documentTest = Effect.fn('test.documentContext')(function* documentTest(
             },
           }),
         ),
+        Layer.succeed(AccessDecisionGate, makeTestAccessDecision()),
         Layer.succeed(ContextAccess, {
           ...makeContextAccessDouble('allowed'),
           legalEntities: ({ legalEntityIds }) =>

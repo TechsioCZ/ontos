@@ -2,15 +2,16 @@ import type { CustomerListItem } from '@app/party-registry/api/client';
 import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { definePageData, pageDataPending } from '@app/shared-contracts/page-data';
-import type { PageDataSnapshot } from '@app/shared-contracts/page-data';
+import type { ModulePageContext, PageDataSnapshot } from '@app/shared-contracts/page-data';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { defaultParseSearch } from '@tanstack/react-router';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { Effect, Match, Option, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Ref, Schema } from 'effect';
 import { HttpClient, HttpClientResponse } from 'effect/http';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { FinanceCommandSchema } from '../../../../shared/actions/apply-command.ts';
+import { ActionProposalAcceptedSchema } from '../../../../shared/apis/apply-command-action.ts';
 import {
   FinanceDocumentIdSchema,
   FinancePartyIdSchema,
@@ -30,6 +31,7 @@ import { browserCrypto } from '../../../api/browser-crypto.ts';
 import { executeRecords } from '../../../api/records-client.ts';
 import { financeBrowserRuntime } from '../../../runtime/browser.ts';
 import { financeRecordDetailConflict } from './finance-document-detail.ts';
+import { financePageScope } from './finance-page-scope.ts';
 import { reasonText } from './finance-ui.tsx';
 import type { FinanceCommandDraft } from './finance-ui.tsx';
 import { useFinanceReferences } from './use-finance-references.ts';
@@ -53,7 +55,7 @@ export interface DraftInvoiceInput {
 }
 
 export type DraftInvoiceOutcome =
-  | { readonly feedback: Feedback; readonly ok: false }
+  | { readonly feedback: FinanceFeedback; readonly ok: false }
   | { readonly invoice: Invoice; readonly ok: true };
 
 const searchSchema = Schema.Struct({
@@ -108,7 +110,8 @@ export const customerInvoiceFilterKey = (rawSearch: typeof searchSchema.Encoded 
 export const recordsRequestFromQuery = (query: string): Option.Option<RecordsRequest> =>
   recordsRequestOf(decodeCustomerInvoiceSearch(defaultParseSearch(query)).pipe(Option.getOrElse(() => null)));
 
-const FeedbackSchema = Schema.Literals([
+/** Every state the Finance page reports; the document detail and other consumers read this vocabulary. */
+export const FinanceFeedbackSchema = Schema.Literals([
   'loading',
   'ready',
   'saving',
@@ -116,8 +119,27 @@ const FeedbackSchema = Schema.Literals([
   'conflict',
   'validation',
   'unavailable',
+  'pendingApproval',
 ]);
-type Feedback = typeof FeedbackSchema.Type;
+export type FinanceFeedback = typeof FinanceFeedbackSchema.Type;
+/**
+ * A parked owner command (202) is not a write: no invoice exists or changed yet, so callers report it as waiting
+ * for approval and never read an invoice, refresh for one or show a saved result.
+ */
+const isProposalAccepted = Schema.is(ActionProposalAcceptedSchema);
+type ProposalAccepted = typeof ActionProposalAcceptedSchema.Type;
+
+/**
+ * The exact intent a proposal parked: the same command against the same ledger revision, within one page scope
+ * (see `useFinanceRecords`). A new edit changes the command, and any landed write (including the approved proposal
+ * itself) changes the revision, so neither matches.
+ */
+const FinanceCommandJsonSchema = Schema.fromJsonString(FinanceCommandSchema);
+const proposedIntentKey = (snapshot: RecordsResponse, command: FinanceCommandInput) =>
+  Schema.decodeEffect(FinanceCommandSchema)(command).pipe(
+    Effect.flatMap(Schema.encodeEffect(FinanceCommandJsonSchema)),
+    Effect.map((json) => `${snapshot.revision}:${json}`),
+  );
 type UiFailure = Effect.Error<
   | ReturnType<typeof executeApplyCommand>
   | ReturnType<typeof executeRecords>
@@ -127,7 +149,7 @@ type UiFailure = Effect.Error<
 const forbidden = Schema.is(Schema.Struct({ status: Schema.Literal(403) }));
 const conflicting = Schema.is(Schema.Struct({ status: Schema.Literal(409) }));
 const invalid = Schema.is(Schema.Struct({ status: Schema.Literals([400, 422]) }));
-export const financeFailureFeedback = (error: UiFailure): Feedback =>
+export const financeFailureFeedback = (error: UiFailure): FinanceFeedback =>
   Match.value(error).pipe(
     Match.when(forbidden, () => 'forbidden' as const),
     Match.when(conflicting, () => 'conflict' as const),
@@ -155,38 +177,102 @@ const submitFinanceCommand = Effect.fn('Finance.browserSubmit')(function* submit
   );
 });
 
+/**
+ * Proposals parked per cached ledger (`scopedRecordsKey`: verified scope and filter), so no other scope's or
+ * ledger's proposal ever applies. Within one ledger, the exact same intent is not proposed again until it expires.
+ */
+type ProposalMemory = ReadonlyMap<string, ReadonlyMap<string, ProposalAccepted>>;
+
+/**
+ * Submits a command once per pending intent: while an identical earlier proposal of the same ledger has not expired,
+ * its own acceptance is answered again instead of sending a second proposal for the approver.
+ */
+const submitIntent = Effect.fn('Finance.submitIntent')(function* submitIntent(
+  memory: Ref.Ref<ProposalMemory>,
+  ledgerKey: string,
+  current: RecordsResponse,
+  command: FinanceCommandInput,
+) {
+  const now = yield* DateTime.now;
+  const key = yield* proposedIntentKey(current, command);
+  const intents = (yield* Ref.get(memory)).get(ledgerKey);
+  const parked = intents?.get(key);
+  if (parked !== undefined && DateTime.isLessThan(now, parked.expiresAt)) {
+    return parked;
+  }
+  yield* Ref.update(memory, (ledgers) => {
+    const remaining = new Map(ledgers.get(ledgerKey));
+    remaining.delete(key);
+    return new Map(ledgers).set(ledgerKey, remaining);
+  });
+  const result = yield* submitFinanceCommand(current, command);
+  if (isProposalAccepted(result)) {
+    yield* Ref.update(memory, (ledgers) =>
+      new Map(ledgers).set(ledgerKey, new Map(ledgers.get(ledgerKey)).set(key, result)),
+    );
+  }
+  return result;
+});
+
 const fetchRecords = (request: RecordsRequest) => executeRecords(request, 'finance-billing.records');
 
 /**
- * The ledger snapshot (invoices and KPI indicators) per customer filter; the Shell preloads it before reveal.
- * A failed refresh must not keep presenting the last-good rows as the current answer: a denied read clears them
- * (and write access) instead of leaving stale data on screen, and a transient failure shows its retry state.
+ * One cached ledger: the customer filter as sent, within the verified scope it was read for. The scope only keys
+ * the cache; the request on the wire stays the filter, and the session's own gateway credentials carry identity.
+ */
+interface ScopedRecordsRequest {
+  readonly request: RecordsRequest;
+  readonly scope: string;
+}
+
+const ScopedRecordsKeySchema = Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String]));
+const scopedRecordsKey = (input: ScopedRecordsRequest): string =>
+  Schema.encodeOption(ScopedRecordsKeySchema)([input.scope, recordsRequestKey(input.request)]).pipe(
+    Option.getOrElse(() => 'invalid'),
+  );
+
+/** The cache input of a filter, only within a verified scope. */
+const scopedRecordsRequest = (
+  scope: string | undefined,
+  request: Option.Option<RecordsRequest>,
+): Option.Option<ScopedRecordsRequest> =>
+  scope === undefined ? Option.none() : request.pipe(Option.map((value) => ({ request: value, scope })));
+
+/**
+ * The ledger snapshot (invoices and KPI indicators) per scope and customer filter; the Shell preloads it before
+ * reveal. Two scopes never share an entry, so an old scope's late read settles only its own entry. A failed refresh
+ * must not keep presenting the last-good rows as the current answer: a denied read clears them (and write access)
+ * instead of leaving stale data on screen, and a transient failure shows its retry state.
  */
 const financeRecords = definePageData({
-  key: recordsRequestKey,
-  load: fetchRecords,
+  key: scopedRecordsKey,
+  load: (input: ScopedRecordsRequest) => fetchRecords(input.request),
   retainStale: false,
   runtime: financeBrowserRuntime,
 });
 
-export const preloadFinanceRecords = (query: string): Effect.Effect<void> =>
-  Option.match(recordsRequestFromQuery(query), { onNone: () => Effect.void, onSome: financeRecords.preload });
+/** The Shell's prefetch; without a verified scope there is nothing to read for. */
+export const preloadFinanceRecords = (query: string, context: ModulePageContext | undefined): Effect.Effect<void> =>
+  Option.match(scopedRecordsRequest(financePageScope(context), recordsRequestFromQuery(query)), {
+    onNone: () => Effect.void,
+    onSome: financeRecords.preload,
+  });
 
 type RecordsSnapshot = PageDataSnapshot<RecordsResponse, Effect.Error<ReturnType<typeof fetchRecords>>>;
 const readyRecords = (snapshot: RecordsSnapshot): RecordsResponse | undefined =>
   snapshot.state === 'ready' ? snapshot.value : undefined;
 const pendingRecords = (): RecordsSnapshot => pageDataPending;
-const loadFeedbackOf = (snapshot: RecordsSnapshot): Feedback => {
+const loadFeedbackOf = (snapshot: RecordsSnapshot): FinanceFeedback => {
   if (snapshot.state === 'pending') {
     return 'loading';
   }
   return snapshot.state === 'failed' ? financeFailureFeedback(snapshot.error) : 'ready';
 };
-const feedbackOf = (actionFeedback: Feedback, snapshot: RecordsSnapshot): Feedback =>
+const feedbackOf = (actionFeedback: FinanceFeedback, snapshot: RecordsSnapshot): FinanceFeedback =>
   actionFeedback === 'ready' ? loadFeedbackOf(snapshot) : actionFeedback;
-const busyFeedback = (feedback: Feedback): boolean => feedback === 'loading' || feedback === 'saving';
-const canWriteOf = (request: Option.Option<RecordsRequest>, snapshot: RecordsResponse | undefined): boolean =>
-  Option.isSome(request) && snapshot?.canWrite === true;
+const busyFeedback = (feedback: FinanceFeedback): boolean => feedback === 'loading' || feedback === 'saving';
+const canWriteOf = (input: Option.Option<ScopedRecordsRequest>, snapshot: RecordsResponse | undefined): boolean =>
+  Option.isSome(input) && snapshot?.canWrite === true;
 
 /** TanStack history numbers its entries in `history.state`; only the index is read here. */
 const TanstackHistoryStateSchema = Schema.Struct({ __TSR_index: Schema.Int });
@@ -221,7 +307,7 @@ const pushDetailUrl = (id: string) => {
 };
 
 export type CommandOutcome =
-  | { readonly feedback: Feedback; readonly ok: false; readonly reason?: string }
+  | { readonly feedback: FinanceFeedback; readonly ok: false; readonly reason?: string }
   | { readonly invoice: Invoice | undefined; readonly ok: true };
 
 /** Problem `detail`/`reason` of a failed command, so the UI can explain known domain refusals. */
@@ -262,20 +348,26 @@ const loadActorLabel = Effect.fn('Finance.loadActorLabel')(function* loadActorLa
   }
   return name?.slice(0, 200);
 }, Effect.timeout('10 seconds'));
+/** One label per verified scope (the key is the scope), so a principal switch never shows the previous name. */
 const actorLabels = definePageData({
-  key: (key: string) => key,
-  load: loadActorLabel,
+  key: (scope: string) => scope,
+  load: (_scope: string) => loadActorLabel(),
   runtime: financeBrowserRuntime,
 });
 const pendingActorLabel = (): PageDataSnapshot<string | undefined, Effect.Error<ReturnType<typeof loadActorLabel>>> =>
   pageDataPending;
-const useActorLabel = () => {
+/** The signed-in user's label for this scope; without a verified scope nothing is read or shown. */
+const useActorLabel = (scope: string | undefined) => {
   const snapshot = useSyncExternalStore(
     actorLabels.subscribe,
-    () => actorLabels.snapshot('session'),
+    () => (scope === undefined ? pageDataPending : actorLabels.snapshot(scope)),
     pendingActorLabel,
   );
-  useEffect(() => actorLabels.ensure('session'), []);
+  useEffect(() => {
+    if (scope !== undefined) {
+      actorLabels.ensure(scope);
+    }
+  }, [scope]);
   return snapshot.state === 'ready' ? snapshot.value : undefined;
 };
 
@@ -302,7 +394,7 @@ export const financeInvoiceDetailState = ({
   invoices,
   resourceId,
 }: {
-  readonly feedback: Feedback;
+  readonly feedback: FinanceFeedback;
   readonly invoices?: readonly Invoice[] | undefined;
   readonly resourceId?: string | undefined;
 }): FinanceInvoiceDetailState | undefined => {
@@ -343,8 +435,17 @@ const useRetainedInvoice = (
  * Invoice list and detail state. The ledger comes from the page-data store (ready on first paint when the Shell
  * prepared the page); commands refresh it after they succeed and keep the current rows visible meanwhile.
  */
-export const useFinanceRecords = () => {
-  const actorLabel = useActorLabel();
+/** `scope` is `financePageScope` of the Shell context; undefined fails closed (no ledger read, no command). */
+export const useFinanceRecords = ({ scope }: { readonly scope: string | undefined }) => {
+  const [proposalState, setProposalState] = useState(() => ({
+    memory: Ref.makeUnsafe<ProposalMemory>(new Map()),
+    scope,
+  }));
+  if (proposalState.scope !== scope) {
+    setProposalState({ memory: Ref.makeUnsafe<ProposalMemory>(new Map()), scope });
+  }
+  const proposalMemory = proposalState.memory;
+  const actorLabel = useActorLabel(scope);
   const { t } = useModernI18n();
   const toaster = useToast();
   const rawSearch = useRouterState({
@@ -361,24 +462,27 @@ export const useFinanceRecords = () => {
   const requestedDocumentId = fields.documentId;
   const detailConflict = financeRecordDetailConflict({ documentId: requestedDocumentId, resourceId: requestedId });
   const request = searchInvalid ? Option.none() : customerInvoiceRequest(partyId, counterpartyId, tenantId);
+  /** The cached ledger this page shows: none without a verified scope, so no other scope's entry is ever read. */
+  const ledgerInput = scopedRecordsRequest(scope, request);
   const recordsSnapshot = useSyncExternalStore(
     financeRecords.subscribe,
-    () => (Option.isSome(request) ? financeRecords.snapshot(request.value) : pageDataPending),
+    () => (Option.isSome(ledgerInput) ? financeRecords.snapshot(ledgerInput.value) : pageDataPending),
     pendingRecords,
   );
   const snapshot = readyRecords(recordsSnapshot);
-  /** Latest snapshot, so commands issued one after another use the revision the previous one produced. */
+  /** Latest snapshot of this scope, so consecutive commands use the revision the previous one produced. */
   const latestSnapshot = () =>
-    Option.isSome(request) ? readyRecords(financeRecords.snapshot(request.value)) : undefined;
+    Option.isSome(ledgerInput) ? readyRecords(financeRecords.snapshot(ledgerInput.value)) : undefined;
   /** Outcome of the user's own reload or command; 'ready' defers to the ledger's load state. */
-  const [actionFeedback, setActionFeedback] = useState<Feedback>('ready');
-  const feedback = feedbackOf(actionFeedback, recordsSnapshot);
+  const [actionFeedback, setActionFeedback] = useState<FinanceFeedback>('ready');
+  // Without a verified Shell scope nothing is authorized to load, so the page says so instead of waiting forever.
+  const feedback = scope === undefined ? 'forbidden' : feedbackOf(actionFeedback, recordsSnapshot);
   const [voidTarget, setVoidTarget] = useState<Invoice>();
   /** Confirming numbers the invoice and locks it, so every entry point asks first. */
   const [confirmTarget, setConfirmTarget] = useState<Invoice>();
   /** True while the open detail is a history entry this page pushed, so closing it can step back instead. */
   const detailPushed = useRef(false);
-  const requestKey = Option.match(request, { onNone: () => 'invalid', onSome: recordsRequestKey });
+  const requestKey = Option.match(ledgerInput, { onNone: () => 'invalid', onSome: scopedRecordsKey });
   const detailKey = `${requestKey}:${requestedId ?? ''}`;
   const currentInvoiceDetail = financeInvoiceDetailState({
     feedback,
@@ -388,13 +492,13 @@ export const useFinanceRecords = () => {
   const invoiceDetail = useRetainedInvoice(currentInvoiceDetail, detailKey);
   const selected = invoiceDetail?.state === 'ready' ? invoiceDetail.invoice : undefined;
   const busy = busyFeedback(feedback);
-  const canWrite = canWriteOf(request, snapshot);
-  const references = useFinanceReferences();
+  const canWrite = canWriteOf(ledgerInput, snapshot);
+  const references = useFinanceReferences({ scope });
   const objects = useRentalObjects();
 
   /** Never fails; a failed reload reports through the ledger snapshot instead of rejecting. */
   const load = (): Effect.Effect<void> =>
-    Option.isSome(request) ? financeRecords.refresh(request.value) : Effect.void;
+    Option.isSome(ledgerInput) ? financeRecords.refresh(ledgerInput.value) : Effect.void;
 
   /**
    * Creates a draft from the form. The counterparty ref is the party registry's own ref for the customer, and the
@@ -420,14 +524,20 @@ export const useFinanceRecords = () => {
     if (input.documentKind !== undefined && input.documentKind !== 'STANDARD') {
       command.documentKind = input.documentKind;
     }
-    return submitFinanceCommand(snapshot, command).pipe(
-      Effect.tap(load),
+    return submitIntent(proposalMemory, requestKey, snapshot, command).pipe(
+      Effect.tap((result) => (isProposalAccepted(result) ? Effect.void : load())),
       // A 409 means the snapshot revision is stale (another write landed first); reload it so the next try can succeed.
       Effect.tapError((cause) => (financeFailureFeedback(cause) === 'conflict' ? load() : Effect.void)),
       Effect.match({
         onFailure: (error): DraftInvoiceOutcome => ({ feedback: financeFailureFeedback(error), ok: false }),
-        onSuccess: (result): DraftInvoiceOutcome =>
-          result.invoice === undefined ? { feedback: 'unavailable', ok: false } : { invoice: result.invoice, ok: true },
+        onSuccess: (result): DraftInvoiceOutcome => {
+          if (isProposalAccepted(result)) {
+            return { feedback: 'pendingApproval', ok: false };
+          }
+          return result.invoice === undefined
+            ? { feedback: 'unavailable', ok: false }
+            : { invoice: result.invoice, ok: true };
+        },
       }),
     );
   };
@@ -435,11 +545,14 @@ export const useFinanceRecords = () => {
   // A cold mount (the page was not prepared) starts the load; a prepared page finds it ready and keeps it. The
   // snapshot state is a dependency so an expired entry that turned pending starts its revalidation again.
   useEffect(() => {
-    const current = searchInvalid ? Option.none() : customerInvoiceRequest(partyId, counterpartyId, tenantId);
+    const current = scopedRecordsRequest(
+      scope,
+      searchInvalid ? Option.none() : customerInvoiceRequest(partyId, counterpartyId, tenantId),
+    );
     if (Option.isSome(current) && recordsSnapshot.state !== 'failed') {
       financeRecords.ensure(current.value);
     }
-  }, [counterpartyId, partyId, recordsSnapshot.state, searchInvalid, tenantId]);
+  }, [counterpartyId, partyId, recordsSnapshot.state, scope, searchInvalid, tenantId]);
 
   /** Retry after a failed load; the outcome shows through the ledger's own state. */
   const reload = () => {
@@ -453,8 +566,8 @@ export const useFinanceRecords = () => {
     }
     setActionFeedback('saving');
     void financeBrowserRuntime.runPromise(
-      submitFinanceCommand(snapshot, command).pipe(
-        Effect.tap(load),
+      submitIntent(proposalMemory, requestKey, snapshot, command).pipe(
+        Effect.tap((result) => (isProposalAccepted(result) ? Effect.void : load())),
         // A 409 means the snapshot revision is stale (another user changed the ledger); reload it so a retry works.
         Effect.tapError((cause) => (financeFailureFeedback(cause) === 'conflict' ? load() : Effect.void)),
         Effect.match({
@@ -477,6 +590,10 @@ export const useFinanceRecords = () => {
           },
           onSuccess: (result) => {
             setActionFeedback('ready');
+            if (isProposalAccepted(result)) {
+              toaster.create({ title: t('finance-billing.demo.feedback.pendingApproval'), type: 'info' });
+              return;
+            }
             toaster.create({
               description: result.invoice?.number ?? result.invoice?.documentNumber,
               title: successTitle,
@@ -498,8 +615,8 @@ export const useFinanceRecords = () => {
           return Effect.succeed({ feedback: 'unavailable', ok: false });
         }
         setActionFeedback('saving');
-        return submitFinanceCommand(current, command).pipe(
-          Effect.tap(load),
+        return submitIntent(proposalMemory, requestKey, current, command).pipe(
+          Effect.tap((result) => (isProposalAccepted(result) ? Effect.void : load())),
           Effect.tapError((cause) => (financeFailureFeedback(cause) === 'conflict' ? load() : Effect.void)),
           Effect.match({
             onFailure: (error): CommandOutcome => {
@@ -512,6 +629,13 @@ export const useFinanceRecords = () => {
             },
             onSuccess: (result): CommandOutcome => {
               setActionFeedback('ready');
+              if (isProposalAccepted(result)) {
+                // Titled callers rely on the toast for their outcome, so they hear the approval wait the same way.
+                if (successTitle !== undefined) {
+                  toaster.create({ title: t('finance-billing.demo.feedback.pendingApproval'), type: 'info' });
+                }
+                return { feedback: 'pendingApproval', ok: false };
+              }
               if (successTitle !== undefined) {
                 toaster.create({ title: successTitle, type: 'success' });
               }

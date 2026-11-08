@@ -1,3 +1,4 @@
+import { v1 } from '@authzed/authzed-node';
 import { Cause, Effect, Logger, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -22,8 +23,8 @@ const captured = (entries: string[]) =>
     }),
   ]);
 
-const timingOutClient = (cause: unknown): SpiceDbPermissionClient => ({
-  checkBulkPermissions: () => Effect.fail(spiceDbPermissionClientError(cause)),
+const failingClient = (cause: unknown, rpcCode?: number): SpiceDbPermissionClient => ({
+  checkBulkPermissions: () => Effect.fail(spiceDbPermissionClientError(cause, rpcCode)),
   checkPermission: () => Effect.die(new Error('Action check must not run')),
   close: () => {},
 });
@@ -40,7 +41,7 @@ it.effect('logs one structured warning for a SpiceDB timeout mapped to unavailab
   Effect.gen(function* logsSpiceDbTimeout() {
     const entries: string[] = [];
     const timeout = new Cause.TimeoutError('secret deadline detail');
-    const access = timeout.pipe(timingOutClient, makeContextAccess);
+    const access = timeout.pipe(failingClient, makeContextAccess);
     const decisions = yield* access
       .legalEntities({ legalEntityIds: [legalEntityId], principalId, tenantId })
       // @effect-diagnostics-next-line strictEffectProvide:off -- Test-owned diagnostic logger capture.
@@ -55,6 +56,84 @@ it.effect('logs one structured warning for a SpiceDB timeout mapped to unavailab
     expect(mapped[0]).not.toContain('secret');
   }),
 );
+
+for (const [description, rpcCode, errorClass, failureKind] of [
+  ['RPC deadline', 4, 'TimeoutError', 'timeout'],
+  ['RPC transport failure', 14, 'SpiceDbPermissionClientError', 'client-error'],
+  ['unclassified client failure', undefined, 'SpiceDbPermissionClientError', 'client-error'],
+] as const) {
+  const entries: string[] = [];
+  it.layer(captured(entries))(`safe mapped warning for ${description}`, (suite) => {
+    suite.effect('emits exactly one warning for the entire batch without raw failure details', () =>
+      Effect.gen(function* logsSafeBatchFailure() {
+        const secretCause = new Error('postgresql://ontos:secret@private.invalid password=secret token=secret');
+        secretCause.name = 'private-secret-error-class';
+        const access = makeContextAccess(failingClient(secretCause, rpcCode));
+        const otherLegalEntityId = '20000000-0000-4000-8000-000000000002';
+        const decisions = yield* access.legalEntities({
+          legalEntityIds: [legalEntityId, otherLegalEntityId],
+          principalId,
+          tenantId,
+        });
+        expect(decisions).toEqual([
+          { decision: 'unavailable', key: legalEntityId },
+          { decision: 'unavailable', key: otherLegalEntityId },
+        ]);
+        const mapped = entries.filter((entry) => entry.includes(MAPPING_EVENT));
+        expect(mapped).toHaveLength(1);
+        expect(mapped[0]).toContain(`"errorClass":"${errorClass}"`);
+        expect(mapped[0]).toContain(`"failureKind":"${failureKind}"`);
+        expect(mapped[0]).not.toContain('secret');
+        expect(mapped[0]).not.toContain('private');
+        expect(mapped[0]).not.toContain('"cause"');
+        expect(mapped[0]).not.toContain('"errorMessage"');
+        expect(mapped[0]).not.toContain(principalId);
+        expect(mapped[0]).not.toContain(tenantId);
+        expect(mapped[0]).not.toContain(legalEntityId);
+      }),
+    );
+  });
+}
+
+const successfulEntries: string[] = [];
+it.layer(captured(successfulEntries))('successful context permission batch', (suite) => {
+  suite.effect('preserves allowed and denied decisions without mapped warnings', () =>
+    Effect.gen(function* noUnavailableWarning() {
+      const client: SpiceDbPermissionClient = {
+        checkBulkPermissions: (request) =>
+          Effect.succeed(
+            v1.CheckBulkPermissionsResponse.create({
+              pairs: request.items.map((item, index) => ({
+                request: item,
+                response: {
+                  item: {
+                    permissionship:
+                      index === 0
+                        ? v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION
+                        : v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
+                  },
+                  oneofKind: 'item',
+                },
+              })),
+            }),
+          ),
+        checkPermission: () => Effect.die(new Error('Action check must not run')),
+        close: () => {},
+      };
+      const otherLegalEntityId = '20000000-0000-4000-8000-000000000002';
+      const decisions = yield* makeContextAccess(client).legalEntities({
+        legalEntityIds: [legalEntityId, otherLegalEntityId],
+        principalId,
+        tenantId,
+      });
+      expect(decisions).toEqual([
+        { decision: 'allowed', key: legalEntityId },
+        { decision: 'denied', key: otherLegalEntityId },
+      ]);
+      expect(successfulEntries.filter((entry) => entry.includes(MAPPING_EVENT))).toEqual([]);
+    }),
+  );
+});
 
 it.effect('logs the module-state acquisition failure with its underlying class and a redacted message', () =>
   Effect.gen(function* logsModuleStateFailure() {

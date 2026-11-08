@@ -1,9 +1,44 @@
+import { Hex } from 'effect/encoding';
+import { storefrontRegistryRegistration } from '../../vertical.registration.ts';
+import { storefrontRegistryManifest } from '../../vertical.manifest.ts';
+import { HttpApi } from 'effect/http-api';
 import { resolveEffectBffModuleHandler } from '@modern-js/bff-effect/effect';
 import type { DatabaseConnectionPair, TrustedPrincipalContext } from '@app/core-runtime';
-import { ActionRuntime, ReadRuntime, DatabaseConfig, parseDatabaseConnectionPair } from '@app/core-runtime';
+import {
+  canonicalOntosPublicApiKey,
+  extractVerticalRuntimeSafeDescriptors,
+  OntosModuleDeploymentContractSchema,
+  ActionRuntime,
+  ReadRuntime,
+  DatabaseConfig,
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
+  parseDatabaseConnectionPair,
+  ContextAccessLive,
+  CorePersistenceLive,
+  TenantModuleStateServiceLive,
+  OwnerAuthorizationOverlay,
+  makeActionRuntimeLive,
+  makeReadRuntimeLive,
+} from '@app/core-runtime';
+import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
+  ActionPermissionLive,
+  ActionRepositoryLive,
+  ModuleEntrypointGatewayLive,
+  ModuleStateGateLive,
+  OperationalScopeResolverLive,
+  TenantIntentLoaderLive,
+} from '@app/core-runtime/actions/runtime-wiring';
+import { OwnerActionApprovals, makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
+import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
+import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { defineEffectBff, dispatchEffectBffRequest } from '@modern-js/bff-effect/effect-edge';
 import {
+  Array as EffectArray,
   ConfigProvider,
+  Crypto,
   Context,
   Duration,
   Effect,
@@ -17,16 +52,16 @@ import {
   Stream,
 } from 'effect';
 
-import { NodeHttpServer } from '@effect/platform-node';
+import { NodeCrypto, NodeHttpServer } from '@effect/platform-node';
 import { ChildProcess } from 'effect/process';
-import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
+import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import {
   GatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive,
 } from '../../api/auth/gateway-assertion-redemption.ts';
 import { storefrontRegistryApiRuntimeFromContext } from '../../api/index.ts';
 import { storefrontRegistryApiContract } from '../../shared/api.ts';
-import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 
 import type { RegisterStorefrontApplicationPayloadSchema } from '../../shared/actions/register-storefront-application.ts';
 import { registerStorefrontApplicationAction } from '../../src/actions/register-storefront-application.action.ts';
@@ -35,6 +70,9 @@ export class CurrentStorefrontNativeFixtureError extends Schema.TaggedError<Curr
   'CurrentStorefrontNativeFixtureError',
   { cause: Schema.optionalKey(Schema.Redacted(Schema.Defect())), reason: Schema.String },
 ) {}
+
+// The Registry shares the Core request/issuer identities and declares no owner-specific database role.
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 
 const unavailable = (cause?: unknown) =>
   new CurrentStorefrontNativeFixtureError({
@@ -68,17 +106,78 @@ export const makeCurrentStorefrontNativeFixture = Effect.fn('CurrentStorefrontNa
     if (!/^[a-f0-9]{64}$/u.test(options.compositionRevision) || options.storefrontAppId.length === 0) {
       return yield* unavailable();
     }
-    const actionRuntime = yield* ActionRuntime;
-    const readRuntime = yield* ReadRuntime;
+    const inheritedConfiguration = yield* ConfigProvider.ConfigProvider;
+    const provider = ConfigProvider.orElse(
+      ConfigProvider.fromEnvRecord({
+        ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: configuration.compositionSourceUrl.href,
+        ONTOS_GATEWAY_ISSUER: options.issuer,
+        ONTOS_GATEWAY_PUBLIC_JWKS: options.publicJwks,
+      }),
+      inheritedConfiguration,
+    );
+    const inheritedOverlay = yield* Effect.serviceOption(OwnerAuthorizationOverlay);
+    const overlay = Option.isSome(inheritedOverlay)
+      ? Layer.succeed(OwnerAuthorizationOverlay, inheritedOverlay.value)
+      : Layer.empty;
+    const persistence = CorePersistenceLive;
+    const states = TenantModuleStateServiceLive.pipe(Layer.provide(persistence));
+    const gate = ModuleStateGateLive.pipe(Layer.provide(states));
+    const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(gate));
+    const accessEnforcement = AccessDecisionLive.pipe(
+      Layer.provideMerge(AccessEnforcementPortsLive),
+      Layer.provide(TenantIntentLoaderLive),
+      Layer.provide(persistence),
+    );
+    const resolver = OperationalScopeResolverLive.pipe(
+      Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, accessEnforcement)),
+    );
+    const source = ActiveApplicationCompositionSourceLive.pipe(
+      Layer.provide(
+        FetchHttpClient.layer.pipe(
+          Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+        ),
+      ),
+    );
+    const composition = ActiveApplicationCompositionConfigLive.pipe(Layer.provideMerge(source));
+    const common = Layer.mergeAll(
+      persistence,
+      ContextAccessLive,
+      gate,
+      gateway,
+      resolver,
+      composition,
+      overlay,
+      accessEnforcement,
+    );
+    const ownerApprovals = makeOwnerActionApprovalsLive(ultramodernDeliveryUnit, storefrontRegistryRegistration).pipe(
+      Layer.provide(common),
+    );
+    // The Registry creates both runtimes from its own published registration and compiled release.
+    const runtimes = Layer.mergeAll(
+      makeActionRuntimeLive(ultramodernDeliveryUnit, storefrontRegistryRegistration).pipe(
+        Layer.provideMerge(ownerApprovals),
+        Layer.provide(Layer.mergeAll(common, ActionRepositoryLive, ActionPermissionLive)),
+      ),
+      makeReadRuntimeLive(ultramodernDeliveryUnit, storefrontRegistryRegistration).pipe(Layer.provide(common)),
+    ).pipe(Layer.provide(NodeCrypto.layer), Layer.provide(databaseIdentitiesLive));
+    const ownerContext = yield* Layer.build(runtimes).pipe(
+      Effect.provideService(ConfigProvider.ConfigProvider, provider),
+    );
+    const actionRuntime = Context.get(ownerContext, ActionRuntime);
+    const readRuntime = Context.get(ownerContext, ReadRuntime);
     const closed = yield* Ref.make(false);
     yield* Effect.addFinalizer(() => Ref.set(closed, true));
     const redemption = yield* Layer.build(
-      GatewayAssertionRedemptionLive.pipe(Layer.provide(GatewayAssertionRedemptionDatabaseLive)),
+      GatewayAssertionRedemptionLive.pipe(
+        Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+        Layer.provide(databaseIdentitiesLive),
+      ),
     );
     // Static imports describe the owner runtime; acquire it only after validated fixture setup.
     const runtime = yield* storefrontRegistryApiRuntimeFromContext.pipe(
       Effect.provideService(ReadRuntime, readRuntime),
       Effect.provideService(ActionRuntime, actionRuntime),
+      Effect.provideService(OwnerActionApprovals, Context.get(ownerContext, OwnerActionApprovals)),
       Effect.provideContext(redemption),
       Effect.catchDefect((cause) => Effect.fail(unavailable(cause))),
       Effect.timeoutOrElse({ duration: Duration.seconds(10), orElse: () => Effect.fail(unavailable()) }),
@@ -151,8 +250,90 @@ interface RegistryNativeConnectionOptions {
 }
 
 /** Allocate the receiving address before sealing the immutable cross-owner test composition. */
+const compareFixtureApiKeys = (left: string, right: string): -1 | 0 | 1 => {
+  const compared = left.localeCompare(right);
+  if (compared < 0) {
+    return -1;
+  }
+  if (compared > 0) {
+    return 1;
+  }
+  return 0;
+};
+const fixtureDigest = Effect.fn('SourceOwnerFixture.digest')(function* digest(document: string) {
+  const crypto = yield* Crypto.Crypto;
+  return Hex.encode(new Uint8Array(yield* crypto.digest('SHA-256', new TextEncoder().encode(document))));
+});
+/** Controlled SOURCE fixture DTO from the actual owner; this is not a published receiver claim. */
+const makeRegistrySourceContract = Effect.fn('CurrentStorefrontNative.sourceContract')(function* sourceContract() {
+  const owner = yield* Effect.try({
+    catch: unavailable,
+    try: () => extractVerticalRuntimeSafeDescriptors(storefrontRegistryRegistration),
+  });
+  const manifest = storefrontRegistryManifest;
+  const events = yield* Effect.all(
+    manifest.publicSurface.events.map((event) =>
+      Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))(
+        Schema.toJsonSchemaDocument(event.payloadSchema),
+      ).pipe(
+        Effect.flatMap((document) => fixtureDigest(`${document}\n`)),
+        Effect.map((payloadContract) => ({
+          key: event.key,
+          owningModuleId: event.owningModuleId,
+          payloadContract,
+          referencesResourceTypes: event.referencesResourceTypes,
+          tense: event.tense,
+          visibility: event.visibility,
+        })),
+      ),
+    ),
+  );
+  const apis = yield* Effect.forEach(Object.entries(manifest.publicSurface.api), ([key, api]) => {
+    if (!HttpApi.isHttpApi(api)) {
+      return Effect.fail(unavailable('Actual fixture owner API is not an HttpApi'));
+    }
+    return Effect.succeed({
+      key: canonicalOntosPublicApiKey(owner.moduleId, key),
+      operationKeys: EffectArray.sort(
+        Object.values(api.groups).flatMap((group) =>
+          Object.values(group.endpoints).map((endpoint) =>
+            group.topLevel ? endpoint.identifier : `${group.identifier}.${endpoint.identifier}`,
+          ),
+        ),
+        compareFixtureApiKeys,
+      ),
+    });
+  });
+  const authoredManifest = {
+    activation: manifest.activation,
+    module: manifest.module,
+    publicSurface: {
+      actions: owner.actions,
+      api: apis,
+      businessPermissions: manifest.publicSurface.businessPermissions ?? [],
+      components: Object.values(manifest.publicSurface.components),
+      events,
+      operationContracts: owner.operationContracts,
+      reports: manifest.publicSurface.reports,
+      resourceTypes: manifest.publicSurface.resourceTypes,
+      search: manifest.publicSurface.search,
+      shellContributions: owner.shellContributions,
+    },
+  };
+  if (owner.requirements !== undefined) {
+    Object.assign(authoredManifest, { requirements: owner.requirements });
+  }
+  return yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema, { onExcessProperty: 'error' })({
+    deployment: { appId: ultramodernApiMarker.appId, buildMarker: ultramodernApiMarker.buildMarker },
+    manifest: authoredManifest,
+    runtime: { outboxSubscriptions: owner.outboxSubscriptions },
+    schemaVersion: '2',
+  });
+});
+
 export const makeCurrentStorefrontNativeReceiver = Effect.fn('CurrentStorefrontNativeReceiver.make')(
   function* makeCurrentStorefrontNativeReceiver() {
+    const contract = yield* makeRegistrySourceContract();
     const server = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
     if (!Schema.is(Schema.Struct({ port: Schema.Int }))(server.address)) {
       return yield* unavailable();
@@ -200,6 +381,7 @@ export const makeCurrentStorefrontNativeReceiver = Effect.fn('CurrentStorefrontN
         return fixture;
       }),
       baseUrl: `http://127.0.0.1:${server.address.port}/`,
+      contract,
       deployment: Object.freeze({ appId: ultramodernApiMarker.appId, buildMarker: ultramodernApiMarker.buildMarker }),
       migrate: Effect.fn('CurrentStorefrontNativeReceiver.migrate')(function* migrate(
         options: RegistryNativeConnectionOptions,

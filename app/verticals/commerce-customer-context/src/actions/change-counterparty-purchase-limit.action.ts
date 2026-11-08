@@ -2,12 +2,7 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug change-counterparty-purchase-limit
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineTenantModuleEntrypoint,
-  OperationContextUnavailable,
-} from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint, OperationContextUnavailable } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import {
   CounterpartyPurchaseLimitChangedEventSchema,
@@ -27,6 +22,7 @@ import type {
   ChangeCounterpartyPurchaseLimitResult,
 } from '../../shared/actions/change-counterparty-purchase-limit.ts';
 import { createChangeCounterpartyPurchaseLimitCommerceCustomerContextCounterpartyPurchaseLimitChangedV1OutboxMessage as createCounterpartyPurchaseLimitChangedOutboxMessage } from './change-counterparty-purchase-limit.commerce-customer-context-counterparty-purchase-limit-changed-v1.outbox-message.ts';
+import { counterpartyOwnerFacts } from './owner-access-facts.ts';
 
 const MODULE_KEY = 'commerce.customer-context';
 const EVENT_TYPE = `${MODULE_KEY}.counterparty-purchase-limit-changed.v1`;
@@ -119,27 +115,27 @@ const handleChangeCounterpartyPurchaseLimit = Effect.fn('ChangeCounterpartyPurch
 
 export const changeCounterpartyPurchaseLimitAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.counterparty-purchase-limit.change',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'purchase-limits', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.change-counterparty-purchase-limit.access.v1',
     },
+    accessOwnerFacts: (payload) => counterpartyOwnerFacts(payload.counterpartyRef.resourceId),
     actionKey: 'commerce.customer-context.change-counterparty-purchase-limit',
     auditEvidenceSchema: PurchaseLimitPolicyAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission<ChangeCounterpartyPurchaseLimitPayload>((payload, scope) => ({
-      permission: 'counterparty.purchase_limit.manage',
-      target: {
-        counterpartyId: payload.counterpartyRef.resourceId,
-        kind: 'counterparty',
-        legalEntityId: scope.legalEntityId ?? '',
-        tenantId: scope.tenantId,
-      },
-    })),
     domainErrorSchema: ChangeCounterpartyPurchaseLimitErrorSchema,
     domainEvents: { [EVENT_TYPE]: CounterpartyPurchaseLimitChangedEventSchema },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.change-counterparty-purchase-limit',
       moduleKey: 'commerce.customer-context',
       role: 'action',

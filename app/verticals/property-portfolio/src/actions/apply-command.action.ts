@@ -71,6 +71,14 @@ const handleApplyCommand = Effect.fn('Property.Action.applyCommand')(function* h
 
 export const applyCommandAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'property.portfolio.apply-command.write',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'property-portfolio', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'property.portfolio.apply-command.access.v1',
@@ -81,7 +89,7 @@ export const applyCommandAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'property.portfolio.apply-command',
       moduleKey: owningModuleKey,
       role: 'action',

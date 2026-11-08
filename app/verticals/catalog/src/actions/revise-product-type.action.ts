@@ -5,8 +5,13 @@ import {
   prepareCatalogOpenSelectionPopulation,
   validatePreparedCatalogScope,
 } from '../services/catalog-open-selection-preflight.ts';
-import type { ActionHandlerContext, ActionServiceFactory, ActionServicePreflight } from '@app/core-runtime';
-import { Effect, Match, Schema } from 'effect';
+import type {
+  ActionHandlerContext,
+  ActionServiceFactory,
+  ActionServicePreparationContext,
+  ActionServicePreflight,
+} from '@app/core-runtime';
+import { Effect, Match, Option, Schema } from 'effect';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 
 import {
@@ -15,7 +20,7 @@ import {
 } from '../../shared/actions/revise-product-type.ts';
 import type { ReviseProductTypePayload } from '../../shared/actions/revise-product-type.ts';
 import type { CartOpenSelectionPopulationPort } from '../../shared/domain/catalog-open-selection-population.ts';
-import { cartOpenSelectionPopulationFromEnvironment } from '../../shared/domain/catalog-open-selection-population.ts';
+import { cartOpenSelectionPopulationForScope } from '../../shared/domain/catalog-open-selection-population.ts';
 import { OutboxPayloadSchema as SelectionSourceChangedEventSchema } from '../../shared/outbox/commerce-catalog-selection-source-changed-v1.ts';
 import { captureCatalogActionResult } from '../persistence/catalog-action-result-snapshot.ts';
 import type { CatalogPersistenceConflict } from '../persistence/errors.ts';
@@ -66,7 +71,7 @@ const reviseProductTypePersistenceServiceFactory = Effect.fn(
     readonly scope: Parameters<typeof productTypeRevisePersistenceForScope>[1];
   },
 ) {
-  const configuredPopulation = population ?? (yield* cartOpenSelectionPopulationFromEnvironment);
+  const configuredPopulation = population ?? Option.getOrUndefined(yield* cartOpenSelectionPopulationForScope(scope));
   return yield* productTypeRevisePersistenceForScope(
     transaction,
     scope,
@@ -196,35 +201,54 @@ const reviseProductTypeActionServices = (
     ),
   );
 
-const prepareReviseProductTypeActionServices: ActionServicePreflight<
+const ActionDomainErrorSchema = Schema.Union([
+  ReviseProductTypeStaleBasisSchema,
+  ProductTypeImpactBasisUnavailable,
+  CatalogPersistenceUnavailable,
+]);
+
+const prepareReviseProductTypeActionServices = Effect.fn('prepareReviseProductTypeActionServices')(
+  function* prepareServices(
+    _payload: typeof ReviseProductTypePayloadSchema.Type,
+    context: ActionServicePreparationContext,
+  ) {
+    const population = yield* prepareCatalogOpenSelectionPopulation(context);
+    return (
+      transaction: Parameters<ActionServiceFactory<never>>[0],
+      scope: Parameters<ActionServiceFactory<never>>[1],
+      revision: Parameters<ActionServiceFactory<never>>[2],
+    ) =>
+      validatePreparedCatalogScope(context, scope, revision).pipe(
+        Effect.flatMap(() => reviseProductTypeActionServices(transaction, { population, scope })),
+      );
+  },
+) satisfies ActionServicePreflight<
   typeof ReviseProductTypePayloadSchema.Type,
   Effect.Success<ReturnType<typeof reviseProductTypeActionServices>>,
-  never
-> = Effect.fn('prepareReviseProductTypeActionServices')(function* prepareServices(_payload, context) {
-  const population = yield* prepareCatalogOpenSelectionPopulation(context);
-  return (transaction, scope, revision) =>
-    validatePreparedCatalogScope(context, scope, revision).pipe(
-      Effect.flatMap(() => reviseProductTypeActionServices(transaction, { population, scope })),
-    );
-});
+  typeof ActionDomainErrorSchema.Type
+>;
 
 export const reviseProductTypeAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-type.revise',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product-type', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.revise-product-type.access.v1',
     },
     actionKey: ACTION_KEY,
     auditProfile: 'standard',
-    domainErrorSchema: Schema.Union([
-      ReviseProductTypeStaleBasisSchema,
-      ProductTypeImpactBasisUnavailable,
-      CatalogPersistenceUnavailable,
-    ]),
+    domainErrorSchema: ActionDomainErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.catalog.revise-product-type',
       moduleKey: 'commerce.catalog',
       role: 'action',

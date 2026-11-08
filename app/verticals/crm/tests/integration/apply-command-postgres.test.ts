@@ -1,6 +1,8 @@
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
+import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';
 import {
   ActiveApplicationCompositionService,
-  ContextAccess,
+  DatabaseIdentityEnrollmentContext,
   OperationContextUnavailable,
   TrustedPrincipalContextSchema,
   defineDatabaseIdentityEnrollment,
@@ -8,11 +10,18 @@ import {
 } from '@app/core-runtime';
 import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
 import { HttpServerRequest } from 'effect/http';
-import { Layer, Crypto, Effect, Redacted, Schema } from 'effect';
+import { Layer, Crypto, Effect, Option, Redacted, Schema } from 'effect';
 import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import type { ActionServicePreparationContext, ContextAccessService, OperationalScope } from '@app/core-runtime';
-import { installOperationalScope } from '@app/core-runtime/testing/actions';
+import type { OperationalScope } from '@app/core-runtime';
+import {
+  bindActionTestServices,
+  installOperationalScope,
+  makeActionPreparationProbe,
+  makeActionTestHarness,
+} from '@app/core-runtime/testing/actions';
+import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
+import { CoreDatabase, testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 
 import { Reactivity } from 'effect/reactivity';
@@ -22,9 +31,16 @@ import {
   CrmReferenceUnavailable,
   CrmRevisionConflict,
 } from '../../shared/actions/apply-command.ts';
-import { prepareApplyCommandServices } from '../../src/actions/apply-command.action.ts';
+import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
+import { assignmentPolicy } from '../../src/services/assignment-policy.ts';
 import { crmRelations } from '../../src/database/schema.ts';
 import { persistenceService } from '../../src/services/persistence.service.ts';
+import {
+  crmApplyCommandDeclaration,
+  crmClientOwnerAssignGroup,
+  crmRecordsReadDeclaration,
+} from '../../shared/domain/access-declarations.ts';
+import { crmRegistration } from '../../vertical.registration.ts';
 
 const unusedReference = () => Effect.die('Unexpected reference boundary access');
 const referenceBoundary = Layer.mergeAll(
@@ -47,6 +63,8 @@ const nativeCrmCommands = Effect.scoped(
     const database = yield* makeWithDefaults({ relations: crmRelations }).pipe(
       Effect.provideService(PgClient.PgClient, client),
     );
+    const coreExecutor = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, client));
+    const enrollment = defineDatabaseIdentityEnrollment([]);
     const principal = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
       authBindingId: yield* crypto.randomUUIDv4(),
       authContextRef: 'session:crm-command-test',
@@ -57,28 +75,44 @@ const nativeCrmCommands = Effect.scoped(
     });
     const scope: OperationalScope = { ...principal, correlationId: 'crm-command-test' };
     const resourceId = yield* crypto.randomUUIDv4();
-    const context: ActionServicePreparationContext = {
-      actionInvocationId: resourceId,
-      compositionRevision: 'crm-command-composition',
-      scope,
-      transaction: () => Effect.die('Command permission checks need no SQL snapshot'),
-    };
+    const owner = yield* makeOwnerApplicationCompositionFixture({ ownerRegistration: crmRegistration });
+    const compositionRevision = owner.snapshot.composition.revision;
+    // The real preparation and Policy run through Core. Bound services replace consumption only:
+    // the probe retains each exact original factory, uninvoked, for the native owner checks below.
+    const harness = yield* makeActionTestHarness({
+      access: 'allowed',
+      applicationComposition: owner.applicationComposition,
+      expectedDeployment: owner.expectedDeployment,
+      ownerRegistration: crmRegistration,
+      services: [
+        bindActionTestServices(applyCommandAction, {
+          apply: (_command, expectedRevision) => Effect.succeed({ entityIds: [], revision: expectedRevision + 1 }),
+          loadAssignmentDirectory: unusedReference,
+          loadRecords: unusedReference,
+        }),
+      ],
+    });
     let insideTransaction = false;
     let permissionChecks = 0;
-    const access: ContextAccessService = {
-      contextPermissions: ({ targets }) =>
+    const gate = makeTestAccessDecision({
+      answers: {
+        [crmApplyCommandDeclaration.key]: { outcome: 'ALLOWED' },
+        [crmClientOwnerAssignGroup.key]: { outcome: 'ALLOWED' },
+        [crmRecordsReadDeclaration.key]: { outcome: 'ALLOWED', predicate: { groups: [] } },
+      },
+    });
+    const assertOutsideSql = () => expect(insideTransaction).toBe(false);
+    const access = {
+      ...gate,
+      decide: (question: Parameters<typeof gate.decide>[0]) =>
+        Effect.sync(assertOutsideSql).pipe(Effect.andThen(gate.decide(question))),
+      decideMany: (question: Parameters<typeof gate.decideMany>[0]) =>
         Effect.sync(() => {
-          expect(insideTransaction).toBe(false);
+          assertOutsideSql();
           permissionChecks += 1;
-          return targets.map(({ moduleId, permission }) => ({
-            decision: 'allowed' as const,
-            key: `${moduleId}:${permission}`,
-          }));
-        }),
-      legalEntities: () => Effect.succeed([]),
-      modules: () => Effect.succeed([]),
-      resources: () => Effect.die('Company writer needs no per-task check'),
-      tenants: () => Effect.succeed([]),
+        }).pipe(Effect.andThen(gate.decideMany(question))),
+      list: (question: Parameters<typeof gate.list>[0]) =>
+        Effect.sync(assertOutsideSql).pipe(Effect.andThen(gate.list(question))),
     };
     const create = yield* Schema.decodeEffect(ApplyCommandPayloadSchema)({
       command: {
@@ -88,36 +122,81 @@ const nativeCrmCommands = Effect.scoped(
       },
       expectedRevision: 0,
     });
+    const createKey = `${resourceId}-create`;
+    const createProbe = makeActionPreparationProbe(applyCommandAction);
+    expect(Option.isNone(createProbe.snapshot())).toBe(true);
+    yield* harness.runtime
+      .runAction(
+        createProbe.input({
+          payload: create,
+          principal,
+          transport: { correlationId: scope.correlationId, idempotencyKey: createKey },
+        }),
+      )
+      .pipe(
+        Effect.provideService(AccessDecisionGate, access),
+        Effect.provideService(CoreDatabase, { executor: coreExecutor }),
+        Effect.provideService(DatabaseIdentityEnrollmentContext, enrollment),
+      );
+    const createFactory = Option.getOrThrow(createProbe.snapshot());
+    const createInvocationId = Option.getOrThrow(
+      Option.fromUndefinedOr(harness.snapshot().invocations.find(({ idempotencyKey }) => idempotencyKey === createKey)),
+    ).actionInvocationId;
+    const clientId = `${createInvocationId}-client`;
     const update = yield* Schema.decodeEffect(ApplyCommandPayloadSchema)({
-      command: { _tag: 'UpdateClient', id: `${resourceId}-client`, patch: { name: 'Upravený klient' } },
+      command: { _tag: 'UpdateClient', id: clientId, patch: { name: 'Upravený klient' } },
       expectedRevision: 1,
     });
-    const createFactory = yield* prepareApplyCommandServices(create, context).pipe(
-      Effect.provideService(ContextAccess, access),
-    );
-    const updateFactory = yield* prepareApplyCommandServices(update, context).pipe(
-      Effect.provideService(ContextAccess, access),
-    );
+    const updateKey = `${resourceId}-update`;
+    const updateProbe = makeActionPreparationProbe(applyCommandAction);
+    expect(Option.isNone(updateProbe.snapshot())).toBe(true);
+    yield* harness.runtime
+      .runAction(
+        updateProbe.input({
+          payload: update,
+          principal,
+          transport: { correlationId: scope.correlationId, idempotencyKey: updateKey },
+        }),
+      )
+      .pipe(
+        Effect.provideService(AccessDecisionGate, access),
+        Effect.provideService(CoreDatabase, { executor: coreExecutor }),
+        Effect.provideService(DatabaseIdentityEnrollmentContext, enrollment),
+      );
+    const updateFactory = Option.getOrThrow(updateProbe.snapshot());
+    const updateInvocationId = Option.getOrThrow(
+      Option.fromUndefinedOr(harness.snapshot().invocations.find(({ idempotencyKey }) => idempotencyKey === updateKey)),
+    ).actionInvocationId;
+    expect(harness.snapshot().policyDenials).toEqual([]);
+    expect(harness.snapshot().committed).toHaveLength(2);
+    for (const committed of harness.snapshot().committed) {
+      expect(committed.allowedPolicies).toContainEqual({
+        owningModuleKey: 'demo.crm',
+        policyKey: assignmentPolicy.policyKey,
+        scope: 'microvertical',
+      });
+    }
     expect(permissionChecks).toBe(2);
     const result = yield* database
       .transaction(
         Effect.fn('CrmCommandsTest.transaction')(function* nativeTransaction(tx) {
           insideTransaction = true;
-          const scoped = yield* installOperationalScope(tx, scope, defineDatabaseIdentityEnrollment([]));
-          const creator = yield* createFactory(scoped, scope, context.compositionRevision);
-          const created = yield* creator.apply(create.command, 0, resourceId);
+          const scoped = yield* installOperationalScope(tx, scope, enrollment);
+          const creator = yield* createFactory(scoped, scope, compositionRevision);
+          const created = yield* creator.apply(create.command, 0, createInvocationId);
           expect(created.revision).toBe(1);
-          const updater = yield* updateFactory(scoped, scope, context.compositionRevision);
-          const updated = yield* updater.apply(update.command, 1, resourceId);
-          expect(updated).toMatchObject({ entityIds: [`${resourceId}-client`], revision: 2 });
-          const stale = yield* updater.apply(update.command, 1, resourceId).pipe(Effect.flip);
+          expect(created.entityIds).toEqual([clientId]);
+          const updater = yield* updateFactory(scoped, scope, compositionRevision);
+          const updated = yield* updater.apply(update.command, 1, updateInvocationId);
+          expect(updated).toMatchObject({ entityIds: [clientId], revision: 2 });
+          const stale = yield* updater.apply(update.command, 1, updateInvocationId).pipe(Effect.flip);
           expect(Schema.is(CrmRevisionConflict)(stale)).toBe(true);
-          const changed = yield* updater.apply(create.command, 1, resourceId).pipe(Effect.flip);
+          const changed = yield* updater.apply(create.command, 1, updateInvocationId).pipe(Effect.flip);
           expect(Schema.is(CrmReferenceUnavailable)(changed)).toBe(true);
           const unprepared = yield* persistenceService(scoped, { scope });
           expect(
             Schema.is(CrmReferenceUnavailable)(
-              yield* unprepared.apply(create.command, 0, resourceId).pipe(Effect.flip),
+              yield* unprepared.apply(create.command, 0, createInvocationId).pipe(Effect.flip),
             ),
           ).toBe(true);
           for (const other of [
@@ -128,7 +207,7 @@ const nativeCrmCommands = Effect.scoped(
           ]) {
             expect(
               Schema.is(OperationContextUnavailable)(
-                yield* updateFactory(scoped, other, context.compositionRevision).pipe(Effect.flip),
+                yield* updateFactory(scoped, other, compositionRevision).pipe(Effect.flip),
               ),
             ).toBe(true);
           }
@@ -141,17 +220,13 @@ const nativeCrmCommands = Effect.scoped(
           return yield* Effect.fail('fixture-rollback' as const);
         }),
       )
-      .pipe(Effect.flip);
+      .pipe(Effect.provideService(AccessDecisionGate, access), Effect.flip);
     expect(result).toBe('fixture-rollback');
   }),
 );
 
-it.layer(Layer.merge(NodeCrypto.layer, referenceBoundary), { excludeTestServices: true })(
-  'native crm commands',
-  (suite) => {
-    suite.effect(
-      'prepares permissions outside SQL; revalidates identity, payload and revision',
-      () => nativeCrmCommands,
-    );
-  },
-);
+it.layer(Layer.mergeAll(NodeCrypto.layer, referenceBoundary, makeTestAccessGateLayers()), {
+  excludeTestServices: true,
+})('native crm commands', (suite) => {
+  suite.effect('prepares permissions outside SQL; revalidates identity, payload and revision', () => nativeCrmCommands);
+});

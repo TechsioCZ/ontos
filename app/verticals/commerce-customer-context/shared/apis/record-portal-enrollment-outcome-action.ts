@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.customer-context
 // @ontos-action-http-slug record-portal-enrollment-outcome
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/record-portal-enrollment-outcome.ts';
 
 export { RecordPortalEnrollmentOutcomePayloadSchema } from '../actions/record-portal-enrollment-outcome.ts';
-
 export const RecordPortalEnrollmentOutcomeActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RecordPortalEnrollmentOutcomeActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const RecordPortalEnrollmentOutcomeActionForbiddenProblemSchema = makePro
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -150,7 +151,7 @@ export const recordPortalEnrollmentOutcomeActionGroupDefinition = HttpApiGroup.m
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/record-portal-enrollment-outcome', {
       error: actionErrors,
       payload: Schema.toEncoded(RecordPortalEnrollmentOutcomePayloadSchema),
-      success: RecordPortalEnrollmentOutcomeResultSchema,
+      success: [ActionProposalAcceptedSchema, RecordPortalEnrollmentOutcomeResultSchema],
     }),
   )
   .middleware(RecordPortalEnrollmentOutcomeActionSchemaErrorMiddleware);

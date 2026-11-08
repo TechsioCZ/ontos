@@ -21,9 +21,8 @@ import {
 } from '../../../../packages/core-runtime/src/actions/runtime.ts';
 import { trustVerifiedGatewayPrincipalContext } from '../../../../packages/core-runtime/src/auth/system-principal-context-provenance.ts';
 import { buildApplicationCompositionCatalog } from '../../../../packages/core-runtime/src/modules/application-composition-catalog.ts';
-import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/permissions/owner-authorization-overlay.ts';
+import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/access/enforcement/owner-overlay.ts';
 import type { ContextAccessService } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
-import { toBusinessPermissionAccessKey } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import { makeModuleEntrypointGateway } from '../../../../packages/core-runtime/src/modules/module-entrypoint-gateway.ts';
 import type { ModuleEntrypointDescriptor } from '../../../../packages/core-runtime/src/modules/module-entrypoint.ts';
 import {
@@ -33,10 +32,15 @@ import {
 import { makeOperationalScopeResolver } from '../../../../packages/core-runtime/src/operations/context.ts';
 import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
 import {
+  makeTestBoundAccessGate,
+  makeTestOperationalScopeAccess,
+} from '../../../../packages/core-runtime/src/testing/access-gate.ts';
+import {
   freshOutboxWorkerCompositionSnapshot,
   makeOutboxWorkerComposition,
 } from '../../../../packages/core-runtime/tests/support/outbox-worker-composition.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { priceGroupCatalogRegistration } from '../../vertical.registration.ts';
 import type { CreatePriceGroupDefinitionRevisionPayload } from '../../shared/actions/create-price-group-definition-revision.ts';
 import type { CreatePriceGroupPayload } from '../../shared/actions/create-price-group.ts';
 import type { RetirePriceGroupPayload } from '../../shared/actions/retire-price-group.ts';
@@ -54,12 +58,13 @@ import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-
 const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
-const foreignTenantId = '77777777-7777-4777-8777-777777777777';
 const principalId = '22222222-2222-4222-8222-222222222222';
 const priceGroupId = '33333333-3333-4333-8333-333333333333';
 const definitionRevisionId = '44444444-4444-4444-8444-444444444444';
 const invocationId = '55555555-5555-4555-8555-555555555555';
 const fingerprint = 'a'.repeat(64);
+
+const accessScopeId = '88888888-8888-4888-8888-888888888888';
 
 const legalPrincipal = Schema.decodeSync(TrustedPrincipalContextSchema)({
   authBindingId: '99999999-9999-4999-8999-999999999999',
@@ -225,7 +230,8 @@ const DecisionSchema = Schema.Literals(['allowed', 'denied', 'unavailable']);
 type Decision = typeof DecisionSchema.Type;
 
 interface HarnessOptions {
-  readonly businessDecision?: Decision;
+  /** The one access gate's scripted answer for the protected management Actions. */
+  readonly access?: Decision;
   readonly commitIndeterminate?: boolean;
   readonly createFailure?: 'expected-current' | 'unavailable';
   readonly flushFailure?: boolean;
@@ -249,7 +255,6 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   );
   const flushAttempts: FlushActionSuccessInput[] = [];
   const successfulFlushes: FlushActionSuccessInput[] = [];
-  const businessChecks: unknown[] = [];
   let createInvocationCount = 0;
   let handlerResolutionCount = 0;
   let serviceResolutionCount = 0;
@@ -356,6 +361,15 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       if (sql.includes('transaction_timestamp')) {
         return Effect.succeed([{ operation_at: new Date('2026-11-30T00:00:00.000Z') }]);
       }
+      // The shared access fence every Action transaction pins its authority to: one resolved access
+      // scope for this tenant/company, locked through the routine and reported Ready, as the production
+      // dispatch reads them.
+      if (sql.includes('access_scopes')) {
+        return Effect.succeed([{ scope_id: accessScopeId }]);
+      }
+      if (sql.includes('lock_access_scope_fence')) {
+        return Effect.succeed([{ state: 'Ready' }]);
+      }
       if (sql.startsWith('select')) {
         return Effect.succeed([{ authBindingId: legalPrincipal.authBindingId }]);
       }
@@ -363,25 +377,25 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
     }),
   };
 
+  // The one gate decides a protected Action; the retired legacy authority is never consulted (O62).
+  const accessAnswer = (access: HarnessOptions['access']) => {
+    if (access === undefined || access === 'allowed') {
+      return { defaultAnswer: { outcome: 'ALLOWED' as const } };
+    }
+    return access === 'denied' ? {} : { defaultAnswer: { outcome: 'UNAVAILABLE' as const } };
+  };
+  const accessGate = makeTestBoundAccessGate(accessAnswer(options.access));
   const contextAccess: ContextAccessService = {
-    businessPermissions: (input) => {
-      businessChecks.push(input);
-      return Effect.succeed(
-        input.targets.map((target) => ({
-          decision: options.businessDecision ?? ('allowed' as const),
-          key: toBusinessPermissionAccessKey(target),
-        })),
-      );
-    },
     legalEntities: ({ legalEntityIds }: { readonly legalEntityIds: readonly string[] }) =>
       Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
     modules: () => Effect.succeed([]),
+    ownerPermissions: () => Effect.die('The gate decides; no legacy owner target is checked'),
     resources: () => Effect.succeed([]),
     tenants: () => Effect.succeed([]),
   };
   const scopeResolver = yield* makeOperationalScopeResolver(
     { load: () => Effect.succeed(activeScope) },
-    contextAccess,
+    makeTestOperationalScopeAccess(),
   ).pipe(Effect.provide(NodeCrypto.layer));
   const moduleStateGate = {
     check: checkModuleEntrypoint,
@@ -456,11 +470,13 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
     { checkActionPermission: () => Effect.succeed('allowed') },
     scopeResolver,
     {
+      accessDecision: accessGate.bound,
       contextAccess,
       databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
       moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
       moduleStateGate,
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
+      ownerRegistration: priceGroupCatalogRegistration,
       resolveCompositionRevision: makeActionCompositionRevisionResolver(
         { load: Effect.succeed(approvedComposition) },
         ultramodernApiMarker,
@@ -498,7 +514,8 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
     });
 
   return {
-    businessChecks,
+    askedCapabilities: () =>
+      accessGate.accessDecision.askedDecisions.map((one) => one.carrier.accessDeclaration?.key ?? '<missing>'),
     counts: () => ({
       commitCount,
       createInvocationCount,
@@ -516,25 +533,10 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
 });
 
 describe('Price Group management Actions through the Core runtime', () => {
-  it.effect('rejects cross-Tenant and forbidden legal-entity context before service or handler resolution', () =>
+  it.effect('rejects a forbidden legal-entity context before service or handler resolution', () =>
     Effect.gen(function* rejectInvalidTrustedScope() {
-      const crossTenant = yield* makeHarness();
-      const crossTenantFailure = yield* Effect.flip(
-        crossTenant.runRevision({
-          ...revisionPayload,
-          expectedCurrent: {
-            ...revisionPayload.expectedCurrent,
-            priceGroupRef: { ...revisionPayload.expectedCurrent.priceGroupRef, tenantId: foreignTenantId },
-          },
-        }),
-      );
-      expect(Predicate.isTagged(crossTenantFailure, 'ActionPermissionCheckError')).toBe(true);
-      expect(crossTenant.counts()).toMatchObject({
-        createInvocationCount: 0,
-        handlerResolutionCount: 0,
-        serviceResolutionCount: 0,
-      });
-
+      // A cross-Tenant payload is refused by the owner persistence that reads it
+      // (`price-group-catalog-persistence.test.ts`); v2 carries no per-record target that could.
       const legalEntity = yield* makeHarness();
       const legalEntityFailure = yield* Effect.flip(legalEntity.runCreate(legalPrincipal));
       expect(Predicate.isTagged(legalEntityFailure, 'OperationContextInvalid')).toBe(true);
@@ -548,15 +550,15 @@ describe('Price Group management Actions through the Core runtime', () => {
 
   it.effect('keeps definite denial and indeterminate authorization ahead of owner service resolution', () =>
     Effect.gen(function* rejectUnauthorized() {
-      const denied = yield* makeHarness({ businessDecision: 'denied' });
+      const denied = yield* makeHarness({ access: 'denied' });
       expect(Predicate.isTagged(yield* Effect.flip(denied.runCreate()), 'ActionPermissionDenied')).toBe(true);
       expect(denied.counts()).toMatchObject({ handlerResolutionCount: 0, serviceResolutionCount: 0 });
-      expect(denied.businessChecks).toHaveLength(1);
+      expect(denied.askedCapabilities()).toEqual(['pricing.price-group-catalog.price-group.create']);
 
-      const unavailable = yield* makeHarness({ businessDecision: 'unavailable' });
+      const unavailable = yield* makeHarness({ access: 'unavailable' });
       expect(Predicate.isTagged(yield* Effect.flip(unavailable.runCreate()), 'ActionPermissionCheckError')).toBe(true);
       expect(unavailable.counts()).toMatchObject({ handlerResolutionCount: 0, serviceResolutionCount: 0 });
-      expect(unavailable.businessChecks).toHaveLength(1);
+      expect(unavailable.askedCapabilities()).toEqual(['pricing.price-group-catalog.price-group.create']);
     }),
   );
 

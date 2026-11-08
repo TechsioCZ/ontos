@@ -63,7 +63,7 @@ const recoverAssertSizeEquivalence = Effect.fn('AssertSizeEquivalenceRecoveryRea
 
 const assertSizeEquivalenceRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.assert-size-equivalence-recovery' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.assert-size-equivalence-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -71,6 +71,14 @@ const assertSizeEquivalenceRecoveryEntrypoint = defineTenantModuleEntrypoint({
 
 export const assertSizeEquivalenceRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.assert-size-equivalence-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'size-equivalence', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: assertSizeEquivalenceRecoveryEntrypoint,
     evidencePolicy: {
@@ -80,7 +88,6 @@ export const assertSizeEquivalenceRecoveryRead = defineRead(
     inputSchema: AssertSizeEquivalenceRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.assert-size-equivalence-recovery',
     resultSchema: AssertSizeEquivalenceRecoveryResponseSchema,
@@ -94,5 +101,4 @@ export const assertSizeEquivalenceRecoveryRead = defineRead(
   },
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

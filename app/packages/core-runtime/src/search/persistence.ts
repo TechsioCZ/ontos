@@ -2,6 +2,7 @@ import { and, asc, eq, gt, inArray, notInArray, or, sql } from 'drizzle-orm';
 import { Context, DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
 import { isSqlError } from 'effect/sql/SqlError';
 
+import { PrincipalIdSchema } from '../access/ids.ts';
 import { CoreDatabase } from '../db/client.ts';
 import { DatabaseIdentityEnrollmentContext } from '../db/database-identities.ts';
 import type { DatabaseIdentityEnrollment } from '../db/database-identity-manifest.ts';
@@ -93,6 +94,7 @@ import {
 import { coreSearchQueryMatchesScope } from './projection-store.ts';
 import { decodeCoreSearchResourceRef } from './resource-ref.ts';
 import { deriveCoreSearchRepresentation } from './evidence-codec.ts';
+import type { CoreSearchAuthorization } from './visibility.ts';
 import {
   CORE_SEARCH_CANDIDATE_BUDGET,
   coreSearchDerivedStampOutdated,
@@ -103,6 +105,7 @@ import {
 export const CoreSearchPersistedPayloadSchema = Schema.Struct({
   aliases: Schema.optionalKey(Schema.Array(CoreSearchAliasSchema).check(Schema.isMaxLength(100))),
   archived: Schema.Boolean,
+  assignedPrincipalId: Schema.optionalKey(PrincipalIdSchema),
   facets: Schema.Array(CoreSearchFacetSchema),
   labelDependencies: Schema.optionalKey(Schema.Array(CoreSearchLabelDependencySchema).check(Schema.isMaxLength(100))),
   matchedRef: Schema.optionalKey(CoreSearchResourceRefSchema),
@@ -142,6 +145,7 @@ type SearchIndexEntry = typeof searchIndexEntries.$inferSelect;
 interface PersistedDocumentInput {
   aliases?: PersistedDocumentPayload['aliases'];
   archived: boolean;
+  assignedPrincipalId?: string;
   facets: PersistedDocumentPayload['facets'];
   labelDependencies?: PersistedDocumentPayload['labelDependencies'];
   matchedRef?: PersistedDocumentPayload['matchedRef'];
@@ -215,6 +219,9 @@ export const coreSearchDocumentPayload = (document: CoreSearchProjectionDocument
     schemaVersion: '2',
     searchableText: document.searchableText,
   };
+  if (document.assignedPrincipalId !== undefined) {
+    persisted.assignedPrincipalId = document.assignedPrincipalId;
+  }
   if (document.aliases !== undefined) {
     persisted.aliases = document.aliases;
   }
@@ -1135,6 +1142,7 @@ const makeTransactionOperations = (databaseIdentities: DatabaseIdentityEnrollmen
       transaction: CoreTransaction,
       input: CoreSearchQuery,
       scope: OperationalScope,
+      authorization?: CoreSearchAuthorization,
     ) {
       // A query may narrow a tenant-wide scope, or select global rows under an entity scope.
       if (!coreSearchQueryMatchesScope(input, scope)) {
@@ -1144,7 +1152,7 @@ const makeTransactionOperations = (databaseIdentities: DatabaseIdentityEnrollmen
       yield* installOperationalScope(transaction, scope, databaseIdentities).pipe(
         Effect.catchTag('OperationContextUnavailable', (failure) => Effect.fail(unavailable(failure))),
       );
-      const query = selectCoreSearchCandidates(transaction, input);
+      const query = selectCoreSearchCandidates(transaction, input, authorization);
       const rows = yield* query.execute.bind(query)().pipe(Effect.mapError(unavailable));
       if (rows.length > CORE_SEARCH_CANDIDATE_BUDGET) {
         return yield* unavailable();
@@ -1861,9 +1869,13 @@ export const makePostgresCoreSearchProjectionStore = (
   );
   const queryCandidates: CoreSearchProjectionStoreService['queryCandidates'] = Effect.fn(
     'CoreSearchProjectionStore.queryCandidatesPostgres',
-  )(function* queryCoreSearchCandidates(input: CoreSearchQuery, scope: OperationalScope) {
+  )(function* queryCoreSearchCandidates(
+    input: CoreSearchQuery,
+    scope: OperationalScope,
+    authorization?: CoreSearchAuthorization,
+  ) {
     const transactionBody = (transaction: CoreTransaction) =>
-      transactionOperations.queryCandidatesTransaction(transaction, input, scope);
+      transactionOperations.queryCandidatesTransaction(transaction, input, scope, authorization);
     // Every row already passed decodeCoreSearchDocumentRow, whose mutation decode validates the same document schema.
     return yield* runTransaction(transactionBody);
   });

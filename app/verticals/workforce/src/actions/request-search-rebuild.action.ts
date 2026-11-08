@@ -41,6 +41,14 @@ const handleRequestSearchRebuild = Effect.fn('WorkforceSearch.requestRebuild')(f
 
 export const requestSearchRebuildAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'demo.workforce.request-search-rebuild.write',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'workforce', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'demo.workforce.request-search-rebuild.access.v1',
@@ -51,7 +59,7 @@ export const requestSearchRebuildAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'demo.workforce.request-search-rebuild',
       moduleKey: 'demo.workforce',
       role: 'action',
@@ -63,7 +71,6 @@ export const requestSearchRebuildAction = defineAction(
     policies: [],
     resultSchema: RequestSearchRebuildResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_identity',
   },
   handleRequestSearchRebuild,
 );

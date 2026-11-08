@@ -88,14 +88,17 @@ export interface LinkedTaskDraft {
 
 export type TaskCreation =
   | {
-      readonly ok: true;
+      readonly status: 'created';
       readonly task: { readonly resourceId: string; readonly tenantId: string; readonly title: string };
     }
-  | { readonly ok: false };
+  /** work-tasks parked the command as a proposal: no task exists yet, so nothing may be linked. */
+  | { readonly status: 'pending_approval' }
+  | { readonly status: 'failed' };
 
 /**
  * Creates one task with its structured property/unit link and a same-principal owner-read credential.
- * Only a revision conflict is retried. Never hide a refused reference by creating an unlinked task.
+ * Only a revision conflict is retried; an accepted proposal is a success and is never resubmitted.
+ * Never hide a refused reference by creating an unlinked task.
  */
 export const createServiceTask = (draft: LinkedTaskDraft, device: SecurityDevice, tenantId: string) => {
   const attempt = Effect.fn('Security.createServiceTaskAttempt')(function* attempt(contextRefs: ContextRef[]) {
@@ -123,21 +126,24 @@ export const createServiceTask = (draft: LinkedTaskDraft, device: SecurityDevice
 
   const program = attempt(refs).pipe(
     Effect.retry({ times: 1, while: (error) => Predicate.isTagged(error, 'ApplyCommandActionConflictProblem') }),
-    Effect.map((result): TaskCreation =>
-      result.task === undefined
-        ? { ok: false }
+    Effect.map((result): TaskCreation => {
+      if (Predicate.isTagged(result, 'ActionProposalAccepted')) {
+        return { status: 'pending_approval' };
+      }
+      return result.task === undefined
+        ? { status: 'failed' }
         : {
-            ok: true,
+            status: 'created',
             task: {
               resourceId: result.task.ref.resourceId,
               tenantId: result.task.ref.tenantId,
               title: result.task.title,
             },
-          },
-    ),
+          };
+    }),
     Effect.matchEffect({
       onFailure: (error) =>
-        Effect.logWarning('Service task creation failed', error).pipe(Effect.as({ ok: false } as const)),
+        Effect.logWarning('Service task creation failed', error).pipe(Effect.as({ status: 'failed' } as const)),
       onSuccess: Effect.succeed,
     }),
   );

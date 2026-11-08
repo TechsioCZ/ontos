@@ -68,6 +68,7 @@ const fixtureOwner = (moduleKey = 'fixture.stock', policyPrefix = 'stock'): Data
     ownerModuleKey: moduleKey,
     registersGatewayScopeGrants: false,
     role: `${policyPrefix}_runtime`,
+    runsActions: true,
     scopeAuthority: 'gateway_grant',
     urlKey: `${policyPrefix.toUpperCase()}_DATABASE_URL`,
   },
@@ -80,6 +81,7 @@ const fixtureOwner = (moduleKey = 'fixture.stock', policyPrefix = 'stock'): Data
     ownerModuleKey: moduleKey,
     registersGatewayScopeGrants: false,
     role: `${policyPrefix}_worker`,
+    runsActions: false,
     scopeAuthority: 'session_setting',
     urlKey: `${policyPrefix.toUpperCase()}_WORKER_DATABASE_URL`,
   },
@@ -127,8 +129,8 @@ it.layer(NodeServices.layer)((suite) => {
             .toSorted((left, right) => left.name.localeCompare(right.name));
         });
         const preExtraction = yield* corePolicies('20261024223832_gateway-identity-attestation');
-        // Later Core migrations add policies (the Outbox delivery resolution read, then the search refresh queues); the latest snapshot is the schema of record.
-        const current = yield* corePolicies('20261104101838_colorful_quentin_quire');
+        // Keep the historical policies exact while including the current intent and prepared-authority policies.
+        const current = yield* corePolicies('20261107110051_full-target-action-authority-v2');
         const actual = [
           ...Object.values(coreDatabaseSchema).flatMap((table) =>
             getTableConfig(table).policies.map((policy) => renderPolicy({ policy, table })),
@@ -138,7 +140,7 @@ it.layer(NodeServices.layer)((suite) => {
 
         expect(preExtraction).toHaveLength(59);
         expect(actual).toEqual(expect.arrayContaining(preExtraction));
-        expect(current).toHaveLength(78);
+        expect(current).toHaveLength(174);
         expect(actual).toEqual(current);
       }),
   );

@@ -8,7 +8,6 @@ const TenantId = uuid.pipe(Schema.brand('PeopleTenantId'), Schema.decodeTo(Schem
 const LegalEntityId = uuid.pipe(Schema.brand('PeopleLegalEntityId'), Schema.decodeTo(Schema.String));
 const InvitationId = uuid.pipe(Schema.brand('PeopleInvitationId'), Schema.decodeTo(Schema.String));
 const Affiliation = Schema.Literals(['employee', 'external']);
-const RoleOperation = Schema.Literals(['assign', 'revoke']);
 const text = (max: number) => Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(max));
 export const PeoplePrincipalRefSchema = Schema.Struct({ principalId: PrincipalId, tenantId: TenantId });
 export const PeopleScopeSchema = Schema.Union([
@@ -17,22 +16,6 @@ export const PeopleScopeSchema = Schema.Union([
 ]);
 export const CompanyAffiliationSchema = Schema.NullOr(Affiliation);
 export const CompanyMembershipStatusSchema = Schema.Literals(['invited', 'active', 'disabled', 'departed']);
-export const PeopleRoleSchema = Schema.Struct({
-  roleKey: text(200),
-  scope: PeopleScopeSchema,
-  tenantId: TenantId,
-});
-export const PeopleRoleCatalogSchema = Schema.Struct({
-  items: Schema.Array(
-    Schema.Struct({
-      description: Schema.String,
-      name: Schema.String,
-      roleKey: text(200),
-      scope: PeopleScopeSchema,
-    }),
-  ),
-});
-export type PeopleRoleCatalog = typeof PeopleRoleCatalogSchema.Type;
 export const PeopleCompanyMembershipSchema = Schema.Struct({
   affiliation: CompanyAffiliationSchema,
   legalEntityId: LegalEntityId,
@@ -61,11 +44,7 @@ export const PeopleListResponseSchema = Schema.Struct({
       kind: Schema.Literals(['human', 'agent']),
       principalRef: PeoplePrincipalRefSchema,
       principalStatus: Schema.Literals(['active', 'disabled', 'archived']),
-      roleAssignments: Schema.Array(PeopleRoleSchema),
       selectedCompanyMembership: Schema.NullOr(PeopleCompanyMembershipSchema),
-      selectedCompanyMembershipProjection: Schema.NullOr(
-        Schema.Struct({ expectedMember: Schema.Boolean, observedMember: Schema.Boolean }),
-      ),
     }),
   ),
   nextOffset: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
@@ -82,18 +61,6 @@ export const SetPeopleCompanyMembershipRequestSchema = Schema.Struct({
 export const SetPeopleCompanyMembershipResponseSchema = Schema.Struct({
   membership: PeopleCompanyMembershipSchema,
   projection: Schema.Literal('pending'),
-});
-export const SetPeopleRoleRequestSchema = Schema.Struct({
-  operation: RoleOperation,
-  principalRef: PeoplePrincipalRefSchema,
-  reason: text(500),
-  roleKey: text(200),
-});
-export const SetPeopleRoleResponseSchema = Schema.Struct({
-  operation: RoleOperation,
-  principalRef: PeoplePrincipalRefSchema,
-  projection: Schema.Literal('pending'),
-  role: PeopleRoleSchema,
 });
 export const InvitePeopleRequestSchema = Schema.Struct({
   affiliation: Affiliation,
@@ -112,15 +79,9 @@ export type PeopleList = typeof PeopleListResponseSchema.Type;
 export type Person = PeopleList['items'][number];
 export type SetPeopleCompanyMembershipRequest = typeof SetPeopleCompanyMembershipRequestSchema.Type;
 export type SetPeopleCompanyMembershipResponse = typeof SetPeopleCompanyMembershipResponseSchema.Type;
-export type SetPeopleRoleRequest = typeof SetPeopleRoleRequestSchema.Type;
-export type SetPeopleRoleResponse = typeof SetPeopleRoleResponseSchema.Type;
 export const PEOPLE_PATHS = {
   companyInvite: '/auth/identity/people/invite',
   companyList: '/auth/identity/people/list',
   companyMembership: '/auth/identity/people/company-membership',
-  companyRole: '/auth/identity/people/company-role',
-  companyRoleCatalog: '/auth/identity/people/role-catalog',
   tenantList: '/auth/identity/people/tenant-list',
-  tenantRole: '/auth/identity/people/tenant-role',
-  tenantRoleCatalog: '/auth/identity/people/tenant-role-catalog',
 } as const;

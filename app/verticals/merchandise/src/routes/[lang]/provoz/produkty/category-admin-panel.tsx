@@ -6,7 +6,7 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { AutosaveStatus, SidePanel, formatDateTime, useAutosaveDraft } from '@app/admin-ui';
 import type { RevisionedSaveResult } from '@app/admin-ui';
-import { DateTime, Effect, Match, Option } from 'effect';
+import { DateTime, Effect, Match, Option, Predicate } from 'effect';
 import { useState } from 'react';
 import type { CategoryNode } from '../../../../../shared/domain/merchandise-model.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
@@ -222,16 +222,17 @@ interface CategoryEditPanelProps {
  */
 const CategoryEditPanel = ({ category, onBack, onSaved, parentName, revision, siblings }: CategoryEditPanelProps) => {
   const { t } = useModernI18n();
+  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
   const autosave = useAutosaveDraft<CategoryDraft, never>({
     equals: sameCategoryDraft,
     isValid: (value) => Object.keys(categoryDraftErrors(value)).length === 0,
     revision,
     runtime: browserRuntime,
     save: (value, expectedRevision): Effect.Effect<RevisionedSaveResult> =>
-      autosaveCategoryEdit(value, category, expectedRevision).pipe(
+      autosaveCategoryEdit(value, category, expectedRevision, setPendingMessage).pipe(
         Effect.tap((result) =>
           Effect.sync(() => {
-            if (result !== 'conflict' && result !== 'failed' && result !== 'saved') {
+            if (Predicate.isNumber(result)) {
               onSaved(savedCategory(category, value), result);
             }
           }),
@@ -253,6 +254,7 @@ const CategoryEditPanel = ({ category, onBack, onSaved, parentName, revision, si
     <SidePanel
       actions={
         <>
+          {pendingMessage !== null && <StatusText status="error">{pendingMessage}</StatusText>}
           <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
           <Button onClick={close} theme="outlined" variant="secondary">
             Zpět na seznam

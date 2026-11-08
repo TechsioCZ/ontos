@@ -25,6 +25,15 @@ export class OrderCustomerConversionError extends Schema.TaggedError<OrderCustom
 type WriteOptions = Pick<PartyCommandOptions, 'correlationId' | 'idempotencyKey'>;
 const provenanceSource = 'demo.merchandise.order-customer';
 
+/**
+ * The Party candidate name fields for one person. Party Registry derives `displayName` from
+ * `firstName`/`lastName`, so the derived display name stays equal to the name the order recorded.
+ */
+export const personNameFields = (name: string) => {
+  const [first = '', ...rest] = name.trim().split(/\s+/u);
+  return rest.length === 0 ? { firstName: first } : { firstName: first, lastName: rest.join(' ') };
+};
+
 /** Both staff UI and the explicit seed operator use these same native Party owners. */
 export interface OrderCustomerOwners<E, R> {
   readonly contact: (
@@ -65,7 +74,7 @@ export const convertOrderCustomer = Effect.fn('Merchandise.convertOrderCustomer'
   const validFrom = order.createdAt;
   const candidate = yield* Schema.decodeEffect(CreatePartyPayloadSchema)({
     candidate: {
-      displayName: order.contact.name,
+      ...personNameFields(order.contact.name),
       evidenceRefs: [evidenceReference],
       officialIdentifiers: [],
       partyType: 'PERSON',
@@ -175,7 +184,6 @@ export const convertOrderCustomer = Effect.fn('Merchandise.convertOrderCustomer'
     privacyClassification: 'BUSINESS_SENSITIVE',
     provenance: { authoritative: false, evidenceReference, method: 'MANUAL_CONFIRMATION', source: 'USER_ASSERTION' },
     validFrom: DateTime.formatIso(validFrom),
-    verification: { state: 'UNVERIFIED' },
   });
   yield* owners
     .contact(contactPoint, options('email'))

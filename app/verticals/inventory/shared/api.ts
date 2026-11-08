@@ -1,3 +1,4 @@
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { identity } from 'effect';
 import {
   MicroVerticalBuildMarkerSchema,
@@ -96,12 +97,14 @@ type InventoryApiGroups = GroupsOf<
   | typeof StockIssueActionApi
   | typeof StockReceiptActionApi
   | typeof StockSharingEligibilityResolutionApi
+  | typeof OwnerActionApprovalApi
 >;
 
 type InventoryApi = HttpApi.HttpApi<'InventoryApi', InventoryApiGroups>;
 
 export const inventoryApi: InventoryApi = HttpApi.make('InventoryApi')
   .addHttpApi(inventoryFoundationApi)
+  .addHttpApi(OwnerActionApprovalApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(CatalogToStockBindingResolutionApi)
   .addHttpApi(ChangeStockSharingEligibilityActionApi)

@@ -1,10 +1,19 @@
+import { buildAccessGraph, buildActionGate, buildGate } from '../support/access-admin-real-gate-fixture.ts';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import { AccessProjectionWriter } from '@app/core-runtime/access/intent/projection-writer';
+import { AccessMembershipIdSchema } from '@app/core-runtime/access/intent/memberships';
+import { LegalEntityIdSchema, PrincipalIdSchema, TenantIdSchema } from '@app/core-runtime/access/ids';
+import {
+  tenantObjectId,
+  legalEntityObjectId,
+} from '../../../../packages/core-runtime/src/access/compiler/object-id.ts';
 import { randomBytes, randomUUID } from 'node:crypto';
 
 import { v1 } from '@authzed/authzed-node';
 import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { and, eq, sql } from 'drizzle-orm';
-import { Config, Context, Crypto, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
+import { Config, Context, Crypto, DateTime, Deferred, Effect, Fiber, Layer, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 
@@ -39,6 +48,7 @@ import {
   STAFF_AUTHENTICATION_NAMESPACE_ID,
 } from '../../../../packages/core-runtime/src/auth/staff-authentication-namespace.ts';
 import { CoreDatabase, makeCoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
+import { makeDatabaseIdentityEnrollmentLive } from '../../../../packages/core-runtime/src/db/database-identities.ts';
 import { DatabaseConfig, loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
 import {
   applicationCompositionAuthority,
@@ -51,8 +61,8 @@ import {
   principalCompanyMemberships,
   principals,
   tenants,
+  tenantModuleStates,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
-import { buildActionAuthorizationRelationships } from '../../../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import { invitePersonAction } from '../../../../packages/core-runtime/src/modules/actions/invite-person.action.ts';
 import { makeModuleEntrypointGateway } from '../../../../packages/core-runtime/src/modules/module-entrypoint-gateway.ts';
 import { makeModuleStateGate } from '../../../../packages/core-runtime/src/modules/module-state-gate.ts';
@@ -61,29 +71,35 @@ import {
   makeOperationalScopeRepository,
   makeOperationalScopeResolver,
 } from '../../../../packages/core-runtime/src/operations/context.ts';
-import {
-  corePrincipalLifecycleSubscription,
-  CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS,
-} from '../../../../packages/core-runtime/src/outbox/core-system-subscriptions.ts';
+import { CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS } from '../../../../packages/core-runtime/src/outbox/core-system-subscriptions.ts';
 import { createSpiceDbPermissionClient } from '../../../../packages/core-runtime/src/permissions/client.ts';
 import { loadSpiceDbConfig, SpiceDbConfig } from '../../../../packages/core-runtime/src/permissions/config.ts';
-import {
-  ContextAccess,
-  makeContextAccess,
-  toLegalEntityAccessObjectId,
-} from '../../../../packages/core-runtime/src/permissions/context-access.ts';
+import { ContextAccess, makeContextAccess } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../../../packages/core-runtime/src/permissions/schema.ts';
 import { ActiveApplicationCompositionService } from '../../../../packages/core-runtime/src/modules/active-application-composition.ts';
-import { coreSystemOutboxWorkers } from '../../../../packages/core-runtime/src/outbox/core-system-worker-entry.ts';
+import {
+  coreSystemOutboxWorkers,
+  corePeopleSearchOutboxWorkers,
+  PeopleSearchProjectorLive,
+  PeopleSearchSourceLive,
+  peopleSearchIngestionRegistrations,
+} from '../../../../packages/core-runtime/src/outbox/core-system-worker-entry.ts';
 import { makeOutboxRepository } from '../../../../packages/core-runtime/src/outbox/repository.ts';
-import { makeOutboxRuntime } from '../../../../packages/core-runtime/src/outbox/runtime.ts';
+import { makeOutboxRuntime, OutboxRuntime } from '../../../../packages/core-runtime/src/outbox/runtime.ts';
+import type {
+  OutboxCycleError,
+  OutboxCycleResult,
+  OutboxRuntimeService,
+} from '../../../../packages/core-runtime/src/outbox/runtime.ts';
+import { defineOutboxWorkerEntry } from '../../../../packages/core-runtime/src/outbox/process.ts';
+import { CoreSearchWorkerSnapshotLive } from '../../../../packages/core-runtime/src/search/worker-snapshot.ts';
+import { CoreSearchProjectionStoreLive } from '../../../../packages/core-runtime/src/search/persistence.ts';
+import { coreSearchIngestionRegistryLayer } from '../../../../packages/core-runtime/src/search/ingestion-registry.ts';
 import {
   ActionAuthorizationLifecycle,
   ActionAuthorizationLifecycleLive,
 } from '../../../../packages/core-runtime/src/permissions/action-authorization-lifecycle.ts';
-import { ScopedRoleMembershipLifecycleLive } from '../../../../packages/core-runtime/src/permissions/scoped-role-membership-lifecycle.ts';
 import { makeActionPermissionService } from '../../../../packages/core-runtime/src/permissions/service.ts';
-import { toScopedRoleObjectId } from '../../../../packages/core-runtime/src/permissions/scoped-role.ts';
 import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import {
   freshOutboxWorkerCompositionSnapshot,
@@ -150,20 +166,6 @@ const deleteRecipientMessagesFrom = (mailpitUrl: string, email: string) =>
     ),
     Effect.ignore,
   );
-const relationship = (
-  type: string,
-  id: string,
-  relation: string,
-  subjectType: string,
-  subjectId: string,
-  optionalRelation = '',
-) =>
-  v1.Relationship.create({
-    relation,
-    resource: { objectId: id, objectType: type },
-    subject: { object: { objectId: subjectId, objectType: subjectType }, optionalRelation },
-  });
-
 // This proof owns a throwaway DB and isolated SpiceDB schema. Never run against the demo database/graph.
 it.live(
   'accepts native invitations atomically with company admission, without granting roles or business authority',
@@ -272,46 +274,61 @@ it.live(
           tenantId,
         };
       };
-      const companyObject = (id: string) => {
-        const objectId = toLegalEntityAccessObjectId(tenantId, id);
-        if (objectId === undefined) {
-          expect.unreachable('Invalid owned company identifier');
-        }
-        return objectId;
-      };
-      const roleId = toScopedRoleObjectId({ legalEntityId: companyId, roleKey: 'company-admin', tenantId });
-      const relations = [
-        ...[adminId, ordinaryId].map((id) => relationship('tenant', tenantId, 'member', 'principal', id)),
-        ...[companyId, otherCompanyId].map((id) =>
-          relationship('legal_entity', companyObject(id), 'tenant', 'tenant', tenantId),
-        ),
-        ...[adminId, ordinaryId].map((id) =>
-          relationship('legal_entity', companyObject(companyId), 'member', 'principal', id),
-        ),
-        relationship('scoped_role', roleId, 'member', 'principal', adminId),
-        relationship('legal_entity', companyObject(companyId), 'admin', 'scoped_role', roleId, 'member'),
-        ...[companyId, otherCompanyId].flatMap((legalEntityId) =>
-          buildActionAuthorizationRelationships([
-            { actionKey: invitePersonAction.descriptor.actionKey, legalEntityId, tenantId },
-          ]),
-        ),
+      const workerRegistrations = [...coreSystemOutboxWorkers, ...corePeopleSearchOutboxWorkers];
+      const workerConsumerModuleKeys = [
+        ...new Set(workerRegistrations.map(({ descriptor }) => descriptor.consumerModuleKey)),
       ];
-      yield* Effect.promise(() =>
-        graph.promises.writeRelationships(
-          v1.WriteRelationshipsRequest.create({
-            updates: relations.map((item) => ({
-              operation: v1.RelationshipUpdate_Operation.TOUCH,
-              relationship: item,
-            })),
-          }),
+      expect(workerConsumerModuleKeys.toSorted()).toEqual(['core.authorization', 'core.identity']);
+      // Only this real entry's consumers receive native background eligibility. These are module
+      // state rows, not catalog owners or authority grants; only invite-person is released below.
+      yield* admin.executor.insert(tenantModuleStates).values(
+        workerConsumerModuleKeys.map(
+          (moduleKey) =>
+            ({
+              moduleKey,
+              state: 'active',
+              tenantId,
+              tenantModuleStateId: randomUUID(),
+            }) satisfies typeof tenantModuleStates.$inferInsert,
         ),
       );
+      const accessGraph = yield* buildAccessGraph({
+        adminUrl: pair.runtime.connectionString,
+        configuration: graphConfiguration,
+      });
+      const administratorScope = { ...actor(adminId), correlationId: 'owned-invitation-bootstrap' };
+      const bootstrap = yield* accessGraph.bootstrap.bootstrapTenantAccess({
+        legalEntityIds: [LegalEntityIdSchema.make(companyId)],
+        modules: [{ descriptors: [invitePersonAction.descriptor], moduleId: 'core.identity' }],
+        scope: administratorScope,
+      });
+      expect(bootstrap.cells.map(({ capabilityKey }) => capabilityKey)).toEqual([
+        invitePersonAction.descriptor.accessDeclaration?.key,
+      ]);
+      // The ordinary actor is a member, never an owner, access administrator or role assignee.
+      const memberAt = yield* DateTime.nowAsDate;
+      yield* accessGraph.memberships.recordMemberships(administratorScope, {
+        memberships: bootstrap.scopes.map(({ scopeId }) => ({
+          createdAt: memberAt,
+          holder: { _tag: 'Principal', principalId: PrincipalIdSchema.make(ordinaryId) },
+          id: AccessMembershipIdSchema.make(randomUUID()),
+          kind: 'member',
+          recordedBy: PrincipalIdSchema.make(adminId),
+          scopeId,
+          status: 'active',
+          tenantId: TenantIdSchema.make(tenantId),
+          validFrom: memberAt,
+        })),
+      });
+      yield* accessGraph.writer.reconcileTenant({ scope: administratorScope });
+      const accessGate = yield* buildGate({ configuration: graphConfiguration, executor: database.executor });
+      const actionGate = yield* buildActionGate({ configuration: graphConfiguration, executor: database.executor });
       const permission = createSpiceDbPermissionClient(graphConfiguration, 5000);
       const contextAccess = makeContextAccess(permission);
       const stateGate = makeModuleStateGate(makeTenantModuleStateService(database));
       const operationalScopeResolver = yield* makeOperationalScopeResolver(
         makeOperationalScopeRepository(database, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
-        contextAccess,
+        accessGate,
       );
       const runtime = makeActionRuntime(
         database,
@@ -319,6 +336,7 @@ it.live(
         makeActionPermissionService(permission),
         operationalScopeResolver,
         {
+          accessDecision: actionGate,
           contextAccess,
           databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
           moduleEntrypointGateway: makeModuleEntrypointGateway(stateGate),
@@ -447,13 +465,18 @@ it.live(
         .from(principalCompanyMemberships)
         .where(eq(principalCompanyMemberships.principalId, invited.principalRef.principalId));
       expect(unaccepted?.status).toBe('invited');
-      expect(
-        (yield* contextAccess.legalEntities({
-          legalEntityIds: [companyId],
-          principalId: invited.principalRef.principalId,
-          tenantId,
-        }))[0]?.decision,
-      ).toBe('denied');
+      // Native projection query is readonly subject data, not a fabricated authenticated operational scope.
+      const beforeAcceptance = yield* Effect.promise(() =>
+        graph.promises.checkPermission(
+          v1.CheckPermissionRequest.create({
+            consistency: { requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } },
+            permission: 'access',
+            resource: { objectId: legalEntityObjectId(tenantId, companyId), objectType: 'access_legal_entity' },
+            subject: { object: { objectId: invited.principalRef.principalId, objectType: 'access_human' } },
+          }),
+        ),
+      );
+      expect(beforeAcceptance.permissionship).toBe(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION);
       // Force a real credential-write failure AFTER the consume hook has activated the membership and queued work.
       // This schema constraint belongs only to the guarded throwaway database and is removed before the real acceptance.
       expect(intent.providerSubjectId).toMatch(/^[0-9a-f-]{36}$/u);
@@ -507,7 +530,7 @@ it.live(
       expect(membership).toMatchObject({ affiliation: 'external', revision: 2, status: 'active' });
       const lifecycleContext = yield* Layer.build(
         ActionAuthorizationLifecycleLive.pipe(
-          Layer.provide(ScopedRoleMembershipLifecycleLive),
+          Layer.provide(Layer.succeed(AccessProjectionWriter, accessGraph.writer)),
           Layer.provide(
             Layer.mergeAll(
               Layer.succeed(CoreDatabase, database),
@@ -521,20 +544,58 @@ it.live(
       const lifecycle = Context.get(lifecycleContext, ActionAuthorizationLifecycle);
       const outbox = makeOutboxRuntime(makeOutboxRepository(database.executor, crypto));
       yield* outbox.matchMessages({ compositionRevision: composition.revision });
-      const drained = yield* outbox
-        .runCycle({
-          claimOwner: 'owned-invitation-acceptance',
-          compositionRevision: composition.revision,
-          maxDeliveries: 10,
-          now: yield* DateTime.nowAsDate,
-          registrations: coreSystemOutboxWorkers.filter(
-            (worker) => worker.descriptor.workerKey === corePrincipalLifecycleSubscription.workerKey,
+      const completed = yield* Deferred.make<OutboxCycleResult, OutboxCycleError>();
+      // Observe the real cycle without replacing its repository, admission, claims or handlers.
+      const observedOutbox: OutboxRuntimeService = {
+        ...outbox,
+        runCycle: (input) => outbox.runCycle(input).pipe(Effect.onExit((exit) => Deferred.done(completed, exit))),
+      };
+      const peopleSnapshot = CoreSearchWorkerSnapshotLive.pipe(
+        Layer.provide(coreSearchIngestionRegistryLayer(peopleSearchIngestionRegistrations)),
+      );
+      const peopleSearch = PeopleSearchProjectorLive.pipe(
+        Layer.provide(
+          Layer.mergeAll(PeopleSearchSourceLive.pipe(Layer.provide(peopleSnapshot)), CoreSearchProjectionStoreLive),
+        ),
+      );
+      // The public constructor owns receiving authority and its lifetime. Core workers remain
+      // genuine Shell-hosted system registrations, never synthetic tenant module owners.
+      const workerEntry = defineOutboxWorkerEntry({
+        claimOwnerPrefix: 'owned-invitation-acceptance',
+        expectedDeployment: composition.shell.deployment,
+        layer: Layer.mergeAll(
+          peopleSearch,
+          Layer.succeed(ActionAuthorizationLifecycle, lifecycle),
+          Layer.succeed(OutboxRuntime, observedOutbox),
+          Layer.succeed(ActiveApplicationCompositionService, authority),
+        ).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(CoreDatabase, database),
+              makeDatabaseIdentityEnrollmentLive(FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+              NodeCrypto.layer,
+              Reactivity.layer,
+            ),
           ),
-          subscriptions: [corePrincipalLifecycleSubscription],
+        ),
+        registrations: workerRegistrations,
+        subscriptions: CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS,
+      });
+      const worker = yield* workerEntry
+        .runLoop({
+          config: {
+            claimOwner: 'owned-invitation-acceptance',
+            maxDeliveries: 10,
+            pollIntervalMs: 3_600_000,
+          },
         })
-        .pipe(Effect.provideService(ActionAuthorizationLifecycle, lifecycle));
+        .pipe(Effect.forkScoped);
+      const drained = yield* Deferred.await(completed).pipe(
+        Effect.timeout('10 seconds'),
+        Effect.ensuring(Fiber.interrupt(worker)),
+      );
       expect(drained.failed).toBe(0);
-      expect(drained.succeeded).toBe(2);
+      expect(drained.succeeded).toBe(4);
       const nativeCheck = (objectType: string, objectId: string, permissionKey: string) =>
         Effect.promise(() =>
           graph.promises.checkPermission(
@@ -542,38 +603,61 @@ it.live(
               consistency: { requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } },
               permission: permissionKey,
               resource: { objectId, objectType },
-              subject: { object: { objectId: invited.principalRef.principalId, objectType: 'principal' } },
+              subject: { object: { objectId: invited.principalRef.principalId, objectType: 'access_human' } },
             }),
           ),
         ).pipe(
           Effect.map((answer) => answer.permissionship === v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
         );
-      expect(yield* nativeCheck('tenant', tenantId, 'access')).toBe(true);
-      expect(yield* nativeCheck('tenant', tenantId, 'manage_identity')).toBe(false);
-      expect(yield* nativeCheck('legal_entity', companyObject(companyId), 'manage_people')).toBe(false);
-      expect(yield* nativeCheck('legal_entity', companyObject(otherCompanyId), 'access')).toBe(false);
-      expect(yield* nativeCheck('scoped_role', roleId, 'member')).toBe(false);
+      expect(yield* nativeCheck('access_tenant', tenantObjectId(tenantId), 'access')).toBe(true);
+      expect(yield* nativeCheck('access_tenant', tenantObjectId(tenantId), 'administer')).toBe(false);
+      expect(yield* nativeCheck('access_legal_entity', legalEntityObjectId(tenantId, companyId), 'administer')).toBe(
+        false,
+      );
+      expect(yield* nativeCheck('access_legal_entity', legalEntityObjectId(tenantId, otherCompanyId), 'access')).toBe(
+        false,
+      );
+
       const acceptedAudit = yield* admin.executor
         .select()
         .from(auditEvents)
         .where(and(eq(auditEvents.tenantId, tenantId), eq(auditEvents.eventType, 'auth.invitation.accepted')));
       expect(acceptedAudit).toHaveLength(1);
       expect(JSON.stringify(acceptedAudit).includes(token)).toBe(false);
-      expect(
-        (yield* contextAccess.legalEntities({
-          legalEntityIds: [companyId],
-          principalId: invited.principalRef.principalId,
-          tenantId,
-        }))[0]?.decision,
-      ).toBe('allowed');
+      expect(yield* nativeCheck('access_legal_entity', legalEntityObjectId(tenantId, companyId), 'access')).toBe(true);
       const cookie = signedIn.setCookieHeaders.map((value) => value.split(';')[0]).join('; ');
       const selectedContext = yield* authentication
         .resolveShellContext(new Headers({ cookie }))
         .pipe(
           Effect.provideService(ContextAccess, contextAccess),
+          Effect.provideService(AccessDecisionGate, accessGate),
           Effect.provideService(LegalEntityContext, makeLegalEntityContext(database)),
         );
       expect(selectedContext).toMatchObject({ identity: { legalEntityId: companyId }, state: 'authenticated' });
+      if (selectedContext.state !== 'authenticated') {
+        yield* Effect.die('Accepted invitation has no authenticated company context');
+        return;
+      }
+      const invitedScope = yield* operationalScopeResolver
+        .resolve({
+          correlationId: 'owned-invitation-no-role',
+          legalEntityScope: 'required',
+          principal: selectedContext.principal,
+        })
+        .pipe(Effect.provideService(AuthenticationNamespaceRegistry, registry));
+      const selectable = yield* accessGate.selectableLegalEntities({
+        now: yield* DateTime.nowAsDate,
+        scope: invitedScope,
+      });
+      expect(selectable).toEqual([companyId]);
+      const invitationPermission = yield* accessGate.decide({
+        carrier: { accessDeclaration: invitePersonAction.descriptor.accessDeclaration },
+        legalEntityScope: 'required',
+        now: yield* DateTime.nowAsDate,
+        scope: invitedScope,
+      });
+      expect(invitationPermission.outcome).toBe('DENIED');
+
       const expired = yield* invite(expiredRecipient);
       const [expiredIntent] = yield* admin.executor
         .select()

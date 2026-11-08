@@ -23,7 +23,15 @@ import {
 it('requires native execution provisioning, company scope and native idempotency', () => {
   const { descriptor } = mutateAgentProposalsAction;
   expect(descriptor.actionKey).toBe('core.identity.mutate-agent-proposals');
-  expect(descriptor.entrypoint.authorization).toEqual({ kind: 'action_execution', provisioning: 'explicit' });
+  expect(descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+  // The transport Action's carrier is routine, so an agent may run it; it never grants a business
+  // capability on its own (the target Action's own declaration does that).
+  expect(descriptor.accessDeclaration).toMatchObject({
+    key: 'core.identity.agent-proposal.mutate',
+    kind: 'action',
+    modes: ['run'],
+    risk: 'routine',
+  });
   expect(descriptor.legalEntityScope).toBe('required');
   expect(descriptor.idempotency).toBe('required');
   expect(descriptor.auditProfile).toBe('sensitive');

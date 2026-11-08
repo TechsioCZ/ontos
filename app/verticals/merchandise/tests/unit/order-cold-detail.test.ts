@@ -19,7 +19,9 @@ import type { CustomerDirectory } from '../../src/routes/[lang]/prodej/objednavk
 const { createElement } = rstest.requireActual<typeof React>('react');
 
 rstest.mock('../../src/api/records-consumer.ts');
-rstest.mock('../../src/api/apply-command-action-client.ts');
+rstest.mock('../../src/api/manage-catalog-action-client.ts');
+rstest.mock('../../src/api/cleanup-demo-action-client.ts');
+rstest.mock('../../src/api/change-order-status-action-client.ts');
 // Execute the first-render branch without running effects.
 rstest.mock('react', () => ({
   ...rstest.requireActual<typeof React>('react'),

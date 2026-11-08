@@ -19,6 +19,7 @@ import {
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { Schema } from 'effect';
 import type { OutboxWorkerSubscription } from '../outbox/definition.ts';
+import { defineAccessTables } from './access-schema.ts';
 import type { CompanyAffiliation, CompanyMembershipStatus } from '../permissions/company-membership.ts';
 
 import { SHARED_RUNTIME_IDENTITY } from './database-identity-manifest.ts';
@@ -26,44 +27,9 @@ import { SHARED_RUNTIME_IDENTITY } from './database-identity-manifest.ts';
 export { emailDeliveries, emailSchema, emailSettings } from './email-schema.ts';
 
 export const CORE_SCHEMA_NAME = 'core';
-
-export const CORE_TABLE_INVENTORY = [
-  'application_composition_authority',
-  'application_composition_durable_work',
-  'tenants',
-  'legal_entities',
-  'principals',
-  'principal_auth_bindings',
-  'principal_company_memberships',
-  'person_invitations',
-  'tenant_module_states',
-  'action_invocations',
-  'tenant_module_state_changes',
-  'audit_events',
-  'data_access_events',
-  'domain_events',
-  'outbox_messages',
-  'outbox_deliveries',
-  'outbox_attempts',
-  'outbox_delivery_resolutions',
-  'media_assets',
-  'media_asset_renditions',
-  'media_links',
-  'evidence_references',
-  'search_index_entries',
-  'search_projection_generations',
-  'search_projection_rebuilds',
-  'search_label_source_revisions',
-  'search_label_refresh_jobs',
-  'search_derived_repair_jobs',
-  'worker_checkpoints',
-  'agent_proposals',
-  'legal_entity_navigation_exclusions',
-  'oauth_connection_grants',
-] as const;
-
 export const ACTION_INVOCATION_STATUSES = [
   'received',
+  'proposed',
   'rejected',
   'running',
   'succeeded',
@@ -105,6 +71,14 @@ const occurredAt = () => timestamp('occurred_at', { withTimezone: true }).defaul
 const enableCoreGovernedRls = <Table>(table: { readonly enableRLS: () => Table }): Table => table.enableRLS();
 
 const SHARED_RUNTIME_ROLE = SHARED_RUNTIME_IDENTITY.role;
+/**
+ * The gateway-scoped request roles the access intent tables materialize a read (and evidence insert)
+ * policy for. Core stays owner-neutral: the role names must match the request identities the composing
+ * application enrolls (`app/database/identity-enrollment.ts`) and the canonical access intent migration
+ * (`drizzle/20261103093547_authorization-v2-access-intent`). Adding an owner here without enrolling it
+ * would create a policy for a role that never connects.
+ */
+const ACCESS_GATEWAY_REQUEST_ROLES = ['party_registry_runtime'] as const;
 
 /** The shared runtime keeps its pre-pilot unrestricted access once RLS guards a Core table. */
 const sharedRuntimeAllPolicy = (tableName: string) =>
@@ -504,7 +478,7 @@ export const actionInvocations = enableCoreGovernedRls(
       ),
       check(
         'core_action_invocations_status_ck',
-        sql`${table.status} in ('received', 'rejected', 'running', 'succeeded', 'failed', 'indeterminate', 'replayed')`,
+        sql`${table.status} in ('received', 'proposed', 'rejected', 'running', 'succeeded', 'failed', 'indeterminate', 'replayed')`,
       ),
       sharedRuntimeAllPolicy('action_invocations'),
     ],
@@ -1479,7 +1453,82 @@ export const legalEntityNavigationExclusions = coreSchema.table(
   ],
 );
 
+/** The access intent tables, materialized against this module's Core identity tables. */
+const accessTables = defineAccessTables({
+  legalEntities,
+  principals,
+  requestRoles: [...ACCESS_GATEWAY_REQUEST_ROLES],
+  tenants,
+});
+
+export const {
+  accessAgentConnections,
+  accessAssignments,
+  accessCatalogEntries,
+  accessCatalogSnapshots,
+  accessChangeDecisions,
+  accessChangeItems,
+  accessConsentSnapshots,
+  accessDecisionLogs,
+  accessDelegations,
+  accessFrozenCommands,
+  accessGrantIncarnations,
+  accessMandateGrants,
+  accessMandates,
+  accessMemberships,
+  accessOperationJournals,
+  accessProposals,
+  accessRoleRevisions,
+  accessRoles,
+  accessScopeFences,
+  accessScopes,
+  accessTeamMembers,
+  accessTeams,
+  accessWorkloadBindings,
+} = accessTables.tables;
+
+export const accessDatabaseSchema = accessTables.tables;
+export const ACCESS_TABLE_INVENTORY = accessTables.inventory;
+export const ACCESS_TABLES = accessTables.all;
+
+export const CORE_TABLE_INVENTORY = [
+  'application_composition_authority',
+  'application_composition_durable_work',
+  'tenants',
+  'legal_entities',
+  'principals',
+  'principal_auth_bindings',
+  'principal_company_memberships',
+  'person_invitations',
+  'tenant_module_states',
+  'action_invocations',
+  'tenant_module_state_changes',
+  'audit_events',
+  'data_access_events',
+  'domain_events',
+  'outbox_messages',
+  'outbox_deliveries',
+  'outbox_attempts',
+  'outbox_delivery_resolutions',
+  'media_assets',
+  'media_asset_renditions',
+  'media_links',
+  'evidence_references',
+  'search_index_entries',
+  'search_projection_generations',
+  'search_projection_rebuilds',
+  'search_label_source_revisions',
+  'search_label_refresh_jobs',
+  'search_derived_repair_jobs',
+  'worker_checkpoints',
+  'agent_proposals',
+  'legal_entity_navigation_exclusions',
+  'oauth_connection_grants',
+  ...ACCESS_TABLE_INVENTORY,
+] as const;
+
 export const coreDatabaseSchema = {
+  ...accessDatabaseSchema,
   applicationCompositionAuthority,
   applicationCompositionDurableWork,
   actionInvocations,
@@ -1544,6 +1593,7 @@ export const CORE_TABLES = [
   searchProjectionGenerations,
   searchProjectionRebuilds,
   workerCheckpoints,
+  ...ACCESS_TABLES,
   agentProposals,
   legalEntityNavigationExclusions,
 ] as const;

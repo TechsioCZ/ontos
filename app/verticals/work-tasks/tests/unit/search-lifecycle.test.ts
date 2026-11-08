@@ -7,6 +7,7 @@ import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime
 import { Effect, Exit, Layer, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { requestSearchRebuildAction } from '../../src/actions/request-search-rebuild.action.ts';
+import { workTasksRegistration } from '../../vertical.registration.ts';
 import { company, scope } from './search-fixtures.ts';
 
 const principal = {
@@ -16,14 +17,18 @@ const principal = {
   authMethod: 'session',
   legalEntityId: company,
 } as const;
-it.effect('rebuild needs explicit execution AND tenant management; denial queues no message', () =>
+it.effect('rebuild uses its canonical declaration; denial queues no message', () =>
   Effect.gen(function* test() {
     for (const [execution, management] of [
       ['allowed', 'allowed'],
       ['denied', 'allowed'],
       ['allowed', 'denied'],
     ] as const) {
-      const harness = yield* makeActionTestHarness({ actionPermission: execution, tenantPermission: management });
+      const harness = yield* makeActionTestHarness({
+        access: execution,
+        ownerRegistration: workTasksRegistration,
+        tenantPermission: management,
+      });
       const input = {
         payload: {},
         principal,
@@ -31,7 +36,7 @@ it.effect('rebuild needs explicit execution AND tenant management; denial queues
         transport: { correlationId: 'rebuild', idempotencyKey: 'rebuild-test' },
       };
       const result = yield* harness.runtime.runAction(input).pipe(Effect.exit);
-      const allowed = execution === 'allowed' && management === 'allowed';
+      const allowed = execution === 'allowed';
       expect(Exit.isSuccess(result)).toBe(allowed);
       expect(harness.snapshot().committed).toHaveLength(allowed ? 1 : 0);
       if (allowed) {
@@ -66,7 +71,8 @@ it.layer(dependencies)('task search lifecycle', (suite) => {
   suite.effect('every successful task edit queues committed search intent once, never on replay', () =>
     Effect.gen(function* test() {
       const harness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
+        access: 'allowed',
+        ownerRegistration: workTasksRegistration,
         services: [
           bindActionTestServices(applyCommandAction, {
             apply: () => Effect.succeed({ results: [], revision: 2 }),

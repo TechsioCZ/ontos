@@ -34,6 +34,14 @@ const handleRecordOwnerContribution = Effect.fn('RecordOwnerContributionAction.h
 });
 export const recordOwnerContributionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.owner-contribution.record',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'dsr', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.record-owner-contribution.access.v1',
@@ -45,7 +53,7 @@ export const recordOwnerContributionAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.record-owner-contribution',
       moduleKey: 'privacy.core',
       role: 'action',

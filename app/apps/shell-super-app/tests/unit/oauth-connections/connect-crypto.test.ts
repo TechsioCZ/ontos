@@ -1,3 +1,5 @@
+import { subjectInspectionFixture } from '../oauth-connections-admin/subject-inspection.fixture.ts';
+import { shellTestScope } from '../../support/access-decision-double.ts';
 // @rstest-environment node
 import { ContextAccess, OAuthGrantRegistry } from '@app/core-runtime';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
@@ -24,6 +26,11 @@ const session: ConnectSession = {
   companies: [{ legalEntityId: retainedGrant.legalEntityId, legalName: 'Company' }],
   displayName: 'Person',
   principalId: retainedGrant.userPrincipalId,
+  scope: shellTestScope({
+    legalEntityId: retainedGrant.legalEntityId,
+    principalId: retainedGrant.userPrincipalId,
+    tenantId: retainedGrant.tenantId,
+  }),
   sessionId: retainedGrant.sessionId ?? '',
   tenantId: retainedGrant.tenantId,
   userId: retainedGrant.userId,
@@ -58,7 +65,18 @@ const fixture = (previousProfileId: Option.Option<string>, failCrypto = false) =
             }),
         }
       : nativeCrypto;
+    const inspection = subjectInspectionFixture({
+      snapshot,
+      subjects: [
+        {
+          legalEntityId: retainedGrant.legalEntityId,
+          principalId: retainedGrant.userPrincipalId,
+          tenantId: retainedGrant.tenantId,
+        },
+      ],
+    });
     const dependencies = Layer.mergeAll(
+      inspection.layer,
       Layer.succeed(Crypto.Crypto, crypto),
       makeInstalledModuleCatalogLayer(Effect.succeed(snapshot)),
       Layer.mock(ContextAccess, { modules: () => Effect.succeed([]) }),

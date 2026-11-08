@@ -19,6 +19,7 @@ import {
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { defineOutboxWorker, extractOutboxWorkerSubscriptions } from '../../src/outbox/definition.ts';
 import { makeOutboxRepository } from '../../src/outbox/repository.ts';
+import { makeNativeOutboxWorkerFixture } from '../support/outbox-worker-native-fixture.ts';
 
 const MergeIdSchema = Schema.String.pipe(Schema.brand('OutboxWorkerActorEvidenceMergeId'));
 const payloadSchema = Schema.Struct({ mergeId: MergeIdSchema });
@@ -33,7 +34,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('outbox worker actor e
       const configuration = yield* loadDatabaseConnectionPair();
       const { executor } = yield* makeCoreDatabase(configuration.runtime);
       const { executor: adminExecutor } = yield* makeCoreDatabase(configuration.admin);
-      const compositionRevision = 'c'.repeat(64);
       const cleanup = Effect.gen(function* cleanupWorkerActorEvidence() {
         yield* adminExecutor
           .delete(applicationCompositionAuthority)
@@ -90,7 +90,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('outbox worker actor e
           (yield* executor
             .insert(actionInvocations)
             .values({
-              actionKey: 'party.registry.merge-party',
+              actionKey: 'producer.actorfixture.merge-party',
               authMethod: 'session',
               correlationId: 'merge-correlation-1',
               legalEntityId,
@@ -111,8 +111,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('outbox worker actor e
               eventType: 'PartyMerged',
               legalEntityId,
               payloadJson: { mergeId: 'merge-1' },
-              producerModuleKey: 'party.registry',
-              subjectModuleKey: 'party.registry',
+              producerModuleKey: 'producer.actorfixture',
+              subjectModuleKey: 'producer.actorfixture',
               subjectResourceId: 'merge-1',
               subjectResourceType: 'party-merge',
               tenantId,
@@ -129,43 +129,45 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('outbox worker actor e
               domainEventId: event.domainEventId,
               matchedAt: now,
               payloadJson: { mergeId: 'merge-1' },
-              producerModuleKey: 'party.registry',
+              producerModuleKey: 'producer.actorfixture',
               tenantId,
-              topic: 'party.registry.party-merged.v1',
+              topic: 'producer.actorfixture.party-merged.v1',
             })
             .returning({ messageId: outboxMessages.outboxMessageId }))[0],
         ),
       );
       yield* executor.insert(tenantModuleStates).values({
-        moduleKey: 'commerce.customer-context',
+        moduleKey: 'consumer.actorfixture',
         state: 'active',
         tenantId,
       });
       const registration = defineOutboxWorker(
         {
-          consumerModuleKey: 'commerce.customer-context',
+          consumerModuleKey: 'consumer.actorfixture',
           entrypoint: defineTenantModuleEntrypoint({
             access: 'background',
             authorization: { kind: 'owner_local_background' },
-            entrypointKey: 'commerce.customer-context.reconcile-party-merge',
-            moduleKey: 'commerce.customer-context',
+            entrypointKey: 'consumer.actorfixture.reconcile-party-merge',
+            moduleKey: 'consumer.actorfixture',
             role: 'worker',
           }),
           leaseDurationMs: 30_000,
           payloadSchema,
-          producerModuleKey: 'party.registry',
+          producerModuleKey: 'producer.actorfixture',
           retryPolicy: {
             initialBackoffMs: 1000,
             maxAttempts: 5,
             maxBackoffMs: 60_000,
             multiplier: 2,
           },
-          topic: 'party.registry.party-merged.v1',
-          workerKey: 'commerce.customer-context.reconcile-party-merge',
+          topic: 'producer.actorfixture.party-merged.v1',
+          workerKey: 'consumer.actorfixture.reconcile-party-merge',
         },
         () => Effect.void,
       );
       const repository = makeOutboxRepository(executor, crypto);
+      const claimFixture = makeNativeOutboxWorkerFixture([registration]);
+      const compositionRevision = claimFixture.revision;
       const authority = {
         authorityKey: 'active',
         phase: 'active' as const,
@@ -185,10 +187,63 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('outbox worker actor e
       });
       const claimAt = DateTime.makeUnsafe(now).pipe(DateTime.add({ milliseconds: 1000 }), DateTime.toDateUtc);
       const claimed = Option.getOrThrow(
-        yield* repository.claimNext([registration], 'worker-actor-evidence', claimAt, compositionRevision),
+        yield* claimFixture.bind(
+          [registration],
+          repository.claimNext([registration], 'worker-actor-evidence', claimAt, compositionRevision),
+        ),
       );
       expect(claimed.actorPrincipalId).toBe(principalId);
       expect(claimed.correlationId).toBe('merge-correlation-1');
+      // The event's own invocation is the originator of the asynchronous work (D7).
+      expect(claimed.originatorInvocationId).toBe(invocation.actionInvocationId);
+
+      // An event without an action invocation carries no originator, so no call can act for anyone.
+      const bareEvent = Option.getOrThrow(
+        Option.fromNullishOr(
+          (yield* executor
+            .insert(domainEvents)
+            .values({
+              eventType: 'PartyMerged',
+              legalEntityId,
+              payloadJson: { mergeId: 'merge-2' },
+              producerModuleKey: 'party.registry',
+              subjectModuleKey: 'party.registry',
+              subjectResourceId: 'merge-2',
+              subjectResourceType: 'party-merge',
+              tenantId,
+            })
+            .returning({ domainEventId: domainEvents.domainEventId }))[0],
+        ),
+      );
+      const bareMessage = Option.getOrThrow(
+        Option.fromNullishOr(
+          (yield* executor
+            .insert(outboxMessages)
+            .values({
+              domainEventId: bareEvent.domainEventId,
+              matchedAt: now,
+              payloadJson: { mergeId: 'merge-2' },
+              producerModuleKey: 'party.registry',
+              tenantId,
+              topic: 'party.registry.party-merged.v1',
+            })
+            .returning({ messageId: outboxMessages.outboxMessageId }))[0],
+        ),
+      );
+      yield* executor.insert(outboxDeliveries).values({
+        availableAt: now,
+        consumerModuleKey: registration.descriptor.consumerModuleKey,
+        outboxMessageId: bareMessage.messageId,
+        workerKey: registration.descriptor.workerKey,
+      });
+      const bare = Option.getOrThrow(
+        yield* claimFixture.bind(
+          [registration],
+          repository.claimNext([registration], 'worker-actor-evidence', claimAt, compositionRevision),
+        ),
+      );
+      expect(bare.domainEventId).toBe(bareEvent.domainEventId);
+      expect(bare.originatorInvocationId).toBeUndefined();
       return yield* Effect.void;
     }),
   );

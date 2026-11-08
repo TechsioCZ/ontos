@@ -507,7 +507,7 @@ const RecordsEditPanel = ({ base: opened, view }: { readonly base: PropertyDraft
     }
   };
   const send = (value: PropertyDraft, expectedRevision: number, command: PropertyCommand) =>
-    autosavePropertyEdit(command, expectedRevision, editUnchangedSince(base.current)).pipe(
+    autosavePropertyEdit(command, expectedRevision, editUnchangedSince(base.current), editor.reportProposal).pipe(
       Effect.tap((result) => Effect.sync(() => rememberSaved(value, result))),
     );
   const autosave = useAutosaveDraft<PropertyDraft, never>({

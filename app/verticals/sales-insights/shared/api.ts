@@ -1,3 +1,4 @@
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import {
   MicroVerticalBuildMarkerSchema,
@@ -8,9 +9,11 @@ import type { MicroVerticalReadiness, MicroVerticalOperationContext } from '@mod
 import { identity } from 'effect';
 
 // <generated-governed-http-api-imports>
-
 import { ApplyCommandActionApi } from './apis/apply-command-action.ts';
+import { AssignMetricActionApi } from './apis/assign-metric-action.ts';
+import { ChangeMetricStateActionApi } from './apis/change-metric-state-action.ts';
 import { RecordsApi } from './apis/records.ts';
+import { UpdateMetricActionApi } from './apis/update-metric-action.ts';
 // </generated-governed-http-api-imports>
 
 export type SalesInsightsReadiness = MicroVerticalReadiness;
@@ -34,9 +37,13 @@ export const salesInsightsFoundationApi = HttpApi.make('SalesInsightsApiFoundati
 
 export const salesInsightsApi = HttpApi.make('SalesInsightsApi')
   .addHttpApi(salesInsightsFoundationApi)
+  .addHttpApi(OwnerActionApprovalApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(ApplyCommandActionApi)
+  .addHttpApi(AssignMetricActionApi)
+  .addHttpApi(ChangeMetricStateActionApi)
   .addHttpApi(RecordsApi)
+  .addHttpApi(UpdateMetricActionApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);

@@ -8,7 +8,8 @@ import {
   makeOperationalScopeRepository,
   makeOperationalScopeResolver,
 } from '@app/core-runtime';
-import type { ContextAccessService } from '@app/core-runtime';
+import { makeScriptedBoundAccessGate, makeTestOperationalScopeAccess } from '@app/core-runtime/testing/access-gate';
+import { writeTestTenantScopes } from '@app/core-runtime/testing/tenant-access';
 import { AuthenticationNamespaceRegistrationSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import {
   AuthenticationNamespaceRegistry,
@@ -66,18 +67,8 @@ const makeAdmissionClock = (initial: DateTime.Utc): Clock.Clock => {
   };
 };
 
-const allowedContextResults = (keys: readonly string[]) =>
-  Effect.succeed(keys.map((key) => ({ decision: 'allowed' as const, key })));
-
-const actionContextAccess: ContextAccessService = {
-  legalEntities: ({ legalEntityIds }) => allowedContextResults(legalEntityIds),
-  modules: ({ moduleIds }) => allowedContextResults(moduleIds),
-  resources: ({ resources }) =>
-    allowedContextResults(
-      resources.map(({ moduleId, resourceId, resourceType }) => `${moduleId}:${resourceType}:${resourceId}`),
-    ),
-  tenants: ({ tenantIds }) => allowedContextResults(tenantIds),
-};
+/** The one gate this suite scripts: every protected entrypoint of the fixture is admitted. */
+const accessGate = makeScriptedBoundAccessGate('allowed');
 
 const makePrincipal = (input: {
   readonly authBindingId: string;
@@ -221,7 +212,7 @@ it.live('revokes only T1 through the governed Core action and keeps T2 admitted 
             return canonicalRepository.load(principal);
           }),
       },
-      actionContextAccess,
+      makeTestOperationalScopeAccess(),
     );
     const actionRuntime = makeActionRuntime(
       { executor: database },
@@ -230,7 +221,7 @@ it.live('revokes only T1 through the governed Core action and keeps T2 admitted 
       scopeResolver,
       {
         ...openActionRuntimeOptions,
-        contextAccess: actionContextAccess,
+        accessDecision: accessGate.bound,
         databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
       },
     );
@@ -244,7 +235,7 @@ it.live('revokes only T1 through the governed Core action and keeps T2 admitted 
         .delete(principalAuthBindings)
         .where(inArray(principalAuthBindings.tenantId, [tenantOneId, tenantTwoId]));
       yield* admin.delete(principals).where(inArray(principals.tenantId, [tenantOneId, tenantTwoId]));
-      yield* admin.delete(tenants).where(inArray(tenants.tenantId, [tenantOneId, tenantTwoId]));
+      // Core retains access intent (D27): T1's scope and fence, and so both Tenants, stay.
     });
     yield* Effect.acquireRelease(Effect.void, () => cleanup().pipe(Effect.orDie));
     yield* cleanup();
@@ -302,6 +293,8 @@ it.live('revokes only T1 through the governed Core action and keeps T2 admitted 
         tenantId: tenantTwoId,
       },
     ]);
+    // The governed revoke runs under T1's real access fence, so T1 carries the scope production bootstrap writes.
+    yield* writeTestTenantScopes(admin, { principalId: principalOneId, tenantId: tenantOneId });
 
     const resolveCurrent = (principal: typeof tenantOne, operation: string) =>
       Effect.suspend(() => {

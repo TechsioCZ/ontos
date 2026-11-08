@@ -10,8 +10,8 @@ import {
   ReadPermissionDenied,
   ReadRuntime,
 } from '@app/core-runtime';
-import type { ContextAccessResult, OAuthGrantRecord, ReadRuntimeService } from '@app/core-runtime';
-import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
+import type { OAuthGrantRecord, ReadRuntimeService } from '@app/core-runtime';
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import {
   AgentAccessGrantIdSchema,
   CONNECTION_STATUSES,
@@ -34,11 +34,13 @@ import { OAuthGrantOwnersLive } from '../../../api/oauth-connections/grant-store
 import { OAuthFlow } from '../../../api/oauth-connections/oauth-flow.ts';
 import { makeCompositionSnapshot } from '../../fixtures/application-composition.ts';
 import { grantRegistryFixture, retainedGrant } from '../oauth-connections/grant-registry-fixture.ts';
+import { administrationScopeLayer } from './administration-runtime.fixture.ts';
+import { subjectInspectionFixture } from './subject-inspection.fixture.ts';
 
 const principal: GrantAdminRequest['principal'] = {
   authBindingId: '00000000-0000-4000-8000-000000000007',
   authContextRef: 'better-auth-session:grant-admin',
-  authenticationNamespaceId: 'test.staff.better-auth.v1',
+  authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
   authMethod: 'session',
   legalEntityId: retainedGrant.legalEntityId,
   principalId: retainedGrant.userPrincipalId,
@@ -50,6 +52,8 @@ const filter = { legalEntityId: principal.legalEntityId, statuses: CONNECTION_ST
 const revoked: OAuthGrantRecord = { ...retainedGrant, revokedAt: retainedGrant.createdAt, status: 'revoked' };
 const noteDenied = new ReadPermissionDenied({ code: 'read_permission_denied', reason: 'retained owner denied' });
 const auditDenied = new OAuthAuthenticationAuditUnavailable({ cause: 'audit failed', reason: 'observer unavailable' });
+const foreignCompanyId = '00000000-0000-4000-8000-000000000098';
+const foreignTenantId = '00000000-0000-4000-8000-000000000099';
 
 interface FixtureOptions {
   readonly auditFails?: boolean;
@@ -128,44 +132,83 @@ const fixture = (options: FixtureOptions = {}) =>
     };
     const owners = Layer.merge(Layer.succeed(OAuthGrantRegistry, registry), Layer.succeed(ReadRuntime, reads));
     const readableModules = options.readableModules ?? [];
-    const installed = yield* makeInstalledModuleCatalogLoader(
-      makeCompositionSnapshot(
-        readableModules.map((moduleId) =>
-          makeModuleContractFixture({ appId: moduleId.replaceAll('.', '-'), moduleId }),
-        ),
-      ),
+    const snapshot = yield* makeCompositionSnapshot(
+      readableModules.map((moduleId) => {
+        const contract = makeModuleContractFixture({ appId: moduleId.replaceAll('.', '-'), moduleId });
+        return {
+          ...contract,
+          manifest: {
+            ...contract.manifest,
+            publicSurface: {
+              ...contract.manifest.publicSurface,
+              components: [
+                { expose: './PageRecords', key: `${moduleId}.page-records`, mfBoundaryId: 'fixtureRecords' },
+              ],
+              shellContributions: {
+                ...contract.manifest.publicSurface.shellContributions,
+                pages: [
+                  {
+                    accessDeclaration: {
+                      key: `${moduleId}.records.read`,
+                      kind: 'read',
+                      modes: ['run'],
+                      placement: { group: 'records', level: 'basic' },
+                      risk: 'routine',
+                      selectors: [],
+                    },
+                    componentKey: `${moduleId}.page-records`,
+                    contributionKey: `${moduleId}.page.records`,
+                    entrypoint: {
+                      access: 'read',
+                      authorization: { kind: 'protected' },
+                      entrypointKey: `${moduleId}.page.records`,
+                      moduleKey: moduleId,
+                      role: 'page',
+                      scope: 'tenant',
+                    },
+                    expose: './PageRecords',
+                    routePath: `/${moduleId.replaceAll('.', '-')}`,
+                  },
+                ],
+              },
+            },
+          },
+        };
+      }),
     );
+    const installed = yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
+    const inspection = subjectInspectionFixture({
+      capabilities: readableModules.map((moduleId) => ({ key: `${moduleId}.records.read`, modes: ['run'] })),
+      onScopeRead: (principalId) =>
+        Effect.gen(function* authorityRead() {
+          authorityReads.push(principalId);
+          activeReads += 1;
+          maxReads = Math.max(maxReads, activeReads);
+          yield* Effect.yieldNow;
+          activeReads -= 1;
+        }),
+      snapshot,
+      subjects: rows.flatMap((row) => [
+        {
+          kind: row.actingKind,
+          legalEntityId: row.legalEntityId,
+          principalId: row.actingPrincipalId,
+          tenantId: row.tenantId,
+        },
+        { legalEntityId: row.legalEntityId, principalId: row.userPrincipalId, tenantId: row.tenantId },
+      ]),
+    });
     const dependencies = Layer.mergeAll(
       owners,
       OAuthGrantOwnersLive.pipe(Layer.provide(owners)),
       Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      administrationScopeLayer(options.request ?? request),
+      inspection.layer,
       Layer.succeed(ContextAccess, {
-        legalEntities: ({ legalEntityIds }) =>
-          Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
-        modules: ({ legalEntityId, moduleIds, principalId, tenantId }) => {
-          const inScope = rows.some(
-            (row) =>
-              row.actingPrincipalId === principalId && row.legalEntityId === legalEntityId && row.tenantId === tenantId,
-          );
-          return Effect.gen(function* authorityRead() {
-            authorityReads.push(principalId);
-            activeReads += 1;
-            maxReads = Math.max(maxReads, activeReads);
-            yield* Effect.yieldNow;
-            activeReads -= 1;
-            const decisions: ContextAccessResult[] = [];
-            for (const key of moduleIds) {
-              decisions.push({ decision: inScope && readableModules.includes(key) ? 'allowed' : 'denied', key });
-            }
-            return decisions;
-          });
-        },
+        legalEntities: () => Effect.die('Owner company access must use subject inspection'),
+        modules: () => Effect.die('Module visibility must use subject inspection'),
         resources: () => Effect.die('Unexpected resource check'),
         tenants: () => Effect.die('Unexpected tenant check'),
-      }),
-      Layer.succeed(ActionAuthority, {
-        checkActionAuthorities: () => Effect.succeed([]),
-        checkActionProposalPermission: () => Effect.die('Unexpected single Action check'),
       }),
       Layer.succeed(OAuthConnectionCompanies, {
         names: (_tenantId, ids) => Effect.succeed(new Map(ids.map((id) => [id, 'Company']))),
@@ -286,14 +329,36 @@ it.effect(
 it.effect('rejects cross-company and cross-tenant revoked rows before the note read', () =>
   Effect.gen(function* exactCompanyNotes() {
     for (const row of [
-      { ...revoked, legalEntityId: 'other-company' },
-      { ...revoked, tenantId: 'other-tenant' },
+      { ...revoked, legalEntityId: foreignCompanyId },
+      { ...revoked, tenantId: foreignTenantId },
     ]) {
       const test = yield* fixture({ rows: [row] });
       const failure = yield* test.grants.get(row.grantId).pipe(Effect.flip);
       expect(Predicate.isTagged(failure, 'ConnectionsUnavailable')).toBe(true);
       expect(test.noteRequests).toEqual([]);
     }
+  }),
+);
+
+it.effect('never labels a retained foreign-tenant grant with requester-tenant inspection authority', () =>
+  Effect.gen(function* foreignRetainedTenant() {
+    const row: OAuthGrantRecord = {
+      ...retainedGrant,
+      // Keep principal and company IDs identical: tenant equality itself must be enforced.
+      tenantId: foreignTenantId,
+    };
+    const test = yield* fixture({ readableModules: ['work.tasks'], rows: [row] });
+    const failure = yield* test.grants.get(row.grantId).pipe(Effect.flip);
+    expect(failure).toMatchObject({
+      _tag: 'ConnectionsUnavailable',
+      cause: {
+        _tag: 'ConnectionUnavailable',
+        cause: { _tag: 'SubjectInspectionUnavailable' },
+      },
+    });
+    expect(test.authorityReads).toEqual([]);
+    expect(test.noteRequests).toEqual([]);
+    expect(test.events).toEqual([]);
   }),
 );
 
@@ -310,11 +375,11 @@ it.effect('never turns a denied retained-owner audit read into an empty successf
 it.effect('keeps request-bound native services isolated across companies and transport carriers', () =>
   Effect.gen(function* isolatedRequests() {
     const otherRequest: GrantAdminRequest = {
-      principal: { ...principal, legalEntityId: 'other-company' },
+      principal: { ...principal, legalEntityId: foreignCompanyId },
       transport: { correlationId: 'other-request', traceId: 'other-trace' },
     };
     const first = yield* fixture({ rows: [revoked] });
-    const second = yield* fixture({ request: otherRequest, rows: [{ ...revoked, legalEntityId: 'other-company' }] });
+    const second = yield* fixture({ request: otherRequest, rows: [{ ...revoked, legalEntityId: foreignCompanyId }] });
     yield* second.grants.get(revoked.grantId);
     yield* first.grants.get(revoked.grantId);
     expect(first.noteRequests).toMatchObject([{ principal, transport }]);
@@ -359,7 +424,13 @@ it.effect('retains native authority, catalog, credentials and mutation owners fr
 
 it.effect('deduplicates authority by acting principal and company and bounds independent reads to two', () =>
   Effect.gen(function* boundedReads() {
-    const rows: readonly OAuthGrantRecord[] = ['a', 'b', 'c', 'a'].map((actingPrincipalId, index) => ({
+    const identities = [
+      '00000000-0000-4000-8000-000000000031',
+      '00000000-0000-4000-8000-000000000032',
+      '00000000-0000-4000-8000-000000000033',
+    ] as const;
+    const [first, second, third] = identities;
+    const rows: readonly OAuthGrantRecord[] = [first, second, third, first].map((actingPrincipalId, index) => ({
       ...retainedGrant,
       actingPrincipalId,
       grantId: `grant-${index}`,
@@ -368,7 +439,7 @@ it.effect('deduplicates authority by acting principal and company and bounds ind
     const test = yield* fixture({ rows });
     const result = yield* test.grants.list(filter);
     expect(result).toHaveLength(4);
-    expect(test.authorityReads.toSorted()).toEqual(['a', 'b', 'c']);
+    expect(test.authorityReads.toSorted()).toEqual(identities);
     expect(test.maxReads()).toBe(2);
   }),
 );

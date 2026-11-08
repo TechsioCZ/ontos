@@ -1,3 +1,4 @@
+import { committedResult, pendingProposalMessage } from '../../../../api/action-result.ts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
@@ -13,17 +14,16 @@ import { SelectTemplate } from '@app/admin-ui/select-template';
 import { selectItem } from '../../../../ui/select-item.ts';
 import { AutosaveStatus, dialogCloseLabel, formatDate, formatMoney, PageHeader, useAutosave } from '@app/admin-ui';
 import type { AutosaveOutcome } from '@app/admin-ui';
-import { DateTime, Effect, Predicate, Random, Schema } from 'effect';
+import { DateTime, Effect, Predicate, Random } from 'effect';
 import { isRealVariant } from '../../../../../shared/domain/merchandise-model.ts';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { useEffect, useRef, useState } from 'react';
-import { ApplyCommandPayloadSchema } from '../../../../../shared/actions/apply-command.ts';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { CategoryTrail, ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
 import type { ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
 import { orderLineVatMinor } from '../../../../../shared/domain/order-totals.ts';
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
-import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
+import { executeManageCatalog } from '../../../../api/manage-catalog-action-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import {
   detailDraftInvalid,
@@ -403,25 +403,25 @@ const DetailForm = ({ canWrite, draft, onBlur, onDraftChange, product }: DetailF
   );
 };
 
-type CommandFailure = Effect.Error<ReturnType<typeof executeApplyCommand>>;
+type CommandFailure = Effect.Error<ReturnType<typeof runProductCommand>>;
 
 const idempotencyKey = Effect.all({ now: DateTime.now, random: Random.nextInt }, { concurrency: 1 }).pipe(
   Effect.map(({ now, random }) => `merchandise:product:${DateTime.toEpochMillis(now)}:${random}`),
 );
 
 /** One merchandise command; the revision the server answered with is the one the next command must expect. */
-const runProductCommand = (command: MerchandiseCommand, expectedRevision: number) =>
+const runProductCommand = (
+  command: Extract<MerchandiseCommand, { readonly _tag: 'UpdateProduct' | 'ChangePrice' }>,
+  expectedRevision: number,
+) =>
   idempotencyKey.pipe(
-    Effect.flatMap((key) =>
-      Schema.encodeEffect(ApplyCommandPayloadSchema)({ command, expectedRevision }).pipe(
-        Effect.flatMap((payload) => executeApplyCommand(payload, key, { idempotencyKey: key })),
-      ),
-    ),
+    Effect.flatMap((key) => executeManageCatalog({ command, expectedRevision }, key, { idempotencyKey: key })),
+    Effect.flatMap(committedResult),
     Effect.map((result) => result.revision),
   );
 
 const failureOutcome = (error: CommandFailure): AutosaveOutcome =>
-  Predicate.isTagged(error, 'ApplyCommandActionConflictProblem') && error.code !== 'merchandise_lifecycle_conflict'
+  Predicate.isTagged(error, 'ManageCatalogActionConflictProblem') && error.code !== 'merchandise_lifecycle_conflict'
     ? 'conflict'
     : 'failed';
 
@@ -433,6 +433,7 @@ const saveDetailEffect = (
   value: DetailDraft,
   product: ProductRecord,
   revisionRef: { current: number },
+  pending: (message: string | null) => void,
 ): Effect.Effect<AutosaveOutcome> => {
   const { patch, priceChanged, priceMinor } = detailSaveOf(value, product);
   if (Object.keys(patch).length === 0 && !priceChanged) {
@@ -455,7 +456,10 @@ const saveDetailEffect = (
       }),
     ),
     Effect.match({
-      onFailure: failureOutcome,
+      onFailure: (error) => {
+        pending(pendingProposalMessage(error) ?? null);
+        return failureOutcome(error);
+      },
       onSuccess: (): AutosaveOutcome => 'saved',
     }),
   );
@@ -481,6 +485,7 @@ export const ProductDetailView = ({
 }: ProductDetailViewProps) => {
   const k = useProductLabel();
   const { t } = useModernI18n();
+  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
   const [editableDraft, setEditableDraft] = useState(() => draftOf(product));
   // Real variants are read-only on this tab and always come from the latest product.
   // Deriving them preserves unsaved detail fields when the variants tab commits a change.
@@ -507,7 +512,7 @@ export const ProductDetailView = ({
     equals: sameDetailDraft,
     isValid: (value) => !detailDraftInvalid(value),
     runtime: browserRuntime,
-    save: (value): Effect.Effect<AutosaveOutcome> => saveDetailEffect(value, product, revisionRef),
+    save: (value): Effect.Effect<AutosaveOutcome> => saveDetailEffect(value, product, revisionRef, setPendingMessage),
     value: draft,
   });
   const dirty = autosave.pending || isMovementDraftDirty(movementDraft);
@@ -546,7 +551,10 @@ export const ProductDetailView = ({
                 {k('detail.back')}
               </Button>
               {canWrite && tab === 'detail' && (
-                <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+                <>
+                  {pendingMessage !== null && <StatusText status="error">{pendingMessage}</StatusText>}
+                  <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+                </>
               )}
             </div>
           }

@@ -4,10 +4,9 @@ import { afterAll, beforeAll, beforeEach, expect, it, rstest } from 'effect-rste
 
 import {
   changeCompanyMembership,
-  changeScopedRole,
-  loadPeople,
-  loadAllPeople,
   invitePerson,
+  loadAllPeople,
+  loadPeople,
 } from '../../src/routes/people/people-client.ts';
 
 const originalFetch = globalThis.fetch;
@@ -36,7 +35,6 @@ const principalRef = {
   tenantId: '00000000-0000-4000-8000-000000000001',
 };
 const legalEntityId = '00000000-0000-4000-8000-000000000002';
-const role = { roleKey: 'admin', scope: { _tag: 'tenant' }, tenantId: principalRef.tenantId };
 const forbiddenProblem = {
   _tag: 'ShellTargetForbiddenProblem',
   detail: 'Fixture failure',
@@ -51,26 +49,6 @@ const forbiddenResponse = () =>
   });
 
 it.layer(FetchHttpClient.layer)((test) => {
-  test.effect(
-    'gives each deliberate sensitive command a fresh idempotency key and uses an explicit tenant endpoint',
-    () =>
-      Effect.gen(function* testKeys() {
-        fetch.mockResolvedValue(Response.json({ operation: 'assign', principalRef, projection: 'pending', role }));
-        const command = { operation: 'assign', principalRef, reason: 'Správa', roleKey: 'admin' } as const;
-        expect((yield* changeScopedRole('tenant', command)).status).toBe('ok');
-        fetch.mockResolvedValue(Response.json({ operation: 'assign', principalRef, projection: 'pending', role }));
-        expect((yield* changeScopedRole('tenant', command)).status).toBe('ok');
-        const { calls } = fetch.mock;
-        expect(calls).toHaveLength(2);
-        expect(requestPath(calls[0]?.[0])).toBe('/shell-super-app-api/auth/identity/people/tenant-role');
-        const first = new Headers(calls[0]?.[1]?.headers).get('idempotency-key');
-        const second = new Headers(calls[1]?.[1]?.headers).get('idempotency-key');
-        expect(first).toMatch(/^[\da-f-]{36}$/u);
-        expect(first).not.toBe(second);
-        expect(yield* requestBody(calls[0]?.[1])).toEqual(command);
-      }),
-  );
-
   test.effect('uses selected-company membership transport and preserves pending instead of claiming success', () =>
     Effect.gen(function* testMembership() {
       const membership = {
@@ -92,20 +70,6 @@ it.layer(FetchHttpClient.layer)((test) => {
       expect(requestPath(fetch.mock.calls[0]?.[0])).toBe(
         '/shell-super-app-api/auth/identity/people/company-membership',
       );
-    }),
-  );
-
-  test.effect('reports a committed retry as conflict and never automatically resubmits it', () =>
-    Effect.gen(function* testConflict() {
-      fetch.mockResolvedValue(Response.json({ detail: 'ActionAlreadyCommitted' }, { status: 409 }));
-      const outcome = yield* changeScopedRole('company', {
-        operation: 'revoke',
-        principalRef,
-        reason: 'Odchod',
-        roleKey: 'admin',
-      });
-      expect(outcome.status).toBe('failed');
-      expect(fetch).toHaveBeenCalledTimes(1);
     }),
   );
 
@@ -153,15 +117,14 @@ it.layer(FetchHttpClient.layer)((test) => {
         scope: { _tag: 'company', legalEntityId },
         tenantId: principalRef.tenantId,
       };
+      // Organisation data only: no role assignment and no trailing membership projection on the wire.
       const person = {
         displayName: 'Jana',
         invitationDelivery: null,
         kind: 'human',
         principalRef,
         principalStatus: 'active',
-        roleAssignments: [],
         selectedCompanyMembership: null,
-        selectedCompanyMembershipProjection: null,
       };
       fetch.mockResolvedValueOnce(Response.json(first));
       fetch.mockResolvedValueOnce(Response.json({ ...first, items: [person], nextOffset: null }));

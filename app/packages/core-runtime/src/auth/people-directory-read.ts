@@ -1,6 +1,5 @@
-import { v1 } from '@authzed/authzed-node';
 import { and, asc, eq, or, sql } from 'drizzle-orm';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 
 import {
   emailDeliveries,
@@ -11,29 +10,39 @@ import {
   tenants,
 } from '../db/schema.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
-import { invitationDeliveryFromLedger, PersonInvitationDeliverySchema } from './person-invitation.ts';
 import { defineSystemModuleEntrypoint } from '../modules/module-entrypoint.ts';
-import {
-  ScopedRoleMembershipRoleSchema,
-  ScopedRoleScopeSchema,
-} from '../outbox/core-identity-scoped-role-membership-changed-v1.ts';
-import { fullyConsistent } from '../permissions/client.ts';
-import { CompanyMembershipSchema, buildCompanyMembershipUpdates } from '../permissions/company-membership.ts';
-import { toLegalEntityAccessObjectId } from '../permissions/context-access.ts';
-import { loadSpiceDbConfig } from '../permissions/config.ts';
+import { CompanyMembershipSchema } from '../permissions/company-membership.ts';
 import { PrincipalRefSchema } from '../permissions/principal-ref.ts';
-import { fromScopedRoleObjectId } from '../permissions/scoped-role.ts';
-import { openSpiceDbRpc } from '../permissions/spicedb-transaction-guard.ts';
-import { isSystemServiceRoleKey } from './system-service-roles.ts';
-import type { SpiceDbRpc } from '../permissions/spicedb-rpc.ts';
 import type { ReadFinishContext, ReadLoadContext } from '../reads/context.ts';
 import { defineRead } from '../reads/definition.ts';
 import { ReadHandlerUnavailable } from '../reads/errors.ts';
+import { invitationDeliveryFromLedger, PersonInvitationDeliverySchema } from './person-invitation.ts';
+
+/*
+ * The organisation half of the people directory: who belongs to the selected company (or to the tenant),
+ * the affiliation and membership status an administrator recorded, and the state of their invitation.
+ *
+ * It is deliberately NOT the role authority. A person's roles and role assignments are access intent, so
+ * they are read from the canonical access administration (`api/access-admin/people.ts` over
+ * `AccessPeopleCommands`) and never from a graph relationship of this read. This read therefore reports no
+ * role assignment and no membership projection: a role label or a membership projection derived from the
+ * old `scoped_role` graph would be a second, trailing answer to a question the canonical intent already
+ * owns.
+ *
+ * A platform-operated login (a warm-up reader, a service account) is excluded by its own principal kind,
+ * not by the role key it happens to hold: only `human` and `agent` principals are listed.
+ */
 
 export const PeopleDirectoryInputSchema = Schema.Struct({
   limit: Schema.Int.check(Schema.isBetween({ maximum: 100, minimum: 1 })),
   offset: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
+
+/** The exact scope this directory answers for: the tenant context, or exactly one company. */
+export const PeopleDirectoryScopeSchema = Schema.Union([
+  Schema.TaggedStruct('tenant', {}),
+  Schema.TaggedStruct('company', { legalEntityId: CompanyMembershipSchema.fields.legalEntityId }),
+]);
 
 /** This read covers the trusted selected scope, never an implicit all-company membership view. */
 export const PeopleDirectoryResultSchema = Schema.Struct({
@@ -44,18 +53,11 @@ export const PeopleDirectoryResultSchema = Schema.Struct({
       kind: Schema.Literals(['human', 'agent']),
       principalRef: PrincipalRefSchema,
       principalStatus: Schema.Literals(['active', 'disabled', 'archived']),
-      roleAssignments: Schema.Array(ScopedRoleMembershipRoleSchema),
       selectedCompanyMembership: Schema.OptionFromNullOr(CompanyMembershipSchema),
-      selectedCompanyMembershipProjection: Schema.OptionFromNullOr(
-        Schema.Struct({
-          expectedMember: Schema.Boolean,
-          observedMember: Schema.Boolean,
-        }),
-      ),
     }),
   ),
   nextOffset: Schema.OptionFromNullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
-  scope: ScopedRoleScopeSchema,
+  scope: PeopleDirectoryScopeSchema,
   tenantId: PrincipalRefSchema.fields.tenantId,
 });
 
@@ -76,7 +78,6 @@ const peopleDirectoryServices = (transaction: ScopedTransactionExecutor) => ({
       .select({
         affiliation: principalCompanyMemberships.affiliation,
         companyId: principalCompanyMemberships.legalEntityId,
-        companyStatus: legalEntities.status,
         displayName: principals.displayName,
         invitationErrorTag: emailDeliveries.errorTag,
         invitationExpired: sql<boolean | null>`${personInvitations.expiresAt} <= now()`,
@@ -87,7 +88,6 @@ const peopleDirectoryServices = (transaction: ScopedTransactionExecutor) => ({
         membershipStatus: principalCompanyMemberships.status,
         principalId: principals.principalId,
         principalStatus: principals.status,
-        tenantStatus: tenants.status,
       })
       .from(principals)
       .innerJoin(tenants, eq(tenants.tenantId, principals.tenantId))
@@ -144,194 +144,65 @@ const peopleDirectoryServices = (transaction: ScopedTransactionExecutor) => ({
 type PeopleServices = ReturnType<typeof peopleDirectoryServices>;
 type LoadedPeople = Effect.Success<ReturnType<PeopleServices['list']>>;
 
-/** None for a system service account (see isSystemServiceRoleKey), which people administration never lists. */
-export const peopleDirectoryRolesOf = Effect.fn('PeopleDirectory.rolesOf')(function* rolesOf(
-  client: SpiceDbRpc,
-  input: { readonly legalEntityId?: string; readonly principalId: string; readonly tenantId: string },
-) {
-  const relationships = yield* client.readRelationships(
-    v1.ReadRelationshipsRequest.create({
-      consistency: fullyConsistent,
-      relationshipFilter: {
-        optionalRelation: 'member',
-        optionalSubjectFilter: { optionalSubjectId: input.principalId, subjectType: 'principal' },
-        resourceType: 'scoped_role',
-      },
-    }),
-  );
-  const held = yield* Effect.forEach(
-    relationships,
-    Effect.fn(function* readRole(response: v1.ReadRelationshipsResponse) {
-      const edge = response.relationship;
-      if (
-        edge?.resource?.objectType !== 'scoped_role' ||
-        edge.relation !== 'member' ||
-        edge.subject?.object?.objectType !== 'principal' ||
-        edge.subject.object.objectId !== input.principalId ||
-        edge.subject.optionalRelation !== ''
-      ) {
-        return yield* unavailable('Unexpected role relationship');
-      }
-      const role = fromScopedRoleObjectId(edge.resource.objectId);
-      if (Option.isNone(role) || role.value.tenantId !== input.tenantId) {
-        return yield* unavailable('Role relationship has a malformed or foreign-tenant identity');
-      }
-      return role.value;
-    }),
-    { concurrency: 1 },
-  );
-  // A system account is hidden in every scope, also where it holds no role of its own.
-  if (held.some((role) => isSystemServiceRoleKey(role.roleKey))) {
-    return Option.none();
-  }
-  const roles = yield* Effect.forEach(
-    held.filter((role) => role.legalEntityId === input.legalEntityId),
-    (role) =>
-      Schema.decodeEffect(ScopedRoleMembershipRoleSchema)({
-        roleKey: role.roleKey,
-        scope:
-          role.legalEntityId === undefined
-            ? { _tag: 'tenant' }
-            : { _tag: 'company', legalEntityId: role.legalEntityId },
-        tenantId: role.tenantId,
-      }),
-    { concurrency: 1 },
-  );
-  return Option.some(roles.toSorted((left, right) => left.roleKey.localeCompare(right.roleKey)));
-});
-
-const membershipProjection = Effect.fn('PeopleDirectory.membershipProjection')(function* membershipProjection(
-  client: SpiceDbRpc,
-  row: LoadedPeople['rows'][number],
-  tenantId: string,
-) {
-  if (row.companyId === null) {
-    return null;
-  }
-  if (row.membershipStatus === null || row.companyStatus === null) {
-    return yield* unavailable('Selected membership has no exact company owner state');
-  }
-  const companyObjectId = toLegalEntityAccessObjectId(tenantId, row.companyId);
-  if (companyObjectId === undefined) {
-    return yield* unavailable('Selected company identity is invalid');
-  }
-  const relationships = yield* client.readRelationships(
-    v1.ReadRelationshipsRequest.create({
-      consistency: fullyConsistent,
-      relationshipFilter: {
-        optionalRelation: 'member',
-        optionalResourceId: companyObjectId,
-        optionalSubjectFilter: { optionalSubjectId: row.principalId, subjectType: 'principal' },
-        resourceType: 'legal_entity',
-      },
-    }),
-  );
-  if (
-    relationships.length > 1 ||
-    relationships.some(
-      ({ relationship: edge }) =>
-        edge?.resource?.objectType !== 'legal_entity' ||
-        edge.resource.objectId !== companyObjectId ||
-        edge.relation !== 'member' ||
-        edge.subject?.object?.objectType !== 'principal' ||
-        edge.subject.object.objectId !== row.principalId ||
-        edge.subject.optionalRelation !== '',
-    )
-  ) {
-    return yield* unavailable('Selected company membership graph evidence is ambiguous');
-  }
-  const [expectedUpdate] = buildCompanyMembershipUpdates({
-    affiliation: row.affiliation,
-    companyActive: row.companyStatus === 'active',
-    kind: row.kind,
-    legalEntityId: row.companyId,
-    principalId: row.principalId,
-    principalStatus: row.principalStatus,
-    status: row.membershipStatus,
-    tenantActive: row.tenantStatus === 'active',
-    tenantId,
-  });
-  return {
-    expectedMember: expectedUpdate?.operation === v1.RelationshipUpdate_Operation.TOUCH,
-    observedMember: relationships.length === 1,
-  };
-});
-
 const load = (input: typeof PeopleDirectoryInputSchema.Type, context: ReadLoadContext<PeopleServices>) =>
   context.services.list(input);
-const finish = Effect.fn('PeopleDirectory.finish')(function* finish(
+const finish = Effect.fn('PeopleDirectory.finish')(function* finishDirectory(
   _input: typeof PeopleDirectoryInputSchema.Type,
   context: ReadFinishContext<undefined, LoadedPeople>,
 ) {
-  return yield* Effect.scoped(
-    Effect.gen(function* finishOutsideSqlTransaction() {
-      const configuration = yield* loadSpiceDbConfig();
-      const client = yield* Effect.acquireRelease(
-        Effect.try({ catch: unavailable, try: () => openSpiceDbRpc(configuration, 5000) }),
-        (rpc) => Effect.sync(rpc.close),
-      );
-      const { legalEntityId, tenantId } = context.scope;
-      const items = yield* Effect.forEach(
-        context.loaded.rows,
-        Effect.fn(function* enrichPerson(row: LoadedPeople['rows'][number]) {
-          const principalRef = { principalId: row.principalId, tenantId };
-          const identity = legalEntityId === undefined ? principalRef : { ...principalRef, legalEntityId };
-          const [roles, selectedCompanyMembershipProjection] = yield* Effect.all(
-            [peopleDirectoryRolesOf(client, identity), membershipProjection(client, row, tenantId)],
-            { concurrency: 2 },
-          );
-          if (Option.isNone(roles)) {
-            return [];
-          }
-          const roleAssignments = roles.value;
-          return [
-            {
-              displayName: row.displayName,
-              invitationDelivery:
-                row.invitationId === null
-                  ? null
-                  : invitationDeliveryFromLedger({
-                      errorTag: row.invitationErrorTag,
-                      expired: row.invitationExpired,
-                      status: row.invitationStatus,
-                    }),
-              kind: row.kind,
+  const { legalEntityId, tenantId } = context.scope;
+  const items = context.loaded.rows.map((row) => {
+    const principalRef = { principalId: row.principalId, tenantId };
+    return {
+      displayName: row.displayName,
+      invitationDelivery:
+        row.invitationId === null
+          ? null
+          : invitationDeliveryFromLedger({
+              errorTag: row.invitationErrorTag,
+              expired: row.invitationExpired,
+              status: row.invitationStatus,
+            }),
+      kind: row.kind,
+      principalRef,
+      principalStatus: row.principalStatus,
+      selectedCompanyMembership:
+        row.companyId === null
+          ? null
+          : {
+              affiliation: row.affiliation,
+              legalEntityId: row.companyId,
               principalRef,
-              principalStatus: row.principalStatus,
-              roleAssignments,
-              selectedCompanyMembership:
-                row.companyId === null
-                  ? null
-                  : {
-                      affiliation: row.affiliation,
-                      legalEntityId: row.companyId,
-                      principalRef,
-                      revision: row.membershipRevision,
-                      status: row.membershipStatus,
-                    },
-              selectedCompanyMembershipProjection,
+              revision: row.membershipRevision,
+              status: row.membershipStatus,
             },
-          ];
-        }),
-        { concurrency: 4 },
-      );
-      const result = yield* Schema.decodeUnknownEffect(PeopleDirectoryResultSchema)({
-        items: items.flat(),
-        nextOffset: context.loaded.nextOffset,
-        scope: legalEntityId === undefined ? { _tag: 'tenant' } : { _tag: 'company', legalEntityId },
-        tenantId,
-      });
-      return { evidence: { resultCount: result.items.length }, result };
-    }),
-  ).pipe(Effect.mapError(unavailable));
+    };
+  });
+  const result = yield* Schema.decodeUnknownEffect(PeopleDirectoryResultSchema)({
+    items,
+    nextOffset: context.loaded.nextOffset,
+    scope: legalEntityId === undefined ? { _tag: 'tenant' } : { _tag: 'company', legalEntityId },
+    tenantId,
+  }).pipe(Effect.mapError(unavailable));
+  return { evidence: { resultCount: result.items.length }, result };
 });
 
 export const peopleDirectoryRead = defineRead(
   {
+    // The tenant/company people directory is a governed read (O62, O72): the access gate decides it, and
+    // its rows are the scope's own (the owner already filters by tenant and selected company).
+    accessDeclaration: {
+      key: 'core.identity.people-directory.list',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'list',
     entrypoint: defineSystemModuleEntrypoint({
       access: 'read',
-      authorization: { kind: 'context_permission', permission: 'module.access' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.people-directory',
       moduleKey: 'core.identity',
       role: 'api',
@@ -340,7 +211,6 @@ export const peopleDirectoryRead = defineRead(
     inputSchema: PeopleDirectoryInputSchema,
     legalEntityScope: 'optional',
     owningModuleKey: 'core.identity',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'core.identity.people-directory',
     resultSchema: PeopleDirectoryResultSchema,
@@ -348,14 +218,4 @@ export const peopleDirectoryRead = defineRead(
   },
   { finish, load },
   (transaction) => Effect.succeed(peopleDirectoryServices(transaction)),
-  (_input, scope) =>
-    scope.legalEntityId === undefined
-      ? { kind: 'tenant', permission: 'read_people' }
-      : {
-          kind: 'any_of',
-          targets: [
-            { kind: 'tenant', permission: 'read_people' },
-            { kind: 'legal_entity', legalEntityId: scope.legalEntityId, permission: 'read_people' },
-          ],
-        },
 );

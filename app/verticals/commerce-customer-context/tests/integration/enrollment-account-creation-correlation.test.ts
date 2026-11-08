@@ -143,6 +143,7 @@ const createAccountFor = (fixture: CorrelationFixture) =>
     ownerInvocationId: fixture.ownerInvocationId,
     password: Redacted.make(PASSWORD),
     tenantId: fixture.tenantId,
+    verificationOrigin: new URL(ORIGIN),
   });
 
 /** The Attempt as a lost provider answer leaves it: claimed, revision fenced, and no subject. */
@@ -341,6 +342,7 @@ it.live('reports unavailable when the first send fails, then converges and reiss
           ownerInvocationId,
           password: Redacted.make(PASSWORD),
           tenantId,
+          verificationOrigin: new URL(ORIGIN),
         });
 
       // The user row commits inside Better Auth's sign-up, but the awaited send fails right after,
@@ -459,6 +461,7 @@ it.live('re-dispatches the account-creation transition after a claim-only crash 
               ownerInvocationId: input.ownerInvocationId,
               password: Redacted.make(PASSWORD),
               tenantId: input.tenantId,
+              verificationOrigin: new URL(ORIGIN),
             })
             .pipe(
               Effect.map((result) => ({

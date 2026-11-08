@@ -31,7 +31,14 @@ import type {
   PricingMaterialEvidenceFenceExpectation,
   PricingMaterialEvidenceFenceSourceObservation,
 } from '../../src/services/material-evidence-final-validation.service.ts';
+import { verifiedTestScope } from '../support/owner-gateway-connection.fixture.ts';
 
+const scope = verifiedTestScope({
+  correlationId: 'material-evidence-production-fence-786',
+  legalEntityId: '33333333-3333-4333-8333-333333333332',
+  principalId: '44444444-4444-4444-8444-444444444442',
+  tenantId: '22222222-2222-4222-8222-222222222222',
+});
 const requestedAt = '2026-09-28T12:00:00.000Z';
 const nextMaterialBoundary = '2026-09-28T13:00:00.000Z';
 
@@ -188,7 +195,7 @@ describe('Pricing material-evidence production owner fence #786', () => {
   it.layer(live())((test) => {
     test.effect('executes the Live five-owner composition and preserves distinct owner timestamps', () =>
       Effect.gen(function* unchangedStateSucceeds() {
-        const result = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', sources);
+        const result = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', scope, sources);
 
         expect(result.observedAt).toBe('2026-09-28T12:00:10.550Z');
         expect(result.sources.map(({ observedAt }) => observedAt)).toEqual([
@@ -218,7 +225,9 @@ describe('Pricing material-evidence production owner fence #786', () => {
   it.layer(live({ catalog: changedCatalog }))((test) => {
     test.effect('fails retryably when Catalog changes from A after t1 before slow Promotion completes at t2', () =>
       Effect.gen(function* changedStateFails() {
-        const failure = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', sources).pipe(Effect.flip);
+        const failure = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', scope, sources).pipe(
+          Effect.flip,
+        );
 
         expect(failure).toBeInstanceOf(PricingMaterialEvidenceChangedAtFinalFence);
         expect(failure).toMatchObject({
@@ -251,7 +260,9 @@ describe('Pricing material-evidence production owner fence #786', () => {
   it.layer(live({ promotion: unavailablePromotion }))((test) => {
     test.effect('maps a Promotion owner outage to a typed retryable publication failure', () =>
       Effect.gen(function* ownerOutageFailsTyped() {
-        const failure = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', sources).pipe(Effect.flip);
+        const failure = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', scope, sources).pipe(
+          Effect.flip,
+        );
 
         expect(failure).toBeInstanceOf(PricingMaterialEvidenceUnverifiableFailure);
         expect(failure).toMatchObject({
@@ -713,7 +724,7 @@ it.effect('preserves equal-ref distinct Catalog occurrences through final valida
       },
       'test:1225',
     );
-    const result = yield* verifyPricingMaterialEvidenceOwnerFence(typed.candidateRef, rawSources, typed).pipe(
+    const result = yield* verifyPricingMaterialEvidenceOwnerFence(typed.candidateRef, scope, rawSources, typed).pipe(
       Effect.provideService(PricingMaterialEvidenceOwnerFinalFence, ownerFence),
     );
     expect(received).toEqual([['occurrence-a', 'occurrence-b', 'occurrence-a', 'occurrence-b']]);
@@ -735,7 +746,7 @@ it.effect('rejects omitted, extra or reordered Catalog material before any owner
     }
     for (const candidate of [rawSources.slice(1), [...rawSources, first], [...rawSources].toReversed()]) {
       let invoked = false;
-      const failure = yield* verifyPricingMaterialEvidenceOwnerFence(typed.candidateRef, candidate, typed).pipe(
+      const failure = yield* verifyPricingMaterialEvidenceOwnerFence(typed.candidateRef, scope, candidate, typed).pipe(
         Effect.provideService(PricingMaterialEvidenceOwnerFinalFence, {
           verifyImmediatelyBeforePublication: () => {
             invoked = true;
@@ -756,7 +767,7 @@ it.effect('rejects missing, extra, reordered or changed Catalog observations at 
     const typed = completeCatalogFixture1225();
     const rawSources = typed.sources.flatMap((source) => ('sourceEvidence' in source ? [source.sourceEvidence] : []));
     for (const fault of ['MISSING', 'EXTRA', 'REORDERED', 'CHANGED'] as const) {
-      const failure = yield* verifyPricingMaterialEvidenceOwnerFence(typed.candidateRef, rawSources, typed).pipe(
+      const failure = yield* verifyPricingMaterialEvidenceOwnerFence(typed.candidateRef, scope, rawSources, typed).pipe(
         Effect.provideService(PricingMaterialEvidenceOwnerFinalFence, {
           verifyImmediatelyBeforePublication: (request) => {
             const observations = request.sources.map((source) => observationFor(source, '2026-09-28T10:00:01.500Z'));
@@ -808,6 +819,7 @@ it.effect('keeps mixed-owner raw proof collisions blocked with validated Catalog
     let invoked = false;
     const failure = yield* verifyPricingMaterialEvidenceOwnerFence(
       typed.candidateRef,
+      scope,
       [...rawSources, colliding],
       typed,
     ).pipe(

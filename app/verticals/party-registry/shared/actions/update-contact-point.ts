@@ -8,7 +8,6 @@ import {
   ContactPointPrivacyClassificationSchema,
   ContactPointProvenanceSchema,
   ContactPointTimestampSchema,
-  ContactPointVerificationSchema,
 } from '../domain/contact-point.ts';
 import { PartyContactPointRefSchema } from '../resources/party-contact-point.ts';
 
@@ -28,10 +27,6 @@ const ContactPointMetadataChangeSchema = Schema.Union([
     type: Schema.Literal('END_ADDRESS_PURPOSE'),
   }),
   Schema.Struct({
-    type: Schema.Literal('ENRICH_VERIFICATION'),
-    verification: ContactPointVerificationSchema,
-  }),
-  Schema.Struct({
     provenance: ContactPointProvenanceSchema,
     type: Schema.Literal('ADD_PROVENANCE'),
   }),
@@ -47,7 +42,6 @@ const ContactPointMetadataChangeSchema = Schema.Union([
         privacyClassification: ContactPointPrivacyClassificationSchema,
         provenance: ContactPointProvenanceSchema,
         validFrom: ContactPointTimestampSchema,
-        verification: ContactPointVerificationSchema,
       }),
     ),
     type: Schema.Literal('CORRECT_CONTACT_POINT'),

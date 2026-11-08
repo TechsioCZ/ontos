@@ -103,6 +103,29 @@ export const persistenceService = (transaction: Transaction, scope: OperationalS
       Effect.mapError(unavailable),
       Effect.map(([row]): StateRow | undefined => row),
     );
+  const loadSearchStateRow = () =>
+    transaction
+      .select({
+        legalEntityId: financeStates.legalEntityId,
+        revision: financeStates.revision,
+        state: financeStates.state,
+        tenantId: financeStates.tenantId,
+      })
+      .from(financeStates)
+      .where(scopeWhere)
+      .limit(1)
+      .pipe(
+        Effect.mapError(unavailable),
+        Effect.flatMap(([row]) => {
+          if (row === undefined) {
+            return Effect.succeed<StateRow | undefined>(row);
+          }
+          if (row.tenantId !== scope.tenantId || row.legalEntityId !== legalEntityId) {
+            return Effect.fail(unavailable());
+          }
+          return Effect.succeed<StateRow>({ revision: row.revision, state: row.state });
+        }),
+      );
   const documents = {
     loadDocument: (documentId: string) =>
       transaction
@@ -129,6 +152,7 @@ export const persistenceService = (transaction: Transaction, scope: OperationalS
   };
   return Effect.succeed({
     ...documents,
+    loadSearchStateRow,
     loadStateRow: () => loadStateRow,
     ...financeStateRepository({
       insert: (state) =>

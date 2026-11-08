@@ -5,7 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { OperationalScope, ReadLoadContext, ResolvedReadPermissionTarget } from '@app/core-runtime';
+import type { ReadHandlerContext } from '@app/core-runtime';
 import { Effect, Match } from 'effect';
 import {
   RetailPortalProfileBindingReadRequestSchema,
@@ -15,11 +15,8 @@ import type {
   RetailPortalProfileBindingReadRequest,
   RetailPortalProfileBindingReadResponse,
 } from '../../shared/apis/retail-portal-profile-binding-read.ts';
-import type { RetailPermissionReader } from '../integrations/retail-permission-reader.ts';
-import {
-  prepareRetailPermissions,
-  profileServicesWithRetailPermissionsForVerifiedScope,
-} from '../profile-service-factory.ts';
+import { profileServicesForVerifiedScope } from '../profile-service-factory.ts';
+import { retailProfileOwnerFacts } from './read-owner-facts.ts';
 
 export interface RetailPortalProfileBindingReadServices {
   readonly readBinding: (
@@ -28,11 +25,6 @@ export interface RetailPortalProfileBindingReadServices {
     tenantId: string,
   ) => Effect.Effect<RetailPortalProfileBindingReadResponse, ReadHandlerNotFound | ReadHandlerUnavailable>;
 }
-
-/** The services a Read's `load` uses, over the Retail Portal permission snapshot its `prepare` read. */
-type RetailPortalProfileBindingReadServicesFor = (
-  readRetailPermissions: RetailPermissionReader,
-) => RetailPortalProfileBindingReadServices;
 
 const notFound = () =>
   new ReadHandlerNotFound({
@@ -78,25 +70,9 @@ const readRetailPortalProfileBindingFromServices = (
   );
 };
 
-export const retailPortalProfileBindingReadPermissionTarget = (
-  input: RetailPortalProfileBindingReadRequest,
-  scope: OperationalScope,
-): ResolvedReadPermissionTarget => ({
-  businessPermission: {
-    permission: 'retail.profile.read',
-    target: {
-      kind: 'retail_profile',
-      legalEntityId: scope.legalEntityId ?? '',
-      profileId: input.profileRef.resourceId,
-      tenantId: scope.tenantId,
-    },
-  },
-  kind: 'business_permission',
-});
-
 const retailPortalProfileBindingReadEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.retail-portal-profile-binding-read',
   moduleKey: 'commerce.customer-context',
   role: 'api',
@@ -104,7 +80,16 @@ const retailPortalProfileBindingReadEntrypoint = defineTenantModuleEntrypoint({
 
 export const retailPortalProfileBindingReadRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.retail-portal-profile-binding.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'portal-access', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
+    accessOwnerFacts: (input) => retailProfileOwnerFacts(input, 'retail.profile.read'),
     entrypoint: retailPortalProfileBindingReadEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',
@@ -113,30 +98,23 @@ export const retailPortalProfileBindingReadRead = defineRead(
     inputSchema: RetailPortalProfileBindingReadRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: 'commerce.customer-context',
-    permissionTarget: 'business_permission',
     policies: [],
     readKey: 'commerce.customer-context.api.retail-portal-profile-binding-read',
     resultSchema: RetailPortalProfileBindingReadResponseSchema,
     schemaVersion: '1',
   },
-  {
-    prepare: (input, context) => prepareRetailPermissions(context.scope, input.profileRef.resourceId),
-    load: (input, context: ReadLoadContext<RetailPortalProfileBindingReadServicesFor, RetailPermissionReader>) =>
-      readRetailPortalProfileBindingFromServices(
-        input,
-        context.scope.principalId,
-        context.scope.tenantId,
-        context.scope.legalEntityId,
-        context.services(context.prepared),
-      ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
-  },
+  (input, context: ReadHandlerContext<RetailPortalProfileBindingReadServices>) =>
+    readRetailPortalProfileBindingFromServices(
+      input,
+      context.scope.principalId,
+      context.scope.tenantId,
+      context.scope.legalEntityId,
+      context.services,
+    ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
   (transaction, scope) =>
-    profileServicesWithRetailPermissionsForVerifiedScope(transaction, scope).pipe(
+    profileServicesForVerifiedScope(transaction, scope).pipe(
       Effect.map(
-        (withRetailPermissions): RetailPortalProfileBindingReadServicesFor =>
-          (readRetailPermissions): RetailPortalProfileBindingReadServices =>
-            withRetailPermissions(readRetailPermissions).retailPortalProfileBindingRead,
+        ({ retailPortalProfileBindingRead }): RetailPortalProfileBindingReadServices => retailPortalProfileBindingRead,
       ),
     ),
-  retailPortalProfileBindingReadPermissionTarget,
 );

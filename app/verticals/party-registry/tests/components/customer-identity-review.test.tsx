@@ -57,8 +57,8 @@ const partyRef = {
 const instant = '2026-10-15T10:00:00.000Z';
 const candidateCase = Schema.decodeSync(DuplicateCandidateDetailResponseSchema)({
   candidate: {
-    displayName: 'Submitted identity',
     evidenceRefs: ['signup:42'],
+    firstName: 'Submitted identity',
     officialIdentifiers: [],
     partyType: 'PERSON',
     provenance: { method: 'MANUAL_ENTRY', source: 'signup' },
@@ -82,8 +82,11 @@ const candidateCase = Schema.decodeSync(DuplicateCandidateDetailResponseSchema)(
 });
 const party = Schema.decodeSync(PartySchema)({
   archivedAt: null,
+  businessName: null,
   createdAt: instant,
   displayName: 'Existing identity',
+  firstName: 'Existing identity',
+  lastName: null,
   partyRef,
   partyType: 'PERSON',
   revision: 2,
@@ -129,7 +132,6 @@ beforeEach(() => {
   rstest.mocked(executePartyDetail).mockReturnValue(
     Effect.succeed({
       currentFactAssertions: [],
-      factHistory: Option.none(),
       party,
       resolution: { aliasChain: [], canonicalPartyRef: partyRef, kind: 'DIRECT', requestedPartyRef: partyRef },
     }),
@@ -340,7 +342,6 @@ it.effect('matching submits the explicitly chosen second candidate, not the firs
     rstest.mocked(executePartyDetail).mockImplementation((input) =>
       Effect.succeed({
         currentFactAssertions: [],
-        factHistory: Option.none(),
         party: { ...party, partyRef: input.partyRef },
         resolution: {
           aliasChain: [],
@@ -379,7 +380,6 @@ for (const state of ['archived', 'alias', 'forbidden', 'not-candidate'] as const
         rstest.mocked(executePartyDetail).mockReturnValue(
           Effect.succeed({
             currentFactAssertions: [],
-            factHistory: Option.none(),
             party: { ...party, archivedAt: state === 'archived' ? Option.some(party.createdAt) : Option.none() },
             resolution: {
               aliasChain: state === 'alias' ? [partyRef] : [],

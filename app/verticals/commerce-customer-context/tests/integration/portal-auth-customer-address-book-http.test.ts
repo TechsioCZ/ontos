@@ -2,7 +2,10 @@ import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gatewa
 import { ActiveApplicationCompositionService, ReadRuntime } from '@app/core-runtime';
 import type { ReadRuntimeService } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
-import { makeGatewayPrincipalVerifierLayer } from '@app/gateway-principal-verifier/server';
+import {
+  bindGatewayPrincipalVerifier,
+  makeGatewayPrincipalVerifierLayer,
+} from '@app/gateway-principal-verifier/server';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { betterAuth } from 'better-auth';
@@ -103,6 +106,49 @@ const gatewayClock: Clock.Clock = {
   monotonicTimeNanosUnsafe: () => BigInt(epochMillis) * 1_000_000n,
   sleep: () => Effect.never,
 };
+
+const signedFixtureCustomer = Effect.fn('AddressBookFixture.signedCustomer')(function* signedCustomer(
+  input: CustomerAuthorityInput,
+  compositionRevision: string,
+  privateKey: Parameters<SignJWT['sign']>[0],
+  issuer: string,
+  now: number,
+) {
+  const token = yield* Effect.promise(() =>
+    new SignJWT({
+      compositionRevision,
+      principal: {
+        authBindingId: customerBindingId,
+        authContextRef: input.sessionRef,
+        authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+        authMethod: 'session',
+        legalEntityId,
+        principalId: customerPrincipalId,
+        tenantId,
+      },
+      targetBuildMarker: ultramodernApiMarker.buildMarker,
+      ver: EXTERNAL_GATEWAY_ASSERTION_VERSION,
+    })
+      .setProtectedHeader({ alg: 'EdDSA', kid: 'address-book-test', typ: 'JWT' })
+      .setIssuer(issuer)
+      .setAudience('commerce-customer-context')
+      .setSubject(customerPrincipalId)
+      .setIssuedAt(now)
+      .setExpirationTime(now + 300)
+      .setJti('00000000-0000-4000-8000-000000000010')
+      .sign(privateKey),
+  );
+  const principal = yield* bindGatewayPrincipalVerifier('commerce-customer-context', ultramodernApiMarker)
+    .verifyAndRedeem(Redacted.make(`Bearer ${token}`), { redemption: { consume: () => Effect.void } })
+    .pipe(Effect.orDie);
+  return {
+    authBindingId: customerBindingId,
+    partyId,
+    principal,
+    principalId: customerPrincipalId,
+    profileId,
+  };
+});
 
 const makeFixture = (mode: Mode) =>
   Effect.gen(function* addressBookTransportFixture() {
@@ -230,7 +276,7 @@ const makeFixture = (mode: Mode) =>
         authorityCalls.push(input);
         return mode === 'denied'
           ? Effect.fail(new CustomerAuthorityRejected())
-          : Effect.succeed({ authBindingId: customerBindingId, partyId, principalId: customerPrincipalId, profileId });
+          : signedFixtureCustomer(input, snapshot.composition.revision, privateKey, issuer, now);
       },
     };
     const services = Layer.mergeAll(

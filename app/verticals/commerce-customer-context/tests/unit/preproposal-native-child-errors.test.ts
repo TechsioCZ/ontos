@@ -5,7 +5,11 @@ import { NodeServices } from '@effect/platform-node';
 import { Cause, Effect, Exit, Option, Schema } from 'effect';
 import { expect, it, rs } from 'effect-rstest';
 
-import { openNativeChild } from '../support/preproposal-basis-native.ts';
+import {
+  NativeGovernedSingletonPolicySchema,
+  openNativeChild,
+  selectNativeFederationSingletons,
+} from '../support/preproposal-basis-native.ts';
 
 const secret = 'dummy-auth-secret-never-report';
 const credential = ['dummy', 'db', 'credential', 'never', 'report'].join('-');
@@ -277,3 +281,50 @@ it.live(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   { timeout: 2000 },
 );
+
+it('rejects missing malformed empty and duplicate native singleton policy', () => {
+  const decode = Schema.decodeUnknownSync(Schema.fromJsonString(NativeGovernedSingletonPolicySchema));
+  expect(decode('["react","react-dom"]')).toEqual(['react', 'react-dom']);
+  for (const invalid of [undefined, 'not-json', '{}', '[]', '[""]', '["react","react"]']) {
+    expect(() => decode(invalid)).toThrow();
+  }
+});
+
+it.effect('selects only canonical governed singleton demands from real manifest shape', () =>
+  Effect.gen(function* governedManifestSelection() {
+    const selected = yield* selectNativeFederationSingletons({
+      governedPackages: ['react'],
+      role: 'host',
+      shared: [
+        { name: 'react', requiredVersion: '19.2.7', singleton: true },
+        { name: 'effect/Predicate', requiredVersion: '4.0.7', singleton: true },
+      ],
+    });
+    expect(selected).toEqual([{ packageName: 'react', version: '19.2.7' }]);
+    expect(
+      yield* selectNativeFederationSingletons({ governedPackages: ['react'], role: 'remote', shared: [] }),
+    ).toEqual([]);
+  }),
+);
+
+for (const shared of [
+  [],
+  [{ name: 'react', requiredVersion: '19.2.7', singleton: false }],
+  [{ name: 'react', singleton: true }],
+  [{ name: 'react', requiredVersion: '', singleton: true }],
+  [
+    { name: 'react', requiredVersion: '19.2.7', singleton: true },
+    { name: 'react', requiredVersion: '19.2.7', singleton: true },
+  ],
+]) {
+  it.effect('refuses missing or conflicting governed host singleton evidence', () =>
+    Effect.gen(function* invalidManifestSelection() {
+      const failed = yield* selectNativeFederationSingletons({
+        governedPackages: ['react'],
+        role: 'host',
+        shared,
+      }).pipe(Effect.flip);
+      expect(failed).toMatchObject({ stage: 'actual-mf-governed-singleton' });
+    }),
+  );
+}

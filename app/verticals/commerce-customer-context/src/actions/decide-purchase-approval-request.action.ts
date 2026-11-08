@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug decide-purchase-approval-request
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import {
   DecidePurchaseApprovalRequestPayloadSchema,
@@ -18,7 +18,7 @@ import { purchasingApprovalWorkflowForScope } from '../persistence/purchasing-ap
 import {
   recordPurchasingApprovalRequestResources,
   recordPurchasingApprovalResourceAccess,
-  purchasingApprovalPermissionTarget,
+  purchasingApprovalOwnerFacts,
   trustedPurchasingContext,
 } from './purchasing-approval-action-support.ts';
 import { purchasingApprovalPolicy } from '../policies/purchasing-approval.policy.ts';
@@ -121,28 +121,31 @@ const handleDecidePurchaseApprovalRequest = Effect.fn('DecidePurchaseApprovalReq
 
 export const decidePurchaseApprovalRequestAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.purchase-approval-request.decide',
+      kind: 'action',
+      modes: ['run', 'propose'],
+      placement: { group: 'purchasing-approval', level: 'manage' },
+      risk: 'critical',
+      selectors: ['all'],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.decide-purchase-approval-request.access.v1',
     },
+    accessOwnerFacts: (payload) =>
+      purchasingApprovalOwnerFacts({ counterpartyRef: payload.counterpartyRef, storefrontId: payload.storefrontId }),
+    accessTarget: (payload) => ({ moduleKey: MODULE_KEY, recordKey: payload.requestRef.resourceId }),
     actionKey: 'commerce.customer-context.decide-purchase-approval-request',
     auditEvidenceSchema: DecidePurchaseApprovalRequestAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission((payload: DecidePurchaseApprovalRequestPayload, scope) =>
-      purchasingApprovalPermissionTarget({
-        counterpartyRef: payload.counterpartyRef,
-        permission: 'counterparty.approval.decide',
-        scope,
-        storefrontId: payload.storefrontId,
-      }),
-    ),
     domainErrorSchema: DecidePurchaseApprovalRequestRejected,
     domainEvents: {
       'commerce.customer-context.approval-decision-recorded.v1': ApprovalDecisionRecordedEventSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.decide-purchase-approval-request',
       moduleKey: MODULE_KEY,
       role: 'action',

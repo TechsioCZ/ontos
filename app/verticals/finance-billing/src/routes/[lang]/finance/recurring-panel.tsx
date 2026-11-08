@@ -18,8 +18,8 @@ import { useState } from 'react';
 import type { RecurringTemplate, VatRate } from '../../../../shared/apis/records.ts';
 import { addMonths, monthOf } from '../../../../shared/domain/finance-planning.ts';
 import { computeInvoiceTotals } from '../../../../shared/domain/invoice-totals.ts';
-import { monthLabel, outcomeMessage, parseAmountMinor } from './finance-ui.tsx';
-import type { FinanceCommandDraft, FinanceViewModel } from './finance-ui.tsx';
+import { isPendingApproval, monthLabel, outcomeMessage, outcomeNotice, parseAmountMinor } from './finance-ui.tsx';
+import type { FinanceCommandDraft, FinanceNotice, FinanceViewModel } from './finance-ui.tsx';
 
 const templateTotal = (template: RecurringTemplate) => computeInvoiceTotals(template.lines)?.totalMinor ?? 0;
 
@@ -47,10 +47,12 @@ interface GenerationResult {
   readonly created: readonly string[];
   readonly duplicates: readonly RecurringTemplate[];
   readonly failed: readonly string[];
+  /** Templates whose invoice an approver must still accept: nothing was generated yet, and nothing failed. */
+  readonly pending: readonly string[];
 }
 
 /** S07.R3 / S07-05: rent templates, per-period generation with duplicate protection. */
-const recurringPanelGenerateProgram = Effect.fn('Finance.generate')(function* recurringPanelGenerateProgram(
+export const recurringPanelGenerateProgram = Effect.fn('Finance.generate')(function* recurringPanelGenerateProgram(
   context: Pick<
     ReturnType<typeof useRecurringPanel>,
     'period' | 'setDuplicateTarget' | 'setResult' | 'setRunning' | 'vm'
@@ -62,6 +64,7 @@ const recurringPanelGenerateProgram = Effect.fn('Finance.generate')(function* re
   const created: string[] = [];
   const duplicates: RecurringTemplate[] = [];
   const failed: string[] = [];
+  const pending: string[] = [];
   yield* Effect.forEach(
     targets,
     (template) =>
@@ -77,6 +80,8 @@ const recurringPanelGenerateProgram = Effect.fn('Finance.generate')(function* re
             Effect.sync(() => {
               if (outcome.ok) {
                 created.push(outcome.invoice?.number ?? template.name);
+              } else if (isPendingApproval(outcome)) {
+                pending.push(template.name);
               } else if (outcome.reason?.includes('recurring_period_already_generated') === true) {
                 duplicates.push(template);
               } else {
@@ -88,7 +93,7 @@ const recurringPanelGenerateProgram = Effect.fn('Finance.generate')(function* re
     { concurrency: 1, discard: true },
   );
   setRunning(false);
-  setResult({ created, duplicates, failed });
+  setResult({ created, duplicates, failed, pending });
   if (targets.length === 1 && duplicates.length === 1) {
     setDuplicateTarget(duplicates[0]);
   }
@@ -111,7 +116,14 @@ const recurringPanelGenerateDuplicateProgram = Effect.fn('Finance.generateDuplic
     );
     setDuplicateTarget(undefined);
     if (outcome.ok) {
-      setResult({ created: [outcome.invoice?.number ?? duplicateTarget.name], duplicates: [], failed: [] });
+      setResult({
+        created: [outcome.invoice?.number ?? duplicateTarget.name],
+        duplicates: [],
+        failed: [],
+        pending: [],
+      });
+    } else if (isPendingApproval(outcome)) {
+      setResult({ created: [], duplicates: [], failed: [], pending: [duplicateTarget.name] });
     }
   },
 );
@@ -129,11 +141,11 @@ const recurringPanelCreateTemplateProgram = Effect.fn('Finance.createTemplate')(
     const issueDay = Number(draft.issueDay);
     const dueDays = Number(draft.dueDays);
     if (customer === undefined || draft.name.trim() === '' || draft.description.trim() === '') {
-      setFormError('Vyberte nájemce a vyplňte název a popis položky.');
+      setFormError({ status: 'error', text: 'Vyberte nájemce a vyplňte název a popis položky.' });
       return;
     }
     if (amountMinor === undefined || amountMinor === 0) {
-      setFormError('Zadejte měsíční částku bez DPH.');
+      setFormError({ status: 'error', text: 'Zadejte měsíční částku bez DPH.' });
       return;
     }
     if (
@@ -144,7 +156,7 @@ const recurringPanelCreateTemplateProgram = Effect.fn('Finance.createTemplate')(
       dueDays < 1 ||
       dueDays > 90
     ) {
-      setFormError('Den vystavení musí být 1–28 a splatnost 1–90 dní.');
+      setFormError({ status: 'error', text: 'Den vystavení musí být 1–28 a splatnost 1–90 dní.' });
       return;
     }
     const createRecurringTemplateCommand: FinanceCommandDraft<'CreateRecurringTemplate'> = {
@@ -167,7 +179,7 @@ const recurringPanelCreateTemplateProgram = Effect.fn('Finance.createTemplate')(
       setDraft(emptyTemplate);
       setFormError(undefined);
     } else {
-      setFormError(outcomeMessage(vm, outcome));
+      setFormError(outcomeNotice(vm, outcome));
     }
   },
 );
@@ -195,7 +207,8 @@ const recurringPanelPrepareSelectedProgram = Effect.fn('Finance.prepareSelected'
       });
       setBulkSelected(new Set());
     } else {
-      setBulkResult({ kind: 'error', text: outcomeMessage(vm, outcome) });
+      const notice = outcomeNotice(vm, outcome);
+      setBulkResult({ kind: notice.status, text: notice.text });
     }
   },
 );
@@ -207,12 +220,15 @@ const useRecurringPanel = (vm: FinanceViewModel) => {
   const [period, setPeriod] = useState(nextMonth);
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState<TemplateDraft>(emptyTemplate);
-  const [formError, setFormError] = useState<string>();
+  const [formError, setFormError] = useState<FinanceNotice>();
   const [result, setResult] = useState<GenerationResult>();
   const [duplicateTarget, setDuplicateTarget] = useState<RecurringTemplate>();
   const [running, setRunning] = useState(false);
   const [bulkSelected, setBulkSelected] = useState<ReadonlySet<string>>(new Set());
-  const [bulkResult, setBulkResult] = useState<{ readonly kind: 'error' | 'success'; readonly text: string }>();
+  const [bulkResult, setBulkResult] = useState<{
+    readonly kind: 'default' | 'error' | 'success';
+    readonly text: string;
+  }>();
   const { customers } = vm.references;
   const set = (patch: Partial<TemplateDraft>) => setDraft((current) => ({ ...current, ...patch }));
 
@@ -371,6 +387,12 @@ const RecurringGeneration = (model: ReturnType<typeof useRecurringPanel>) => {
             <StatusText showIcon size="sm" status="warning">
               Přeskočeno kvůli ochraně proti duplicitě ({monthLabel(period)} už existuje):{' '}
               {result.duplicates.map((template) => template.name).join(', ')}
+            </StatusText>
+          )}
+          {result.pending.length > 0 && (
+            <StatusText showIcon size="sm" status="default">
+              {vm.t('finance-billing.demo.feedback.pendingApproval')} ({monthLabel(period)}):{' '}
+              {result.pending.join(', ')}
             </StatusText>
           )}
           {result.failed.map((failure) => (
@@ -697,8 +719,8 @@ const RecurringTemplateEditor = (model: ReturnType<typeof useRecurringPanel>) =>
         }}
       >
         {formError !== undefined && (
-          <StatusText showIcon size="sm" status="error">
-            {formError}
+          <StatusText showIcon size="sm" status={formError.status}>
+            {formError.text}
           </StatusText>
         )}
         {customers.length === 0 && (

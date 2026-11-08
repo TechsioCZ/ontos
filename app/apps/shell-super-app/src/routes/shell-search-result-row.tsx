@@ -65,19 +65,37 @@ const titleClassName = {
 /** Native `<mark>`, so the highlight reaches assistive technology instead of being colour alone. */
 const markClassName = 'bg-primary-light font-semibold text-fg-primary';
 
-const Title = ({ query, title }: { readonly query: string; readonly title: string }) => (
-  <>
-    {shellSearchTitleSegments(title, query).map((segment) =>
-      segment.matched ? (
-        <mark className={markClassName} key={segment.start}>
-          {segment.text}
-        </mark>
-      ) : (
-        segment.text
-      ),
-    )}
-  </>
-);
+/**
+ * The hit's own title with the query highlighted. A hit whose governed name is not visible shows the
+ * caller's own neutral fallback (O17, O58) instead of a protected name or a technical identifier.
+ */
+/** The neutral name shown when the owner withholds a result's name. */
+const NAME_HIDDEN_KEY = 'shell.search.name_hidden';
+
+const Title = ({
+  fallback,
+  query,
+  title,
+}: {
+  readonly fallback: string;
+  readonly query: string;
+  readonly title: string | undefined;
+}) =>
+  title === undefined ? (
+    fallback
+  ) : (
+    <>
+      {shellSearchTitleSegments(title, query).map((segment) =>
+        segment.matched ? (
+          <mark className={markClassName} key={segment.start}>
+            {segment.text}
+          </mark>
+        ) : (
+          segment.text
+        ),
+      )}
+    </>
+  );
 
 /**
  * One authorized search hit as an ordinary link inside the caller's list: the title with the query highlighted, at
@@ -105,7 +123,7 @@ export const ShellSearchResultRow = ({
   const variantSku = matchedVariant?.sku;
   // A highlight can split a word across DOM nodes. Keep the link name intact while retaining every visible detail.
   const accessibleLabel = [
-    result.title,
+    result.title ?? t(NAME_HIDDEN_KEY),
     ...context,
     variantName,
     variantSku,
@@ -123,15 +141,19 @@ export const ShellSearchResultRow = ({
       >
         <span className="grid min-w-0 gap-50">
           <span className={titleClassName[density]}>
-            <Title query={query} title={result.title} />
+            <Title fallback={t(NAME_HIDDEN_KEY)} query={query} title={result.title} />
           </span>
           {context.length === 0 && variantName === undefined && variantSku === undefined ? null : (
             <span className="truncate text-fg-secondary text-xs">
               {context.join(' · ')}
               {context.length > 0 && (variantName !== undefined || variantSku !== undefined) ? ' · ' : null}
-              {variantName === undefined ? null : <Title query={query} title={variantName} />}
+              {variantName === undefined ? null : (
+                <Title fallback={t(NAME_HIDDEN_KEY)} query={query} title={variantName} />
+              )}
               {variantName !== undefined && variantSku !== undefined ? ' · ' : null}
-              {variantSku === undefined ? null : <Title query={query} title={variantSku} />}
+              {variantSku === undefined ? null : (
+                <Title fallback={t(NAME_HIDDEN_KEY)} query={query} title={variantSku} />
+              )}
             </span>
           )}
         </span>

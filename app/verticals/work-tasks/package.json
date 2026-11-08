@@ -11,8 +11,6 @@
     "./contracts/records": "./shared/apis/records.ts",
     "./outbox/work-tasks-search-rebuild-requested-v1": "./shared/outbox/work-tasks-search-rebuild-requested-v1.ts",
     "./outbox/work-tasks-search-refresh-requested-v1": "./shared/outbox/work-tasks-search-refresh-requested-v1.ts",
-    "./permissions/work.tasks.read_all": "./shared/permissions/work-tasks-read-all.ts",
-    "./permissions/work.tasks.write_all": "./shared/permissions/work-tasks-write-all.ts",
     "./resources/task": "./shared/resources/task.ts",
     "./resources/task-collection": "./shared/resources/task-collection.ts",
     "./Route": "./src/federation-entry.tsx",

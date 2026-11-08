@@ -10,18 +10,14 @@ import { partySubjectKeyFromString } from '../../shared/domain/identity-contract
 import type {
   PartyOfficialIdentifierRecord,
   PartyRecord,
-  duplicateCandidateCaseParties,
   duplicateCandidateCases,
   parties,
   partyFactAssertions,
-  partyMatchDecisions,
 } from '../../src/db/schema.ts';
 import { tenantIdentityWriteLockKey } from '../../src/services/party-identifier-claim.service.ts';
 import {
-  classifyUnarchiveClaimOwners,
   endedPartyFactTransition,
   insertPartyRecord,
-  reconcilePartyIdentifierClaims,
   transitionPartyRecord,
   unarchivePartyRecord,
   unarchivePartyWithReview,
@@ -57,6 +53,9 @@ const partyRow = (overrides: Partial<PartyRecord> = {}) => ({
   archivedAt: instantAsDate('2026-01-01T00:00:00.000Z'),
   createdAt: instantAsDate('2025-01-01T00:00:00.000Z'),
   currentDisplayName: 'Archived organization',
+  firstName: null,
+  lastName: null,
+  businessName: 'Archived organization',
   currentType: 'ORGANIZATION',
   partyId,
   revision: 4,
@@ -75,7 +74,6 @@ const identifierRow = (overrides: Partial<PartyOfficialIdentifierRecord> = {}) =
   state: 'ACTIVE',
   tenantId,
   validTo: null,
-  verificationState: 'VERIFIED',
   ...overrides,
 });
 
@@ -188,7 +186,6 @@ it.layer(
             {
               identifierType: 'ICO',
               value: '27074358',
-              verification: 'VERIFIED',
             },
           ],
           partyType: 'ORGANIZATION',
@@ -226,18 +223,89 @@ it.layer(
     }),
   );
 
+  testIt.effect('a surname-only update preserves other facts and derives the full personal display name', () =>
+    Effect.gen(function* verifyPartialNameUpdate() {
+      const current = partyRow({
+        archivedAt: null,
+        currentType: 'PERSON',
+        firstName: 'Ada',
+        lastName: 'Byron',
+        businessName: 'Analytical Engines',
+        currentDisplayName: 'Ada Byron',
+      });
+      const harness = transactionHarness(
+        [[current], [], [{ partyId }]],
+        [[{ ...current, lastName: 'Lovelace', currentDisplayName: 'Ada Lovelace', revision: 5 }], []],
+      );
+      const result = yield* updatePartyIdentityRecord(harness.transaction, tenantId, {
+        actionInvocationId: '66666666-6666-4666-8666-666666666666',
+        lastName: 'Lovelace',
+        expectedRevision: 4,
+        partyId,
+        principalId: '77777777-7777-4777-8777-777777777777',
+        provenanceMethod: 'MANUAL',
+        provenanceSource: 'test',
+        validFrom: '2026-01-01T00:00:00.000Z',
+      });
+      expect(Predicate.isTagged(result, 'found')).toBe(true);
+      expect(harness.updateSets[0]).toEqual({
+        lastName: 'Lovelace',
+        currentDisplayName: 'Ada Lovelace',
+        revision: 5,
+        updatedAt: expect.any(Date),
+      });
+      expect(harness.insertedValues[0]).toEqual([
+        expect.objectContaining({ factKind: 'LAST_NAME', normalizedValue: 'Lovelace' }),
+      ]);
+      if (Predicate.isTagged(result, 'found')) {
+        expect(Option.getOrNull(result.value.firstName)).toBe('Ada');
+        expect(Option.getOrNull(result.value.lastName)).toBe('Lovelace');
+        expect(Option.getOrNull(result.value.businessName)).toBe('Analytical Engines');
+      }
+    }),
+  );
+
+  testIt.effect('changing a non-rendered source name still records its assertion and revision', () =>
+    Effect.gen(function* verifyNonRenderedNameUpdate() {
+      const current = partyRow({ archivedAt: null });
+      const harness = transactionHarness(
+        [[current], [], [{ partyId }]],
+        [[{ ...current, firstName: 'Ada', revision: 5 }], []],
+      );
+      yield* updatePartyIdentityRecord(harness.transaction, tenantId, {
+        actionInvocationId: '66666666-6666-4666-8666-666666666666',
+        firstName: 'Ada',
+        expectedRevision: 4,
+        partyId,
+        principalId: '77777777-7777-4777-8777-777777777777',
+        provenanceMethod: 'MANUAL',
+        provenanceSource: 'test',
+        validFrom: '2026-01-01T00:00:00.000Z',
+      });
+      expect(harness.updateSets[0]).toEqual({
+        firstName: 'Ada',
+        currentDisplayName: 'Archived organization',
+        revision: 5,
+        updatedAt: expect.any(Date),
+      });
+      expect(harness.insertedValues[0]).toEqual([
+        expect.objectContaining({ factKind: 'FIRST_NAME', normalizedValue: 'Ada' }),
+      ]);
+    }),
+  );
+
   testIt.effect('identity updates close the preceding assertion before accepting its replacement', () =>
     Effect.gen(function* verifyIdentityPersistence() {
       const current = partyRow({ archivedAt: null });
       const harness = transactionHarness(
         [[current], [], [{ partyId }]],
-        [[{ ...current, currentDisplayName: 'New name', revision: 5 }], []],
+        [[{ ...current, currentDisplayName: 'New name', businessName: 'New name', revision: 5 }], []],
       );
       const encodedAppliedEvidence = yield* Schema.encodeEffect(AresAppliedEvidenceSchema)(appliedEvidence);
 
       const result = yield* updatePartyIdentityRecord(harness.transaction, tenantId, {
         actionInvocationId: '66666666-6666-4666-8666-666666666666',
-        displayName: 'New name',
+        businessName: 'New name',
         expectedRevision: 4,
         externalEvidence: appliedEvidence,
         partyId,
@@ -260,32 +328,12 @@ it.layer(
     }),
   );
 
-  it('unarchive owner classification distinguishes conflict from ambiguity deterministically', () => {
-    const availableOwners = classifyUnarchiveClaimOwners(partyId, [{}, { partyId }]);
-    expect(Predicate.isTagged(availableOwners, 'available')).toBe(true);
-    expect(Struct.omit(availableOwners, ['_tag'])).toEqual({});
-    const conflictingOwner = classifyUnarchiveClaimOwners(partyId, [{ partyId: firstOwnerId }]);
-    expect(Predicate.isTagged(conflictingOwner, 'identity_conflict')).toBe(true);
-    expect(Struct.omit(conflictingOwner, ['_tag'])).toEqual({
-      conflictingPartyId: firstOwnerId,
-    });
-    const ambiguousOwners = classifyUnarchiveClaimOwners(partyId, [
-      { partyId: secondOwnerId },
-      { partyId: firstOwnerId },
-      { partyId: secondOwnerId },
-    ]);
-    expect(Predicate.isTagged(ambiguousOwners, 'identity_ambiguous')).toBe(true);
-    expect(Struct.omit(ambiguousOwners, ['_tag'])).toEqual({
-      candidatePartyIds: [firstOwnerId, secondOwnerId],
-    });
-  });
-
   testIt.effect('future-effective identity updates do not replace current facts early', () =>
     Effect.gen(function* verifyIdentityPersistence() {
       const harness = transactionHarness([[partyRow({ archivedAt: null })], [], [{ partyId }]]);
       const result = yield* updatePartyIdentityRecord(harness.transaction, tenantId, {
         actionInvocationId: '66666666-6666-4666-8666-666666666666',
-        displayName: 'Future name',
+        businessName: 'Future name',
         expectedRevision: 4,
         partyId,
         principalId: '77777777-7777-4777-8777-777777777777',
@@ -297,122 +345,6 @@ it.layer(
       expect(harness.insertedValues).toEqual([]);
       expect(harness.updateSets).toEqual([]);
     }),
-  );
-
-  testIt.effect('unarchive keeps the Party archived when an exact claim belongs to another Party', () =>
-    Effect.gen(function* verifyIdentityPersistence() {
-      const harness = transactionHarness([
-        [partyRow()],
-        [],
-        [{ partyId }],
-        [],
-        [identifierRow()],
-        [{}],
-        [{ partyId: firstOwnerId }],
-      ]);
-
-      const result = yield* unarchivePartyRecord(harness.transaction, tenantId, partyId, 4);
-
-      expect(Predicate.isTagged(result, 'identity_conflict')).toBe(true);
-      expect(Struct.omit(result, ['_tag'])).toEqual({
-        conflictingPartyId: firstOwnerId,
-      });
-      assertTenantLockIsFirst(harness);
-      expect(harness.insertedValues).toEqual([]);
-      expect(harness.updateSets).toEqual([]);
-    }),
-  );
-
-  testIt.effect(
-    'blocked unarchive persists a case and decision without mutating Party, then reuses the case on a fresh attempt',
-    () =>
-      Effect.gen(function* verifyDurableUnarchiveReview() {
-        const candidateCaseId = '66666666-6666-4666-8666-666666666666';
-        const decisionId = '77777777-7777-4777-8777-777777777777';
-        const caseRow = {
-          candidateCaseId,
-          candidateFingerprint: 'a'.repeat(64),
-          evaluatedEvidence: [
-            {
-              outcome: 'AMBIGUOUS',
-              reason: 'Exact claim conflict',
-              ruleKey: 'party-unarchive-review.v1:EXACT_CLAIM_CONFLICT',
-            },
-          ],
-          matchRuleVersion: 'party-exact-claims.v1',
-        };
-        const harness = transactionHarness(
-          [
-            [partyRow()],
-            [],
-            [{ partyId }],
-            [],
-            [identifierRow()],
-            [{}],
-            [{ partyId: firstOwnerId }],
-            [partyRow()],
-            [identifierRow()],
-            [],
-            [],
-          ],
-          [],
-          [[caseRow], [], [{ matchDecisionId: decisionId }]],
-        );
-        const result = yield* unarchivePartyWithReview(harness.transaction, tenantId, partyId, 4, decisionId);
-        expect(Predicate.isTagged(result, 'blocked')).toBe(true);
-        const blocked = Match.value(result).pipe(
-          Match.tag('blocked', ({ value }) => value),
-          Match.orElse(() =>
-            (() => {
-              throw new Error('Expected unarchive to be blocked');
-            })(),
-          ),
-        );
-        assertTenantLockIsFirst(harness);
-        expect(harness.updateSets).toEqual([]);
-        expect(harness.deletedTargets).toEqual([]);
-        expect(harness.insertedValues.length).toBe(3);
-        // SAFETY: These are precisely the case, membership and decision inserts captured from the owner service.
-        const persistedCase = harness.insertedValues[0] as typeof duplicateCandidateCases.$inferInsert;
-        // SAFETY: The second insert is the case's deterministic membership set.
-        const members = harness.insertedValues[1] as readonly (typeof duplicateCandidateCaseParties.$inferInsert)[];
-        // SAFETY: The third insert is the durable Action-linked match decision.
-        const decision = harness.insertedValues[2] as typeof partyMatchDecisions.$inferInsert;
-        expect(persistedCase.candidateSnapshot.intent).toBe('UNARCHIVE');
-        expect(persistedCase.candidateSnapshot.names).toEqual(['Archived organization']);
-        expect(persistedCase.candidateSnapshot.officialIdentifiers?.[0]?.normalizedValue).toBe('27074358');
-        expect(persistedCase.evaluationFingerprint).toMatch(/^[0-9a-f]{64}$/u);
-        expect(members.map((member) => member.partyId)).toEqual([partyId, firstOwnerId]);
-        expect(decision.actionInvocationId).toBe(decisionId);
-        expect(decision.candidateCaseId).toBe(candidateCaseId);
-        expect(decision.outcome).toBe('AMBIGUOUS');
-        expect(blocked.reasonCode).toBe('EXACT_CLAIM_CONFLICT');
-        expect(Option.isSome(blocked.party.archivedAt)).toBe(true);
-        expect(DateTime.formatIso(Option.getOrThrow(blocked.party.archivedAt))).toBe('2026-01-01T00:00:00.000Z');
-        expect(blocked.party.revision).toBe(4);
-
-        const secondDecisionId = '88888888-8888-4888-8888-888888888888';
-        const retryHarness = transactionHarness(
-          [[partyRow()], [], [{ partyId }], [{ candidateCaseId }], [partyRow()], [caseRow]],
-          [],
-          [[{ matchDecisionId: secondDecisionId }]],
-        );
-        const retry = yield* unarchivePartyWithReview(retryHarness.transaction, tenantId, partyId, 4, secondDecisionId);
-        expect(Predicate.isTagged(retry, 'blocked')).toBe(true);
-        const retryBlocked = Match.value(retry).pipe(
-          Match.tag('blocked', ({ value }) => value),
-          Match.orElse(() =>
-            (() => {
-              throw new Error('Expected retry to be blocked');
-            })(),
-          ),
-        );
-        expect(retryHarness.insertedValues.length).toBe(1);
-        expect(retryHarness.updateSets).toEqual([]);
-        expect(retryBlocked.caseRef).toEqual(blocked.caseRef);
-        expect(retryBlocked.decisionRef).not.toEqual(blocked.decisionRef);
-        expect(retryBlocked.party).toEqual(blocked.party);
-      }),
   );
 
   testIt.effect('unresolved unnamed unarchive review persists no invented display-name evidence', () =>
@@ -444,7 +376,7 @@ it.layer(
       );
       // SAFETY: The first captured insert is the immutable candidate case.
       const persistedCase = harness.insertedValues[0] as typeof duplicateCandidateCases.$inferInsert;
-      expect(persistedCase.candidateSnapshot.names).toEqual([]);
+      expect(persistedCase.candidateSnapshot.firstName).toBe(null);
       expect(persistedCase.candidateSnapshot.officialIdentifiers).toEqual([]);
       expect(harness.updateSets).toEqual([]);
       expect(blocked.reasonCode).toBe('UNRESOLVED_IDENTITY');
@@ -460,7 +392,7 @@ it.layer(
     }),
   );
 
-  testIt.effect('unarchive restores an unclaimed eligible identifier before activating the Party', () =>
+  testIt.effect('unarchive activates a reviewed Party without creating exclusive identifier claims', () =>
     Effect.gen(function* verifyIdentityPersistence() {
       const activeParty = partyRow({ archivedAt: null, revision: 5 });
       const harness = transactionHarness(
@@ -471,18 +403,7 @@ it.layer(
       const result = yield* unarchivePartyRecord(harness.transaction, tenantId, partyId, 4);
 
       expect(Predicate.isTagged(result, 'found')).toBe(true);
-      expect(harness.insertedValues).toEqual([
-        [
-          {
-            identifierTypeKey: 'ICO',
-            namespace: 'CZ:ICO',
-            normalizedValue: '27074358',
-            officialIdentifierId,
-            partyId,
-            tenantId,
-          },
-        ],
-      ]);
+      expect(harness.insertedValues).toEqual([]);
       expect(harness.updateSets.length).toBe(1);
       // SAFETY: Unarchive's only update targets the parties table; the harness captures its exact set value.
       expect(
@@ -509,38 +430,7 @@ it.layer(
     }),
   );
 
-  testIt.effect('unarchive reports ambiguous exact claims without changing archived state', () =>
-    Effect.gen(function* verifyIdentityPersistence() {
-      const harness = transactionHarness([
-        [partyRow()],
-        [],
-        [{ partyId }],
-        [],
-        [
-          identifierRow(),
-          identifierRow({
-            identifierTypeKey: 'CZ_DIC',
-            namespace: 'CZ:DIC',
-            normalizedValue: 'CZ27074358',
-          }),
-        ],
-        [{}],
-        [{}],
-        [{ partyId: firstOwnerId }],
-        [{ partyId: secondOwnerId }],
-      ]);
-
-      const result = yield* unarchivePartyRecord(harness.transaction, tenantId, partyId, 4);
-      expect(Predicate.isTagged(result, 'identity_ambiguous')).toBe(true);
-      expect(Struct.omit(result, ['_tag'])).toEqual({
-        candidatePartyIds: [firstOwnerId, secondOwnerId],
-      });
-      expect(harness.insertedValues).toEqual([]);
-      expect(harness.updateSets).toEqual([]);
-    }),
-  );
-
-  testIt.effect('unarchive does not promote a PERSON ICO into an exclusive strong claim', () =>
+  testIt.effect('unarchive preserves PERSON identity without creating claims from declared ICO', () =>
     Effect.gen(function* verifyIdentityPersistence() {
       const currentParty = partyRow({ currentType: 'PERSON' });
       const harness = transactionHarness(
@@ -598,47 +488,7 @@ it.layer(
     }),
   );
 
-  testIt.effect('Party type enrichment refuses another owner of a newly eligible identifier', () =>
-    Effect.gen(function* preventEnrichmentCollision() {
-      const current = partyRow({
-        archivedAt: null,
-        currentType: 'UNRESOLVED',
-      });
-      const harness = transactionHarness([
-        [current],
-        [],
-        [{ partyId }],
-        [],
-        [identifierRow()],
-        [{}],
-        [{ partyId: firstOwnerId }],
-      ]);
-      const result = yield* updatePartyIdentityRecord(harness.transaction, tenantId, {
-        actionInvocationId: '66666666-6666-4666-8666-666666666666',
-        expectedRevision: 4,
-        partyId,
-        partyType: 'ORGANIZATION',
-        principalId: '77777777-7777-4777-8777-777777777777',
-        provenanceMethod: 'MANUAL',
-        provenanceSource: 'test',
-        subjectEvidence: [
-          {
-            basis: 'REVIEWED_DOCUMENT',
-            evidenceRef: 'record/42',
-            kind: 'ACTOR_ATTESTATION',
-            observedSubject: 'ORGANIZATION',
-            statement: 'Reviewed this external organization',
-            subjectKey: partySubjectKeyFromString('one-subject'),
-          },
-        ],
-        validFrom: '2026-01-01T00:00:00.000Z',
-      });
-      expect(Predicate.isTagged(result, 'conflict')).toBe(true);
-      assertNoIdentityWrites(harness);
-    }),
-  );
-
-  testIt.effect('Party type enrichment atomically claims identifiers that newly qualify', () =>
+  testIt.effect('Party type enrichment accepts the fact without manufacturing an identifier claim', () =>
     Effect.gen(function* claimEnrichedIdentifier() {
       const current = partyRow({
         archivedAt: null,
@@ -669,44 +519,9 @@ it.layer(
         validFrom: '2026-01-01T00:00:00.000Z',
       });
       expect(Predicate.isTagged(result, 'found')).toBe(true);
-      expect(harness.insertedValues[0]).toEqual([
-        {
-          identifierTypeKey: 'ICO',
-          namespace: 'CZ:ICO',
-          normalizedValue: '27074358',
-          officialIdentifierId,
-          partyId,
-          tenantId,
-        },
-      ]);
+      expect(harness.insertedValues).toHaveLength(1);
+      expect(harness.deletedTargets).toEqual([]);
       expect(harness.updateSets.length).toBe(2);
-    }),
-  );
-
-  testIt.effect('type correction reconciliation releases an ICO claim no longer eligible for a PERSON', () =>
-    Effect.gen(function* releaseIneligibleClaim() {
-      const harness = transactionHarness([
-        [identifierRow()],
-        [
-          {
-            identifierClaimId: '99999999-9999-4999-8999-999999999999',
-            identifierTypeKey: 'ICO',
-            namespace: 'CZ:ICO',
-            normalizedValue: '27074358',
-            officialIdentifierId,
-            partyId,
-            tenantId,
-          },
-        ],
-      ]);
-      const result = yield* reconcilePartyIdentifierClaims(harness.transaction, tenantId, partyId, 'PERSON');
-      expect(Predicate.isTagged(result, 'available')).toBe(true);
-      expect(Struct.omit(result, ['_tag'])).toEqual({
-        eligibleClaimCount: 0,
-      });
-      expect(harness.deletedTargets.length).toBe(1);
-      expect(harness.insertedValues).toEqual([]);
-      assertTenantLockIsFirst(harness);
     }),
   );
 
@@ -720,7 +535,7 @@ it.layer(
       ]);
       const result = yield* updatePartyIdentityRecord(harness.transaction, tenantId, {
         actionInvocationId: '66666666-6666-4666-8666-666666666666',
-        displayName: 'Historical name',
+        businessName: 'Historical name',
         expectedRevision: 4,
         partyId,
         principalId: '77777777-7777-4777-8777-777777777777',

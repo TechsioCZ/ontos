@@ -187,3 +187,22 @@ export const outcomeMessage = (
   const known = Object.entries(reasonText).find(([key]) => outcome.reason?.includes(key) === true);
   return known?.[1] ?? vm.t(`finance-billing.demo.feedback.${outcome.feedback}`);
 };
+
+/** A command outcome as a panel shows it; `default` is neutral information, `error` a refusal or failure. */
+export interface FinanceNotice {
+  readonly status: 'default' | 'error';
+  readonly text: string;
+}
+
+/** True for a command an approver must still accept: nothing was written, and nothing failed either. */
+export const isPendingApproval = (outcome: { readonly feedback?: string; readonly ok: boolean }): boolean =>
+  !outcome.ok && outcome.feedback === 'pendingApproval';
+
+/** A failed or parked command's message: a proposal waiting for approval reads as information, never an error. */
+export const outcomeNotice = (
+  vm: FinanceViewModel,
+  outcome: { readonly feedback: string; readonly ok: false; readonly reason?: string },
+): FinanceNotice =>
+  isPendingApproval(outcome)
+    ? { status: 'default', text: vm.t('finance-billing.demo.feedback.pendingApproval') }
+    : { status: 'error', text: outcomeMessage(vm, outcome) };

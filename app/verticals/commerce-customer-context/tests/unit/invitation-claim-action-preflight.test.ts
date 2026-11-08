@@ -3,7 +3,7 @@ import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ClaimCounterpartyAccessInvitationPayloadSchema } from '../../shared/actions/claim-counterparty-access-invitation.ts';
-import type { ContextAccessService, ActionAuthorizationPreflightDatabaseService } from '@app/core-runtime';
+import type { ActionAuthorizationPreflightDatabaseService } from '@app/core-runtime';
 import {
   makeInvitationClaimActionAuthorizationPreflight,
   verifyInvitationClaimSnapshotSequence,
@@ -57,10 +57,6 @@ const input = {
   scope: principal,
 } as const;
 
-const contextAccess: Pick<ContextAccessService, 'businessPermissions'> = {
-  businessPermissions: () => Effect.succeed([]),
-};
-
 const eligible = {
   resolve: (candidate: { readonly principalId: string; readonly tenantId: string }) =>
     Effect.succeed({
@@ -85,7 +81,7 @@ const unavailableDatabase: ActionAuthorizationPreflightDatabaseService = {
     Effect.fail(failedDatabase),
 };
 
-const preflight = makeInvitationClaimActionAuthorizationPreflight(noReadDatabase, contextAccess, eligible);
+const preflight = makeInvitationClaimActionAuthorizationPreflight(noReadDatabase, eligible);
 
 it.effect('keeps unrelated Actions on the explicit executor path', () =>
   Effect.gen(function* unrelatedAction() {
@@ -184,7 +180,7 @@ it.effect('fails closed when Core denies or proof expires before revalidation', 
 
 it.effect('fails closed on a partial owner/database failure', () =>
   Effect.gen(function* partialFailure() {
-    const unavailable = makeInvitationClaimActionAuthorizationPreflight(unavailableDatabase, contextAccess, eligible);
+    const unavailable = makeInvitationClaimActionAuthorizationPreflight(unavailableDatabase, eligible);
     const failure = yield* Effect.flip(unavailable.prepare(input));
     expect(Schema.is(ActionPermissionCheckError)(failure)).toBe(true);
   }),

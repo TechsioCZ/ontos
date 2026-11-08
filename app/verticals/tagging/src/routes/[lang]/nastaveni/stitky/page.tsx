@@ -1,3 +1,4 @@
+import { pendingProposalMessage } from '../../../../api/action-result.ts';
 import {
   AutosaveStatus,
   EmptyState,
@@ -40,7 +41,7 @@ import {
   tagCatalogStatusOf,
   tagColorValue,
   useTagCatalogSnapshot,
-} from '../../../../tags/tag-controls.tsx';
+} from '../../../../components/tag-controls.tsx';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { subjectKindValues, tagColorValues } from '../../../../../shared/apis/records.ts';
 import type { SubjectId, SubjectKind, TagId, TagWithCounts } from '../../../../../shared/apis/records.ts';
@@ -201,7 +202,7 @@ const TagCreateDialog = ({ onClose }: { onClose: () => void }) => {
   const [draft, setDraft] = useState<TagDraft>(initial);
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
   const [discardOpen, setDiscardOpen] = useState(false);
 
   const handleDraftChange = setDraft;
@@ -219,11 +220,11 @@ const TagCreateDialog = ({ onClose }: { onClose: () => void }) => {
       return;
     }
     setBusy(true);
-    setFailed(false);
+    setFailed(null);
     runTagEffect(applyTaggingCommand(createTagCommand(draft)), {
-      onFailure: () => {
+      onFailure: (error) => {
         setBusy(false);
-        setFailed(true);
+        setFailed(pendingProposalMessage(error) ?? t('tagging.tags.failure'));
       },
       onSuccess: () => {
         setBusy(false);
@@ -266,9 +267,9 @@ const TagCreateDialog = ({ onClose }: { onClose: () => void }) => {
             submit();
           }}
         >
-          {failed && (
+          {failed !== null && (
             <StatusText showIcon status="error">
-              {t('tagging.tags.failure')}
+              {failed}
             </StatusText>
           )}
           <TagFields draft={draft} onBlur={noBlur} onChange={handleDraftChange} showErrors={submitted} />
@@ -308,6 +309,7 @@ const refreshCatalog = Effect.sync(refreshTagCatalog);
 const TagEditPanel = ({ onClose, tag }: { onClose: () => void; tag: TagWithCounts }) => {
   const { t } = useModernI18n();
   const server = tagDraftOf(tag);
+  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
   /** The version of the tag the draft builds on: what it opened with, last saved or reloaded. */
   const base = useRef(server);
   const autosave = useAutosaveDraft<TagDraft, never>({
@@ -317,7 +319,15 @@ const TagEditPanel = ({ onClose, tag }: { onClose: () => void; tag: TagWithCount
     runtime: browserRuntime,
     save: (value) =>
       tagAutosaveResult(
-        applyTaggingCommandIfUnchanged(updateTagCommand(tag.id, value), tagUnchangedSince(tag.id, base.current)),
+        applyTaggingCommandIfUnchanged(updateTagCommand(tag.id, value), tagUnchangedSince(tag.id, base.current)).pipe(
+          Effect.matchEffect({
+            onFailure: (error) =>
+              Effect.sync(() => setPendingMessage(pendingProposalMessage(error) ?? null)).pipe(
+                Effect.andThen(Effect.fail(error)),
+              ),
+            onSuccess: Effect.succeed,
+          }),
+        ),
       ).pipe(
         Effect.tap((result) =>
           Effect.sync(() => {
@@ -347,6 +357,7 @@ const TagEditPanel = ({ onClose, tag }: { onClose: () => void; tag: TagWithCount
     <SidePanel
       actions={
         <>
+          {pendingMessage !== null && <StatusText status="error">{pendingMessage}</StatusText>}
           <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
           <Button onClick={close} theme="outlined" variant="secondary">
             {t('tagging.tags.form.close')}
@@ -387,15 +398,15 @@ type DeleteFailure = typeof DeleteFailureSchema.Type;
  */
 const deleteOutcomeOf = (error: DeleteError): DeleteFailure | 'gone' => {
   if (
-    Predicate.isTagged(error, 'ApplyCommandActionAlreadyCommittedProblem') ||
-    (Predicate.isTagged(error, 'ApplyCommandActionNotFoundProblem') && error.code === 'tagging_not_found')
+    Predicate.isTagged(error, 'DeleteTagActionAlreadyCommittedProblem') ||
+    (Predicate.isTagged(error, 'DeleteTagActionNotFoundProblem') && error.code === 'tagging_not_found')
   ) {
     return 'gone';
   }
-  if (Predicate.isTagged(error, 'ApplyCommandActionForbiddenProblem')) {
+  if (Predicate.isTagged(error, 'DeleteTagActionForbiddenProblem')) {
     return 'forbidden';
   }
-  return Predicate.isTagged(error, 'ApplyCommandActionConflictProblem') ? 'conflict' : 'failure';
+  return Predicate.isTagged(error, 'DeleteTagActionConflictProblem') ? 'conflict' : 'failure';
 };
 
 const DeleteTagDialog = ({
@@ -414,6 +425,7 @@ const DeleteTagDialog = ({
   const toaster = useToast();
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<DeleteFailure | null>(null);
+  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
 
   const confirm = () => {
     setBusy(true);
@@ -421,6 +433,7 @@ const DeleteTagDialog = ({
     runTagEffect(applyTaggingCommand({ _tag: 'DeleteTag', id: tag.id }), {
       onFailure: (error) => {
         setBusy(false);
+        setPendingMessage(pendingProposalMessage(error) ?? null);
         const outcome = deleteOutcomeOf(error);
         if (outcome === 'gone') {
           toaster.create({ title: t('tagging.tags.delete.alreadyDeleted'), type: 'info' });
@@ -471,7 +484,7 @@ const DeleteTagDialog = ({
       {failure !== null && (
         <div className="py-200">
           <StatusText showIcon status="error">
-            {t(`tagging.tags.delete.${failure}`)}
+            {pendingMessage ?? t(`tagging.tags.delete.${failure}`)}
           </StatusText>
         </div>
       )}

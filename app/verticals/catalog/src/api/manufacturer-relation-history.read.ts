@@ -4,7 +4,6 @@ import {
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
   defineRead,
-  defineReadResourcePermission,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import { Effect, Option } from 'effect';
@@ -30,7 +29,7 @@ const moduleKey = 'commerce.catalog';
 
 export const manufacturerRelationHistoryEntrypoint = defineTenantModuleEntrypoint({
   access: 'historical_read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.manufacturer-relation-history' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.manufacturer-relation-history',
   moduleKey,
   role: 'api',
@@ -38,6 +37,14 @@ export const manufacturerRelationHistoryEntrypoint = defineTenantModuleEntrypoin
 
 export const manufacturerRelationHistoryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.manufacturer-relation-history.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'manufacturer-relation', level: 'extended' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: manufacturerRelationHistoryEntrypoint,
     evidencePolicy: {
@@ -47,13 +54,8 @@ export const manufacturerRelationHistoryRead = defineRead(
     inputSchema: ManufacturerRelationHistoryRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.catalog.api.manufacturer-relation-history',
-    resourcePermission: defineReadResourcePermission<ManufacturerRelationHistoryRequest>(({ subject }) => ({
-      permission: 'read',
-      resource: subject,
-    })),
     resultSchema: ManufacturerRelationHistoryResponseSchema,
     schemaVersion: '1',
   },
@@ -73,5 +75,4 @@ export const manufacturerRelationHistoryRead = defineRead(
     }),
   },
   (transaction, scope) => Effect.succeed(manufacturerPersistenceForScope(transaction, scope)),
-  () => ({ kind: 'module', moduleId: moduleKey }),
 );

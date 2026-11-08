@@ -1,3 +1,4 @@
+import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';
 import { randomUUID } from 'node:crypto';
 
 import { ActiveApplicationCompositionService, ActionRuntime, makeActionRuntimeLive } from '@app/core-runtime';
@@ -220,9 +221,9 @@ const identityClientFor = (
         tenantId: scope.tenantId,
       },
       services: {
-        loadForRead: (lookup) =>
+        read: (lookup) =>
           withRepository(database, { ...scope, correlationId: options.requestCorrelation }, (repository) =>
-            repository.loadForRead(lookup),
+            repository.read(lookup),
           ).pipe(Effect.orDie),
       },
     }).pipe(
@@ -281,6 +282,7 @@ export const makeEnrollmentAcceptanceIdentityFixture = Effect.fnUntraced(
       Layer.provide(runtimeDatabaseLive),
     );
     const scopeResolverLive = OperationalScopeResolverLive.pipe(
+      Layer.provide(makeTestAccessGateLayers({ spec: { defaultAnswer: { outcome: 'ALLOWED' } } })),
       Layer.provide(
         Layer.mergeAll(
           runtimeDatabaseLive,
@@ -295,6 +297,7 @@ export const makeEnrollmentAcceptanceIdentityFixture = Effect.fnUntraced(
           Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
           ActionRepositoryLive,
           AcceptanceActionPermissionLive,
+          makeTestAccessGateLayers({ spec: { defaultAnswer: { outcome: 'ALLOWED' } } }),
           Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(compositionSnapshot) }),
           ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive)),
           moduleStateGateLive,

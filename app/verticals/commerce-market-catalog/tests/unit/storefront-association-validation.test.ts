@@ -1,12 +1,17 @@
-import { FetchHttpClient } from 'effect/http';
-import { TestClock } from 'effect/testing';
-import { preparedStorefrontApplicationAuthority } from '../../src/services/storefront-association-preflight.ts';
+import { NodeCrypto } from '@effect/platform-node';
 import {
   CurrentStorefrontApplicationRequestSchema,
   CurrentStorefrontApplicationResponseSchema,
 } from '@app/storefront-registry-contracts';
 import { describe, expect, it } from 'effect-rstest';
-import { ConfigProvider, DateTime, Effect, Predicate, Schema } from 'effect';
+import { ConfigProvider, DateTime, Effect, Predicate, Redacted, Schema } from 'effect';
+import { FetchHttpClient } from 'effect/http';
+import { TestClock } from 'effect/testing';
+import { TrustedPrincipalContextSchema, trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
+import {
+  prepareStorefrontAssociationServices,
+  preparedStorefrontApplicationAuthority,
+} from '../../src/services/storefront-association-preflight.ts';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import {
   getActionHandler,
@@ -15,8 +20,12 @@ import {
 import {
   AssociateStorefrontPayloadSchema,
   associateStorefrontAction,
+  prepareAssociateStorefrontServices,
 } from '../../src/actions/associate-storefront.action.ts';
-import { reviseStorefrontAssociationAction } from '../../src/actions/revise-storefront-association.action.ts';
+import {
+  prepareReviseStorefrontAssociationServices,
+  reviseStorefrontAssociationAction,
+} from '../../src/actions/revise-storefront-association.action.ts';
 import {
   StorefrontApplicationEvidenceStale,
   StorefrontApplicationNotCurrent,
@@ -248,7 +257,7 @@ describe('Storefront association Current application validation', () => {
           servingModuleKey: 'commerce.storefront-registry',
         }),
       );
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('preflights revise and never calls persistence for any typed validation failure', () =>
@@ -300,7 +309,7 @@ describe('Storefront association Current application validation', () => {
         expect(persistenceCalls).toHaveLength(0);
         expect(collector.snapshot().dataAccessEvents).toHaveLength(0);
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });
 
@@ -353,13 +362,37 @@ describe('Storefront invocation-local prepared authority', () => {
   it.effect('performs Shell and Storefront HTTP during preflight without acquiring an owner transaction', () =>
     Effect.gen(function* remotePreparation() {
       const requests: Request[] = [];
-      const preparation = yield* Effect.fromNullishOr(getActionServicePreflight(associateStorefrontAction));
+      let checkedContract = false;
+      const preparation = prepareStorefrontAssociationServices(() =>
+        Effect.sync(() => {
+          checkedContract = true;
+        }),
+      );
+      const originalScope = trustVerifiedGatewayPrincipalContext(
+        {
+          ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+            authBindingId: actionInvocationId,
+            authContextRef: 'better-auth-session:storefront-preflight',
+            authMethod: 'session',
+            legalEntityId: sellerId,
+            principalId,
+            tenantId,
+          }),
+          correlationId: scope.correlationId,
+        },
+        'a'.repeat(64),
+        {
+          assertion: Redacted.make('original-storefront-administrator-assertion'),
+          audience: 'commerce-market-catalog',
+        },
+      );
       const fakeFetch: typeof fetch = (input, init) => {
         const request = new Request(input, init);
+        expect(checkedContract).toBe(true);
         requests.push(request);
         return Promise.resolve(
           Response.json(
-            new URL(request.url).pathname.endsWith('/auth/api-key/gateway-context')
+            new URL(request.url).pathname.endsWith('/auth/delegated/gateway-context')
               ? {
                   apiBaseUrl: '/module-api/commerce.storefront-registry',
                   compositionRevision: 'a'.repeat(64),
@@ -373,25 +406,48 @@ describe('Storefront invocation-local prepared authority', () => {
       yield* preparation(associatePayload, {
         actionInvocationId,
         compositionRevision: 'a'.repeat(64),
-        scope,
+        scope: originalScope,
         transaction: () => Effect.die('Payload-derived Storefront selector must not open SQL'),
       }).pipe(
         Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
+        Effect.provide(NodeCrypto.layer),
         Effect.provide(
           ConfigProvider.layer(
             ConfigProvider.fromUnknown({
-              ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY: 'market-preflight-key',
+              ONTOS_GATEWAY_MODULE_API_KEY: 'market-module-key',
               ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
             }),
           ),
         ),
       );
       expect(requests).toHaveLength(2);
+      expect(requests[0]?.url).toContain('/auth/delegated/gateway-context');
+      expect(requests[1]?.headers.get('authorization')).toBe('Bearer owner-assertion');
+      expect(requests[1]?.headers.get('x-api-key')).toBeNull();
     }),
   );
 
   it('registers remote preparation for both association mutations', () => {
-    expect(getActionServicePreflight(associateStorefrontAction)).toBeDefined();
-    expect(getActionServicePreflight(reviseStorefrontAssociationAction)).toBeDefined();
+    expect(getActionServicePreflight(associateStorefrontAction)).toBe(prepareAssociateStorefrontServices);
+    expect(getActionServicePreflight(reviseStorefrontAssociationAction)).toBe(
+      prepareReviseStorefrontAssociationServices,
+    );
   });
 });
+
+it.effect('keeps both production Storefront preflights fail-closed without a Core operation lease', () =>
+  Effect.gen(function* unadmittedStorefrontContract() {
+    const context = {
+      actionInvocationId,
+      compositionRevision: 'a'.repeat(64),
+      scope,
+      transaction: () => Effect.die('An unadmitted Storefront preflight must not acquire SQL'),
+    };
+    expect(yield* prepareAssociateStorefrontServices(associatePayload, context).pipe(Effect.flip)).toBeInstanceOf(
+      StorefrontApplicationValidationUnavailable,
+    );
+    expect(yield* prepareReviseStorefrontAssociationServices(revisePayload, context).pipe(Effect.flip)).toBeInstanceOf(
+      StorefrontApplicationValidationUnavailable,
+    );
+  }).pipe(Effect.provide(NodeCrypto.layer)),
+);

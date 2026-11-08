@@ -6,10 +6,9 @@ import {
   ReadPermissionDenied,
   ReadRuntime,
   defineRead,
-  defineReadResourcePermission,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import { DateTime, Effect } from 'effect';
+import { Crypto, DateTime, Effect } from 'effect';
 import {
   ManufacturerRelationCurrentRequestSchema,
   ManufacturerRelationCurrentResponseSchema,
@@ -42,7 +41,7 @@ interface ManufacturerWirePeriod {
 
 export const manufacturerRelationCurrentEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.manufacturer-relation-current' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.manufacturer-relation-current',
   moduleKey,
   role: 'api',
@@ -50,6 +49,14 @@ export const manufacturerRelationCurrentEntrypoint = defineTenantModuleEntrypoin
 
 export const manufacturerRelationCurrentRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.manufacturer-relation-current.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'manufacturer-relation', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: manufacturerRelationCurrentEntrypoint,
     evidencePolicy: {
@@ -59,13 +66,8 @@ export const manufacturerRelationCurrentRead = defineRead(
     inputSchema: ManufacturerRelationCurrentRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.catalog.api.manufacturer-relation-current',
-    resourcePermission: defineReadResourcePermission<ManufacturerRelationCurrentRequest>(({ subject }) => ({
-      permission: 'read',
-      resource: subject,
-    })),
     resultSchema: ManufacturerRelationCurrentResponseSchema,
     schemaVersion: '1',
   },
@@ -88,8 +90,14 @@ export const manufacturerRelationCurrentRead = defineRead(
       context: ReadFinishContext<undefined, ManufacturerStoredResult>,
     ) {
       const readRuntime = yield* ReadRuntime;
+      const crypto = yield* Crypto.Crypto;
       const outcome = yield* resolveManufacturerCurrentOwner(
-        manufacturerTargetResolverForCoreRead(readRuntime, context.scope),
+        manufacturerTargetResolverForCoreRead(
+          readRuntime,
+          context.scope,
+          crypto,
+          'commerce.catalog.requirement.manufacturer-current-party',
+        ),
         context.scope,
         context.loaded,
       ).pipe(
@@ -150,5 +158,4 @@ export const manufacturerRelationCurrentRead = defineRead(
     }),
   },
   (transaction, scope) => Effect.succeed(manufacturerCurrentReadsForScope(transaction, scope)),
-  () => ({ kind: 'module', moduleId: moduleKey }),
 );

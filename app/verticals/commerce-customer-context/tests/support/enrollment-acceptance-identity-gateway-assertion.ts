@@ -1,20 +1,22 @@
 import { randomUUID } from 'node:crypto';
 
 import { sql } from 'drizzle-orm';
-import { ConfigProvider, Effect, Layer } from 'effect';
-import { FetchHttpClient } from 'effect/http';
+import { Effect } from 'effect';
+import type { Layer } from 'effect';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import type { JWK, KeyObject } from 'jose';
 
 import type { CoreDatabaseExecutor } from '../../../../packages/core-runtime/src/db/types.ts';
 import {
+  DELEGATED_GATEWAY_ASSERTION_VERSION,
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_TTL_SECONDS,
 } from '../../../../packages/shared-contracts/src/gateway-context.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
-import { enrollmentApplicationCompositionSnapshot } from './enrollment-application-composition.ts';
-
-const compositionSourceUrl = 'https://composition.enrollment-acceptance.test/active';
+import {
+  enrollmentApplicationCompositionSnapshot,
+  enrollmentApplicationCompositionVerificationLayer,
+} from './enrollment-application-composition.ts';
 
 /**
  * A portal gateway issuer for acceptance suites: an Ed25519 key pair, the verification material the
@@ -40,23 +42,15 @@ export const makeAcceptanceGatewayIssuer = Effect.fnUntraced(function* makeAccep
   const pair = yield* Effect.promise(async () => await generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
   const exported = yield* Effect.promise(async () => await exportJWK(pair.publicKey));
   const publicJwk: JWK = { ...exported, alg: 'EdDSA', kid: keyId, use: 'sig' };
-  const configuration = ConfigProvider.fromUnknown({
-    ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: compositionSourceUrl,
-    ONTOS_GATEWAY_ISSUER: issuer,
-    ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
-  });
   return {
     issuer,
     keyId,
     privateKey: pair.privateKey,
     publicJwk,
-    verificationLive: Layer.mergeAll(
-      ConfigProvider.layer(configuration),
-      Layer.succeed(FetchHttpClient.Fetch, async (input, init) => {
-        const request = new Request(input, init);
-        return request.url === compositionSourceUrl ? Response.json(snapshot) : await fetch(request);
-      }),
-    ),
+    verificationLive: enrollmentApplicationCompositionVerificationLayer(snapshot, {
+      ONTOS_GATEWAY_ISSUER: issuer,
+      ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
+    }),
   } satisfies AcceptanceGatewayIssuer;
 });
 
@@ -75,12 +69,23 @@ interface EpochRow extends Record<string, unknown> {
   readonly epoch: string;
 }
 
-/** Mints one fresh, single-use version-2 gateway assertion for the given audience. */
+/** The calling module a delegated assertion names: the module whose own server code acts for the subject. */
+export interface AcceptanceGatewayActor {
+  readonly appId: string;
+  readonly buildMarker: string;
+  readonly principalId: string;
+}
+
+/**
+ * Mints one fresh, single-use gateway assertion for the given audience: version 2 for a principal acting for
+ * itself, or version 3 when a calling module acts for that principal, as the Shell signs a module call.
+ */
 export const issueAcceptanceGatewayAssertion = Effect.fnUntraced(function* issueAcceptanceGatewayAssertion(
   executor: Pick<CoreDatabaseExecutor, 'execute'>,
   gateway: AcceptanceGatewayIssuer,
   audience: string,
   principal: AcceptanceGatewayPrincipal,
+  actor?: AcceptanceGatewayActor,
 ) {
   const epochRows = yield* executor.execute<EpochRow>(
     sql`select floor(extract(epoch from statement_timestamp()))::bigint::text as epoch`,
@@ -94,12 +99,22 @@ export const issueAcceptanceGatewayAssertion = Effect.fnUntraced(function* issue
   const snapshot = yield* enrollmentApplicationCompositionSnapshot;
   return yield* Effect.promise(
     async () =>
-      await new SignJWT({
-        compositionRevision: snapshot.composition.revision,
-        principal,
-        targetBuildMarker: ultramodernApiMarker.buildMarker,
-        ver: EXTERNAL_GATEWAY_ASSERTION_VERSION,
-      })
+      await new SignJWT(
+        actor === undefined
+          ? {
+              compositionRevision: snapshot.composition.revision,
+              principal,
+              targetBuildMarker: ultramodernApiMarker.buildMarker,
+              ver: EXTERNAL_GATEWAY_ASSERTION_VERSION,
+            }
+          : {
+              act: actor,
+              compositionRevision: snapshot.composition.revision,
+              principal,
+              targetBuildMarker: ultramodernApiMarker.buildMarker,
+              ver: DELEGATED_GATEWAY_ASSERTION_VERSION,
+            },
+      )
         .setProtectedHeader({ alg: 'EdDSA', kid: gateway.keyId, typ: 'JWT' })
         .setAudience(audience)
         .setExpirationTime(issuedAt + GATEWAY_ASSERTION_TTL_SECONDS)

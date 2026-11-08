@@ -4,12 +4,16 @@ import { Crypto, Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
+import type { ListAccessPredicate } from '../../src/access/decision/list-access.ts';
+import { AccessTeamIdSchema } from '../../src/access/decision/authority.ts';
+import { AgentIdSchema, PrincipalIdSchema, RecordKeySchema } from '../../src/access/ids.ts';
 import { loadDatabaseIdentityConnections } from '../../src/db/config.ts';
 import { coreRelations } from '../../src/db/schema.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
 import { attestOutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
 import { makePostgresCoreSearchProjectionStore } from '../../src/search/persistence.ts';
 import { CoreSearchProjectionStore, createCoreSearchQueryRuntime } from '../../src/search/projection.ts';
+import type { CoreSearchAuthorization } from '../../src/search/projection.ts';
 import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
 import {
   addTestGatewayScopeGrantCleanup,
@@ -29,6 +33,62 @@ const queryEffect = <Row extends object>(
 ) => client.unsafe<Row>(statement, parameters);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const compositionRevision = 'a'.repeat(64);
+
+/** Owner predicates exactly as the gate builds them: positive clauses only, and the non-empty array
+ * contracts of the type are what these literals must satisfy rather than hide.
+ */
+const resourceIdsOf = (hits: readonly { readonly ref: { readonly resourceId: string } }[]): readonly string[] =>
+  hits.map(({ ref }) => ref.resourceId);
+const principalHolder = (principalId: string) => ({
+  _tag: 'Principal' as const,
+  principalId: PrincipalIdSchema.make(principalId),
+});
+const unrestricted: ListAccessPredicate = { groups: [] };
+const assignedTo = (principalId: string): ListAccessPredicate => ({
+  groups: [{ clauses: [{ conditions: [{ _tag: 'AssignedTo', holder: principalHolder(principalId) }] }] }],
+});
+/** An agent holder can never equal the assignee principal the index records. */
+const agentAssignedTo = (agentId: string): ListAccessPredicate => ({
+  groups: [
+    {
+      clauses: [
+        { conditions: [{ _tag: 'AssignedTo', holder: { _tag: 'Agent', agentId: AgentIdSchema.make(agentId) } }] },
+      ],
+    },
+  ],
+});
+const recordsOf = (first: string, ...rest: readonly string[]): ListAccessPredicate => ({
+  groups: [
+    {
+      clauses: [
+        {
+          conditions: [
+            {
+              _tag: 'RecordKeyIn',
+              recordKeys: [RecordKeySchema.make(first), ...rest.map((id) => RecordKeySchema.make(id))],
+            },
+          ],
+        },
+      ],
+    },
+  ],
+});
+const teamMemberOf = (first: string, ...rest: readonly string[]): ListAccessPredicate => ({
+  groups: [
+    {
+      clauses: [
+        {
+          conditions: [
+            {
+              _tag: 'TeamMemberOf',
+              teamIds: [AccessTeamIdSchema.make(first), ...rest.map((id) => AccessTeamIdSchema.make(id))],
+            },
+          ],
+        },
+      ],
+    },
+  ],
+});
 
 /** A Party request scope backed by a grant that a Shell issuer login registered for this tenant. */
 const partyRequestScope = Effect.fn('SearchPersistenceTest.partyRequestScope')(function* partyRequestScopeEffect(
@@ -406,6 +466,140 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('search persistence', 
           },
           scope,
         ),
+      ).toEqual([]);
+
+      // Visibility is a database WHERE clause: it is applied before the candidate bound, before text
+      // matching and before the in-memory order, so foreign rows can neither displace a visible row
+      // nor change its count or availability.
+      const assignedId = 'aa000000-0000-4000-8000-000000000001';
+      const sameAssigneeOtherRecordId = 'bb000000-0000-4000-8000-000000000001';
+      const otherAssignedId = 'cc000000-0000-4000-8000-000000000001';
+      const hiddenNameId = 'dd000000-0000-4000-8000-000000000001';
+      const otherPrincipalId = yield* crypto.randomUUIDv4();
+      const teamId = yield* crypto.randomUUIDv4();
+      const assignedParty = (resourceId: string, title: string, assignee: string) => ({
+        ...partyDocument(resourceId, '3', title),
+        assignedPrincipalId: assignee,
+      });
+      yield* store.apply(
+        { document: assignedParty(assignedId, 'ZZZ visible needle', principalId), kind: 'upsert' },
+        context,
+      );
+      yield* store.apply(
+        { document: assignedParty(sameAssigneeOtherRecordId, 'CCC visible needle', principalId), kind: 'upsert' },
+        context,
+      );
+      yield* store.apply(
+        { document: assignedParty(otherAssignedId, 'BBB visible needle', otherPrincipalId), kind: 'upsert' },
+        context,
+      );
+      // A personal name that is *only* in the title, with unrelated public searchable text.
+      yield* store.apply(
+        {
+          document: {
+            archived: false,
+            facets: [],
+            metadata: [],
+            projectionVersion: '3',
+            ref: {
+              moduleId: 'party.registry',
+              resourceId: hiddenNameId,
+              resourceType: 'party.registry.party',
+              tenantId,
+            },
+            searchableText: ['public-needle'],
+            title: 'Hidden Person Name',
+          },
+          kind: 'upsert',
+        },
+        context,
+      );
+      const visibilityQuery = {
+        includeArchived: false,
+        moduleId: 'party.registry',
+        query: 'visible needle',
+        resourceType: 'party.registry.party',
+        tenantId,
+      };
+      const hiddenNameQuery = { ...visibilityQuery, query: 'hidden person' };
+      const publicTextQuery = { ...visibilityQuery, query: 'public-needle' };
+      const mixedGroups: ListAccessPredicate = {
+        groups: [
+          {
+            clauses: [
+              { conditions: [{ _tag: 'AssignedTo', holder: principalHolder(principalId) }] },
+              { conditions: [{ _tag: 'RecordKeyIn', recordKeys: [RecordKeySchema.make(otherAssignedId)] }] },
+            ],
+          },
+          { clauses: [{ conditions: [{ _tag: 'RecordKeyIn', recordKeys: [RecordKeySchema.make(assignedId)] }] }] },
+        ],
+      };
+      const visibleIds = (listAccess: ListAccessPredicate, authorization?: CoreSearchAuthorization) =>
+        search.search(visibilityQuery, scope, { listAccess, ...authorization }).pipe(Effect.map(resourceIdsOf));
+      // Every row of the scope; one assigned row; one named record.
+      expect((yield* visibleIds(unrestricted)).toSorted()).toEqual(
+        [assignedId, otherAssignedId, sameAssigneeOtherRecordId].toSorted(),
+      );
+      expect(yield* visibleIds(assignedTo(principalId))).toEqual([sameAssigneeOtherRecordId, assignedId]);
+      expect(yield* visibleIds(recordsOf(assignedId))).toEqual([assignedId]);
+      expect(yield* visibleIds(assignedTo(otherPrincipalId))).toEqual([otherAssignedId]);
+      // Every group must match and any clause of a group may match: the row that is assigned to the
+      // caller but is not the named record fails the second group and stays hidden.
+      expect(yield* visibleIds(mixedGroups)).toEqual([assignedId]);
+      // An owner dimension the index cannot project denies every row instead of widening the filter,
+      // and an agent holder never equals the assignee principal the index records.
+      expect(yield* visibleIds(teamMemberOf(teamId))).toEqual([]);
+      expect(yield* visibleIds(agentAssignedTo(yield* crypto.randomUUIDv4()))).toEqual([]);
+
+      // 10,001 further rows match the text and the scope but none of them is assigned to the caller.
+      yield* queryEffect(
+        admin,
+        `
+        insert into core.search_index_entries
+          (tenant_id, source_module_key, source_resource_type, source_resource_id,
+           title, body_text, deleted, facets_json, projection_version)
+        select $1, 'party.registry', 'party.registry.party', gen_random_uuid()::text,
+          'AAA invisible needle', 'visible needle', false,
+          '{"schemaVersion":"1","archived":false,"facets":[],"metadata":[]}'::jsonb, 1
+        from generate_series(1, 10001)
+      `,
+        [tenantId],
+      );
+      // The assigned search keeps its exact result and does not report the candidate bound: the
+      // foreign rows were never candidates, so they cannot be counted.
+      expect(yield* visibleIds(assignedTo(principalId))).toEqual([sameAssigneeOtherRecordId, assignedId]);
+      // A hidden title does not order the hits; the resource key the caller may read does.
+      expect(yield* visibleIds(assignedTo(principalId), { hiddenTextFields: ['title'] })).toEqual([
+        assignedId,
+        sameAssigneeOtherRecordId,
+      ]);
+      // The unrestricted path still reports its existing candidate-bound failure; this is the
+      // negative control proving the restricted path did not first scan other people's rows.
+      expect(
+        Predicate.isTagged(
+          yield* Effect.flip(search.search(visibilityQuery, scope, { listAccess: unrestricted })),
+          'CoreSearchProjectionUnavailable',
+        ),
+      ).toBe(true);
+
+      // A denied personal name is not matchable, not countable and not visible in result metadata.
+      const scopedToHiddenName = recordsOf(hiddenNameId);
+      const readableHiddenName = yield* search.search(hiddenNameQuery, scope, { listAccess: scopedToHiddenName });
+      expect(readableHiddenName.map(({ title }) => title)).toEqual(['Hidden Person Name']);
+      // `body_text` repeats the title, so this also proves the denied title is not re-read from it.
+      expect(
+        yield* search.search(hiddenNameQuery, scope, { hiddenTextFields: ['title'], listAccess: scopedToHiddenName }),
+      ).toEqual([]);
+      const publicTextHits = yield* search.search(publicTextQuery, scope, {
+        hiddenTextFields: ['title'],
+        listAccess: scopedToHiddenName,
+      });
+      expect(publicTextHits.map(({ title }) => title)).toEqual(['[redacted]']);
+      expect(
+        yield* search.search(publicTextQuery, scope, {
+          hiddenTextFields: ['searchableText', 'title'],
+          listAccess: scopedToHiddenName,
+        }),
       ).toEqual([]);
 
       const runtimeRows = yield* queryEffect(

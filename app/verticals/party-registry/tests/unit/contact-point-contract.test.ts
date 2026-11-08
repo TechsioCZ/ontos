@@ -22,6 +22,7 @@ import {
 } from '../../src/actions/update-contact-point.action.ts';
 import { partyContactPointDetailRead } from '../../src/api/party-contact-point-detail.read.ts';
 import { partyContactPointsRead } from '../../src/api/party-contact-points.read.ts';
+import { normalizeContactPhone } from '../../shared/domain/contact-phone-normalization.ts';
 
 const partyRef = {
   moduleId: 'party.registry',
@@ -34,6 +35,29 @@ const provenance = {
   method: 'MANUAL_CONFIRMATION',
   source: 'USER_ASSERTION',
 } as const;
+it('uses the same canonical phone protocol for public ingress and durable contacts', () => {
+  for (const [phone, country, extension] of [
+    ['+420 (777) 123-456', undefined, '42'],
+    ['777 123 456', ' cz ', undefined],
+    ['+44 20 7946 0123', 'GB', undefined],
+  ] as const) {
+    expect(normalizeContactPhone(phone, country, extension)).toEqual({
+      normalized: normalizePhone(phone, country, extension),
+      ok: true,
+    });
+  }
+  for (const [phone, country, extension] of [
+    ['777123456', undefined, undefined],
+    ['777123456', 'GB', undefined],
+    ['+012345678', undefined, undefined],
+    ['+1234567890123456', undefined, undefined],
+    ['+420777123456', 'CZ', 'ext42'],
+    ['+420777123456<script>', undefined, undefined],
+  ] as const) {
+    expect(normalizeContactPhone(phone, country, extension).ok).toBe(false);
+    expect(() => normalizePhone(phone, country, extension)).toThrow();
+  }
+});
 it('normalizes EMAIL without provider-specific identity heuristics', () => {
   expect(normalizeEmail('  Qa.Test+case@EXAMPLE.COM  ')).toEqual({
     displayValue: 'Qa.Test+case@EXAMPLE.COM',
@@ -127,7 +151,7 @@ it('keeps ADDRESS structured, multi-purpose, and preferred independently per pur
     }),
   ).toThrow();
 });
-it('requires authoritative, registry-scoped evidence only for REGISTERED', () => {
+it('requires authoritative evidence for an explicitly registry-scoped REGISTERED purpose', () => {
   expect(() =>
     assertAddressPurposeRules(
       [
@@ -176,7 +200,9 @@ it('declares tenant-authorized idempotent Actions and prevents value overwrite t
   for (const action of [addContactPointAction, updateContactPointAction, endContactPointAction]) {
     expect(action.descriptor.legalEntityScope).toBe('optional');
     expect(action.descriptor.idempotency).toBe('required');
-    expect(action.descriptor.tenantPermission).not.toBe(undefined);
+    expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    expect(action.descriptor.accessDeclaration?.kind).toBe('action');
+    expect(action.descriptor.accessTarget).toBeDefined();
   }
   expect(() =>
     Schema.decodeSync(AddContactPointPayloadSchema)({
@@ -189,7 +215,6 @@ it('declares tenant-authorized idempotent Actions and prevents value overwrite t
       privacyClassification: 'PERSONAL',
       provenance,
       validFrom: '2026-09-01T00:00:00.000Z',
-      verification: { state: 'UNVERIFIED' },
     }),
   ).not.toThrow();
   expect(() =>
@@ -207,11 +232,17 @@ it('declares tenant-authorized idempotent Actions and prevents value overwrite t
     }),
   ).toThrow();
 });
-it('governs contact reads with tenant Party authority even when Legal Entity context is optional', () => {
-  for (const read of [partyContactPointsRead, partyContactPointDetailRead]) {
-    expect(read.descriptor.legalEntityScope).toBe('optional');
-    expect(read.descriptor.permissionTarget).toBe('tenant');
-  }
+it('governs contact reads with their own contact-point declarations even when Legal Entity context is optional', () => {
+  expect(partyContactPointsRead.descriptor.legalEntityScope).toBe('optional');
+  expect(partyContactPointDetailRead.descriptor.legalEntityScope).toBe('optional');
+  expect(partyContactPointDetailRead.descriptor.accessActor).toEqual({
+    callers: ['commerce-customer-context'],
+    reason: expect.any(String),
+    subject: 'rights',
+  });
+  expect(
+    [partyContactPointsRead, partyContactPointDetailRead].map((read) => read.descriptor.accessDeclaration?.key),
+  ).toEqual(['party.registry.contact-point.list', 'party.registry.contact-point.read']);
 });
 it('publishes stable references instead of mutable contact data', () => {
   const contactPointRef = {
@@ -306,7 +337,6 @@ it('models an originally wrong Contact Point as an explicit correction with opti
             evidenceReference: 'evidence:customer-confirmation:42',
           },
           validFrom: '2026-09-03T10:00:00.000Z',
-          verification: { state: 'UNVERIFIED' },
         },
         type: 'CORRECT_CONTACT_POINT',
       },
@@ -366,11 +396,65 @@ it('projects independently auditable whole-contact and ADDRESS-purpose ends', ()
         state: 'ACTIVE',
         validFrom: '2026-09-01T00:00:00.000Z',
         validTo: '2026-10-01T00:00:00.000Z',
-        verification: { state: 'UNVERIFIED' },
       },
     ],
     type: 'ADDRESS',
   });
   expect(address.purposes[0]?.end).toEqual(end);
   expect(address.purposes[0]?.current, 'a future end remains current before boundary').toBe(true);
+});
+
+it('accepts a declared REGISTERED purpose without registry authority or evidence', () => {
+  expect(() => assertAddressPurposeRules([{ preferred: true, purpose: 'REGISTERED' }], provenance)).not.toThrow();
+});
+it('accepts contact input without verification and rejects removed verification payloads', () => {
+  const payload = {
+    contactPoint: { preferred: true, type: 'EMAIL', value: 'declared@example.test' },
+    partyRef,
+    privacyClassification: 'PERSONAL',
+    provenance,
+    validFrom: '2026-09-01T00:00:00.000Z',
+  };
+  expect(() => Schema.decodeUnknownSync(AddContactPointPayloadSchema)(payload)).not.toThrow();
+  expect(() =>
+    Schema.decodeUnknownSync(AddContactPointPayloadSchema, { onExcessProperty: 'error' })({
+      ...payload,
+      verification: { state: 'VERIFIED' },
+    }),
+  ).toThrow();
+  expect(() =>
+    Schema.decodeUnknownSync(UpdateContactPointPayloadSchema)({
+      change: { type: 'ENRICH_VERIFICATION', verification: { state: 'VERIFIED' } },
+      contactPointRef: { ...partyRef, resourceType: 'party.registry.party-contact-point' },
+      expectedRevision: 1,
+      provenance,
+    }),
+  ).toThrow();
+});
+
+it('rejects synthetic registry context and keeps it exclusive to REGISTERED', () => {
+  const authoritative = { ...provenance, authoritative: true, evidenceReference: 'evidence:registry:1' };
+  for (const registryContext of [
+    { jurisdiction: 'CZ', registryKey: 'GENERAL' },
+    { jurisdiction: 'ZZ', registryKey: 'ARES' },
+    { jurisdiction: 'SK', registryKey: 'ARES' },
+    { jurisdiction: 'CZ', registryKey: 'OTHER' },
+    { jurisdiction: 'invalid', registryKey: 'ARES' },
+  ]) {
+    expect(() =>
+      assertAddressPurposeRules([{ preferred: false, purpose: 'REGISTERED', registryContext }], authoritative),
+    ).toThrow();
+  }
+  expect(() =>
+    assertAddressPurposeRules(
+      [
+        {
+          preferred: false,
+          purpose: 'BILLING',
+          registryContext: { jurisdiction: 'CZ', registryKey: 'ARES' },
+        },
+      ],
+      authoritative,
+    ),
+  ).toThrow();
 });

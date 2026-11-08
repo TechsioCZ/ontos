@@ -13,6 +13,9 @@ import {
   makeDatabaseIdentityEnrollmentLive,
 } from '@app/core-runtime';
 import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
+  TenantIntentLoaderLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
@@ -60,6 +63,13 @@ const composition = ActiveApplicationCompositionConfigLive.pipe(
 const state = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
 const gate = ModuleStateGateLive.pipe(Layer.provide(state));
 const core = Layer.mergeAll(CorePersistenceLive, ContextAccessLive);
+const accessEnforcement = AccessDecisionLive.pipe(
+  Layer.provideMerge(AccessEnforcementPortsLive),
+  Layer.provide(TenantIntentLoaderLive),
+  Layer.provide(CorePersistenceLive),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(NodeCrypto.layer),
+);
 const runtime = Layer.unwrap(
   Effect.gen(function* originalRequestRuntime() {
     const snapshot = yield* (yield* ActiveApplicationCompositionService).load;
@@ -71,9 +81,10 @@ const runtime = Layer.unwrap(
       Layer.provide(
         Layer.mergeAll(
           core,
+          accessEnforcement,
           gate,
           ModuleEntrypointGatewayLive.pipe(Layer.provide(gate)),
-          OperationalScopeResolverLive.pipe(Layer.provide(core)),
+          OperationalScopeResolverLive.pipe(Layer.provide(Layer.mergeAll(core, accessEnforcement))),
           ActionRepositoryLive,
           ActionPermissionLive,
         ),
@@ -101,6 +112,7 @@ const redemption = GatewayAssertionRedemptionLive.pipe(
   ),
 );
 const live = Layer.mergeAll(
+  accessEnforcement,
   receiptRead,
   runner,
   redemption,

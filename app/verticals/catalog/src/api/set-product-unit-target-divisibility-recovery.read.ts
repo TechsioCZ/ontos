@@ -66,10 +66,7 @@ const recoverSetProductUnitTargetDivisibility = Effect.fn('SetProductUnitTargetD
 
 const setProductUnitTargetDivisibilityRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: {
-    kind: 'context_permission',
-    permission: 'commerce.catalog.read.set-product-unit-target-divisibility-recovery',
-  },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.set-product-unit-target-divisibility-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -77,6 +74,14 @@ const setProductUnitTargetDivisibilityRecoveryEntrypoint = defineTenantModuleEnt
 
 export const setProductUnitTargetDivisibilityRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.set-product-unit-target-divisibility-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product-unit', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: setProductUnitTargetDivisibilityRecoveryEntrypoint,
     evidencePolicy: {
@@ -86,7 +91,6 @@ export const setProductUnitTargetDivisibilityRecoveryRead = defineRead(
     inputSchema: SetProductUnitTargetDivisibilityRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.set-product-unit-target-divisibility-recovery',
     resultSchema: SetProductUnitTargetDivisibilityRecoveryResponseSchema,
@@ -100,5 +104,4 @@ export const setProductUnitTargetDivisibilityRecoveryRead = defineRead(
   },
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

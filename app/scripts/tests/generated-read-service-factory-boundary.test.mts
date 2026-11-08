@@ -2,7 +2,10 @@ import { readFileSync } from 'node:fs';
 
 import { expect, it } from 'effect-rstest';
 
-import { hasOwnerLocalReadServiceFactory } from '../generated-governed-http-boundary.mts';
+import {
+  hasOwnerLocalReadServiceFactory,
+  hasReadOwnerPermissionDeclaration,
+} from '../generated-governed-http-boundary.mts';
 
 const ownerPath = 'verticals/commerce-customer-context';
 const readFile = `${ownerPath}/src/api/payment-term-policy-current.read.ts`;
@@ -40,6 +43,27 @@ for (const name of currentReadFiles) {
     ).toBe(true);
   });
 }
+
+it('accepts only the original scoped Core routine capability paired with its native operational scope', () => {
+  const source = `import type { ScopedRoutineInvoker, OperationalScope } from '@app/core-runtime';
+export const ${factoryName} = (transaction: ScopedRoutineInvoker, scope: OperationalScope) => makeService(transaction, scope);`;
+  expect(accepts(sourcesFor(factoryImport, source))).toBe(true);
+  for (const invalid of [
+    source.replace("from '@app/core-runtime'", "from './foreign-core.ts'"),
+    source.replace(
+      'ScopedRoutineInvoker, OperationalScope',
+      'ForeignRoutineInvoker as ScopedRoutineInvoker, OperationalScope',
+    ),
+    source.replace('transaction: ScopedRoutineInvoker', 'transaction: ForeignRoutineInvoker'),
+    source.replace('scope: OperationalScope', 'scope: unknown'),
+    `${source}\ntype ScopedRoutineInvoker = unknown;`,
+    `${source}\nfunction shadow(ScopedRoutineInvoker) {}`,
+    `${source}\nfunction shadow(OperationalScope) {}`,
+  ]) {
+    expect(invalid).not.toBe(source);
+    expect(accepts(sourcesFor(factoryImport, invalid))).toBe(false);
+  }
+});
 
 it('accepts a genuine Core factory annotation imported only as a type', () => {
   expect(accepts(sourcesFor())).toBe(true);
@@ -155,4 +179,120 @@ for (const [name, invalidService] of [
 
 it('ignores a factory declaration appearing only in comments', () => {
   expect(accepts(sourcesFor(factoryImport, `${coreTypeImport}\n/* ${factoryDeclaration} */`))).toBe(false);
+});
+
+const ownerPermissionInvocation = 'ownerReadPermission<Input>(resolve)';
+const corePermissionInvocation = 'defineReadOwnerPermission(contract, resolve)';
+const permissionFile = `${ownerPath}/src/permissions/authorization.ts`;
+const permissionImport = "import { ownerReadPermission } from '../permissions/authorization.ts';";
+const corePermissionImport = "import { defineReadOwnerPermission } from '@app/core-runtime';";
+const permissionWrapper = `${corePermissionImport}
+export const ownerReadPermission = <Input>(resolver: (input: Input) => Target) =>
+  defineReadOwnerPermission(contract, (input: Input, scope) => resolver(input, scope));`;
+const permissionSources = (readSource = permissionImport, wrapperSource = permissionWrapper) =>
+  new Map([
+    [readFile, readSource],
+    [permissionFile, wrapperSource],
+  ]);
+const acceptsPermission = (sources: ReadonlyMap<string, string>, candidate = ownerPermissionInvocation) =>
+  hasReadOwnerPermissionDeclaration(sources, readFile, ownerPath, candidate);
+
+it('accepts the genuine direct Core owner permission declaration and its native import rename', () => {
+  expect(acceptsPermission(permissionSources(corePermissionImport), corePermissionInvocation)).toBe(true);
+  expect(
+    acceptsPermission(
+      permissionSources(
+        corePermissionImport.replace('defineReadOwnerPermission }', 'defineReadOwnerPermission as nativePermission }'),
+      ),
+      'nativePermission(contract, resolve)',
+    ),
+  ).toBe(true);
+});
+
+it('accepts a genuine direct declaration stored in a const and a same-owner wrapper with typed resolver', () => {
+  expect(
+    acceptsPermission(
+      permissionSources(`${corePermissionImport}\nconst permission = defineReadOwnerPermission(contract, resolve);`),
+      'permission',
+    ),
+  ).toBe(true);
+  expect(acceptsPermission(permissionSources())).toBe(true);
+  expect(
+    acceptsPermission(
+      permissionSources(permissionImport.replace('ownerReadPermission }', 'ownerReadPermission as localPermission }')),
+      'localPermission<Input>(resolve)',
+    ),
+  ).toBe(true);
+});
+
+for (const [name, readSource, wrapperSource, candidate] of [
+  [
+    'fake same-name constructor',
+    "import { defineReadOwnerPermission } from '@app/fake-runtime';",
+    permissionWrapper,
+    corePermissionInvocation,
+  ],
+  [
+    'local fake constructor',
+    'const defineReadOwnerPermission = (contract, resolve) => ({});',
+    permissionWrapper,
+    corePermissionInvocation,
+  ],
+  [
+    'type-only constructor',
+    corePermissionImport.replace('import {', 'import type {'),
+    permissionWrapper,
+    corePermissionInvocation,
+  ],
+  ['plain DTO', "const permission = { kind: 'owner_permission' };", permissionWrapper, 'permission'],
+  ['DTO callback', '', permissionWrapper, "() => ({ kind: 'owner_permission' })"],
+  [
+    'fake wrapper return',
+    permissionImport,
+    permissionWrapper.replace(
+      'defineReadOwnerPermission(contract, (input: Input, scope) => resolver(input, scope))',
+      "({ kind: 'owner_permission' })",
+    ),
+    ownerPermissionInvocation,
+  ],
+  [
+    'fake wrapper constructor import',
+    permissionImport,
+    permissionWrapper.replace('@app/core-runtime', '@app/fake-runtime'),
+    ownerPermissionInvocation,
+  ],
+  [
+    'shadowed constructor parameter',
+    permissionImport,
+    permissionWrapper.replace('resolver: (input: Input) => Target', 'defineReadOwnerPermission: Factory'),
+    ownerPermissionInvocation,
+  ],
+  [
+    'non-exported wrapper',
+    permissionImport,
+    permissionWrapper.replace('export const', 'const'),
+    ownerPermissionInvocation,
+  ],
+  [
+    'extra expression after declaration',
+    corePermissionImport,
+    permissionWrapper,
+    'defineReadOwnerPermission(contract, resolve) || fake',
+  ],
+] as const) {
+  it(`rejects an owner permission ${name}`, () => {
+    expect(acceptsPermission(permissionSources(readSource, wrapperSource), candidate)).toBe(false);
+  });
+}
+
+it('rejects a genuine constructor wrapper imported from another owner', () => {
+  const foreignFile = 'verticals/pricing/src/permissions/authorization.ts';
+  expect(
+    acceptsPermission(
+      new Map([
+        [readFile, "import { ownerReadPermission } from '../../../pricing/src/permissions/authorization.ts';"],
+        [foreignFile, permissionWrapper],
+      ]),
+    ),
+  ).toBe(false);
 });

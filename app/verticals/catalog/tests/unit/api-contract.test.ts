@@ -195,18 +195,19 @@ it('requires retained Category history rather than a Current fallback', () => {
 it('keeps current-detail and historical reads separately permissioned and tenant-scoped', () => {
   expect(productDetailRead.descriptor.entrypoint).toMatchObject({
     access: 'read',
-    authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.product-detail' },
+    authorization: { kind: 'protected' },
     scope: 'tenant',
   });
   expect(productHistoryRead.descriptor.entrypoint).toMatchObject({
     access: 'historical_read',
-    authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.product-history' },
+    authorization: { kind: 'protected' },
     scope: 'tenant',
   });
   for (const read of [productDetailRead, productHistoryRead]) {
     expect(read.descriptor.legalEntityScope).toBe('forbidden');
-    expect(read.descriptor.permissionTarget).toBe('tenant');
-    expect(read.descriptor.resourcePermission).toBeUndefined();
+    // v2: a protected read decides itself through the one access gate, so it declares no legacy
+    // permission target; its scope-wide declaration carries no per-record selectors (O62, CUTOVER §3.1).
+    expect(read.descriptor.accessDeclaration?.selectors).toEqual([]);
   }
 });
 
@@ -362,7 +363,7 @@ it('publishes only explicitly implemented atomic permissions with disjoint autho
       'variant',
     ]).toContain(contract.businessTarget);
     expect(contract.scope).toBe('tenant');
-    if (contract.permissionKind === 'action_execution') {
+    if (contract.accessKind === 'action') {
       expect(contract.permission).toBe(key);
     }
     expect(catalogAuthorityBundles[contract.authorityBundle]).toContain(contract.permission);

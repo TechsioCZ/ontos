@@ -20,7 +20,7 @@ interface FinalOrderTaxServices {
 
 const finalOrderTaxEntrypoint = defineTenantModuleEntrypoint({
   access: 'historical_read',
-  authorization: { kind: 'context_permission', permission: 'tax.governed.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.tax.api.final-order-tax',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -56,6 +56,19 @@ export const readFinalOrderTax = (
 
 export const finalOrderTaxRead = defineRead(
   {
+    accessActor: {
+      callers: ['commerce-order'],
+      reason: 'Commerce Order reads final order tax for a verified originating buyer.',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.tax.order-tax.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'order-tax', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: finalOrderTaxEntrypoint,
     evidencePolicy: {
@@ -65,7 +78,6 @@ export const finalOrderTaxRead = defineRead(
     inputSchema: FinalOrderTaxRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.tax.api.final-order-tax',
     resultSchema: FinalOrderTaxResponseSchema,
@@ -73,5 +85,4 @@ export const finalOrderTaxRead = defineRead(
   },
   { load: readFinalOrderTax },
   (transaction, scope) => Effect.succeed({ finalizations: orderTaxFinalizationsForScope(transaction, scope) }),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

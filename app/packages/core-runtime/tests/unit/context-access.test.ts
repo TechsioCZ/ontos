@@ -1,17 +1,18 @@
+import {
+  historicalOwnerTarget,
+  historicalPermissionKey as toBusinessPermissionAccessKey,
+  historicalPermissionObjectId as toBusinessPermissionAccessObjectId,
+} from '../support/historical-owner-targets.ts';
+import { remainingPermissionBaselines } from './owner-permission-baseline.ts';
+import { ownerPermissionTarget } from '../support/owner-permission-target.ts';
 import { v1 } from '@authzed/authzed-node';
-import { Cause, Deferred, Effect, Exit, Fiber, Logger, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { spiceDbPermissionClientError } from '../../src/permissions/client.ts';
-import { insideDatabaseTransaction } from '../../src/db/transaction-io-guard.ts';
 import type { SpiceDbPermissionClient } from '../../src/permissions/client.ts';
 import {
   makeContextAccess,
-  withRequestPermissionDecisions,
-  toAssortmentPermissionAccessKey,
-  toAssortmentPermissionAccessObjectId,
-  toBusinessPermissionAccessKey,
-  toBusinessPermissionAccessObjectId,
   toContextPermissionAccessKey,
   toContextPermissionAccessObjectId,
   toLegalEntityAccessObjectId,
@@ -21,6 +22,10 @@ import {
 import { LEGAL_ENTITY_PERMISSION_KEYS, TENANT_PERMISSION_KEYS } from '../../src/permissions/context-permissions.ts';
 import { BusinessPermissionCodeSchema } from '../../src/permissions/business-permission.ts';
 
+interface BaselineCurrentState {
+  decision: 'allowed' | 'denied' | 'unavailable';
+}
+
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
 const principalId = '30000000-0000-4000-8000-000000000001';
@@ -28,17 +33,6 @@ const pricingCatalogId = '50000000-0000-4000-8000-000000000001';
 const priceGroupId = '60000000-0000-4000-8000-000000000001';
 const otherPriceGroupId = '60000000-0000-4000-8000-000000000002';
 const inventoryResourceId = '70000000-0000-4000-8000-000000000001';
-
-const assortmentEndTarget = {
-  binding: {
-    moduleId: 'commerce.assortment',
-    resourceId: 'binding-1',
-    resourceType: 'commerce.assortment.applicability-binding',
-  },
-  kind: 'assortment_binding' as const,
-  mode: 'end' as const,
-  permission: 'assortment.binding.end' as const,
-};
 
 const responseFor = (
   request: v1.CheckBulkPermissionsRequest,
@@ -66,12 +60,23 @@ const makeClient = (handle: SpiceDbPermissionClient['checkBulkPermissions']): Sp
 
 const requireBusinessPermissions = (
   access: ReturnType<typeof makeContextAccess>,
-): NonNullable<ReturnType<typeof makeContextAccess>['businessPermissions']> => {
-  const check = access.businessPermissions;
+  selectedLegalEntityId: string = legalEntityId,
+) => {
+  const check = access.ownerPermissions;
   if (check === undefined) {
-    throw new Error('Expected business permission access');
+    throw new Error('Expected owner permission access');
   }
-  return check;
+  return (input: {
+    readonly legalEntityId?: string;
+    readonly principal: { readonly principalId: string; readonly tenantId: string };
+    readonly targets: readonly { readonly permission: string; readonly target: object }[];
+    readonly trustedStorefrontId?: string;
+  }) =>
+    check({
+      ...input,
+      legalEntityId: input.legalEntityId ?? selectedLegalEntityId,
+      targets: input.targets.map(({ permission, target }) => ({ target: historicalOwnerTarget(permission, target) })),
+    });
 };
 
 const requireContextPermissions = (
@@ -84,12 +89,12 @@ const requireContextPermissions = (
   return check;
 };
 
-const requireAssortmentPermissions = (
+const requireOwnerPermissions = (
   access: ReturnType<typeof makeContextAccess>,
-): NonNullable<ReturnType<typeof makeContextAccess>['assortmentPermissions']> => {
-  const check = access.assortmentPermissions;
+): NonNullable<ReturnType<typeof makeContextAccess>['ownerPermissions']> => {
+  const check = access.ownerPermissions;
   if (check === undefined) {
-    throw new Error('Expected Assortment permission access');
+    throw new Error('Expected owner permission access');
   }
   return check;
 };
@@ -130,10 +135,10 @@ it.effect('uses one fully consistent batch and correlates allowed and denied mod
   }),
 );
 
-it.effect('scopes Assortment keys and object IDs by trusted tenant and Legal Entity', () =>
-  Effect.gen(function* scopesAssortmentTargets() {
+it.effect('checks exact owner targets only in their trusted tenant and Legal Entity scope', () =>
+  Effect.gen(function* checksOwnerScope() {
     const requests: v1.CheckBulkPermissionsRequest[] = [];
-    const service = makeContextAccess(
+    const access = makeContextAccess(
       makeClient((request) =>
         Effect.sync(() => {
           requests.push(request);
@@ -141,247 +146,41 @@ it.effect('scopes Assortment keys and object IDs by trusted tenant and Legal Ent
         }),
       ),
     );
-    const result = yield* requireAssortmentPermissions(service)({
-      legalEntityId,
-      principal: { principalId, tenantId },
-      targets: [{ target: assortmentEndTarget }],
-    });
-    const otherKey = toAssortmentPermissionAccessKey(
-      '10000000-0000-4000-8000-000000000009',
-      legalEntityId,
-      assortmentEndTarget,
-    );
-    const objectId = toAssortmentPermissionAccessObjectId(tenantId, legalEntityId, assortmentEndTarget);
-    expect(result).toEqual([
-      { decision: 'allowed', key: toAssortmentPermissionAccessKey(tenantId, legalEntityId, assortmentEndTarget) },
+    const target = ownerPermissionTarget({ legalEntityId, tenantId });
+    const check = requireOwnerPermissions(access);
+    expect(yield* check({ legalEntityId, principal: { principalId, tenantId }, targets: [{ target }] })).toEqual([
+      { decision: 'allowed', key: target.key },
     ]);
-    expect(result?.[0]?.key).not.toBe(otherKey);
-    expect(requests[0]?.items[0]?.permission).toBe('use');
+    expect(requests[0]?.items[0]?.resource?.objectId).toBe(target.objectId);
     expect(requests[0]?.items[0]?.resource?.objectType).toBe('business_permission');
-    expect(requests[0]?.items[0]?.resource?.objectId).toBe(objectId);
-    expect(requests[0]?.items[0]?.resource?.objectId).not.toContain('binding-1');
-  }),
-);
-
-it('uses tenant scope for Rule lineage and requires Legal Entity scope for binding lineage', () => {
-  const ruleTarget = {
-    effect: 'ALLOW' as const,
-    kind: 'assortment_rule' as const,
-    mode: 'create' as const,
-    permission: 'assortment.rule.create' as const,
-    purpose: 'PURCHASE' as const,
-    selector: { kind: 'ALL' as const },
-    stableCode: 'rule-1',
-  };
-  expect(toAssortmentPermissionAccessKey(tenantId, undefined, ruleTarget)).toBeDefined();
-  expect(toAssortmentPermissionAccessObjectId(tenantId, undefined, ruleTarget)).toBeDefined();
-  expect(toAssortmentPermissionAccessKey(tenantId, undefined, assortmentEndTarget)).toBeUndefined();
-  expect(toAssortmentPermissionAccessObjectId(tenantId, undefined, assortmentEndTarget)).toBeUndefined();
-});
-
-it.effect('derives configuration scope from the exact canonical resource type and rejects unknown types', () =>
-  Effect.gen(function* derivesConfigurationScope() {
-    const requests: v1.CheckBulkPermissionsRequest[] = [];
-    const service = makeContextAccess(
-      makeClient((request) =>
-        Effect.sync(() => {
-          requests.push(request);
-          return responseFor(
-            request,
-            request.items.map(() => v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
-          );
-        }),
-      ),
-    );
-    const stableRuleTarget = {
-      kind: 'assortment_configuration' as const,
-      permission: 'assortment.configuration.read' as const,
-      resource: {
-        moduleId: 'commerce.assortment',
-        resourceId: 'stable-rule-1',
-        resourceType: 'commerce.assortment.stable-rule',
-      },
-      resourceScope: 'tenant' as const,
-    };
-    const ruleRevisionTarget = {
-      ...stableRuleTarget,
-      resource: {
-        ...stableRuleTarget.resource,
-        resourceId: 'rule-revision-1',
-        resourceType: 'commerce.assortment.rule-revision',
-      },
-    };
-    const bindingTarget = {
-      ...stableRuleTarget,
-      resource: {
-        ...stableRuleTarget.resource,
-        resourceId: 'binding-1',
-        resourceType: 'commerce.assortment.applicability-binding',
-      },
-      resourceScope: 'legal_entity' as const,
-    };
-    const boundaryTarget = {
-      ...stableRuleTarget,
-      resource: {
-        ...stableRuleTarget.resource,
-        resourceId: 'boundary-1',
-        resourceType: 'commerce.assortment.closed-assortment-boundary',
-      },
-      resourceScope: 'legal_entity' as const,
-    };
-    // A resource type outside its module's namespace is never a valid configuration target.
-    const unknownTarget = {
-      ...bindingTarget,
-      resource: { ...bindingTarget.resource, resourceType: 'foreign.module.configuration' },
-    };
-
-    expect(toAssortmentPermissionAccessKey(tenantId, undefined, stableRuleTarget)).toBeDefined();
-    expect(toAssortmentPermissionAccessKey(tenantId, undefined, ruleRevisionTarget)).toBeDefined();
-    expect(toAssortmentPermissionAccessObjectId(tenantId, legalEntityId, stableRuleTarget)).toBe(
-      toAssortmentPermissionAccessObjectId(tenantId, undefined, stableRuleTarget),
-    );
-    expect(toAssortmentPermissionAccessObjectId(tenantId, legalEntityId, ruleRevisionTarget)).toBe(
-      toAssortmentPermissionAccessObjectId(tenantId, undefined, ruleRevisionTarget),
-    );
-    expect(toAssortmentPermissionAccessKey(tenantId, undefined, bindingTarget)).toBeUndefined();
-    expect(toAssortmentPermissionAccessObjectId(tenantId, undefined, bindingTarget)).toBeUndefined();
-    expect(toAssortmentPermissionAccessKey(tenantId, legalEntityId, bindingTarget)).toBeDefined();
-    expect(toAssortmentPermissionAccessKey(tenantId, undefined, boundaryTarget)).toBeUndefined();
-    expect(toAssortmentPermissionAccessObjectId(tenantId, undefined, boundaryTarget)).toBeUndefined();
-    expect(toAssortmentPermissionAccessKey(tenantId, legalEntityId, boundaryTarget)).toBeDefined();
-    expect(toAssortmentPermissionAccessKey(tenantId, legalEntityId, unknownTarget)).toBeUndefined();
-    expect(toAssortmentPermissionAccessObjectId(tenantId, legalEntityId, unknownTarget)).toBeUndefined();
-
-    const tenantResults = yield* requireAssortmentPermissions(service)({
-      principal: { principalId, tenantId },
-      targets: [{ target: stableRuleTarget }, { target: ruleRevisionTarget }],
-    });
-    expect(tenantResults.map(({ decision }) => decision)).toEqual(['allowed', 'allowed']);
-    const legalEntityResults = yield* requireAssortmentPermissions(service)({
-      legalEntityId,
-      principal: { principalId, tenantId },
-      targets: [{ target: bindingTarget }, { target: boundaryTarget }],
-    });
-    expect(legalEntityResults.map(({ decision }) => decision)).toEqual(['allowed', 'allowed']);
-    const unavailableResults = yield* requireAssortmentPermissions(service)({
-      principal: { principalId, tenantId },
-      targets: [{ target: bindingTarget }, { target: boundaryTarget }, { target: unknownTarget }],
-    });
-    expect(unavailableResults).toEqual([
-      { decision: 'unavailable', key: 'assortment.configuration.read:assortment_configuration' },
-      { decision: 'unavailable', key: 'assortment.configuration.read:assortment_configuration' },
-      { decision: 'unavailable', key: 'assortment.configuration.read:assortment_configuration' },
+    expect(requests[0]?.items[0]?.permission).toBe('use');
+    expect(requests[0]?.items[0]?.subject?.object?.objectId).toBe(principalId);
+    for (const principalScope of [
+      { legalEntityId, principal: { principalId, tenantId: 'other-tenant' } },
+      { legalEntityId: 'other-entity', principal: { principalId, tenantId } },
+      { principal: { principalId, tenantId } },
+    ]) {
+      expect(yield* check({ ...principalScope, targets: [{ target }] })).toEqual([
+        { decision: 'unavailable', key: target.key },
+      ]);
+    }
+    expect(requests).toHaveLength(1);
+    const tenantTarget = ownerPermissionTarget({ tenantId }, 'tenant-owned');
+    expect(yield* check({ principal: { principalId, tenantId }, targets: [{ target: tenantTarget }] })).toEqual([
+      { decision: 'allowed', key: tenantTarget.key },
     ]);
-    expect(requests).toHaveLength(2);
-  }),
-);
-
-it.effect('keeps complete Admission Set digest semantics exact and distinguishes storefront trust', () =>
-  Effect.gen(function* checksAdmissionSetAndStorefront() {
-    const requests: v1.CheckBulkPermissionsRequest[] = [];
-    const service = makeContextAccess(
-      makeClient((request) =>
-        Effect.sync(() => {
-          requests.push(request);
-          return responseFor(
-            request,
-            request.items.map(() => v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
-          );
-        }),
-      ),
-    );
-    const target = {
-      admissionSet: {
-        collectionRevision: {
-          moduleId: 'catalog.core',
-          resourceId: 'collection-revision-1',
-          resourceType: 'catalog.collection-revision',
-        },
-        contentHash: 'a'.repeat(64),
-        entries: [],
-        memberCount: 0,
-        setKind: 'EMPTY' as const,
-      },
-      commercialScope: {
-        channel: { moduleId: 'commerce.channel', resourceId: 'web', resourceType: 'commerce.channel' },
-      },
-      effectiveFrom: '2026-09-22T00:00:00.000Z',
-      kind: 'assortment_boundary' as const,
-      mode: 'create' as const,
-      permission: 'assortment.boundary.create' as const,
-      purpose: 'PURCHASE' as const,
-      subject: {
-        kind: 'COUNTERPARTY' as const,
-        ref: { moduleId: 'party.registry', resourceId: 'counterparty-1', resourceType: 'party.registry.counterparty' },
-      },
-    } as const;
-    const result = yield* requireAssortmentPermissions(service)({
-      legalEntityId,
-      principal: { principalId, tenantId },
-      targets: [{ target }],
+    const storefrontTarget = ownerPermissionTarget({ legalEntityId, tenantId }, 'storefront-owned', {
+      requiredStorefrontId: 'storefront-a',
     });
-    expect(result?.[0]?.decision).toBe('allowed');
-    const sameMeaning = toAssortmentPermissionAccessObjectId(tenantId, legalEntityId, target);
-    const changedMeaning = toAssortmentPermissionAccessObjectId(tenantId, legalEntityId, {
-      ...target,
-      admissionSet: {
-        contentHash: 'a'.repeat(64),
-        entries: [
-          {
-            kind: 'PRODUCT',
-            target: { moduleId: 'commerce.catalog', resourceId: 'product-a', resourceType: 'commerce.catalog.product' },
-          },
-        ],
-        memberCount: 1,
-        setKind: 'ENTRIES',
-      },
-    });
-    const categoryMeaning = toAssortmentPermissionAccessObjectId(tenantId, legalEntityId, {
-      ...target,
-      admissionSet: {
-        contentHash: 'a'.repeat(64),
-        entries: [
-          {
-            kind: 'CATEGORY',
-            target: {
-              moduleId: 'commerce.catalog',
-              resourceId: 'category-c',
-              resourceType: 'commerce.catalog.product-category',
-            },
-          },
-        ],
-        memberCount: 1,
-        setKind: 'ENTRIES',
-      },
-    });
-    const allMeaning = toAssortmentPermissionAccessObjectId(tenantId, legalEntityId, {
-      ...target,
-      admissionSet: { contentHash: 'a'.repeat(64), entries: [{ kind: 'ALL' }], memberCount: 1, setKind: 'ENTRIES' },
-    });
-    const otherProductMeaning = toAssortmentPermissionAccessObjectId(tenantId, legalEntityId, {
-      ...target,
-      admissionSet: {
-        contentHash: 'a'.repeat(64),
-        entries: [
-          {
-            kind: 'PRODUCT',
-            target: { moduleId: 'commerce.catalog', resourceId: 'product-b', resourceType: 'commerce.catalog.product' },
-          },
-        ],
-        memberCount: 1,
-        setKind: 'ENTRIES',
-      },
-    });
-    expect(sameMeaning).toBeDefined();
-    expect(sameMeaning).not.toBe(changedMeaning);
-    expect(new Set([sameMeaning, changedMeaning, categoryMeaning, allMeaning, otherProductMeaning]).size).toBe(5);
     expect(
-      toAssortmentPermissionAccessObjectId(tenantId, legalEntityId, {
-        ...target,
-        admissionSet: { contentHash: 'a'.repeat(64), entries: [], memberCount: 1, setKind: 'ENTRIES' },
+      yield* check({
+        legalEntityId,
+        principal: { principalId, tenantId },
+        targets: [{ target: storefrontTarget }],
+        trustedStorefrontId: 'storefront-b',
       }),
-    ).toBeUndefined();
-    expect(requests[0]?.items[0]?.resource?.objectId).not.toContain('a'.repeat(64));
+    ).toEqual([{ decision: 'unavailable', key: storefrontTarget.key }]);
+    expect(requests).toHaveLength(2);
   }),
 );
 
@@ -971,47 +770,11 @@ it.effect('supports empty batches and exact resource filtering', () =>
   }),
 );
 
-it.effect('omits unbounded transport codes and raw error data from permission diagnostics', () =>
-  Effect.gen(function* boundedTransportStatus() {
-    const entries: string[] = [];
-    const diagnostics = Logger.layer([
-      Logger.make((options) => {
-        entries.push(JSON.stringify(Logger.formatStructured.log(options)));
-      }),
-    ]);
-    yield* Effect.forEach(
-      [-1, 17, 14.5, Number.NaN, undefined],
-      (code) =>
-        makeContextAccess(
-          makeClient(() => Effect.fail(spiceDbPermissionClientError({ message: 'secret-message' }, code))),
-        )
-          .legalEntities({ legalEntityIds: [legalEntityId], principalId, tenantId })
-          .pipe(Effect.tap((result) => Effect.sync(() => expect(result[0]?.decision).toBe('unavailable')))),
-      { concurrency: 1 },
-    ).pipe(
-      // @effect-diagnostics-next-line strictEffectProvide:off -- Test-owned diagnostic logger capture.
-      Effect.provide(diagnostics),
-    );
-    expect(entries).toHaveLength(5);
-    for (const entry of entries) {
-      expect(entry).toContain('"rpcCode":"unknown"');
-      expect(entry).not.toContain('secret');
-    }
-  }),
-);
-
 it.effect('classifies client, partial, duplicate, malformed, and conditional results as unavailable', () =>
   Effect.gen(function* classifiesUnavailableResults() {
     const input = { legalEntityIds: [legalEntityId], principalId, tenantId };
-    const entries: string[] = [];
-    const diagnostics = Logger.layer([
-      Logger.make((options) => {
-        entries.push(JSON.stringify(Logger.formatStructured.log(options)));
-      }),
-    ]);
     const failures = [
-      makeClient(() => Effect.fail(spiceDbPermissionClientError(new Cause.TimeoutError('secret timeout diagnostic')))),
-      makeClient(() => Effect.fail(spiceDbPermissionClientError(new Error('secret SpiceDB diagnostic'), 14))),
+      makeClient(() => Effect.fail(spiceDbPermissionClientError(new Error('secret SpiceDB diagnostic')))),
       makeClient(() => Effect.succeed(v1.CheckBulkPermissionsResponse.create({ pairs: [] }))),
       makeClient((request) =>
         Effect.succeed(responseFor(request, [v1.CheckPermissionResponse_Permissionship.CONDITIONAL_PERMISSION])),
@@ -1038,28 +801,7 @@ it.effect('classifies client, partial, duplicate, malformed, and conditional res
           .legalEntities(input)
           .pipe(Effect.map((result) => expect(result).toEqual([{ decision: 'unavailable', key: legalEntityId }]))),
       { concurrency: 1 },
-    ).pipe(
-      // @effect-diagnostics-next-line strictEffectProvide:off -- Test-owned diagnostic logger capture.
-      Effect.provide(diagnostics),
     );
-    expect(entries).toHaveLength(5);
-    for (const [index, failureKind] of [
-      'timeout',
-      'client_failure',
-      'response_count_mismatch',
-      'response_unavailable',
-      'response_request_mismatch',
-    ].entries()) {
-      expect(entries[index]).toContain(`"failureKind":"${failureKind}"`);
-      expect(entries[index]).toContain('"elapsedMs":0');
-      expect(entries[index]).toContain('"operation":"CheckBulkPermissions"');
-      expect(entries[index]).toContain('"requestCount":1');
-    }
-    const logged = entries.join('\n');
-    expect(entries[1]).toContain('"rpcCode":14');
-    for (const sensitive of [tenantId, legalEntityId, principalId, 'secret', 'cause', 'resourceId']) {
-      expect(logged).not.toContain(sensitive);
-    }
     expect(
       yield* makeContextAccess(failingClient).legalEntities({
         ...input,
@@ -1069,262 +811,6 @@ it.effect('classifies client, partial, duplicate, malformed, and conditional res
       { decision: 'unavailable', key: legalEntityId },
       { decision: 'unavailable', key: legalEntityId },
     ]);
-  }),
-);
-
-const moduleDecisions = {
-  'core.shell': v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
-  crm: v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
-  'denied.billing': v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
-  'missing.crm': v1.CheckPermissionResponse_Permissionship.UNSPECIFIED,
-} as const satisfies Readonly<Record<string, v1.CheckPermissionResponse_Permissionship>>;
-const permissionshipByObjectId = new Map(
-  Object.entries(moduleDecisions).map(([moduleId, permissionship]) => [
-    toModuleAccessObjectId(tenantId, legalEntityId, moduleId),
-    permissionship,
-  ]),
-);
-
-/** Answers module checks from `moduleDecisions` and every other check as allowed. */
-const decidingByModule = (requests: v1.CheckBulkPermissionsRequest[]) =>
-  makeContextAccess(
-    makeClient((request) =>
-      Effect.sync(() => {
-        requests.push(request);
-        return responseFor(
-          request,
-          request.items.map(
-            ({ resource }) =>
-              permissionshipByObjectId.get(resource?.objectId) ??
-              v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
-          ),
-        );
-      }),
-    ),
-  );
-
-const checkModules = (access: ReturnType<typeof makeContextAccess>, moduleIds: readonly string[]) =>
-  access.modules({ legalEntityId, moduleIds, principalId, tenantId });
-
-it.effect('asks SpiceDB again for every check of work that shares no request decisions', () =>
-  Effect.gen(function* checksWithoutRequestDecisions() {
-    const requests: v1.CheckBulkPermissionsRequest[] = [];
-    const access = decidingByModule(requests);
-    yield* checkModules(access, ['core.shell']);
-    yield* checkModules(access, ['core.shell']);
-    expect(requests.length).toBe(2);
-  }),
-);
-
-it.effect('reuses a request decision by exact check and asks only for the checks it has not asked yet', () =>
-  Effect.gen(function* reusesRequestDecisions() {
-    const requests: v1.CheckBulkPermissionsRequest[] = [];
-    const access = decidingByModule(requests);
-    const [first, second, other] = yield* withRequestPermissionDecisions(
-      Effect.all(
-        [
-          checkModules(access, ['core.shell', 'denied.billing', 'crm']),
-          checkModules(access, ['denied.billing', 'core.shell']),
-          access.legalEntities({ legalEntityIds: [legalEntityId], principalId, tenantId }),
-        ],
-        { concurrency: 1 },
-      ),
-    );
-    expect(first).toEqual([
-      { decision: 'allowed', key: 'core.shell' },
-      { decision: 'denied', key: 'denied.billing' },
-      { decision: 'allowed', key: 'crm' },
-    ]);
-    expect(second).toEqual([
-      { decision: 'denied', key: 'denied.billing' },
-      { decision: 'allowed', key: 'core.shell' },
-    ]);
-    expect(other).toEqual([{ decision: 'allowed', key: legalEntityId }]);
-    // The second module check was answered from the request; the legal-entity check is a different check.
-    expect(requests.map(({ items }) => items.length)).toEqual([3, 1]);
-  }),
-);
-
-it.effect('joins a check still in flight instead of asking SpiceDB for it twice', () =>
-  Effect.gen(function* joinsInFlightDecisions() {
-    const requests: v1.CheckBulkPermissionsRequest[] = [];
-    const release = yield* Deferred.make<boolean>();
-    const access = makeContextAccess(
-      makeClient((request) =>
-        Effect.sync(() => requests.push(request)).pipe(
-          Effect.andThen(Deferred.await(release)),
-          Effect.as(
-            responseFor(
-              request,
-              request.items.map(() => v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
-            ),
-          ),
-        ),
-      ),
-    );
-    const [first, second] = yield* withRequestPermissionDecisions(
-      Effect.gen(function* overlappingChecks() {
-        const prefetch = yield* Effect.forkChild(checkModules(access, ['core.shell', 'crm']), {
-          startImmediately: true,
-        });
-        const read = yield* Effect.forkChild(checkModules(access, ['crm']), { startImmediately: true });
-        yield* Deferred.succeed(release, true);
-        return [yield* Fiber.join(prefetch), yield* Fiber.join(read)] as const;
-      }),
-    );
-    expect(first.map(({ decision }) => decision)).toEqual(['allowed', 'allowed']);
-    expect(second).toEqual([{ decision: 'allowed', key: 'crm' }]);
-    expect(requests.length).toBe(1);
-  }),
-);
-
-it.effect('batches different concurrent permission reads and preserves caller ordering and decisions', () =>
-  Effect.gen(function* batchesConcurrentPermissionReads() {
-    const requests: v1.CheckBulkPermissionsRequest[] = [];
-    const access = decidingByModule(requests);
-    const [first, second, company] = yield* withRequestPermissionDecisions(
-      Effect.all(
-        [
-          checkModules(access, ['core.shell', 'denied.billing']),
-          checkModules(access, ['denied.billing', 'crm', 'core.shell']),
-          access.legalEntities({ legalEntityIds: [legalEntityId], principalId, tenantId }),
-        ],
-        { concurrency: 3 },
-      ),
-    );
-    expect(first).toEqual([
-      { decision: 'allowed', key: 'core.shell' },
-      { decision: 'denied', key: 'denied.billing' },
-    ]);
-    expect(second).toEqual([
-      { decision: 'denied', key: 'denied.billing' },
-      { decision: 'allowed', key: 'crm' },
-      { decision: 'allowed', key: 'core.shell' },
-    ]);
-    expect(company).toEqual([{ decision: 'allowed', key: legalEntityId }]);
-    expect(requests.map(({ items }) => items.length)).toEqual([4]);
-    expect(requests[0]?.consistency?.requirement).toEqual({
-      fullyConsistent: true,
-      oneofKind: 'fullyConsistent',
-    });
-  }),
-);
-
-it.effect('keeps concurrent request scopes in separate transport batches', () =>
-  Effect.gen(function* isolatesRequestBatches() {
-    const requests: v1.CheckBulkPermissionsRequest[] = [];
-    const access = decidingByModule(requests);
-    yield* Effect.all(
-      [
-        withRequestPermissionDecisions(checkModules(access, ['core.shell'])),
-        withRequestPermissionDecisions(checkModules(access, ['core.shell'])),
-      ],
-      { concurrency: 2 },
-    );
-    expect(requests.map(({ items }) => items.length)).toEqual([1, 1]);
-  }),
-);
-
-it.effect('bounds coalesced permission batches without dropping checks', () =>
-  Effect.gen(function* boundsRequestBatches() {
-    const requests: v1.CheckBulkPermissionsRequest[] = [];
-    const access = decidingByModule(requests);
-    const moduleIds = Array.from({ length: 300 }, (_, index) => `module${index}`);
-    const results = yield* withRequestPermissionDecisions(
-      Effect.all([checkModules(access, moduleIds.slice(0, 150)), checkModules(access, moduleIds.slice(150))], {
-        concurrency: 2,
-      }),
-    );
-    expect(results.flat().map(({ key }) => key)).toEqual(moduleIds);
-    expect(results.flat().every(({ decision }) => decision === 'allowed')).toBe(true);
-    expect(requests.map(({ items }) => items.length)).toEqual([256, 44]);
-  }),
-);
-
-it.live('settles joined decisions on interruption and allows a fresh request-scoped retry', () =>
-  Effect.gen(function* interruptsBatchedPermissionReads() {
-    const started = yield* Deferred.make<boolean>();
-    let attempts = 0;
-    const access = makeContextAccess(
-      makeClient((request) =>
-        Effect.suspend(() => {
-          attempts += 1;
-          return attempts === 1
-            ? Deferred.succeed(started, true).pipe(Effect.andThen(Effect.never))
-            : Effect.succeed(
-                responseFor(
-                  request,
-                  request.items.map(() => v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
-                ),
-              );
-        }),
-      ),
-    );
-    yield* withRequestPermissionDecisions(
-      Effect.gen(function* interruptedRequest() {
-        const owner = yield* Effect.forkChild(checkModules(access, ['crm']), { startImmediately: true });
-        yield* Deferred.await(started);
-        const joined = yield* Effect.forkChild(checkModules(access, ['crm']), { startImmediately: true });
-        yield* Effect.yieldNow;
-        yield* Effect.yieldNow;
-        yield* Fiber.interrupt(owner);
-        expect(yield* Fiber.join(joined)).toEqual([{ decision: 'unavailable', key: 'crm' }]);
-        expect(yield* checkModules(access, ['crm'])).toEqual([{ decision: 'allowed', key: 'crm' }]);
-      }),
-    );
-    expect(attempts).toBe(2);
-  }).pipe(Effect.timeout('2 seconds')),
-);
-
-it.effect('does not retain pending decisions after a batched client defects', () =>
-  Effect.gen(function* retriesAfterBatchDefect() {
-    let attempts = 0;
-    const access = makeContextAccess(
-      makeClient((request) =>
-        Effect.suspend(() => {
-          attempts += 1;
-          return attempts === 1
-            ? Effect.die('Unexpected test client defect')
-            : Effect.succeed(
-                responseFor(
-                  request,
-                  request.items.map(() => v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
-                ),
-              );
-        }),
-      ),
-    );
-    yield* withRequestPermissionDecisions(
-      Effect.gen(function* retryRequest() {
-        const failed = yield* Effect.all([checkModules(access, ['crm']), checkModules(access, ['core.shell'])], {
-          concurrency: 2,
-        }).pipe(Effect.exit);
-        expect(Exit.isFailure(failed)).toBe(true);
-        expect(yield* checkModules(access, ['crm', 'core.shell'])).toEqual([
-          { decision: 'allowed', key: 'crm' },
-          { decision: 'allowed', key: 'core.shell' },
-        ]);
-      }),
-    );
-    expect(attempts).toBe(2);
-  }),
-);
-
-it.effect('never reuses an unavailable decision and bypasses request decisions inside a governed transaction', () =>
-  Effect.gen(function* forgetsUnavailableDecisions() {
-    const requests: v1.CheckBulkPermissionsRequest[] = [];
-    const access = decidingByModule(requests);
-    yield* withRequestPermissionDecisions(
-      Effect.gen(function* checks() {
-        expect(yield* checkModules(access, ['missing.crm'])).toEqual([{ decision: 'unavailable', key: 'missing.crm' }]);
-        yield* checkModules(access, ['missing.crm']);
-        yield* checkModules(access, ['crm']);
-        yield* checkModules(access, ['crm']).pipe(insideDatabaseTransaction('test.read'));
-      }),
-    ).pipe(Effect.exit);
-    // Unavailable asked twice; `crm` once outside, and the call inside the transaction went to the client (whose
-    // guard refuses it in production) instead of being answered from the request.
-    expect(requests.length).toBe(4);
   }),
 );
 
@@ -1351,5 +837,115 @@ it.effect('keeps Tenant resource assignment grants exact and independent of Lega
       ? Effect.die(new Error('Expected tenant resource adapter'))
       : access.tenantResources({ permission: 'assign', principalId, resources: targets, tenantId });
     expect(decisions.map(({ decision }) => decision)).toEqual(['allowed', 'denied']);
+  }),
+);
+
+it.effect('freezes every remaining family identity and independent Current outcomes without broad scope', () =>
+  Effect.gen(function* remainingFamilyGrantBaselines() {
+    for (const row of remainingPermissionBaselines) {
+      const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)(row.permission);
+      expect(toBusinessPermissionAccessObjectId(permission, row.target)).toBe(row.objectId);
+      expect(toBusinessPermissionAccessKey({ permission, target: row.target })).toBe(row.key);
+      const requests: v1.CheckBulkPermissionsRequest[] = [];
+      const current: BaselineCurrentState = { decision: 'allowed' };
+      const access = makeContextAccess(
+        makeClient((request) =>
+          Effect.sync(() => {
+            requests.push(request);
+            return responseFor(
+              request,
+              request.items.map((item) => {
+                if (item.subject?.object?.objectId !== principalId || current.decision === 'denied') {
+                  return v1.CheckPermissionResponse_Permissionship.NO_PERMISSION;
+                }
+                if (current.decision === 'unavailable') {
+                  return v1.CheckPermissionResponse_Permissionship.UNSPECIFIED;
+                }
+                return v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION;
+              }),
+            );
+          }),
+        ),
+      );
+      const check = requireBusinessPermissions(access);
+      const input = {
+        legalEntityId: 'legalEntityId' in row.target ? row.target.legalEntityId : legalEntityId,
+        principal: { principalId, tenantId: row.target.tenantId },
+        targets: [{ permission, target: row.target }],
+        trustedStorefrontId: 'storefront-a',
+      };
+      expect(yield* check(input)).toEqual([{ decision: 'allowed', key: row.key }]);
+      expect(requests[0]?.items[0]?.resource).toEqual({ objectId: row.objectId, objectType: 'business_permission' });
+      expect(requests[0]?.items[0]?.subject?.object).toEqual({ objectId: principalId, objectType: 'principal' });
+      expect(
+        yield* check({
+          ...input,
+          principal: { ...input.principal, principalId: '30000000-0000-4000-8000-000000000002' },
+        }),
+      ).toEqual([{ decision: 'denied', key: row.key }]);
+      expect(requests[1]?.items[0]?.subject?.object?.objectId).toBe('30000000-0000-4000-8000-000000000002');
+      current.decision = 'denied';
+      expect(yield* check(input)).toEqual([{ decision: 'denied', key: row.key }]);
+      current.decision = 'unavailable';
+      expect(yield* check(input)).toEqual([{ decision: 'unavailable', key: row.key }]);
+      const checked = requests.length;
+      expect(
+        yield* check({ ...input, principal: { principalId, tenantId: '00000000-0000-4000-8000-000000000099' } }),
+      ).toEqual([{ decision: 'unavailable', key: row.key }]);
+      const unknown = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('undeclared.permission');
+      expect(yield* check({ ...input, targets: [{ permission: unknown, target: row.target }] })).toEqual([
+        { decision: 'unavailable', key: row.unknownKey },
+      ]);
+      expect(requests).toHaveLength(checked);
+    }
+  }),
+);
+
+it('keeps the existing 1024-byte grant identity limit without truncation', () => {
+  const [row] = remainingPermissionBaselines;
+  const permission = Schema.decodeSync(BusinessPermissionCodeSchema)(row.permission);
+  expect(toBusinessPermissionAccessObjectId(permission, { ...row.target, profileId: 'x'.repeat(644) })?.length).toBe(
+    1024,
+  );
+  expect(toBusinessPermissionAccessObjectId(permission, { ...row.target, profileId: 'x'.repeat(645) })).toBeUndefined();
+});
+
+it.effect('freezes exact-first Counterparty inheritance order and repeated-target deduplication', () =>
+  Effect.gen(function* freezesInheritedGrantOrder() {
+    const { 2: row } = remainingPermissionBaselines;
+    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)(row.permission);
+    const requests: v1.CheckBulkPermissionsRequest[] = [];
+    const access = makeContextAccess(
+      makeClient((request) =>
+        Effect.sync(() => {
+          requests.push(request);
+          return responseFor(
+            request,
+            request.items.map(() => v1.CheckPermissionResponse_Permissionship.NO_PERMISSION),
+          );
+        }),
+      ),
+    );
+    expect(
+      yield* requireBusinessPermissions(
+        access,
+        row.target.legalEntityId,
+      )({
+        principal: { principalId, tenantId: row.target.tenantId },
+        targets: [
+          { permission, target: row.target },
+          { permission, target: row.target },
+        ],
+        trustedStorefrontId: row.target.storefrontId,
+      }),
+    ).toEqual([
+      { decision: 'denied', key: row.key },
+      { decision: 'denied', key: row.key },
+    ]);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.items.map((item) => item.resource?.objectId)).toEqual([
+      row.objectId,
+      remainingPermissionBaselines[1].objectId,
+    ]);
   }),
 );

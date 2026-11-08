@@ -1,3 +1,5 @@
+import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { definePageData, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
 import type { TanstackTable } from '@techsio/ui-kit/organisms/data-table';
@@ -5,10 +7,15 @@ import { Effect, Match, Option, Random, Result, Schema } from 'effect';
 import type { Cause } from 'effect';
 import { useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
+import { executeManageCatalog } from '../../../../api/manage-catalog-action-client.ts';
+import { executeManageMarkets } from '../../../../api/manage-markets-action-client.ts';
+import { executeCleanupDemo } from '../../../../api/cleanup-demo-action-client.ts';
+import { executeChangeProductImages } from '../../../../api/change-product-images-action-client.ts';
+import { executeRecordStockMovement } from '../../../../api/record-stock-movement-action-client.ts';
+import { committedResult } from '../../../../api/action-result.ts';
 import { executeRecords } from '../../../../api/records-consumer.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
-import { ApplyCommandPayloadSchema } from '../../../../../shared/actions/apply-command.ts';
 import { ProductIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
 import type { ProductId, ProductRecord } from '../../../../../shared/domain/merchandise-model.ts';
 import type {
@@ -28,6 +35,7 @@ const cacheKey = (parts: readonly string[]): string => Result.getOrThrow(Schema.
  * current state refuses, such as an issue larger than the stock on hand.
  */
 const FailureReasonSchema = Schema.Literals([
+  'approval-required',
   'conflict',
   'forbidden',
   'invalid',
@@ -44,10 +52,10 @@ export type LoadOutcome =
 
 export type CommandOutcome =
   | { readonly image?: string; readonly ok: true; readonly revision: number }
-  | { readonly ok: false; readonly reason: FailureReason };
+  | { readonly ok: false; readonly proposal?: ActionProposalAccepted; readonly reason: FailureReason };
 
 type RecordsFailure = Effect.Error<ReturnType<typeof executeRecords>>;
-type CommandFailure = Effect.Error<ReturnType<typeof executeApplyCommand>>;
+type CommandFailure = Effect.Error<ReturnType<typeof submitProductCommand>>;
 
 /** Effect-injected randomness for correlation and idempotency identifiers. */
 const newId = Effect.map(
@@ -86,16 +94,48 @@ export const recordsReason = (error: RecordsFailure): FailureReason =>
 /** Maps the apply-command problems onto the UI outcomes. Anything unlisted reads as unavailable. */
 const commandReason = (error: CommandFailure): FailureReason =>
   Match.value(error).pipe(
-    Match.tag('ApplyCommandActionConflictProblem', (problem): FailureReason =>
-      problem.code === 'merchandise_lifecycle_conflict' ? 'rejected' : 'conflict',
+    Match.tag(
+      'ApplyCommandActionConflictProblem',
+      'ManageCatalogActionConflictProblem',
+      'ManageMarketsActionConflictProblem',
+      'CleanupDemoActionConflictProblem',
+      'ChangeProductImagesActionConflictProblem',
+      'RecordStockMovementActionConflictProblem',
+      (problem): FailureReason => (problem.code === 'merchandise_lifecycle_conflict' ? 'rejected' : 'conflict'),
     ),
-    Match.tag('ApplyCommandActionIneligibleProblem', (): FailureReason => 'rejected'),
+    Match.tag(
+      'ApplyCommandActionIneligibleProblem',
+      'ManageCatalogActionIneligibleProblem',
+      'ManageMarketsActionIneligibleProblem',
+      'CleanupDemoActionIneligibleProblem',
+      'ChangeProductImagesActionIneligibleProblem',
+      'RecordStockMovementActionIneligibleProblem',
+      (): FailureReason => 'rejected',
+    ),
     Match.tag(
       'ApplyCommandActionAuthenticationProblem',
+      'ManageCatalogActionAuthenticationProblem',
+      'ManageMarketsActionAuthenticationProblem',
+      'CleanupDemoActionAuthenticationProblem',
+      'ChangeProductImagesActionAuthenticationProblem',
+      'RecordStockMovementActionAuthenticationProblem',
       'ApplyCommandActionForbiddenProblem',
+      'ManageCatalogActionForbiddenProblem',
+      'ManageMarketsActionForbiddenProblem',
+      'CleanupDemoActionForbiddenProblem',
+      'ChangeProductImagesActionForbiddenProblem',
+      'RecordStockMovementActionForbiddenProblem',
       (): FailureReason => 'forbidden',
     ),
-    Match.tag('ApplyCommandActionInvalidProblem', (): FailureReason => 'invalid'),
+    Match.tag(
+      'ApplyCommandActionInvalidProblem',
+      'ManageCatalogActionInvalidProblem',
+      'ManageMarketsActionInvalidProblem',
+      'CleanupDemoActionInvalidProblem',
+      'ChangeProductImagesActionInvalidProblem',
+      'RecordStockMovementActionInvalidProblem',
+      (): FailureReason => 'invalid',
+    ),
     Match.orElse((): FailureReason => 'unavailable'),
   );
 
@@ -282,31 +322,76 @@ export const productDetailData = definePageData({
   runtime: browserRuntime,
 });
 
-/** One command against the single merchandise apply-command action. Each call gets its own idempotency key. */
+type ProductCommand = Extract<
+  MerchandiseCommand,
+  {
+    readonly _tag:
+      | 'CreateProduct'
+      | 'UpdateProduct'
+      | 'ChangePrice'
+      | 'BulkUpdateProducts'
+      | 'CreateCategory'
+      | 'UpdateCategory'
+      | 'SetProductMarketOffer'
+      | 'ConfigureMarket'
+      | 'SetMarketProductOffers'
+      | 'RemoveMarket'
+      | 'ArchiveDemoProduct'
+      | 'ChangeProductImages'
+      | 'RecordStockMovement';
+  }
+>;
+
+const submitProductCommand = (command: ProductCommand, expectedRevision: number, idempotencyKey: string) => {
+  const options = { idempotencyKey };
+  return Match.value(command).pipe(
+    Match.tag('CreateProduct', (value) =>
+      executeApplyCommand({ command: value, expectedRevision }, idempotencyKey, options),
+    ),
+    Match.tag('UpdateProduct', 'ChangePrice', 'BulkUpdateProducts', 'CreateCategory', 'UpdateCategory', (value) =>
+      executeManageCatalog({ command: value, expectedRevision }, idempotencyKey, options),
+    ),
+    Match.tag('SetProductMarketOffer', 'ConfigureMarket', 'SetMarketProductOffers', 'RemoveMarket', (value) =>
+      executeManageMarkets({ command: value, expectedRevision }, idempotencyKey, options),
+    ),
+    Match.tag('ArchiveDemoProduct', (value) =>
+      executeCleanupDemo({ command: value, expectedRevision }, idempotencyKey, options),
+    ),
+    Match.tag('ChangeProductImages', (value) =>
+      executeChangeProductImages({ command: value, expectedRevision }, idempotencyKey, options),
+    ),
+    Match.tag('RecordStockMovement', (value) =>
+      executeRecordStockMovement({ command: value, expectedRevision }, idempotencyKey, options),
+    ),
+    Match.exhaustive,
+    Effect.flatMap(committedResult),
+  );
+};
+
+/** The product workflow uses each published closed operation, with one native idempotency key per attempt. */
 export const runCommand = (
-  command: MerchandiseCommand,
+  command: ProductCommand,
   expectedRevision: number,
   onOutcome: (outcome: CommandOutcome) => void,
 ): void => {
   void browserRuntime.runPromise(
     newId.pipe(
       Effect.flatMap((idempotencyKey) =>
-        Schema.encodeEffect(ApplyCommandPayloadSchema)({ command, expectedRevision }).pipe(
-          Effect.flatMap((payload) =>
-            executeApplyCommand(payload, idempotencyKey, { idempotencyKey }).pipe(
-              Effect.ensuring(
-                Effect.sync(() => {
-                  productListData.invalidate();
-                  productDetailData.invalidate();
-                  categoryChoicesData.invalidate();
-                }),
-              ),
-            ),
+        submitProductCommand(command, expectedRevision, idempotencyKey).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              productListData.invalidate();
+              productDetailData.invalidate();
+              categoryChoicesData.invalidate();
+            }),
           ),
         ),
       ),
       Effect.match({
-        onFailure: (error): CommandOutcome => ({ ok: false, reason: commandReason(error) }),
+        onFailure: (error): CommandOutcome =>
+          Schema.is(ActionProposalAcceptedSchema)(error)
+            ? { ok: false, proposal: error, reason: 'approval-required' }
+            : { ok: false, reason: commandReason(error) },
         onSuccess: (result): CommandOutcome =>
           result.image === undefined
             ? { ok: true, revision: result.revision }

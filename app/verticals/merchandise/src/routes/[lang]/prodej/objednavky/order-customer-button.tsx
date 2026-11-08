@@ -1,3 +1,4 @@
+import { pendingProposalMessage } from '../../../../api/action-result.ts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -34,9 +35,10 @@ export const OrderCustomerButton = ({
           onFailure: (failure) => {
             setBusy(false);
             setError(
-              Schema.is(OrderCustomerConversionError)(failure)
-                ? failure.reason
-                : 'Převod se nepodařilo dokončit. Obnovte data a zkuste to znovu. Již dokončené kroky se neopakují.',
+              pendingProposalMessage(failure) ??
+                (Schema.is(OrderCustomerConversionError)(failure)
+                  ? failure.reason
+                  : 'Převod se nepodařilo dokončit. Obnovte data a zkuste to znovu. Již dokončené kroky se neopakují.'),
             );
           },
           onSuccess: () => {

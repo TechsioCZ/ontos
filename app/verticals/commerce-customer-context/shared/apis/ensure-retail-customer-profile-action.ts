@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.customer-context
 // @ontos-action-http-slug ensure-retail-customer-profile
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/ensure-retail-customer-profile.ts';
 
 export { EnsureRetailCustomerProfilePayloadSchema } from '../actions/ensure-retail-customer-profile.ts';
-
 export const EnsureRetailCustomerProfileActionInvalidProblemSchema = makeProblemDetailsSchema(
   'EnsureRetailCustomerProfileActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const EnsureRetailCustomerProfileActionForbiddenProblemSchema = makeProbl
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -154,7 +155,7 @@ export const ensureRetailCustomerProfileActionGroupDefinition = HttpApiGroup.mak
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/ensure-retail-customer-profile', {
       error: actionErrors,
       payload: Schema.toEncoded(EnsureRetailCustomerProfilePayloadSchema),
-      success: EnsureRetailCustomerProfileResultSchema,
+      success: [ActionProposalAcceptedSchema, EnsureRetailCustomerProfileResultSchema],
     }),
   )
   .middleware(EnsureRetailCustomerProfileActionSchemaErrorMiddleware);

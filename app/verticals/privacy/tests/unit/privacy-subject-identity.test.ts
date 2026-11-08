@@ -1,3 +1,4 @@
+import { privacyRegistration } from '../../vertical.registration.ts';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { NodeCrypto } from '@effect/platform-node';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
@@ -16,7 +17,7 @@ import {
   CreatePrivacySubjectActionInvalidProblemSchema,
   CreatePrivacySubjectActionIneligibleProblemSchema,
 } from '../../shared/apis/create-privacy-subject-action.ts';
-import { privacySubjectRefForParty } from '../../shared/domain/privacy-subject-identity.ts';
+import { privacySubjectRefForParty } from '@app/consent-authority-contracts';
 
 const partyRef = {
   moduleId: 'party.registry',
@@ -88,7 +89,10 @@ it.effect('rejects malformed subject IDs as typed HTTP 400 before the Action or 
 it.layer(NodeCrypto.layer)('Privacy Subject exact Party identity admission', (suite) => {
   suite.effect('rejects an unrelated well-formed UUID as 422 before owner SQL or persistence', () =>
     Effect.gen(function* rejectUnrelatedSubjectIdentity() {
-      const harness = yield* makeActionTestHarness({ actionPermission: 'allowed' });
+      const harness = yield* makeActionTestHarness({
+        actionPermission: 'allowed',
+        ownerRegistration: privacyRegistration,
+      });
       const payload = Schema.decodeSync(CreatePrivacySubjectPayloadSchema)({
         subject,
         subjectRef: { ...privacySubjectRefForParty(partyRef), resourceId: '44444444-4444-4444-8444-444444444444' },

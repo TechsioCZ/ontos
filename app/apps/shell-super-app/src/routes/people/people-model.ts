@@ -1,13 +1,63 @@
 import { matchesSearch } from '@app/admin-ui';
 import { Match, Schema } from 'effect';
+
+import type { ListAccessPeopleOptionsResponse, ListAccessPeopleResponse } from '../../../shared/access-admin-api.ts';
 import { PeopleScopeSchema } from '../../../shared/people-api.ts';
-import type {
-  PeopleList,
-  PeopleRoleCatalog,
-  Person,
-  SetPeopleCompanyMembershipResponse,
-  SetPeopleRoleResponse,
-} from '../../../shared/people-api.ts';
+import type { PeopleList, Person, SetPeopleCompanyMembershipResponse } from '../../../shared/people-api.ts';
+
+/**
+ * The canonical access-administration view of the request scope: the role choices the release
+ * publishes for it, the people of the scope with their canonical role assignments, and the revision
+ * every write must echo. It is the only role authority this surface reads or writes.
+ */
+export interface PeopleAccessView {
+  readonly options: ListAccessPeopleOptionsResponse;
+  readonly people: ListAccessPeopleResponse;
+}
+
+export type AccessAssignment = ListAccessPeopleResponse['items'][number]['assignments'][number];
+export type AccessRoleChoice = ListAccessPeopleOptionsResponse['roles'][number];
+
+/** Every canonical assignment of one person in the loaded scope, active or not. */
+export const accessAssignmentsOf = (
+  access: PeopleAccessView | undefined,
+  principalId: string,
+): readonly AccessAssignment[] =>
+  access === undefined
+    ? []
+    : access.people.items.flatMap((person) => (person.principalId === principalId ? person.assignments : []));
+
+/** The role names one person holds right now, from canonical intent only. */
+export const accessRoleNamesOf = (access: PeopleAccessView | undefined, principalId: string): readonly string[] =>
+  [
+    ...new Set(
+      accessAssignmentsOf(access, principalId).flatMap((assignment) =>
+        assignment.status === 'active' ? [assignment.roleName] : [],
+      ),
+    ),
+  ].toSorted((left, right) => left.localeCompare(right, 'cs'));
+
+/** The role choices a role of one exact scope offers: a company's role in that company, a tenant role in the tenant. */
+export const accessRolesOfScope = (
+  access: PeopleAccessView | undefined,
+  scope: 'company' | 'tenant',
+  legalEntityId: string | undefined,
+): readonly AccessRoleChoice[] =>
+  (access?.options.roles ?? []).filter((role) =>
+    scope === 'tenant'
+      ? role.scope.kind === 'tenant'
+      : role.scope.kind === 'company' && role.scope.legalEntityId === legalEntityId,
+  );
+
+/** The one live assignment of a role a person holds, which is what a revoke names. */
+export const accessAssignmentOf = (
+  access: PeopleAccessView | undefined,
+  principalId: string,
+  roleId: string,
+): AccessAssignment | undefined =>
+  accessAssignmentsOf(access, principalId).find(
+    (assignment) => assignment.roleId === roleId && assignment.status === 'active',
+  );
 
 export const membershipLabels = {
   active: 'Aktivní',
@@ -91,21 +141,15 @@ export const personStatusKey = (person: Person): PersonStatusKey => {
   );
 };
 
-/** Roles missing from the catalog are technical workloads, never assignable people profiles. */
-export const roleName = (catalog: PeopleRoleCatalog | undefined, roleKey: string): string =>
-  catalog?.items.find((role) => role.roleKey === roleKey)?.name ?? 'Technická role';
-export const roleNames = (catalog: PeopleRoleCatalog | undefined, person: Person): readonly string[] =>
-  person.roleAssignments.map((role) => roleName(catalog, role.roleKey)).toSorted((a, b) => a.localeCompare(b, 'cs'));
-
 /**
  * A blocked login that no longer belongs anywhere in the current view: its membership in the selected company has
  * ended (or it has none), and on the Tenant view it holds no role. Such a retired account is history, not a person
  * to manage, while a blocked login that still holds a membership or a role stays visible so it can be unblocked.
  */
-const isRetired = (person: Person): boolean =>
+const isRetired = (person: Person, access: PeopleAccessView | undefined): boolean =>
   person.principalStatus === 'disabled' &&
   (person.selectedCompanyMembership === null
-    ? person.roleAssignments.length === 0
+    ? accessRoleNamesOf(access, person.principalRef.principalId).length === 0
     : person.selectedCompanyMembership.status === 'departed');
 
 /**
@@ -117,10 +161,11 @@ export type PeopleStatusFilter = typeof PeopleStatusFilterSchema.Type;
 export interface PeopleFilters {
   readonly kind: PersonKindKey | 'all';
   readonly query: string;
-  readonly roleKey: string;
+  /** A canonical role id, or `all`. Role keys are no longer an identity this surface names. */
+  readonly roleId: string;
   readonly status: PeopleStatusFilter;
 }
-export const defaultPeopleFilters: PeopleFilters = { kind: 'all', query: '', roleKey: 'all', status: 'current' };
+export const defaultPeopleFilters: PeopleFilters = { kind: 'all', query: '', roleId: 'all', status: 'current' };
 export const allPeopleFilters: PeopleFilters = { ...defaultPeopleFilters, status: 'all' };
 const matchesStatus = (filter: PeopleStatusFilter, status: PersonStatusKey) => {
   if (filter === 'all') {
@@ -134,24 +179,37 @@ const matchesStatus = (filter: PeopleStatusFilter, status: PersonStatusKey) => {
 export const filterPeople = (
   people: readonly Person[],
   filters: PeopleFilters,
-  catalog: PeopleRoleCatalog | undefined,
+  access: PeopleAccessView | undefined,
 ): readonly Person[] => {
   const { query } = filters;
-  return people.filter(
-    (person) =>
+  return people.filter((person) => {
+    const { principalId } = person.principalRef;
+    return (
       (filters.kind === 'all' || personKindKey(person) === filters.kind) &&
-      (filters.roleKey === 'all' || person.roleAssignments.some((role) => role.roleKey === filters.roleKey)) &&
+      (filters.roleId === 'all' ||
+        accessAssignmentsOf(access, principalId).some(
+          (assignment) => assignment.roleId === filters.roleId && assignment.status === 'active',
+        )) &&
       matchesStatus(filters.status, personStatusKey(person)) &&
-      (filters.status !== 'current' || !isRetired(person)) &&
-      [person.displayName, personKindLabel(person), ...roleNames(catalog, person)].some((text) =>
+      (filters.status !== 'current' || !isRetired(person, access)) &&
+      [person.displayName, personKindLabel(person), ...accessRoleNamesOf(access, principalId)].some((text) =>
         matchesSearch(text, query),
-      ),
-  );
+      )
+    );
+  });
 };
 
+/** What one committed write is waiting for: the directory row, or the canonical assignment incarnation. */
 export type PendingPeopleChange =
   | { readonly kind: 'membership'; readonly result: SetPeopleCompanyMembershipResponse }
-  | { readonly kind: 'role'; readonly result: SetPeopleRoleResponse };
+  | {
+      readonly change: {
+        readonly incarnationId: string;
+        readonly present: boolean;
+        readonly principalId: string;
+      };
+      readonly kind: 'role';
+    };
 
 export const isCompanyScope = Schema.is(PeopleScopeSchema.members[1]);
 export const sameScope = (a: PeopleList['scope'], b: PeopleList['scope']): boolean =>
@@ -161,8 +219,15 @@ export const sameScope = (a: PeopleList['scope'], b: PeopleList['scope']): boole
     Match.exhaustive,
   );
 
-/** Only actual scoped graph assignments can confirm a role command, never the Action's commit response. */
-export const isChangeConfirmed = (change: PendingPeopleChange, list: PeopleList): boolean => {
+/**
+ * A write is confirmed only by the state the authority read reports afterwards: the canonical assignment
+ * incarnation for a role, and the directory row for a membership. A commit response alone never confirms.
+ */
+export const isChangeConfirmed = (
+  change: PendingPeopleChange,
+  list: PeopleList,
+  access: PeopleAccessView | undefined,
+): boolean => {
   if (change.kind === 'membership') {
     const { membership } = change.result;
     if (
@@ -178,35 +243,17 @@ export const isChangeConfirmed = (change: PendingPeopleChange, list: PeopleList)
         item.principalRef.tenantId === membership.principalRef.tenantId,
     );
     const current = person?.selectedCompanyMembership;
-    const projection = person?.selectedCompanyMembershipProjection;
     return (
       current !== null &&
       current !== undefined &&
-      projection !== null &&
-      projection !== undefined &&
       current.revision === membership.revision &&
       current.status === membership.status &&
-      current.affiliation === membership.affiliation &&
-      projection.expectedMember === projection.observedMember
+      current.affiliation === membership.affiliation
     );
   }
-  const { result } = change;
-  if (list.tenantId !== result.role.tenantId || !sameScope(list.scope, result.role.scope)) {
-    return false;
-  }
-  const person = list.items.find(
-    (item) =>
-      item.principalRef.principalId === result.principalRef.principalId &&
-      item.principalRef.tenantId === result.principalRef.tenantId,
+  const { incarnationId, present, principalId } = change.change;
+  const held = accessAssignmentsOf(access, principalId).find(
+    (assignment) => assignment.incarnationId === incarnationId,
   );
-  if (person === undefined) {
-    return false;
-  }
-  const present = person.roleAssignments.some(
-    (role) =>
-      role.tenantId === result.role.tenantId &&
-      role.roleKey === result.role.roleKey &&
-      sameScope(role.scope, result.role.scope),
-  );
-  return result.operation === 'assign' ? present : !present;
+  return present ? held !== undefined && held.status === 'active' : held === undefined || held.status === 'revoked';
 };

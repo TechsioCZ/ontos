@@ -1,5 +1,4 @@
-// Sales-demo command guard (plan 22). One `apply-command` executor grant covers every command of the module, so
-// this pure guard narrows what non-human principals (the agent bot's managed API key) may run.
+// Canonical registered Actions supply authority. This guard retains the existing human-only command rules.
 import { Effect, Schema } from 'effect';
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import { TaggingPermissionDenied } from '../errors/tagging-permission-denied.ts';

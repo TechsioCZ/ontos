@@ -1,4 +1,5 @@
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
+import type { VerifiedGatewayActor } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { GatewayAssertionRedemption } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
@@ -8,6 +9,7 @@ import {
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime/modules/active-application-composition';
 import {
+  DELEGATED_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
   GATEWAY_ASSERTION_VERSION,
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
@@ -313,6 +315,8 @@ const readBearer = (
 };
 
 interface VerifiedGatewayPrincipal {
+  /** The calling module of a delegated (v3) assertion; absent for a subject's own call. */
+  readonly actor?: VerifiedGatewayActor | undefined;
   /** The verified token itself; it becomes the scope assertion only after redemption succeeds. */
   readonly assertion: Redacted.Redacted;
   readonly compositionRevision: string;
@@ -389,14 +393,14 @@ const makeAuthenticatedTokenVerifier = Effect.fn('GatewayPrincipalVerifier.makeA
         Effect.flatMap(validateActiveApplicationCompositionSnapshot),
         Effect.catchTags({ ActiveApplicationCompositionUnavailableError: mapRedemptionUnavailable }),
       );
-      const approvedDeployment =
-        snapshot.composition.shell.deployment.appId === deployment.appId
+      const approvedDeploymentOf = (appId: string) =>
+        snapshot.composition.shell.deployment.appId === appId
           ? snapshot.composition.shell.deployment
-          : snapshot.composition.modules.find((module) => module.deployment.appId === deployment.appId)?.deployment;
+          : snapshot.composition.modules.find((module) => module.deployment.appId === appId)?.deployment;
       if (
         snapshot.composition.revision !== claims.compositionRevision ||
         claims.targetBuildMarker !== deployment.buildMarker ||
-        approvedDeployment?.buildMarker !== deployment.buildMarker
+        approvedDeploymentOf(deployment.appId)?.buildMarker !== deployment.buildMarker
       ) {
         return yield* Effect.fail(
           ActionPrincipalScopeErrorSchema.make({
@@ -404,6 +408,7 @@ const makeAuthenticatedTokenVerifier = Effect.fn('GatewayPrincipalVerifier.makeA
           }),
         );
       }
+      let actor: VerifiedGatewayActor | undefined;
       let principalFromClaims: TrustedPrincipalContext;
       if (claims.ver === GATEWAY_ASSERTION_VERSION) {
         // Mapping occurs only after jwtVerify and claim decoding.  The mapping
@@ -436,10 +441,28 @@ const makeAuthenticatedTokenVerifier = Effect.fn('GatewayPrincipalVerifier.makeA
           return yield* Effect.fail(invalidError());
         }
         principalFromClaims = claims.principal;
+      } else if (claims.ver === DELEGATED_GATEWAY_ASSERTION_VERSION) {
+        // The Shell signs `act` only for a calling module it resolved from a bound module key. The calling
+        // module must be an installed app whose approved release is the build the Shell recorded for it.
+        const approvedActorDeployment = approvedDeploymentOf(claims.act.appId);
+        if (approvedActorDeployment === undefined || approvedActorDeployment.buildMarker !== claims.act.buildMarker) {
+          return yield* Effect.fail(
+            ActionPrincipalScopeErrorSchema.make({
+              reason: 'The Bearer assertion names a calling module that is not an approved release',
+            }),
+          );
+        }
+        principalFromClaims = claims.principal;
+        actor = {
+          appId: claims.act.appId,
+          buildMarker: claims.act.buildMarker,
+          principalId: claims.act.principalId,
+        };
       } else {
         return yield* Effect.fail(invalidError());
       }
       return {
+        actor,
         assertion: Redacted.make(token),
         compositionRevision: claims.compositionRevision,
         expiresAtEpochSeconds: claims.exp,
@@ -555,11 +578,13 @@ export const bindGatewayPrincipalVerifier = <const Audience extends string>(
           }),
         ),
       ),
-      Effect.map(({ assertion, compositionRevision, principal }) =>
-        trustVerifiedGatewayPrincipalContext(principal, compositionRevision, {
-          assertion,
-          audience: expectedAudience,
-        }),
+      Effect.map(({ actor, assertion, compositionRevision, principal }) =>
+        trustVerifiedGatewayPrincipalContext(
+          principal,
+          compositionRevision,
+          { assertion, audience: expectedAudience },
+          actor,
+        ),
       ),
     );
   }

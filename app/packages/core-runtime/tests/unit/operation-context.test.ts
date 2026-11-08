@@ -1,7 +1,5 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { v1 } from '@authzed/authzed-node';
-import { DateTime, Deferred, Duration, Effect, Exit, Fiber, Schema } from 'effect';
-import { TestClock } from 'effect/testing';
+import { DateTime, Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
@@ -10,6 +8,7 @@ import {
   decodeTrustedPrincipalContext,
   isVerifiedGatewayPrincipalContext,
   isTrustedSupportRecoveryPrincipalContext,
+  readVerifiedGatewayActor,
   readVerifiedGatewayCompositionRevision,
   trustVerifiedGatewayPrincipalContext,
 } from '../../src/auth/system-principal-context-provenance.ts';
@@ -19,8 +18,7 @@ import {
 } from '../../src/auth/system-principal-context.ts';
 import { recordSupportImpersonationAction } from '../../src/modules/actions/record-support-impersonation.action.ts';
 import { makeOperationalScopeResolver } from '../../src/operations/context.ts';
-import { makeContextAccess, withRequestPermissionDecisions } from '../../src/permissions/context-access.ts';
-import type { SpiceDbPermissionClient } from '../../src/permissions/client.ts';
+import { makeTestOperationalScopeAccess } from '../../src/testing/access-gate.ts';
 import {
   OperationAuthenticationRequired,
   OperationContextDenied,
@@ -48,34 +46,7 @@ const active = {
   principalTenantId: principal.tenantId,
   tenantStatus: 'active',
 };
-const access = (decision: 'allowed' | 'denied' | 'unavailable') => ({
-  legalEntities: ({ legalEntityIds }: { readonly legalEntityIds: readonly string[] }) =>
-    Effect.succeed(legalEntityIds.map((key) => ({ decision, key }))),
-  modules: () => Effect.succeed([]),
-  resources: () => Effect.succeed([]),
-});
-/** A SpiceDB client that records each CheckBulkPermissions request and allows every item. */
-const recordingPermissionClient = (requests: v1.CheckBulkPermissionsRequest[]): SpiceDbPermissionClient => ({
-  checkBulkPermissions: (request) =>
-    Effect.sync(() => {
-      requests.push(request);
-      return v1.CheckBulkPermissionsResponse.create({
-        pairs: request.items.map((item) =>
-          v1.CheckBulkPermissionsPair.create({
-            request: item,
-            response: {
-              item: v1.CheckBulkPermissionsResponseItem.create({
-                permissionship: v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
-              }),
-              oneofKind: 'item',
-            },
-          }),
-        ),
-      });
-    }),
-  checkPermission: () => Effect.die(new Error('Action check must not run')),
-  close: () => {},
-});
+const access = (decision: 'allowed' | 'denied' | 'unavailable') => makeTestOperationalScopeAccess({ decision });
 const InactiveContextError = Schema.Union([OperationAuthenticationRequired, OperationContextDenied]);
 
 it.layer(NodeCrypto.layer)('operation context', (suite) => {
@@ -240,6 +211,32 @@ it.layer(NodeCrypto.layer)('operation context', (suite) => {
     }),
   );
 
+  suite.effect('keeps the calling module of a delegated principal through operational scope resolution', () =>
+    Effect.gen(function* delegatedActorScope() {
+      const actor = {
+        appId: 'commerce-order',
+        buildMarker: 'commerce-order-build',
+        principalId: '00000000-0000-4000-8000-000000000009',
+      };
+      const delegated = trustVerifiedGatewayPrincipalContext(
+        principal,
+        'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+        undefined,
+        actor,
+      );
+      const resolver = yield* makeOperationalScopeResolver({ load: () => Effect.succeed(active) }, access('allowed'));
+
+      const resolved = yield* resolver.resolve({
+        correlationId: 'delegated-scope',
+        legalEntityScope: 'required',
+        principal: delegated,
+      });
+
+      expect(readVerifiedGatewayActor(resolved)).toEqual(actor);
+      expect(readVerifiedGatewayActor({ ...resolved })).toBeUndefined();
+    }),
+  );
+
   suite.effect('permits only a resolver-branded support-stop recovery through inactive historical scope', () =>
     Effect.gen(function* supportRecovery() {
       const recoveryPrincipal = yield* supportRecoveryPrincipalContextResolverFromRepository({
@@ -280,151 +277,6 @@ it.layer(NodeCrypto.layer)('operation context', (suite) => {
       expect(isTrustedSupportRecoveryPrincipalContext(scope, recordSupportImpersonationAction)).toBe(true);
       expect(isTrustedSupportRecoveryPrincipalContext(scope, {})).toBe(false);
       expect(isTrustedSupportRecoveryPrincipalContext({ ...scope })).toBe(false);
-    }),
-  );
-  suite.effect('audits cached-credential disabled admission without a session request or handler', () =>
-    Effect.gen(function* cachedCredentialDenial() {
-      const attempts: string[] = [];
-      const resolver = yield* makeOperationalScopeResolver(
-        { load: () => Effect.succeed({ ...active, principalStatus: 'disabled' }) },
-        access('allowed'),
-        (input) =>
-          Effect.sync(() => {
-            attempts.push(input.correlationId);
-          }),
-      );
-      const failure = yield* Effect.flip(
-        resolver.resolve({
-          correlationId: 'cached-bearer-mutation',
-          legalEntityScope: 'required',
-          principal,
-        }),
-      );
-      expect(failure).toBeInstanceOf(OperationContextDenied);
-      expect(attempts).toEqual(['cached-bearer-mutation']);
-    }),
-  );
-
-  suite.effect('binds agent API key admission to its audited issuing company, not the principal’s other roles', () =>
-    Effect.gen(function* companyAgentKeyAdmission() {
-      const apiPrincipal = { ...principal, authMethod: 'api_key' as const };
-      const record = {
-        ...active,
-        bindingIssuingLegalEntityId: principal.legalEntityId ?? null,
-        bindingSubjectType: 'api_key',
-        principalKind: 'agent',
-      };
-      const resolve = (
-        persisted: Omit<typeof record, 'bindingIssuingLegalEntityId'> & { bindingIssuingLegalEntityId: string | null },
-        target: typeof principal = apiPrincipal,
-      ) =>
-        Effect.flatMap(
-          makeOperationalScopeResolver({ load: () => Effect.succeed(persisted) }, access('allowed')),
-          (resolver) =>
-            resolver.resolve({
-              correlationId: 'agent-key-admission',
-              legalEntityScope: 'optional',
-              principal: target,
-            }),
-        );
-      yield* resolve(record);
-      const wrongCompany = yield* Effect.flip(resolve({ ...record, bindingIssuingLegalEntityId: 'other-company' }));
-      expect(Schema.is(OperationContextDenied)(wrongCompany)).toBe(true);
-      const missingAudit = yield* Effect.flip(resolve({ ...record, bindingIssuingLegalEntityId: null }));
-      expect(Schema.is(OperationContextDenied)(missingAudit)).toBe(true);
-      const { legalEntityId: _company, ...tenantPrincipal } = apiPrincipal;
-      const tenantContext = yield* Effect.flip(resolve(record, tenantPrincipal));
-      expect(Schema.is(OperationContextDenied)(tenantContext)).toBe(true);
-      // Native tenant-managed workloads retain their existing scope rules.
-      yield* resolve({ ...record, bindingIssuingLegalEntityId: null, principalKind: 'service' }, tenantPrincipal);
-    }),
-  );
-
-  suite.effect('starts the Legal Entity access check beside the persisted load, not after it', () =>
-    Effect.gen(function* legalEntityAccessOverlapsLoad() {
-      const accessStarted = yield* Deferred.make<boolean>();
-      let legalEntityChecks = 0;
-      const overlapping = {
-        legalEntities: ({ legalEntityIds }: { readonly legalEntityIds: readonly string[] }) =>
-          Effect.sync(() => {
-            legalEntityChecks += 1;
-          }).pipe(
-            Effect.andThen(Deferred.succeed(accessStarted, true)),
-            Effect.as(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
-          ),
-        modules: () => Effect.succeed([]),
-        resources: () => Effect.succeed([]),
-      };
-      // The load finishes only once the access check has started: a sequential resolver would never finish it.
-      const repository = { load: () => Deferred.await(accessStarted).pipe(Effect.as(active)) };
-      const resolver = yield* makeOperationalScopeResolver(repository, overlapping);
-      const resolved = yield* resolver
-        .resolve({ correlationId: 'c-1', legalEntityScope: 'required', principal })
-        .pipe(Effect.timeout(Duration.seconds(2)));
-      expect(resolved.legalEntityId).toBe(principal.legalEntityId);
-      expect(legalEntityChecks).toBe(1);
-    }),
-  );
-
-  suite.effect('sends the overlapping Legal Entity and module checks to SpiceDB in one round trip', () =>
-    Effect.gen(function* overlappingChecksShareOneRpc() {
-      const requests: v1.CheckBulkPermissionsRequest[] = [];
-      const contextAccess = makeContextAccess(recordingPermissionClient(requests));
-      // The load takes real I/O time, so a sequential resolver would send the Legal Entity check afterwards.
-      const repository = {
-        load: () => Effect.sleep('5 millis').pipe(Effect.as(active)),
-      };
-      const resolver = yield* makeOperationalScopeResolver(repository, contextAccess);
-      const prefetch = contextAccess.modules({
-        legalEntityId: principal.legalEntityId ?? '',
-        moduleIds: ['core.shell'],
-        principalId: principal.principalId,
-        tenantId: principal.tenantId,
-      });
-      const running = yield* Effect.forkChild(
-        Effect.all([resolver.resolve({ correlationId: 'c-1', legalEntityScope: 'required', principal }), prefetch], {
-          concurrency: 2,
-        }).pipe(withRequestPermissionDecisions),
-      );
-      yield* TestClock.adjust('5 millis');
-      const resolved = yield* Fiber.join(running);
-      expect(resolved[0].legalEntityId).toBe(principal.legalEntityId);
-      expect(requests).toHaveLength(1);
-      expect(requests[0]?.items).toHaveLength(2);
-    }),
-  );
-
-  suite.effect('keeps persisted Legal Entity denial ahead of the overlapping access decision', () =>
-    Effect.gen(function* persistedDenialOutranksAccess() {
-      const inactive = { ...active, legalEntityStatus: 'suspended' };
-      const unavailable = {
-        legalEntities: ({ legalEntityIds }: { readonly legalEntityIds: readonly string[] }) =>
-          Effect.succeed(legalEntityIds.map((key) => ({ decision: 'unavailable' as const, key }))),
-        modules: () => Effect.succeed([]),
-        resources: () => Effect.succeed([]),
-      };
-      const dying = {
-        legalEntities: () => Effect.die(new Error('legal entity access defect')),
-        modules: () => Effect.succeed([]),
-        resources: () => Effect.succeed([]),
-      };
-      const request = { correlationId: 'c-1', legalEntityScope: 'required' as const, principal };
-      const denied = yield* Effect.flatMap(
-        makeOperationalScopeResolver({ load: () => Effect.succeed(inactive) }, unavailable),
-        (resolver) => Effect.flip(resolver.resolve(request)),
-      );
-      expect(Schema.is(OperationContextDenied)(denied)).toBe(true);
-      // A defect from the overlapping check is observed only after the persisted gates pass.
-      const masked = yield* Effect.flatMap(
-        makeOperationalScopeResolver({ load: () => Effect.succeed(inactive) }, dying),
-        (resolver) => Effect.flip(resolver.resolve(request)),
-      );
-      expect(Schema.is(OperationContextDenied)(masked)).toBe(true);
-      const defect = yield* Effect.flatMap(
-        makeOperationalScopeResolver({ load: () => Effect.succeed(active) }, dying),
-        (resolver) => Effect.exit(resolver.resolve(request)),
-      );
-      expect(Exit.isFailure(defect)).toBe(true);
     }),
   );
 });

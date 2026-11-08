@@ -12,7 +12,7 @@ import { readUnavailable, requireReadValue, readDetailResult } from './read-outc
 
 const personEngagementProfileEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'party.registry.api.person-engagement-profile',
   moduleKey: 'party.registry',
   role: 'api',
@@ -26,6 +26,15 @@ const personProfileUnavailable = readUnavailable('Contacts engagement persistenc
 
 export const personEngagementProfileRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'party.registry.person-engagement.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'engagements', level: 'extended' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessTarget: (input) => ({ moduleKey: 'party.registry', recordKey: input.profileRef.resourceId }),
     accessKind: 'detail',
     entrypoint: personEngagementProfileEntrypoint,
     evidencePolicy: {
@@ -35,7 +44,6 @@ export const personEngagementProfileRead = defineRead(
     inputSchema: PersonEngagementProfileRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: 'party.registry',
-    permissionTarget: 'resource',
     policies: [],
     readKey: 'party.registry.api.person-engagement-profile',
     resultSchema: PersonEngagementProfileResponseSchema,
@@ -64,12 +72,4 @@ export const personEngagementProfileRead = defineRead(
       find: (profileId) => findPersonEngagementProfile(transaction, scope.tenantId, profileId),
     });
   },
-  (input) => ({
-    kind: 'resource',
-    resource: {
-      moduleId: input.profileRef.moduleId,
-      resourceId: input.profileRef.resourceId,
-      resourceType: input.profileRef.resourceType,
-    },
-  }),
 );

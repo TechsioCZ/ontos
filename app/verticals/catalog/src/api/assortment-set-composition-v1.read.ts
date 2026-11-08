@@ -23,7 +23,7 @@ import { SetCompositionPersistenceUnavailable } from '../persistence/set-composi
 
 const assortmentSetCompositionV1Entrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.assortment-set-composition-v1' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.assortment-set-composition-v1',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -66,6 +66,14 @@ export const readAssortmentSetCompositionV1 = (
 
 export const assortmentSetCompositionV1Read = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.assortment-set-composition-v1.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'set-composition', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: assortmentSetCompositionV1Entrypoint,
     evidencePolicy: {
@@ -75,7 +83,6 @@ export const assortmentSetCompositionV1Read = defineRead(
     inputSchema: AssortmentSetCompositionV1RequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.assortment-set-composition-v1',
     resultSchema: AssortmentSetCompositionV1ResponseSchema,
@@ -89,5 +96,4 @@ export const assortmentSetCompositionV1Read = defineRead(
   },
   (transaction: ScopedTransactionExecutor, scope: OperationalScope) =>
     Effect.succeed(assortmentSetCompositionV1SourceForScope(transaction, scope)),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

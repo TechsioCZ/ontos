@@ -1,3 +1,4 @@
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { identity } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import {
@@ -41,6 +42,7 @@ export const financeBillingFoundationApi = HttpApi.make('FinanceBillingApiFounda
 
 export const financeBillingApi = HttpApi.make('FinanceBillingApi')
   .addHttpApi(financeBillingFoundationApi)
+  .addHttpApi(OwnerActionApprovalApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(ApplyCommandActionApi)
   .addHttpApi(DocumentsSearchApi)

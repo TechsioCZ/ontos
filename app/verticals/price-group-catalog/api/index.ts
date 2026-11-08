@@ -1,3 +1,10 @@
+import {
+  OwnerActionApprovalSchemaErrorLive,
+  makeOwnerActionApprovalApiLive,
+} from '@app/core-runtime/access/approvals/owner-http';
+import type { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
+import { priceGroupCatalogRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import {
@@ -8,9 +15,8 @@ import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   TenantModuleStateServiceLive,
-  transactionalOwnerAuthorization,
 } from '@app/core-runtime';
 import type {
   ActionRuntime,
@@ -21,11 +27,14 @@ import type {
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
 import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
+  TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
@@ -36,7 +45,10 @@ import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from '
 import { FetchHttpClient } from 'effect/http';
 
 // <generated-governed-http-handler-support-imports>
-import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
+import {
+  ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive,
+  authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal,
+} from './auth/action-principal.ts';
 import {
   GatewayAssertionRedemptionDatabaseLive as GovernedGatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
@@ -105,69 +117,73 @@ const compositionHttpClientLive = FetchHttpClient.layer.pipe(
   Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
 );
 const compositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(Layer.provide(compositionHttpClientLive));
+const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
+  Layer.provide(compositionSourceLive),
+);
+
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
+const accessEnforcementLive = AccessDecisionLive.pipe(
+  Layer.provideMerge(AccessEnforcementPortsLive),
+  Layer.provide(TenantIntentLoaderLive),
+  Layer.provide(CorePersistenceLive),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(nodeCryptoLayer),
+  Layer.provide(databaseIdentitiesLive),
+);
 const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
-  Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive)),
+  Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive, accessEnforcementLive)),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
 const priceGroupCatalogOwnerOperations = [
   {
+    capabilityKey: 'pricing.price-group-catalog.price-group.create',
     operation: 'action',
     operationKey: 'pricing.price-group-catalog.create-price-group',
-    permission: 'pricing.price_group.create',
-    targetKind: 'pricing_catalog',
   },
   {
+    capabilityKey: 'pricing.price-group-catalog.price-group-definition-revision.create',
     operation: 'action',
     operationKey: 'pricing.price-group-catalog.create-price-group-definition-revision',
-    permission: 'pricing.price_group.revision.create',
-    targetKind: 'price_group',
   },
   {
+    capabilityKey: 'pricing.price-group-catalog.price-group.retire',
     operation: 'action',
     operationKey: 'pricing.price-group-catalog.retire-price-group',
-    permission: 'pricing.price_group.retire',
-    targetKind: 'price_group',
   },
   {
+    capabilityKey: 'pricing.price-group-catalog.price-group.read.definition',
     operation: 'read',
     operationKey: 'pricing.price-group-catalog.api.price-group-definition',
-    permission: 'pricing.price_group.read',
-    targetKind: 'price_group',
   },
   {
+    capabilityKey: 'pricing.price-group-catalog.price-group.read.compatibility',
     operation: 'read',
     operationKey: 'pricing.price-group-catalog.api.validate-price-group-compatibility',
-    permission: 'pricing.price_group.read',
-    targetKind: 'price_group',
   },
 ] as const;
 
 /**
- * This owner has one implicit catalog per Tenant (the catalog-root Resource id is the Tenant id).
- * It has no separate owner-held entitlement or lifecycle permission: Core still verifies the exact
- * business Permission and Action executor, and the same scoped native handler routines establish
- * identity, currentness, lifecycle and CAS. In particular, historical/retired reads and genuine
- * missing-owner responses must not be reclassified as permission denials here.
+ * This owner has one implicit catalog per Tenant (the catalog-root Resource id is the Tenant id), so
+ * every one of its capabilities lives in the Tenant context and in no company. It holds no separate
+ * owner-held entitlement: the one access gate decides the capability (O67-Q2), and the scoped native
+ * handler routines still establish identity, currentness, lifecycle and CAS. In particular,
+ * historical/retired reads and genuine missing-owner responses must not be reclassified as
+ * permission denials here.
  */
 export const priceGroupCatalogOwnerAuthorizationDecision = (
   transactionScope: ScopedTransactionExecutor['scope'],
   input: OwnerAuthorizationInput,
 ): OwnerAuthorizationDecision => {
-  const [target] = input.targets;
   if (
     input.owningModuleKey !== 'pricing.price-group-catalog' ||
-    input.targets.length !== 1 ||
-    target?.kind !== 'business_permission' ||
+    // A v2 descriptor carries no legacy target and asks for no record scope (O62, O67-Q2).
+    input.targets.length !== 0 ||
+    input.target !== undefined ||
     input.scope.tenantId !== transactionScope.tenantId ||
     input.scope.legalEntityId !== undefined ||
     transactionScope.legalEntityId !== undefined ||
-    input.scope.trustedStorefrontId !== undefined ||
-    target.trustedStorefrontId !== undefined ||
-    (target.target.kind !== 'pricing_catalog' && target.target.kind !== 'price_group') ||
-    target.target.tenantId !== transactionScope.tenantId ||
-    target.target.pricingCatalogId !== transactionScope.tenantId
+    input.scope.trustedStorefrontId !== undefined
   ) {
     return 'unavailable';
   }
@@ -175,23 +191,41 @@ export const priceGroupCatalogOwnerAuthorizationDecision = (
     (contract) =>
       contract.operation === input.operation &&
       contract.operationKey === input.operationKey &&
-      contract.permission === target.permission &&
-      contract.targetKind === target.target.kind,
+      contract.capabilityKey === input.capabilityKey,
   );
   return exactOperation ? 'allowed' : 'unavailable';
 };
 
-export const priceGroupCatalogOwnerAuthorizationOverlayLive = Layer.succeed(
-  OwnerAuthorizationOverlay,
-  transactionalOwnerAuthorization((transaction, input) =>
+export const priceGroupCatalogOwnerAuthorizationOverlayLive = Layer.succeed(OwnerAuthorizationOverlay, {
+  authorize: (transaction, input) =>
     Effect.succeed(priceGroupCatalogOwnerAuthorizationDecision(transaction.scope, input)),
-  ),
-);
-
-const priceGroupCatalogActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+});
+const priceGroupCatalogReadRuntimeLive = makeReadRuntimeLive(
+  ultramodernDeliveryUnit,
+  priceGroupCatalogRegistration,
+).pipe(
   Layer.provide(
     Layer.mergeAll(
-      ActiveApplicationCompositionConfigLive.pipe(Layer.provide(compositionSourceLive)),
+      CorePersistenceLive,
+      ContextAccessLive,
+      moduleEntrypointGatewayLive,
+      operationalScopeResolverLive,
+      priceGroupCatalogOwnerAuthorizationOverlayLive,
+      accessEnforcementLive,
+    ),
+  ),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(activeApplicationCompositionLive),
+  Layer.provide(databaseIdentitiesLive),
+);
+
+const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(
+  ultramodernDeliveryUnit,
+  priceGroupCatalogRegistration,
+).pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      activeApplicationCompositionLive,
       CorePersistenceLive,
       ActionRepositoryLive,
       ActionPermissionLive,
@@ -200,19 +234,30 @@ const priceGroupCatalogActionRuntimeLive = makeActionRuntimeLive(ultramodernDeli
       moduleStateGateLive,
       moduleEntrypointGatewayLive,
       operationalScopeResolverLive,
+      accessEnforcementLive,
     ),
   ),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
   Layer.provide(databaseIdentitiesLive),
 );
-const priceGroupCatalogReadRuntimeLive = ReadRuntimeLive.pipe(
+
+const priceGroupCatalogActionRuntimeLive = makeActionRuntimeLive(
+  ultramodernDeliveryUnit,
+  priceGroupCatalogRegistration,
+).pipe(
+  Layer.provideMerge(ownerActionApprovalsLive),
   Layer.provide(
     Layer.mergeAll(
+      activeApplicationCompositionLive,
       CorePersistenceLive,
+      ActionRepositoryLive,
+      ActionPermissionLive,
+      priceGroupCatalogOwnerAuthorizationOverlayLive,
       ContextAccessLive,
+      moduleStateGateLive,
       moduleEntrypointGatewayLive,
       operationalScopeResolverLive,
-      priceGroupCatalogOwnerAuthorizationOverlayLive,
+      accessEnforcementLive,
     ),
   ),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
@@ -225,7 +270,10 @@ const priceGroupCatalogGatewayAssertionRedemptionLive = GovernedGatewayAssertion
 
 type PriceGroupCatalogApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof priceGroupCatalogReadRuntimeLive>>,
-  actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof priceGroupCatalogActionRuntimeLive>>,
+  actionRuntime: Layer.Layer<
+    ActionRuntime | OwnerActionApprovals,
+    Layer.Error<typeof priceGroupCatalogActionRuntimeLive>
+  >,
   gatewayAssertionRedemption: Layer.Layer<
     GatewayAssertionRedemptionService,
     Layer.Error<typeof priceGroupCatalogGatewayAssertionRedemptionLive>
@@ -241,6 +289,10 @@ export const makePriceGroupCatalogApiRuntime = (
   );
   const apiHandlersLive = Layer.mergeAll(
     priceGroupCatalogReadinessLayer,
+    makeOwnerActionApprovalApiLive(priceGroupCatalogApi, authenticateOwnerApprovalPrincipal).pipe(
+      GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
+      GovernedReadLayer.provide(governedActionRuntimeLive),
+    ),
     // <generated-governed-http-handler-layers>
     createPriceGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     createPriceGroupDefinitionRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

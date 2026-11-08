@@ -48,6 +48,7 @@
         "emptyDescription": "Create the first record."
       },
       "errors": {
+        "approval_required": "The proposal is awaiting approval. The change has not been applied.",
         "conflict": "Someone else changed the record. We reloaded the data, please repeat the change.",
         "forbidden": "You are not allowed to make this change.",
         "invalid": "Check the entered values.",

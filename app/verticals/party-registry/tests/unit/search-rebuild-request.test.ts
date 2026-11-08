@@ -1,5 +1,6 @@
-import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '@app/party-registry-identity-contracts';
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
+import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '@app/party-registry-identity-contracts';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { Effect, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -32,7 +33,8 @@ it.effect('tenant rebuild requests require Party administration and canonical id
   Effect.gen(function* rebuildDescriptor() {
     const { descriptor } = requestSearchRebuildAction;
     expect(descriptor.actionKey).toBe('party.registry.request-search-rebuild');
-    expect(descriptor.tenantPermission?.({})).toBe('manage_party_identity');
+    expect(descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    expect(descriptor.accessDeclaration?.key).toBe('party.registry.search-index.rebuild');
     expect(descriptor.idempotency).toBe('required');
     expect(descriptor.legalEntityScope).toBe('optional');
     expect(descriptor.entrypoint.scope).toBe('tenant');
@@ -44,9 +46,9 @@ it.effect('tenant rebuild requests require Party administration and canonical id
 it.effect('authorized rebuild commits one linked request without reading identity or running the projector', () =>
   Effect.gen(function* authorizedRebuildRequest() {
     const harness = yield* makeActionTestHarness({
+      access: 'allowed',
       databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-      actionPermission: 'allowed',
-      tenantPermission: 'allowed',
+      ownerRegistration: partyRegistryBackendRegistration,
     });
     const result = yield* harness.runtime.runAction(request);
     expect(result.status).toBe('QUEUED');
@@ -78,12 +80,12 @@ it.effect('authorized rebuild commits one linked request without reading identit
   }),
 );
 
-it.effect('denied Party administration cannot queue a rebuild even with Action execution permission', () =>
+it.effect('a denied gate cannot queue a rebuild even for an otherwise valid request', () =>
   Effect.gen(function* deniedRebuildRequest() {
     const harness = yield* makeActionTestHarness({
+      access: 'denied',
       databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-      actionPermission: 'allowed',
-      tenantPermission: 'denied',
+      ownerRegistration: partyRegistryBackendRegistration,
     });
     const error = yield* harness.runtime.runAction(request).pipe(Effect.flip);
     expect(Predicate.isTagged(error, 'ActionPermissionDenied')).toBe(true);
@@ -97,9 +99,9 @@ it.effect('denied Party administration cannot queue a rebuild even with Action e
 it.effect('replaying the same authorized rebuild request queues only once', () =>
   Effect.gen(function* replayRebuildRequest() {
     const harness = yield* makeActionTestHarness({
+      access: 'allowed',
       databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-      actionPermission: 'allowed',
-      tenantPermission: 'allowed',
+      ownerRegistration: partyRegistryBackendRegistration,
     });
     yield* harness.runtime.runAction(request);
     const replay = yield* harness.runtime.runAction(request).pipe(Effect.flip);

@@ -32,6 +32,19 @@ const handleCompleteOrderApprovalConsumption = Effect.fn('CompleteOrderApprovalC
 );
 export const completeOrderApprovalConsumptionAction = defineAction(
   {
+    accessActor: {
+      callers: ['commerce-order'],
+      reason: 'The Order finalization worker completes the approval consumption of the Order it was delivered.',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.order.approval-consumption.complete',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'order-finalization', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.order.complete-order-approval-consumption.access.v1',
@@ -42,7 +55,7 @@ export const completeOrderApprovalConsumptionAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.order.complete-order-approval-consumption',
       moduleKey,
       role: 'action',

@@ -5,21 +5,6 @@ import type { CounterpartyPersistenceUnavailable } from '../../shared/domain/cou
 import type { CounterpartyRef } from '../../shared/party-registry-references.ts';
 import type { LookupResult } from '../services/counterparty-persistence.service.ts';
 
-export const counterpartyPermissionTarget = (input: { readonly counterpartyRef: CounterpartyRef }) => ({
-  kind: 'any_of' as const,
-  targets: [
-    {
-      kind: 'resource' as const,
-      resource: {
-        moduleId: input.counterpartyRef.moduleId,
-        resourceId: input.counterpartyRef.resourceId,
-        resourceType: input.counterpartyRef.resourceType,
-      },
-    },
-    { kind: 'legal_entity' as const, permission: 'read_counterparty' as const },
-  ] as const,
-});
-
 const notFound = (context: string) =>
   new ReadHandlerNotFound({
     code: 'read_handler_not_found',

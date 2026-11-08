@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.inventory
 // @ontos-action-http-slug change-stock-sharing-eligibility
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/change-stock-sharing-eligibility.ts';
 
 export { ChangeStockSharingEligibilityPayloadSchema } from '../actions/change-stock-sharing-eligibility.ts';
-
 const ChangeStockSharingEligibilityActionHeadersSchema = Schema.Struct({
   'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
 });
@@ -28,6 +28,7 @@ export const ChangeStockSharingEligibilityActionForbiddenProblemSchema = makePro
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -152,7 +153,7 @@ export const changeStockSharingEligibilityActionGroupDefinition = HttpApiGroup.m
       error: actionErrors,
       headers: ChangeStockSharingEligibilityActionHeadersSchema,
       payload: Schema.toEncoded(ChangeStockSharingEligibilityPayloadSchema),
-      success: ChangeStockSharingEligibilityResultSchema,
+      success: [ActionProposalAcceptedSchema, ChangeStockSharingEligibilityResultSchema],
     }),
   )
   .middleware(ChangeStockSharingEligibilityActionSchemaErrorMiddleware);

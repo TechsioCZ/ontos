@@ -5,7 +5,6 @@ import {
   ReadHandlerUnavailable,
   ReadPermissionDenied,
   defineRead,
-  defineReadResourcePermission,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import {
@@ -36,9 +35,10 @@ const MARKET_AFFECTED_USE_MODULE_KEY = 'commerce.customer-context';
 
 export interface MarketReferenceOwnerDeploymentStateAuthority {
   /**
-   * Returns Application Composition evidence for every Market-reference owner that is not read
-   * through this deployment. Disabled/unimplemented and enabled-unreachable are distinct: the
-   * latter must fail instead of returning an empty proof.
+   * Returns evidence of absence from the approved Application Composition for reference owners
+   * not read through this deployment. A present owner remains required when suspended or
+   * unreachable; those states cannot produce an empty proof. Retained UNIMPLEMENTED identities
+   * describe Composition absence, not code availability or the end of historical obligations.
    */
   readonly proveReferenceOwnerStates: (
     input: MarketAffectedUseAssessmentRequest,
@@ -235,7 +235,7 @@ export const handleMarketAffectedUseAssessment: (
 
 export const marketAffectedUseAssessmentEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'market.catalog.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.market-affected-use-assessment',
   moduleKey: MARKET_AFFECTED_USE_MODULE_KEY,
   role: 'api',
@@ -243,6 +243,19 @@ export const marketAffectedUseAssessmentEntrypoint = defineTenantModuleEntrypoin
 
 export const marketAffectedUseAssessmentRead = defineRead(
   {
+    accessActor: {
+      callers: ['commerce-market-catalog'],
+      reason: "Commerce Market Catalog retirement impact is relayed under the retiring user's rights.",
+      subject: 'rights',
+    },
+    accessDeclaration: {
+      key: 'commerce.customer-context.market-use.assess',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'commerce-policy', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: marketAffectedUseAssessmentEntrypoint,
     evidencePolicy: {
@@ -252,13 +265,8 @@ export const marketAffectedUseAssessmentRead = defineRead(
     inputSchema: MarketAffectedUseAssessmentRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MARKET_AFFECTED_USE_MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.customer-context.api.market-affected-use-assessment',
-    resourcePermission: defineReadResourcePermission<MarketAffectedUseAssessmentRequest>(({ marketRef }) => ({
-      permission: 'read',
-      resource: marketRef,
-    })),
     resultSchema: MarketAffectedUseAssessmentResponseSchema,
     schemaVersion: '1',
   },
@@ -275,5 +283,4 @@ export const marketAffectedUseAssessmentRead = defineRead(
     }
     return marketAffectedUseAssessmentServicesForTransaction(transaction);
   },
-  () => ({ kind: 'module', moduleId: MARKET_AFFECTED_USE_MODULE_KEY }),
 );

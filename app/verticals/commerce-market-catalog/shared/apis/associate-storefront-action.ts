@@ -2,11 +2,14 @@
 // @ontos-action-http-owner commerce.market-catalog
 // @ontos-action-http-slug associate-storefront
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { AssociateStorefrontPayloadSchema, AssociateStorefrontResultSchema } from '../actions/associate-storefront.ts';
 
 export { AssociateStorefrontPayloadSchema } from '../actions/associate-storefront.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const AssociateStorefrontActionInvalidProblemSchema = makeProblemDetailsSchema(
   'AssociateStorefrontActionInvalidProblem',
@@ -21,6 +24,7 @@ export const AssociateStorefrontActionForbiddenProblemSchema = makeProblemDetail
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -157,7 +161,7 @@ export const associateStorefrontActionGroupDefinition = HttpApiGroup.make('assoc
     HttpApiEndpoint.post('execute', '/commerce-market-catalog/actions/associate-storefront', {
       error: actionErrors,
       payload: Schema.toEncoded(AssociateStorefrontPayloadSchema),
-      success: AssociateStorefrontResultSchema,
+      success: [ActionProposalAcceptedSchema, AssociateStorefrontResultSchema],
     }),
   )
   .middleware(AssociateStorefrontActionSchemaErrorMiddleware);

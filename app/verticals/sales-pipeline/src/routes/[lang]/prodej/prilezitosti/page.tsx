@@ -372,6 +372,9 @@ const usePipelineCommands = (revision: number, reload: () => void) => {
     Match.value(error).pipe(
       Match.tag('ApplyCommandActionConflictProblem', (problem) => t(pipelineConflictKey(problem.code))),
       Match.tag('ApplyCommandActionForbiddenProblem', () => t(`${K}.errors.forbidden`)),
+      Match.tag('SalesPipelineLifecycleConflictProblem', () => t(`${K}.errors.closed`)),
+      Match.tag('SalesPipelinePermissionDeniedProblem', () => t(`${K}.errors.forbidden`)),
+      Match.tag('ActionProposalAccepted', () => t(`${K}.errors.approvalRequired`)),
       Match.orElse(() => t(`${K}.errors.generic`)),
     );
   const runCommand = (command: PipelineCommand, onDone: (result: ApplyCommandResult) => void) => {
@@ -384,10 +387,13 @@ const usePipelineCommands = (revision: number, reload: () => void) => {
             setBusy(false);
             const message = failureMessage(error);
             setDialogError(message);
+            const awaitingApproval = Predicate.isTagged(error, 'ActionProposalAccepted');
             if (Predicate.isTagged(command, 'ArchiveOpportunity')) {
-              toaster.create({ title: message, type: 'error' });
+              toaster.create({ title: message, type: awaitingApproval ? 'warning' : 'error' });
             }
-            reload();
+            if (!awaitingApproval) {
+              reload();
+            }
           },
           onSuccess: (result) => {
             setBusy(false);

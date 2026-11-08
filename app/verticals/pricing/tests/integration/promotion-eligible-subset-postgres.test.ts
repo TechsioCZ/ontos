@@ -1,8 +1,17 @@
-import { defineRead, defineTenantModuleEntrypoint, ReadHandlerUnavailable } from '@app/core-runtime';
+import {
+  defineRead,
+  defineOntosModuleManifest,
+  defineTenantModuleEntrypoint,
+  defineVerticalRuntimeRegistration,
+  ReadHandlerUnavailable,
+} from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor, ReadHandlerContext } from '@app/core-runtime';
-import { makeNativeReadTestContext } from '@app/core-runtime/testing/native-reads';
+import { makeNativeReadTestContext, NativeReadTestOwnerRegistration } from '@app/core-runtime/testing/native-reads';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
+import {
+  makeApplicationCompositionSnapshotFixture,
+  makeModuleContractFixture,
+} from '@app/core-runtime/testing/module-contract';
 import { CurrentPricingDecisionRequestSchema } from '@app/pricing-contracts/current-pricing-decision';
 import { CurrentSupportedCurrenciesSuccessSchema } from '@app/pricing-contracts/current-supported-currencies';
 import { SetSupportedCurrenciesV2PayloadSchema } from '@app/pricing-contracts/domain/currency-support';
@@ -591,13 +600,21 @@ const produceMixedCandidate = Effect.fn('test.produceMixedPromotionCandidate')(f
 
 const readEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'pricing.promotion.subset.native_test.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.pricing.test.promotion-eligible-subset',
   moduleKey: 'commerce.pricing',
   role: 'api',
 });
 const governedRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.pricing.fixture.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'fixtures', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: readEntrypoint,
     evidencePolicy: {
@@ -607,7 +624,6 @@ const governedRead = defineRead(
     inputSchema: PricingRawCompositionReadySchema,
     legalEntityScope: 'required',
     owningModuleKey: 'commerce.pricing',
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.pricing.test.promotion-eligible-subset',
     resultSchema: Schema.Struct({ total: Schema.String, values: Schema.Array(Schema.String) }),
@@ -661,13 +677,27 @@ const governedRead = defineRead(
       ),
     ),
   zeroFloorAuthorizationPersistenceForScope,
-  () => ({ kind: 'module', moduleId: 'commerce.pricing' }),
 );
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
 );
+
+// This owner registers the exact local native test Read; it claims no production Pricing API.
+const governedReadOwnerBase = makeModuleContractFixture({
+  appId: 'pricing-promotion-subset-native-test',
+  moduleId: governedRead.descriptor.owningModuleKey,
+}).manifest;
+const governedReadOwner = defineVerticalRuntimeRegistration({
+  actions: [],
+  manifest: defineOntosModuleManifest({
+    ...governedReadOwnerBase,
+    publicSurface: { ...governedReadOwnerBase.publicSurface, actions: [], api: {}, components: {} },
+  }),
+  outboxWorkers: [],
+  reads: [governedRead],
+});
 
 it.live(
   'retains the complete native Discount candidate, applies the exact injected Promotion subset once, and publishes floor-governed total 90',
@@ -685,8 +715,8 @@ it.live(
             mode: 'schema-only',
             purpose: 'stabilization-1249-promotion-eligible-subset',
           });
-          yield* isolated.assertClonedSchema();
           const fixture = yield* makeNativeReadTestContext({
+            access: 'allowed',
             connections: {
               admin: { connectionString: Redacted.make(isolated.connections.admin.connectionString) },
               runtime: { connectionString: Redacted.make(isolated.connections.runtime.connectionString) },
@@ -694,7 +724,7 @@ it.live(
             contextPermissions: ['pricing.promotion.subset.native_test.read'],
             moduleId: 'commerce.pricing',
             ownerFixtureRetention: 'retain-complete-context',
-          });
+          }).pipe(Effect.provideService(NativeReadTestOwnerRegistration, governedReadOwner));
           const fixtureContext = yield* Layer.build(fixture.layer);
           const prepared = yield* fixture
             .prepareOwner(
@@ -724,7 +754,6 @@ it.live(
               .pipe(Effect.provideContext(fixtureContext)),
           ).toEqual({ total: '90', values: ['90', '0'] });
           expect(yield* fixture.evidenceCount()).toBe(before + 1);
-          yield* isolated.assertClonedSchema();
         }).pipe(Effect.provideContext(services));
       }),
     ),

@@ -47,6 +47,14 @@ const handleCorrectSku = Effect.fn('CorrectSkuAction.handle')(function* handleCo
 
 export const correctSkuAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.sku.correct',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'variant', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.correct-sku.access.v1',
@@ -58,7 +66,7 @@ export const correctSkuAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

@@ -63,7 +63,7 @@ const recoverReactivateProduct = Effect.fn('ReactivateProductRecoveryRead.recove
 
 const reactivateProductRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.reactivate-product-recovery' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.reactivate-product-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -71,6 +71,14 @@ const reactivateProductRecoveryEntrypoint = defineTenantModuleEntrypoint({
 
 export const reactivateProductRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.reactivate-product-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: reactivateProductRecoveryEntrypoint,
     evidencePolicy: {
@@ -80,7 +88,6 @@ export const reactivateProductRecoveryRead = defineRead(
     inputSchema: ReactivateProductRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.reactivate-product-recovery',
     resultSchema: ReactivateProductRecoveryResponseSchema,
@@ -92,5 +99,4 @@ export const reactivateProductRecoveryRead = defineRead(
   },
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

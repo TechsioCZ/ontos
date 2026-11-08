@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.pricing
 // @ontos-action-http-slug manage-contractual-discount
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { PricingDiscountScheduleAcknowledgementSchema } from '@app/pricing-contracts/domain/discount';
@@ -11,7 +12,6 @@ import {
 } from '../actions/manage-contractual-discount.ts';
 
 export { ManageContractualDiscountPayloadSchema } from '../actions/manage-contractual-discount.ts';
-
 const ManageContractualDiscountActionHeadersSchema = Schema.Struct({
   'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
 });
@@ -29,6 +29,7 @@ export const ManageContractualDiscountActionForbiddenProblemSchema = makeProblem
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -164,7 +165,7 @@ export const manageContractualDiscountActionGroupDefinition = HttpApiGroup.make(
       error: actionErrors,
       headers: ManageContractualDiscountActionHeadersSchema,
       payload: Schema.toEncoded(ManageContractualDiscountPayloadSchema),
-      success: ManageContractualDiscountResultSchema,
+      success: [ActionProposalAcceptedSchema, ManageContractualDiscountResultSchema],
     }),
   )
   .middleware(ManageContractualDiscountActionSchemaErrorMiddleware);

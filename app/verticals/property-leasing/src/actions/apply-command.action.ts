@@ -86,12 +86,7 @@ const makeServices: ActionServiceFactory<ApplyCommandServices> = () =>
       reason: 'Command reference preparation is required',
     }),
   );
-export const prepareApplyCommandServices: ActionServicePreflight<
-  ApplyCommandPayload,
-  ApplyCommandServices,
-  OccupancyError,
-  Effect.Services<ReturnType<typeof makeReferenceGatewayCredentialSource>>
-> = Effect.fn('Occupancy.prepareApplyCommandServices')(function* prepareServices(
+export const prepareApplyCommandServices = Effect.fn('Occupancy.prepareApplyCommandServices')(function* prepareServices(
   payload: ApplyCommandPayload,
   context: ActionServicePreparationContext,
 ) {
@@ -154,10 +149,23 @@ export const prepareApplyCommandServices: ActionServicePreflight<
     );
     return { ...persistence, prepared: { payload, transition } };
   });
-});
+}) satisfies ActionServicePreflight<
+  ApplyCommandPayload,
+  ApplyCommandServices,
+  OccupancyError,
+  Effect.Services<ReturnType<typeof makeReferenceGatewayCredentialSource>>
+>;
 
 export const applyCommandAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'property.leasing.apply-command.write',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'property-leasing', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'property.leasing.apply-command.access.v1' },
     actionKey: 'property.leasing.apply-command',
     auditProfile: 'standard',
@@ -165,7 +173,7 @@ export const applyCommandAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'property.leasing.apply-command',
       moduleKey: OWNER_MODULE_KEY,
       role: 'action',

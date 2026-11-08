@@ -1,6 +1,6 @@
-import { NodeServices } from '@effect/platform-node';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { Config, Effect, Layer } from 'effect';
-import { Cookies, FetchHttpClient } from 'effect/http';
+import { FetchHttpClient } from 'effect/http';
 
 import {
   ContextAccessLive,
@@ -14,14 +14,18 @@ import {
   PrincipalResolverLive,
   ReadRuntimeLive,
   TenantModuleStateServiceLive,
+  makeActionRuntimeLive,
 } from '@app/core-runtime';
 import {
   ActionAuthorityLive,
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
+  TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import {
@@ -29,13 +33,8 @@ import {
   ActiveApplicationCompositionService,
 } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
-import {
-  ActionAuthorizationLifecycleLive,
-  ScopedRoleMembershipLifecycleLive,
-  SpiceDbConfigLive,
-} from '@app/core-runtime/outbox/core-system-worker';
-import { makeActionRuntimeLive } from '../../packages/core-runtime/src/actions/runtime.ts';
-import { CoreAdminDatabaseLive, CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
+import { AccessPeopleDirectoryLive } from '@app/core-runtime/access/intent/people-directory';
+import { CoreAdminDatabaseLive, CoreDatabase } from '@app/core-runtime/db/client';
 import { OAuthFlowLive } from '../../apps/shell-super-app/api/auth/db/oauth-flow-live.ts';
 import { OAuthCredentialsLive } from '../../apps/shell-super-app/api/auth/db/oauth-credentials-live.ts';
 import { OAuthEndpointGuardDataLive } from '../../apps/shell-super-app/api/oauth-connections/grant-store.ts';
@@ -51,11 +50,20 @@ import { BetterAuthNativeAdapterLive } from '../../apps/shell-super-app/api/auth
 import { AuthenticationService, AuthenticationServiceLive } from '../../apps/shell-super-app/api/auth/service.ts';
 import { StaffAuthenticationNamespaceRegistryLive } from '../../apps/shell-super-app/api/auth/authentication-namespace-registry.ts';
 import { ShellInstalledModuleCatalogLive } from '../../apps/shell-super-app/api/modules/installed-module-catalog.ts';
-import { AgentProfileReadDatabase, AgentProfileSetupError } from './agent-profile-setup.mts';
+import { AgentProfileReadDatabase } from './agent-profile-setup.mts';
+import { AgentProfileSetupError, retainAgentOperatorSessionCookies } from './agent-operator-session.mts';
 
 const persistence = CorePersistenceLive.pipe(Layer.provide(DatabaseConfigLive));
 const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 const access = ContextAccessLive;
+const intentLoader = TenantIntentLoaderLive.pipe(Layer.provide(persistence), Layer.provide(databaseIdentitiesLive));
+const enforcementPorts = AccessEnforcementPortsLive.pipe(
+  Layer.provide(intentLoader),
+  Layer.provide(persistence),
+  Layer.provide(databaseIdentitiesLive),
+  Layer.provide(NodeCrypto.layer),
+);
+const enforcement = Layer.merge(enforcementPorts, AccessDecisionLive.pipe(Layer.provide(enforcementPorts)));
 const authConfig = AuthConfigLive;
 const authDatabase = AuthDatabaseLive.pipe(Layer.provide(authConfig));
 const betterAuthNativeAdapter = BetterAuthNativeAdapterLive.pipe(Layer.provide(authDatabase));
@@ -79,7 +87,11 @@ const authenticationDependencies = Layer.mergeAll(
 );
 const authenticationFramework = BetterAuthFrameworkLive().pipe(Layer.provideMerge(authenticationDependencies));
 const authenticationGuards = OAuthEndpointGuardsLive.pipe(Layer.provideMerge(authenticationFramework));
-const authentication = AuthenticationServiceLive.pipe(Layer.provide(authenticationGuards));
+const legalEntityContext = LegalEntityContextLive.pipe(Layer.provide(persistence));
+const authentication = AuthenticationServiceLive.pipe(
+  Layer.provide(Layer.mergeAll(authenticationGuards, access, legalEntityContext, enforcement)),
+  Layer.provide(NodeCrypto.layer),
+);
 const composition = ActiveApplicationCompositionConfigLive.pipe(
   Layer.provide(ActiveApplicationCompositionSourceLive.pipe(Layer.provide(FetchHttpClient.layer))),
 );
@@ -88,8 +100,13 @@ const operations = Layer.mergeAll(
   persistence,
   access,
   modules,
+  intentLoader,
+  enforcement,
+  databaseIdentitiesLive,
   ModuleEntrypointGatewayLive.pipe(Layer.provide(modules)),
-  OperationalScopeResolverLive.pipe(Layer.provide(Layer.merge(persistence, access))),
+  OperationalScopeResolverLive.pipe(
+    Layer.provide(Layer.mergeAll(persistence, access, enforcement, databaseIdentitiesLive)),
+  ),
 );
 // The operator runs the approved Shell contract, not whichever marker happens to be in an unbuilt checkout.
 const actionRuntime = Layer.unwrap(
@@ -108,25 +125,25 @@ const reads = Layer.effect(
     return { executor: database.executor };
   }),
 ).pipe(Layer.provide(CoreAdminDatabaseLive));
-const legalEntityContext = LegalEntityContextLive.pipe(Layer.provide(persistence));
 const readRuntime = ReadRuntimeLive.pipe(Layer.provide(operations));
-const authorizationLifecycle = ActionAuthorizationLifecycleLive.pipe(
-  Layer.provide(ScopedRoleMembershipLifecycleLive),
-  Layer.provide(Layer.mergeAll(persistence, DatabaseConfigLive, SpiceDbConfigLive, composition)),
+const authority = ActionAuthorityLive.pipe(Layer.provide(Layer.merge(enforcement, composition)));
+const operatorIdentities = AccessPeopleDirectoryLive.pipe(
+  Layer.provide(Layer.merge(persistence, databaseIdentitiesLive)),
 );
-const apiKeys = ApiKeyServiceLive.pipe(Layer.provide(Layer.merge(authConfig, authDatabase)));
+const apiKeys = ApiKeyServiceLive.pipe(Layer.provide(authDatabase), Layer.provide(NodeCrypto.layer));
 const identityLifecycle = IdentityLifecycleLive.pipe(Layer.provide(Layer.mergeAll(actionRuntime, apiKeys, resolver)));
 export const AgentProfileOperatorLive = Layer.mergeAll(
   // Core revalidates the staff namespace when Actions run, not only while the authentication service is built.
   StaffAuthenticationNamespaceRegistryLive,
   identityLifecycle,
-  ActionAuthorityLive,
+  authority,
+  operatorIdentities,
+  operations,
   OAuthFlowLive.pipe(Layer.provide(Layer.merge(authConfig, authDatabase))),
   authentication,
   actionRuntime,
   readRuntime,
   legalEntityContext,
-  authorizationLifecycle,
   composition,
   ActionPermissionLive,
   reads,
@@ -135,7 +152,7 @@ export const AgentProfileOperatorLive = Layer.mergeAll(
   access,
   ShellInstalledModuleCatalogLive.pipe(Layer.provide(composition)),
   NodeServices.layer,
-).pipe(Layer.provide(databaseIdentitiesLive));
+).pipe(Layer.provide(databaseIdentitiesLive), Layer.provide(NodeCrypto.layer), Layer.provide(authConfig));
 
 /** Real Better Auth sign-in and native principal binding resolution; no synthetic session context or default password. */
 export const authenticateAgentProfileOperator = Effect.gen(function* authenticateOperator() {
@@ -145,12 +162,15 @@ export const authenticateAgentProfileOperator = Effect.gen(function* authenticat
   const config = yield* AuthConfig;
   const headers = new Headers({ origin: config.baseUrl });
   const signedIn = yield* service.signIn(email, secret, headers);
-  headers.set('cookie', Cookies.toCookieHeader(Cookies.fromSetCookie(signedIn.setCookieHeaders)));
-  const context = yield* service.resolveTenantContext(headers);
-  if (context.state !== 'authenticated') {
-    return yield* new AgentProfileSetupError({
-      reason: 'The operator could not resolve an authenticated native principal',
-    });
-  }
-  return { close: service.signOut(headers), principal: context.principal, requestHeaders: headers };
+  return yield* Effect.gen(function* resolveSignedInOperator() {
+    yield* retainAgentOperatorSessionCookies(headers, signedIn.setCookieHeaders);
+    const context = yield* service.resolveTenantContext(headers);
+    yield* retainAgentOperatorSessionCookies(headers, context.setCookieHeaders);
+    if (context.state !== 'authenticated') {
+      return yield* new AgentProfileSetupError({
+        reason: 'The operator could not resolve an authenticated native principal',
+      });
+    }
+    return { close: service.signOut(headers), principal: context.principal, requestHeaders: headers };
+  }).pipe(Effect.onError(() => service.signOut(headers).pipe(Effect.ignore)));
 });

@@ -126,6 +126,19 @@ export const matchingCustomer = (client: CrmClient, customers: readonly Customer
         : Option.getOrNull(customer.companyId) === client.regNo),
   );
 
+/**
+ * The Party candidate name fields for one CRM client. Party Registry derives `displayName` from
+ * `businessName` for organizations and from `firstName`/`lastName` for people, so the derived display
+ * name stays equal to the name the CRM recorded.
+ */
+export const candidateNameFields = (client: Pick<CrmClient, 'kind' | 'name'>) => {
+  if (client.kind === 'organization') {
+    return { businessName: client.name };
+  }
+  const [first = '', ...rest] = client.name.trim().split(/\s+/u);
+  return rest.length === 0 ? { firstName: first } : { firstName: first, lastName: rest.join(' ') };
+};
+
 const createCustomer = (
   client: SeedClient & { readonly target: { readonly tenantId: string } },
   crmClient: CrmClient,
@@ -140,14 +153,14 @@ const createCustomer = (
       CreatePartyPayloadJsonSchema,
       {
         candidate: {
-          displayName: crmClient.name,
+          ...candidateNameFields(crmClient),
           evidenceRefs: [evidenceReference],
           officialIdentifiers: [
             ...(organization && validIco(crmClient.regNo)
-              ? [{ identifierType: 'ICO' as const, value: crmClient.regNo, verification: 'UNVERIFIED' as const }]
+              ? [{ identifierType: 'ICO' as const, value: crmClient.regNo }]
               : []),
             ...(organization && crmClient.vatNo !== undefined && /^CZ\d{8,10}$/u.test(crmClient.vatNo)
-              ? [{ identifierType: 'CZ_DIC' as const, value: crmClient.vatNo, verification: 'UNVERIFIED' as const }]
+              ? [{ identifierType: 'CZ_DIC' as const, value: crmClient.vatNo }]
               : []),
           ],
           partyType: organization ? 'ORGANIZATION' : 'PERSON',
@@ -251,7 +264,6 @@ const createCustomer = (
               source: 'USER_ASSERTION',
             },
             validFrom: now,
-            verification: { state: 'UNVERIFIED' },
           },
           Schema.toEncoded(AddContactPointResultSchema),
           true,

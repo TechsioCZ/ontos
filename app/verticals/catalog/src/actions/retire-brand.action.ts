@@ -52,6 +52,14 @@ export const handleRetireBrand = Effect.fn('RetireBrandAction.handle')(function*
 
 export const retireBrandAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.brand.retire',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'brand', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.retire-brand.access.v1',
@@ -63,7 +71,7 @@ export const retireBrandAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

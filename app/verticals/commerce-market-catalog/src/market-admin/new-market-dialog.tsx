@@ -1,4 +1,6 @@
 // "Nový trh": the market definition for the signed-in company, then its merchandise price list (DESIGN 4).
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { DateTime, Effect, Schema } from 'effect';
 import { useState } from 'react';
@@ -19,7 +21,20 @@ import {
 import type { MarketDefinitionForm, MarketPricingForm } from './market-form.ts';
 import { useMarketText } from './market-ui.tsx';
 import { runMarketAction, runMerchandiseCommand } from './page-data.ts';
-import type { WriteFailure } from './page-data.ts';
+import type { MarketCommandResult, WriteFailure, WriteOutcome } from './page-data.ts';
+
+const isProposal = Schema.is(ActionProposalAcceptedSchema);
+
+/** The price list of a newly created market: saved, parked for approval, or not saved. */
+const MarketPricingSchema = Schema.Literals(['awaitingApproval', 'notSaved', 'saved']);
+type MarketPricing = typeof MarketPricingSchema.Type;
+
+const pricingOf = (configured: WriteOutcome<MarketCommandResult>): MarketPricing => {
+  if (!configured.ok) {
+    return 'notSaved';
+  }
+  return isProposal(configured.value) ? 'awaitingApproval' : 'saved';
+};
 
 export interface NewMarketDialogProps {
   /** Catalogue managers also set up the price list; everybody else creates the definition only. */
@@ -27,8 +42,12 @@ export interface NewMarketDialogProps {
   readonly legalEntityId: string;
   readonly merchandiseRevision: number;
   readonly onClose: () => void;
-  /** After the market exists: its code, its id, and whether the price list was saved too. */
-  readonly onCreated: (result: { readonly code: string; readonly marketId: string; readonly priced: boolean }) => void;
+  /** After the market exists: its code, its id, and whether its price list was saved, awaits approval or is missing. */
+  readonly onCreated: (result: {
+    readonly code: string;
+    readonly marketId: string;
+    readonly pricing: MarketPricing;
+  }) => void;
   readonly tenantId: string;
 }
 
@@ -62,9 +81,14 @@ export const NewMarketDialog = ({
   const [showIssues, setShowIssues] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<WriteFailure | null>(null);
+  /** The creation was parked for approval: no market exists yet, and sending it again would propose it twice. */
+  const [parked, setParked] = useState(false);
   const issues = definitionIssues(form);
   const priceIssues = canConfigurePricing ? pricingIssues(pricing) : [];
   const submit = () => {
+    if (parked) {
+      return;
+    }
     if (issues.length > 0 || priceIssues.length > 0) {
       setShowIssues(true);
       return;
@@ -81,19 +105,26 @@ export const NewMarketDialog = ({
           setFailure(outcome.reason);
           return;
         }
-        const marketId = outcome.value.marketRef.resourceId;
-        const finish = (priced: boolean) => {
+        const created = outcome.value;
+        if (isProposal(created)) {
           setBusy(false);
-          onCreated({ code, marketId, priced });
-        };
-        if (!canConfigurePricing) {
-          finish(false);
+          setParked(true);
           return;
         }
+        const marketId = created.marketRef.resourceId;
+        const finish = (pricingResult: MarketPricing) => {
+          setBusy(false);
+          onCreated({ code, marketId, pricing: pricingResult });
+        };
+        if (!canConfigurePricing) {
+          finish('notSaved');
+          return;
+        }
+        // The market already exists; only its price list may wait for approval.
         runMerchandiseCommand(
           configureMarketCommand({ expectedRevision: 0, form: pricing, marketCode: code, marketId }),
           merchandiseRevision,
-          (configured) => finish(configured.ok),
+          (configured) => finish(pricingOf(configured)),
         );
       },
     );
@@ -138,6 +169,11 @@ export const NewMarketDialog = ({
             showIssues={showIssues}
           />
         </section>
+      )}
+      {parked && (
+        <StatusText showIcon status="warning">
+          {text('approvalRequired')}
+        </StatusText>
       )}
     </DialogFrame>
   );

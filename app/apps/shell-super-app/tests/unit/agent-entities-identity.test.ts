@@ -1,8 +1,8 @@
+import { administrationProjectionLayer } from './oauth-connections-admin/administration-runtime.fixture.ts';
 import { AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
 import { Effect, Layer, Option, Schema } from 'effect' with { rstest: 'importActual' };
 import { ActionRuntime, configureAgentAction, ContextAccess } from '@app/core-runtime';
 import type { ActionRuntimeService, withPostgresSessionAdvisoryLock } from '@app/core-runtime';
-import { ActionAuthorizationLifecycle } from '@app/core-runtime/outbox/core-system-worker';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { ManageAgentEntityRequestSchema } from '@app/shared-contracts/agent-access';
 import { expect, it, rs } from 'effect-rstest';
@@ -221,14 +221,13 @@ const fixture = (selected: DemoAccountCaller, principalId: string) =>
           throw new Error('Unexpected authentication database IO');
         },
       }),
-      Effect.provideService(ActionAuthorizationLifecycle, {
-        reconcilePrincipal: () =>
+      Effect.provide(
+        administrationProjectionLayer({ principal: selected.principal }, [], [], () =>
           Effect.sync(() => {
             events.push('projection');
           }),
-        reconcileScopedRoleMembership: () => Effect.die('Unexpected role reconciliation'),
-        reconcileTenant: () => Effect.die('Unexpected tenant reconciliation'),
-      }),
+        ),
+      ),
       Effect.provideService(AuthConfig, {
         baseUrl: 'https://example.invalid',
         connectionString: 'postgresql://unused.invalid/test',

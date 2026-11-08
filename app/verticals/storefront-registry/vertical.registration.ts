@@ -6,6 +6,7 @@ import { storefrontRegistryManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
 import { registerStorefrontApplicationAction } from './src/actions/register-storefront-application.action.ts';
 import { reviseStorefrontApplicationAction } from './src/actions/revise-storefront-application.action.ts';
+import { currentStorefrontApplicationRead } from './src/api/current-storefront-application.read.ts';
 // </generated-module-registration-imports>
 
 export const storefrontRegistryRegistration = defineVerticalRuntimeRegistration({
@@ -19,6 +20,7 @@ export const storefrontRegistryRegistration = defineVerticalRuntimeRegistration(
     api: {
       // <generated-module-registration-apis>
       'current-storefront-application': () => import('./src/api/current-storefront-application-client.ts'),
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       'storefront-applications': () => import('./src/api/storefront-applications-client.ts'),
       'verify-current-storefront-application-v1': () =>
         import('./src/api/verify-current-storefront-application-v1-client.ts'),
@@ -45,6 +47,11 @@ export const storefrontRegistryRegistration = defineVerticalRuntimeRegistration(
   outboxWorkers: [
     // <generated-module-registration-workers>
     // </generated-module-registration-workers>
+  ],
+  reads: [
+    // <generated-module-registration-reads>
+    currentStorefrontApplicationRead,
+    // </generated-module-registration-reads>
   ],
 });
 

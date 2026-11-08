@@ -1,7 +1,8 @@
 import { NodeServices } from '@effect/platform-node';
-import { Config, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
+import { Config, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { executeReviseCartDraftWithAuthorization } from '@app/commerce-cart/api/client';
 import { executePurchaseProposalBasisWithAuthorization } from '../../src/api/purchase-proposal-basis-client.ts';
+import { requireExecutedAction } from '../support/action-execution-result.ts';
 import { PurchaseProposalBasisUnavailableProblemSchema } from '../../shared/apis/purchase-proposal-basis.ts';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
@@ -36,11 +37,16 @@ it.live(
         expect(proof.created.outcome).toBe('CREATED');
         expect(proof.wrongIssuanceRejected).toBe(true);
         expect(proof.wrongIssuanceRejection.code).toBe('IDEMPOTENCY_CONFLICT');
-        expect(proof.wrongIssuanceRejection.principalId).toBe(fixture.transport.cccReaderPrincipalId);
+        // The subject of every call is the buyer; the calling module is the actor, which Core records in its decision log.
+        expect(proof.wrongIssuanceRejection.principalId).toBe(fixture.transport.buyerPrincipalId);
         expect(proof.current.facts).not.toBeNull();
         expect(proof.ready.pricingIssuanceInvocationId).toBe(proof.invocation.actionInvocationId);
-        expect(proof.ready.pricingIssuerPrincipalId).toBe(fixture.transport.pricingIssuerPrincipalId);
-        expect(proof.invocation.principalId).not.toBe(fixture.transport.buyerPrincipalId);
+        expect(proof.ready.pricingIssuerPrincipalId).toBe(fixture.transport.buyerPrincipalId);
+        expect(proof.invocation.principalId).toBe(fixture.transport.buyerPrincipalId);
+        // A declared caller cannot act for a second human of the Tenant through that human's own invocation: Pricing
+        // declares no Originator Actions, so the Shell refuses the delegation and the read is never sent.
+        expect(fixture.transport.secondHuman.principalId).not.toBe(fixture.transport.buyerPrincipalId);
+        expect(proof.nonBuyerSubjectRefusal.stage).toBe('delegated-module-credential-forbidden:pricing');
         expect(proof.issued.quotation.binding.candidateRef).toBe(proof.pricingInput.pricingCandidateRef);
         expect(proof.current.basis.preparationInvocationId).toBe(proof.prepared.preparationInvocationId);
         // Two distinct Catalog selections: CCC prepares each Cart entry through Catalog, in Cart order.
@@ -136,7 +142,11 @@ it.live(
           expect(original[0]?.status).toBe('succeeded');
           expect(original[0]?.principalId).toBe(fixture.transport.buyerPrincipalId);
         }
-        const currentCredential = yield* fixture.transport.authorize('ccc-service', 'commerce-customer-context');
+        const currentCredential = yield* fixture.transport.authorize(
+          'pricing-module',
+          'commerce-customer-context',
+          Option.none(),
+        );
         const selector = {
           operation: 'CURRENT' as const,
           sourceRef: proof.prepared.proposal.proposalRevisionRef.resourceId,
@@ -152,19 +162,24 @@ it.live(
         expect(current.basis).toEqual(proof.current.basis);
         const cartCredential = yield* fixture.transport.authorize('buyer', 'commerce-cart');
         const mutationKey = `${fixture.intent}:change-cart-material`;
-        const changedCart = yield* executeReviseCartDraftWithAuthorization(
-          {
-            cartRef: fixture.cart.revised.cart.cartRef,
-            entries: [],
-            expectedRevision: fixture.cart.revised.cart.revisionRef.revision,
-          },
-          Redacted.value(cartCredential.authorization),
-          mutationKey,
-          { ...cartCredential.options, idempotencyKey: mutationKey },
+        // Commerce Cart publishes no execution-result schema for its draft mutations: this proof requires
+        // the executed revision, so a parked proposal must fail the seam before any Cart field is read.
+        const changedCart = yield* requireExecutedAction(
+          () => new Error('The Cart revise Action parked a proposal instead of executing the revision'),
+          executeReviseCartDraftWithAuthorization(
+            {
+              cartRef: fixture.cart.revised.cart.cartRef,
+              entries: [],
+              expectedRevision: fixture.cart.revised.cart.revisionRef.revision,
+            },
+            Redacted.value(cartCredential.authorization),
+            mutationKey,
+            { ...cartCredential.options, idempotencyKey: mutationKey },
+          ),
         );
         expect(changedCart.cart.entries).toEqual([]);
         expect(changedCart.cart.revisionRef.revision).toBe(fixture.cart.revised.cart.revisionRef.revision + 1);
-        const reader = yield* fixture.transport.authorize('ccc-service', 'commerce-customer-context');
+        const reader = yield* fixture.transport.authorize('pricing-module', 'commerce-customer-context', Option.none());
         const refused = yield* Schema.decodeUnknownEffect(PurchaseProposalBasisUnavailableProblemSchema)(
           yield* Effect.flip(
             executePurchaseProposalBasisWithAuthorization(

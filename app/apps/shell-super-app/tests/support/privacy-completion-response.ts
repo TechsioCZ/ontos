@@ -16,6 +16,7 @@ export const PrivacyCompletionReadySchema = Schema.Struct({
   apiKey: Schema.RedactedFromValue(Schema.String.check(Schema.isMinLength(1))),
   legalEntityId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrivacyCompletionLegalEntityId')),
   marker: Schema.Unknown,
+  moduleApiKey: Schema.RedactedFromValue(Schema.String.check(Schema.isMinLength(1))),
   port: Schema.Number.check(Schema.isInt(), Schema.isBetween({ maximum: 65_535, minimum: 1 })),
   principal: TrustedPrincipalContextSchema,
   protocolVersion: Schema.Literal(2),

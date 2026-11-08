@@ -29,7 +29,8 @@ export interface ShellSearchSuggestion {
   readonly roles: readonly PartyRole[];
   /** Where the hit opens: its owner's record page, else the Shell record page. */
   readonly target: ShellSearchLinkTarget;
-  readonly title: string;
+  /** The hit's own governed title; absent when the caller may not see the name (O17, O58). */
+  readonly title: string | undefined;
 }
 
 export interface ShellSearchResultGroup<Item> {

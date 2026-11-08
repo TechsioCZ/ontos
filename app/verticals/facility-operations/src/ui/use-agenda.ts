@@ -8,7 +8,10 @@ import { optionalField } from '../../shared/domain/common.ts';
 import { Schema, DateTime, Effect, Match, Option, Random, Schedule } from 'effect';
 import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import { useEffect, useSyncExternalStore } from 'react';
+import { PersonalAgendaCommandSchema } from '../../shared/actions/personal-agenda.ts';
+import { executeUpdatePersonalAgenda } from '../api/update-personal-agenda-action-client.ts';
 import { executeApplyCommand } from '../api/apply-command-action-client.ts';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { executeRecords } from '../api/records-consumer.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { agendaIds, agendaOfCommand } from '../../shared/agendas.ts';
@@ -18,7 +21,14 @@ import type { AgendaId } from '../../shared/domain/common.ts';
 import { BaseUpdatedAtSchema } from '../../shared/domain/change-log.ts';
 
 /** `conflict` = stale revision; `rejected` = business rule refused the change. */
-export const FailureReasonSchema = Schema.Literals(['conflict', 'forbidden', 'invalid', 'rejected', 'unavailable']);
+export const FailureReasonSchema = Schema.Literals([
+  'approval_required',
+  'conflict',
+  'forbidden',
+  'invalid',
+  'rejected',
+  'unavailable',
+]);
 export type FailureReason = typeof FailureReasonSchema.Type;
 
 export type CommandOutcome =
@@ -26,7 +36,8 @@ export type CommandOutcome =
   | { readonly ok: false; readonly reason: FailureReason };
 
 type RecordsFailure = Effect.Error<ReturnType<typeof executeRecords>>;
-type CommandFailure = Effect.Error<ReturnType<typeof executeApplyCommand>>;
+type CommandEffect = ReturnType<typeof executeApplyCommand> | ReturnType<typeof executeUpdatePersonalAgenda>;
+type CommandFailure = Effect.Error<CommandEffect>;
 
 const newId = Effect.map(
   Effect.all([Random.nextInt, Random.nextInt, Random.nextInt], { concurrency: 1 }),
@@ -44,17 +55,33 @@ const recordsReason = (error: RecordsFailure): FailureReason =>
 
 const commandReason = (error: CommandFailure): FailureReason =>
   Match.value(error).pipe(
-    Match.tag('ApplyCommandActionConflictProblem', (problem): FailureReason =>
-      problem.code === 'facility_operations_lifecycle_conflict' ? 'rejected' : 'conflict',
+    Match.tag(
+      'ApplyCommandActionConflictProblem',
+      'UpdatePersonalAgendaActionConflictProblem',
+      (problem): FailureReason => (problem.code === 'facility_operations_lifecycle_conflict' ? 'rejected' : 'conflict'),
     ),
-    Match.tag('ApplyCommandActionIneligibleProblem', (): FailureReason => 'rejected'),
-    Match.tag('ApplyCommandActionNotFoundProblem', (): FailureReason => 'rejected'),
+    Match.tag(
+      'ApplyCommandActionIneligibleProblem',
+      'UpdatePersonalAgendaActionIneligibleProblem',
+      (): FailureReason => 'rejected',
+    ),
+    Match.tag(
+      'ApplyCommandActionNotFoundProblem',
+      'UpdatePersonalAgendaActionNotFoundProblem',
+      (): FailureReason => 'rejected',
+    ),
     Match.tag(
       'ApplyCommandActionAuthenticationProblem',
       'ApplyCommandActionForbiddenProblem',
+      'UpdatePersonalAgendaActionAuthenticationProblem',
+      'UpdatePersonalAgendaActionForbiddenProblem',
       (): FailureReason => 'forbidden',
     ),
-    Match.tag('ApplyCommandActionInvalidProblem', (): FailureReason => 'invalid'),
+    Match.tag(
+      'ApplyCommandActionInvalidProblem',
+      'UpdatePersonalAgendaActionInvalidProblem',
+      (): FailureReason => 'invalid',
+    ),
     Match.orElse((): FailureReason => 'unavailable'),
   );
 
@@ -111,20 +138,25 @@ export const runCommand = (command: OpsCommand, expectedRevision: number, baseUp
   newId.pipe(
     Effect.flatMap((idempotencyKey) =>
       Schema.decodeEffect(Schema.OptionFromUndefinedOr(BaseUpdatedAtSchema))(baseUpdatedAt).pipe(
-        Effect.flatMap((stamp) =>
-          executeApplyCommand(
-            { command, expectedRevision, ...optionalField('baseUpdatedAt', Option.getOrUndefined(stamp)) },
-            idempotencyKey,
-            {
-              idempotencyKey,
-            },
-          ),
-        ),
+        Effect.flatMap((stamp): Effect.Effect<Effect.Success<CommandEffect>, CommandFailure> => {
+          const input = {
+            command,
+            expectedRevision,
+            ...optionalField('baseUpdatedAt', Option.getOrUndefined(stamp)),
+          };
+          // A distinct published Action and endpoint keep its replay identity separate from broad writes.
+          return Schema.is(PersonalAgendaCommandSchema)(command)
+            ? executeUpdatePersonalAgenda({ ...input, command }, idempotencyKey, { idempotencyKey })
+            : executeApplyCommand(input, idempotencyKey, { idempotencyKey });
+        }),
       ),
     ),
     Effect.match({
       onFailure: (error): CommandOutcome => ({ ok: false, reason: commandReason(error) }),
-      onSuccess: (result): CommandOutcome => ({ ok: true, result }),
+      onSuccess: (result): CommandOutcome =>
+        Schema.is(ActionProposalAcceptedSchema)(result)
+          ? { ok: false, reason: 'approval_required' }
+          : { ok: true, result },
     }),
   );
 

@@ -1,25 +1,24 @@
 import { fileURLToPath } from 'node:url';
 import type { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import {
-  canonicalizeApplicationComposition,
+  ActiveApplicationCompositionSnapshotSchema,
   makeContextPermissionRelationshipMutationLive,
   OntosModuleDeploymentContractSchema,
+  OntosModuleRequirementsSchema,
+  OntosOperationContractSchema,
+  OntosShellRuntimeContractSchema,
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import {
-  makeApplicationCompositionSnapshotFixture,
-  makeModuleContractFixture,
-} from '@app/core-runtime/testing/module-contract';
-import {
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_TTL_SECONDS,
   decodeSupportedGatewayContextClaims,
   SupportedGatewayContextClaimsSchema,
 } from '@app/shared-contracts';
-import { NodeCrypto, NodeServices } from '@effect/platform-node';
+import { NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import {
   Cause,
@@ -42,9 +41,11 @@ import {
 } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { SqlError, UniqueViolation } from 'effect/sql/SqlError';
-import { FetchHttpClient } from 'effect/http';
+import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import { executeCreateProductWithAuthorization } from '../../src/api/create-product-action-client.ts';
+import { CreateProductResultSchema } from '../../shared/actions/create-product.ts';
+import { requireExecutionResult } from '../support/action-execution-result.ts';
 import { executeAssignCatalogMediaWithAuthorization } from '../../src/api/assign-catalog-media-action-client.ts';
 import { executeReorderCatalogMediaRecoveryWithAuthorization } from '../../src/api/reorder-catalog-media-recovery-client.ts';
 import { ProductActionInvocationIdSchema } from '../../shared/domain/product.ts';
@@ -66,11 +67,12 @@ import {
   ReorderCatalogMediaActionUnavailableProblemSchema,
 } from '../../shared/apis/reorder-catalog-media-action.ts';
 import { VariantRefSchema } from '../../shared/resources/variant.ts';
-import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { catalogRegistration } from '../../vertical.registration.ts';
 import {
   MediaOwnedDatabaseCertificateSchema,
   MediaOrderingBootstrapSchema,
   MediaOrderingCommandSchema,
+  MediaOrderingDescriptionSchema,
   MediaOrderingResponseSchema,
   guardMediaOwnedDatabase,
   mediaOrderingClosedEnvironment,
@@ -104,11 +106,125 @@ const PublicKeysSchema = Schema.Struct({
     }),
   ),
 });
-const bundleReceiver = Effect.fn('MediaOrderingNative.bundleReceiver')(function* bundleReceiver() {
+const MediaBuildIdentitySchema = Schema.Struct({ buildMarker: Schema.String, sourceRevision: Schema.String });
+const MediaOwnerSourceSchema = Schema.Struct({
+  buildIdentity: MediaBuildIdentitySchema,
+  composition: ActiveApplicationCompositionSnapshotSchema,
+  contract: OntosModuleDeploymentContractSchema,
+  shellRuntime: OntosShellRuntimeContractSchema,
+});
+/** Derive current source metadata before bundling; no published backend or browser-build receipt is claimed. */
+const describeOwnerSource = Effect.fn('MediaOrderingNative.describeOwnerSource')(function* describeOwnerSource() {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const catalogFederationDocument = yield* fs.readFileString(
+    path.join(appRoot, 'verticals/catalog/.output/mf-manifest.json'),
+  );
+  const shellFederationDocument = yield* fs.readFileString(
+    path.join(appRoot, 'apps/shell-super-app/.output/mf-manifest.json'),
+  );
+  const server = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
+  yield* server.serve(
+    Effect.gen(function* serveObservedFederationMetadata() {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      if (request.url === '/catalog/mf-manifest.json') {
+        return HttpServerResponse.text(catalogFederationDocument, { contentType: 'application/json' });
+      }
+      if (request.url === '/shell-super-app/mf-manifest.json') {
+        return HttpServerResponse.text(shellFederationDocument, { contentType: 'application/json' });
+      }
+      return HttpServerResponse.empty({ status: 404 });
+    }),
+  );
+  const address = yield* Schema.decodeUnknownEffect(Schema.Struct({ port: Schema.Number }))(server.address);
+  const metadataOrigin = `http://127.0.0.1:${address.port}`;
+  const program = `import { DateTime, Duration, Effect, FileSystem, ManagedRuntime, Schema } from 'effect';
+    import { NodeServices } from '@effect/platform-node';
+    import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
+    import { deriveOntosModuleDeploymentContract } from './scripts/generate-ontos-module-contract.mts';
+    import { createShellRuntimeContract } from './scripts/generate-ontos-shell-runtime-contract.mts';
+    import { deriveActiveApplicationCompositionSnapshot } from './scripts/active-application-composition.mts';
+    import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
+    import { ActiveApplicationCompositionSnapshotSchema, OntosModuleDeploymentContractSchema, OntosShellRuntimeContractSchema } from '@app/core-runtime';
+    const runtime = ManagedRuntime.make(NodeServices.layer);
+    try { const text = await runtime.runPromise(Effect.gen(function* describeCurrentOwners() {
+      const fs = yield* FileSystem.FileSystem;
+      const unit = Schema.Struct({id: Schema.String,
+        deliveryUnit: Schema.Struct({buildMarker: Schema.String, unitId: Schema.String})});
+      const topology = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Struct({
+        shell: unit, verticals: Schema.Array(unit)
+      })))(yield* fs.readFileString('./topology/reference-topology.json'));
+      const owner = yield* Schema.decodeUnknownEffect(unit)(topology.verticals.find(entry => entry.id === 'catalog'));
+      const buildIdentity = yield* Effect.try(() => resolveUltramodernReleaseIdentity({
+        generationBuildMarker: owner.deliveryUnit.buildMarker,
+        unitId: owner.deliveryUnit.unitId, workspaceRoot: process.cwd()
+      }));
+      const shellIdentity = yield* Effect.try(() => resolveUltramodernReleaseIdentity({
+        generationBuildMarker: topology.shell.deliveryUnit.buildMarker,
+        unitId: topology.shell.deliveryUnit.unitId, workspaceRoot: process.cwd()
+      }));
+      const contract = yield* deriveOntosModuleDeploymentContract({vertical: owner.id});
+      const shellRuntime = createShellRuntimeContract(shellIdentity.buildMarker);
+      const initial = yield* makeApplicationCompositionSnapshotFixture(['catalog'], buildIdentity.buildMarker);
+      const [module] = initial.composition.modules;
+      if (module === undefined) { throw new Error('Catalog fixture placement is missing'); }
+      const contractDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(contract);
+      const shellDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(shellRuntime);
+      const artifact = (url, document) => ({url, bytes: new TextEncoder().encode(document)});
+      const composition = yield* deriveActiveApplicationCompositionSnapshot({
+        environment: 'development',
+        modules: [{appId: 'catalog', backend: module.backend,
+          contract: artifact(module.contract.url, contractDocument),
+          federationManifest: artifact(${JSON.stringify(`${metadataOrigin}/catalog/mf-manifest.json`)}, ${JSON.stringify(catalogFederationDocument)})}],
+        observedAt: initial.observedAt,
+        shell: {
+          runtimeContract: artifact(initial.composition.shell.runtimeContract.url, shellDocument),
+          federationManifest: artifact(${JSON.stringify(`${metadataOrigin}/shell-super-app/mf-manifest.json`)}, ${JSON.stringify(shellFederationDocument)})},
+        validity: Duration.millis(DateTime.toEpochMillis(initial.validUntil) - DateTime.toEpochMillis(initial.observedAt))
+      });
+      return yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Struct({
+        buildIdentity: Schema.Struct({buildMarker: Schema.String, sourceRevision: Schema.String}),
+        composition: ActiveApplicationCompositionSnapshotSchema,
+        contract: OntosModuleDeploymentContractSchema, shellRuntime: OntosShellRuntimeContractSchema
+      })))({buildIdentity, composition, contract, shellRuntime});
+    })); process.stdout.write(text); } finally { await runtime.dispose(); }`;
+  const child = yield* ChildProcess.make(
+    process.execPath,
+    ['--experimental-strip-types', '--input-type=module', '--eval', program],
+    {
+      cwd: appRoot,
+      env: {
+        APP_ENV_PATH: '/dev/null',
+        HOME: yield* Config.String('HOME'),
+        PATH: yield* Config.String('PATH'),
+        TMPDIR: yield* Config.String('TMPDIR').pipe(Config.withDefault('/tmp')),
+      },
+      extendEnv: false,
+      stderr: 'pipe',
+      stdin: 'ignore',
+      stdout: 'pipe',
+    },
+  );
+  const [output, code] = yield* Effect.all(
+    [child.stdout.pipe(Stream.decodeText(), Stream.runCollect), child.exitCode, Stream.runDrain(child.stderr)],
+    { concurrency: 3 },
+  );
+  yield* requireCondition(code === 0, 'owner-source-description');
+  const source = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(MediaOwnerSourceSchema))(output.join(''));
+  yield* requireCondition(
+    source.contract.deployment.appId === 'catalog' &&
+      source.contract.deployment.buildMarker === source.buildIdentity.buildMarker,
+    'owner-source-identity',
+  );
+  return source;
+});
+const bundleReceiver = Effect.fn('MediaOrderingNative.bundleReceiver')(function* bundleReceiver(
+  identity: typeof MediaBuildIdentitySchema.Type,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const directory = path.join(appRoot, 'verticals/catalog');
-  const cache = path.join(directory, 'node_modules/.cache/ontos-1274');
+  const cache = path.join(directory, '.cache/ontos-1274');
   yield* fs.makeDirectory(cache, { recursive: true });
   const artifact = path.join(cache, `${yield* nextId}.mjs`);
   yield* Effect.addFinalizer(() => fs.remove(artifact, { force: true }).pipe(Effect.orDie));
@@ -120,6 +236,8 @@ const bundleReceiver = Effect.fn('MediaOrderingNative.bundleReceiver')(function*
       '--platform=node',
       '--format=esm',
       '--packages=external',
+      `--define:ULTRAMODERN_BUILD_MARKER=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(identity.buildMarker)}`,
+      `--define:ULTRAMODERN_SOURCE_REVISION=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(identity.sourceRevision)}`,
       `--outfile=${artifact}`,
     ],
     {
@@ -136,6 +254,42 @@ const bundleReceiver = Effect.fn('MediaOrderingNative.bundleReceiver')(function*
   });
   yield* requireCondition(code === 0, 'receiver-bundle');
   return { artifact, directory };
+});
+const describeReceiver = Effect.fn('MediaOrderingNative.describeReceiver')(function* describeReceiver(
+  bundle: Effect.Success<ReturnType<typeof bundleReceiver>>,
+  source: typeof MediaOwnerSourceSchema.Type,
+) {
+  const child = yield* ChildProcess.make(process.execPath, [bundle.artifact, '--describe-media-ordering'], {
+    cwd: bundle.directory,
+    env: { APP_ENV_PATH: '/dev/null' },
+    extendEnv: false,
+    stderr: 'pipe',
+    stdin: 'ignore',
+    stdout: 'pipe',
+  });
+  const [output, code] = yield* Effect.all(
+    [child.stdout.pipe(Stream.decodeText(), Stream.runCollect), child.exitCode, Stream.runDrain(child.stderr)],
+    { concurrency: 3 },
+  );
+  yield* requireCondition(code === 0, 'receiver-description');
+  const actual = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(MediaOrderingDescriptionSchema))(
+    output.join(''),
+  );
+  const { requirements } = source.contract.manifest;
+  if (requirements === undefined) {
+    return yield* fail('owner-source-requirements');
+  }
+  const encodeRequirements = Schema.encodeEffect(Schema.fromJsonString(OntosModuleRequirementsSchema));
+  const encodeOperations = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(OntosOperationContractSchema)));
+  return yield* requireCondition(
+    actual.deployment.appId === source.contract.deployment.appId &&
+      actual.deployment.buildMarker === source.buildIdentity.buildMarker &&
+      actual.moduleId === source.contract.manifest.module.id &&
+      (yield* encodeRequirements(actual.requirements)) === (yield* encodeRequirements(requirements)) &&
+      (yield* encodeOperations(actual.operationContracts)) ===
+        (yield* encodeOperations(source.contract.manifest.publicSurface.operationContracts ?? [])),
+    'receiver-source-projection',
+  );
 });
 const captureOwnedCertificate = Effect.fn('MediaOrderingNative.captureOwnedCertificate')(
   function* captureOwnedCertificate(isolated: Effect.Success<ReturnType<typeof makeIsolatedNativeDatabaseFixture>>) {
@@ -333,8 +487,9 @@ const startReceiver = Effect.fn('MediaOrderingNative.startReceiver')(function* s
     return yield* fail('receiver-ready-order');
   }
   yield* requireCondition(
-    ready.buildMarker === ultramodernApiMarker.buildMarker &&
-      ready.compositionRevision === bootstrap.composition.composition.revision,
+    ready.buildMarker ===
+      bootstrap.composition.composition.modules.find(({ deployment }) => deployment.appId === 'catalog')?.deployment
+        .buildMarker && ready.compositionRevision === bootstrap.composition.composition.revision,
     'receiver-ready-identity',
   );
   return {
@@ -348,50 +503,19 @@ const startReceiver = Effect.fn('MediaOrderingNative.startReceiver')(function* s
     ),
   };
 });
-const makeCatalogComposition = Effect.fn('MediaOrderingNative.makeCatalogComposition')(
-  function* makeCatalogComposition() {
-    const initial = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
-    const [module] = initial.composition.modules;
-    if (module === undefined) {
-      return yield* fail('catalog-composition-module');
-    }
-    const moduleId = 'commerce.catalog';
-    const contract = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)(
-      makeModuleContractFixture({ appId: 'catalog', buildMarker: ultramodernApiMarker.buildMarker, moduleId }),
-    );
-    const contractDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
-      contract,
-    );
-    const crypto = yield* Crypto.Crypto;
-    const sha256 = Buffer.from(yield* crypto.digest('SHA-256', new TextEncoder().encode(contractDocument))).toString(
-      'hex',
-    );
-    const composition = {
-      ...initial.composition,
-      modules: [
-        {
-          ...module,
-          contract: { ...module.contract, sha256 },
-          contractDocument,
-          moduleId,
-          publicContract: { id: moduleId, sha256, version: contract.schemaVersion },
-        },
-      ],
-      revision: '0'.repeat(64),
-    };
-    const revision = Buffer.from(
-      yield* crypto.digest('SHA-256', new TextEncoder().encode(canonicalizeApplicationComposition(composition))),
-    ).toString('hex');
-    return yield* validateActiveApplicationCompositionSnapshot({
-      ...initial,
-      composition: { ...composition, revision },
-    });
-  },
-);
+const makeCatalogComposition = Effect.fn('MediaOrderingNative.makeCatalogComposition')(function* makeCatalogComposition(
+  source: typeof MediaOwnerSourceSchema.Type,
+) {
+  // The source-native candidate retains the fixture placement/window and uses the publisher's
+  // actual observed Federation policy. This does not claim browser execution or a deployment receipt.
+  return yield* validateActiveApplicationCompositionSnapshot(source.composition);
+});
 const makeNative = Effect.fn('MediaOrderingNative.make')(function* makeNative() {
   yield* requireCondition((yield* Config.String('APP_ENV_PATH')) === '/dev/null', 'closed-parent-environment');
-  const bundle = yield* bundleReceiver();
-  const composition = yield* makeCatalogComposition();
+  const source = yield* describeOwnerSource();
+  const bundle = yield* bundleReceiver(source.buildIdentity);
+  yield* describeReceiver(bundle, source);
+  const composition = yield* makeCatalogComposition(source);
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     mode: 'empty',
     purpose: 'stabilization-1274-media-ordering',
@@ -401,6 +525,7 @@ const makeNative = Effect.fn('MediaOrderingNative.make')(function* makeNative() 
   const owned = yield* captureOwnedCertificate(isolated);
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
+      access: 'allowed',
       actionExecutor: 'manager-only',
       actionKeys: [
         'commerce.catalog.create-product',
@@ -413,6 +538,7 @@ const makeNative = Effect.fn('MediaOrderingNative.make')(function* makeNative() 
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: composition.composition.revision,
       moduleKeys: ['commerce.catalog'],
+      ownerRegistration: catalogRegistration,
       runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     }),
     (value) => value.close().pipe(Effect.orDie),
@@ -420,7 +546,7 @@ const makeNative = Effect.fn('MediaOrderingNative.make')(function* makeNative() 
   const authority = yield* makeAuthority(
     fixture.manager,
     composition.composition.revision,
-    ultramodernApiMarker.buildMarker,
+    source.buildIdentity.buildMarker,
   );
   const ca = yield* Config.String('SPICEDB_CA_CERT').pipe(Config.option);
   const fixed = {
@@ -435,6 +561,7 @@ const makeNative = Effect.fn('MediaOrderingNative.make')(function* makeNative() 
     actor: fixture.manager,
     composition,
     database: owned.certificate,
+    deniedPrincipalId: fixture.denied.principalId,
     issuer: authority.issuer,
     jwks: authority.jwks,
     spiceDb,
@@ -538,14 +665,17 @@ const observeOriginalProtection = Effect.fn('MediaOrderingNative.originalProtect
 const produceSubjects = Effect.fn('MediaOrderingNative.produceSubjects')(function* produceSubjects(
   native: Effect.Success<ReturnType<typeof makeNative>>,
 ) {
-  const created = yield* executeCreateProductWithAuthorization(
-    {
-      name: 'Observed media-ordering sample',
-      reason: 'Observe actual Product and its initial Variant for media ordering',
-    },
-    yield* native.authority.issue(yield* DateTime.now),
-    yield* nextId,
-    yield* native.options(),
+  const created = yield* requireExecutionResult(
+    CreateProductResultSchema,
+    executeCreateProductWithAuthorization(
+      {
+        name: 'Observed media-ordering sample',
+        reason: 'Observe actual Product and its initial Variant for media ordering',
+      },
+      yield* native.authority.issue(yield* DateTime.now),
+      yield* nextId,
+      yield* native.options(),
+    ),
   );
   const { productRef } = created.product;
   const variantRef = yield* Schema.decodeUnknownEffect(VariantRefSchema)({
@@ -556,11 +686,14 @@ const produceSubjects = Effect.fn('MediaOrderingNative.produceSubjects')(functio
   });
   // Opaque owner-qualified identities are genuinely issued by Catalog. This fixture does not
   // assert Documents ownership, bytes or Current availability (the public contract says UNVERIFIED).
-  const owner = yield* executeCreateProductWithAuthorization(
-    { name: 'Observed resource owner identity', reason: 'Issue an owner-qualified opaque resource reference' },
-    yield* native.authority.issue(yield* DateTime.now),
-    yield* nextId,
-    yield* native.options(),
+  const owner = yield* requireExecutionResult(
+    CreateProductResultSchema,
+    executeCreateProductWithAuthorization(
+      { name: 'Observed resource owner identity', reason: 'Issue an owner-qualified opaque resource reference' },
+      yield* native.authority.issue(yield* DateTime.now),
+      yield* nextId,
+      yield* native.options(),
+    ),
   );
   const permissions = yield* makeContextPermissionRelationshipMutationLive();
   const principal = { principalId: native.fixture.manager.principalId, tenantId: native.fixture.tenantId };
@@ -1340,6 +1473,7 @@ it.live(
       expect(yield* observeMedia(native)).toEqual(before);
       const other = yield* Effect.acquireRelease(
         makeLiveOperationFixture({
+          access: 'allowed',
           actionExecutor: 'manager-only',
           actionKeys: ['commerce.catalog.reorder-catalog-media'],
           adminConnectionString: Redacted.make(native.isolated.connections.admin.connectionString),
@@ -1347,6 +1481,7 @@ it.live(
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: native.composition.composition.revision,
           moduleKeys: ['commerce.catalog'],
+          ownerRegistration: catalogRegistration,
           runtimeConnectionString: Redacted.make(native.isolated.connections.runtime.connectionString),
         }),
         (fixture) => fixture.close().pipe(Effect.orDie),

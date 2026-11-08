@@ -18,7 +18,9 @@ const czech = {
   'party-registry.pages.partyIdentity.description':
     'Aktuální identita strany, oficiální identifikátory a kontaktní údaje, které vám tento modul zpřístupňuje.',
   'party-registry.pages.partyIdentity.ended': 'ukončený',
-  'party-registry.pages.partyIdentity.facts.DISPLAY_NAME': 'Název',
+  'party-registry.pages.partyIdentity.facts.BUSINESS_NAME': 'Obchodní název',
+  'party-registry.pages.partyIdentity.facts.FIRST_NAME': 'Jméno',
+  'party-registry.pages.partyIdentity.facts.LAST_NAME': 'Příjmení',
   'party-registry.pages.partyIdentity.facts.PARTY_TYPE': 'Typ strany',
   'party-registry.pages.partyIdentity.fields.createdAt': 'Vytvořeno',
   'party-registry.pages.partyIdentity.fields.displayName': 'Název',
@@ -62,9 +64,7 @@ const czech = {
   'party-registry.pages.partyIdentity.title': 'Identita strany',
   'party-registry.pages.partyIdentity.unavailable': 'Identita strany teď není dostupná. Zkuste to znovu.',
   'party-registry.pages.partyIdentity.unnamed': 'Strana bez názvu',
-  'party-registry.pages.partyIdentity.verification.REJECTED': 'zamítnuté ověření',
-  'party-registry.pages.partyIdentity.verification.UNVERIFIED': 'neověřené',
-  'party-registry.pages.partyIdentity.verification.VERIFIED': 'ověřené',
+  'party-registry.pages.partyIdentity.withheld': 'údaj zadržen',
 } as const;
 
 const english = {
@@ -87,7 +87,9 @@ const english = {
   'party-registry.pages.partyIdentity.description':
     'The current Party identity, official identifiers and contact details this module makes available to you.',
   'party-registry.pages.partyIdentity.ended': 'ended',
-  'party-registry.pages.partyIdentity.facts.DISPLAY_NAME': 'Name',
+  'party-registry.pages.partyIdentity.facts.BUSINESS_NAME': 'Business name',
+  'party-registry.pages.partyIdentity.facts.FIRST_NAME': 'First name',
+  'party-registry.pages.partyIdentity.facts.LAST_NAME': 'Last name',
   'party-registry.pages.partyIdentity.facts.PARTY_TYPE': 'Party type',
   'party-registry.pages.partyIdentity.fields.createdAt': 'Created',
   'party-registry.pages.partyIdentity.fields.displayName': 'Name',
@@ -132,9 +134,7 @@ const english = {
   'party-registry.pages.partyIdentity.title': 'Party identity',
   'party-registry.pages.partyIdentity.unavailable': 'The Party identity is unavailable right now. Try again.',
   'party-registry.pages.partyIdentity.unnamed': 'Unnamed Party',
-  'party-registry.pages.partyIdentity.verification.REJECTED': 'rejected verification',
-  'party-registry.pages.partyIdentity.verification.UNVERIFIED': 'unverified',
-  'party-registry.pages.partyIdentity.verification.VERIFIED': 'verified',
+  'party-registry.pages.partyIdentity.withheld': 'value withheld',
 } as const;
 
 export const partyIdentityI18nResources = {

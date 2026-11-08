@@ -1,7 +1,7 @@
 import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { Clock, Context, DateTime, Duration, Effect, Option, Schema } from 'effect';
+import { Clock, Context, Crypto, DateTime, Duration, Effect, Option, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
 import { SellingLegalEntityRefSchema } from '../shared/domain/profile-contracts.ts';
@@ -134,11 +134,14 @@ export const AdmittedRetailProfileRecoveryRuntime = Context.Service<{
   readonly observe: (
     request: RecoveryRequest,
   ) => Effect.Effect<RecoveryObservation, AdmittedRetailProfileRecoveryError>;
-  readonly resolveCommand: typeof resolveRetailOwnerCommand;
+  readonly resolveCommand: (
+    authority: Parameters<typeof resolveRetailOwnerCommand>[0],
+    payload: Parameters<typeof resolveRetailOwnerCommand>[1],
+  ) => ReturnType<typeof resolveRetailOwnerCommand>;
   readonly run: CommerceEnrollmentOwnerTransactionRun;
   readonly store: (observation: RecoveryObservation) => CommerceEnrollmentOwnerAttemptStore;
 }>('commerce.customer-context/scripts/AdmittedRetailProfileRecoveryRuntime');
-export type RetailProfileRecoveryRequirements = typeof AdmittedRetailProfileRecoveryRuntime.Identifier;
+export type RetailProfileRecoveryRequirements = typeof AdmittedRetailProfileRecoveryRuntime.Identifier | Crypto.Crypto;
 
 export const RecoveryReportSchema = Schema.Struct({
   approvalSha256: EnrollmentDigestSchema,
@@ -186,6 +189,9 @@ const assertReceipt = (request: RecoveryRequest, observation: RecoveryObservatio
 const profileInput = (observation: RecoveryObservation) =>
   Effect.gen(function* deriveExactProfileInput() {
     const { attempt, partyOperation } = observation;
+    if (attempt.originatorActionInvocationId === undefined) {
+      return yield* failure(SCOPE_MISMATCH);
+    }
     const [partyRef, sellingLegalEntityRef] = yield* Effect.all([
       Schema.decodeUnknownEffect(PartyRefSchema)({
         moduleId: PARTY_REGISTRY_OWNER_MODULE_KEY,
@@ -203,6 +209,11 @@ const profileInput = (observation: RecoveryObservation) =>
     return {
       compositionRevision: attempt.compositionRevision,
       effectiveAt: attempt.createdAt,
+      originator: Object.freeze({
+        actionInvocationId: attempt.originatorActionInvocationId,
+        compositionRevision: attempt.compositionRevision,
+        tenantId: attempt.tenantId,
+      }),
       partyRef,
       requestCorrelation: `profile-recovery:${observation.operation.ownerInvocationId}`,
       sellingLegalEntityRef,
@@ -313,6 +324,7 @@ export const retailProfileRecoveryApproval = (
       request.receiptId,
       request.expectedAttemptRevision,
       request.expectedOperationRevision,
+      observation.attempt.originatorActionInvocationId ?? '',
       observation.operation.requestDigest,
       observation.core.receiptRequestHash,
       observation.core.receiptStatus,
@@ -379,6 +391,7 @@ export const claimApprovedRetailProfileFence = Effect.fn('RetailProfileRecovery.
       beforeAttempt.revision !== initial.attempt.revision ||
       input.expectedRevision !== initial.attempt.revision ||
       beforeAttempt.compositionRevision !== initial.attempt.compositionRevision ||
+      beforeAttempt.originatorActionInvocationId !== initial.attempt.originatorActionInvocationId ||
       beforeOperation.revision !== initial.operation.revision ||
       beforeOperation.status !== 'IN_PROGRESS' ||
       !sameOperation(beforeOperation)
@@ -393,6 +406,7 @@ export const claimApprovedRetailProfileFence = Effect.fn('RetailProfileRecovery.
       result.attempt.revision !== initial.attempt.revision + 1 ||
       afterAttempt.revision !== initial.attempt.revision + 1 ||
       afterAttempt.compositionRevision !== initial.attempt.compositionRevision ||
+      afterAttempt.originatorActionInvocationId !== initial.attempt.originatorActionInvocationId ||
       afterOperation.revision !== initial.operation.revision + 1 ||
       afterOperation.status !== 'INDETERMINATE' ||
       afterOperation.lease !== undefined ||
@@ -411,6 +425,7 @@ const reconcileExactProfile = Effect.fn('RetailProfileRecovery.reconcileExactPro
   input: RetailCustomerProfileOwnerInput,
 ) {
   const runtime = yield* AdmittedRetailProfileRecoveryRuntime;
+  const crypto = yield* Crypto.Crypto;
   const revalidate = (reconciliation: CommerceEnrollmentOwnerReconciliationInput) =>
     Effect.gen(function* revalidateBeforeOwnerEffect() {
       const delta = initial.operation.status === 'IN_PROGRESS' ? 1 : 0;
@@ -431,6 +446,7 @@ const reconcileExactProfile = Effect.fn('RetailProfileRecovery.reconcileExactPro
           current.operation.requestDigest === initial.operation.requestDigest &&
           current.partyOperation.resultReference === initial.partyOperation.resultReference &&
           current.attempt.targetLegalEntityId === initial.attempt.targetLegalEntityId &&
+          current.attempt.originatorActionInvocationId === input.originator.actionInvocationId &&
           DateTime.formatIso(current.attempt.createdAt) === DateTime.formatIso(initial.attempt.createdAt),
         DIGEST_MISMATCH,
       );
@@ -442,7 +458,13 @@ const reconcileExactProfile = Effect.fn('RetailProfileRecovery.reconcileExactPro
       if (
         activeReconciliation === undefined ||
         payload.idempotencyKey !== request.ownerInvocationId ||
-        payload.actionKey !== ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY
+        payload.actionKey !== ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY ||
+        authority.tenantId !== input.originator.tenantId ||
+        authority.compositionRevision !== input.originator.compositionRevision ||
+        authority.legalEntityId !== input.sellingLegalEntityRef.resourceId ||
+        authority.originator.actionInvocationId !== input.originator.actionInvocationId ||
+        authority.originator.tenantId !== input.originator.tenantId ||
+        authority.originator.compositionRevision !== input.originator.compositionRevision
       ) {
         return yield* commandFailure();
       }
@@ -466,7 +488,7 @@ const reconcileExactProfile = Effect.fn('RetailProfileRecovery.reconcileExactPro
     );
   const execute = runtime.executeProfile(input);
   const nativeOwner = retailCustomerProfileOwnerEffect(input, {
-    commitResolution: retailCustomerProfileCommitResolutionFor(Option.some(runtime.run), input, guardedResolve),
+    commitResolution: retailCustomerProfileCommitResolutionFor(Option.some(runtime.run), input, crypto, guardedResolve),
     ensureProfile: (payload, correlation, options) =>
       Effect.gen(function* retryOnlyExactApprovedCommand() {
         if (activeReconciliation === undefined || options.idempotencyKey !== request.ownerInvocationId) {
@@ -519,6 +541,7 @@ const reconcileExactProfile = Effect.fn('RetailProfileRecovery.reconcileExactPro
   yield* assertReceipt(request, final);
   yield* assert(
     final.operation.portalEnrollmentOwnerOperationId === request.operationId &&
+      final.attempt.originatorActionInvocationId === input.originator.actionInvocationId &&
       final.operation.ownerInvocationId === request.ownerInvocationId &&
       final.operation.actorPrincipalId === request.actorPrincipalId &&
       final.operation.requestDigest === initial.operation.requestDigest &&

@@ -29,11 +29,9 @@ import {
 import type { ReviseCommercialFeeActionServices } from '../../src/actions/revise-commercial-fee.action.ts';
 import { readCommercialFeeDefinition } from '../../src/api/commercial-fee-definition.read.ts';
 import { readCommercialFeeSchedule } from '../../src/api/commercial-fee-schedule.read.ts';
-import {
-  CatalogSelectionGatewayCredentialService,
-  PricingCatalogSelectionUnavailable,
-} from '../../shared/domain/catalog-selection-gateway-credential.ts';
-import { commercialFeeCatalogTargetAssessmentPortFromEnvironment } from '../../src/integrations/commercial-fee-catalog-target-evidence.ts';
+import { PricingCatalogSelectionUnavailable } from '../../shared/domain/pricing-catalog-selection-unavailable.ts';
+import { makeCommercialFeeCatalogTargetAssessmentPort } from '../../src/integrations/commercial-fee-catalog-target-evidence.ts';
+import { ownerConnectionStub, verifiedTestScope } from '../support/owner-gateway-connection.fixture.ts';
 import { CurrencySupportPersistenceUnavailable } from '../../src/actions/currency-support-persistence-unavailable.ts';
 import { ProductCommercialFeeBulkUnavailable } from '../../src/services/product-commercial-fee-bulk-rejected.ts';
 
@@ -298,14 +296,6 @@ interface CatalogSnapshotFixture {
   readonly targetSetCompleteness: unknown;
 }
 
-const catalogGateway = {
-  issue: () =>
-    Effect.succeed({
-      baseUrl: new URL('https://catalog.example.test'),
-      credential: Redacted.make('Bearer catalog-owner-assertion'),
-    }),
-};
-
 const revisionServices = (
   revise: ReviseCommercialFeeActionServices['revise'],
   validateCatalogTarget: ReviseCommercialFeeActionServices['validateCatalogTarget'] = () => Effect.succeed(true),
@@ -354,14 +344,14 @@ describe('Commercial Fee management Actions issue #797', () => {
     ).toEqual([
       {
         actionKey: 'commerce.pricing.define-commercial-fee',
-        authorization: { kind: 'action_execution', provisioning: 'explicit' },
+        authorization: { kind: 'protected' },
         idempotency: 'required',
         legalEntityScope: 'required',
         scope: 'tenant',
       },
       {
         actionKey: 'commerce.pricing.revise-commercial-fee',
-        authorization: { kind: 'action_execution', provisioning: 'explicit' },
+        authorization: { kind: 'protected' },
         idempotency: 'required',
         legalEntityScope: 'required',
         scope: 'tenant',
@@ -748,19 +738,32 @@ describe('Commercial Fee management Actions issue #797', () => {
       Effect.gen(function* catalogOwnerTrust() {
         const executed: unknown[] = [];
         const portFor = (response: CatalogSnapshotFixture) =>
-          commercialFeeCatalogTargetAssessmentPortFromEnvironment(
-            { compositionRevision: 'a'.repeat(64), legalEntityId, requestCorrelation: trusted.requestCorrelationId },
-            (payload, credential, requestCorrelation, options) =>
-              Effect.sync(() => {
-                executed.push({
-                  credential: Redacted.value(credential),
-                  options,
-                  payload,
-                  requestCorrelation,
-                });
-                // SAFETY: This fixture deliberately returns malformed owner evidence to verify rejection before persistence.
-                return response as CatalogSnapshotResponse;
-              }),
+          Effect.succeed(
+            makeCommercialFeeCatalogTargetAssessmentPort({
+              acquire: ownerConnectionStub('Bearer catalog-owner-assertion', 'https://catalog.example.test'),
+              context: {
+                compositionRevision: 'a'.repeat(64),
+                legalEntityId,
+                requestCorrelation: trusted.requestCorrelationId,
+                scope: verifiedTestScope({
+                  correlationId: trusted.requestCorrelationId,
+                  legalEntityId,
+                  principalId,
+                  tenantId,
+                }),
+              },
+              execute: (payload, credential, requestCorrelation, options) =>
+                Effect.sync(() => {
+                  executed.push({
+                    credential: Redacted.value(credential),
+                    options,
+                    payload,
+                    requestCorrelation,
+                  });
+                  // SAFETY: This fixture deliberately returns malformed owner evidence to verify rejection before persistence.
+                  return response as CatalogSnapshotResponse;
+                }),
+            }),
           );
         const exactPort = yield* portFor(catalogSnapshotResponse);
         expect(yield* exactPort.validate(catalogTargetEvidence)).toBe(true);
@@ -839,7 +842,7 @@ describe('Commercial Fee management Actions issue #797', () => {
           payload: { productRef },
           requestCorrelation: trusted.requestCorrelationId,
         });
-      }).pipe(Effect.provideService(CatalogSelectionGatewayCredentialService, catalogGateway)),
+      }),
   );
 
   it.effect('fails governed definition and schedule reads closed before owner persistence on scope mismatch', () =>

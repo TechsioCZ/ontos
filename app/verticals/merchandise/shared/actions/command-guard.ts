@@ -1,6 +1,4 @@
-// Sales-demo command guard (plan 22). One `apply-command` executor grant covers every command of the module, so
-// this pure guard narrows what non-human principals (the agent bot's managed API key, and MCP connections acting for
-// an AI agent) may run. An MCP connection acting as its person is human and uses that person's grants.
+// Narrow registered Actions supply authority. This guard keeps the existing human-only and storefront protocols.
 import { Effect, Schema } from 'effect';
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import { MerchandisePermissionDenied } from '../errors/merchandise-permission-denied.ts';
@@ -136,31 +134,3 @@ export const withCommandGuard =
       ),
       Effect.flatMap(() => handler(payload, context)),
     );
-
-/**
- * AKROS market offers and price lists (ConfigureMarket, SetProductMarketOffer, SetMarketProductOffers, RemoveMarket):
- * administrators and the company's own administrators (the e-shop manager, Core `legal_entity#manage_people`), never
- * dispatch. Other companies keep their normal write rights.
- */
-export const staffMarketCommandAllowed = (
-  legalEntityId: string,
-  rights: { readonly administrator: boolean; readonly companyAdministrator: boolean },
-): boolean => !isAkrosCompany(legalEntityId) || rights.administrator || rights.companyAdministrator;
-
-/** AKROS dispatch is operational only; catalog and money edits require a trusted administrator decision. */
-export const staffCommandAllowed = (legalEntityId: string, administrator: boolean, commandTag: string): boolean => {
-  if (commandTag === 'ResetDemoData') {
-    return administrator && legalEntityId === AKROS_LEGAL_ENTITY_ID;
-  }
-  if (commandTag === 'RemoveDemoOrder' || commandTag === 'ArchiveDemoProduct') {
-    return administrator;
-  }
-  return (
-    !isAkrosCompany(legalEntityId) ||
-    administrator ||
-    // The AKROS e-shop manager curates product photos; prices and catalog data stay with administrators.
-    commandTag === 'ChangeProductImages' ||
-    commandTag === 'RecordStockMovement' ||
-    commandTag === 'ChangeOrderStatus'
-  );
-};

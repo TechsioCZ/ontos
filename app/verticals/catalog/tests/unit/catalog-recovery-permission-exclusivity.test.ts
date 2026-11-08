@@ -22,9 +22,9 @@ describe('Catalog Action recovery permission exclusivity (#478)', () => {
       expect(action, actionKey).toBeDefined();
       expect(api, name).toBeDefined();
       expect(contract).toMatchObject({
+        accessKind: 'read',
         authorityBundle: 'CATALOG_READER',
         permission,
-        permissionKind: 'context_permission',
         scope: 'tenant',
       });
       expect(catalogAuthorityBundles.CATALOG_READER).toContain(permission);

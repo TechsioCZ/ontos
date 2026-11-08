@@ -6,9 +6,14 @@ import {
   prepareCatalogOpenSelectionPopulation,
   validatePreparedCatalogScope,
 } from '../services/catalog-open-selection-preflight.ts';
-import type { ActionHandlerContext, ActionServiceFactory, ActionServicePreflight } from '@app/core-runtime';
+import type {
+  ActionHandlerContext,
+  ActionServiceFactory,
+  ActionServicePreparationContext,
+  ActionServicePreflight,
+} from '@app/core-runtime';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Option } from 'effect';
 import type { Crypto } from 'effect';
 
 import {
@@ -16,7 +21,7 @@ import {
   GovernVariantAxesResultSchema,
 } from '../../shared/actions/govern-variant-axes.ts';
 import type { GovernVariantAxesPayload } from '../../shared/actions/govern-variant-axes.ts';
-import { cartOpenSelectionPopulationFromEnvironment } from '../../shared/domain/catalog-open-selection-population.ts';
+import { cartOpenSelectionPopulationForScope } from '../../shared/domain/catalog-open-selection-population.ts';
 import { ProductAuditEvidenceSchema } from '../../shared/domain/product.ts';
 import { decideVariantUseChange } from '../../shared/domain/variant-use-change.ts';
 import { OutboxPayloadSchema } from '../../shared/outbox/commerce-catalog-variant-axes-changed-v1.ts';
@@ -157,7 +162,8 @@ const governVariantAxesActionServices = Effect.fn('GovernVariantAxesAction.servi
       readonly scope: Parameters<ActionServiceFactory<never>>[1];
     },
   ) {
-    const openSelections = preparedPopulation ?? (yield* cartOpenSelectionPopulationFromEnvironment);
+    const openSelections =
+      preparedPopulation ?? Option.getOrUndefined(yield* cartOpenSelectionPopulationForScope(scope));
     return {
       ...variantAxisPersistenceForScope(transaction, scope),
       assessOpenSelectionImpact: catalogOpenSelectionImpactForScope(transaction, scope, openSelections).assess,
@@ -185,29 +191,48 @@ const governVariantAxesActionServices = Effect.fn('GovernVariantAxesAction.servi
   },
 );
 
-const prepareGovernVariantAxesActionServices: ActionServicePreflight<
+const ActionDomainErrorSchema = Schema.Union([VariantAxisWriteConflict, CatalogPersistenceUnavailable]);
+
+const prepareGovernVariantAxesActionServices = Effect.fn('prepareGovernVariantAxesActionServices')(
+  function* prepareServices(
+    _payload: typeof GovernVariantAxesPayloadSchema.Type,
+    context: ActionServicePreparationContext,
+  ) {
+    const population = yield* prepareCatalogOpenSelectionPopulation(context);
+    return (
+      transaction: Parameters<ActionServiceFactory<never>>[0],
+      scope: Parameters<ActionServiceFactory<never>>[1],
+      revision: Parameters<ActionServiceFactory<never>>[2],
+    ) =>
+      validatePreparedCatalogScope(context, scope, revision).pipe(
+        Effect.flatMap(() => governVariantAxesActionServices(transaction, { population, scope })),
+      );
+  },
+) satisfies ActionServicePreflight<
   typeof GovernVariantAxesPayloadSchema.Type,
   Effect.Success<ReturnType<typeof governVariantAxesActionServices>>,
-  never
-> = Effect.fn('prepareGovernVariantAxesActionServices')(function* prepareServices(_payload, context) {
-  const population = yield* prepareCatalogOpenSelectionPopulation(context);
-  return (transaction, scope, revision) =>
-    validatePreparedCatalogScope(context, scope, revision).pipe(
-      Effect.flatMap(() => governVariantAxesActionServices(transaction, { population, scope })),
-    );
-});
+  typeof ActionDomainErrorSchema.Type
+>;
 
 export const governVariantAxesAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.variant-axes.govern',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'commerce.catalog.govern-variant-axes.access.v1' },
     actionKey,
     auditEvidenceSchema: ProductAuditEvidenceSchema,
     auditProfile: 'standard',
-    domainErrorSchema: Schema.Union([VariantAxisWriteConflict, CatalogPersistenceUnavailable]),
+    domainErrorSchema: ActionDomainErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.catalog.govern-variant-axes',
       moduleKey: 'commerce.catalog',
       role: 'action',

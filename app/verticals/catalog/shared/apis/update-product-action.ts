@@ -2,11 +2,13 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug update-product
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { UpdateProductPayloadSchema, UpdateProductResultSchema } from '../actions/update-product.ts';
 
 export { UpdateProductPayloadSchema } from '../actions/update-product.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const UpdateProductActionInvalidProblemSchema = makeProblemDetailsSchema(
   'UpdateProductActionInvalidProblem',
@@ -21,6 +23,7 @@ export const UpdateProductActionForbiddenProblemSchema = makeProblemDetailsSchem
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -133,7 +136,7 @@ export const UpdateProductActionApi = HttpApi.make('UpdateProductActionApi').add
       HttpApiEndpoint.post('execute', '/catalog/actions/update-product', {
         error: actionErrors,
         payload: Schema.toEncoded(UpdateProductPayloadSchema),
-        success: UpdateProductResultSchema,
+        success: [ActionProposalAcceptedSchema, UpdateProductResultSchema],
       }),
     )
     .middleware(UpdateProductActionSchemaErrorMiddleware),

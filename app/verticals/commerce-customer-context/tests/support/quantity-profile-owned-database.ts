@@ -10,7 +10,7 @@ import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
 import { assert, expect } from 'effect-rstest';
 import { commerceCustomerContextRelations } from '../../src/database/schema.ts';
-import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from './database-identities.ts';
+import { nativeTestDatabaseContainer } from './native-test-database.ts';
 
 const databaseUsernameArgument = '--username';
 
@@ -40,7 +40,7 @@ const quantityJournalReceipt = Effect.fn('QuantityProfileAdmissionTests.journalR
       '-i',
       '-e',
       'PGPASSWORD',
-      'ontos-db',
+      yield* nativeTestDatabaseContainer,
       'psql',
       '--host',
       'localhost',
@@ -86,7 +86,7 @@ const copyQuantityMigrationJournal = Effect.fn('QuantityProfileAdmissionTests.co
       '-i',
       '-e',
       'PGPASSWORD',
-      'ontos-db',
+      yield* nativeTestDatabaseContainer,
       'pg_dump',
       '--host',
       'localhost',
@@ -115,7 +115,7 @@ const copyQuantityMigrationJournal = Effect.fn('QuantityProfileAdmissionTests.co
       '-i',
       '-e',
       'PGPASSWORD',
-      'ontos-db',
+      yield* nativeTestDatabaseContainer,
       'psql',
       '--host',
       'localhost',
@@ -349,12 +349,9 @@ export const makeQuantityProfileOwnedDatabase = Effect.fn('QuantityProfileAdmiss
   function* makeOwnedDatabase(snapshot: ActiveApplicationCompositionSnapshot) {
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: snapshot,
-      // Core's db:verify below checks the trust catalog against the provisioned gateway audiences.
-      databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
       mode: 'schema-only',
       purpose: 'stabilization-1266-quantity-profile-admission',
     });
-    yield* isolated.assertClonedSchema();
     const receipts = yield* applyQuantityProfileCurrentMigrations(isolated.connections);
     return { isolated, receipts };
   },

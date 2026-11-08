@@ -1,16 +1,14 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { executeApplyCommandWithAuthorization } from "@app/merchandise/clients/apply-command";
+import { executePlaceStorefrontOrderWithAuthorization } from "@app/merchandise/clients/place-storefront-order";
+import { PlaceStorefrontOrderPayloadSchema } from "@app/merchandise/contracts/place-storefront-order";
 import {
   StorefrontOrderLineRequestSchema,
   StorefrontOrderResultSchema,
 } from "@app/merchandise/contracts/apply-command";
-import type {
-  ApplyCommandPayloadEncoded,
-  ApplyCommandResult,
-} from "@app/merchandise/contracts/apply-command";
+import type { ApplyCommandResult } from "@app/merchandise/contracts/apply-command";
 import { StorefrontMarketSchema } from "@app/merchandise/domain/market-offers";
-import { Clock, Effect, Match, Schema, Struct } from "effect";
+import { Clock, Effect, Match, Predicate, Schema, Struct } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { CartQuoteDiagnosticSchema, CartQuoteRequestSchema, CartQuoteSchema } from "./cart-quote";
 import type { CartQuoteRequest, CartScope } from "./cart-quote";
@@ -228,7 +226,7 @@ export const quoteCart = (input: CartQuoteRequest) =>
     // Both combined reads redeemed their assertions. The command always mints a new one.
     const context = yield* mintQuoteContext(config);
     const requestId = `n1-quote-${randomUUID()}`;
-    const payload: ApplyCommandPayloadEncoded = {
+    const payload = yield* Schema.decodeUnknownEffect(PlaceStorefrontOrderPayloadSchema)({
       command: {
         _tag: "PlaceStorefrontOrder",
         clientRequestId: requestId,
@@ -239,8 +237,8 @@ export const quoteCart = (input: CartQuoteRequest) =>
         shippingMethod: "OSOBNI_ODBER",
       },
       expectedRevision: snapshot.revision,
-    };
-    const result = yield* executeApplyCommandWithAuthorization(
+    }).pipe(Effect.mapError(() => new CartQuoteFailure({ state: "invalid" })));
+    const result = yield* executePlaceStorefrontOrderWithAuthorization(
       payload,
       `Bearer ${context.token}`,
       randomUUID(),
@@ -253,7 +251,7 @@ export const quoteCart = (input: CartQuoteRequest) =>
       Effect.timeout("20 seconds"),
       Effect.catch((error) =>
         Match.value(error).pipe(
-          Match.tag("ApplyCommandActionForbiddenProblem", () =>
+          Match.tag("PlaceStorefrontOrderActionForbiddenProblem", () =>
             Effect.fail(
               new CartQuoteFailure({ diagnostic: "native-action-forbidden", state: "forbidden" }),
             ),
@@ -269,5 +267,11 @@ export const quoteCart = (input: CartQuoteRequest) =>
         ),
       ),
     );
+    if (Predicate.isTagged(result, "ActionProposalAccepted")) {
+      return yield* new CartQuoteFailure({
+        diagnostic: "native-action-unavailable",
+        state: "unavailable",
+      });
+    }
     return yield* confirmCartQuote(snapshot.scope, result);
   });

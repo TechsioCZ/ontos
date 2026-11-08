@@ -105,7 +105,6 @@ it('keeps exact Party lifecycle and Core People registrations', () => {
   expectTopicWorkers(owners.core, [
     ['people-search-rebuild-requested', 'rebuild-people-search'],
     ['principal-lifecycle-changed', 'project-people-lifecycle-search'],
-    ['scoped-role-membership-changed', 'project-people-role-search'],
   ]);
   expect(new Set(searchStageTopics).size).toBe(searchStageTopics.length);
   expect(searchStageTopics.every((topic) => topic.endsWith('.v1'))).toBe(true);
@@ -209,11 +208,15 @@ it.effect('checks mirrored vertical subscriptions against source registrations w
       [owners.projects, 'projects'],
     ] as const) {
       const root = new URL(`../../verticals/${vertical}/`, import.meta.url);
-      const registration = yield* fs.readFileString(new URL('vertical.registration.ts', root).pathname);
+      const clientRegistration = yield* fs.readFileString(new URL('vertical.registration.ts', root).pathname);
+      // Split registrations publish executable workers in the owner runtime declaration.
+      const registration = clientRegistration.includes("from './vertical.runtime-declaration.ts'")
+        ? yield* fs.readFileString(new URL('vertical.runtime-declaration.ts', root).pathname)
+        : clientRegistration;
       const workers = registration
         .split('// <generated-module-registration-workers>')[1]
         ?.split('// </generated-module-registration-workers>')[0];
-      expect(workers).toBeDefined();
+      expect(workers, `${owner}: executable worker registry`).toBeDefined();
       const subscriptions = subscriptionsFor(owner);
       if (subscriptions.length === 0) {
         // In-source ingestion declarations alone do not register an executable worker.
@@ -239,5 +242,20 @@ it.effect('checks mirrored vertical subscriptions against source registrations w
         expect(workers).toContain(`${symbol},`);
       }
     }
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('mirrors only the live Core lifecycle and rebuild subscriptions', () =>
+  Effect.gen(function* coreSubscriptions() {
+    const fs = yield* FileSystem.FileSystem;
+    const source = yield* fs.readFileString(
+      new URL('../../packages/core-runtime/src/people/people-search-subscriptions.ts', import.meta.url).pathname,
+    );
+    for (const { topic, workerKey } of subscriptionsFor(owners.core)) {
+      expect(source).toContain(`topic: '${topic}'`);
+      expect(source).toContain(`workerKey: '${workerKey}'`);
+    }
+    expect(source).not.toContain('project-people-role-search');
+    expect(searchStageTopics).not.toContain('core.identity.scoped-role-membership-changed.v1');
   }).pipe(Effect.provide(NodeServices.layer)),
 );

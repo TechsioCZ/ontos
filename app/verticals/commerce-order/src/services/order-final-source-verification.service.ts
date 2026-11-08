@@ -34,6 +34,8 @@ import type {
   OrderQuotationExpired,
 } from '../integrations/order-finalization-pricing-cart.ts';
 import { OrderFinalizationPricingCart } from '../integrations/order-finalization-pricing-cart.ts';
+import { callAs } from './order-module-call.ts';
+import type { OrderFinalizationCall } from './order-module-call.ts';
 import { FinalizationTaxPaymentTerms } from '../integrations/finalization-tax-payment-terms.ts';
 import {
   preparationInputConflicts,
@@ -43,13 +45,13 @@ import {
 
 type ProposalEvidence = Extract<OrderServiceApprovalEvidenceResponse, { readonly operation: 'LOAD_PROPOSAL' }>;
 interface SourceInput {
-  readonly scope: OrderFinalizationContext;
+  readonly scope: OrderFinalizationCall;
   readonly state: OrderCommitmentState;
 }
 interface PreparationInput {
   readonly evidence: ProposalEvidence;
   readonly input: PrepareOrderCommitmentInput;
-  readonly scope: OrderFinalizationContext;
+  readonly scope: OrderFinalizationCall;
 }
 type PricingProofInput = SourceInput & { readonly idempotencyKey: string };
 /** Either exact final purchase evidence or Pricing's owner-proven expiry of its retained Quotation. */
@@ -102,8 +104,12 @@ const conflict = () =>
     code: 'order_commitment_conflict',
     reason: 'Owner finalization evidence does not match the immutable purchase',
   });
-const ownerScope = (scope: OrderFinalizationContext) =>
-  Schema.decodeUnknownEffect(OrderFinalizationContextSchema)(scope).pipe(Effect.mapError(unavailable));
+/** Decodes the business context and keeps the caller the outgoing calls of this scope act for. */
+const ownerScope = (scope: OrderFinalizationCall) =>
+  Schema.decodeUnknownEffect(OrderFinalizationContextSchema)(scope).pipe(
+    Effect.map((context) => callAs(context, scope.caller)),
+    Effect.mapError(unavailable),
+  );
 const sameRef = (
   left: {
     readonly moduleId: string;

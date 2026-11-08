@@ -27,9 +27,16 @@ describe('AutosaveStatus', () => {
   it('offers retry only after a failed save', () => {
     expect(text('error')).toBe('Chyba – zkusit znovu');
     expect(markup('error')).toContain('<button');
-    for (const status of ['idle', 'dirty', 'saving', 'saved', 'invalid'] as const) {
+    for (const status of ['idle', 'dirty', 'saving', 'saved', 'invalid', 'proposed'] as const) {
       expect(markup(status)).not.toContain('<button');
     }
+  });
+
+  it('shows a change waiting for approval as information, without an error or a retry', () => {
+    expect(text('proposed')).toBe('Čeká na schválení – změna zatím nebyla provedena');
+    expect(markup('proposed')).not.toContain('<button');
+    expect(markup('proposed')).not.toContain('error');
+    expect(markup('proposed')).toContain('data-autosave-state="proposed"');
   });
 
   it('offers the latest version only on a conflict', () => {

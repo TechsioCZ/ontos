@@ -20,7 +20,7 @@ interface TaxRuleHistoryServices {
 
 const taxRuleHistoryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'tax.evidence.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.tax.api.tax-rule-history',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -52,6 +52,14 @@ export const readTaxRuleHistory = (
 
 export const taxRuleHistoryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.tax.tax-rule.read-history',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'tax-rules', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: taxRuleHistoryEntrypoint,
     evidencePolicy: {
@@ -61,7 +69,6 @@ export const taxRuleHistoryRead = defineRead(
     inputSchema: TaxRuleHistoryRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.tax.api.tax-rule-history',
     resultSchema: TaxRuleHistoryResponseSchema,
@@ -69,5 +76,4 @@ export const taxRuleHistoryRead = defineRead(
   },
   { load: readTaxRuleHistory },
   (transaction, scope) => Effect.succeed({ governed: taxGovernedReadsForScope(transaction, scope) }),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

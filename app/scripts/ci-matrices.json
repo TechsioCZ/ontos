@@ -1,0 +1,129 @@
+{
+  "source": [
+    {
+      "name": "Typecheck, Effect Rule Implementation, and OntOS API Boundary Rules",
+      "typescript-build": true,
+      "commands": "pnpm typecheck\npnpm typecheck:lint-rules\npnpm test:lint-rules\npnpm lint:repository-policy\npnpm api:check:ontos\npnpm handler-services:check\n"
+    },
+    {
+      "name": "Repository Tooling, Module Entrypoint, and Codesmith Generation Tests",
+      "commands": "pnpm shell:ui-candidates:check\npnpm test:scripts\npnpm module-entrypoints:check\npnpm test:generation\n"
+    }
+  ],
+  "unit": [
+    {
+      "name": "Unit and Component Tests (Catalog, Commerce Customer Context, and Inventory)",
+      "node-artifacts": true,
+      "commands": "pnpm -r --no-sort --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:unit\npnpm -r --no-sort --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:component\n"
+    },
+    {
+      "name": "Unit and Component Tests (every other package)",
+      "node-artifacts": true,
+      "fetch_depth": 512,
+      "commands": "pnpm -r --no-sort --if-present --filter '!.' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' run test:unit\npnpm -r --no-sort --if-present --filter '!.' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' run test:component\n"
+    }
+  ],
+  "integration": [
+    {
+      "suite": "integration",
+      "name": "Database, Migration, RLS, Authorization, and Outbox Integration",
+      "native-composition": true,
+      "root-suite": true,
+      "package-filters": "--filter !. --filter !./verticals/catalog --filter !./verticals/pricing --filter !./verticals/inventory --filter !./verticals/commerce-customer-context --filter !./verticals/commerce-market-catalog --filter !./verticals/commerce-order --filter !./verticals/payment-term-catalog --filter !./verticals/price-group-catalog --filter !./verticals/storefront-registry --filter !./verticals/privacy --filter !./verticals/party-registry --filter !./verticals/tax --filter !./verticals/projects"
+    },
+    {
+      "suite": "integration",
+      "name": "Catalog Integration",
+      "package-filters": "--filter ./verticals/catalog"
+    },
+    {
+      "suite": "integration",
+      "name": "Pricing and Inventory Integration",
+      "native-composition": true,
+      "package-filters": "--filter ./verticals/pricing --filter ./verticals/inventory"
+    },
+    {
+      "suite": "integration",
+      "name": "Commerce Customer Context Integration (1/6)",
+      "package-filters": "--filter ./verticals/commerce-customer-context",
+      "rstest-shard": "1/6"
+    },
+    {
+      "suite": "integration",
+      "name": "Commerce Customer Context Integration (2/6)",
+      "package-filters": "--filter ./verticals/commerce-customer-context",
+      "rstest-shard": "2/6"
+    },
+    {
+      "suite": "integration",
+      "name": "Commerce Customer Context Integration (3/6)",
+      "package-filters": "--filter ./verticals/commerce-customer-context",
+      "rstest-shard": "3/6"
+    },
+    {
+      "suite": "integration",
+      "name": "Commerce Customer Context Integration (4/6)",
+      "package-filters": "--filter ./verticals/commerce-customer-context",
+      "rstest-shard": "4/6"
+    },
+    {
+      "suite": "integration",
+      "name": "Commerce Customer Context Integration (5/6)",
+      "package-filters": "--filter ./verticals/commerce-customer-context",
+      "rstest-shard": "5/6"
+    },
+    {
+      "suite": "integration",
+      "name": "Commerce Customer Context Integration (6/6)",
+      "package-filters": "--filter ./verticals/commerce-customer-context",
+      "rstest-shard": "6/6"
+    },
+    {
+      "suite": "integration",
+      "name": "Market, Order, Payment Term, Price Group, and Storefront Integration",
+      "native-preproposal": true,
+      "proof-packages": [
+        "@app/shell-super-app",
+        "@app/party-registry",
+        "@app/commerce-cart",
+        "@app/catalog",
+        "@app/storefront-registry",
+        "@app/commerce-market-catalog",
+        "@app/pricing",
+        "@app/commerce-customer-context"
+      ],
+      "package-filters": "--filter ./verticals/commerce-market-catalog --filter ./verticals/commerce-order --filter ./verticals/payment-term-catalog --filter ./verticals/price-group-catalog --filter ./verticals/storefront-registry"
+    },
+    {
+      "suite": "integration",
+      "name": "Privacy Integration (1/2)",
+      "package-filters": "--filter ./verticals/privacy",
+      "rstest-shard": "1/2"
+    },
+    {
+      "suite": "integration",
+      "name": "Privacy Integration (2/2)",
+      "package-filters": "--filter ./verticals/privacy",
+      "rstest-shard": "2/2"
+    },
+    {
+      "suite": "integration",
+      "name": "Party Registry Integration",
+      "package-filters": "--filter ./verticals/party-registry"
+    },
+    {
+      "suite": "integration",
+      "name": "Tax Integration",
+      "package-filters": "--filter ./verticals/tax"
+    },
+    {
+      "suite": "integration",
+      "name": "Projects Integration",
+      "package-filters": "--filter ./verticals/projects"
+    },
+    {
+      "suite": "browser",
+      "name": "Authenticated Browser Tests"
+    }
+  ]
+}

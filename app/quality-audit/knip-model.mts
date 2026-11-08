@@ -6,7 +6,14 @@ import { Effect, FileSystem, Path, Schema } from 'effect';
 import { findNodeAtLocation, parseTree } from 'jsonc-parser';
 import type { PlatformError } from 'effect/PlatformError';
 import { parseSync, Visitor, visitorKeys } from 'oxc-parser';
-import type { Function as AstFunction, FunctionBody, Node, ObjectExpression, Program } from 'oxc-parser';
+import type {
+  ArrowFunctionExpression,
+  Function as AstFunction,
+  FunctionBody,
+  Node,
+  ObjectExpression,
+  Program,
+} from 'oxc-parser';
 
 import { buildKnipRuntimeEvidence, workspaceDirectories } from './knip-runtime-model.mts';
 
@@ -435,7 +442,7 @@ const exportedBindings = ({ program }: SourceFacts): readonly ExportedBinding[] 
       node.declaration?.type === 'ClassDeclaration' ||
       node.declaration?.type === 'TSEnumDeclaration'
     ) {
-      const name = identifierName(node.declaration.id);
+      const name = identifierName(node.declaration.id ?? undefined);
       return name === undefined ? [] : [{ kind: 'export' as const, name, offset: node.declaration.start }];
     }
     if (node.declaration?.type === 'TSTypeAliasDeclaration' || node.declaration?.type === 'TSInterfaceDeclaration') {
@@ -1397,9 +1404,7 @@ const scopedVariables = (facts: SourceFacts, offset: number): ReadonlyMap<string
       recordDeclaration(declaration);
     }
   }
-  const recordParameters = (
-    node: Extract<Node, { type: 'FunctionDeclaration' | 'FunctionExpression' | 'ArrowFunctionExpression' }>,
-  ) => {
+  const recordParameters = (node: AstFunction | ArrowFunctionExpression) => {
     if (node.start <= offset && offset < node.end) {
       if (node.type === 'FunctionExpression' && node.id !== null) {
         blockBinding(node.id);
@@ -1616,12 +1621,19 @@ const esbuildSubprocessInput = (
   }
   const flags = elements.slice(6);
   const allowedFlags = new Set(['--bundle', '--platform=node', '--format=esm', '--packages=external']);
+  const defineOption =
+    /^--define:[$_\p{ID_Start}][$\u200C\u200D_\p{ID_Continue}]*(?:\.[$_\p{ID_Start}][$\u200C\u200D_\p{ID_Continue}]*)*=/u;
   const isFlag = (raw: Node | null): boolean => {
     const value = immutableValue(raw ?? undefined);
     const literal = staticString(value, new Map());
     return (
-      (literal !== undefined && (allowedFlags.has(literal) || literal.startsWith('--outfile='))) ||
-      (value?.type === 'TemplateLiteral' && value.quasis[0]?.value.cooked?.startsWith('--outfile=') === true)
+      (literal !== undefined &&
+        (allowedFlags.has(literal) ||
+          literal.startsWith('--outfile=') ||
+          (defineOption.test(literal) && literal.indexOf('=') < literal.length - 1))) ||
+      (value?.type === 'TemplateLiteral' &&
+        (value.quasis[0]?.value.cooked?.startsWith('--outfile=') === true ||
+          (value.expressions.length > 0 && defineOption.test(value.quasis[0]?.value.cooked ?? ''))))
     );
   };
   if (
@@ -2529,6 +2541,7 @@ const nativeSubprocessEvidence = (
   path: Path.Path,
 ): KnipModelEvidence[] => {
   const mutable = new Set<string>();
+  const mutablePatterns: Node[] = [];
   const calls: Extract<Node, { type: 'CallExpression' }>[] = [];
   const invalidate = (node: Node) => {
     if (node.type === 'Identifier') {
@@ -2536,7 +2549,7 @@ const nativeSubprocessEvidence = (
     } else if (node.type === 'MemberExpression') {
       invalidate(node.object);
     } else {
-      new Visitor({ Identifier: (identifier) => mutable.add(identifier.name) }).visit(node);
+      mutablePatterns.push(node);
     }
   };
   new Visitor({
@@ -2551,6 +2564,17 @@ const nativeSubprocessEvidence = (
       }
     },
   }).visit(facts.program);
+  // Oxc's visitor accepts a Program, not a pattern subtree. Keep invalidation
+  // confined to the original pattern spans while traversing the real Program.
+  if (mutablePatterns.length > 0) {
+    new Visitor({
+      Identifier: (identifier) => {
+        if (mutablePatterns.some((pattern) => pattern.start <= identifier.start && identifier.end <= pattern.end)) {
+          mutable.add(identifier.name);
+        }
+      },
+    }).visit(facts.program);
+  }
   const proof = subprocessCapabilityProof(facts, mutable);
   if (proof.unavailable) {
     return [];
@@ -6309,6 +6333,8 @@ const reflectedEvidence = (evidence: readonly KnipModelEvidence[]): KnipModelEvi
   }
   return [...reflectedByTarget.values()];
 };
+// Knip's oxc parser aborts on one generated consumer file of about 1.14 MB, so consumers are split into entries.
+const CONSUMER_CHUNK_LENGTH = 256 * 1024;
 
 /** Static adapters never evaluate application or configuration modules. */
 export const buildKnipModel = Effect.fn('QualityAudit.buildKnipModel')(function* buildModel(
@@ -6361,7 +6387,8 @@ export const buildKnipModel = Effect.fn('QualityAudit.buildKnipModel')(function*
       bindingsByFile.set(resolved, bindings);
     }
   }
-  const bindingConsumers = [...bindingsByFile].flatMap(([file, bindings], group) => {
+  // Each group is one unit so its import, void, and type alias stay in the same chunk.
+  const bindingConsumers = [...bindingsByFile].map(([file, bindings], group) => {
     const specifiers = [...bindings.values, ...bindings.types.map((binding) => `type ${binding}`)];
     const statements = [`import { ${specifiers.join(', ')} } from ${JSON.stringify(file)};`];
     if (bindings.values.length > 0) {
@@ -6376,14 +6403,37 @@ export const buildKnipModel = Effect.fn('QualityAudit.buildKnipModel')(function*
           .join(', ')}];`,
       );
     }
-    return statements;
+    return statements.join('\n');
   });
-  const consumerSource = [...directConsumers, ...bindingConsumers].join('\n');
-  if (consumerPath !== undefined && reflected.length > 0 && workspaces['.'] !== undefined) {
+  const consumerChunks: string[] = [];
+  let chunk: string[] = [];
+  let chunkLength = 0;
+  for (const unit of [...directConsumers, ...bindingConsumers]) {
+    if (chunk.length > 0 && chunkLength + unit.length > CONSUMER_CHUNK_LENGTH) {
+      consumerChunks.push(chunk.join('\n'));
+      chunk = [];
+      chunkLength = 0;
+    }
+    chunk.push(unit);
+    chunkLength += unit.length + 1;
+  }
+  if (chunk.length > 0) {
+    consumerChunks.push(chunk.join('\n'));
+  }
+  const consumerFiles =
+    consumerPath === undefined
+      ? []
+      : consumerChunks.map((source, index) => ({
+          path: consumerPath.replace(/\.mts$/u, `-${index}.mts`),
+          source,
+        }));
+  if (consumerFiles.length > 0 && workspaces['.'] !== undefined) {
     workspaces['.'] = {
       ...workspaces['.'],
-      entry: [...(workspaces['.'].entry ?? []), path.relative(appRoot, consumerPath).replaceAll('\\', '/')],
+      entry: [...(workspaces['.'].entry ?? []), ...consumerFiles.map((file) => file.path)],
     };
   }
-  return { config: { ...baseConfig, workspaces }, consumerSource, evidence };
+  // `consumerFiles` is what the audit writes and what `runPinnedKnip` reads; `consumerSource` keeps the
+  // whole consumer program available to callers that inspect it directly.
+  return { config: { ...baseConfig, workspaces }, consumerFiles, consumerSource: consumerChunks.join('\n'), evidence };
 });

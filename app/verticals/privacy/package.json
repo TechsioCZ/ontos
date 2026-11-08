@@ -47,8 +47,7 @@
     "./outbox-worker-host": "./src/worker-host/entry.ts",
     "./Route": "./src/federation-entry.tsx",
     "./Widget": "./src/components/widget.tsx",
-    "./admin/legacy-completion": "./scripts/legacy-completion-publication.ts",
-    "./domain/privacy-subject-identity": "./shared/domain/privacy-subject-identity.ts"
+    "./admin/legacy-completion": "./scripts/legacy-completion-publication.ts"
   },
   "scripts": {
     "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical privacy --target dist && ultramodern-create ultramodern public-surface --app privacy --target dist && modern deploy --skip-build --deploy-target node",
@@ -101,7 +100,6 @@
   },
   "devDependencies": {
     "@app/party-registry-identity-contracts": "workspace:*",
-    "@authzed/authzed-node": "1.6.1",
     "@effect/tsgo": "0.67.0",
     "@modern-js/app-tools": "catalog:ultramodern",
     "@modern-js/app-tools-extensions": "catalog:ultramodern",

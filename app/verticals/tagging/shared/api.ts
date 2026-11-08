@@ -1,3 +1,4 @@
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import {
   MicroVerticalBuildMarkerSchema,
@@ -8,9 +9,12 @@ import type { MicroVerticalReadiness, MicroVerticalOperationContext } from '@mod
 import { identity } from 'effect';
 
 // <generated-governed-http-api-imports>
-
 import { ApplyCommandActionApi } from './apis/apply-command-action.ts';
+import { AssignTagActionApi } from './apis/assign-tag-action.ts';
+import { DeleteTagActionApi } from './apis/delete-tag-action.ts';
 import { RecordsApi } from './apis/records.ts';
+import { UnassignTagActionApi } from './apis/unassign-tag-action.ts';
+import { UpdateTagActionApi } from './apis/update-tag-action.ts';
 // </generated-governed-http-api-imports>
 
 export type TaggingReadiness = MicroVerticalReadiness;
@@ -34,9 +38,14 @@ export const taggingFoundationApi = HttpApi.make('TaggingApiFoundation').add(
 
 export const taggingApi = HttpApi.make('TaggingApi')
   .addHttpApi(taggingFoundationApi)
+  .addHttpApi(OwnerActionApprovalApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(ApplyCommandActionApi)
+  .addHttpApi(AssignTagActionApi)
+  .addHttpApi(DeleteTagActionApi)
   .addHttpApi(RecordsApi)
+  .addHttpApi(UnassignTagActionApi)
+  .addHttpApi(UpdateTagActionApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);

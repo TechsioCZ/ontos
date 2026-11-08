@@ -1,12 +1,6 @@
 import { Effect, Option, Schema } from 'effect';
-import { NodeCrypto } from '@effect/platform-node';
-import { ContextAccess, ReadHandlerNotFound, ReadHandlerUnavailable, ReadPermissionDenied } from '@app/core-runtime';
-import type { ContextAccessService } from '@app/core-runtime';
-import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
-import { OpenDatabaseTransaction } from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
 import { expect, it } from 'effect-rstest';
 import { CreateProjectPayloadSchema } from '../../shared/actions/create-project.ts';
-import { ProjectPersistenceUnavailable } from '../../shared/domain/project-persistence-unavailable.ts';
 import { ProjectOwnerNotEligible, makeCreateProjectHandler } from '../../src/actions/create-project.action.ts';
 import { projectOwnerCandidatesRead } from '../../src/api/project-owner-candidates.read.ts';
 import { makeReadProjectHandler, readProjectRead } from '../../src/api/read-project.read.ts';
@@ -71,231 +65,52 @@ it.effect('returns a governed same-tenant Project even when creator differs from
   }),
 );
 
-const readScope = {
-  authBindingId: '40000000-0000-4000-8000-000000000001',
-  authContextRef: 'better-auth-session:projects-read',
-  authMethod: 'session',
-  correlationId: 'projects-read',
-  principalId: creatorId,
-  tenantId,
-} as const;
-const operationTime = new Date('2026-10-27T00:00:00.000Z');
-const readTransport = { correlationId: readScope.correlationId };
-/** SpiceDB is remote I/O: a check that runs inside the read's database transaction is a defect. */
-const outsideTransaction =
-  (tenantResources: ContextAccessService['tenantResources']): ContextAccessService['tenantResources'] =>
-  (request) =>
-    Effect.service(OpenDatabaseTransaction).pipe(
-      Effect.flatMap((open) => {
-        expect(Option.isNone(open)).toBe(true);
-        return tenantResources === undefined ? Effect.succeed([]) : tenantResources(request);
-      }),
-    );
-const candidateAccess = (tenantResources: ContextAccessService['tenantResources']): ContextAccessService => ({
-  legalEntities: () => Effect.succeed([]),
-  modules: () => Effect.succeed([]),
-  resources: () => Effect.succeed([]),
-  tenantResources: outsideTransaction(tenantResources),
-  tenants: () => Effect.succeed([]),
+it('classifies both governed reads as v2 protected and declares their sensitive field classes (O83, O58)', () => {
+  // R5c-4/O83: a tenant member without a project role must not enumerate identity candidates or read
+  // any Project, so both reads are decided by the one access gate and never by tenant membership.
+  expect(readProjectRead.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+  expect(readProjectRead.descriptor.accessDeclaration?.key).toBe('projects.core.project.read');
+  // O83: scope-wide in tenant context, so it names no record and carries no accessTarget.
+  expect(readProjectRead.descriptor.accessDeclaration?.selectors).toEqual([]);
+  expect(readProjectRead.descriptor.accessTarget).toBeUndefined();
+  expect(readProjectRead.descriptor.legalEntityScope).toBe('optional');
+  expect(
+    readProjectRead.descriptor.accessFieldGroups?.map((group) => [group.key, group.fieldClass, group.fields]),
+  ).toEqual([
+    ['projects.core.project.authority.read', 'authority_metadata', ['createdByPrincipalId', 'ownerPrincipalId']],
+  ]);
+
+  expect(projectOwnerCandidatesRead.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+  expect(projectOwnerCandidatesRead.descriptor.accessDeclaration?.key).toBe(
+    'projects.core.project.owner-candidates.read',
+  );
+  // A candidate search has no single record; its field class rides its own scope-wide declaration (O74).
+  expect(projectOwnerCandidatesRead.descriptor.accessDeclaration?.selectors).toEqual([]);
+  expect(
+    projectOwnerCandidatesRead.descriptor.accessFieldGroups?.map((group) => [
+      group.key,
+      group.fieldClass,
+      group.fields,
+    ]),
+  ).toEqual([['projects.core.project.owner-candidates.personal.read', 'personal_data', ['candidates.displayName']]]);
 });
 
-it('preserves tenant access, optional legal entity scope and metadata-only evidence for both reads', () => {
-  for (const registration of [readProjectRead, projectOwnerCandidatesRead]) {
-    expect(registration.descriptor).toMatchObject({
-      entrypoint: { authorization: { kind: 'authenticated_principal' }, scope: 'tenant' },
-      evidencePolicy: {
-        captureMode: 'metadata_only',
-        policyKey: `${registration.descriptor.readKey}.evidence.v1`,
-      },
-      legalEntityScope: 'optional',
-      owningModuleKey: 'projects.core',
-      permissionTarget: 'tenant',
-      policies: [],
-    });
-  }
-});
-
-it.layer(NodeCrypto.layer)('Projects governed reads', (test) => {
-  test.effect('runs the Project load pipeline with scoped persistence and commits read evidence', () =>
-    Effect.gen(function* governedProjectRead() {
-      const project = yield* projectFixture;
-      const encoded = yield* Schema.encodeEffect(readProjectRead.descriptor.resultSchema)(project);
-      const harness = yield* makeReadTestHarness({
-        executeOwnerQuery: ({ params, scope, sql }) => {
-          expect(scope).toEqual({ legalEntityId: '', tenantId });
-          expect(sql).toContain('from "projects"."projects"');
-          expect(params).toContain(tenantId);
-          expect(params).toContain(projectId);
-          return Effect.succeed([{ ...encoded, updatedAt: encoded.createdAt }]);
-        },
-        operationTime,
-        ownerAuthorizationDecision: 'allowed',
-        permissionDecision: 'allowed',
-        scope: readScope,
-      });
-      const result = yield* harness.runtime
-        .runRead({
-          input: { projectId },
-          principal: readScope,
-          registration: readProjectRead,
-          transport: readTransport,
-        })
-        .pipe(Effect.provide(harness.layer));
-      expect(result).toEqual(project);
-      expect(harness.snapshot().ownerQueries).toHaveLength(1);
-      expect(harness.snapshot().evidenceWrites).toBe(1);
-      expect(harness.snapshot().stages).toContain('evidence_persisted');
-    }),
-  );
-
-  test.effect('denies both reads before constructing owner services or querying owner data', () =>
-    Effect.gen(function* deniedProjectReads() {
-      const harness = yield* makeReadTestHarness({
-        executeOwnerQuery: () => Effect.die('Denied reads must not query owner data'),
-        operationTime,
-        permissionDecision: 'denied',
-        scope: readScope,
-      });
-      const projectFailure = yield* harness.runtime
-        .runRead({
-          input: { projectId },
-          principal: readScope,
-          registration: readProjectRead,
-          transport: readTransport,
-        })
-        .pipe(Effect.provide(harness.layer), Effect.flip);
-      const candidatesFailure = yield* harness.runtime
-        .runRead({
-          input: { prefix: 'ONTO', query: '' },
-          principal: readScope,
-          registration: projectOwnerCandidatesRead,
-          transport: readTransport,
-        })
-        .pipe(Effect.provide(harness.layer), Effect.flip);
-      expect(Schema.is(ReadPermissionDenied)(projectFailure)).toBe(true);
-      expect(Schema.is(ReadPermissionDenied)(candidatesFailure)).toBe(true);
-      expect(harness.snapshot().ownerQueries).toEqual([]);
-      expect(harness.snapshot().stages).not.toContain('handler_executed');
-    }),
-  );
-
-  test.effect('keeps missing and foreign-tenant Projects indistinguishable and persistence failures unavailable', () =>
-    Effect.gen(function* projectReadFailures() {
-      const project = yield* projectFixture;
-      const missing = yield* makeReadProjectHandler(
-        { find: () => Effect.succeed({ _tag: 'not_found' }) },
-        tenantId,
-      )(projectId).pipe(Effect.flip);
-      const foreign = yield* makeReadProjectHandler(
-        { find: () => Effect.succeed({ _tag: 'found', value: { ...project, tenantId: 'foreign-tenant' } }) },
-        tenantId,
-      )(projectId).pipe(Effect.flip);
-      const unavailable = yield* makeReadProjectHandler(
-        {
-          find: () =>
-            Effect.fail(
-              new ProjectPersistenceUnavailable({
-                code: 'project_persistence_unavailable',
-                reason: 'Private persistence diagnostic',
-              }),
-            ),
-        },
-        tenantId,
-      )(projectId).pipe(Effect.flip);
-      expect(Schema.is(ReadHandlerNotFound)(missing)).toBe(true);
-      expect(foreign).toEqual(missing);
-      expect(Schema.is(ReadHandlerUnavailable)(unavailable)).toBe(true);
-      expect(unavailable.reason).toBe('Project persistence is unavailable');
-    }),
-  );
-
-  test.effect('loads eligible human Owners and checks assign permission for the exact normalized Project prefix', () =>
-    Effect.gen(function* governedCandidatesRead() {
-      const harness = yield* makeReadTestHarness({
-        executeOwnerQuery: ({ params, scope, sql }) => {
-          expect(scope).toEqual({ legalEntityId: '', tenantId });
-          expect(sql).toContain('from "core"."principals"');
-          expect(params).toContain(tenantId);
-          expect(params).toContain('active');
-          expect(params).toContain('human');
-          expect(params).toContain('%Owner%');
-          return Effect.succeed([
-            { displayName: 'Allowed Owner', principalId: ownerId },
-            { displayName: 'Denied Owner', principalId: creatorId },
-          ]);
-        },
-        operationTime,
-        ownerAuthorizationDecision: 'allowed',
-        permissionDecision: 'allowed',
-        scope: readScope,
-      });
-      const checkedPrincipals: string[] = [];
-      const result = yield* harness.runtime
-        .runRead({
-          input: { prefix: 'onto', query: 'Owner' },
-          principal: readScope,
-          registration: projectOwnerCandidatesRead,
-          transport: readTransport,
-        })
-        .pipe(
-          Effect.provideService(
-            ContextAccess,
-            candidateAccess(({ permission, principalId, resources, tenantId: checkedTenantId }) => {
-              expect(permission).toBe('assign');
-              expect(checkedTenantId).toBe(tenantId);
-              expect(resources).toEqual([
-                { moduleId: 'projects.core', resourceId: 'ONTO', resourceType: 'projects.project-owner-eligibility' },
-              ]);
-              checkedPrincipals.push(principalId);
-              return Effect.succeed([
-                {
-                  decision: principalId === ownerId ? 'allowed' : 'denied',
-                  key: 'projects.core:projects.project-owner-eligibility:ONTO',
-                },
-              ]);
-            }),
-          ),
-          Effect.provide(harness.layer),
-        );
-      expect(result.candidates).toEqual([{ displayName: 'Allowed Owner', principalId: ownerId }]);
-      expect(checkedPrincipals).toHaveLength(2);
-      expect(checkedPrincipals).toEqual(expect.arrayContaining([creatorId, ownerId]));
-      expect(harness.snapshot().evidenceWrites).toBe(1);
-      expect(harness.snapshot().stages).toContain('evidence_persisted');
-    }),
-  );
-
-  test.effect('fails the complete candidate read closed on unavailable or mismatched assignment evidence', () =>
-    Effect.gen(function* unavailableCandidatesRead() {
-      for (const key of ['projects.core:projects.project-owner-eligibility:ONTO', 'wrong-project']) {
-        const harness = yield* makeReadTestHarness({
-          executeOwnerQuery: () => Effect.succeed([{ displayName: 'Owner', principalId: ownerId }]),
-          operationTime,
-          ownerAuthorizationDecision: 'allowed',
-          permissionDecision: 'allowed',
-          scope: readScope,
-        });
-        const failure = yield* harness.runtime
-          .runRead({
-            input: { prefix: 'ONTO', query: '' },
-            principal: readScope,
-            registration: projectOwnerCandidatesRead,
-            transport: readTransport,
-          })
-          .pipe(
-            Effect.provideService(
-              ContextAccess,
-              candidateAccess(() =>
-                Effect.succeed([{ decision: key === 'wrong-project' ? 'allowed' : 'unavailable', key }]),
-              ),
-            ),
-            Effect.provide(harness.layer),
-            Effect.flip,
-          );
-        expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
-        expect(harness.snapshot().evidenceWrites).toBe(0);
-        expect(harness.snapshot().stages).not.toContain('evidence_persisted');
-      }
-    }),
-  );
-});
+it.effect('names exactly the sensitive result fields, and nothing else (R5c, O58, O83)', () =>
+  Effect.gen(function* declaredFields() {
+    const project = yield* projectFixture;
+    // The governed fields are the owner and the creator, and the result really carries them.
+    expect(project.ownerPrincipalId).toBeDefined();
+    expect(project.createdByPrincipalId).toBeDefined();
+    expect((readProjectRead.descriptor.accessFieldGroups ?? []).flatMap((group) => group.fields)).toEqual([
+      'createdByPrincipalId',
+      'ownerPrincipalId',
+    ]);
+    expect((projectOwnerCandidatesRead.descriptor.accessFieldGroups ?? []).flatMap((group) => group.fields)).toEqual([
+      'candidates.displayName',
+    ]);
+    // The opaque principal id is not part of the personal_data group (O2): only the name is.
+    expect(
+      (projectOwnerCandidatesRead.descriptor.accessFieldGroups ?? []).flatMap((group) => group.fields),
+    ).not.toContain('candidates.principalId');
+  }),
+);

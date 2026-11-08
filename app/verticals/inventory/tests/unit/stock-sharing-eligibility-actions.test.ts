@@ -4,7 +4,7 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import {
-  getActionBusinessPermissionTargetResolver,
+  getActionOwnerPermissionTargetResolver,
   getActionResourcePermissionTargetResolver,
 } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { ChangeStockSharingEligibilityPayloadSchema } from '../../shared/actions/change-stock-sharing-eligibility.ts';
@@ -154,16 +154,7 @@ const memoryPersistence = (initial?: StockSharingEligibility) => {
 };
 
 describe('Stock Sharing Eligibility lifecycle Actions', () => {
-  it('declares required legal-entity, exact Position business, and conjunctive Resource permission gates', () => {
-    const expectedTarget = {
-      kind: 'inventory_resource',
-      resource: {
-        moduleId: positionRef.moduleId,
-        resourceId: positionRef.resourceId,
-        resourceType: positionRef.resourceType,
-      },
-      tenantId,
-    } as const;
+  it('declares required legal-entity scope and the three scope-wide eligibility capabilities', () => {
     for (const action of [
       establishStockSharingEligibilityAction,
       changeStockSharingEligibilityAction,
@@ -173,25 +164,25 @@ describe('Stock Sharing Eligibility lifecycle Actions', () => {
       expect(action.descriptor.auditProfile).toBe('sensitive');
     }
     expect(
-      getActionBusinessPermissionTargetResolver(establishStockSharingEligibilityAction)?.(establishPayload, scope),
-    ).toEqual({ permission: 'inventory.stock_sharing_eligibility.manage', target: expectedTarget });
-    expect(
-      getActionBusinessPermissionTargetResolver(changeStockSharingEligibilityAction)?.(changePayload, scope),
-    ).toEqual({ permission: 'inventory.stock_sharing_eligibility.manage', target: expectedTarget });
-    expect(getActionBusinessPermissionTargetResolver(endStockSharingEligibilityAction)?.(endPayload, scope)).toEqual({
-      permission: 'inventory.stock_sharing_eligibility.manage',
-      target: expectedTarget,
-    });
-    expect(
-      getActionResourcePermissionTargetResolver(establishStockSharingEligibilityAction)?.(establishPayload, scope),
-    ).toEqual({ permission: 'write', resource: positionRef });
-    expect(
-      getActionResourcePermissionTargetResolver(changeStockSharingEligibilityAction)?.(changePayload, scope),
-    ).toEqual({ permission: 'write', resource: positionRef });
-    expect(getActionResourcePermissionTargetResolver(endStockSharingEligibilityAction)?.(endPayload, scope)).toEqual({
-      permission: 'write',
-      resource: positionRef,
-    });
+      [
+        establishStockSharingEligibilityAction,
+        changeStockSharingEligibilityAction,
+        endStockSharingEligibilityAction,
+      ].map(({ descriptor }) => descriptor.accessDeclaration?.key),
+    ).toEqual([
+      'commerce.inventory.stock-sharing-eligibility.establish',
+      'commerce.inventory.stock-sharing-eligibility.change',
+      'commerce.inventory.stock-sharing-eligibility.end',
+    ]);
+    // O67-Q2: the retired exact-Position business and conjunctive Resource targets are gone.
+    expect([
+      getActionOwnerPermissionTargetResolver(establishStockSharingEligibilityAction),
+      getActionOwnerPermissionTargetResolver(changeStockSharingEligibilityAction),
+      getActionOwnerPermissionTargetResolver(endStockSharingEligibilityAction),
+      getActionResourcePermissionTargetResolver(establishStockSharingEligibilityAction),
+      getActionResourcePermissionTargetResolver(changeStockSharingEligibilityAction),
+      getActionResourcePermissionTargetResolver(endStockSharingEligibilityAction),
+    ]).toEqual([undefined, undefined, undefined, undefined, undefined, undefined]);
   });
 
   it.effect('fails closed without owner Commerce validation and before persistence', () =>

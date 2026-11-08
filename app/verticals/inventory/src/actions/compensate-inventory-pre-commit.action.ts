@@ -8,7 +8,7 @@ import type { ActionHandlerContext } from '@app/core-runtime';
 import { Crypto, DateTime, Effect, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
-import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import {
   CompensateInventoryPreCommitErrorSchema,
   CompensateInventoryPreCommitPayloadSchema,
@@ -121,29 +121,25 @@ export const handleCompensateInventoryPreCommit = Effect.fn('CompensateInventory
 
 export const compensateInventoryPreCommitAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.inventory.inventory-reservation.compensate',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'recovery', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: `${ACTION_KEY}.access.v1`,
     },
     actionKey: ACTION_KEY,
     auditProfile: 'standard',
-    businessPermission: defineActionBusinessPermission<CompensateInventoryPreCommitPayload>((payload, scope) => ({
-      permission: 'inventory.recovery.execute',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: payload.authorizationTargetRef.moduleId,
-          resourceId: payload.authorizationTargetRef.resourceId,
-          resourceType: payload.authorizationTargetRef.resourceType,
-        },
-        tenantId: payload.authorizationTargetRef.tenantId === scope.tenantId ? scope.tenantId : '',
-      },
-    })),
     domainErrorSchema: CompensateInventoryPreCommitErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: MODULE_KEY,
       role: 'action',

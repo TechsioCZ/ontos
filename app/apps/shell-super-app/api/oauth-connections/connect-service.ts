@@ -27,6 +27,7 @@ import type {
   ConnectionClient,
   ConnectionModulesRequest,
 } from '@app/shared-contracts/oauth-connections';
+import type { OperationalScope } from '@app/core-runtime';
 import {
   ConnectionClientIdSchema,
   ConnectionGrantIdSchema,
@@ -63,6 +64,8 @@ export interface ConnectSession {
   readonly companies: readonly { readonly legalEntityId: string; readonly legalName: string }[];
   readonly displayName: string;
   readonly principalId: string;
+  /** The actual session requester; read-only subject queries retain this object unchanged. */
+  readonly scope: OperationalScope;
   readonly sessionId: string;
   readonly tenantId: string;
   readonly userId: string;
@@ -191,11 +194,11 @@ export const connectOptions = Effect.fn('OAuthConnectService.connectOptions')(fu
     legalEntityId: string,
     agent: { readonly displayName: string; readonly principalId: string },
   ) {
-    const authority = yield* loadActingAuthority({
+    const authority = yield* loadActingAuthority(session.scope, {
       actingKind: 'agent',
       actingPrincipalId: agent.principalId,
       legalEntityId,
-      tenantId: session.tenantId,
+      tenantId: session.scope.tenantId,
     });
     return {
       displayName: agent.displayName,
@@ -207,11 +210,11 @@ export const connectOptions = Effect.fn('OAuthConnectService.connectOptions')(fu
   const companyOption = Effect.fn('OAuthConnectService.companyOption')(function* companyOption(
     company: ConnectSession['companies'][number],
   ) {
-    const own = yield* loadActingAuthority({
+    const own = yield* loadActingAuthority(session.scope, {
       actingKind: 'human',
       actingPrincipalId: session.principalId,
       legalEntityId: company.legalEntityId,
-      tenantId: session.tenantId,
+      tenantId: session.scope.tenantId,
     });
     const agentOptions = yield* Effect.forEach(
       agents.filter((agent) => agent.companies.includes(company.legalEntityId)),
@@ -261,19 +264,16 @@ export const createDraft = Effect.fn('OAuthConnectService.createDraft')(function
     actingKind = 'agent';
     actingPrincipalId = agentId;
   }
-  const authority = yield* loadActingAuthority({
+  const authority = yield* loadActingAuthority(session.scope, {
     actingKind,
     actingPrincipalId,
     legalEntityId: request.legalEntityId,
-    tenantId: session.tenantId,
+    tenantId: session.scope.tenantId,
   });
   if (!isPolicyWithin(request.writePolicy, authority.policyCap)) {
     return yield* new ConnectionForbidden({
       code: 'write_policy_forbidden',
-      reason:
-        authority.policyCap === 'read_only'
-          ? 'Agent smí jen číst (nastavení agenta).'
-          : 'Agent smí jen navrhovat změny (nastavení agenta).',
+      reason: 'Požadovaný způsob zápisu není pro toto připojení povolen.',
     });
   }
   if (!isModulesRequestWithin(request.modules, authority.offered)) {
@@ -323,6 +323,9 @@ export const draftSummary = Effect.fn('OAuthConnectService.draftSummary')(functi
   if (grant === undefined || grant.status !== 'draft' || grant.clientId !== verified.clientId) {
     return yield* new ConnectionInvalid({ code: 'draft_not_found' });
   }
+  if (grant.tenantId !== session.scope.tenantId || grant.legalEntityId !== session.scope.legalEntityId) {
+    return yield* new ConnectionUnavailable({ cause: 'Retained connection scope differs from original requester' });
+  }
   const agent = grant.actingKind === 'agent';
   const actingName = agent
     ? ((yield* loadPrincipals(grant.tenantId, [grant.actingPrincipalId])).get(grant.actingPrincipalId)?.displayName ??
@@ -331,7 +334,7 @@ export const draftSummary = Effect.fn('OAuthConnectService.draftSummary')(functi
   const legalName = (yield* (yield* OAuthConnectionCompanies)
     .names(grant.tenantId, [grant.legalEntityId])
     .pipe(Effect.mapError(toUnavailable))).get(grant.legalEntityId);
-  const authority = yield* loadActingAuthority({
+  const authority = yield* loadActingAuthority(session.scope, {
     actingKind: grant.actingKind,
     actingPrincipalId: grant.actingPrincipalId,
     legalEntityId: grant.legalEntityId,

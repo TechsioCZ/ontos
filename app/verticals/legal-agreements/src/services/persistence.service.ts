@@ -50,7 +50,6 @@ export interface AgreementsValidators {
       readonly activeCustomer: boolean;
       readonly archived: boolean;
       readonly counterpartyRef: CounterpartyRef;
-      readonly displayName: string | null;
       readonly legalEntityId: string;
       readonly partyRef: PartyRef;
     },
@@ -645,7 +644,6 @@ export const makeAgreementsValidators = Effect.fn('Agreements.validators')(funct
         activeCustomer: value.currentRoles.some((role) => role.roleType === 'CUSTOMER' && role.state === 'ACTIVE'),
         archived: value.party.archived,
         counterpartyRef: value.counterpartyRef,
-        displayName: value.party.displayName,
         legalEntityId: value.legalEntityRef.resourceId,
         partyRef: value.party.canonicalPartyRef,
       };

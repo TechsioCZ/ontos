@@ -1,6 +1,7 @@
 import { Predicate, Schema } from 'effect';
 import type { Effect } from 'effect';
 
+import type { OwnerLocalBackgroundAuthorization } from '../authorization/entrypoint-classification.ts';
 import type { SystemModuleEntrypoint, TenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
 import { OutboxWorkerDescriptorError } from './errors.ts';
 
@@ -14,7 +15,7 @@ export interface OutboxWorkerRetryPolicy {
 }
 
 export interface OutboxWorkerHandlerContext extends Readonly<
-  Partial<Record<'actorPrincipalId' | 'correlationId', string>>
+  Partial<Record<'actorPrincipalId' | 'correlationId' | 'originatorInvocationId', string>>
 > {
   readonly attemptNumber: number;
   readonly claimId: string;
@@ -40,10 +41,12 @@ export interface OutboxWorkerDescriptor<
   Consumer extends string,
   Producer extends string,
 > {
+  /** Owner-local background work is not a user capability and cannot declare catalog access. */
+  readonly accessDeclaration?: never;
   readonly consumerModuleKey: Consumer;
   readonly entrypoint:
-    | TenantModuleEntrypoint<'worker', 'background', Consumer>
-    | SystemModuleEntrypoint<'worker', 'background', Consumer>;
+    | SystemModuleEntrypoint<'worker', 'background', Consumer, OwnerLocalBackgroundAuthorization>
+    | TenantModuleEntrypoint<'worker', 'background', Consumer, OwnerLocalBackgroundAuthorization>;
   readonly leaseDurationMs: number;
   /** Defaults to required so existing Legal Entity workers cannot silently broaden their scope. */
   readonly legalEntityScope?: 'forbidden' | 'required';
@@ -57,7 +60,7 @@ export interface OutboxWorkerDescriptor<
 export type OutboxWorkerSubscription = Readonly<
   Pick<
     OutboxWorkerDescriptor<Schema.ConstraintDecoder<unknown>, string, string>,
-    'consumerModuleKey' | 'entrypoint' | 'producerModuleKey' | 'topic' | 'workerKey'
+    'accessDeclaration' | 'consumerModuleKey' | 'entrypoint' | 'producerModuleKey' | 'topic' | 'workerKey'
   >
 >;
 
@@ -133,6 +136,10 @@ export const extractOutboxWorkerSubscriptions = (
       .toSorted((left, right) => left.workerKey.localeCompare(right.workerKey)),
   );
 
+/** Core-private execution validation; not part of the public package surface. */
+export const isOutboxWorkerRegistration = <Value>(value: Value): value is Value & AnyOutboxWorkerRegistration =>
+  Schema.is(Schema.instanceOf(OutboxWorkerRegistrationValue))(value);
+
 export type OutboxWorkerRequirements<Registration extends AnyOutboxWorkerRegistration> =
   Registration extends OutboxWorkerRegistration<
     Schema.ConstraintDecoder<unknown>,
@@ -192,6 +199,9 @@ const assertWorkerEntrypoint = (descriptor: OutboxWorkerSubscription, reason: st
 };
 
 const assertWorkerSubscription = (descriptor: OutboxWorkerSubscription, entrypointError: string): void => {
+  if (descriptor.accessDeclaration !== undefined) {
+    throw descriptorError('Owner-local background Workers cannot carry accessDeclaration');
+  }
   if (!moduleKeyPattern.test(descriptor.consumerModuleKey)) {
     throw descriptorError('consumerModuleKey must be a stable module key');
   }

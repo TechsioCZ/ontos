@@ -14,7 +14,7 @@ const OWNER = 'commerce.customer-context';
 
 const privacyMeasureExecutionEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.privacy-measure-execution',
   moduleKey: OWNER,
   role: 'api',
@@ -22,6 +22,20 @@ const privacyMeasureExecutionEntrypoint = defineTenantModuleEntrypoint({
 
 export const privacyMeasureExecutionRead = defineRead(
   {
+    accessActor: {
+      callers: ['commerce-customer-context'],
+      reason:
+        'The customer-context privacy worker reads the execution receipt of a privacy measure for the subject it acts for',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.customer-context.privacy-measure.read-execution',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'privacy', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: privacyMeasureExecutionEntrypoint,
     evidencePolicy: {
@@ -31,7 +45,6 @@ export const privacyMeasureExecutionRead = defineRead(
     inputSchema: PrivacyMeasureExecutionRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: OWNER,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.customer-context.api.privacy-measure-execution',
     resultSchema: PrivacyMeasureExecutionResponseSchema,
@@ -56,5 +69,4 @@ export const privacyMeasureExecutionRead = defineRead(
       ),
   },
   (transaction, scope) => privacyMeasureExecutionService(transaction, scope),
-  () => ({ kind: 'module', moduleId: OWNER }),
 );

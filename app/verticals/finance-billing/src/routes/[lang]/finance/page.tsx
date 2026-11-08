@@ -15,8 +15,9 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { modulePagePreload } from '@app/shared-contracts/page-data';
+import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { useState } from 'react';
-import { Option, Schema, SchemaGetter } from 'effect';
+import { Option, Result, Schema, SchemaGetter } from 'effect';
 import csResource from '../../../../locales/cs/finance-billing.json';
 import enResource from '../../../../locales/en/finance-billing.json';
 import '../../index.css';
@@ -36,6 +37,7 @@ import {
   preloadFinanceRecords,
   useFinanceRecords,
 } from './use-finance-records.ts';
+import { financePageScope } from './finance-page-scope.ts';
 import { preloadFinanceDirectory } from './use-finance-references.ts';
 
 const resources = {
@@ -193,8 +195,8 @@ const RecordDetail = ({ vm }: { readonly vm: ReturnType<typeof useFinanceRecords
   return null;
 };
 
-const RecordsPageContent = () => {
-  const vm = useFinanceRecords();
+const RecordsPageContent = ({ scope }: { readonly scope: string | undefined }) => {
+  const vm = useFinanceRecords({ scope });
   const { canWrite, feedback, indicators, references, t } = vm;
   const [createOpen, setCreateOpen] = useState(false);
   const [incomingOpen, setIncomingOpen] = useState(false);
@@ -332,11 +334,14 @@ const RecordsPageContent = () => {
  * and reminder e-mail receipts load lazily.
  */
 export const preloadPage = modulePagePreload(
-  (props) => preloadFinanceRecords(props.search),
-  () => preloadFinanceDirectory,
+  (props) => preloadFinanceRecords(props.search, props.context),
+  (props) => preloadFinanceDirectory(props.context),
 );
 
-export const RecordsPage = () => {
+/** Remount identity of the page content: the verified scope (or none) and the customer filter. */
+const PageContentKeySchema = Schema.fromJsonString(Schema.Tuple([Schema.NullOr(Schema.String), Schema.String]));
+
+export const RecordsPage = (props: Partial<ModulePageProps>) => {
   const rawSearch = useRouterState({
     select: (state) => {
       const input: unknown = state.location.search;
@@ -344,6 +349,10 @@ export const RecordsPage = () => {
     },
   });
   const filterKey = customerInvoiceFilterKey(rawSearch);
+  // The Shell's verified scope keys the ledger cache; a tenant, company or principal switch also remounts the page,
+  // so no local state of the previous scope carries over. Without a scope the page reads and writes nothing.
+  const scope = financePageScope(props.context);
+  const contentKey = Result.getOrThrow(Schema.encodeResult(PageContentKeySchema)([scope ?? null, filterKey]));
   return (
     <FederatedI18nBoundary
       defaultNamespace="finance-billing"
@@ -351,7 +360,7 @@ export const RecordsPage = () => {
       resources={resources}
       supportedLanguages={['en', 'cs']}
     >
-      <RecordsPageContent key={filterKey} />
+      <RecordsPageContent key={contentKey} scope={scope} />
     </FederatedI18nBoundary>
   );
 };

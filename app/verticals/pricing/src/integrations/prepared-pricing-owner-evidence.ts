@@ -70,6 +70,7 @@ export const revalidatePreparedPricingOwnerEvidence = Effect.fn('PricingMaterial
     const observed = yield* gateway.verifyOpaqueProofsAgainstCurrentState({
       candidateRef: material.candidateRef,
       compositionRevision,
+      scope,
       sources: local,
       typedSources,
       verificationContext,
@@ -89,6 +90,7 @@ export const revalidatePreparedPricingOwnerEvidence = Effect.fn('PricingMaterial
       candidateRef: material.candidateRef,
       compositionRevision,
       observations: observed.observations,
+      scope,
       through: observed.completedAt,
       typedSources,
       verificationContext,

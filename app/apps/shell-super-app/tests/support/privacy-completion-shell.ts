@@ -1,19 +1,24 @@
 // TEST infrastructure: only this child owns Shell authentication implementation.
 import {
+  ActionRuntime,
   ActiveApplicationCompositionSnapshotSchema,
+  bindManagedApiKeyAction,
   bindSelfApiKeyAction,
   changeTenantModuleStateAction,
-  ContextAccess,
   CorePersistenceLive,
+  createNonHumanPrincipalAction,
   DatabaseConfigLive,
   InstalledModuleCatalogService,
-  makeContextAccessLive,
   OAuthAuthenticationAuditLive,
   OAuthGrantRegistryLive,
+  PrincipalResolver,
   PrincipalResolverLive,
   runAction,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
+import type { PrincipalResolverService, TrustedPrincipalContext } from '@app/core-runtime';
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
+import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import {
   makeLiveOperationFixtureRuntime,
@@ -21,13 +26,16 @@ import {
   LiveOperationFixtureBootstrapResponseSchema,
 } from '@app/core-runtime/testing/actions';
 import { NodeCrypto, NodeHttpServer, NodeRuntime, NodeServices, NodeSocket } from '@effect/platform-node';
-import { Config, Crypto, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { resolveEffectBffModuleHandler } from '@modern-js/bff-effect/effect';
+import { dispatchEffectBffRequest } from '@modern-js/bff-effect/effect-edge';
+import { Config, ConfigProvider, Context, Crypto, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { PgClient } from '@effect/sql-pg';
 import { Socket } from 'effect/socket';
 import { Reactivity } from 'effect/reactivity';
 
-import apiRuntime from '../../api/index.ts';
+import { makeShellAuthenticationApiRuntime, shellProductionRuntimeArguments } from '../../api/index.ts';
+import { shellAuthenticationApiContract } from '../../shared/api.ts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
 import { BetterAuthFrameworkLive } from '../../api/auth/better-auth-framework.ts';
 import { BetterAuthRuntimeLive } from '../../api/auth/better-auth-runtime.ts';
@@ -37,9 +45,12 @@ import { OAuthEndpointGuardsLive } from '../../api/auth/oauth-server/endpoint-gu
 import { makeAuthenticationService } from '../../api/auth/service.ts';
 import { OAuthConnectionHooksLive } from '../../api/oauth-connections/better-auth-hooks.ts';
 import { OAuthEndpointGuardDataLive } from '../../api/oauth-connections/grant-store.ts';
-import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
+import { ApiKeyService, makeApiKeyService } from '../../api/auth/api-key-service.ts';
+import { GatewayModuleBindingSchema } from '../../api/auth/gateway-delegation-policy.ts';
+import { IdentityLifecycle, IdentityLifecycleLive } from '../../api/auth/identity-lifecycle.ts';
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { createShellRuntimeContract } from '../../../../scripts/ontos-shell-runtime-contract.ts';
 import {
   loadPrivacyCompletionResponseSocket,
   PrivacyCompletionReadySchema,
@@ -53,6 +64,113 @@ class PrivacyCompletionShellFailure extends Schema.TaggedError<PrivacyCompletion
   { reason: Schema.String },
 ) {}
 const partyModule = 'party.registry';
+const partyAppId = 'party-registry';
+
+interface PartyModuleCredentialInput {
+  readonly headers: Headers;
+  readonly principal: TrustedPrincipalContext;
+  readonly resolver: PrincipalResolverService;
+  readonly suffix: string;
+  readonly tenantId: string;
+}
+/** One service principal for party-registry and one managed key bound to it through bind-managed-api-key. */
+const issuePartyModuleCredential = Effect.fn('PrivacyCompletionShell.issuePartyModuleCredential')(
+  function* issuePartyModuleCredential(input: PartyModuleCredentialInput) {
+    const lifecycle = yield* IdentityLifecycle;
+    const service = yield* lifecycle.createNonHumanPrincipal({
+      correlationId: `${input.suffix}:module:create`,
+      idempotencyKey: `${input.suffix}:module:create`,
+      payload: { displayName: 'Privacy completion party-registry module', kind: 'service' },
+      principal: input.principal,
+    });
+    const key = yield* lifecycle.issue({
+      correlationId: `${input.suffix}:module:key`,
+      idempotencyKey: `${input.suffix}:module:key`,
+      managedPrincipalId: service.principalId,
+      // Better Auth's API key plugin caps key names at 32 characters.
+      name: 'Party registry module',
+      principal: input.principal,
+      requestHeaders: input.headers,
+    });
+    // Better Auth's verifyApiKey rejects keys owned by a service principal (references: 'user'), so the
+    // binding row names the provider key and the principal resolver proves its owner.
+    const binding = yield* input.resolver.loadApiKeyBindingForAdministration({
+      authBindingId: key.authBindingId,
+      principalId: service.principalId,
+      tenantId: input.tenantId,
+    });
+    const bound = yield* input.resolver.resolveBetterAuthApiKey(binding.providerSubjectId);
+    if (
+      key.cleanupPending ||
+      bound.principalId !== service.principalId ||
+      bound.tenantId !== input.tenantId ||
+      bound.authBindingId !== key.authBindingId
+    ) {
+      return yield* new PrivacyCompletionShellFailure({ reason: 'Party module key binding is unavailable' });
+    }
+    return { providerKeyId: binding.providerSubjectId, secret: key.secret };
+  },
+);
+
+/** The GatewayModuleBinding list the Shell reads from ONTOS_GATEWAY_MODULE_BINDINGS for the party-registry key. */
+const partyModuleBindings = Effect.fn('PrivacyCompletionShell.partyModuleBindings')(function* partyModuleBindings(
+  composition: typeof ActiveApplicationCompositionSnapshotSchema.Type,
+  providerKeyId: string,
+) {
+  const partyDeployment = composition.composition.modules.find(
+    (candidate) => candidate.deployment.appId === partyAppId,
+  )?.deployment;
+  if (partyDeployment === undefined) {
+    return yield* new PrivacyCompletionShellFailure({ reason: 'Party composition deployment is unavailable' });
+  }
+  return yield* Schema.decodeUnknownEffect(Schema.Array(GatewayModuleBindingSchema))([
+    {
+      compositionRevision: composition.composition.revision,
+      providerKeyId,
+      sourceAppId: partyAppId,
+      sourceBuildMarker: partyDeployment.buildMarker,
+    },
+  ]).pipe(
+    Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(Schema.Array(GatewayModuleBindingSchema)))),
+    Effect.mapError(() => new PrivacyCompletionShellFailure({ reason: 'Party module binding is invalid' })),
+  );
+});
+
+/** Mounts the production Shell API with the module bindings visible to its gateway policy through ConfigProvider. */
+const mountShellApiHandler = Effect.fn('PrivacyCompletionShell.mountShellApiHandler')(function* mountShellApiHandler(
+  accessGate: Layer.Layer<AccessDecisionGate>,
+  bindings: string,
+) {
+  const runtime = makeShellAuthenticationApiRuntime(...shellProductionRuntimeArguments, accessGate);
+  const originalProvider = yield* ConfigProvider.ConfigProvider;
+  return yield* Effect.acquireRelease(
+    Effect.promise(
+      resolveEffectBffModuleHandler.bind(
+        undefined,
+        {
+          api: runtime.api,
+          layer: runtime.layer.pipe(
+            Layer.provideMerge(
+              ConfigProvider.layer(
+                ConfigProvider.fromEnvRecord({ ONTOS_GATEWAY_MODULE_BINDINGS: bindings }).pipe(
+                  ConfigProvider.orElse(originalProvider),
+                ),
+              ),
+            ),
+          ),
+        },
+        {},
+      ),
+    ).pipe(
+      Effect.flatMap((value) =>
+        value === null
+          ? Effect.fail(new PrivacyCompletionShellFailure({ reason: 'Shell API handler is unavailable' }))
+          : Effect.succeed(value),
+      ),
+    ),
+    (value) => (value.dispose === undefined ? Effect.void : Effect.promise(value.dispose).pipe(Effect.orDie)),
+  );
+});
 
 const requestCreatorBootstrap = Effect.fn('PrivacyCompletionShell.requestBootstrap')(function* requestCreatorBootstrap(
   socketPath: string,
@@ -211,8 +329,11 @@ const serve = Effect.scoped(
       makeLiveOperationFixtureRuntime({
         configuration: {
           ...additionalLegalEntityConfiguration,
+          access: 'allowed',
           actionKeys: [
             bindSelfApiKeyAction.descriptor.actionKey,
+            createNonHumanPrincipalAction.descriptor.actionKey,
+            bindManagedApiKeyAction.descriptor.actionKey,
             changeTenantModuleStateAction.descriptor.actionKey,
             'privacy.core.dispatch-privacy-measure',
             'privacy.core.record-owner-execution-outcome',
@@ -232,15 +353,28 @@ const serve = Effect.scoped(
       (value) => value.close().pipe(Effect.orDie),
     );
     const fixtureContext = yield* Layer.build(fixture.layer);
+    /**
+     * The one gate this fixture serves HTTP with (CUTOVER-PLAN §3.1 step 8). The child's database
+     * carries no v2 access intent, so the production default would refuse every gateway-context
+     * request; the suite scripts its answers and names the companies the fixture created, which is
+     * exactly the question `issueApiKeyGatewayContext` asks through `selectableLegalEntities`.
+     */
+    const fixtureAccessGate = makeTestAccessDecision({
+      defaultAnswer: { outcome: 'ALLOWED' },
+      legalEntityIds: [fixture.legalEntityId, fixture.runtimeHandoff.secondaryLegalEntityId]
+        .filter((legalEntityId) => legalEntityId !== undefined)
+        .map((legalEntityId) => LegalEntityIdSchema.make(legalEntityId)),
+    });
     const signedIn = yield* authentication.signIn(email, password, new Headers({ origin: configuration.baseUrl }));
     const headers = new Headers({
       cookie: signedIn.setCookieHeaders.map((value) => value.split(';')[0]).join('; '),
       origin: configuration.baseUrl,
     });
-    const access = yield* makeContextAccessLive();
+    // Session resolution asks the gate only for a support impersonator; this fixture signs in as the
+    // person themselves, so the scripted answer is never reached.
     const resolved = yield* authentication
       .resolveTenantContext(headers)
-      .pipe(Effect.provideService(ContextAccess, access));
+      .pipe(Effect.provideService(AccessDecisionGate, fixtureAccessGate));
     if (resolved.state !== 'authenticated') {
       return yield* new PrivacyCompletionShellFailure({ reason: 'The real fixture staff session did not resolve' });
     }
@@ -264,6 +398,27 @@ const serve = Effect.scoped(
       transport: { correlationId: suffix, idempotencyKey: suffix, targetModuleKey: 'core.identity' },
     }).pipe(Effect.provideContext(fixtureContext));
     yield* keys.clearPendingCleanup(pending.providerKeyId);
+    // The party-registry module credential is minted here, so the Shell mounts with its bindings after it exists.
+    const lifecycleContext = yield* Layer.build(
+      IdentityLifecycleLive.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(ActionRuntime, Context.get(fixtureContext, ActionRuntime)),
+            Layer.succeed(ApiKeyService, keys),
+            Layer.succeed(PrincipalResolver, Context.get(resolver, PrincipalResolver)),
+          ),
+        ),
+      ),
+    );
+    // Actions read the fixture's own services from the calling fiber, exactly as the bindSelf fixture Action does.
+    const moduleCredential = yield* issuePartyModuleCredential({
+      headers,
+      principal: resolved.principal,
+      resolver: Context.get(resolver, PrincipalResolver),
+      suffix,
+      tenantId: fixture.tenantId,
+    }).pipe(Effect.provideContext(Context.merge(fixtureContext, lifecycleContext)));
+    const moduleBindings = yield* partyModuleBindings(composition, moduleCredential.providerKeyId);
     const principal = { ...resolved.principal, legalEntityId: fixture.legalEntityId };
     const catalog = yield* makeInstalledModuleCatalogLoader(Effect.succeed(composition));
     const changePartyState = (newState: 'active' | 'inactive') =>
@@ -282,17 +437,16 @@ const serve = Effect.scoped(
           },
         }).pipe(
           Effect.provideContext(fixtureContext),
-          Effect.provideService(InstalledModuleCatalogService, { load: Effect.succeed(catalog) }),
+          Effect.provideService(InstalledModuleCatalogService, {
+            loadForRevision: (_compositionRevision) => Effect.succeed(catalog),
+          }),
         );
       });
     const changePartyRead = (operation: 'grant' | 'revoke') =>
       fixture.changeManagerModuleAccess(partyModule, operation);
     yield* changePartyRead('grant');
     yield* Effect.addFinalizer(() => changePartyRead('revoke').pipe(Effect.orDie));
-    const app = yield* Effect.acquireRelease(
-      Effect.sync(() => apiRuntime.createHandler()),
-      (value) => Effect.promise(value.dispose.bind(value)),
-    );
+    const app = yield* mountShellApiHandler(Layer.succeed(AccessDecisionGate, fixtureAccessGate), moduleBindings);
     const server = yield* HttpServer.HttpServer;
     yield* server.serve(
       Effect.gen(function* shellRequest() {
@@ -316,7 +470,14 @@ const serve = Effect.scoped(
         const webRequest = yield* HttpServerRequest.toWeb(request);
         const response = yield* Effect.tryPromise({
           catch: () => new PrivacyCompletionShellFailure({ reason: 'Shell HTTP adapter failed' }),
-          try: app.handler.bind(app, webRequest, undefined),
+          try: dispatchEffectBffRequest.bind(
+            undefined,
+            app.handler,
+            webRequest,
+            new URL(webRequest.url).pathname.startsWith(`${shellAuthenticationApiContract.apiPrefix}/`)
+              ? { prefix: shellAuthenticationApiContract.apiPrefix }
+              : {},
+          ),
         });
         return HttpServerResponse.fromWeb(response);
       }),
@@ -331,6 +492,7 @@ const serve = Effect.scoped(
       apiKey: Redacted.value(pending.secret),
       legalEntityId: fixture.legalEntityId,
       marker: ultramodernDeliveryUnit,
+      moduleApiKey: Redacted.value(moduleCredential.secret),
       port: address.port,
       principal: wirePrincipal,
       protocolVersion: 2,
@@ -350,6 +512,7 @@ const describe = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
   protocolVersion: 2,
   responseSocketEnvironment: privacyCompletionResponseEnvironment,
   responseTransport: privacyCompletionResponseTransport,
+  runtimeContract: createShellRuntimeContract(ultramodernDeliveryUnit.buildMarker),
 }).pipe(Effect.flatMap((line) => Effect.sync(() => process.stdout.write(`${line}\n`))));
 NodeRuntime.runMain(
   Effect.scoped(

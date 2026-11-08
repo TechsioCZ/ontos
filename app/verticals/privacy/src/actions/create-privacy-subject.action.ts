@@ -21,7 +21,7 @@ import {
   PrivacySubjectPartyOwner,
   privacySubjectPartyOwnerUnavailable,
 } from '../persistence/privacy-subject-party-owner.ts';
-import { privacySubjectRefForParty } from '../../shared/domain/privacy-subject-identity.ts';
+import { privacySubjectRefForParty } from '@app/consent-authority-contracts';
 
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
 import {
@@ -123,6 +123,14 @@ const preparePrivacySubjectServices = Effect.fn('CreatePrivacySubjectAction.prep
 
 export const createPrivacySubjectAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.privacy-subject.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'subjects', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.create-privacy-subject.access.v1',
@@ -134,7 +142,7 @@ export const createPrivacySubjectAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.create-privacy-subject',
       moduleKey: 'privacy.core',
       role: 'action',

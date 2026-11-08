@@ -4,10 +4,10 @@ import type { ReadLoadContext, ReadHandlerResult } from '@app/core-runtime';
 import { Effect } from 'effect';
 import { ConfigurationRequestSchema, ConfigurationResponseSchema } from '../../shared/apis/configuration.ts';
 import type { ConfigurationRequest, ConfigurationResponse } from '../../shared/apis/configuration.ts';
+import { configurationCurrentnessFacts } from '../services/assortment-currentness.ts';
 import {
   assortmentConfigurationReadService,
   assortmentConfigurationReadSourceForScope,
-  configurationPermissionTarget,
 } from '../services/governed-configuration-read.service.ts';
 
 const MODULE_KEY = 'commerce.assortment';
@@ -18,7 +18,7 @@ interface ConfigurationServices {
 
 export const configurationEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'assortment.configuration.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.assortment.api.configuration',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -40,17 +40,18 @@ export const readConfiguration = (
     ),
   );
 
-export const configurationReadPermissionTarget = (
-  input: ConfigurationRequest,
-  scope: Parameters<typeof configurationPermissionTarget>[1],
-) => ({
-  assortmentPermission: configurationPermissionTarget(input, scope),
-  kind: 'assortment_permission' as const,
-});
-
 export const configurationRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.assortment.configuration.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'configuration', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
+    accessOwnerFacts: (input) => configurationCurrentnessFacts(input),
     entrypoint: configurationEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',
@@ -59,7 +60,6 @@ export const configurationRead = defineRead(
     inputSchema: ConfigurationRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'assortment_permission',
     policies: [],
     readKey: 'commerce.assortment.api.configuration',
     resultSchema: ConfigurationResponseSchema,
@@ -73,5 +73,4 @@ export const configurationRead = defineRead(
         scope,
       ),
     }),
-  (input, scope) => configurationReadPermissionTarget(input, scope),
 );

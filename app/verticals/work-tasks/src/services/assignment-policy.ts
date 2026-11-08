@@ -1,5 +1,5 @@
 import { defineMicroverticalPolicy, denyPolicy } from '@app/core-runtime';
-import { loadAssignmentPreflightSnapshot, resolveAssignee } from '@app/core-runtime/auth/assignable-principals';
+import { AssignablePrincipals, loadAssignmentPreflightSnapshot } from '@app/core-runtime/auth/assignable-principals';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import { and, eq } from 'drizzle-orm';
 import { Effect, Match, Option, Schema } from 'effect';
@@ -7,6 +7,8 @@ import type { ApplyCommandPayload, WorkCommand } from '../../shared/actions/appl
 import { WorkStateSchema } from '../../shared/apis/records.ts';
 import type { WorkState } from '../../shared/apis/records.ts';
 import { workStates } from '../database/schema.ts';
+
+import { workRecordsCarrier } from '../../shared/access-declarations.ts';
 
 const samePrincipal = (left: PrincipalRef | undefined, right: PrincipalRef) =>
   left?.tenantId === right.tenantId && left.principalId === right.principalId;
@@ -79,7 +81,19 @@ export const assignmentPolicy = defineMicroverticalPolicy<ApplyCommandPayload, '
       }
       const target = changedAssignmentTarget(payload.command, Option.getOrUndefined(value.state));
       if (target !== undefined) {
-        yield* resolveAssignee(directory, target, { moduleId: 'work.tasks', permission: 'module.access' });
+        const assignments = yield* Effect.serviceOption(AssignablePrincipals).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () =>
+                Effect.fail(denyPolicy('assignment_unavailable', 'Assignment authorization is unavailable')),
+              onSome: Effect.succeed,
+            }),
+          ),
+        );
+        yield* assignments.resolveAssignee(directory, target, {
+          carrier: workRecordsCarrier,
+          scope: { ...principal, correlationId: transport.correlationId, legalEntityId },
+        });
       }
     },
     Effect.catchTags({

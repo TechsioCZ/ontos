@@ -6,13 +6,53 @@ import type {
   HttpClientError,
   Schema,
 } from '@modern-js/bff-effect/effect-client';
-import { Context } from 'effect';
+import { Context, Crypto, PlatformError } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/http';
 
 import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../shared/api.ts';
 import { moduleTargetSourceHeader, moduleTargetSourcePathHeader } from '../../shared/module-target-diagnostics.ts';
 import type { ModuleTargetSource } from '../../shared/module-target-diagnostics.ts';
 import type { DocumentGatewayContextsRequest } from '../../shared/document-gateway-api.ts';
+import { AccessAdministrationApi } from '../../shared/access-admin-api.ts';
+import type {
+  AccessAdminProblem,
+  AccessApproval,
+  AccessPeopleMutationResponse,
+  CreateAccessRolePayload,
+  DecideAccessApprovalPayload,
+  DecideAccessChangesPayload,
+  DecideAccessChangesResponse,
+  ExecuteAccessApprovalPayload,
+  ExplainAccessPayload,
+  ExplainAccessResponse,
+  GetAccessRolePayload,
+  GetAccessRoleResponse,
+  ListAccessApprovalsPayload,
+  ListAccessApprovalsResponse,
+  ListAccessAssignmentsPayload,
+  ListAccessAssignmentsResponse,
+  ListAccessChangesPayload,
+  ListAccessChangesResponse,
+  ListAccessPeoplePayload,
+  ListAccessPeopleOptionsResponse,
+  ListAccessPeopleResponse,
+  ListAccessRolesPayload,
+  ListAccessRolesResponse,
+  ListAccessRoleTemplatesPayload,
+  ListAccessRoleTemplatesResponse,
+  PreviewAccessChangesPayload,
+  PreviewAccessChangesResponse,
+  AccessRoleEditPayload,
+  PreviewAccessRoleEditResponse,
+  SaveAccessRoleEditPayload,
+  SaveAccessRoleEditResponse,
+  AssignAccessRolePayload,
+  RevokeAccessAssignmentPayload,
+  CreateAccessDelegationPayload,
+  RevokeAccessDelegationPayload,
+  SetAccessTeamMembershipPayload,
+  TransferAccessOwnershipPayload,
+} from '../../shared/access-admin-api.ts';
 // @ontos-codesmith-core-read-client-imports:start
 
 // @ontos-core-read legal-entity-detail
@@ -81,7 +121,7 @@ import type {
   ShellSearchPayload,
   ShellSearchResponse,
 } from '../../shared/api.ts';
-import type { PeopleList, PeopleListRequest, PeopleRoleCatalog } from '../../shared/people-api.ts';
+import type { PeopleList, PeopleListRequest } from '../../shared/people-api.ts';
 
 export { issueGatewayContext } from '@app/shared-contracts';
 export type {
@@ -171,7 +211,7 @@ const ShellAuthenticationRequestOptions = Context.Reference<ShellAuthenticationC
   { defaultValue: () => ({}) },
 );
 
-const shellAuthenticationClient = makeEffectHttpApiClient(ShellAuthenticationApi, {
+const shellAuthenticationClientOptions = {
   transformClient: HttpClient.mapRequestEffect((request) =>
     ShellAuthenticationRequestOptions.pipe(
       Effect.map((options) => {
@@ -199,7 +239,46 @@ const shellAuthenticationClient = makeEffectHttpApiClient(ShellAuthenticationApi
       }),
     ),
   ),
+};
+
+const shellAuthenticationClient = makeEffectHttpApiClient(ShellAuthenticationApi, shellAuthenticationClientOptions);
+const accessAdministrationClient = makeEffectHttpApiClient(AccessAdministrationApi, shellAuthenticationClientOptions);
+type AccessAdministrationClient = HttpApiClient.Client<
+  Extract<
+    typeof AccessAdministrationApi extends HttpApi.HttpApi<infer _Id, infer Groups> ? Groups : never,
+    HttpApiGroup.Constraint
+  >
+>;
+export type AccessAdministrationClientError = AccessAdminProblem | HttpClientError.HttpClientError | Schema.SchemaError;
+export interface AccessAdministrationWriteOptions extends ShellAuthenticationClientOptions {
+  readonly idempotencyKey: string;
+}
+const accessWriteHeaders = (options: AccessAdministrationWriteOptions) => ({
+  'idempotency-key': options.idempotencyKey,
 });
+
+/** Secure, retry-stable command identity is created once at the UI boundary, then reused on retry. */
+const browserCrypto = Crypto.make({
+  digest: (algorithm, data) => {
+    const input = new Uint8Array(data.byteLength);
+    input.set(data);
+    return Effect.tryPromise({
+      catch: (cause) => PlatformError.systemError({ _tag: 'Unknown', cause, method: 'digest', module: 'WebCrypto' }),
+      try: globalThis.crypto.subtle.digest.bind(globalThis.crypto.subtle, algorithm, input),
+    }).pipe(Effect.map((result) => new Uint8Array(result)));
+  },
+  randomBytes: (size) => globalThis.crypto.getRandomValues(new Uint8Array(size)),
+});
+export const createAccessAdministrationIdempotencyKey = (): Effect.Effect<string, PlatformError.PlatformError> =>
+  browserCrypto.randomUUIDv4();
+const invokeAccessAdministrationClient = <Success, Failure>(
+  options: ShellAuthenticationClientOptions,
+  operation: (client: AccessAdministrationClient) => Effect.Effect<Success, Failure>,
+): Effect.Effect<Success, Failure> =>
+  accessAdministrationClient.pipe(
+    Effect.flatMap(operation),
+    Effect.provideService(ShellAuthenticationRequestOptions, options),
+  );
 
 const invokeShellAuthenticationClient = <Success, Failure>(
   options: ShellAuthenticationClientOptions,
@@ -316,20 +395,6 @@ export const listTenantPeople = (
   options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<PeopleList, IdentityClientError> =>
   invokeShellAuthenticationClient(options, (client) => client.peopleAdministration.listTenantPeople({ payload }));
-
-export const listCompanyPeopleRoleCatalog = (
-  options: ShellAuthenticationClientOptions = {},
-): Effect.Effect<PeopleRoleCatalog, IdentityClientError> =>
-  invokeShellAuthenticationClient(options, (client) =>
-    client.peopleAdministration.listCompanyRoleCatalog({ payload: {} }),
-  );
-
-export const listTenantPeopleRoleCatalog = (
-  options: ShellAuthenticationClientOptions = {},
-): Effect.Effect<PeopleRoleCatalog, IdentityClientError> =>
-  invokeShellAuthenticationClient(options, (client) =>
-    client.peopleAdministration.listTenantRoleCatalog({ payload: {} }),
-  );
 
 export const searchResources = (
   payload: ShellSearchPayload,
@@ -504,5 +569,144 @@ export const executeLegalEntityDetail = (
     client.coreReadLegalEntityDetail.executeLegalEntityDetail({ payload }),
   );
 // @ontos-codesmith-core-read-client-operations:end
+
+// All administration calls use the typed native HttpApi client. The authenticated tenant is
+// resolved again by the BFF; neither a company selection nor a browser tenant id grants access.
+export const listAccessRoles = (
+  payload: ListAccessRolesPayload,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<ListAccessRolesResponse, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) => client.accessAdminRoles.listAccessRoles({ payload }));
+export const getAccessRole = (
+  payload: GetAccessRolePayload,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<GetAccessRoleResponse, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) => client.accessAdminRoles.getAccessRole({ payload }));
+export const listAccessRoleTemplates = (
+  payload: ListAccessRoleTemplatesPayload,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<ListAccessRoleTemplatesResponse, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) => client.accessAdminRoles.listAccessRoleTemplates({ payload }));
+export const previewAccessRoleEdit = (
+  payload: AccessRoleEditPayload,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<PreviewAccessRoleEditResponse, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) => client.accessAdminRoles.previewAccessRoleEdit({ payload }));
+export const saveAccessRoleEdit = (
+  payload: SaveAccessRoleEditPayload,
+  options: AccessAdministrationWriteOptions,
+): Effect.Effect<SaveAccessRoleEditResponse, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) =>
+    client.accessAdminRoles.saveAccessRoleEdit({ headers: accessWriteHeaders(options), payload }),
+  );
+export const createAccessRole = (
+  payload: CreateAccessRolePayload,
+  options: AccessAdministrationWriteOptions,
+): Effect.Effect<GetAccessRoleResponse['role'], AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) =>
+    client.accessAdminRoles.createAccessRole({ headers: accessWriteHeaders(options), payload }),
+  );
+
+export const listAccessPeople = (
+  payload: ListAccessPeoplePayload,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<ListAccessPeopleResponse, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) => client.accessAdminPeople.listAccessPeople({ payload }));
+export const listAccessPeopleOptions = (
+  payload: ListAccessPeoplePayload,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<ListAccessPeopleOptionsResponse, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) => client.accessAdminPeople.listAccessPeopleOptions({ payload }));
+export const listAccessAssignments = (
+  payload: ListAccessAssignmentsPayload,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<ListAccessAssignmentsResponse, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) => client.accessAdminPeople.listAccessAssignments({ payload }));
+export const assignAccessRole = (
+  payload: AssignAccessRolePayload,
+  options: AccessAdministrationWriteOptions,
+): Effect.Effect<AccessPeopleMutationResponse, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) =>
+    client.accessAdminPeople.assignAccessRole({ headers: accessWriteHeaders(options), payload }),
+  );
+export const revokeAccessAssignment = (
+  payload: RevokeAccessAssignmentPayload,
+  options: AccessAdministrationWriteOptions,
+): Effect.Effect<AccessPeopleMutationResponse, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) =>
+    client.accessAdminPeople.revokeAccessAssignment({ headers: accessWriteHeaders(options), payload }),
+  );
+export const setAccessTeamMembership = (
+  payload: SetAccessTeamMembershipPayload,
+  options: AccessAdministrationWriteOptions,
+): Effect.Effect<AccessPeopleMutationResponse, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) =>
+    client.accessAdminPeople.setAccessTeamMembership({ headers: accessWriteHeaders(options), payload }),
+  );
+export const createAccessDelegation = (
+  payload: CreateAccessDelegationPayload,
+  options: AccessAdministrationWriteOptions,
+): Effect.Effect<AccessPeopleMutationResponse, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) =>
+    client.accessAdminPeople.createAccessDelegation({ headers: accessWriteHeaders(options), payload }),
+  );
+export const revokeAccessDelegation = (
+  payload: RevokeAccessDelegationPayload,
+  options: AccessAdministrationWriteOptions,
+): Effect.Effect<AccessPeopleMutationResponse, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) =>
+    client.accessAdminPeople.revokeAccessDelegation({ headers: accessWriteHeaders(options), payload }),
+  );
+export const transferAccessOwnership = (
+  payload: TransferAccessOwnershipPayload,
+  options: AccessAdministrationWriteOptions,
+): Effect.Effect<AccessPeopleMutationResponse, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) =>
+    client.accessAdminPeople.transferAccessOwnership({ headers: accessWriteHeaders(options), payload }),
+  );
+
+export const listAccessChanges = (
+  payload: ListAccessChangesPayload,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<ListAccessChangesResponse, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) => client.accessAdminChanges.listAccessChanges({ payload }));
+export const previewAccessChanges = (
+  payload: PreviewAccessChangesPayload,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<PreviewAccessChangesResponse, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) => client.accessAdminChanges.previewAccessChanges({ payload }));
+export const decideAccessChanges = (
+  payload: DecideAccessChangesPayload,
+  options: AccessAdministrationWriteOptions,
+): Effect.Effect<DecideAccessChangesResponse, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) =>
+    client.accessAdminChanges.decideAccessChanges({ headers: accessWriteHeaders(options), payload }),
+  );
+
+export const listAccessApprovals = (
+  payload: ListAccessApprovalsPayload,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<ListAccessApprovalsResponse, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) => client.accessAdminApprovals.listAccessApprovals({ payload }));
+export const decideAccessApproval = (
+  payload: DecideAccessApprovalPayload,
+  options: AccessAdministrationWriteOptions,
+): Effect.Effect<AccessApproval, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) =>
+    client.accessAdminApprovals.decideAccessApproval({ headers: accessWriteHeaders(options), payload }),
+  );
+export const executeAccessApproval = (
+  payload: ExecuteAccessApprovalPayload,
+  options: AccessAdministrationWriteOptions,
+): Effect.Effect<AccessApproval, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) =>
+    client.accessAdminApprovals.executeAccessApproval({ headers: accessWriteHeaders(options), payload }),
+  );
+
+export const explainAccess = (
+  payload: ExplainAccessPayload,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<ExplainAccessResponse, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) => client.accessAdminExplain.explainAccess({ payload }));
 
 export { Effect } from '@modern-js/bff-effect/effect-client';

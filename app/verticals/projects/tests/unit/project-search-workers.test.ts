@@ -99,7 +99,7 @@ it('the explicit rebuild Action stays an idempotent, explicitly provisioned, ten
   expect(descriptor.owningModuleKey).toBe(projectModuleKey);
   expect(descriptor.idempotency).toBe('required');
   expect(descriptor.legalEntityScope).toBe('optional');
-  expect(descriptor.entrypoint.authorization).toEqual({ kind: 'action_execution', provisioning: 'explicit' });
+  expect(descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
 });
 
 for (const { handle, kind, registration } of workers) {

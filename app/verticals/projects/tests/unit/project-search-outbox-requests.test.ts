@@ -1,6 +1,7 @@
 import { ContextAccess } from '@app/core-runtime';
 import type { ContextAccessService } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { projectsRegistration } from '../../vertical.registration.ts';
 import { Effect, Layer, Option, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { archiveProjectAction } from '../../src/actions/archive-project.action.ts';
@@ -40,6 +41,7 @@ it.layer(Layer.succeed(ContextAccess, unusedContextAccess))('Projects search com
         const project = yield* projectFixture;
         const harness = yield* makeActionTestHarness({
           actionPermission: 'allowed',
+          ownerRegistration: projectsRegistration,
           services: [
             bindActionTestServices(createProjectAction, {
               create: () => Effect.succeed(project),
@@ -47,7 +49,6 @@ it.layer(Layer.succeed(ContextAccess, unusedContextAccess))('Projects search com
             }),
             bindActionTestServices(updateProjectAction, {
               findForLifecycleGuard: () => Effect.succeed({ _tag: 'found', value: project }),
-              ownerEligibility: () => Effect.succeed('allowed'),
               update: (values) => Effect.succeed({ ...project, name: values.name }),
             }),
             bindActionTestServices(moveProjectAction, {
@@ -128,6 +129,7 @@ it.layer(Layer.succeed(ContextAccess, unusedContextAccess))('Projects search com
     Effect.gen(function* rebuildRequest() {
       const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
+        ownerRegistration: projectsRegistration,
         services: [bindActionTestServices(requestSearchRebuildAction, {})],
         tenantPermission: 'allowed',
       });
@@ -155,6 +157,7 @@ it.layer(Layer.succeed(ContextAccess, unusedContextAccess))('Projects search com
     Effect.gen(function* deniedExecutor() {
       const harness = yield* makeActionTestHarness({
         actionPermission: 'denied',
+        ownerRegistration: projectsRegistration,
         services: [bindActionTestServices(requestSearchRebuildAction, {})],
         tenantPermission: 'allowed',
       });

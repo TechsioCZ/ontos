@@ -1,3 +1,15 @@
+import { makeTestBoundAccessGate } from '@app/core-runtime/testing/access-gate';
+import type { ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
+import { ListAccessConditionSchema } from '@app/core-runtime/access/decision/list-access';
+import {
+  prepareSearchPredicate,
+  validSearchPredicate,
+  searchReachSql,
+  searchRecordVisible,
+} from '../../src/services/search-record-access.ts';
+import { PgDialect } from 'drizzle-orm/pg-core';
+import { sql as drizzleSql } from 'drizzle-orm';
+import { merchandiseRegistration } from '../../vertical.registration.ts';
 import {
   ContextAccess,
   CoreSearchIngestion,
@@ -5,17 +17,12 @@ import {
   CoreSearchProjectionStore,
   CoreSearchQueryRuntime,
   CoreSearchWorkerSnapshot,
-  ResourceContainmentRelationshipMutation,
   TrustedPrincipalContextSchema,
   createCoreSearchQueryRuntime,
   makeCoreSearchIngestion,
   makeInMemoryCoreSearchProjectionStore,
 } from '@app/core-runtime';
-import type {
-  ContextAccessDecision,
-  CoreSearchProjectionHit,
-  CoreSearchWorkerSnapshotService,
-} from '@app/core-runtime';
+import type { CoreSearchProjectionHit, CoreSearchWorkerSnapshotService } from '@app/core-runtime';
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { scriptedPgClientLayer, testSqlConnection } from '@app/core-runtime/testing/scripted-pg-client';
@@ -26,7 +33,7 @@ import { Context, Effect, Exit, Layer, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it, rstest } from 'effect-rstest';
 
-import { merchandiseRelations } from '../../src/database/schema.ts';
+import { merchandiseRelations, products as productTable, orders as orderTable } from '../../src/database/schema.ts';
 import { ordersRead } from '../../src/search/orders.provider.ts';
 import { productsRead } from '../../src/search/products.provider.ts';
 import {
@@ -196,7 +203,6 @@ it.effect(
               CoreSearchIngestion,
               makeCoreSearchIngestion(store, merchandiseSearchIngestionRegistrations),
             ),
-            Effect.provideService(ResourceContainmentRelationshipMutation, { touch: () => Effect.void }),
           );
         const search = (resource: string) =>
           runtime.search(
@@ -269,7 +275,6 @@ it.effect('projects only approved JSON parameter members and checks every owner 
           CoreSearchIngestion,
           makeCoreSearchIngestion(store, merchandiseSearchIngestionRegistrations),
         ),
-        Effect.provideService(ResourceContainmentRelationshipMutation, { touch: () => Effect.void }),
       );
       const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
       // A local fixture of the reported SKU/title is searchable once a verified snapshot is actually published.
@@ -277,7 +282,7 @@ it.effect('projects only approved JSON parameter members and checks every owner 
       for (const query of ['SKU18kop009', 'ADAPTÉRY', 'material zinek', 'prumer 180']) {
         expect(
           yield* loadMerchandiseSearch(scope, 'product', query, ProductRefSchema, (ids) =>
-            loadCurrentMerchandiseSearch(source.db, scope, 'product', ids),
+            loadCurrentMerchandiseSearch(source.db, scope, 'product', ids, { groups: [] }),
           ).pipe(Effect.provideService(CoreSearchQueryRuntime, runtime)),
         ).toHaveLength(1);
       }
@@ -325,7 +330,7 @@ it.effect('current owner rematch ranks canonical exact/prefix product and varian
         })),
       );
       const results = yield* loadMerchandiseSearch(scope, 'product', '  sku18KOP009  ', ProductRefSchema, (ids) =>
-        loadCurrentMerchandiseSearch(source.db, scope, 'product', ids),
+        loadCurrentMerchandiseSearch(source.db, scope, 'product', ids, { groups: [] }),
       ).pipe(
         Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed(hits) }),
         Effect.flatMap(Schema.decodeUnknownEffect(ProductsProviderResponseSchema)),
@@ -395,7 +400,7 @@ it.effect(
           const source = yield* sourceSnapshot({ status: 'VERIFIED' }, '1', false, state);
           expect(
             yield* loadMerchandiseSearch(scope, 'product', state.query, ProductRefSchema, (ids) =>
-              loadCurrentMerchandiseSearch(source.db, scope, 'product', ids),
+              loadCurrentMerchandiseSearch(source.db, scope, 'product', ids, { groups: [] }),
             ).pipe(Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed([hit]) })),
           ).toEqual([]);
         }
@@ -405,7 +410,7 @@ it.effect(
         });
         expect(
           yield* loadMerchandiseSearch(scope, 'product', 'material zinek', ProductRefSchema, (ids) =>
-            loadCurrentMerchandiseSearch(source.db, scope, 'product', ids),
+            loadCurrentMerchandiseSearch(source.db, scope, 'product', ids, { groups: [] }),
           ).pipe(Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed([hit]) })),
         ).toMatchObject([{ relevance: { score: 100, version: '1' }, title: 'Adaptér' }]);
         const legacy = yield* sourceSnapshot({ status: 'VERIFIED' }, '1', false, {
@@ -414,7 +419,7 @@ it.effect(
         });
         expect(
           yield* loadMerchandiseSearch(scope, 'product', 'legacy', ProductRefSchema, (ids) =>
-            loadCurrentMerchandiseSearch(legacy.db, scope, 'product', ids),
+            loadCurrentMerchandiseSearch(legacy.db, scope, 'product', ids, { groups: [] }),
           ).pipe(Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed([hit]) })),
         ).toMatchObject([{ relevance: { score: 1000, version: '1' } }]);
         const orderHit = yield* Schema.decodeUnknownEffect(CoreSearchProjectionHitSchema)({
@@ -426,7 +431,7 @@ it.effect(
         });
         expect(
           yield* loadMerchandiseSearch(scope, 'order', 'OBJ-1', OrderRefSchema, (ids) =>
-            loadCurrentMerchandiseSearch(removed.db, scope, 'order', ids),
+            loadCurrentMerchandiseSearch(removed.db, scope, 'order', ids, { groups: [] }),
           ).pipe(Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed([orderHit]) })),
         ).toEqual([]);
       }),
@@ -456,7 +461,7 @@ it.effect('current rematch fails closed when publication is missing or unfinishe
         const source = yield* sourceSnapshot(state.checkpoint, '1', state.missing);
         const exit = yield* Effect.exit(
           loadMerchandiseSearch(scope, 'product', 'kava', ProductRefSchema, (ids) =>
-            loadCurrentMerchandiseSearch(source.db, scope, 'product', ids),
+            loadCurrentMerchandiseSearch(source.db, scope, 'product', ids, { groups: [] }),
           ).pipe(Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed([hit]) })),
         );
         expect(Exit.isFailure(exit)).toBe(true);
@@ -502,6 +507,7 @@ const transactionDepth = (statements: readonly string[]) => {
 };
 
 /** Exercise the actual registration, guarded owner transactions, result authorizer and durable evidence. */
+const noStatements = (): readonly string[] => [];
 const runProviderBoundary = Effect.fn('MerchandiseSearchPublicationTest.providerBoundary')(function* runBoundary(
   resource: 'product' | 'order',
   query: string,
@@ -511,12 +517,30 @@ const runProviderBoundary = Effect.fn('MerchandiseSearchPublicationTest.provider
     readonly checkpoint?: CatalogCheckpoint;
     readonly currentCheckpoint?: CatalogCheckpoint;
     readonly missing?: boolean;
-    readonly resultDecision?: ContextAccessDecision;
+    readonly predicate?: ListAccessPredicate;
+    readonly readOutcome?: 'ALLOWED' | 'DENIED' | 'NEEDS_APPROVAL' | 'UNAVAILABLE';
   } = {},
 ) {
   const calls: string[] = [];
   let headReads = 0;
+  const predicate = options.predicate ?? { groups: [] };
+  const gate = makeTestBoundAccessGate({ defaultAnswer: { outcome: options.readOutcome ?? 'ALLOWED', predicate } });
+  let statements: () => readonly string[] = noStatements;
+  const accessDecision: typeof gate.bound = {
+    ...gate.bound,
+    list: (input, transaction) => {
+      expect(transactionDepth(statements())).toBe(0);
+      expect(input.carrier.accessDeclaration).toEqual(
+        (resource === 'product' ? productsRead : ordersRead).descriptor.accessDeclaration,
+      );
+      calls.push('authorization');
+      return gate.bound.list(input, transaction);
+    },
+  };
+  const visibleProducts = rows.products.filter((row) => searchRecordVisible(predicate, row, scope));
+  const visibleOrders = rows.orders.filter((row) => searchRecordVisible(predicate, row, scope));
   const harness = yield* makeReadTestHarness({
+    accessDecision,
     executeOwnerQuery: ({ params, scope: ownerScope, sql }) => {
       expect(ownerScope).toEqual({ legalEntityId, tenantId });
       expect(params).toContain(tenantId);
@@ -540,8 +564,15 @@ const runProviderBoundary = Effect.fn('MerchandiseSearchPublicationTest.provider
       if (sql.includes(productSql)) {
         calls.push('products');
         expect(sql).toContain(' in (');
+        const reach = new PgDialect().sqlToQuery(
+          searchReachSql(predicate, drizzleSql`${productTable.legalEntityId} || '.' || ${productTable.id}`),
+        );
+        expect(sql.replaceAll(/\$\d+/gu, '?')).toContain(reach.sql.replaceAll(/\$\d+/gu, '?'));
+        if (reach.params.length > 0) {
+          expect(params.slice(-reach.params.length)).toEqual(reach.params);
+        }
         return Effect.succeed(
-          rows.products.map((row) => ({
+          visibleProducts.map((row) => ({
             active: row.active,
             archived: row.archived,
             id: row.id,
@@ -556,48 +587,49 @@ const runProviderBoundary = Effect.fn('MerchandiseSearchPublicationTest.provider
       if (sql.includes(variantSql)) {
         calls.push('variants');
         return Effect.succeed(
-          rows.variants.map((row) => {
-            const selected = {
-              active: row.active,
-              legalEntityId: row.legalEntityId,
-              name: row.name,
-              parameters: row.parameters ?? null,
-              productId: row.productId,
-              sku: row.sku,
-              tenantId: row.tenantId,
-            };
-            return sql.includes('"price_minor"')
-              ? { ...selected, priceMinor: row.priceMinor ?? null, variantId: row.variantId ?? null }
-              : selected;
-          }),
+          rows.variants
+            .filter((row) => visibleProducts.some((product) => product.id === row.productId))
+            .map((row) => {
+              const selected = {
+                active: row.active,
+                legalEntityId: row.legalEntityId,
+                name: row.name,
+                parameters: row.parameters ?? null,
+                productId: row.productId,
+                sku: row.sku,
+                tenantId: row.tenantId,
+              };
+              return sql.includes('"price_minor"')
+                ? { ...selected, priceMinor: row.priceMinor ?? null, variantId: row.variantId ?? null }
+                : selected;
+            }),
         );
       }
       if (sql.includes(orderSql)) {
         calls.push('orders');
         expect(sql).toContain(' in (');
-        return Effect.succeed(rows.orders);
+        const reach = new PgDialect().sqlToQuery(
+          searchReachSql(predicate, drizzleSql`${orderTable.legalEntityId} || '.' || ${orderTable.id}`),
+        );
+        expect(sql.replaceAll(/\$\d+/gu, '?')).toContain(reach.sql.replaceAll(/\$\d+/gu, '?'));
+        if (reach.params.length > 0) {
+          expect(params.slice(-reach.params.length)).toEqual(reach.params);
+        }
+        return Effect.succeed(visibleOrders);
       }
       return Effect.die(`Unexpected provider SQL: ${sql}`);
     },
     operationTime: new Date('2026-11-03T12:00:00.000Z'),
     ownerAuthorizationDecision: 'allowed',
+    ownerRegistration: merchandiseRegistration,
     permissionDecision: 'allowed',
     scope,
   });
-  const access = yield* ContextAccess.pipe(Effect.provide(harness.layer));
-  const authorize = access.resources;
-  const authorization = rstest.spyOn(access, 'resources').mockImplementation((request) => {
-    expect(transactionDepth(harness.snapshot().statements)).toBe(0);
-    calls.push('authorization');
-    return authorize(request).pipe(
-      Effect.map((decisions) =>
-        decisions.map((decision) => ({
-          ...decision,
-          decision: options.resultDecision ?? decision.decision,
-        })),
-      ),
-    );
-  });
+  statements = () => harness.snapshot().statements;
+  const legacy = yield* ContextAccess.pipe(Effect.provide(harness.layer));
+  const authorization = rstest
+    .spyOn(legacy, 'resources')
+    .mockImplementation(() => Effect.die('Canonical Merchandise search must never invoke legacy resource authority'));
   const request = { input: { query }, principal, transport: { correlationId: scope.correlationId } };
   const read = Effect.gen(function* executeProvider() {
     if (resource === 'product') {
@@ -625,6 +657,9 @@ const runProviderBoundary = Effect.fn('MerchandiseSearchPublicationTest.provider
     Effect.exit,
     Effect.ensuring(Effect.sync(() => authorization.mockRestore())),
   );
+  expect(authorization).not.toHaveBeenCalled();
+  expect(gate.accessDecision.askedDecisions).toEqual([]);
+  expect(gate.accessDecision.askedLists).toHaveLength(1);
   const snapshot = harness.snapshot();
   expect(transactionDepth(snapshot.statements)).toBe(0);
   let depth = 0;
@@ -894,15 +929,31 @@ it.layer(NodeCrypto.layer)('Merchandise governed search publication fence', (sui
       Effect.gen(function* authorizedWitnesses() {
         const hit = yield* providerHit('product', 'product-1', 'Stale title');
         const denied = yield* runProviderBoundary('product', 'SKU-01', [hit], staffVariantRows, {
-          resultDecision: 'denied',
+          predicate: {
+            groups: [
+              {
+                clauses: [
+                  {
+                    conditions: [
+                      Schema.decodeUnknownSync(ListAccessConditionSchema)({
+                        _tag: 'RecordKeyIn',
+                        recordKeys: [`${legalEntityId}.another-record`],
+                      }),
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
         });
-        expect(Exit.isSuccess(denied.exit)).toBe(true);
+        expect(denied.exit).toMatchObject({ _tag: 'Success' });
         if (Exit.isSuccess(denied.exit)) {
           expect(denied.exit.value).toEqual([]);
         }
-        expect(denied.calls.at(-1)).toBe('authorization');
+        expect(denied.calls[0]).toBe('authorization');
+        expect(denied.calls).not.toContain('variants');
         const uncertain = yield* runProviderBoundary('product', 'SKU-01', [hit], staffVariantRows, {
-          resultDecision: 'unavailable',
+          readOutcome: 'UNAVAILABLE',
         });
         expect(Exit.isFailure(uncertain.exit)).toBe(true);
         expect(uncertain.snapshot.evidenceWrites).toBe(0);
@@ -937,7 +988,7 @@ it.layer(NodeCrypto.layer)('Merchandise governed search publication fence', (sui
           );
           if (state.missing || (state.checkpoint !== null && state.checkpoint.status !== 'VERIFIED')) {
             expect(Exit.isFailure(result.exit)).toBe(true);
-            expect(result.calls).toEqual(['head']);
+            expect(result.calls).toEqual(['authorization', 'head']);
             expect(result.snapshot.evidenceWrites).toBe(0);
           } else {
             expect(Exit.isSuccess(result.exit)).toBe(true);
@@ -948,8 +999,8 @@ it.layer(NodeCrypto.layer)('Merchandise governed search publication fence', (sui
             }
             expect(result.calls).toEqual(
               resource === 'product'
-                ? ['head', 'index', 'head', 'products', 'variants', 'authorization']
-                : ['head', 'index', 'head', 'orders', 'authorization'],
+                ? ['authorization', 'head', 'index', 'head', 'products', 'variants']
+                : ['authorization', 'head', 'index', 'head', 'orders'],
             );
             expect(result.snapshot.evidenceWrites).toBe(1);
           }
@@ -990,7 +1041,7 @@ it.layer(NodeCrypto.layer)('Merchandise governed search publication fence', (sui
           if (Exit.isSuccess(result.exit)) {
             expect(result.exit.value).toEqual([]);
           }
-          expect(result.calls).not.toContain('authorization');
+          expect(result.calls[0]).toBe('authorization');
         }
         const renamed = yield* runProviderBoundary('product', 'KAVA', [productHit], {
           ...providerOwnerRows,
@@ -1104,7 +1155,7 @@ it.layer(NodeCrypto.layer)('Merchandise governed search publication fence', (sui
   );
 
   suite.effect(
-    'actual result authorization stays after current-owner commit and filters denied/indeterminate resources',
+    'canonical predicates filter owner SQL before projection and indeterminate authority never queries storage',
     () =>
       Effect.gen(function* authorizationBoundary() {
         for (const resource of ['product', 'order'] as const) {
@@ -1114,20 +1165,38 @@ it.layer(NodeCrypto.layer)('Merchandise governed search publication fence', (sui
             resource === 'product' ? 'KAVA' : 'OBJ-1',
             [hit],
             providerOwnerRows,
-            { resultDecision: 'denied' },
+            {
+              predicate: {
+                groups: [
+                  {
+                    clauses: [
+                      {
+                        conditions: [
+                          Schema.decodeUnknownSync(ListAccessConditionSchema)({
+                            _tag: 'RecordKeyIn',
+                            recordKeys: [`${legalEntityId}.another-record`],
+                          }),
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
           );
-          expect(Exit.isSuccess(denied.exit)).toBe(true);
+          expect(denied.exit).toMatchObject({ _tag: 'Success' });
           if (Exit.isSuccess(denied.exit)) {
             expect(denied.exit.value).toEqual([]);
           }
-          expect(denied.calls.at(-1)).toBe('authorization');
+          expect(denied.calls[0]).toBe('authorization');
+          expect(denied.calls).not.toContain('variants');
           expect(denied.snapshot.evidenceWrites).toBe(1);
           const uncertain = yield* runProviderBoundary(
             resource,
             resource === 'product' ? 'KAVA' : 'OBJ-1',
             [hit],
             providerOwnerRows,
-            { resultDecision: 'unavailable' },
+            { readOutcome: 'UNAVAILABLE' },
           );
           expect(Exit.isFailure(uncertain.exit)).toBe(true);
           expect(uncertain.snapshot.evidenceWrites).toBe(0);
@@ -1147,7 +1216,7 @@ it.layer(NodeCrypto.layer)('Merchandise governed search publication fence', (sui
           { currentCheckpoint: { status: 'IMPORTING' } },
         );
         expect(Exit.isFailure(unpublished.exit)).toBe(true);
-        expect(unpublished.calls).toEqual(['head', 'index', 'head']);
+        expect(unpublished.calls).toEqual(['authorization', 'head', 'index', 'head']);
         expect(unpublished.snapshot.evidenceWrites).toBe(0);
         const foreign = yield* Schema.decodeUnknownEffect(CoreSearchProjectionHitSchema)({
           ...hit,
@@ -1160,9 +1229,78 @@ it.layer(NodeCrypto.layer)('Merchandise governed search publication fence', (sui
           providerOwnerRows,
         );
         expect(Exit.isFailure(forged.exit)).toBe(true);
-        expect(forged.calls).toEqual(['head', 'index']);
+        expect(forged.calls).toEqual(['authorization', 'head', 'index']);
         expect(forged.snapshot.evidenceWrites).toBe(0);
       }
     }),
   );
 });
+
+it.effect('both real search providers preserve AND/OR target intersections and refuse unsupported owner facts', () =>
+  Effect.gen(function* compoundPredicates() {
+    for (const resource of ['product', 'order'] as const) {
+      const hit = yield* providerHit(resource, `${resource}-1`, 'Stale index label');
+      const target = Schema.decodeUnknownSync(ListAccessConditionSchema)({
+        _tag: 'RecordKeyIn',
+        recordKeys: [`${legalEntityId}.${resource}-1`],
+      });
+      const other = Schema.decodeUnknownSync(ListAccessConditionSchema)({
+        _tag: 'RecordKeyIn',
+        recordKeys: [`${legalEntityId}.another`],
+      });
+      const unsupported = Schema.decodeUnknownSync(ListAccessConditionSchema)({
+        _tag: 'AssignedTo',
+        holder: { _tag: 'Principal', principalId: principal.principalId },
+      });
+      const predicates: readonly { readonly expected: number; readonly predicate: ListAccessPredicate }[] = [
+        { expected: 1, predicate: { groups: [] } },
+        { expected: 1, predicate: { groups: [{ clauses: [{ conditions: [target] }] }] } },
+        // OR admits the real target, the second AND group still constrains that result.
+        {
+          expected: 1,
+          predicate: {
+            groups: [
+              { clauses: [{ conditions: [other] }, { conditions: [target] }] },
+              { clauses: [{ conditions: [target] }] },
+            ],
+          },
+        },
+        {
+          expected: 0,
+          predicate: { groups: [{ clauses: [{ conditions: [target] }] }, { clauses: [{ conditions: [other] }] }] },
+        },
+        { expected: 0, predicate: { groups: [{ clauses: [{ conditions: [target, other] }] }] } },
+        { expected: 0, predicate: { groups: [{ clauses: [{ conditions: [target, unsupported] }] }] } },
+      ];
+      for (const { expected, predicate } of predicates) {
+        const actual = yield* runProviderBoundary(
+          resource,
+          resource === 'product' ? 'KAVA' : 'OBJ-1',
+          [hit],
+          providerOwnerRows,
+          { predicate },
+        );
+        expect(Exit.isSuccess(actual.exit)).toBe(true);
+        if (Exit.isSuccess(actual.exit)) {
+          expect(actual.exit.value).toHaveLength(expected);
+        }
+        if (expected === 0) {
+          expect(actual.calls).not.toContain('variants');
+        }
+      }
+      for (const readOutcome of ['DENIED', 'NEEDS_APPROVAL', 'UNAVAILABLE'] as const) {
+        const refused = yield* runProviderBoundary(resource, 'KAVA', [hit], providerOwnerRows, { readOutcome });
+        expect(Exit.isFailure(refused.exit)).toBe(true);
+        expect(refused.calls).toEqual(['authorization']);
+      }
+    }
+  }).pipe(Effect.provide(NodeCrypto.layer), Effect.scoped),
+);
+it.effect('missing or malformed canonical search predicates never become all-in-scope', () =>
+  Effect.gen(function* missingPredicate() {
+    expect(yield* prepareSearchPredicate().pipe(Effect.flip)).toMatchObject({ _tag: 'ReadPermissionDenied' });
+    expect(validSearchPredicate({ groups: [{ clauses: [] }] })).toBe(false);
+    expect(validSearchPredicate({ groups: [{ clauses: [{ conditions: [] }] }] })).toBe(false);
+    expect(validSearchPredicate({ groups: [{ clauses: [{ conditions: [{ _tag: 'Unsupported' }] }] }] })).toBe(false);
+  }),
+);

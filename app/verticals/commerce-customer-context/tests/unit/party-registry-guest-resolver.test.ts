@@ -1,10 +1,15 @@
-import { Effect, Predicate, Schema } from 'effect';
+import { NodeCrypto } from '@effect/platform-node';
+import { Crypto, Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { getActionServicePreflight } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import {
+  bindActionTestServices,
+  makeActionPreparationProbe,
+  makeActionTestHarness,
+} from '@app/core-runtime/testing/actions';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import {
   attributeGuestRetailCustomerAction,
   bindPreparedGuestParty,
-  prepareGuestAttributionServices,
 } from '../../src/actions/attribute-guest-retail-customer.action.ts';
 import type { PartyRegistryGuestResolverFactoryService } from '../../src/integrations/party-registry-guest-resolver.ts';
 
@@ -14,6 +19,9 @@ import {
   PartyRegistryGuestResolverFactory,
   partyRegistryGuestResolverFactoryLive,
 } from '../../src/integrations/party-registry-guest-resolver.ts';
+import { PartyRegistryRetailPartyResolverFactory } from '../../src/integrations/party-registry-retail-party-resolver.ts';
+import { ProfileReactivationEligibilityEvaluatorFactory } from '../../src/integrations/profile-reactivation-eligibility.ts';
+import { ProfileCounterpartyRoleEligibilityResolverFactory } from '../../src/profile-counterparty-role-eligibility.ts';
 import { ProfilePersistenceDependencyFailure } from '../../src/persistence/profile-persistence.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -178,13 +186,8 @@ it.effect('binds a prepared Party outcome to every Guest evidence selector field
   }),
 );
 
-it.effect('runs the registered Guest Party preflight with the exact payload selector outside owner SQL', () =>
+it.effect('runs the original registered Guest preparation with the exact selector before owner execution', () =>
   Effect.gen(function* guestPreflight() {
-    expect(getActionServicePreflight(attributeGuestRetailCustomerAction)).toBe(prepareGuestAttributionServices);
-    const preflight = prepareGuestAttributionServices;
-    let selected: unknown;
-    let selectedScope: unknown;
-    let transactions = 0;
     const payload = {
       correlationRoot: request.correlationRoot,
       guestEvidenceRef: request.guestEvidenceRef,
@@ -196,55 +199,97 @@ it.effect('runs the registered Guest Party preflight with the exact payload sele
         tenantId,
       },
     };
-    const preparation = {
-      actionInvocationId: '50000000-0000-4000-8000-000000000005',
-      compositionRevision: 'a'.repeat(64),
-      scope: {
-        authMethod: 'session' as const,
-        correlationId: scope.requestCorrelation,
-        legalEntityId,
-        principalId: '60000000-0000-4000-8000-000000000006',
-        tenantId,
-      },
-      transaction: () => {
-        transactions += 1;
-        return Effect.die('Unexpected SQL snapshot');
-      },
+    const principal = {
+      authBindingId: '50000000-0000-4000-8000-000000000005',
+      authContextRef: 'better-auth-session:guest-preparation-unit',
+      authMethod: 'session' as const,
+      legalEntityId,
+      principalId: '60000000-0000-4000-8000-000000000006',
+      tenantId,
     };
     let calls = 0;
-    const layer: PartyRegistryGuestResolverFactoryService = {
+    let executions = 0;
+    const probe = makeActionPreparationProbe(attributeGuestRetailCustomerAction);
+    const harness = yield* makeActionTestHarness({
+      access: 'allowed',
+      ownerRegistration: commerceCustomerContextRegistration,
+      services: [
+        bindActionTestServices(attributeGuestRetailCustomerAction, {
+          attribute: () =>
+            Effect.sync(() => {
+              executions += 1;
+              expect(calls).toBe(1);
+              return { outcome: 'PARTY_INVALID' as const };
+            }),
+        }),
+      ],
+    });
+    const crypto = yield* Crypto.Crypto;
+    const resolver: PartyRegistryGuestResolverFactoryService = {
       make: (input) => {
-        selectedScope = input;
-        return (selector) => {
-          selected = selector;
-          calls += 1;
-          return Effect.succeed({ outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE' as const, reason: 'not established' });
-        };
+        expect(input.crypto).toBe(crypto);
+        expect(input.scope).toEqual({ ...principal, correlationId: scope.requestCorrelation });
+        expect('evaluatePolicy' in input).toBe(false);
+        return (selector) =>
+          Effect.sync(() => {
+            expect(executions).toBe(0);
+            expect(harness.snapshot().transactionCount).toBe(0);
+            expect(selector).toEqual(request);
+            calls += 1;
+            return { outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE' as const, reason: 'not established' };
+          });
       },
     };
-    const factory = yield* preflight(payload, preparation).pipe(
-      Effect.provideService(PartyRegistryGuestResolverFactory, layer),
-    );
-    expect(factory).toBeDefined();
-    expect(selectedScope).toEqual(scope);
-    expect(selected).toEqual(request);
+    const run = (candidate: typeof payload, idempotencyKey: string) =>
+      harness.runtime.runAction(
+        probe.input({
+          payload: candidate,
+          principal,
+          transport: { correlationId: scope.requestCorrelation, idempotencyKey },
+        }),
+      );
+    expect(Option.isNone(probe.snapshot())).toBe(true);
+    expect(
+      yield* run(payload, 'original-guest-preparation').pipe(
+        Effect.provideService(PartyRegistryGuestResolverFactory, resolver),
+        Effect.provideService(Crypto.Crypto, crypto),
+      ),
+    ).toEqual({ outcome: 'PARTY_INVALID' });
+    expect(Option.isSome(probe.snapshot())).toBe(true);
     expect(calls).toBe(1);
-    expect(transactions).toBe(0);
-    const failure = yield* preflight(
+    expect(executions).toBe(1);
+    expect(harness.snapshot().preparationQueries).toEqual([]);
+    expect(harness.snapshot().committed).toHaveLength(1);
+    const failure = yield* run(
       { ...payload, sellingLegalEntityRef: { ...payload.sellingLegalEntityRef, tenantId: otherTenantId } },
-      preparation,
-    ).pipe(
-      Effect.provideService(PartyRegistryGuestResolverFactory, layer),
-      Effect.match({ onFailure: (error) => error, onSuccess: () => null }),
-    );
+      'foreign-guest-preparation',
+    ).pipe(Effect.provideService(PartyRegistryGuestResolverFactory, resolver), Effect.flip);
     expect(failure).toMatchObject({ code: 'CURRENT_STATE_CONFLICT' });
     expect(calls).toBe(1);
+    expect(executions).toBe(1);
     const cause = new ProfilePersistenceDependencyFailure({ reason: 'Party unavailable' });
-    const unavailable = yield* preflight(payload, preparation).pipe(
+    const unavailable = yield* run(payload, 'unavailable-guest-preparation').pipe(
       Effect.provideService(PartyRegistryGuestResolverFactory, { make: () => () => Effect.fail(cause) }),
-      Effect.match({ onFailure: (error) => error, onSuccess: () => null }),
+      Effect.flip,
     );
     expect(unavailable).toMatchObject({ cause, code: 'PARTY_REGISTRY_UNAVAILABLE', retryable: true });
-    expect(transactions).toBe(0);
-  }),
+    expect(executions).toBe(1);
+    expect(harness.snapshot().committed).toHaveLength(1);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeCrypto.layer,
+        Layer.succeed(PartyRegistryRetailPartyResolverFactory, {
+          make: () => () => Effect.die('Guest preparation must not resolve Retail identity'),
+        }),
+        Layer.succeed(ProfileCounterpartyRoleEligibilityResolverFactory, {
+          make: () => () => Effect.die('Guest preparation must not resolve Counterparty roles'),
+        }),
+        Layer.succeed(ProfileReactivationEligibilityEvaluatorFactory, {
+          make: () => () => Effect.die('Guest preparation must not evaluate reactivation'),
+          observe: () => Effect.die('Guest preparation must not observe reactivation'),
+        }),
+      ),
+    ),
+  ),
 );

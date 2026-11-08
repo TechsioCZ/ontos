@@ -6,15 +6,15 @@ import {
   ActionRuntime,
   companyAgentDirectoryRead,
   openPrincipalOperators,
+  OperationalScopeResolver,
   ReadRuntime,
   replaceAgentOperatorsAction,
 } from '@app/core-runtime';
 import type { CompanyAgentDirectoryResultSchema } from '@app/core-runtime';
-import { ActionAuthorizationLifecycle } from '@app/core-runtime/outbox/core-system-worker';
+import { AccessProjectionWriter } from '@app/core-runtime/access/intent/projection-writer';
 import { AgentModuleKeySchema, AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
 import { Effect, Layer, Match, Schema } from 'effect';
 
-import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import { CompanyDirectory } from './company-directory.ts';
 import type { CompanyDirectoryPort, CompanyDirectoryRequest } from './company-directory.ts';
 import { ConnectionsForbidden } from './connections-forbidden.ts';
@@ -69,8 +69,8 @@ export const CompanyDirectoryLive = (request: CompanyDirectoryRequest) =>
     Effect.gen(function* companyDirectoryService() {
       const reads = yield* ReadRuntime;
       const actions = yield* ActionRuntime;
-      const lifecycle = yield* ActionAuthorizationLifecycle;
-      const catalog = yield* ShellInstalledModuleCatalog;
+      const projectionWriter = yield* AccessProjectionWriter;
+      const scopeResolver = yield* OperationalScopeResolver;
 
       const loadSnapshot = Effect.suspend(() =>
         reads.runRead({
@@ -85,13 +85,16 @@ export const CompanyDirectoryLive = (request: CompanyDirectoryRequest) =>
         Effect.withSpan('CompanyDirectory.snapshot'),
       );
 
-      const reconcile = Effect.fn('CompanyDirectory.reconcile')(function* reconcileOperators(agentPrincipalId: string) {
-        const installed = yield* catalog.load;
-        yield* lifecycle.reconcilePrincipal(
-          request.principal.tenantId,
-          agentPrincipalId,
-          installed.composition.revision,
-        );
+      // Authorization v2 retired the per-principal Action lifecycle: the one writer of the engine is the access
+      // projection writer, which brings the whole tenant's projection in line with its intent. The reconcile is
+      // idempotent, so a retry that already converged resumes instead of writing a second graph.
+      const reconcile = Effect.fn('CompanyDirectory.reconcile')(function* reconcileProjection() {
+        const scope = yield* scopeResolver.resolve({
+          correlationId: request.transport.correlationId,
+          legalEntityScope: 'required',
+          principal: request.principal,
+        });
+        yield* projectionWriter.reconcileTenant({ scope });
       }, Effect.mapError(unavailable));
 
       const replaceOperators = Effect.fn('CompanyDirectory.replaceOperators')(function* replaceOperatorsEffect(
@@ -148,7 +151,7 @@ export const CompanyDirectoryLive = (request: CompanyDirectoryRequest) =>
           revision += 1;
         }
         // A matching committed command is resumed rather than written/audited again.
-        yield* reconcile(agent.principalId);
+        yield* reconcile();
         const confirmed = (yield* loadSnapshot).agents.find((candidate) => candidate.principalId === agent.principalId);
         if (
           confirmed?.status !== 'active' ||
@@ -164,7 +167,7 @@ export const CompanyDirectoryLive = (request: CompanyDirectoryRequest) =>
       const confirmArchived = Effect.fn('CompanyDirectory.confirmArchived')(function* confirmArchivedEffect(
         agentPrincipalId: string,
       ) {
-        yield* reconcile(agentPrincipalId);
+        yield* reconcile();
         // Archive removes company membership. Confirm graph cleanup without emitting a second command.
         const operators = yield* Effect.scoped(
           openPrincipalOperators.pipe(Effect.flatMap((port) => port.operatorsOf(agentPrincipalId))),

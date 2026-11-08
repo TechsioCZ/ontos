@@ -4,13 +4,11 @@ import {
   CoreSearchProjectionStore,
   CoreSearchProjectionUnavailable,
   CoreSearchWorkerSnapshot,
-  ResourceContainmentMutationUnavailable,
-  ResourceContainmentRelationshipMutation,
   createCoreSearchQueryRuntime,
   makeCoreSearchIngestion,
   makeInMemoryCoreSearchProjectionStore,
 } from '@app/core-runtime';
-import type { CoreSearchProjectionStoreService, ResourceContainmentRelationshipMutationInput } from '@app/core-runtime';
+import type { CoreSearchProjectionStoreService } from '@app/core-runtime';
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
 import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -19,9 +17,19 @@ import { loadSearchSnapshot } from '../../src/services/search-source.ts';
 import type { SearchSnapshot } from '../../src/services/search-source.ts';
 import { CalendarDateSchema, ProjectIdSchema } from '../../shared/apis/records.ts';
 import { TaskRefSchema } from '../../shared/resources/task.ts';
-import { loadSearch } from '../../src/services/search-read.ts';
+import { loadSearch as governedSearch } from '../../src/services/search-read.ts';
+
 import { searchIngestionRegistrations } from '../../src/worker-host/search-ingestion-registrations.ts';
 import { company, context, otherCompany, otherTenant, ref, scope, snapshot } from './search-fixtures.ts';
+
+const loadSearch = (operationScope: Parameters<typeof governedSearch>[0], query: string) =>
+  governedSearch(operationScope, query, { groups: [] });
+
+const publishWithStore = (store: CoreSearchProjectionStoreService, next: SearchSnapshot) =>
+  publishSearchSnapshot(context, next).pipe(
+    Effect.provideService(CoreSearchProjectionStore, store),
+    Effect.provideService(CoreSearchIngestion, makeCoreSearchIngestion(store, searchIngestionRegistrations)),
+  );
 
 it.effect('indexes only approved task evidence with exact tenant, resource type and company', () =>
   Effect.gen(function* test() {
@@ -50,22 +58,11 @@ it.effect('fails foreign tenants and duplicate identities across companies befor
     expect(Exit.isFailure(duplicate)).toBe(true);
   }),
 );
-it.effect('lifecycle update, archive, deletion and rebuild are version fenced and repair containment', () =>
+it.effect('lifecycle update, archive, deletion and rebuild are version fenced', () =>
   Effect.gen(function* test() {
     const store = makeInMemoryCoreSearchProjectionStore();
     const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
-    const relationships: ResourceContainmentRelationshipMutationInput[] = [];
-    const publish = (next: typeof snapshot) =>
-      publishSearchSnapshot(context, next).pipe(
-        Effect.provideService(CoreSearchProjectionStore, store),
-        Effect.provideService(CoreSearchIngestion, makeCoreSearchIngestion(store, searchIngestionRegistrations)),
-        Effect.provideService(ResourceContainmentRelationshipMutation, {
-          touch: (batch) =>
-            Effect.sync(() => {
-              relationships.push(batch);
-            }),
-        }),
-      );
+    const publish = (next: typeof snapshot) => publishWithStore(store, next);
     yield* publish(snapshot);
     yield* publish(snapshot);
     expect(
@@ -81,10 +78,6 @@ it.effect('lifecycle update, archive, deletion and rebuild are version fenced an
         Effect.provideService(CoreSearchQueryRuntime, runtime),
       ),
     ).toEqual([]);
-    expect(relationships[0]?.relationships).toMatchObject([
-      { container: { objectType: 'module_access' }, relation: 'module' },
-    ]);
-    expect(relationships.every((batch) => batch.relationships.every((edge) => edge.relation === 'module'))).toBe(true);
     yield* publish({
       ...snapshot,
       projectionVersion: '2',
@@ -130,19 +123,11 @@ it.effect('rejects a mismatched trusted snapshot before attempting owner SQL', (
 );
 
 const taskRef = (id: string) => Schema.decodeSync(TaskRefSchema)({ ...ref, resourceId: id });
-const publishWithStore = (store: CoreSearchProjectionStoreService, next: SearchSnapshot) =>
-  publishSearchSnapshot(context, next).pipe(
-    Effect.provideService(CoreSearchProjectionStore, store),
-    Effect.provideService(CoreSearchIngestion, makeCoreSearchIngestion(store, searchIngestionRegistrations)),
-    Effect.provideService(ResourceContainmentRelationshipMutation, { touch: () => Effect.void }),
-  );
 const publicationFailure = () =>
   new CoreSearchProjectionUnavailable({
     code: 'core_search_projection_unavailable',
     reason: 'Test publication failure',
   });
-const containmentFailure = () => new ResourceContainmentMutationUnavailable({ reason: 'Test containment failure' });
-
 it.effect('finds actual task identifiers, owner ID, local project ID, due date and approved enum text', () =>
   Effect.gen(function* test() {
     const store = makeInMemoryCoreSearchProjectionStore();
@@ -201,8 +186,6 @@ it.effect('performs zero individual ingests/applies and one complete replacement
       let applies = 0;
       let ingests = 0;
       let replacements = 0;
-      const order: string[] = [];
-      const batches: ResourceContainmentRelationshipMutationInput[] = [];
       const store: CoreSearchProjectionStoreService = {
         ...backing,
         apply: (input, claim) =>
@@ -212,7 +195,6 @@ it.effect('performs zero individual ingests/applies and one complete replacement
         replace: (input, claim) =>
           Effect.sync(() => {
             replacements += 1;
-            order.push('replace');
           }).pipe(Effect.andThen(backing.replace(input, claim))),
       };
       const ingestion = makeCoreSearchIngestion(store, searchIngestionRegistrations);
@@ -233,25 +215,8 @@ it.effect('performs zero individual ingests/applies and one complete replacement
               ingests += 1;
             }).pipe(Effect.andThen(ingestion.ingest(input, claim))),
         }),
-        Effect.provideService(ResourceContainmentRelationshipMutation, {
-          touch: (batch) =>
-            Effect.sync(() => {
-              batches.push(batch);
-              order.push('containment');
-            }),
-        }),
       );
       expect({ applies, ingests, replacements }).toEqual({ applies: 0, ingests: 0, replacements: 1 });
-      let expectedBatchSizes: readonly number[] = [];
-      if (count === 1) {
-        expectedBatchSizes = [1];
-      } else if (count > 1) {
-        expectedBatchSizes = [100, 100, 5];
-      }
-      expect(batches.map((batch) => batch.relationships.length)).toEqual(expectedBatchSizes);
-      expect(order).toEqual([...batches.map(() => 'containment'), 'replace']);
-      expect(batches.flatMap((batch) => batch.relationships)).toHaveLength(count);
-      expect(batches.every((batch) => batch.relationships.every((edge) => edge.relation === 'module'))).toBe(true);
       const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
       expect(
         yield* loadSearch(scope, 'ukol').pipe(Effect.provideService(CoreSearchQueryRuntime, runtime)),
@@ -296,57 +261,6 @@ it.effect('a failed replacement leaves the entire old generation searchable and 
         1,
       );
     }
-  }),
-);
-
-it.effect('containment failure never publishes, and a retry repairs containment before replacing', () =>
-  Effect.gen(function* test() {
-    const backing = makeInMemoryCoreSearchProjectionStore();
-    yield* publishWithStore(backing, snapshot);
-    let replacements = 0;
-    let touches = 0;
-    const store: CoreSearchProjectionStoreService = {
-      ...backing,
-      replace: (input, claim) =>
-        Effect.sync(() => {
-          replacements += 1;
-        }).pipe(Effect.andThen(backing.replace(input, claim))),
-    };
-    const next: SearchSnapshot = {
-      ...snapshot,
-      projectionVersion: '2',
-      records: Array.from({ length: 101 }, (_, index) => ({
-        archived: false,
-        legalEntityId: company,
-        ref: taskRef(`replacement-${index}`),
-        title: `Nový úkol ${index}`,
-      })),
-    };
-    const failed = yield* publishSearchSnapshot(context, next).pipe(
-      Effect.provideService(CoreSearchProjectionStore, store),
-      Effect.provideService(CoreSearchIngestion, makeCoreSearchIngestion(store, searchIngestionRegistrations)),
-      Effect.provideService(ResourceContainmentRelationshipMutation, {
-        touch: () =>
-          Effect.sync(() => {
-            touches += 1;
-          }).pipe(
-            Effect.andThen(Effect.suspend(() => (touches === 2 ? Effect.fail(containmentFailure()) : Effect.void))),
-          ),
-      }),
-      Effect.exit,
-    );
-    expect(Exit.isFailure(failed)).toBe(true);
-    expect({ replacements, touches }).toEqual({ replacements: 0, touches: 2 });
-    const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, backing));
-    expect(
-      yield* loadSearch(scope, 'cerstva').pipe(Effect.provideService(CoreSearchQueryRuntime, runtime)),
-    ).toHaveLength(1);
-    expect(yield* loadSearch(scope, 'novy').pipe(Effect.provideService(CoreSearchQueryRuntime, runtime))).toEqual([]);
-    yield* publishWithStore(store, next);
-    expect(replacements).toBe(1);
-    expect(yield* loadSearch(scope, 'novy').pipe(Effect.provideService(CoreSearchQueryRuntime, runtime))).toHaveLength(
-      101,
-    );
   }),
 );
 
@@ -416,16 +330,9 @@ it.effect('rejects unregistered or unattested claims and oversized snapshots bef
       { claim: context, next: { ...snapshot, tenantId: otherTenant } },
       { claim: context, next: oversized },
     ];
-    const mutatingContainment = {
-      touch: () =>
-        Effect.sync(() => {
-          mutations += 1;
-        }),
-    };
     for (const { claim, next } of scenarios) {
       const result = yield* publishSearchSnapshot(claim, next).pipe(
         Effect.provideService(CoreSearchProjectionStore, store),
-        Effect.provideService(ResourceContainmentRelationshipMutation, mutatingContainment),
         Effect.exit,
       );
       expect(Exit.isFailure(result)).toBe(true);

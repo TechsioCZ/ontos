@@ -1,10 +1,9 @@
 import type { DatabaseConnectionPair } from '@app/core-runtime';
 import { Reactivity } from 'effect/reactivity';
 import { PgClient } from '@effect/sql-pg';
-import { createHash } from 'node:crypto';
 import { makeLiveOperationFixture, makeGatewayScopeGrantRegistrar } from '@app/core-runtime/testing/actions';
+import { createPrivacyDeniedAccess } from '../support/live-access-authority.ts';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import {
@@ -15,9 +14,6 @@ import {
   loadDatabaseConnectionPair,
   SHELL_GATEWAY_ISSUER_IDENTITY,
   ActiveApplicationCompositionSnapshotSchema,
-  canonicalizeApplicationComposition,
-  OntosModuleDeploymentContractSchema,
-  validateActiveApplicationCompositionSnapshot,
   makeContextPermissionRelationshipMutationLive,
   ReadRuntime,
   runAction,
@@ -51,7 +47,12 @@ import { TestClock } from 'effect/testing';
 import { ChildProcess } from 'effect/process';
 import { HttpServer, HttpServerResponse } from 'effect/http';
 import { expect, it } from 'effect-rstest';
-import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { privacyRegistration } from '../../vertical.registration.ts';
+import {
+  describeControllerContracts,
+  identityFailure,
+  makePrivacyPartyCompositionSnapshot,
+} from '../support/dsr-obligation-native.ts';
 import { createProcessingPurposeAction } from '../../src/actions/create-processing-purpose.action.ts';
 import { assignPrivacyResponsibilityAction } from '../../src/actions/assign-privacy-responsibility.action.ts';
 import { AssignPrivacyResponsibilityPayloadSchema } from '../../shared/actions/assign-privacy-responsibility.ts';
@@ -91,11 +92,6 @@ import { legalBasisAssignmentsRead } from '../../src/api/legal-basis-assignments
 import { processingActivitiesRead } from '../../src/api/processing-activities.read.ts';
 
 const appRoot = new URL('../../../../', import.meta.url).pathname;
-class PrivacyPartyNativeIdentityError extends Schema.TaggedError<PrivacyPartyNativeIdentityError>()(
-  'PrivacyPartyNativeIdentityError',
-  { stage: Schema.String },
-) {}
-const identityFailure = (stage: string) => new PrivacyPartyNativeIdentityError({ stage });
 
 const partyNativeCloneTargetMatches = (
   connections: DatabaseConnectionPair,
@@ -224,7 +220,6 @@ const preparePartyNativeIdentities = Effect.fn('PrivacyPartyNative.prepareIdenti
     return { PARTY_REGISTRY_DATABASE_URL: requestUrl, SHELL_GATEWAY_ISSUER_DATABASE_URL: issuerUrl };
   },
 );
-const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const ownerMarkerSchema = Schema.Struct({ appId: Schema.Literal('party-registry'), buildMarker: Schema.String });
 const ownerReadySchema = Schema.Struct({ marker: ownerMarkerSchema, port: Schema.Number });
 const publicProofServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
@@ -232,6 +227,9 @@ const publicProofServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerg
 const makeControllerOwner = Effect.fn('ControllerOwnerTest.makeFixture')(function* makeControllerOwner() {
   const crypto = yield* Crypto.Crypto;
   const nextId = () => crypto.randomUUIDv4();
+  const description = yield* describeControllerContracts();
+  const partyIdentity = description.buildIdentities['party-registry'];
+  const encodeIdentity = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
   const suffix = yield* nextId();
   const fs = yield* FileSystem.FileSystem;
   const artifact = `${appRoot}verticals/party-registry/node_modules/.cache/ontos-1272/${suffix}.mjs`;
@@ -249,6 +247,8 @@ const makeControllerOwner = Effect.fn('ControllerOwnerTest.makeFixture')(functio
       '--platform=node',
       '--format=esm',
       '--packages=external',
+      `--define:ULTRAMODERN_BUILD_MARKER=${yield* encodeIdentity(partyIdentity.buildMarker)}`,
+      `--define:ULTRAMODERN_SOURCE_REVISION=${yield* encodeIdentity(partyIdentity.sourceRevision)}`,
       `--outfile=${artifact}`,
     ],
     { cwd: appRoot, stderr: 'pipe', stdout: 'pipe' },
@@ -274,50 +274,8 @@ const makeControllerOwner = Effect.fn('ControllerOwnerTest.makeFixture')(functio
   expect(describeExit).toBe(0);
   const marker = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ownerMarkerSchema))(markerLines[0]);
   expect(marker.appId).toBe('party-registry');
-  const base = yield* makeApplicationCompositionSnapshotFixture(
-    [marker.appId, ultramodernApiMarker.appId],
-    marker.buildMarker,
-  );
-  const modules = yield* Effect.forEach(
-    base.composition.modules,
-    Effect.fn('ControllerOwnerTest.moduleContract')(function* moduleContract(module) {
-      const ownerId = module.deployment.appId === 'party-registry' ? 'party.registry' : 'privacy.core';
-      const deployment =
-        module.deployment.appId === 'party-registry'
-          ? marker
-          : { appId: ultramodernApiMarker.appId, buildMarker: ultramodernApiMarker.buildMarker };
-      const old = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
-        module.contractDocument,
-      );
-      const document = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))({
-        ...old,
-        deployment,
-        manifest: { ...old.manifest, module: { ...old.manifest.module, id: ownerId } },
-      });
-      const hash = digest(document);
-      return {
-        ...module,
-        backend: {
-          baseUrl: `https://${module.deployment.appId}.fixture.example.test/`,
-          transport: 'node-http' as const,
-        },
-        contract: { ...module.contract, sha256: hash },
-        contractDocument: document,
-        deployment,
-        moduleId: ownerId,
-        publicContract: { ...module.publicContract, id: ownerId, sha256: hash },
-      };
-    }),
-    { concurrency: 2 },
-  );
-  const composition = { ...base.composition, modules };
-  const snapshot = yield* validateActiveApplicationCompositionSnapshot({
-    ...base,
-    composition: {
-      ...composition,
-      revision: digest(canonicalizeApplicationComposition({ ...composition, revision: '0'.repeat(64) })),
-    },
-  });
+  expect(marker).toEqual(description.partyContract.deployment);
+  const snapshot = yield* makePrivacyPartyCompositionSnapshot(description);
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     compositionSnapshot: snapshot,
     mode: 'schema-only',
@@ -335,6 +293,7 @@ const makeControllerOwner = Effect.fn('ControllerOwnerTest.makeFixture')(functio
   }
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
+      access: 'allowed',
       actionExecutor: 'manager-only',
       actionKeys: [
         'party.registry.create-party',
@@ -350,9 +309,12 @@ const makeControllerOwner = Effect.fn('ControllerOwnerTest.makeFixture')(functio
       ],
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
       allowedAudiences: ['party-registry', 'privacy'],
+      applicationComposition: { load: Effect.succeed(snapshot) },
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: snapshot.composition.revision,
+      expectedDeployment: description.privacyContract.deployment,
       moduleKeys: ['party.registry', 'privacy.core'],
+      ownerRegistration: privacyRegistration,
       runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     }),
     (resource) => resource.close().pipe(Effect.orDie),
@@ -477,9 +439,23 @@ const makeControllerOwner = Effect.fn('ControllerOwnerTest.makeFixture')(functio
     });
     return `Bearer ${token}`;
   });
-  const context = yield* Layer.build(fixture.layer);
+  // The one access gate this suite scripts (the native database carries no v2 access intent and
+  // reaches no engine), plus the per-principal refusals it names (see `live-access-authority`).
+  const deniedAccess = createPrivacyDeniedAccess();
+  const context = yield* Layer.build(fixture.layer.pipe(Layer.provide(deniedAccess.layer)));
   const runtime = yield* ReadRuntime.pipe(Effect.provideContext(context));
-  return { authorization, baseUrl, context, coreEvidenceExecutor, fixture, nextId, principal, runtime, snapshot };
+  return {
+    authorization,
+    baseUrl,
+    context,
+    coreEvidenceExecutor,
+    deniedAccess,
+    fixture,
+    nextId,
+    principal,
+    runtime,
+    snapshot,
+  };
 });
 
 const produceCanonicalController = Effect.fn('ControllerOwnerTest.produceCanonicalParty')(
@@ -490,10 +466,10 @@ const produceCanonicalController = Effect.fn('ControllerOwnerTest.produceCanonic
     const result = yield* createPartyWithAuthorization(
       yield* Schema.decodeUnknownEffect(CreatePartyPayloadSchema)({
         candidate: {
-          displayName: `Controller ${partyType}`,
           evidenceRefs: ['review/controller-arrangement'],
           officialIdentifiers: [],
           partyType,
+          [partyType === 'PERSON' ? 'firstName' : 'businessName']: `Controller ${partyType}`,
           provenance: { method: 'DOCUMENT', source: 'controller-native-test' },
           subjectEvidence: [
             {
@@ -562,7 +538,7 @@ const produceCanonicalController = Effect.fn('ControllerOwnerTest.produceCanonic
 const proveControllerArrangement = Effect.fn('ControllerOwnerTest.proveArrangement')(
   function* proveControllerArrangement(kind: 'PERSON' | 'ORGANIZATION' | 'LEGAL_ENTITY' | 'MIXED') {
     const owner = yield* makeControllerOwner();
-    const { context, coreEvidenceExecutor, fixture, nextId, principal, runtime } = owner;
+    const { context, coreEvidenceExecutor, deniedAccess, fixture, nextId, principal, runtime } = owner;
     const canonical =
       kind === 'LEGAL_ENTITY'
         ? undefined
@@ -903,6 +879,9 @@ const proveControllerArrangement = Effect.fn('ControllerOwnerTest.proveArrangeme
                 }),
               ),
       };
+      // v2: the one access gate decides this read (O62); the removed legacy permission tuples
+      // no longer refuse anyone, so the suite flips the fixture's own gate answer instead.
+      deniedAccess.deny(principal.principalId, 'privacy.core.processing-activity.read');
       expect(
         yield* Effect.flip(
           runtime
@@ -915,7 +894,7 @@ const proveControllerArrangement = Effect.fn('ControllerOwnerTest.proveArrangeme
             .pipe(Effect.provideContext(context)),
         ),
       ).toMatchObject({ code: 'read_permission_denied' });
-      yield* fixture.grantResourceAccess(activity.activityRef, principal.principalId, 'writer');
+      deniedAccess.allow(principal.principalId, 'privacy.core.processing-activity.read');
       const beforeResponsibilities = yield* runtime
         .runRead({
           input: { asOf: at, scopeRefs: [scopeRef.scopeId] },
@@ -974,6 +953,9 @@ const proveControllerArrangement = Effect.fn('ControllerOwnerTest.proveArrangeme
           ...fixture.legalEntityOnly,
           legalEntityId: fixture.legalEntityId,
         });
+        // v2: the one access gate decides this Action (O62); a principal without the executor
+        // assignment is refused by the gate, named on the fixture's own per-request owner seam.
+        deniedAccess.deny(noExecutor.principalId, 'privacy.core.processing-activity.transition');
         expect(
           yield* Effect.flip(
             runAction({ ...transition, principal: noExecutor, transport: yield* transport() }).pipe(
@@ -1062,5 +1044,7 @@ for (const arrangement of ['PERSON', 'ORGANIZATION', 'LEGAL_ENTITY', 'MIXED'] as
         Effect.provide(publicProofServices),
         Effect.provide(NodeHttpServer.layerTest),
       ),
+    // Native owner bundling, schema cloning and the MIXED arrangement exceed the 30-second default on CI.
+    120_000,
   );
 }

@@ -2,7 +2,8 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug grant-counterparty-commerce-access
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { reconcileAccessPortalAfterAttempt } from '@app/core-runtime/access/portal';
 import { Effect } from 'effect';
 import {
   GrantCounterpartyCommerceAccessPayloadSchema,
@@ -14,9 +15,10 @@ import { CounterpartyAccessDomainErrorSchema } from '../../shared/domain/access-
 import type { CounterpartyAccessPortService } from '../../shared/domain/access-port.ts';
 import { counterpartyAccessServicesForTransaction } from '../access-services.ts';
 import {
-  accessAuthorizationMutationEventPayload,
+  accessGrantEventFields,
+  accessGrantEventSubject,
+  accessManagementOwnerFacts,
   auditEvidence,
-  accessManagementPermissionTarget,
   deniedAccessAuditEvidence,
   principalRefFromContext,
   recordAccessRead,
@@ -24,13 +26,12 @@ import {
   requireAccessScope,
 } from './access-action-support.ts';
 import {
-  GrantCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessGrantAuthorizationMutationRequestedV1OutboxPayloadSchema as AuthorizationMutationRequestedEventSchema,
-  createGrantCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessGrantAuthorizationMutationRequestedV1OutboxMessage as createAuthorizationMutationRequestedOutboxMessage,
-} from './grant-counterparty-commerce-access.commerce-customer-context-counterparty-access-grant-authorization-mutation-requested-v1.outbox-message.ts';
+  GrantCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessGrantedV1OutboxPayloadSchema as AccessGrantedEventSchema,
+  createGrantCounterpartyCommerceAccessCommerceCustomerContextCounterpartyAccessGrantedV1OutboxMessage as createAccessGrantedOutboxMessage,
+} from './grant-counterparty-commerce-access.commerce-customer-context-counterparty-access-granted-v1.outbox-message.ts';
 
 const domainEvents = {
-  'commerce.customer-context.counterparty-access-grant-authorization-mutation-requested.v1':
-    AuthorizationMutationRequestedEventSchema,
+  'commerce.customer-context.counterparty-access-granted.v1': AccessGrantedEventSchema,
 } as const;
 
 interface Services {
@@ -74,31 +75,37 @@ const handle = Effect.fn('GrantCounterpartyCommerceAccess.handle')(function* han
       target: payload.recipient,
     }),
   );
-  if (result.outcome === 'RECONCILIATION_REQUIRED' && result.reconciliation.staged) {
-    const eventPayload = accessAuthorizationMutationEventPayload(result.grant, result.reconciliation, legalEntityId);
+  if (result.outcome === 'APPLIED') {
+    const { grant } = result;
+    const eventPayload = { ...accessGrantEventFields(grant), grantedAt: grant.grantedAt, grantedBy: grant.grantedBy };
     const event = yield* context.addDomainEvent({
-      eventType: 'commerce.customer-context.counterparty-access-grant-authorization-mutation-requested.v1',
+      ...accessGrantEventSubject(grant),
+      eventType: 'commerce.customer-context.counterparty-access-granted.v1',
       payloadJson: eventPayload,
-      producerModuleKey: result.grant.grantRef.moduleId,
-      subjectModuleKey: result.grant.grantRef.moduleId,
-      subjectResourceId: result.grant.grantRef.resourceId,
-      subjectResourceType: result.grant.grantRef.resourceType,
     });
-    yield* context.addOutboxMessage(event, createAuthorizationMutationRequestedOutboxMessage(eventPayload));
+    yield* context.addOutboxMessage(event, createAccessGrantedOutboxMessage(eventPayload));
   }
   return result;
 });
 
 export const grantCounterpartyCommerceAccessAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.counterparty-commerce-access.grant',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'counterparty-access', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.grant-counterparty-commerce-access.access.v1',
     },
+    accessOwnerFacts: accessManagementOwnerFacts,
     actionKey: 'commerce.customer-context.grant-counterparty-commerce-access',
     auditEvidenceSchema: AccessAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission(accessManagementPermissionTarget),
     deniedAuditEvidence: {
       resolve: (payload, scope) =>
         deniedAccessAuditEvidence({
@@ -115,7 +122,7 @@ export const grantCounterpartyCommerceAccessAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.grant-counterparty-commerce-access',
       moduleKey: 'commerce.customer-context',
       role: 'action',
@@ -131,4 +138,7 @@ export const grantCounterpartyCommerceAccessAction = defineAction(
   handle,
   (transaction, scope) =>
     counterpartyAccessServicesForTransaction(transaction, scope).pipe(Effect.map((port) => ({ grant: port.grant }))),
+  undefined,
+  // The ACTIVE grant committed the grantee's portal access with it; the engine follows once it committed.
+  reconcileAccessPortalAfterAttempt(),
 );

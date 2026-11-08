@@ -543,7 +543,9 @@ export const commerceCustomerContextMcpContribution = defineOntosMcpContribution
       },
     },
     'market-bootstrap-resolution': 'hidden',
-    'market-retirement-reservation': 'hidden',
+    // Internal recovery of an existing Market Catalog retirement invocation under its original actor.
+    // The native receiver checks the exact market, tenant and source invocation; this is not a separate MCP lookup.
+    'market-retirement-reservation-recovery': 'hidden',
     'market-subject-restrictions-current': {
       title: {
         cs: 'Aktuální omezení subjektů na trhu',

@@ -12,8 +12,8 @@ import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useState } from 'react';
 import type { PlanItem } from '../../../../shared/apis/records.ts';
 import { planItemWeightedMinor } from '../../../../shared/domain/finance-planning.ts';
-import { minorToInput, outcomeMessage, parseAmountMinor } from './finance-ui.tsx';
-import type { FinanceCommandDraft, FinanceViewModel } from './finance-ui.tsx';
+import { minorToInput, outcomeNotice, parseAmountMinor } from './finance-ui.tsx';
+import type { FinanceCommandDraft, FinanceNotice, FinanceViewModel } from './finance-ui.tsx';
 import { FinanceTableScroll } from './finance-table-scroll.tsx';
 import { emptyObjectSelection, objectAnchors, ObjectFields, objectSummary } from './object-fields.tsx';
 import type { ObjectSelection } from './object-fields.tsx';
@@ -122,11 +122,14 @@ const planItemsSaveProgram = Effect.fn('Finance.save')(function* planItemsSavePr
   const amountMinor = parseAmountMinor(draft.amount);
   const probability = draft.probability.trim() === '' ? undefined : Number(draft.probability.replace('%', '').trim());
   if (draft.title.trim() === '' || amountMinor === undefined || amountMinor === 0 || draft.expectedDate === '') {
-    setError('Vyplňte název, kladnou částku a očekávané datum.');
+    setError({ status: 'error', text: 'Vyplňte název, kladnou částku a očekávané datum.' });
     return;
   }
   if (probability !== undefined && (!Number.isInteger(probability) || probability < 1 || probability > 100)) {
-    setError('Pravděpodobnost zadejte jako celé číslo 1–100 %, nebo ji nechte prázdnou.');
+    setError({
+      status: 'error',
+      text: 'Pravděpodobnost zadejte jako celé číslo 1–100 %, nebo ji nechte prázdnou.',
+    });
     return;
   }
   const upsertPlanItemCommand = buildPlanItemCommand({ amountMinor, draft, probability, vm });
@@ -138,7 +141,7 @@ const planItemsSaveProgram = Effect.fn('Finance.save')(function* planItemsSavePr
     setDraft(undefined);
     setError(undefined);
   } else {
-    setError(outcomeMessage(vm, outcome));
+    setError(outcomeNotice(vm, outcome));
   }
 });
 
@@ -149,7 +152,7 @@ const usePlanItems = ({ vm }: { readonly vm: FinanceViewModel }) => {
   const today = vm.referenceDate === '' ? '2026-10-21' : vm.referenceDate;
   const [draft, setDraft] = useState<PlanDraft>();
   const [deleteTarget, setDeleteTarget] = useState<PlanItem>();
-  const [error, setError] = useState<string>();
+  const [error, setError] = useState<FinanceNotice>();
   const totalIn = items
     .filter((item) => item.kind === 'REVENUE')
     .reduce((sum, item) => sum + planItemWeightedMinor(item), 0);
@@ -310,8 +313,8 @@ export const PlanItemsSection = (props: { readonly vm: FinanceViewModel }) => {
         {draft !== undefined && (
           <div className="flex flex-col gap-150">
             {error !== undefined && (
-              <StatusText showIcon size="sm" status="error">
-                {error}
+              <StatusText showIcon size="sm" status={error.status}>
+                {error.text}
               </StatusText>
             )}
             <div className="grid grid-cols-1 gap-150 sm:grid-cols-[10rem_minmax(0,1fr)]">

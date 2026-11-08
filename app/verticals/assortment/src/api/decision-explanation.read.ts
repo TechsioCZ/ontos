@@ -16,11 +16,9 @@ import type {
   DecisionExplanationResponse,
 } from '../../shared/apis/decision-explanation.ts';
 import { AssortmentPolicyPersistenceUnavailable } from '../../shared/domain/policy-errors.ts';
+import { decisionExplanationCurrentnessFacts } from '../services/assortment-currentness.ts';
 import { assortmentDecisionEvidenceReferenceForScope } from '../services/decision-evidence.repository.ts';
-import {
-  assortmentDecisionExplanationReadService,
-  decisionExplanationPermissionTarget,
-} from '../services/decision-explanation-read.service.ts';
+import { assortmentDecisionExplanationReadService } from '../services/decision-explanation-read.service.ts';
 
 const MODULE_KEY = 'commerce.assortment';
 
@@ -30,7 +28,7 @@ interface DecisionExplanationServices {
 
 export const decisionExplanationEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'assortment.decision.explain' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.assortment.api.decision-explanation',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -75,7 +73,28 @@ const readDecisionExplanation = (
 
 export const decisionExplanationRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.assortment.decision.explain',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'decisions', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+    accessFieldGroups: [
+      {
+        fieldClass: 'assortment_policy',
+        fields: ['evidence.boundaryPath', 'evidence.candidates'],
+        key: 'commerce.assortment.decision-explanation.policy-detail',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'decisions', level: 'extended' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
     accessKind: 'detail',
+    accessOwnerFacts: () => decisionExplanationCurrentnessFacts(),
     entrypoint: decisionExplanationEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',
@@ -84,7 +103,6 @@ export const decisionExplanationRead = defineRead(
     inputSchema: DecisionExplanationRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'assortment_permission',
     policies: [],
     readKey: 'commerce.assortment.api.decision-explanation',
     resultSchema: DecisionExplanationResponseSchema,
@@ -99,8 +117,4 @@ export const decisionExplanationRead = defineRead(
       ),
     });
   },
-  (input, scope) => ({
-    assortmentPermission: decisionExplanationPermissionTarget(input.request, scope),
-    kind: 'assortment_permission',
-  }),
 );

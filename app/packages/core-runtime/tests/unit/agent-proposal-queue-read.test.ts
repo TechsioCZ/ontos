@@ -107,11 +107,21 @@ const executableComposition = Effect.fn('AgentProposalQueueReadTest.composition'
     ...contract.manifest.publicSurface,
     actions: [
       {
+        // A v2 protected Action: the capability lives in the declaration, never in a legacy
+        // `action_execution` provisioning intent (O62).
+        accessDeclaration: {
+          key: 'work.tasks.task.update',
+          kind: 'action',
+          modes: ['run'],
+          placement: { group: 'tasks', level: 'basic' },
+          risk: 'routine',
+          selectors: [],
+        },
         actionKey: 'work.tasks.update',
         auditProfile: 'standard',
         entrypoint: {
           access: 'write',
-          authorization: { kind: 'action_execution', provisioning: 'explicit' },
+          authorization: { kind: 'protected' },
           entrypointKey: 'work.tasks.update',
           moduleKey: 'work.tasks',
           role: 'action',
@@ -198,8 +208,8 @@ const retainedCommand = (
 });
 
 const authority = (execute: 'allowed' | 'denied' = 'allowed'): ActionAuthorityService => ({
-  checkActionAuthorities: (targets) =>
-    Effect.succeed(targets.map((target) => ({ ...target, execute, propose: 'allowed' }))),
+  checkActionAuthorities: (query) =>
+    Effect.succeed(query.actionKeys.map((actionKey) => ({ actionKey, execute, propose: 'allowed' as const }))),
   checkActionProposalPermission: () => Effect.die('Proposal permission never authorizes queue reads'),
 });
 

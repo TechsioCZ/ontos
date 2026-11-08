@@ -2,7 +2,9 @@
 // @ontos-action-owner commerce.assortment
 // @ontos-action-slug end-closed-assortment-boundary
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionAssortmentPermissions, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { assortmentCurrentnessFacts } from '../services/assortment-currentness.ts';
+import { endBoundaryCurrentnessTarget } from './boundary-administration-support.ts';
 import { Effect, Schema } from 'effect';
 import {
   EndClosedAssortmentBoundaryPayloadSchema,
@@ -18,7 +20,7 @@ import {
 } from '../../shared/domain/policy-errors.ts';
 import type { BoundaryAdministrationService } from '../services/boundary-administration.service.ts';
 import { boundaryAdministrationService } from '../services/boundary-administration.service.ts';
-import { endBoundaryPermissionTarget } from './boundary-administration-support.ts';
+
 import {
   EndClosedAssortmentBoundaryCommerceAssortmentBoundaryEndedV1OutboxPayloadSchema,
   createEndClosedAssortmentBoundaryCommerceAssortmentBoundaryEndedV1OutboxMessage,
@@ -98,21 +100,27 @@ export const handleEndClosedAssortmentBoundary = Effect.fn('EndClosedAssortmentB
 });
 export const endClosedAssortmentBoundaryAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.assortment.closed-assortment-boundary.end',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'boundaries', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.assortment.end-closed-assortment-boundary.access.v1',
     },
+    accessOwnerFacts: (payload, scope) => assortmentCurrentnessFacts(endBoundaryCurrentnessTarget(payload, scope)),
     actionKey: 'commerce.assortment.end-closed-assortment-boundary',
-    assortmentPermissions: defineActionAssortmentPermissions<EndClosedAssortmentBoundaryPayload>((payload, scope) => [
-      endBoundaryPermissionTarget(payload, scope),
-    ]),
     auditEvidenceSchema: AssortmentPolicyAuditEvidenceSchema,
     auditProfile: 'sensitive',
     domainErrorSchema: ActionErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.assortment.end-closed-assortment-boundary',
       moduleKey: 'commerce.assortment',
       role: 'action',

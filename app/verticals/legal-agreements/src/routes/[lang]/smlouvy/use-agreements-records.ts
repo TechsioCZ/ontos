@@ -1,5 +1,7 @@
 import { failureFeedback } from '../../../../shared/actions/apply-command.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { pageDataPending } from '@app/shared-contracts/page-data';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -95,6 +97,7 @@ export const autosaveTerms = (
   command: ContractTermsCommand,
   expectedRevision: number,
   unchanged: (contracts: readonly Contract[]) => boolean,
+  onProposal?: (proposal: ActionProposalAccepted) => void,
 ) => {
   const send = (revision: number) =>
     newUuid.pipe(
@@ -119,6 +122,12 @@ export const autosaveTerms = (
               Effect.flatMap((fresh) => (unchanged(fresh.contracts) ? send(fresh.revision) : Effect.fail(conflict))),
             )
           : Effect.fail(conflict),
+      ),
+      // A change parked for approval is not saved: the draft stays unconfirmed on its base revision.
+      Effect.flatMap((result) =>
+        Schema.is(ActionProposalAcceptedSchema)(result)
+          ? Effect.sync(() => onProposal?.(result)).pipe(Effect.andThen(Effect.fail(result)))
+          : Effect.succeed(result),
       ),
     ),
   );
@@ -148,6 +157,8 @@ export const useRecordsPage = (input: AgreementsInput) => {
   /** Set when a command was denied or the owner became unavailable; hides the data until the next reload. */
   const [sensitiveHidden, setSensitiveHidden] = useState(false);
   const [actionFeedback, setActionFeedback] = useState<Feedback>();
+  /** The person's last change that was parked for approval instead of being applied. */
+  const [proposal, setProposal] = useState<ActionProposalAccepted>();
   /** Rental references read on demand when the person picks a lease and the page did not prepare them. */
   const [requestedRental, setRequestedRental] = useState<RentalReferences>();
   const [requestedRentalFeedback, setRequestedRentalFeedback] = useState<Feedback>();
@@ -260,10 +271,21 @@ export const useRecordsPage = (input: AgreementsInput) => {
       }),
       Match.exhaustive,
     );
+  /** Opens the contract a committed command created or changed, once the refreshed agreements hold it. */
+  const openCommitted = (resourceId: string | undefined) => {
+    const latest = data.snapshot(input);
+    const record = (latest.state === 'ready' ? Option.getOrUndefined(latest.value) : undefined)?.records.contracts.find(
+      (item) => item.contractRef.resourceId === resourceId,
+    );
+    if (record !== undefined && linkedResourceId !== record.contractRef.resourceId) {
+      void navigate({ search: { resourceId: record.contractRef.resourceId }, to: '.' });
+    }
+  };
   const runCommand = (command: AgreementsCommand) => {
     if (snapshot === undefined) {
       return;
     }
+    setProposal(undefined);
     setActionFeedback('saving');
     run(
       Effect.all(
@@ -286,21 +308,23 @@ export const useRecordsPage = (input: AgreementsInput) => {
             ),
           ),
         ),
-        Effect.tap(() => data.refresh(input)),
-        Effect.tap((result) => {
-          const latest = data.snapshot(input);
-          const record = (
-            latest.state === 'ready' ? Option.getOrUndefined(latest.value) : undefined
-          )?.records.contracts.find((item) => item.contractRef.resourceId === result.resourceRef?.resourceId);
-          return record !== undefined && linkedResourceId !== record.contractRef.resourceId
-            ? Effect.sync(() => {
-                void navigate({ search: { resourceId: record.contractRef.resourceId }, to: '.' });
-              })
-            : Effect.void;
-        }),
+        // A change parked for approval changed nothing yet: no reload and no record to open.
+        Effect.flatMap((result) =>
+          Schema.is(ActionProposalAcceptedSchema)(result)
+            ? Effect.succeed(Option.some(result))
+            : data
+                .refresh(input)
+                .pipe(
+                  Effect.andThen(Effect.sync(() => openCommitted(result.resourceRef?.resourceId))),
+                  Effect.as(Option.none<ActionProposalAccepted>()),
+                ),
+        ),
         Effect.match({
           onFailure: reportFailure,
-          onSuccess: () => setActionFeedback(undefined),
+          onSuccess: (parked) => {
+            setProposal(Option.getOrUndefined(parked));
+            setActionFeedback(undefined);
+          },
         }),
       ),
     );
@@ -525,9 +549,11 @@ export const useRecordsPage = (input: AgreementsInput) => {
     occupancyId,
     openTerms,
     properties,
+    proposal,
     recordSignature,
     renew,
     rentalFeedback,
+    reportProposal: setProposal,
     resetDraftForm,
     retry,
     runCommand,

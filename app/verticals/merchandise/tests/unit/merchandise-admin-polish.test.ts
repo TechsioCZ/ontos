@@ -1,6 +1,5 @@
 import { DateTime, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { staffCommandAllowed, AKROS_LEGAL_ENTITY_ID } from '../../shared/actions/command-guard.ts';
 import { MerchandiseCommandSchema } from '../../shared/actions/apply-command.ts';
 import { rankCategories } from '../../shared/domain/category-search.ts';
 import type { CategoryCandidate } from '../../shared/domain/category-search.ts';
@@ -51,10 +50,7 @@ it('reorders gallery images and makes any image the main one', () => {
   expect(moveImage(images, 2, 3)).toBe(images);
 });
 
-it('lets only an AKROS administrator reset the demo data', () => {
-  expect(staffCommandAllowed(AKROS_LEGAL_ENTITY_ID, true, 'ResetDemoData')).toBe(true);
-  expect(staffCommandAllowed(AKROS_LEGAL_ENTITY_ID, false, 'ResetDemoData')).toBe(false);
-  expect(staffCommandAllowed('71000000-0000-4000-8000-000000000020', true, 'ResetDemoData')).toBe(false);
+it('requires the exact destructive reset confirmation', () => {
   expect(() =>
     Schema.decodeUnknownSync(MerchandiseCommandSchema)({
       _tag: 'ResetDemoData',

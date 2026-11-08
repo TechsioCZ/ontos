@@ -6,15 +6,10 @@ import {
   CustomerGroupHistoryRequestSchema,
   CustomerGroupHistoryResponseSchema,
 } from '../../shared/apis/customer-group-history.ts';
-import type {
-  CustomerGroupHistoryRequest,
-  CustomerGroupHistoryResponse,
-} from '../../shared/apis/customer-group-history.ts';
+import type { CustomerGroupHistoryRequest } from '../../shared/apis/customer-group-history.ts';
 import {
   customerGroupReadServiceFactory,
   customerGroupReadUnavailable,
-  customerGroupResourceTarget,
-  customerProfileResourceTarget,
   requireCustomerGroupReadLegalEntityId,
   requireCustomerGroupTenant,
   unwrapCustomerGroupLookup,
@@ -23,7 +18,7 @@ import type { CustomerGroupReadServices } from './customer-group-read-support.ts
 
 const customerGroupHistoryEntrypoint = defineTenantModuleEntrypoint({
   access: 'historical_read',
-  authorization: { kind: 'context_permission', permission: 'customer.group.history.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.customer-group-history',
   moduleKey: 'commerce.customer-context',
   role: 'api',
@@ -52,6 +47,14 @@ const handleCustomerGroupHistory = Effect.fn('CustomerGroupHistoryRead.handle')(
 
 export const customerGroupHistoryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.customer-group.read-history',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'customer-groups', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'list',
     entrypoint: customerGroupHistoryEntrypoint,
     evidencePolicy: {
@@ -61,7 +64,6 @@ export const customerGroupHistoryRead = defineRead(
     inputSchema: CustomerGroupHistoryRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: 'commerce.customer-context',
-    permissionTarget: 'resource',
     policies: [],
     readKey: 'commerce.customer-context.api.customer-group-history',
     resultSchema: CustomerGroupHistoryResponseSchema,
@@ -69,7 +71,4 @@ export const customerGroupHistoryRead = defineRead(
   },
   { load: handleCustomerGroupHistory },
   customerGroupReadServiceFactory,
-  ({ groupRef }: CustomerGroupHistoryRequest) => customerGroupResourceTarget(groupRef),
-  (result: CustomerGroupHistoryResponse) =>
-    result.memberships.map(({ profile }) => customerProfileResourceTarget(profile)),
 );

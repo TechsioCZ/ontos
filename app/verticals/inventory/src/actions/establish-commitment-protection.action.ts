@@ -2,12 +2,7 @@
 // @ontos-action-owner commerce.inventory
 // @ontos-action-slug establish-commitment-protection
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { DateTime, Effect, Match, Schema } from 'effect';
 
 import {
@@ -109,29 +104,25 @@ export const handleEstablishCommitmentProtection = Effect.fn('EstablishCommitmen
 
 export const establishCommitmentProtectionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.inventory.commitment-protection.establish',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'commitments', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: `${ACTION_KEY}.access.v1`,
     },
     actionKey: ACTION_KEY,
     auditProfile: 'standard',
-    businessPermission: defineActionBusinessPermission<EstablishCommitmentProtectionPayload>((payload) => ({
-      permission: 'inventory.commitment_protection.establish',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: payload.protectionRef.moduleId,
-          resourceId: payload.protectionRef.resourceId,
-          resourceType: payload.protectionRef.resourceType,
-        },
-        tenantId: payload.protectionRef.tenantId,
-      },
-    })),
     domainErrorSchema: EstablishCommitmentProtectionErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: MODULE_KEY,
       role: 'action',
@@ -141,10 +132,6 @@ export const establishCommitmentProtectionAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: EstablishCommitmentProtectionPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<EstablishCommitmentProtectionPayload>((payload) => ({
-      permission: 'write',
-      resource: payload.protectionRef,
-    })),
     resultSchema: EstablishCommitmentProtectionResultSchema,
     schemaVersion: '1',
   },

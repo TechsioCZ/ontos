@@ -9,8 +9,6 @@
     "./clients/records": "./src/api/records-consumer.ts",
     "./contracts/apply-command": "./shared/actions/apply-command.ts",
     "./contracts/records": "./shared/apis/records.ts",
-    "./permissions/crm.activities.read_all": "./shared/permissions/crm-activities-read-all.ts",
-    "./permissions/crm.activities.write_all": "./shared/permissions/crm-activities-write-all.ts",
     "./resources/activity": "./shared/resources/activity.ts",
     "./Route": "./src/federation-entry.tsx"
   },

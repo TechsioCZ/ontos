@@ -1,4 +1,4 @@
-import { ContextAccess } from '@app/core-runtime';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { profileCounterpartyRoleEligibilityResolverFactoryLive } from '../../src/profile-counterparty-role-eligibility.ts';
@@ -6,7 +6,6 @@ import {
   profileReactivationEligibilityEvaluatorFactoryLive,
   profileReconfirmationPolicyUnavailableLive,
 } from '../../src/integrations/profile-reactivation-eligibility.ts';
-import { profileRetailPermissionReaderFactoryLive } from '../../src/integrations/retail-permission-reader.ts';
 import { partyRegistryGuestResolverFactoryLive } from '../../src/integrations/party-registry-guest-resolver.ts';
 import { partyRegistryRetailPartyResolverFactoryLive } from '../../src/integrations/party-registry-retail-party-resolver.ts';
 import { readFile } from 'node:fs/promises';
@@ -18,7 +17,7 @@ import { CreateCounterpartyPurchasingProfileActionUnavailableProblemSchema } fro
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Layer, Redacted, Schema, Tracer } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionHandler } from '@app/core-runtime/testing/actions';
 import { archiveCustomerProfileAction } from '../../src/actions/archive-customer-profile.action.ts';
 import { attributeGuestRetailCustomerAction } from '../../src/actions/attribute-guest-retail-customer.action.ts';
 import { bindRetailPortalProfileAction } from '../../src/actions/bind-retail-portal-profile.action.ts';
@@ -66,9 +65,17 @@ describe('customer profile Actions', () => {
       expect(descriptor.actionKey.startsWith('commerce.customer-context.')).toBe(true);
       expect(descriptor.idempotency).toBe('required');
       expect(descriptor.legalEntityScope).toBe('required');
-      expect(descriptor.entrypoint.authorization).toEqual({
-        kind: 'action_execution',
-        provisioning: 'explicit',
+      expect(descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    }
+  });
+
+  it('declares the module actor and workload subject of the enrollment continuation carriers', () => {
+    for (const { descriptor } of [ensureRetailCustomerProfileAction, bindRetailPortalProfileAction]) {
+      expect(descriptor.accessActor).toStrictEqual({
+        callers: ['commerce-customer-context'],
+        reason: expect.any(String),
+        subject: 'identity',
+        subjectWorkloads: ['commerce.storefront-client'],
       });
     }
   });
@@ -447,8 +454,6 @@ it.effect('the actual API observation layer retains a supplied tracer and has a 
   }),
 );
 
-const unusedPermission = () => Effect.die(new Error('Unused Retail permission dependency'));
-
 it.live('observes the original profile handler cause before mapping while public HTTP stays safe', () =>
   Effect.gen(function* observeRealProfileFailure() {
     const legalEntityId = '20000000-0000-4000-8000-000000000002';
@@ -505,24 +510,9 @@ it.live('observes the original profile handler cause before mapping while public
       Effect.mapError(Schema.decodeUnknownSync(CreateCounterpartyPurchasingProfileActionUnavailableProblemSchema)),
       Effect.provide(
         Layer.mergeAll(
-          profileCounterpartyRoleEligibilityResolverFactoryLive,
+          profileCounterpartyRoleEligibilityResolverFactoryLive.pipe(Layer.provide(nodeCryptoLayer)),
           profileReactivationEligibilityEvaluatorFactoryLive.pipe(
             Layer.provide(profileReconfirmationPolicyUnavailableLive),
-          ),
-          profileRetailPermissionReaderFactoryLive.pipe(
-            Layer.provide(
-              Layer.succeed(ContextAccess, {
-                assortmentPermissions: unusedPermission,
-                businessPermissions: unusedPermission,
-                contextPermissions: unusedPermission,
-                identityNamespaces: unusedPermission,
-                legalEntities: unusedPermission,
-                modules: unusedPermission,
-                resources: unusedPermission,
-                tenantResources: unusedPermission,
-                tenants: unusedPermission,
-              }),
-            ),
           ),
           partyRegistryGuestResolverFactoryLive,
           partyRegistryRetailPartyResolverFactoryLive,

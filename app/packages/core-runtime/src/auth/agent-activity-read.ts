@@ -7,7 +7,6 @@ import {
 import { buildApplicationCompositionCatalog } from '../modules/application-composition-catalog.ts';
 import { defineSystemModuleEntrypoint } from '../modules/module-entrypoint.ts';
 import { ActionAuthority } from '../permissions/action-authority.ts';
-import { ContextAccess } from '../permissions/context-access.ts';
 import type { ReadPrepareContext, ReadLoadContext } from '../reads/context.ts';
 import { defineRead } from '../reads/definition.ts';
 import { AgentActivityInputSchema, AgentActivityResultSchema } from './agent-activity-contract.ts';
@@ -19,7 +18,7 @@ const prepare = Effect.fn('AgentActivityRead.prepare')(function* prepare(
   input: typeof AgentActivityInputSchema.Type,
   context: ReadPrepareContext,
 ) {
-  const { legalEntityId, principalId, tenantId } = context.scope;
+  const { legalEntityId } = context.scope;
   if (legalEntityId === undefined) {
     return yield* agentActivityUnavailable('An exact company context is required');
   }
@@ -33,30 +32,16 @@ const prepare = Effect.fn('AgentActivityRead.prepare')(function* prepare(
   const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition).pipe(
     Effect.mapError(agentActivityUnavailable),
   );
-  const access = yield* (yield* ContextAccess).modules({
-    legalEntityId,
-    moduleIds: catalog.moduleIds,
-    principalId,
-    tenantId,
-  });
-  if (access.some(({ decision }) => decision === 'unavailable')) {
-    return yield* agentActivityUnavailable('Module authorization is unavailable');
-  }
-  const accessible = new Set(access.flatMap(({ decision, key }) => (decision === 'allowed' ? [key] : [])));
+  // The module and Action rights are the one gate's answer over each module's own published Actions; a
+  // legacy `module_access` hint is never consulted, so a principal that holds only v2 grants is seen
+  // (O62, O67-Q5). The request's module keys can only narrow the answer below.
   const actions = catalog.contracts.flatMap(({ manifest }) =>
-    manifest.publicSurface.actions.filter(
-      (action) => action.legalEntityScope !== 'forbidden' && accessible.has(action.owningModuleId),
-    ),
+    manifest.publicSurface.actions.filter((action) => action.legalEntityScope !== 'forbidden'),
   );
+  // One gate question per Action, over this request's own trusted scope: the answer already names the
+  // principal, tenant and company it was decided in, so no scalar identity is re-checked here (O66).
   const authorities = yield* (yield* ActionAuthority)
-    .checkActionAuthorities(
-      actions.map(({ actionKey }) => ({
-        actionKey,
-        legalEntityId,
-        principalId,
-        tenantId,
-      })),
-    )
+    .checkActionAuthorities({ actionKeys: actions.map(({ actionKey }) => actionKey), scope: context.scope })
     .pipe(Effect.mapError(agentActivityUnavailable));
   const executable = new Set(
     authorities.flatMap(({ actionKey, execute }) => (execute === 'allowed' ? [actionKey] : [])),

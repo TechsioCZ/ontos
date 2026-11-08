@@ -1,13 +1,13 @@
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import {
-  ContextAccess,
   OperationContextUnavailable,
   TrustedPrincipalContextSchema,
   defineDatabaseIdentityEnrollment,
   loadDatabaseConnectionPair,
 } from '@app/core-runtime';
-import type { ActionServicePreparationContext, ContextAccessService, OperationalScope } from '@app/core-runtime';
+import type { ActionServicePreparationContext, OperationalScope } from '@app/core-runtime';
 import { installOperationalScope } from '@app/core-runtime/testing/actions';
 import { and, eq } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
@@ -53,23 +53,15 @@ const nativeAgendaDelivery = Effect.scoped(
     };
     let insideTransaction = false;
     let permissionChecks = 0;
-    const access: ContextAccessService = {
-      contextPermissions: (input) =>
+    const gate = makeTestAccessDecision({ defaultAnswer: { outcome: 'ALLOWED' } });
+    const access = {
+      ...gate,
+      decideMany: (questions: Parameters<typeof gate.decideMany>[0]) =>
         Effect.sync(() => {
           expect(insideTransaction).toBe(false);
-          expect(input.principalId).toBe(scope.principalId);
-          expect(input.tenantId).toBe(scope.tenantId);
-          expect(input.legalEntityId).toBe(scope.legalEntityId);
+          expect(questions.every((question) => question.scope === scope)).toBe(true);
           permissionChecks += 1;
-          return input.targets.map(({ moduleId, permission }) => ({
-            decision: 'allowed' as const,
-            key: `${moduleId}:${permission}`,
-          }));
-        }),
-      legalEntities: () => Effect.succeed([]),
-      modules: () => Effect.succeed([]),
-      resources: () => Effect.succeed([]),
-      tenants: () => Effect.succeed([]),
+        }).pipe(Effect.andThen(gate.decideMany(questions))),
     };
     const payload = yield* Schema.decodeEffect(ApplyCommandPayloadSchema)({
       command: {
@@ -79,7 +71,7 @@ const nativeAgendaDelivery = Effect.scoped(
       expectedRevision: 0,
     });
     const factory = yield* prepareApplyCommandServices(payload, context).pipe(
-      Effect.provideService(ContextAccess, access),
+      Effect.provideService(AccessDecisionGate, access),
     );
     expect(permissionChecks).toBe(1);
     // Roll back the entire native fixture, including successful owner writes, after the assertions.
@@ -119,21 +111,12 @@ const nativeAgendaDelivery = Effect.scoped(
           return yield* Effect.fail('fixture-rollback' as const);
         }),
       )
-      .pipe(Effect.provideService(ContextAccess, access), Effect.flip);
+      .pipe(Effect.provideService(AccessDecisionGate, access), Effect.flip);
     expect(result).toBe('fixture-rollback');
     insideTransaction = false;
-    const unavailableAccess: ContextAccessService = {
-      ...access,
-      contextPermissions: ({ targets }) =>
-        Effect.succeed(
-          targets.map(({ moduleId, permission }) => ({
-            decision: 'unavailable' as const,
-            key: `${moduleId}:${permission}`,
-          })),
-        ),
-    };
+    const unavailableAccess = makeTestAccessDecision({ defaultAnswer: { outcome: 'UNAVAILABLE' } });
     const unavailable = yield* prepareApplyCommandServices(payload, context).pipe(
-      Effect.provideService(ContextAccess, unavailableAccess),
+      Effect.provideService(AccessDecisionGate, unavailableAccess),
       Effect.flip,
     );
     expect(Schema.is(FacilityOperationsReferenceUnavailable)(unavailable)).toBe(true);

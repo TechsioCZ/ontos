@@ -1,43 +1,31 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import { v1 } from '@authzed/authzed-node';
 import { and, desc, eq, sql } from 'drizzle-orm';
-import { Array as EffectArray, Context, Effect, FileSystem, Order, Schema } from 'effect';
-import type { ChildProcessSpawner } from 'effect/process';
+import { Context, Effect, FileSystem, Option, Schema } from 'effect';
 
-import { ActionPermission } from '../../packages/core-runtime/src/permissions/service.ts';
-import { ActionRuntime } from '../../packages/core-runtime/src/actions/runtime.ts';
-import type { TrustedPrincipalContext } from '../../packages/core-runtime/src/actions/principal-context.ts';
-import type { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import {
-  auditEvents,
-  principalCompanyMemberships,
-  principals,
-  tenantModuleStates,
-} from '../../packages/core-runtime/src/db/schema.ts';
-import {
+  ActionRuntime,
   configureAgentAction,
   ConfigureAgentAuditEvidenceSchema,
   ConfigureAgentPayloadSchema,
-} from '../../packages/core-runtime/src/modules/actions/configure-agent.action.ts';
-import { openDemoAccountGrants } from '../../packages/core-runtime/src/install/demo-account-administration.ts';
+} from '@app/core-runtime';
+import type { CoreDatabase } from '@app/core-runtime/db/client';
+import { auditEvents, principalCompanyMemberships, principals } from '../../packages/core-runtime/src/db/schema.ts';
 import {
-  currentAgentProfileRelationships,
-  readCurrentAgentNamedPermissions,
-} from '../../packages/core-runtime/src/permissions/agent-profile-lifecycle.ts';
-import {
-  agentNamedPermissionScopeRelationships,
-  planAgentScopedRoleReplacement,
-} from '../../packages/core-runtime/src/install/agent-scoped-role-policy.ts';
-import { loadSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
-import { openSpiceDbRpc } from '../../packages/core-runtime/src/permissions/spicedb-transaction-guard.ts';
-import { ShellInstalledModuleCatalog } from '../../apps/shell-super-app/api/modules/installed-module-catalog.ts';
+  AgentProfileSetupError,
+  requireAgentSetupAuthority,
+  selectAgentOperatorCompany,
+} from './agent-operator-session.mts';
+import type { AgentOperatorSession } from './agent-operator-session.mts';
+
+export { AgentProfileSetupError } from './agent-operator-session.mts';
+
+const profileIdempotencyInput = Schema.fromJsonString(
+  Schema.Tuple([Schema.String, Schema.String, Schema.String, Schema.String]),
+);
 
 const configureOperation = 'configure-agent' as const;
 const createOperation = 'create-agent' as const;
-export const AgentProfileSetupError = Schema.TaggedError<unknown>()('AgentProfileSetupError', {
-  reason: Schema.String,
-});
 const fail = (reason: string) => new AgentProfileSetupError({ reason });
 export class AgentProfileReadDatabase extends Context.Service<
   AgentProfileReadDatabase,
@@ -70,33 +58,6 @@ export const ReviewedAgentProfilesSchema = Schema.Struct({
 });
 export const AgentProfileSetupModeSchema = Schema.Literals(['dry-run', 'apply', 'verify']);
 export type AgentProfileSetupMode = typeof AgentProfileSetupModeSchema.Type;
-export interface ReviewedAgentPolicyRepair {
-  readonly input: AgentProfileSetupInput;
-  readonly missing: readonly string[];
-}
-/** An audited reconciliation never lets a fresh seed preparation expand or delete its reviewed tuple delta. */
-export const isExactAdditiveAgentPolicy = (
-  approved: readonly string[],
-  updates: readonly v1.RelationshipUpdate[],
-): boolean => {
-  const allowed = new Set(approved);
-  return (
-    allowed.size === approved.length &&
-    updates.length === approved.length &&
-    updates.every(
-      (update) =>
-        update.operation === v1.RelationshipUpdate_Operation.TOUCH &&
-        update.relationship !== undefined &&
-        allowed.has(v1.Relationship.toJsonString(update.relationship)),
-    ) &&
-    new Set(
-      updates.flatMap((update) =>
-        update.relationship === undefined ? [] : [v1.Relationship.toJsonString(update.relationship)],
-      ),
-    ).size === updates.length
-  );
-};
-
 export const readReviewedAgentProfiles = Effect.fn('AgentProfileSetup.readReviewed')(function* readReviewed(
   path: string,
   expectedSha256: string,
@@ -139,12 +100,21 @@ export const readProfile = Effect.fn('AgentProfileSetup.readProfile')(function* 
         sql`${auditEvents.evidenceJson}->>'targetPrincipalId' = ${input.principalId}`,
       ),
     )
-    .orderBy(sql`(${auditEvents.evidenceJson}->>'revision')::integer desc`, desc(auditEvents.occurredAt))
+    .orderBy(
+      sql`(${auditEvents.evidenceJson}->>'revision')::integer desc`,
+      desc(auditEvents.occurredAt),
+      desc(auditEvents.auditEventId),
+    )
     .limit(1);
-  return row === undefined
-    ? undefined
-    : yield* Schema.decodeUnknownEffect(ConfigureAgentAuditEvidenceSchema)(row.evidence);
-});
+  if (row === undefined) {
+    return Option.none<typeof ConfigureAgentAuditEvidenceSchema.Type>();
+  }
+  const evidence = yield* Schema.decodeUnknownEffect(ConfigureAgentAuditEvidenceSchema)(row.evidence);
+  if (evidence.targetPrincipalId !== input.principalId || evidence.legalEntityId !== input.legalEntityId) {
+    return yield* fail('Native profile evidence belongs to another principal or company');
+  }
+  return Option.some(evidence);
+}, Effect.map(Option.getOrUndefined));
 const profileMatches = (
   profile: typeof ConfigureAgentAuditEvidenceSchema.Type | undefined,
   input: AgentProfileSetupInput,
@@ -208,13 +178,17 @@ export const explicitProfileInputs = Effect.fn('AgentProfileSetup.explicitInputs
     rows,
     Effect.fnUntraced(function* input(row) {
       const [target] = yield* executor
-        .select({ principalId: principals.principalId })
+        .select({ displayName: principals.displayName, kind: principals.kind })
         .from(principals)
         .where(and(eq(principals.tenantId, row.tenantId), eq(principals.principalId, row.principalId)))
         .limit(1);
       const current = yield* readProfile(row);
+      if (target !== undefined && target.kind !== 'agent') {
+        return yield* fail('Explicit agent setup cannot adopt a non-agent principal');
+      }
       return {
         ...row,
+        displayName: target?.displayName ?? row.displayName,
         operation:
           target === undefined || current?.operation === createOperation ? createOperation : configureOperation,
       };
@@ -223,50 +197,43 @@ export const explicitProfileInputs = Effect.fn('AgentProfileSetup.explicitInputs
   );
 });
 
-/** All writes are the native audited Action, followed by the native scoped-policy materializer. */
+/**
+ * Identity/profile metadata only. Modules and writePolicy remain audited display information, never grants.
+ * Role assignments, consent and connection authority belong to Core's access lifecycle, not this Action.
+ */
 export const runAgentProfileSetup = Effect.fn('AgentProfileSetup.run')(function* runAgentProfileSetup(
-  actor: TrustedPrincipalContext,
+  operator: AgentOperatorSession,
   inputs: readonly AgentProfileSetupInput[],
   mode: AgentProfileSetupMode,
   sourceFingerprint: string,
-  reviewedPolicy?: readonly ReviewedAgentPolicyRepair[],
-  afterWrite?: Effect.Effect<
-    void,
-    InstanceType<typeof AgentProfileSetupError>,
-    ChildProcessSpawner.ChildProcessSpawner
-  >,
 ) {
+  if (!/^[a-f0-9]{64}$/u.test(sourceFingerprint)) {
+    return yield* fail('An explicit source SHA-256 fingerprint is required');
+  }
+  const identities = inputs.map((input) => `${input.tenantId}:${input.legalEntityId}:${input.principalId}`);
+  if (new Set(identities).size !== inputs.length) {
+    return yield* fail('Agent-profile setup contains duplicate scope/principal rows');
+  }
   const runtime = yield* ActionRuntime;
-  const permission = yield* ActionPermission;
   const { executor } = yield* AgentProfileReadDatabase;
-  const grants = yield* openDemoAccountGrants;
-  const configuration = yield* loadSpiceDbConfig();
-  const rpc = yield* Effect.acquireRelease(
-    Effect.sync(() => openSpiceDbRpc(configuration, 10_000)),
-    (client) => Effect.sync(() => client.close()),
-  );
-  // Prepare every row before any Action: a bad membership or unmigrated global Action blocks the whole replay.
+  // Prepare every company and complete payload before any Action. A denied row blocks the whole batch.
   const prepared = yield* Effect.forEach(
     inputs,
-    Effect.fnUntraced(function* prepare(input) {
-      if (input.tenantId !== actor.tenantId) {
+    Effect.fnUntraced(function* prepare(raw) {
+      const input = yield* Schema.decodeUnknownEffect(AgentProfileSetupInputSchema, {
+        onExcessProperty: 'error',
+      })(raw);
+      if (input.tenantId !== operator.principal.tenantId) {
         return yield* fail('The authenticated operator tenant does not match the setup input');
       }
-      const decision = yield* permission.checkActionPermission({
-        actionKey: configureAgentAction.descriptor.actionKey,
-        correlationId: randomUUID(),
-        legalEntityId: input.legalEntityId,
-        principalId: actor.principalId,
-        tenantId: input.tenantId,
-      });
-      if (decision !== 'allowed') {
-        return yield* fail('The authenticated operator cannot configure agents in every requested company');
-      }
+      const principal = yield* selectAgentOperatorCompany(operator, input.legalEntityId);
+      yield* requireAgentSetupAuthority(principal, configureAgentAction.descriptor.actionKey);
       const [target] = yield* executor
-        .select({ kind: principals.kind })
+        .select({ kind: principals.kind, status: principals.status })
         .from(principals)
         .where(and(eq(principals.tenantId, input.tenantId), eq(principals.principalId, input.principalId)))
         .limit(1);
+      const current = yield* readProfile(input);
       if (input.operation === configureOperation) {
         const [membership] = yield* executor
           .select({ affiliation: principalCompanyMemberships.affiliation, status: principalCompanyMemberships.status })
@@ -279,172 +246,88 @@ export const runAgentProfileSetup = Effect.fn('AgentProfileSetup.run')(function*
             ),
           )
           .limit(1);
-        if (target?.kind !== 'agent' || membership?.status !== 'active' || membership.affiliation !== null) {
-          return yield* fail(
-            `Agent ${input.principalId} needs its exact active company membership before profile replay`,
-          );
+        if (
+          target?.kind !== 'agent' ||
+          target.status === 'archived' ||
+          membership?.status !== 'active' ||
+          membership.affiliation !== null
+        ) {
+          return yield* fail(`Agent ${input.principalId} needs its exact active company membership before replay`);
         }
-      } else if (target !== undefined && !profileMatches(yield* readProfile(input), input)) {
+      } else if (
+        target !== undefined &&
+        (target.kind !== 'agent' || target.status === 'archived' || !profileMatches(current, input))
+      ) {
         return yield* fail(`Agent ${input.principalId} already exists; explicit creation cannot adopt it`);
       }
-      const principalRelationships = yield* grants.relationshipsOf(input.principalId);
-      if (principalRelationships.some((relationship) => relationship.resourceType === 'action')) {
-        return yield* fail(
-          'Legacy global Action grants remain; complete the reviewed cutover before agent-profile setup',
-        );
+      if (current !== undefined && !profileMatches(current, input)) {
+        return yield* fail('The current native profile differs; do not overwrite newer administrator evidence');
       }
-      const catalog = yield* (yield* ShellInstalledModuleCatalog).load;
-      const installedModules = yield* executor
-        .select({ moduleKey: tenantModuleStates.moduleKey })
-        .from(tenantModuleStates)
-        .where(and(eq(tenantModuleStates.tenantId, input.tenantId), eq(tenantModuleStates.state, 'active')));
-      const desired = currentAgentProfileRelationships({
-        catalog,
-        company: { active: true, legalEntityId: input.legalEntityId, profile: input },
-        installedModuleKeys: new Set(installedModules.map(({ moduleKey }) => moduleKey)),
-        namedPermissions: yield* readCurrentAgentNamedPermissions(rpc, input),
+      const payload = {
+        description: input.description,
+        displayName: input.displayName,
+        modules: input.modules,
+        operation: input.operation,
+        ownerPrincipalId: input.ownerPrincipalId,
         principalId: input.principalId,
-        tenantId: input.tenantId,
-      });
-      const plan = yield* planAgentScopedRoleReplacement(rpc, {
-        ...input,
-        currentPrincipalRelationships: principalRelationships.map((relationship) =>
-          v1.Relationship.create({
-            relation: relationship.relation,
-            resource: { objectId: relationship.resourceId, objectType: relationship.resourceType },
-            subject: { object: { objectId: input.principalId, objectType: 'principal' } },
-          }),
-        ),
-        desired,
-      });
-      const graphMatches = plan.updates.length === 0;
-      if (reviewedPolicy !== undefined) {
-        const bound = reviewedPolicy.find(
-          (row) =>
-            row.input.tenantId === input.tenantId &&
-            row.input.legalEntityId === input.legalEntityId &&
-            row.input.principalId === input.principalId,
-        );
-        if (
-          bound === undefined ||
-          !Schema.toEquivalence(AgentProfileSetupInputSchema)(bound.input, input) ||
-          !profileMatches(yield* readProfile(input), input) ||
-          !isExactAdditiveAgentPolicy(bound.missing, plan.updates)
-        ) {
-          return yield* fail(
-            'Fresh native preparation differs from the exact reviewed additive agent-policy delta; no Actions run',
-          );
-        }
-      }
-      return {
-        desired,
-        graphMatches,
-        input,
-        policyUpdates: plan.updates,
-        profileMatches: profileMatches(yield* readProfile(input), input),
+        writePolicy: input.writePolicy,
       };
+      const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(ConfigureAgentPayloadSchema))(payload);
+      const keyInput = yield* Schema.encodeEffect(profileIdempotencyInput)([
+        sourceFingerprint,
+        input.tenantId,
+        input.legalEntityId,
+        encoded,
+      ]);
+      const idempotencyKey = `agent-profile:${createHash('sha256').update(keyInput).digest('hex')}`;
+      return { idempotencyKey, input, matches: profileMatches(current, input), payload };
     }),
     { concurrency: 1 },
   );
-  if (mode === 'verify') {
-    if (prepared.some((row) => !row.graphMatches || !row.profileMatches)) {
-      return yield* fail('Native audited profiles or exact scoped role policies differ from the reviewed input');
-    }
-    return { applied: 0, mode, rows: prepared.length, verified: true };
-  }
-  if (mode === 'dry-run') {
-    return {
-      applied: 0,
-      changes: prepared
-        .filter((row) => !row.graphMatches || !row.profileMatches)
-        .map(({ input }) => ({
-          legalEntityId: input.legalEntityId,
-          operation: input.operation,
-          principalId: input.principalId,
-          tenantId: input.tenantId,
-        })),
-      mode,
-      policies: prepared.map((row) => ({
-        expected: EffectArray.sort(
-          [
-            ...row.desired,
-            ...agentNamedPermissionScopeRelationships({
-              ...row.input,
-              currentPrincipalRelationships: [],
-              desired: row.desired,
-            }),
-          ]
-            .map((relationship) => v1.Relationship.toJsonString(relationship))
-            .filter((relationship, index, all) => all.indexOf(relationship) === index),
-          Order.String,
-        ),
-        input: row.input,
-        missing: EffectArray.sort(
-          row.policyUpdates
-            .filter((update) => update.operation === v1.RelationshipUpdate_Operation.TOUCH)
-            .flatMap((update) =>
-              update.relationship === undefined ? [] : [v1.Relationship.toJsonString(update.relationship)],
-            ),
-          Order.String,
-        ),
-        profileMatches: row.profileMatches,
-        unexpected: EffectArray.sort(
-          row.policyUpdates
-            .filter((update) => update.operation === v1.RelationshipUpdate_Operation.DELETE)
-            .flatMap((update) =>
-              update.relationship === undefined ? [] : [v1.Relationship.toJsonString(update.relationship)],
-            ),
-          Order.String,
-        ),
-      })),
-      rows: prepared.length,
-      verified: prepared.every((row) => row.graphMatches && row.profileMatches),
-    };
+  if (mode === 'verify' && prepared.some((row) => !row.matches)) {
+    return yield* fail('Native audited profiles differ from the reviewed input');
   }
   let applied = 0;
-  for (const row of prepared) {
-    if (row.graphMatches && row.profileMatches) {
-      continue;
+  if (mode === 'apply') {
+    for (const row of prepared.filter((candidate) => !candidate.matches)) {
+      // Selection mutates one session. Re-select at execution, never reuse a stale selected principal.
+      const principal = yield* selectAgentOperatorCompany(operator, row.input.legalEntityId);
+      const latest = yield* readProfile(row.input);
+      if (latest !== undefined) {
+        if (!profileMatches(latest, row.input)) {
+          return yield* fail('The native profile changed during preparation; preserve administrator evidence');
+        }
+        // Another exact invocation may have committed while this batch was being prepared.
+        continue;
+      }
+      yield* runtime
+        .runAction({
+          payload: row.payload,
+          principal,
+          registration: configureAgentAction,
+          transport: { correlationId: randomUUID(), idempotencyKey: row.idempotencyKey },
+        })
+        .pipe(Effect.catchTag('ActionAlreadyCommitted', () => Effect.void));
+      if (!profileMatches(yield* readProfile(row.input), row.input)) {
+        return yield* fail('The profile changed after this replay committed; do not overwrite administrator evidence');
+      }
+      applied += 1;
     }
-    const { input } = row;
-    const payload = {
-      description: input.description,
-      displayName: input.displayName,
-      modules: input.modules,
-      operation: input.operation,
-      ownerPrincipalId: input.ownerPrincipalId,
-      principalId: input.principalId,
-      writePolicy: input.writePolicy,
-    };
-    const replayIdentity = `${sourceFingerprint}:${input.tenantId}:${input.legalEntityId}:${input.principalId}`;
-    const idempotencyKey = `agent-profile:${createHash('sha256').update(replayIdentity).digest('hex')}`;
-    yield* runtime
-      .runAction({
-        payload,
-        principal: { ...actor, legalEntityId: input.legalEntityId },
-        registration: configureAgentAction,
-        transport: { correlationId: randomUUID(), idempotencyKey },
-      })
-      .pipe(Effect.catchTag('ActionAlreadyCommitted', () => Effect.void));
-    if (afterWrite !== undefined) {
-      yield* afterWrite;
-    }
-    // A prior idempotent commit must still be current; never restore an older reviewed profile over a later admin edit.
-    if (!profileMatches(yield* readProfile(input), input)) {
-      return yield* fail(
-        'The native profile changed after this replay committed; do not overwrite newer administrator evidence',
-      );
-    }
-    yield* grants.replaceAgentGrants({
-      desired: row.desired,
-      legalEntityId: input.legalEntityId,
-      principalId: input.principalId,
-      tenantId: input.tenantId,
-    });
-    if (afterWrite !== undefined) {
-      yield* afterWrite;
-    }
-    applied += 1;
   }
-  return { applied, mode, rows: prepared.length, verified: true };
+  return {
+    applied,
+    // This checkpoint must not be mistaken for provisioned MCP access or consent.
+    authority: 'not-provisioned' as const,
+    changes: prepared
+      .filter((row) => !row.matches)
+      .map(({ input }) => ({
+        legalEntityId: input.legalEntityId,
+        operation: input.operation,
+        principalId: input.principalId,
+        tenantId: input.tenantId,
+      })),
+    mode,
+    rows: prepared.length,
+    verified: mode !== 'dry-run' || prepared.every((row) => row.matches),
+  };
 });

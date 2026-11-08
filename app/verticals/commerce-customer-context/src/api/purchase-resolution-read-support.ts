@@ -1,8 +1,7 @@
-import { ReadHandlerUnavailable, ReadPermissionDenied, defineReadConditionalPermission } from '@app/core-runtime';
-import type { ReadConditionalPermissionDeclaration, ReadLoadContext, ReadHandlerResult } from '@app/core-runtime';
+import { ReadHandlerUnavailable, ReadPermissionDenied } from '@app/core-runtime';
+import type { OwnerAccessFacts, ReadHandlerContext, ReadHandlerResult } from '@app/core-runtime';
 import { Effect } from 'effect';
-import type { AddressBookProfile } from '../../shared/domain/address-book.ts';
-import { profileTarget } from './address-read-support.ts';
+import { counterpartyOwnerFacts, retailOwnerFacts } from '../actions/owner-access-facts.ts';
 import type {
   PurchaseResolutionContextClaim,
   PurchaseResolutionSubject,
@@ -15,57 +14,20 @@ type PurchaseResolutionReadInput = Readonly<{
   readonly subject: PurchaseResolutionSubject;
 }>;
 
-type ResourceReference = Readonly<{
-  readonly moduleId: string;
-  readonly resourceId: string;
-  readonly resourceType: string;
-}>;
-
-type PurchaseResolutionPermissionSubject =
-  | PurchaseResolutionSubject
-  | Readonly<{
-      readonly kind: 'PROFILE_SAVED_ADDRESS';
-      readonly profile: AddressBookProfile;
-      readonly savedAddressRef: ResourceReference;
-    }>;
-
-export const makePurchaseResolutionPermission = <Input extends PurchaseResolutionReadInput>(
-  savedAddressRefFor: (input: Input) => ResourceReference | undefined,
-): ReadConditionalPermissionDeclaration<Input> =>
-  defineReadConditionalPermission<Input, PurchaseResolutionPermissionSubject>({
-    branches: {
-      GUEST: {
-        requiredKinds: ['module'],
-        resolve: () => [{ kind: 'module', moduleId: 'commerce.customer-context' }],
-      },
-      PROFILE: {
-        requiredKinds: ['business_permission', 'resource_read'],
-        resolve: (_input, { profile }, scope) => [
-          profileTarget({ profile }, scope),
-          { kind: 'resource_read', permission: 'read', resource: profile.profileRef },
-        ],
-      },
-      PROFILE_SAVED_ADDRESS: {
-        requiredKinds: ['business_permission', 'resource_read', 'resource_read'],
-        resolve: (_input, { profile, savedAddressRef }, scope) => [
-          profileTarget({ profile }, scope),
-          { kind: 'resource_read', permission: 'read', resource: profile.profileRef },
-          { kind: 'resource_read', permission: 'read', resource: savedAddressRef },
-        ],
-      },
-    },
-    permissionKey: 'module.access',
-    select: (input) => {
-      const { subject } = input;
-      if (subject.kind === 'GUEST') {
-        return subject;
-      }
-      const savedAddressRef = savedAddressRefFor(input);
-      return savedAddressRef === undefined
-        ? subject
-        : { kind: 'PROFILE_SAVED_ADDRESS', profile: subject.profile, savedAddressRef };
-    },
-  });
+/**
+ * The owner-local facts of a purchase-resolution read (O67-Q1, O70): a profile subject is checked
+ * against the counterparty's own grant or the Retail Portal profile capability, and a guest subject
+ * needs no owner record. The v2 declaration gates the read itself.
+ */
+export const purchaseResolutionOwnerFacts = (input: PurchaseResolutionReadInput): OwnerAccessFacts => {
+  const { subject } = input;
+  if (subject.kind === 'GUEST') {
+    return {};
+  }
+  return subject.profile.kind === 'COUNTERPARTY'
+    ? counterpartyOwnerFacts(subject.profile.counterpartyRef.resourceId)
+    : retailOwnerFacts(subject.profile.profileRef.resourceId, 'retail.address_book.use');
+};
 
 type PurchaseResolutionReadHandlerConfig<Input extends PurchaseResolutionReadInput, Resolution, Services> = Readonly<{
   readonly effectName: string;
@@ -83,7 +45,7 @@ export const makePurchaseResolutionReadHandler = <Input extends PurchaseResoluti
 ) =>
   Effect.fn(config.effectName)(function* purchaseResolutionReadHandler(
     input: Input,
-    context: ReadLoadContext<Services>,
+    context: ReadHandlerContext<Services>,
   ): Effect.fn.Return<
     ReadHandlerResult<{ readonly resolution: Resolution }>,
     ReadHandlerUnavailable | ReadPermissionDenied

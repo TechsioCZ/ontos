@@ -1,19 +1,18 @@
+import { catalogRegistration } from '../../vertical.registration.ts';
 import { NodeCrypto } from '@effect/platform-node';
 import {
-  ContextAccess,
   OperationContextDenied,
-  ReadHandlerExecutionError,
   ReadHandlerNotFound,
   ReadInputValidationError,
   ReadPermissionDenied,
   ReadPermissionUnavailable,
   TrustedPrincipalContextSchema,
   defineRead,
-  toContextPermissionAccessKey,
 } from '@app/core-runtime';
-import type { ContextPermissionAccessTarget, ReadRuntimeService, TrustedPrincipalContext } from '@app/core-runtime';
+import type { ReadRuntimeService, TrustedPrincipalContext } from '@app/core-runtime';
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
-import { Context, DateTime, Effect, Layer, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { catalogAuthorityBundles, catalogPublicOperationContracts } from '../../shared/api.ts';
@@ -260,76 +259,47 @@ const reads = [
   setCompositionHistoryRead,
 ] as const;
 
-const expectedPermissionTarget = (readKey: string) => {
-  if (
-    readKey === 'commerce.catalog.api.catalog-media-current' ||
-    readKey === 'commerce.catalog.api.pricing-purpose-equivalence' ||
-    readKey === 'commerce.catalog.api.quantity-basis-compatibility' ||
-    readKey === 'commerce.catalog.api.quantity-preparation'
-  ) {
-    return 'resource';
-  }
-  if (readKey.endsWith('-recovery')) {
-    return 'tenant';
-  }
-  if (
-    readKey.includes('brand') ||
-    readKey.includes('manufacturer-relation') ||
-    readKey.includes('product-relationship') ||
-    readKey === 'commerce.catalog.api.assortment-selection-assessment-v1' ||
-    readKey === 'commerce.catalog.api.product-size-current' ||
-    readKey === 'commerce.catalog.api.color-current' ||
-    readKey === 'commerce.catalog.api.color-history' ||
-    readKey === 'commerce.catalog.api.effective-attribute-values-current' ||
-    readKey === 'commerce.catalog.api.gtin-current' ||
-    readKey === 'commerce.catalog.api.gtin-history' ||
-    readKey === 'commerce.catalog.api.list-recorded-variants' ||
-    readKey === 'commerce.catalog.api.sku-lookup'
-  ) {
-    return 'module';
-  }
-  return 'tenant';
-};
-
 it('maps every published Action and governed read to one explicit atomic permission and bundle', () => {
   const actionKeys = catalogManifest.publicSurface.actions.map((action) => action.descriptor.actionKey);
   const readKeys = reads.map((read) => read.descriptor.readKey);
-  expect(new Set(readKeys)).toEqual(
-    new Set(Object.keys(catalogManifest.publicSurface.api).map((name) => `commerce.catalog.api.${name}`)),
-  );
+  // The shared Core approval API evaluates the original Action's authority; it is not a Catalog capability.
+  const apiEntries = Object.entries(catalogManifest.publicSurface.api);
+  expect(apiEntries.filter(([, api]) => api === OwnerActionApprovalApi)).toEqual([
+    ['owner-action-approvals', OwnerActionApprovalApi],
+  ]);
+  const ownerReads = apiEntries.filter(([, api]) => api !== OwnerActionApprovalApi);
+  expect(new Set(readKeys)).toEqual(new Set(ownerReads.map(([name]) => `commerce.catalog.api.${name}`)));
   const published = [...actionKeys, ...readKeys];
   expect(new Set(published).size).toBe(published.length);
   expect(new Set(Object.keys(catalogPublicOperationContracts))).toEqual(new Set(published));
 
   for (const actionKey of actionKeys) {
     const contract = Object.entries(catalogPublicOperationContracts).find(([key]) => key === actionKey)?.[1];
-    expect(contract).toMatchObject({ permission: actionKey, permissionKind: 'action_execution', scope: 'tenant' });
+    expect(contract).toMatchObject({ accessKind: 'action', permission: actionKey, scope: 'tenant' });
   }
   for (const read of reads) {
     const { entrypoint, readKey } = read.descriptor;
     const contract = Object.entries(catalogPublicOperationContracts).find(([key]) => key === readKey)?.[1];
-    expect(entrypoint.authorization.kind).toBe('context_permission');
-    if (entrypoint.authorization.kind !== 'context_permission') {
-      continue;
-    }
-    expect(contract).toMatchObject({
-      authorityBundle: 'CATALOG_READER',
-      permission: entrypoint.authorization.permission,
-      permissionKind: 'context_permission',
-      scope: 'tenant',
-    });
+    expect(entrypoint.authorization.kind).toBe('protected');
+    expect(contract).toMatchObject({ accessKind: 'read', authorityBundle: 'CATALOG_READER', scope: 'tenant' });
     expect(entrypoint.scope).toBe('tenant');
-    const expectedTarget = expectedPermissionTarget(readKey);
-    expect(read.descriptor.permissionTarget).toBe(expectedTarget);
-    if ('resourcePermission' in read.descriptor && read.descriptor.resourcePermission !== undefined) {
-      expect(contract).toMatchObject({ permissionTarget: expectedTarget, resourcePermission: 'read' });
-    }
+    // v2: the declaration is the only authority identity; a scope-wide read declares no legacy target.
+    expect(read.descriptor.accessDeclaration).toMatchObject({ kind: 'read', selectors: [] });
   }
 
-  expect(catalogPublicOperationContracts['commerce.catalog.api.product-relationship-current']).toMatchObject({
-    permissionTarget: 'module',
-    resourcePermission: 'read',
-  });
+  // v2 replaced every legacy read/action permission target with one declaration per operation (Q2):
+  // staff catalog capabilities are scope-wide, and the declaration key is the only authority identity.
+  const declarations = [
+    ...catalogManifest.publicSurface.actions.map(({ descriptor }) => descriptor.accessDeclaration),
+    ...reads.map(({ descriptor }) => descriptor.accessDeclaration),
+  ];
+  const declarationKeys = declarations.map((declaration) => declaration?.key);
+  expect(declarationKeys.filter((key) => key === undefined)).toEqual([]);
+  expect(new Set(declarationKeys).size).toBe(declarationKeys.length);
+  for (const declaration of declarations) {
+    expect(declaration?.selectors).toEqual([]);
+    expect(declaration?.key.startsWith('commerce.catalog.')).toBe(true);
+  }
 
   const bundlePermissions = Object.values(catalogAuthorityBundles).flat();
   const contractPermissions = Object.values(catalogPublicOperationContracts).map(({ permission }) => permission);
@@ -347,9 +317,9 @@ it('keeps read, ordinary edit, shared-definition, and high-impact lifecycle auth
   expect(bundles.PRODUCT_EDITOR).toContain('commerce.catalog.govern-variant-axes');
   expect(bundles.CATALOG_DEFINITION_MANAGER).not.toContain('commerce.catalog.govern-variant-axes');
   expect(catalogPublicOperationContracts['commerce.catalog.govern-variant-axes']).toMatchObject({
+    accessKind: 'action',
     authorityBundle: 'PRODUCT_EDITOR',
     businessTarget: 'product',
-    permissionKind: 'action_execution',
   });
   expect(bundles.PRODUCT_EDITOR).toContain('commerce.catalog.set-product-brand');
   expect(bundles.PRODUCT_EDITOR).toContain('commerce.catalog.set-product-manufacturer');
@@ -363,10 +333,10 @@ it('keeps read, ordinary edit, shared-definition, and high-impact lifecycle auth
   expect(bundles.CATALOG_DEFINITION_MANAGER).toContain('commerce.catalog.revise-attribute-definition');
   expect(bundles.PRODUCT_EDITOR).not.toContain('commerce.catalog.revise-attribute-definition');
   expect(catalogPublicOperationContracts['commerce.catalog.revise-attribute-definition']).toMatchObject({
+    accessKind: 'action',
     authorityBundle: 'CATALOG_DEFINITION_MANAGER',
     businessTarget: 'attribute-definition',
     permission: 'commerce.catalog.revise-attribute-definition',
-    permissionKind: 'action_execution',
     scope: 'tenant',
   });
   for (const operation of [
@@ -378,10 +348,10 @@ it('keeps read, ordinary edit, shared-definition, and high-impact lifecycle auth
     expect(bundles.PRODUCT_EDITOR).not.toContain(operation);
     expect(bundles.CATALOG_LIFECYCLE_MANAGER).not.toContain(operation);
     expect(catalogPublicOperationContracts[operation]).toMatchObject({
+      accessKind: 'action',
       authorityBundle: 'CATALOG_DEFINITION_MANAGER',
       businessTarget: 'configuration-unit',
       permission: operation,
-      permissionKind: 'action_execution',
       scope: 'tenant',
     });
   }
@@ -574,20 +544,12 @@ const targetReadCases = [
   },
 ];
 
-const allowTargetReadContextPermissions = ({
-  targets,
-}: {
-  readonly targets: readonly ContextPermissionAccessTarget[];
-}) =>
-  Effect.succeed(
-    targets.map((target) => ({ decision: 'allowed' as const, key: toContextPermissionAccessKey(target) })),
-  );
-
 it.layer(NodeCrypto.layer)('Catalog registered resource target agreement', (suite) => {
   for (const read of targetReadCases) {
     suite.effect(`${read.name} reaches its original owner handler and commits governed evidence`, () =>
       Effect.gen(function* registeredResourceRead() {
         const harness = yield* makeReadTestHarness({
+          access: 'allowed',
           executeOwnerQuery: (query) => {
             expect(query.scope).toEqual({ legalEntityId: targetScope.legalEntityId, tenantId: targetTenantId });
             if (query.sql.includes('"catalog"."catalog_media_assignment_sets"')) {
@@ -602,11 +564,8 @@ it.layer(NodeCrypto.layer)('Catalog registered resource target agreement', (suit
           },
           operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(targetEffectiveAt)),
           ownerAuthorizationDecision: 'allowed',
-          permissionDecision: 'allowed',
+          ownerRegistration: catalogRegistration,
           scope: targetScope,
-        });
-        Object.assign(Context.get(yield* Layer.build(harness.layer), ContextAccess), {
-          contextPermissions: allowTargetReadContextPermissions,
         });
         yield* read.run(harness.runtime, targetScope, resourceTargetInputs());
         expect(harness.snapshot().stages).toContain('handler_executed');
@@ -616,35 +575,21 @@ it.layer(NodeCrypto.layer)('Catalog registered resource target agreement', (suit
     );
 
     for (const decision of ['denied', 'unavailable'] as const) {
-      suite.effect(`${read.name} keeps resource ${decision} fail-closed despite module access`, () =>
-        Effect.gen(function* resourcePermissionFailure() {
+      suite.effect(`${read.name} keeps a ${decision} access decision fail-closed despite module access`, () =>
+        Effect.gen(function* accessDecisionFailure() {
           const harness = yield* makeReadTestHarness({
+            access: decision,
             executeOwnerQuery: () => Effect.die('No owner SQL is authorized'),
             operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(targetEffectiveAt)),
+            // The trusted scope itself is fine; only the read's own decision is refused.
             ownerAuthorizationDecision: 'allowed',
-            permissionDecision: 'allowed',
+            ownerRegistration: catalogRegistration,
             scope: targetScope,
-          });
-          const access = Context.get(yield* Layer.build(harness.layer), ContextAccess);
-          const requested: object[] = [];
-          // Override only the test permission transport; real Core resolution and gates remain.
-          Object.assign(access, {
-            contextPermissions: allowTargetReadContextPermissions,
-            resources: ({ resources }: Parameters<typeof access.resources>[0]) => {
-              requested.push(...resources);
-              return Effect.succeed(
-                resources.map((resource) => ({
-                  decision,
-                  key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
-                })),
-              );
-            },
           });
           const failure = yield* read.run(harness.runtime, targetScope, resourceTargetInputs()).pipe(Effect.flip);
           expect(Schema.is(decision === 'denied' ? ReadPermissionDenied : ReadPermissionUnavailable)(failure)).toBe(
             true,
           );
-          expect(requested).toEqual([resourceTargetInputs().media.target, resourceTargetInputs().media.target]);
           expect(harness.snapshot().ownerQueries).toEqual([]);
           expect(harness.snapshot().stages).not.toContain('handler_executed');
         }),
@@ -654,10 +599,11 @@ it.layer(NodeCrypto.layer)('Catalog registered resource target agreement', (suit
     suite.effect(`${read.name} rejects a malformed resource kind before owner SQL`, () =>
       Effect.gen(function* wrongResourceKind() {
         const harness = yield* makeReadTestHarness({
+          access: 'allowed',
           executeOwnerQuery: () => Effect.die('No owner SQL is authorized'),
           operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(targetEffectiveAt)),
           ownerAuthorizationDecision: 'allowed',
-          permissionDecision: 'allowed',
+          ownerRegistration: catalogRegistration,
           scope: targetScope,
         });
         const failure = yield* read
@@ -671,14 +617,12 @@ it.layer(NodeCrypto.layer)('Catalog registered resource target agreement', (suit
     suite.effect(`${read.name} rejects a foreign Tenant before owner SQL`, () =>
       Effect.gen(function* foreignResourceTenant() {
         const harness = yield* makeReadTestHarness({
+          access: 'allowed',
           executeOwnerQuery: () => Effect.die('No owner SQL is authorized'),
           operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(targetEffectiveAt)),
           ownerAuthorizationDecision: 'allowed',
-          permissionDecision: 'allowed',
+          ownerRegistration: catalogRegistration,
           scope: targetScope,
-        });
-        Object.assign(Context.get(yield* Layer.build(harness.layer), ContextAccess), {
-          contextPermissions: allowTargetReadContextPermissions,
         });
         const failure = yield* read
           .run(harness.runtime, targetScope, resourceTargetInputs('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'))
@@ -693,10 +637,11 @@ it.layer(NodeCrypto.layer)('Catalog registered resource target agreement', (suit
     suite.effect(`${read.name} requires a selected Legal Entity before permission or owner resolution`, () =>
       Effect.gen(function* missingLegalEntity() {
         const harness = yield* makeReadTestHarness({
+          access: 'allowed',
           executeOwnerQuery: () => Effect.die('No owner SQL is authorized'),
           operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(targetEffectiveAt)),
           ownerAuthorizationDecision: 'allowed',
-          permissionDecision: 'allowed',
+          ownerRegistration: catalogRegistration,
           scope: targetScope,
         });
         const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
@@ -714,7 +659,7 @@ it.layer(NodeCrypto.layer)('Catalog registered resource target agreement', (suit
     );
   }
 
-  suite.effect('current media authorizes the exact Variant target through both resource checks', () =>
+  suite.effect('current media reads the exact Variant target through the one access gate', () =>
     Effect.gen(function* exactMediaVariant() {
       const target = {
         moduleId: 'commerce.catalog',
@@ -723,6 +668,7 @@ it.layer(NodeCrypto.layer)('Catalog registered resource target agreement', (suit
         tenantId: targetTenantId,
       };
       const harness = yield* makeReadTestHarness({
+        access: 'allowed',
         executeOwnerQuery: (query) => {
           expect(query.scope).toEqual({ legalEntityId: targetScope.legalEntityId, tenantId: targetTenantId });
           if (query.sql.includes('"catalog"."product_variants"')) {
@@ -734,22 +680,8 @@ it.layer(NodeCrypto.layer)('Catalog registered resource target agreement', (suit
         },
         operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(targetEffectiveAt)),
         ownerAuthorizationDecision: 'allowed',
-        permissionDecision: 'allowed',
+        ownerRegistration: catalogRegistration,
         scope: targetScope,
-      });
-      const access = Context.get(yield* Layer.build(harness.layer), ContextAccess);
-      const requested: object[] = [];
-      Object.assign(access, {
-        contextPermissions: allowTargetReadContextPermissions,
-        resources: ({ resources }: Parameters<typeof access.resources>[0]) => {
-          requested.push(...resources);
-          return Effect.succeed(
-            resources.map((resource) => ({
-              decision: 'allowed' as const,
-              key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
-            })),
-          );
-        },
       });
       const result = yield* harness.runtime.runRead({
         input: { target },
@@ -758,38 +690,46 @@ it.layer(NodeCrypto.layer)('Catalog registered resource target agreement', (suit
         transport: { correlationId: targetScope.correlationId },
       });
       expect(result.target).toEqual(target);
-      expect(requested).toEqual([target, target]);
       expect(harness.snapshot().stages).toContain('handler_executed');
       expect(harness.snapshot().evidenceWrites).toBe(1);
-    }),
-  );
 
-  suite.effect('preserves the Core descriptor/resolver mismatch guard', () =>
-    Effect.gen(function* mismatchControl() {
-      const mismatched = defineRead(
-        quantityPreparationRead.descriptor,
-        () => Effect.die('Mismatch must fail before handler'),
-        () => Effect.succeed({}),
-        () => ({ kind: 'module', moduleId: 'commerce.catalog' }),
-      );
-      const harness = yield* makeReadTestHarness({
+      // Negative control: the same exact Variant request never reaches owner SQL when the gate refuses.
+      const refused = yield* makeReadTestHarness({
+        access: 'denied',
         executeOwnerQuery: () => Effect.die('No owner SQL is authorized'),
         operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(targetEffectiveAt)),
         ownerAuthorizationDecision: 'allowed',
-        permissionDecision: 'allowed',
+        ownerRegistration: catalogRegistration,
         scope: targetScope,
       });
-      const failure = yield* harness.runtime
+      const failure = yield* refused.runtime
         .runRead({
-          input: resourceTargetInputs().preparation,
+          input: { target },
           principal: targetScope,
-          registration: mismatched,
+          registration: catalogMediaCurrentRead,
           transport: { correlationId: targetScope.correlationId },
         })
         .pipe(Effect.flip);
-      expect(Schema.is(ReadHandlerExecutionError)(failure)).toBe(true);
-      expect(failure).toMatchObject({ reason: 'The declared read permission target is invalid' });
-      expect(harness.snapshot().ownerQueries).toEqual([]);
+      expect(Schema.is(ReadPermissionDenied)(failure)).toBe(true);
+      expect(refused.snapshot().ownerQueries).toEqual([]);
+    }),
+  );
+
+  suite.effect('binds a record target only to a record-scoped declaration', () =>
+    Effect.sync(() => {
+      // The v2 replacement for the descriptor/resolver agreement: a scope-wide capability answers no
+      // single record, so a detail read may not carry an accessTarget for it. It fails at definition
+      // time, before any handler or owner SQL runs.
+      expect(() =>
+        defineRead(
+          {
+            ...quantityPreparationRead.descriptor,
+            accessTarget: () => ({ moduleKey: 'commerce.catalog', recordKey: targetProductId }),
+          },
+          () => Effect.die('Mismatch must fail before handler'),
+          () => Effect.succeed({}),
+        ),
+      ).toThrow(/accessTarget/u);
     }),
   );
 });

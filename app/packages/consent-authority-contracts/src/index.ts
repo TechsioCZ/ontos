@@ -1,19 +1,45 @@
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { DateTime, Option, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
+const privacyModuleId = 'privacy.core';
 const ResourceIdSchema = Schema.toEncoded(
   Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(Schema.brand('PrivacyResourceId')),
 );
 const TenantIdSchema = Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrivacyTenantId')));
 export const PrivacySubjectRefSchema = Schema.Struct({
-  moduleId: Schema.Literal('privacy.core'),
+  moduleId: Schema.Literal(privacyModuleId),
   resourceId: ResourceIdSchema,
   resourceType: Schema.Literal('privacy.core.privacy-subject'),
   tenantId: TenantIdSchema,
 });
 export type PrivacySubjectRef = typeof PrivacySubjectRefSchema.Type;
 
+/** Public identity protocol only: deriving a reference proves neither existence nor access. */
+export const privacySubjectRefForParty = (partyRef: {
+  readonly moduleId: 'party.registry';
+  readonly resourceId: string;
+  readonly resourceType: 'party.registry.party';
+  readonly tenantId: string;
+}): PrivacySubjectRef => {
+  // UUIDv8: SHA-256, domain separated from every other owner/resource identity.
+  const hash = Hex.encode(
+    sha256(
+      utf8ToBytes(`privacy.core/privacy-subject/party.registry.party/${partyRef.tenantId}/${partyRef.resourceId}`),
+    ),
+  );
+  const variant = ((Number.parseInt(hash.slice(16, 18), 16) % 64) + 128).toString(16).padStart(2, '0');
+  return {
+    moduleId: privacyModuleId,
+    resourceId: `${hash.slice(0, 8)}-${hash.slice(8, 12)}-8${hash.slice(13, 16)}-${variant}${hash.slice(18, 20)}-${hash.slice(20, 32)}`,
+    resourceType: 'privacy.core.privacy-subject',
+    tenantId: partyRef.tenantId,
+  };
+};
+
 export const ProcessingPurposeRefSchema = Schema.Struct({
-  moduleId: Schema.Literal('privacy.core'),
+  moduleId: Schema.Literal(privacyModuleId),
   resourceId: ResourceIdSchema,
   resourceType: Schema.Literal('privacy.core.processing-purpose'),
   tenantId: TenantIdSchema,

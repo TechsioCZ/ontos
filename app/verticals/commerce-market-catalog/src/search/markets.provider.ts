@@ -6,10 +6,9 @@ import {
   OperationContextUnavailable,
   ReadHandlerUnavailable,
   defineRead,
-  defineReadSearchCollectionAuthorization,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { OperationalScope, ReadLoadContext } from '@app/core-runtime';
+import type { CoreSearchAuthorization, OperationalScope, ReadLoadContext, ReadPrepareContext } from '@app/core-runtime';
 import { MarketsProviderRequestSchema, MarketsProviderResponseSchema } from '../../shared/apis/markets-search.ts';
 import type { MarketsProviderRequest, MarketsProviderResponse } from '../../shared/apis/markets-search.ts';
 
@@ -17,7 +16,7 @@ const moduleKey = 'commerce.market-catalog';
 
 const marketsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.market-catalog.search.markets',
   moduleKey,
   role: 'search',
@@ -36,7 +35,11 @@ export const makeMarketSearchLoader = Effect.gen(function* makeMarketSearchLoade
   return Effect.fn('MarketsProvider.load')(function* loadMarkets(
     scope: OperationalScope,
     input: MarketsProviderRequest,
+    authorization: CoreSearchAuthorization,
   ) {
+    if (authorization.listAccess === undefined) {
+      return yield* unavailable();
+    }
     const { legalEntityId } = scope;
     if (legalEntityId === undefined) {
       return yield* new OperationContextUnavailable({
@@ -57,6 +60,7 @@ export const makeMarketSearchLoader = Effect.gen(function* makeMarketSearchLoade
           tenantId: scope.tenantId,
         },
         scope,
+        authorization,
       )
       .pipe(
         Effect.mapError(unavailable),
@@ -87,13 +91,36 @@ export const makeMarketSearchLoader = Effect.gen(function* makeMarketSearchLoade
 export const loadMarkets = Effect.fn('MarketsProvider.query')(function* queryMarkets(
   scope: OperationalScope,
   input: MarketsProviderRequest,
+  authorization: CoreSearchAuthorization,
 ) {
   const load = yield* makeMarketSearchLoader;
-  return yield* load(scope, input);
+  return yield* load(scope, input, authorization);
 });
+
+const prepareMarkets = (input: MarketsProviderRequest, context: ReadPrepareContext) => {
+  // The protected search's actual LIST answer bounds Core's SQL candidates before matching,
+  // ordering and limiting. Missing authority never becomes an invented scope-wide predicate.
+  // This search declares no field groups; unexpected denied paths cannot be silently ignored.
+  if (
+    context.listAccess === undefined ||
+    context.deniedFieldPaths === undefined ||
+    context.deniedFieldPaths.length > 0
+  ) {
+    return Effect.fail(unavailable());
+  }
+  return loadMarkets(context.scope, input, { listAccess: context.listAccess });
+};
 
 export const marketsRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.market-catalog.market.search',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'markets', level: 'basic' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
     accessKind: 'search',
     entrypoint: marketsEntrypoint,
     evidencePolicy: {
@@ -103,39 +130,20 @@ export const marketsRead = defineRead(
     inputSchema: MarketsProviderRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.market-catalog.search.markets',
-    resultAuthorization: defineReadSearchCollectionAuthorization({
-      items: (result: MarketsProviderResponse) => result,
-      resource: (item) => item.ref,
-      resultSchema: MarketsProviderResponseSchema,
-      withItems: (_result, items) => items,
-    }),
     resultSchema: MarketsProviderResponseSchema,
     schemaVersion: '1',
   },
   {
-    load: (
-      input,
-      context: ReadLoadContext<{
-        readonly load: (
-          request: MarketsProviderRequest,
-        ) => Effect.Effect<MarketsProviderResponse, ReadHandlerUnavailable | OperationContextUnavailable>;
-      }>,
-    ) =>
-      context.services.load(input).pipe(
-        Effect.map((result) => ({
-          evidence: { resultCount: result.length },
-          result,
-        })),
-      ),
+    prepare: prepareMarkets,
+    load: (_input, context: ReadLoadContext<Record<never, never>, MarketsProviderResponse>) =>
+      Effect.succeed({
+        evidence: { resultCount: context.prepared.length },
+        result: context.prepared,
+      }),
   },
-  Effect.fn('MarketsProvider.services')(function* marketSearchServices(_transaction, scope) {
-    const load = yield* makeMarketSearchLoader;
-    return {
-      load: (input: MarketsProviderRequest) => load(scope, input),
-    };
-  }),
-  () => ({ kind: 'module', moduleId: moduleKey }),
+  // Core Search owns its scoped index transaction in prepare. No owner SQL or service
+  // lookup remains inside this Read's load transaction; Core retains its disclosure fence.
+  () => Effect.succeed({}),
 );

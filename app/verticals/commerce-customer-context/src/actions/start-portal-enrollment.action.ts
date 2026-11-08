@@ -75,9 +75,21 @@ const handleStartPortalEnrollment = Effect.fn('StartPortalEnrollmentAction.handl
 
 export const startPortalEnrollmentAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.portal-enrollment.start',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'portal-enrollment', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.start-portal-enrollment.access.v1',
+    },
+    accessWorkload: {
+      reason: 'The shared Storefront client starts an enrollment on a visitor behalf before any human session exists',
+      workloads: ['commerce.storefront-client'],
     },
     actionKey: 'commerce.customer-context.start-portal-enrollment',
     auditProfile: 'standard',
@@ -85,7 +97,7 @@ export const startPortalEnrollmentAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.start-portal-enrollment',
       moduleKey: 'commerce.customer-context',
       role: 'action',

@@ -45,6 +45,14 @@ const handleRevalidateOrderCommitment = Effect.fn('RevalidateOrderCommitment.han
 
 export const revalidateOrderCommitmentAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.order.commitment.revalidate',
+      kind: 'action',
+      modes: ['run', 'propose'],
+      placement: { group: 'orders', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.order.revalidate-order-commitment.access.v1',
@@ -55,7 +63,7 @@ export const revalidateOrderCommitmentAction = defineAction(
     domainEvents: orderCommitmentDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.order.revalidate-order-commitment',
       moduleKey,
       role: 'action',

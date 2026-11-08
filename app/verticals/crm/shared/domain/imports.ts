@@ -212,8 +212,8 @@ export type ImportsSlice = typeof ImportsSliceSchema.Type;
 export const initialImportsSlice: ImportsSlice = { batches: [], customerLinks: [], orders: [], pairingHistory: [] };
 
 /**
- * Read projection. read_all sees everything (batches, unpaired queue). A salesperson sees only orders paired to
- * visible clients and their pairing history; never batches or the unpaired queue.
+ * Read projection. A full reader sees everything (batches, unpaired queue). A salesperson sees only orders
+ * paired to visible clients and their pairing history; never batches or the unpaired queue.
  */
 export const projectImportsSlice = (
   slice: ImportsSlice,

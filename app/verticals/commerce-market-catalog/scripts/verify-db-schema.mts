@@ -8,6 +8,7 @@ import { CommerceMarketCatalogDatabase, CommerceMarketCatalogDatabaseLive } from
 import { COMMERCE_MARKET_CATALOG_SCHEMA_NAME, COMMERCE_MARKET_CATALOG_TABLES } from '../src/database/schema.ts';
 
 class VerificationError extends Schema.TaggedError<VerificationError>()('CommerceMarketCatalogVerificationError', {
+  actual: Schema.optional(Schema.Record(Schema.String, Schema.Union([Schema.Boolean, Schema.Number]))),
   reason: Schema.String,
 }) {}
 
@@ -27,6 +28,7 @@ interface InfrastructureRow extends Readonly<Record<string, boolean | number>> {
   readonly journal_count: number;
   readonly policy_count: number;
   readonly private_routine_executable: boolean;
+  readonly retirement_runtime_privileges_valid: boolean;
   readonly role_bypass_rls: boolean;
   readonly role_super: boolean;
   readonly runtime_create: boolean;
@@ -143,9 +145,19 @@ const verification = Effect.gen(function* verifyDatabase() {
       has_function_privilege(${'ontos_runtime'}, ${'commerce_market_catalog.assert_operation_scope(uuid,uuid)'}, ${'EXECUTE'}) or has_function_privilege(${'ontos_runtime'}, ${'commerce_market_catalog.advance_completeness_generation(uuid,uuid)'}, ${'EXECUTE'}) as private_routine_executable,
       has_schema_privilege(${'ontos_runtime'}, ${COMMERCE_MARKET_CATALOG_SCHEMA_NAME}, ${'CREATE'}) as runtime_create,
       has_schema_privilege(${'ontos_runtime'}, ${COMMERCE_MARKET_CATALOG_SCHEMA_NAME}, ${'USAGE'}) as runtime_usage,
-      bool_or(relation.relname <> ${'gateway_assertion_redemptions'} and has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'SELECT'})) as runtime_select,
-      bool_or(relation.relname <> ${'gateway_assertion_redemptions'} and has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'INSERT'})) as runtime_insert,
-      bool_or(relation.relname <> ${'gateway_assertion_redemptions'} and has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'UPDATE'})) as runtime_update,
+      bool_or(relation.relname = ${'market_retirement_admissions'}
+        and has_table_privilege(${'ontos_runtime'}, relation.oid, ${'SELECT'})
+        and has_table_privilege(${'ontos_runtime'}, relation.oid, ${'INSERT'})
+        and has_table_privilege(${'ontos_runtime'}, relation.oid, ${'UPDATE'})
+        and not has_table_privilege(${'ontos_runtime'}, relation.oid, ${'DELETE'})
+        and not has_table_privilege(${'ontos_runtime'}, relation.oid, ${'REFERENCES'})
+        and not has_table_privilege(${'ontos_runtime'}, relation.oid, ${'TRUNCATE'})
+        and not has_table_privilege(${'ontos_runtime'}, relation.oid, ${'TRIGGER'})
+        and not exists(select 1 from pg_catalog.aclexplode(coalesce(relation.relacl, pg_catalog.acldefault('r', relation.relowner))) acl where acl.grantee = 0)
+      ) as retirement_runtime_privileges_valid,
+      bool_or(relation.relname not in (${'gateway_assertion_redemptions'}, ${'market_retirement_admissions'}) and has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'SELECT'})) as runtime_select,
+      bool_or(relation.relname not in (${'gateway_assertion_redemptions'}, ${'market_retirement_admissions'}) and has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'INSERT'})) as runtime_insert,
+      bool_or(relation.relname not in (${'gateway_assertion_redemptions'}, ${'market_retirement_admissions'}) and has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'UPDATE'})) as runtime_update,
       bool_or(relation.relname <> ${'gateway_assertion_redemptions'} and has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'DELETE'})) as runtime_delete,
       runtime_role.rolsuper as role_super, runtime_role.rolbypassrls as role_bypass_rls
       from pg_catalog.pg_class relation join pg_catalog.pg_namespace namespace on namespace.oid = relation.relnamespace
@@ -156,10 +168,10 @@ const verification = Effect.gen(function* verifyDatabase() {
   );
   if (
     infrastructure === undefined ||
-    infrastructure.table_count !== 8 ||
-    infrastructure.force_rls_count !== 7 ||
+    infrastructure.table_count !== 9 ||
+    infrastructure.force_rls_count !== 8 ||
     infrastructure.wrong_owner_count !== 0 ||
-    infrastructure.policy_count !== 28 ||
+    infrastructure.policy_count !== 32 ||
     infrastructure.foreign_key_count !== 7 ||
     infrastructure.append_only_trigger_count !== 2 ||
     infrastructure.identity_trigger_count !== 2 ||
@@ -168,6 +180,7 @@ const verification = Effect.gen(function* verifyDatabase() {
     infrastructure.unsafe_governed_routine_count !== 0 ||
     infrastructure.unexpected_runtime_routine_count !== 0 ||
     infrastructure.private_routine_executable ||
+    !infrastructure.retirement_runtime_privileges_valid ||
     infrastructure.runtime_create ||
     !infrastructure.runtime_usage ||
     infrastructure.runtime_select ||
@@ -178,6 +191,7 @@ const verification = Effect.gen(function* verifyDatabase() {
     infrastructure.role_bypass_rls
   ) {
     return yield* new VerificationError({
+      actual: infrastructure,
       reason:
         'Commerce Market Catalog ownership, RLS, routine, trigger, journal, or least-privilege verification failed',
     });

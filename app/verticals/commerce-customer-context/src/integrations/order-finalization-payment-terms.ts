@@ -3,7 +3,6 @@ import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runt
 import type { FinalCartCandidate } from '@app/commerce-cart-finalization-contracts/final-candidate';
 import { DateTime, Effect, Schema, Predicate } from 'effect';
 import { PaymentTermsResolutionRequestSchema } from '../../shared/apis/payment-terms-resolution.ts';
-import type { PaymentTermsResolutionResponse } from '../../shared/apis/payment-terms-resolution.ts';
 import type { PurchaseApprovalRequest } from '../../shared/domain/purchasing-approval.ts';
 import {
   loadPaymentTermsResolutionState,
@@ -11,6 +10,7 @@ import {
 } from '../persistence/payment-term-persistence.ts';
 import { customerCommercePolicyRepositoryForScope } from '../persistence/customer-commerce-policy-persistence.ts';
 import { currentPaymentTermPolicySet } from '../../shared/domain/customer-commerce-policy-administration.ts';
+import { stableRevision } from '../stable-revision.ts';
 import { customerCommercePaymentTermsPolicyResolver } from './customer-commerce-payment-terms-policy.ts';
 import { paymentTermCatalogPortFromEnvironment } from './payment-term-catalog.ts';
 
@@ -78,7 +78,7 @@ const approvedPurchaseMatchesCart = ({
  * The candidate supplies business buyer/Storefront identity. The invoking service's Core scope stays unchanged.
  */
 export const loadOrderFinalizationPaymentTermsSnapshot = Effect.fn('OrderFinalizationPaymentTerms.loadSnapshot')(
-  function* resolveOrderFinalizationPaymentTerms(
+  function* loadSnapshot(
     transaction: ScopedTransactionExecutor,
     actualScope: OperationalScope,
     approvedRequest: PurchaseApprovalRequest,
@@ -113,49 +113,46 @@ export const loadOrderFinalizationPaymentTermsSnapshot = Effect.fn('OrderFinaliz
         storefrontId: candidate.storefrontId,
       },
     }).pipe(Effect.mapError(unavailable));
-    const [state, policy] = yield* Effect.all(
-      [
-        loadPaymentTermsResolutionState({ invoker: transaction, scope: { ...actualScope, legalEntityId } }, input),
-        customerCommercePolicyRepositoryForScope(transaction, actualScope).pipe(
-          Effect.flatMap((repository) => repository.loadPaymentTermPolicyState),
-          Effect.mapError(unavailable),
-        ),
-      ],
-      { concurrency: 1 },
+    const repository = yield* customerCommercePolicyRepositoryForScope(transaction, actualScope);
+    const policyState = yield* repository.loadPaymentTermPolicyState.pipe(Effect.mapError(unavailable));
+    const state = yield* loadPaymentTermsResolutionState(
+      { invoker: transaction, scope: { ...actualScope, legalEntityId } },
+      input,
     );
-    return { input, policy, state };
+    return { binding: stableRevision({ actualScope, approvedRequest }), input, policyState, state };
   },
 );
 
-export type OrderFinalizationPaymentTermsSnapshot = Effect.Success<
-  ReturnType<typeof loadOrderFinalizationPaymentTermsSnapshot>
->;
-
+/** The original requester obtains Catalog evidence only after the owner snapshot commits. */
 export const finishOrderFinalizationPaymentTerms = Effect.fn('OrderFinalizationPaymentTerms.finishSnapshot')(
   function* finishSnapshot(
     actualScope: OperationalScope,
     approvedRequest: PurchaseApprovalRequest,
-    snapshot: OrderFinalizationPaymentTermsSnapshot,
+    snapshot: Effect.Success<ReturnType<typeof loadOrderFinalizationPaymentTermsSnapshot>>,
     compositionRevision: string,
-  ): Effect.fn.Return<PaymentTermsResolutionResponse, ReadHandlerUnavailable | OperationContextUnavailable> {
+  ) {
     const { legalEntityId } = actualScope;
-    if (legalEntityId === undefined) {
-      return yield* new OperationContextUnavailable({
-        code: 'operation_context_unavailable',
-        reason: 'Order finalization requires a scoped Legal Entity',
-      });
+    if (
+      legalEntityId === undefined ||
+      snapshot.binding !== stableRevision({ actualScope, approvedRequest }) ||
+      snapshot.input.purchasingContext.sellingLegalEntityId !== legalEntityId
+    ) {
+      return yield* unavailable('The prepared Payment Terms scope changed');
     }
     const { proposal } = approvedRequest;
     const catalog = yield* paymentTermCatalogPortFromEnvironment({
       compositionRevision,
       legalEntityId,
       requestCorrelation: actualScope.correlationId,
-      tenantId: actualScope.tenantId,
+      subject: { _tag: 'Assertion', scope: actualScope },
     });
     const policy = customerCommercePaymentTermsPolicyResolver(
       'PROFILE',
-      { tenantId: actualScope.tenantId, trustedStorefrontId: proposal.context.storefrontId },
-      { readCurrentPaymentTermPolicy: (at) => Effect.succeed(currentPaymentTermPolicySet(snapshot.policy, at)) },
+      {
+        tenantId: actualScope.tenantId,
+        trustedStorefrontId: snapshot.input.purchasingContext.storefrontId,
+      },
+      { readCurrentPaymentTermPolicy: (at) => Effect.succeed(currentPaymentTermPolicySet(snapshot.policyState, at)) },
     );
     const result = yield* finishPaymentTermsResolution(snapshot.input, snapshot.state, policy, catalog);
     if (

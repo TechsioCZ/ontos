@@ -1,6 +1,7 @@
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { CommerceEnrollmentOwnerEffectUnavailable } from '../../src/enrollment/orchestration/owner-transition-errors.ts';
-import { GatewayContextRequestSchema } from '@app/shared-contracts';
-import { ConfigProvider, DateTime, Effect, Schema } from 'effect';
+import { GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
+import { ConfigProvider, Crypto, DateTime, Effect, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
@@ -8,10 +9,6 @@ import { EnrollmentCommandRecoveryInputSchema } from '../../shared/enrollment-co
 import type { EnrollmentCommandRecoveryResultSchema } from '../../shared/enrollment-command-recovery-api.ts';
 import { EnsureRetailCustomerProfilePayloadSchema } from '../../shared/actions/ensure-retail-customer-profile.ts';
 import { BindRetailPortalProfilePayloadSchema } from '../../shared/actions/bind-retail-portal-profile.ts';
-import {
-  RetailPortalPermissionCodeSchema,
-  RETAIL_PORTAL_SELF_SERVICE_BASELINE,
-} from '../../shared/domain/profile-contracts.ts';
 import {
   resolveRetailOwnerCommand,
   retailCustomerProfileActionExecutor,
@@ -22,9 +19,14 @@ const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
 const principalId = '30000000-0000-4000-8000-000000000001';
 const revision = 'a'.repeat(64);
-const servicePrincipalId = '40000000-0000-4000-8000-000000000001';
+const actorPrincipalId = '40000000-0000-4000-8000-000000000001';
 const issuedAssertion = (mode: string): string => {
   const claims = {
+    act: {
+      appId: mode === 'wrong-actor' ? 'pricing' : 'commerce-customer-context',
+      buildMarker: 'ccc-release',
+      principalId: actorPrincipalId,
+    },
     aud: 'commerce-customer-context',
     compositionRevision: mode === 'wrong-assertion-revision' ? 'b'.repeat(64) : revision,
     exp: 1_800_000_300,
@@ -33,19 +35,36 @@ const issuedAssertion = (mode: string): string => {
     jti: '50000000-0000-4000-8000-000000000001',
     principal: {
       authBindingId: '60000000-0000-4000-8000-000000000001',
-      authContextRef: 'api-key:enrollment-service',
-      authMethod: 'api_key',
+      authContextRef: 'better-auth-session:original-enrollment',
+      authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+      authMethod: 'session',
       legalEntityId: mode === 'wrong-legal-entity' ? '70000000-0000-4000-8000-000000000001' : legalEntityId,
-      principalId: servicePrincipalId,
+      principalId,
       tenantId: mode === 'wrong-tenant' ? '80000000-0000-4000-8000-000000000001' : tenantId,
     },
-    sub: servicePrincipalId,
+    sub: principalId,
     targetBuildMarker: 'approved-owner-build',
-    ver: 1,
+    ver: 3,
   };
   return `${Buffer.from(JSON.stringify({ alg: 'EdDSA', kid: 'test-key', typ: 'JWT' })).toString('base64url')}.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.issuer-signature`;
 };
 const requestCorrelation = 'scheduled-retail-owner-proof';
+const originator = {
+  actionInvocationId: '90000000-0000-4000-8000-000000000009',
+  compositionRevision: revision,
+  tenantId,
+};
+const crypto = Crypto.make({
+  digest: () => Effect.succeed(new Uint8Array()),
+  randomBytes: (size) => new Uint8Array(size).fill(1),
+});
+const delegationPayload = {
+  audience: 'commerce-customer-context',
+  compositionRevision: revision,
+  exchangeId: '01010101-0101-4101-8101-010101010101',
+  legalEntityScope: 'subject',
+  subject: { _tag: 'Originator', actionInvocationId: originator.actionInvocationId, legalEntityId, tenantId },
+};
 const sellingLegalEntityRef = {
   moduleId: 'core.identity',
   resourceId: legalEntityId,
@@ -74,6 +93,7 @@ const effectiveAt = DateTime.makeUnsafe('2026-10-02T17:00:00.000Z');
 const profileInput = {
   compositionRevision: revision,
   effectiveAt,
+  originator,
   partyRef,
   requestCorrelation,
   sellingLegalEntityRef,
@@ -82,6 +102,7 @@ const bindingInput = {
   compositionRevision: revision,
   effectiveAt,
   enrollmentEvidenceRef: 'attempt-1',
+  originator,
   principalRef,
   profileRef,
   reason: 'Retail enrollment',
@@ -105,7 +126,7 @@ const bindingPayload = Schema.decodeSync(BindRetailPortalProfilePayloadSchema)({
 });
 
 const NativeRequestPayloadSchema = Schema.Union([
-  GatewayContextRequestSchema,
+  GatewayDelegatedContextRequestSchema,
   EnrollmentCommandRecoveryInputSchema,
   EnsureRetailCustomerProfilePayloadSchema,
   BindRetailPortalProfilePayloadSchema,
@@ -113,7 +134,7 @@ const NativeRequestPayloadSchema = Schema.Union([
 
 const bindingResponse = {
   authorizationOperation: 'grant',
-  authorizationState: 'PENDING_GRANT',
+  authorizationState: 'ACTIVE',
   bindingRef: {
     moduleId: 'commerce.customer-context',
     resourceId: 'binding-1',
@@ -122,12 +143,6 @@ const bindingResponse = {
   },
   effectiveAt: DateTime.formatIso(effectiveAt),
   outcome: 'BINDING_ACTIVATED',
-  permissionMutations: RETAIL_PORTAL_SELF_SERVICE_BASELINE.map((permission, index) => ({
-    mutationId: `9000000${String(index)}-0000-4000-8000-000000000001`,
-    operation: 'grant',
-    permission: Schema.decodeSync(RetailPortalPermissionCodeSchema)(permission),
-    staged: true,
-  })),
   revision: 1,
   state: 'ACTIVE',
 };
@@ -144,11 +159,12 @@ const IssuanceModeSchema = Schema.Literals([
   'wrong-tenant',
   'wrong-legal-entity',
   'wrong-assertion-revision',
+  'wrong-actor',
 ]);
 type IssuanceMode = typeof IssuanceModeSchema.Type;
 
 type RecoveryState = (typeof EnrollmentCommandRecoveryResultSchema.Type)['state'];
-const nativeOwnerServer = (mode: IssuanceMode, recoveryState: RecoveryState = 'RETRYABLE') =>
+const nativeOwnerServer = (mode: IssuanceMode, recoveryState: RecoveryState = 'RETRYABLE', proposal = false) =>
   Effect.sync(() => {
     const requests: CapturedRequest[] = [];
     const nativeFetch: typeof fetch = (input, init) => {
@@ -157,7 +173,7 @@ const nativeOwnerServer = (mode: IssuanceMode, recoveryState: RecoveryState = 'R
       return request.text().then((text) => {
         const payload = Schema.decodeSync(Schema.fromJsonString(NativeRequestPayloadSchema))(text);
         requests.push({ headers: request.headers, path, payload });
-        if (path.endsWith('/auth/api-key/gateway-context')) {
+        if (path.endsWith('/auth/delegated/gateway-context')) {
           return mode === 'stale'
             ? Response.json(
                 {
@@ -188,6 +204,16 @@ const nativeOwnerServer = (mode: IssuanceMode, recoveryState: RecoveryState = 'R
           );
         }
         if (path.endsWith('/ensure-retail-customer-profile')) {
+          if (proposal) {
+            return Response.json(
+              {
+                _tag: 'ActionProposalAccepted',
+                expiresAt: '2026-11-08T00:00:00.000Z',
+                proposalId: '22222222-2222-4222-8222-222222222222',
+              },
+              { status: 202 },
+            );
+          }
           return Response.json({ outcome: 'PROFILE_CREATED', profileRef, revision: 1, state: 'ACTIVE' });
         }
         return Response.json(bindingResponse);
@@ -199,12 +225,7 @@ const nativeOwnerServer = (mode: IssuanceMode, recoveryState: RecoveryState = 'R
 const configured = (baseUrl: URL) =>
   ConfigProvider.layer(
     ConfigProvider.fromUnknown({
-      COMMERCE_TENANT_CREDENTIALS: JSON.stringify({
-        [tenantId]: {
-          coreIdentityApiKey: 'reviewed-enrollment-core-identity-key',
-          gatewayApiKey: 'reviewed-enrollment-service-key',
-        },
-      }),
+      ONTOS_GATEWAY_MODULE_API_KEY: 'reviewed-ccc-module-key',
       ONTOS_SHELL_GATEWAY_BASE_URL: baseUrl.href,
     }),
   );
@@ -213,13 +234,13 @@ it.effect('dispatches scheduled profile and portal owners over native HTTP witho
   Effect.gen(function* nativeScheduledDispatch() {
     expect(globalThis).not.toHaveProperty('document');
     const server = yield* nativeOwnerServer('current');
-    yield* retailCustomerProfileActionExecutor(profileInput)(profilePayload, requestCorrelation, {
+    yield* retailCustomerProfileActionExecutor(profileInput, crypto)(profilePayload, requestCorrelation, {
       idempotencyKey: 'profile-invocation',
     }).pipe(
       Effect.provide(configured(server.baseUrl)),
       Effect.provideService(FetchHttpClient.Fetch, server.nativeFetch),
     );
-    yield* retailPortalBindingActionExecutor(bindingInput)(bindingPayload, requestCorrelation, {
+    yield* retailPortalBindingActionExecutor(bindingInput, crypto)(bindingPayload, requestCorrelation, {
       idempotencyKey: 'binding-invocation',
     }).pipe(
       Effect.provide(configured(server.baseUrl)),
@@ -227,11 +248,8 @@ it.effect('dispatches scheduled profile and portal owners over native HTTP witho
     );
     expect(server.requests).toHaveLength(4);
     const issuance = server.requests.filter(({ path }) => path.endsWith('/gateway-context'));
-    expect(issuance.map(({ payload }) => payload)).toEqual([
-      { audience: 'commerce-customer-context', compositionRevision: revision, legalEntityId },
-      { audience: 'commerce-customer-context', compositionRevision: revision, legalEntityId },
-    ]);
-    expect(issuance.every(({ headers }) => headers.get('x-api-key') === 'reviewed-enrollment-service-key')).toBe(true);
+    expect(issuance.map(({ payload }) => payload)).toEqual([delegationPayload, delegationPayload]);
+    expect(issuance.every(({ headers }) => headers.get('x-api-key') === 'reviewed-ccc-module-key')).toBe(true);
     const owners = server.requests.filter(({ path }) => path.startsWith('/selected-owner-api'));
     expect(owners.map(({ path }) => path)).toEqual([
       '/selected-owner-api/commerce-customer-context/actions/ensure-retail-customer-profile',
@@ -254,11 +272,18 @@ it.effect('dispatches scheduled profile and portal owners over native HTTP witho
   }).pipe(Effect.provide(FetchHttpClient.layer), Effect.scoped),
 );
 
-for (const mode of ['stale', 'mismatched', 'wrong-tenant', 'wrong-legal-entity', 'wrong-assertion-revision'] as const) {
+for (const mode of [
+  'stale',
+  'mismatched',
+  'wrong-tenant',
+  'wrong-legal-entity',
+  'wrong-assertion-revision',
+  'wrong-actor',
+] as const) {
   it.effect(`rejects ${mode} enrollment composition before contacting either business owner`, () =>
     Effect.gen(function* rejectedScheduledDispatch() {
       const server = yield* nativeOwnerServer(mode);
-      const profileFailure = yield* retailCustomerProfileActionExecutor(profileInput)(
+      const profileFailure = yield* retailCustomerProfileActionExecutor(profileInput, crypto)(
         profilePayload,
         requestCorrelation,
         { idempotencyKey: 'profile-invocation' },
@@ -267,7 +292,7 @@ for (const mode of ['stale', 'mismatched', 'wrong-tenant', 'wrong-legal-entity',
         Effect.provideService(FetchHttpClient.Fetch, server.nativeFetch),
         Effect.flip,
       );
-      const bindingFailure = yield* retailPortalBindingActionExecutor(bindingInput)(
+      const bindingFailure = yield* retailPortalBindingActionExecutor(bindingInput, crypto)(
         bindingPayload,
         requestCorrelation,
         { idempotencyKey: 'binding-invocation' },
@@ -292,7 +317,7 @@ it.effect('pins enrollment revision, tenant, Legal Entity and correlation before
       partyRef: { ...partyRef },
       sellingLegalEntityRef: { ...sellingLegalEntityRef },
     };
-    const execute = retailCustomerProfileActionExecutor(mutableInput);
+    const execute = retailCustomerProfileActionExecutor(mutableInput, crypto);
     mutableInput.compositionRevision = 'b'.repeat(64);
     mutableInput.requestCorrelation = 'mutated-correlation';
     Object.assign(mutableInput.partyRef, { tenantId: '90000000-0000-4000-8000-000000000001' });
@@ -301,11 +326,7 @@ it.effect('pins enrollment revision, tenant, Legal Entity and correlation before
       Effect.provide(configured(server.baseUrl)),
       Effect.provideService(FetchHttpClient.Fetch, server.nativeFetch),
     );
-    expect(server.requests[0]?.payload).toEqual({
-      audience: 'commerce-customer-context',
-      compositionRevision: revision,
-      legalEntityId,
-    });
+    expect(server.requests[0]?.payload).toEqual(delegationPayload);
     expect(server.requests[1]?.headers.get('x-ontos-composition-revision')).toBe(revision);
     expect(server.requests[1]?.headers.get('x-correlation-id')).toBe(requestCorrelation);
   }).pipe(Effect.provide(FetchHttpClient.layer), Effect.scoped),
@@ -320,8 +341,9 @@ for (const state of ['NOT_STARTED', 'RETRYABLE', 'RUNNING', 'COMMITTED', 'REJECT
         idempotencyKey: 'original-owner-invocation',
       };
       const outcome = yield* resolveRetailOwnerCommand(
-        { compositionRevision: revision, legalEntityId, requestCorrelation, tenantId },
+        { compositionRevision: revision, legalEntityId, originator, requestCorrelation, tenantId },
         payload,
+        crypto,
       ).pipe(
         Effect.provide(configured(server.baseUrl)),
         Effect.provideService(FetchHttpClient.Fetch, server.nativeFetch),
@@ -336,3 +358,21 @@ for (const state of ['NOT_STARTED', 'RETRYABLE', 'RUNNING', 'COMMITTED', 'REJECT
     }),
   );
 }
+
+it.effect('never treats a 202 profile proposal as an ensured committed profile', () =>
+  Effect.gen(function* profileProposalIsNotCommit() {
+    const server = yield* nativeOwnerServer('current', 'NOT_STARTED', true);
+    const outcome = yield* retailCustomerProfileActionExecutor(profileInput, crypto)(
+      profilePayload,
+      requestCorrelation,
+      { idempotencyKey: 'pending-profile-owner' },
+    ).pipe(
+      Effect.provide(configured(server.baseUrl)),
+      Effect.provideService(FetchHttpClient.Fetch, server.nativeFetch),
+      Effect.flip,
+    );
+    expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(outcome)).toBe(true);
+    expect(server.requests.filter(({ path }) => path.includes('/actions/'))).toHaveLength(1);
+    expect(server.requests.some(({ path }) => path.endsWith('/bind-retail-portal-profile'))).toBe(false);
+  }).pipe(Effect.provide(FetchHttpClient.layer), Effect.scoped),
+);

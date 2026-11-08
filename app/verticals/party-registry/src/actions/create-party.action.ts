@@ -2,7 +2,7 @@
 // @ontos-action-owner party.registry
 // @ontos-action-slug create-party
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import type { ActionHandlerContext } from '@app/core-runtime';
+import type { ActionHandlerContext, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 
 import { AddPartyOfficialIdentifierResultSchema } from '../../shared/actions/add-party-official-identifier.ts';
@@ -13,27 +13,22 @@ import type { PartyCandidate } from '../../shared/domain/identity-contracts.ts';
 import { ClaimOwnedByDifferentParty, DuplicateCandidateConflict } from '../../shared/domain/matching-contracts.ts';
 import { PartyRefSchema } from '../../shared/resources/party.ts';
 import { candidateFingerprint, createOrMatchParty } from '../services/party-matching-persistence.service.ts';
-import {
-  publishAttachedOfficialIdentifiers,
-  publishUpdatedOfficialIdentifiers,
-} from './attached-official-identifier-events.ts';
+import { publishAttachedOfficialIdentifiers } from './attached-official-identifier-events.ts';
 import { createCreatePartyPartyRegistryPartyCreatedV1OutboxMessage } from './create-party.party-registry-party-created-v1.outbox-message.ts';
-import { OfficialIdentifierUpdatedEventSchema } from './update-party-official-identifier.action.ts';
 
 export type { CreatePartyPayload } from '../../shared/actions/create-party.ts';
 
 const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
 
-const CreatePartyErrorSchema = Schema.Union([
+export const CreatePartyErrorSchema = Schema.Union([
   ClaimOwnedByDifferentParty,
   DuplicateCandidateConflict,
   PartyEvidenceInsufficient,
   PartyPersistenceUnavailable,
 ]);
 const PartyCreatedEventSchema = Schema.Struct({ partyRef: PartyRefSchema });
-const domainEvents = {
+export const createPartyDomainEvents = {
   'party.registry.official-identifier-added.v1': AddPartyOfficialIdentifierResultSchema,
-  'party.registry.official-identifier-updated.v1': OfficialIdentifierUpdatedEventSchema,
   'party.registry.party-created.v1': PartyCreatedEventSchema,
 } as const;
 
@@ -44,15 +39,14 @@ interface Services {
   ) => ReturnType<typeof createOrMatchParty>;
 }
 
-const handleCreateParty = Effect.fn('CreatePartyAction.handleCreateParty')(function* createParty(
+export const handleCreateParty = Effect.fn('CreatePartyAction.handleCreateParty')(function* createParty(
   payload: CreatePartyPayload,
-  context: ActionHandlerContext<typeof domainEvents, Services>,
+  context: ActionHandlerContext<typeof createPartyDomainEvents, Services>,
 ) {
-  const {
-    addedOfficialIdentifierRefs = [],
-    updatedOfficialIdentifiers = [],
-    ...result
-  } = yield* context.services.createOrMatch(payload.candidate, context.actionInvocationId);
+  const { addedOfficialIdentifierRefs = [], ...result } = yield* context.services.createOrMatch(
+    payload.candidate,
+    context.actionInvocationId,
+  );
   const target = result.outcome === 'AMBIGUOUS' ? result.caseRef : result.partyRef;
   yield* context.recordDataAccess({
     accessKind: 'read',
@@ -81,19 +75,43 @@ const handleCreateParty = Effect.fn('CreatePartyAction.handleCreateParty')(funct
   }
   if (result.outcome === 'MATCHED_EXISTING') {
     yield* publishAttachedOfficialIdentifiers(context, result.partyRef, addedOfficialIdentifierRefs);
-    yield* publishUpdatedOfficialIdentifiers(
-      context,
-      result.partyRef,
-      updatedOfficialIdentifiers,
-      payload.candidate.evidenceRefs,
-      'Matching acceptance upgraded an existing current identifier to VERIFIED',
-    );
   }
   return result;
 });
 
+export const createPartyServices = (transaction: ScopedTransactionExecutor, scope: OperationalScope) =>
+  Effect.succeed({
+    createOrMatch: (candidate: PartyCandidate, actionInvocationId: string) => {
+      const input: Parameters<typeof createOrMatchParty>[1] = {
+        actionInvocationId,
+        candidate,
+        principalId: scope.principalId,
+        tenantId: scope.tenantId,
+      };
+      if (scope.legalEntityId !== undefined) {
+        Object.assign(input, { legalEntityId: scope.legalEntityId });
+      }
+      return createOrMatchParty(transaction, input);
+    },
+  });
+
 export const createPartyAction = defineAction(
   {
+    accessActor: {
+      callers: ['commerce-customer-context'],
+      reason:
+        'Commerce Customer Context creates Parties for a verified self-enrollment subject during profile creation.',
+      subject: 'identity',
+      subjectWorkloads: ['commerce.storefront-client'],
+    },
+    accessDeclaration: {
+      key: 'party.registry.party.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'party-identity', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.create-party.access.v1',
@@ -101,13 +119,10 @@ export const createPartyAction = defineAction(
     actionKey: 'party.registry.create-party',
     auditProfile: 'standard',
     domainErrorSchema: CreatePartyErrorSchema,
-    domainEvents,
+    domainEvents: createPartyDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.create-party',
       moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
@@ -121,22 +136,7 @@ export const createPartyAction = defineAction(
     policies: [],
     resultSchema: CreatePartyResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_party_identity',
   },
   handleCreateParty,
-  (transaction, scope) =>
-    Effect.succeed({
-      createOrMatch: (candidate: PartyCandidate, actionInvocationId: string) => {
-        const input: Parameters<typeof createOrMatchParty>[1] = {
-          actionInvocationId,
-          candidate,
-          principalId: scope.principalId,
-          tenantId: scope.tenantId,
-        };
-        if (scope.legalEntityId !== undefined) {
-          Object.assign(input, { legalEntityId: scope.legalEntityId });
-        }
-        return createOrMatchParty(transaction, input);
-      },
-    }),
+  createPartyServices,
 );

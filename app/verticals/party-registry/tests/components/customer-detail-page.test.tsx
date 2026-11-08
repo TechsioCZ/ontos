@@ -117,8 +117,11 @@ const customer = Schema.decodeSync(CustomerListItemSchema)({
 
 const party = Schema.decodeSync(PartySchema)({
   archivedAt: null,
+  businessName: null,
   createdAt: instant,
   displayName: 'Eva Bílá',
+  firstName: 'Eva Bílá',
+  lastName: null,
   partyRef,
   partyType: 'PERSON',
   revision: 1,
@@ -139,7 +142,6 @@ const counterparty = Schema.decodeSync(CounterpartyReadResponseSchema)({
 });
 const identity = {
   currentFactAssertions: [],
-  factHistory: Option.none(),
   party,
   resolution: { aliasChain: [], canonicalPartyRef: partyRef, kind: 'DIRECT' as const, requestedPartyRef: partyRef },
 };

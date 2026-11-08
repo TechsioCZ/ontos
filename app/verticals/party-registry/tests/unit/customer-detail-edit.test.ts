@@ -40,7 +40,6 @@ const contact = Schema.decodeUnknownSync(PartyContactPointSchema)({
   state: 'ACTIVE',
   validFrom: now,
   validTo: null,
-  verification: { state: 'UNVERIFIED' },
   value: {
     type: 'PHONE',
     preferred: true,
@@ -88,7 +87,6 @@ it('distinguishes registered address protection from missing Party permissions a
             state: 'ACTIVE',
             validFrom: now,
             validTo: null,
-            verification: { state: 'UNVERIFIED' },
           },
         ],
       },
@@ -147,7 +145,10 @@ it.effect('sends the loaded Party revision and explicit supporting provenance fo
     const party = yield* Schema.decodeEffect(PartySchema)({
       partyRef,
       partyType: 'ORGANIZATION',
+      businessName: 'Before',
       displayName: 'Before',
+      firstName: null,
+      lastName: null,
       revision: 9,
       archivedAt: null,
       createdAt: now,
@@ -157,7 +158,7 @@ it.effect('sends the loaded Party revision and explicit supporting provenance fo
     yield* saveCustomerFact(partyRef, { kind: 'name', party, value: ' After ' }, 'Reviewed name', 'document:42');
     expect(rstest.mocked(updateParty).mock.calls[0]?.[0]).toMatchObject({
       partyRef,
-      displayName: 'After',
+      businessName: 'After',
       expectedRevision: 9,
       provenanceSource: 'document:42',
       provenanceMethod: 'MANUAL_ENTRY',
@@ -189,7 +190,6 @@ it.effect(
           evidenceReferences: ['document:42'],
           replacement: {
             privacyClassification: 'BUSINESS_SENSITIVE',
-            verification: { state: 'UNVERIFIED' },
             contactPoint: { type: 'PHONE', value: '+420777654321', extension: '12' },
           },
         },

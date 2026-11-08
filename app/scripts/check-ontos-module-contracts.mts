@@ -25,6 +25,12 @@ import type {
 import { deriveOntosModuleDeploymentContract } from './generate-ontos-module-contract.mts';
 import {
   MODULE_CONTRACT_GENERATOR_HEADER,
+  readModuleRuntimeDeclarationEffect,
+  toCamelCase,
+  MODULE_MANIFEST_OPERATION_SLOT_START,
+  MODULE_MANIFEST_OPERATION_SLOT_END,
+  MODULE_REGISTRATION_READ_SLOT_START,
+  MODULE_REGISTRATION_READ_SLOT_END,
   MODULE_MANIFEST_ACTION_SLOT_END,
   MODULE_MANIFEST_ACTION_SLOT_START,
   MODULE_MANIFEST_API_SLOT_END,
@@ -92,11 +98,13 @@ const ModulePackageSchema = Schema.Struct({
 
 export class OntosModuleContractCheckError extends Schema.TaggedError<OntosModuleContractCheckError>()(
   'OntosModuleContractCheckError',
-  { cause: Schema.optional(Schema.Defect()), message: Schema.String },
+  { cause: Schema.optional(Schema.Defect()), message: Schema.String, reason: Schema.String },
 ) {}
 
+// `message` carries the full `${filePath} ${reason}` diagnostic; `reason` exposes the same text for
+// callers that match on the failure cause alone.
 const failure = (message: string, cause?: unknown): OntosModuleContractCheckError =>
-  new OntosModuleContractCheckError({ cause, message });
+  new OntosModuleContractCheckError({ cause, message, reason: message });
 
 const sourceExtensions = new Set(['.cjs', '.cts', '.js', '.jsx', '.mjs', '.mts', '.ts', '.tsx']);
 
@@ -229,7 +237,7 @@ export const moduleImportSources = (filePath: string, content: string) => {
 export const checkModuleContractSourceImports = (filePath: string, content: string, ownerRoot?: string) =>
   Effect.gen(function* checkModuleContractImports() {
     const sources = yield* moduleImportSources(filePath, content);
-    const privateOwnerFile = /vertical\.(?:manifest|registration)(?:\.ts)?$/u;
+    const privateOwnerFile = /vertical\.(?:manifest|registration|runtime-declaration)(?:\.ts)?$/u;
     if (ownerRoot !== undefined) {
       const hasPrivateOwnerImportViolation = sources.some((specifier) => {
         if (!privateOwnerFile.test(specifier)) {
@@ -422,6 +430,132 @@ const registrationMarkers = [
   MODULE_REGISTRATION_WORKER_SLOT_END,
 ] as const;
 
+const splitManifestMarkers = [
+  MODULE_MANIFEST_IMPORT_SLOT_START,
+  MODULE_MANIFEST_IMPORT_SLOT_END,
+  MODULE_MANIFEST_COMPONENT_SLOT_START,
+  MODULE_MANIFEST_COMPONENT_SLOT_END,
+  MODULE_MANIFEST_REPORT_SLOT_START,
+  MODULE_MANIFEST_REPORT_SLOT_END,
+  MODULE_MANIFEST_SEARCH_SLOT_START,
+  MODULE_MANIFEST_SEARCH_SLOT_END,
+];
+const splitRegistrationMarkers = [
+  MODULE_REGISTRATION_API_SLOT_START,
+  MODULE_REGISTRATION_API_SLOT_END,
+  MODULE_REGISTRATION_COMPONENT_SLOT_START,
+  MODULE_REGISTRATION_COMPONENT_SLOT_END,
+  MODULE_REGISTRATION_PAGE_SLOT_START,
+  MODULE_REGISTRATION_PAGE_SLOT_END,
+  MODULE_REGISTRATION_REPORT_SLOT_START,
+  MODULE_REGISTRATION_REPORT_SLOT_END,
+  MODULE_REGISTRATION_SEARCH_SLOT_START,
+  MODULE_REGISTRATION_SEARCH_SLOT_END,
+];
+const splitDeclarationMarkers = [
+  MODULE_MANIFEST_IMPORT_SLOT_START,
+  MODULE_MANIFEST_IMPORT_SLOT_END,
+  MODULE_MANIFEST_ACTION_SLOT_START,
+  MODULE_MANIFEST_ACTION_SLOT_END,
+  MODULE_MANIFEST_API_SLOT_START,
+  MODULE_MANIFEST_API_SLOT_END,
+  MODULE_REGISTRATION_IMPORT_SLOT_START,
+  MODULE_REGISTRATION_IMPORT_SLOT_END,
+  MODULE_REGISTRATION_WORKER_SLOT_START,
+  MODULE_REGISTRATION_WORKER_SLOT_END,
+];
+const shellMarkerPairs = [
+  ['navigation', MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_START, MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_END],
+  ['pages', MODULE_MANIFEST_SHELL_PAGE_SLOT_START, MODULE_MANIFEST_SHELL_PAGE_SLOT_END],
+  ['publicComponents', MODULE_MANIFEST_SHELL_COMPONENT_SLOT_START, MODULE_MANIFEST_SHELL_COMPONENT_SLOT_END],
+  ['reports', MODULE_MANIFEST_SHELL_REPORT_SLOT_START, MODULE_MANIFEST_SHELL_REPORT_SLOT_END],
+  ['search', MODULE_MANIFEST_SHELL_SEARCH_SLOT_START, MODULE_MANIFEST_SHELL_SEARCH_SLOT_END],
+] as const;
+
+const literalProperty = (object: Expression | undefined, name: string): Expression | undefined => {
+  if (object?.type !== 'ObjectExpression') {
+    return undefined;
+  }
+  const properties = object.properties.filter(
+    (property) =>
+      property.type === 'Property' &&
+      !property.computed &&
+      property.key.type === 'Identifier' &&
+      property.key.name === name,
+  );
+  const [property] = properties;
+  return properties.length === 1 && property?.type === 'Property' ? property.value : undefined;
+};
+const splitShellProperties = (content: string, prefix: string) => {
+  const parsed = parseSync('runtime-declaration.ts', content, { astType: 'ts', lang: 'ts', sourceType: 'module' });
+  const declarations = parsed.program.body.flatMap((statement) =>
+    statement.type === 'ExportNamedDeclaration' && statement.declaration?.type === 'VariableDeclaration'
+      ? statement.declaration.declarations.filter(
+          (declaration) => declaration.id.type === 'Identifier' && declaration.id.name === `${prefix}RuntimeManifest`,
+        )
+      : [],
+  );
+  return declarations.length === 1
+    ? literalProperty(literalProperty(declarations[0]?.init ?? undefined, 'publicSurface'), 'shellContributions')
+    : undefined;
+};
+
+const validateSplitContributionMarkers = (
+  content: string,
+  verticalName: string,
+  derived: OntosModuleDeploymentContract,
+) =>
+  Effect.gen(function* validateSplitContributionSlots() {
+    const shell = splitShellProperties(content, toCamelCase(verticalName));
+    for (const [key, start, end] of shellMarkerPairs) {
+      const present = content.includes(start) || content.includes(end);
+      const meaningful = derived.manifest.publicSurface.shellContributions[key].length > 0;
+      if (present || meaningful) {
+        const value = literalProperty(shell, key);
+        if (
+          value?.type !== 'ArrayExpression' ||
+          !occursExactlyOnce(content, start) ||
+          !occursExactlyOnce(content, end) ||
+          content.indexOf(start) <= value.start ||
+          content.indexOf(end) >= value.end ||
+          content.indexOf(start) >= content.indexOf(end)
+        ) {
+          return yield* failure(`runtime declaration must contain exactly one owned ${start} pair for ${key}`);
+        }
+      }
+    }
+    return yield* Effect.void;
+  });
+
+const validateSplitMarkerOwnership = (manifest: string, registration: string, declaration: string) =>
+  Effect.gen(function* validateSplitMarkerOwners() {
+    const backendOnly = [
+      ...splitDeclarationMarkers.filter(
+        (marker) => marker !== MODULE_MANIFEST_IMPORT_SLOT_START && marker !== MODULE_MANIFEST_IMPORT_SLOT_END,
+      ),
+      MODULE_MANIFEST_OPERATION_SLOT_START,
+      MODULE_MANIFEST_OPERATION_SLOT_END,
+      MODULE_REGISTRATION_READ_SLOT_START,
+      MODULE_REGISTRATION_READ_SLOT_END,
+      ...shellMarkerPairs.flatMap(([, start, end]) => [start, end]),
+    ];
+    if (
+      backendOnly.some((marker) => manifest.includes(marker) || registration.includes(marker)) ||
+      splitRegistrationMarkers.some((marker) => manifest.includes(marker) || declaration.includes(marker)) ||
+      [
+        MODULE_MANIFEST_COMPONENT_SLOT_START,
+        MODULE_MANIFEST_COMPONENT_SLOT_END,
+        MODULE_MANIFEST_REPORT_SLOT_START,
+        MODULE_MANIFEST_REPORT_SLOT_END,
+        MODULE_MANIFEST_SEARCH_SLOT_START,
+        MODULE_MANIFEST_SEARCH_SLOT_END,
+      ].some((marker) => registration.includes(marker) || declaration.includes(marker))
+    ) {
+      return yield* failure('shared owner markers must occur only in their authoritative declaration or UI view');
+    }
+    return yield* Effect.void;
+  });
+
 const checkVertical = (workspaceRoot: string, vertical: TopologyVertical, contractUrl: string) =>
   Effect.gen(function* checkVerticalContract() {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -432,10 +566,32 @@ const checkVertical = (workspaceRoot: string, vertical: TopologyVertical, contra
     const packageJson = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ModulePackageSchema))(packageSource);
     const manifestPath = path.join(verticalDirectory, 'vertical.manifest.ts');
     const registrationPath = path.join(verticalDirectory, 'vertical.registration.ts');
-    const [manifestModuleId, registrationModuleId] = yield* Effect.all([
-      validateOwner(manifestPath, manifestMarkers),
-      validateOwner(registrationPath, registrationMarkers),
+    const [manifestSource, registrationSource] = yield* Effect.all([
+      fileSystem.readFileString(manifestPath),
+      fileSystem.readFileString(registrationPath),
     ]);
+    const declaration = yield* readModuleRuntimeDeclarationEffect(
+      verticalDirectory,
+      path.basename(relativePath),
+      manifestSource,
+      registrationSource,
+    ).pipe(Effect.mapError(() => failure(`${appId} shared owner declaration is invalid`)));
+    const [manifestModuleId, registrationModuleId] = yield* Effect.all([
+      validateOwner(manifestPath, declaration === undefined ? manifestMarkers : splitManifestMarkers),
+      validateOwner(registrationPath, declaration === undefined ? registrationMarkers : splitRegistrationMarkers),
+    ]);
+    if (declaration !== undefined) {
+      const deploymentMarker = /^\/\/ @ontos-deployment-app-id (?<appId>[^\s]+)$/mu.exec(declaration.content)?.groups
+        ?.appId;
+      if (deploymentMarker !== appId) {
+        return yield* failure(`${appId} shared declaration deployment marker disagrees with its topology owner`);
+      }
+      const declarationModuleId = yield* validateOwner(declaration.path, splitDeclarationMarkers);
+      if (declarationModuleId !== manifestModuleId) {
+        return yield* failure(`${appId} shared declaration identity disagrees with its UI views`);
+      }
+      yield* validateSplitMarkerOwnership(manifestSource, registrationSource, declaration.content);
+    }
     if (
       packageJson.modernjs.appId !== appId ||
       packageJson.modernjs.ontosModule.moduleId !== manifestModuleId ||
@@ -455,6 +611,9 @@ const checkVertical = (workspaceRoot: string, vertical: TopologyVertical, contra
       vertical: verticalName,
       workspaceRoot,
     }).pipe(Effect.mapError((cause) => failure(`${appId} authored module contract could not be derived`, cause)));
+    if (declaration !== undefined) {
+      yield* validateSplitContributionMarkers(declaration.content, verticalName, derived);
+    }
     if (derived.deployment.appId !== appId || derived.manifest.module.id !== manifestModuleId) {
       return yield* failure(`${appId} authored module contract disagrees with generated owner metadata`);
     }

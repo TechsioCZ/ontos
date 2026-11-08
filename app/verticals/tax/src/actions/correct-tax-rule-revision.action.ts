@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.tax
 // @ontos-action-slug correct-tax-rule-revision
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 
 import {
@@ -62,6 +62,14 @@ export const handleCorrectTaxRuleRevision = Effect.fn('CorrectTaxRuleRevisionAct
 
 export const correctTaxRuleRevisionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.tax.tax-rule-revision.correct',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'tax-rules', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.tax.correct-tax-rule-revision.access.v1',
@@ -69,15 +77,11 @@ export const correctTaxRuleRevisionAction = defineAction(
     actionKey: 'commerce.tax.correct-tax-rule-revision',
     auditEvidenceSchema: TaxGovernanceAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission<CorrectTaxRuleRevisionPayload>((_payload, scope) => ({
-      permission: 'tax.rule.manage',
-      target: { kind: 'tax_selling_legal_entity', legalEntityId: scope.legalEntityId ?? '', tenantId: scope.tenantId },
-    })),
     domainErrorSchema: ActionErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.tax.correct-tax-rule-revision',
       moduleKey: 'commerce.tax',
       role: 'action',

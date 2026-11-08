@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.customer-context
 // @ontos-action-http-slug claim-portal-enrollment-transition
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/claim-portal-enrollment-transition.ts';
 
 export { ClaimPortalEnrollmentTransitionPayloadSchema } from '../actions/claim-portal-enrollment-transition.ts';
-
 export const ClaimPortalEnrollmentTransitionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ClaimPortalEnrollmentTransitionActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const ClaimPortalEnrollmentTransitionActionForbiddenProblemSchema = makeP
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -150,7 +151,7 @@ export const claimPortalEnrollmentTransitionActionGroupDefinition = HttpApiGroup
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/claim-portal-enrollment-transition', {
       error: actionErrors,
       payload: Schema.toEncoded(ClaimPortalEnrollmentTransitionPayloadSchema),
-      success: ClaimPortalEnrollmentTransitionResultSchema,
+      success: [ActionProposalAcceptedSchema, ClaimPortalEnrollmentTransitionResultSchema],
     }),
   )
   .middleware(ClaimPortalEnrollmentTransitionActionSchemaErrorMiddleware);

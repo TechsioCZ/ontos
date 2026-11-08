@@ -20,6 +20,7 @@ import {
 import { CreateSetCompositionActionUnavailableProblemSchema } from '../../shared/apis/create-set-composition-action.ts';
 import { createSetCompositionAction } from '../../src/actions/create-set-composition.action.ts';
 import { reviseSetCompositionAction } from '../../src/actions/revise-set-composition.action.ts';
+import { catalogRegistration } from '../../vertical.registration.ts';
 import { createSetCompositionActionApiLive } from '../../api/create-set-composition-action-server.ts';
 import { reviseSetCompositionActionApiLive } from '../../api/revise-set-composition-action-server.ts';
 import { setCompositionCurrentReadApiLive } from '../../api/set-composition-current-read-server.ts';
@@ -30,7 +31,11 @@ import { executeReviseSetCompositionWithAuthorization } from '../../src/api/revi
 import { executeSetCompositionCurrentWithAuthorization } from '../../src/api/set-composition-current-client.ts';
 import { executeSetCompositionHistoryWithAuthorization } from '../../src/api/set-composition-history-client.ts';
 import { executeReviseSetCompositionRecoveryWithAuthorization } from '../../src/api/revise-set-composition-recovery-client.ts';
-import { SetCompositionMutationPayloadSchema } from '../../shared/actions/set-composition-contract.ts';
+import {
+  SetCompositionMutationPayloadSchema,
+  SetCompositionMutationResultSchema,
+} from '../../shared/actions/set-composition-contract.ts';
+import { requireExecutionResult } from '../support/action-execution-result.ts';
 import { setCompositionPersistenceForScope } from '../../src/persistence/set-composition-persistence.ts';
 import { catalogSelectionPackageUnitBasisForScope } from '../../src/persistence/catalog-selection-package-unit-basis.ts';
 import {
@@ -63,6 +68,7 @@ import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-
 import { HttpServerRequest, HttpServerResponse, FetchHttpClient } from 'effect/http';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { createCatalogDeniedAccess } from '../support/live-access-authority.ts';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -754,6 +760,7 @@ const makeSetEffectiveFixture = Effect.fn('SetEffectiveRevision.makeFixture')(fu
   yield* isolated.publishInitialComposition(composition);
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
+      access: 'allowed',
       actionExecutor: 'manager-only',
       actionKeys: [createSetCompositionAction.descriptor.actionKey, reviseSetCompositionAction.descriptor.actionKey],
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
@@ -761,11 +768,16 @@ const makeSetEffectiveFixture = Effect.fn('SetEffectiveRevision.makeFixture')(fu
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: composition.composition.revision,
       moduleKeys: ['commerce.catalog'],
+      ownerRegistration: catalogRegistration,
       runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     }),
     (value) => value.close().pipe(Effect.orDie),
   );
-  const fixtureContext = yield* Layer.build(fixture.layer);
+  // The one access gate this suite scripts (the native database carries no v2 access intent and
+  // reaches no engine), plus the per-principal refusal it names (see `live-access-authority`).
+  const deniedAccess = createCatalogDeniedAccess();
+  const accessLayer = fixture.layer.pipe(Layer.provide(deniedAccess.layer));
+  const fixtureContext = yield* Layer.build(accessLayer);
   const fs = yield* FileSystem;
   const setHeadMigration = yield* fs.readFileString(
     fileURLToPath(
@@ -903,7 +915,7 @@ const makeSetEffectiveFixture = Effect.fn('SetEffectiveRevision.makeFixture')(fu
       ).pipe(Layer.provide(ActiveApplicationCompositionSourceLive), Layer.provide(FetchHttpClient.layer)),
     ),
     Layer.provide(redemption),
-    Layer.provide(fixture.layer),
+    Layer.provide(accessLayer),
     Layer.provide(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({ ONTOS_GATEWAY_ISSUER: tokenIssuer, ONTOS_GATEWAY_PUBLIC_JWKS: jwks }),
@@ -923,7 +935,7 @@ const makeSetEffectiveFixture = Effect.fn('SetEffectiveRevision.makeFixture')(fu
             .add(catalogApi.groups.reviseSetCompositionRecovery),
         ).pipe(
           Layer.provide(handlers),
-          Layer.provideMerge(fixture.layer),
+          Layer.provideMerge(accessLayer),
           Layer.provide(HttpServer.layerServices),
           Layer.provide(NodeCrypto.layer),
         ),
@@ -978,6 +990,7 @@ const makeSetEffectiveFixture = Effect.fn('SetEffectiveRevision.makeFixture')(fu
     baseUrl,
     composition,
     coreEvidenceExecutor,
+    deniedAccess,
     fixture,
     fixtureContext,
     nativeFetch,
@@ -1042,12 +1055,13 @@ it.live('keeps effective R1 through public future R2 publication and preserves e
       lifecycleState: 'ACTIVE',
       revision,
     });
-    const created = yield* executeCreateSetCompositionWithAuthorization(
-      initial,
-      yield* owner.authorization(),
-      yield* nextId,
-      { ...options, idempotencyKey: yield* nextId },
-    ).pipe(Effect.provideService(FetchHttpClient.Fetch, owner.nativeFetch));
+    const created = yield* requireExecutionResult(
+      SetCompositionMutationResultSchema,
+      executeCreateSetCompositionWithAuthorization(initial, yield* owner.authorization(), yield* nextId, {
+        ...options,
+        idempotencyKey: yield* nextId,
+      }).pipe(Effect.provideService(FetchHttpClient.Fetch, owner.nativeFetch)),
+    );
     expect(created.revision).toEqual(revision.reference);
     const selected = (number: number) =>
       Schema.decodeUnknownSync(CatalogSelectionSchema)({
@@ -1087,12 +1101,13 @@ it.live('keeps effective R1 through public future R2 publication and preserves e
     const attempts = yield* Effect.all(
       requestKeys.map((idempotencyKey) =>
         Effect.gen(function* competingSuccessor() {
-          const result = yield* executeReviseSetCompositionWithAuthorization(
-            next,
-            yield* owner.authorization(),
-            yield* nextId,
-            { ...options, idempotencyKey },
-          ).pipe(Effect.provideService(FetchHttpClient.Fetch, owner.nativeFetch), Effect.result);
+          const result = yield* requireExecutionResult(
+            SetCompositionMutationResultSchema,
+            executeReviseSetCompositionWithAuthorization(next, yield* owner.authorization(), yield* nextId, {
+              ...options,
+              idempotencyKey,
+            }).pipe(Effect.provideService(FetchHttpClient.Fetch, owner.nativeFetch)),
+          ).pipe(Effect.result);
           return { idempotencyKey, result };
         }),
       ),
@@ -1464,7 +1479,7 @@ it.live(
   () =>
     Effect.gen(function* setTrustAndRollback() {
       const owner = yield* makeSetEffectiveFixture();
-      const { fixture, otherProduct, produced } = owner;
+      const { deniedAccess, fixture, otherProduct, produced } = owner;
       const options = { baseUrl: owner.baseUrl, compositionRevision: owner.composition.composition.revision };
       const compositionRef = {
         moduleId: 'commerce.catalog',
@@ -1592,6 +1607,9 @@ it.live(
           yield* owner.read(selection, forbiddenLegalEntity).pipe(Effect.flip),
         ),
       ).toBe(true);
+      // v2: the one access gate decides this read (O62), so the principal with no assignment is
+      // named on the fixture's own per-request owner seam (see `live-access-authority`).
+      deniedAccess.deny(fixture.denied.principalId, 'commerce.catalog.selection-evidence.read');
       expect(
         Schema.is(SelectionEvidenceForbiddenProblemSchema)(
           yield* owner.read(selection, fixture.denied).pipe(Effect.flip),
@@ -1636,14 +1654,14 @@ it.live(
           ).pipe(Effect.provideService(FetchHttpClient.Fetch, owner.nativeFetch), Effect.flip),
         ),
       ).toBe(true);
-      const permissions = yield* makeContextPermissionRelationshipMutationLive();
-      const principal = { principalId: fixture.manager.principalId, tenantId: fixture.tenantId };
-      const target = { moduleId: 'commerce.catalog', permission: 'commerce.catalog.read.selection-evidence' };
-      yield* permissions.mutate({ operation: 'revoke', principal, target, tenantId: fixture.tenantId });
+      // v2: the one access gate decides this read (O62); the removed SpiceDB context permission no
+      // longer refuses anyone, so the suite flips the fixture's own gate answer for the capability
+      // and proves the same request succeeds once it is restored.
+      deniedAccess.deny(fixture.manager.principalId, 'commerce.catalog.selection-evidence.read');
       expect(Schema.is(SelectionEvidenceForbiddenProblemSchema)(yield* owner.read(selection).pipe(Effect.flip))).toBe(
         true,
       );
-      yield* permissions.mutate({ operation: 'grant', principal, target, tenantId: fixture.tenantId });
+      deniedAccess.allow(fixture.manager.principalId, 'commerce.catalog.selection-evidence.read');
       expect((yield* owner.read(selection)).evidence).toMatchObject({ status: 'VALID' });
       expect(yield* state()).toEqual(before);
     }).pipe(Effect.provide(nativeServices)),

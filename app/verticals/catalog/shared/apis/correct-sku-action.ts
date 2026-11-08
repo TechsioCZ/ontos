@@ -2,11 +2,13 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug correct-sku
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { CorrectSkuPayloadSchema, CorrectSkuResultSchema } from '../actions/correct-sku.ts';
 
 export { CorrectSkuPayloadSchema } from '../actions/correct-sku.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const CorrectSkuActionInvalidProblemSchema = makeProblemDetailsSchema('CorrectSkuActionInvalidProblem', 400);
 export const CorrectSkuActionAuthenticationProblemSchema = makeProblemDetailsSchema(
@@ -18,6 +20,7 @@ export const CorrectSkuActionForbiddenProblemSchema = makeProblemDetailsSchema(
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -119,7 +122,7 @@ export const CorrectSkuActionApi = HttpApi.make('CorrectSkuActionApi').add(
       HttpApiEndpoint.post('execute', '/catalog/actions/correct-sku', {
         error: actionErrors,
         payload: Schema.toEncoded(CorrectSkuPayloadSchema),
-        success: CorrectSkuResultSchema,
+        success: [ActionProposalAcceptedSchema, CorrectSkuResultSchema],
       }),
     )
     .middleware(CorrectSkuActionSchemaErrorMiddleware),

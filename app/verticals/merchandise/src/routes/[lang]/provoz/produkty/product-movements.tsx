@@ -195,7 +195,7 @@ export const MovementForm = ({
     runCommand(trimmed === '' ? movement : { ...movement, note: trimmed }, expected, (outcome) => {
       setBusy(false);
       if (!outcome.ok) {
-        setServerError(failure(outcome.reason, onReload));
+        setServerError(failure(outcome.reason, onReload, outcome.proposal));
         return;
       }
       savedRevision.current = outcome.revision;

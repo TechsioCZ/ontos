@@ -1,7 +1,7 @@
-import { ContextAccess } from '@app/core-runtime';
-import type { ContextAccessService } from '@app/core-runtime';
+import { projectsRegistration } from '../../vertical.registration.ts';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
-import { Effect, Layer, Predicate } from 'effect';
+import { NodeCrypto } from '@effect/platform-node';
+import { Effect, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { createProjectAction } from '../../src/actions/create-project.action.ts';
 import { updateProjectAction } from '../../src/actions/update-project.action.ts';
@@ -16,20 +16,14 @@ const principal = {
 } as const;
 const transport = { correlationId: 'projects-runtime', idempotencyKey: 'projects-create-once' };
 
-const unusedContextAccess: ContextAccessService = {
-  legalEntities: () => Effect.succeed([]),
-  modules: () => Effect.succeed([]),
-  resources: () => Effect.succeed([]),
-  tenants: () => Effect.succeed([]),
-};
-
-it.layer(Layer.succeed(ContextAccess, unusedContextAccess))('Projects Action lifecycle', (test) => {
+it.layer(NodeCrypto.layer)('Projects Action lifecycle', (test) => {
   test.effect('Create uses trusted actor metadata, settles evidence, and never repeats a committed write', () =>
     Effect.gen(function* createThroughRuntime() {
       const project = yield* projectFixture;
       let writes = 0;
       const harness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
+        access: 'allowed',
+        ownerRegistration: projectsRegistration,
         services: [
           bindActionTestServices(createProjectAction, {
             create: (_payload, createdByPrincipalId) => {
@@ -39,7 +33,6 @@ it.layer(Layer.succeed(ContextAccess, unusedContextAccess))('Projects Action lif
             ownerEligibility: () => Effect.succeed('allowed'),
           }),
         ],
-        tenantPermission: 'allowed',
       });
       const request = {
         payload: { name: 'Project', ownerPrincipalId: ownerId, prefix: 'ONTO' },
@@ -66,21 +59,20 @@ it.layer(Layer.succeed(ContextAccess, unusedContextAccess))('Projects Action lif
       const project = yield* projectFixture;
       let ownerCalls = 0;
       const harness = yield* makeActionTestHarness({
-        actionPermission: 'denied',
+        access: 'denied',
+        ownerRegistration: projectsRegistration,
         services: [
           bindActionTestServices(updateProjectAction, {
             findForLifecycleGuard: () => {
               ownerCalls += 1;
               return Effect.succeed({ _tag: 'found', value: project });
             },
-            ownerEligibility: () => Effect.succeed('allowed'),
             update: () => {
               ownerCalls += 1;
               return Effect.succeed(project);
             },
           }),
         ],
-        tenantPermission: 'allowed',
       });
       const failure = yield* harness.runtime
         .runAction({

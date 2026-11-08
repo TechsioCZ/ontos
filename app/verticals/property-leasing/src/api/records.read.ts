@@ -57,7 +57,7 @@ export const makeRecordsServices: ReadServiceFactory<Services> = (transaction, s
 
 const recordsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'property.leasing.api.records',
   moduleKey: OWNER_MODULE_KEY,
   role: 'api',
@@ -65,6 +65,14 @@ const recordsEntrypoint = defineTenantModuleEntrypoint({
 
 export const recordsRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'property.leasing.api-records.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'property-leasing', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'list',
     entrypoint: recordsEntrypoint,
     evidencePolicy: {
@@ -74,7 +82,6 @@ export const recordsRead = defineRead(
     inputSchema: RecordsRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: OWNER_MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'property.leasing.api.records',
     resultSchema: RecordsResponseSchema,
@@ -109,5 +116,4 @@ export const recordsRead = defineRead(
       ),
   },
   makeRecordsServices,
-  () => ({ kind: 'module', moduleId: OWNER_MODULE_KEY }),
 );

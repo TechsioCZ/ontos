@@ -1,4 +1,4 @@
-import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '@app/party-registry-identity-contracts';
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import {
   CoreSearchProjectionStore,
   makeCoreSearchIngestion,
@@ -6,10 +6,15 @@ import {
   makeInMemoryCoreSearchProjectionStore,
 } from '@app/core-runtime';
 import type { OutboxMessage, OutboxWorkerHandlerContext } from '@app/core-runtime';
+import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '@app/party-registry-identity-contracts';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
 import { DateTime, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+
+import { derivePartyDisplayName, PartySchema } from '../../shared/domain/identity-contracts.ts';
+import { updatePartyAction } from '../../src/actions/update-party.action.ts';
+import { projectPartyUpdatedToSearchWorker } from '../../src/workers/project-party-updated-to-search.worker.ts';
 
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
 import { resolveDuplicateCandidateMatchAction } from '../../src/actions/resolve-duplicate-candidate-match.action.ts';
@@ -111,7 +116,6 @@ const makeSearchFixture = (identifiers: readonly PartySearchSourceValue[]) => {
     },
     makeCoreSearchIngestion(store, partySearchIngestionRegistrations),
     store,
-    { touch: () => Effect.void },
   );
   const replaceIdentifiers = (values: readonly PartySearchSourceValue[]) =>
     Effect.sync(() => {
@@ -153,7 +157,16 @@ const makeSearchFixture = (identifiers: readonly PartySearchSourceValue[]) => {
     });
   return {
     deliver,
-    query: () =>
+    projector,
+    replaceDisplayName: (displayName: string | null) =>
+      Effect.sync(() => {
+        canonical = {
+          ...canonical,
+          parties: canonical.parties.map((party) => ({ ...party, displayName })),
+          projectionVersion: '2',
+        };
+      }),
+    query: (query = identifier.value) =>
       Effect.gen(function* queryIdentifiers() {
         const search = yield* createCoreSearchQueryRuntime;
         return yield* search.search(
@@ -161,7 +174,7 @@ const makeSearchFixture = (identifiers: readonly PartySearchSourceValue[]) => {
             effectiveAt: '2026-09-03T00:00:00.000Z',
             includeArchived: false,
             moduleId: 'party.registry',
-            query: identifier.value,
+            query,
             resourceType: 'party.registry.party',
             tenantId,
           },
@@ -215,8 +228,9 @@ it.effect('CreateParty MATCHED_EXISTING publishes an attached identifier and ind
     const search = makeSearchFixture([]);
     yield* search.seed;
     const harness = yield* makeActionTestHarness({
+      access: 'allowed',
       databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-      actionPermission: 'allowed',
+      ownerRegistration: partyRegistryBackendRegistration,
       services: [
         bindActionTestServices(createPartyAction, {
           createOrMatch: () =>
@@ -230,18 +244,16 @@ it.effect('CreateParty MATCHED_EXISTING publishes an attached identifier and ind
             ),
         }),
       ],
-      tenantPermission: 'allowed',
     });
     const result = yield* harness.runtime.runAction({
       payload: {
         candidate: {
-          displayName: 'Acme',
+          businessName: 'Acme',
           evidenceRefs: ['evidence:confirmed-tax-registration'],
           officialIdentifiers: [
             {
               identifierType: 'CZ_DIC',
               value: identifier.value,
-              verification: 'VERIFIED',
             },
           ],
           partyType: 'ORGANIZATION',
@@ -270,8 +282,9 @@ it.effect('reviewed MATCH_EXISTING publishes an attached identifier and indexes 
     const search = makeSearchFixture([]);
     yield* search.seed;
     const harness = yield* makeActionTestHarness({
+      access: 'allowed',
       databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-      actionPermission: 'allowed',
+      ownerRegistration: partyRegistryBackendRegistration,
       services: [
         bindActionTestServices(resolveDuplicateCandidateMatchAction, {
           resolve: () =>
@@ -287,7 +300,6 @@ it.effect('reviewed MATCH_EXISTING publishes an attached identifier and indexes 
             ),
         }),
       ],
-      tenantPermission: 'allowed',
     });
     const result = yield* harness.runtime.runAction({
       payload: {
@@ -322,14 +334,12 @@ it.effect('END_VALIDITY refreshes search only after its committed identifier mes
     const before = {
       state: 'ACTIVE',
       validTo: null,
-      verification: 'VERIFIED',
-      verifiedAt: null,
-      verifiedByPrincipalId: null,
     } as const;
     const after = { ...before, state: 'ENDED', validTo } as const;
     const harness = yield* makeActionTestHarness({
+      access: 'allowed',
       databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-      actionPermission: 'allowed',
+      ownerRegistration: partyRegistryBackendRegistration,
       services: [
         bindActionTestServices(updatePartyOfficialIdentifierAction, {
           update: () =>
@@ -342,13 +352,11 @@ it.effect('END_VALIDITY refreshes search only after its committed identifier mes
                   partyRef,
                   state: 'ENDED',
                   validTo: Option.some(DateTime.makeUnsafe(validTo)),
-                  verification: 'VERIFIED',
                 },
               }),
             ),
         }),
       ],
-      tenantPermission: 'allowed',
     });
     yield* harness.runtime.runAction({
       payload: {
@@ -370,5 +378,76 @@ it.effect('END_VALIDITY refreshes search only after its committed identifier mes
     expect(yield* search.query()).toEqual([]);
     yield* search.deliver(outbox.message);
     expect(yield* search.query()).toEqual([]);
+  }),
+);
+
+it.effect('a structured-name Update publishes only its reference and refreshes current search presentation', () =>
+  Effect.gen(function* refreshNamePresentation() {
+    const search = makeSearchFixture([]);
+    yield* search.seed;
+    const updated = yield* Schema.decodeEffect(PartySchema)({
+      archivedAt: null,
+      businessName: 'Renamed Engines',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      displayName: 'Renamed Engines',
+      firstName: null,
+      lastName: null,
+      partyRef,
+      partyType: 'ORGANIZATION',
+      revision: 2,
+      updatedAt: '2026-09-03T00:00:00.000Z',
+    });
+    const harness = yield* makeActionTestHarness({
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+      ownerRegistration: partyRegistryBackendRegistration,
+      actionPermission: 'allowed',
+      services: [
+        bindActionTestServices(updatePartyAction, {
+          update: (payload) =>
+            search
+              .replaceDisplayName(
+                derivePartyDisplayName({ partyType: 'ORGANIZATION', businessName: payload.businessName ?? null }),
+              )
+              .pipe(Effect.as({ _tag: 'found' as const, value: updated })),
+        }),
+      ],
+      tenantPermission: 'allowed',
+    });
+    yield* harness.runtime.runAction({
+      payload: {
+        businessName: 'Renamed Engines',
+        expectedRevision: 1,
+        partyRef,
+        provenanceMethod: 'MANUAL',
+        provenanceSource: 'search-name-fixture',
+        validFrom: '2026-09-03T00:00:00.000Z',
+      },
+      principal,
+      registration: updatePartyAction,
+      transport: { correlationId: 'name-sync', idempotencyKey: 'name-change-1' },
+    });
+    const [commit] = harness.snapshot().committed;
+    expect(commit?.evidence.outboxMessages.length).toBe(1);
+    const message = commit?.evidence.outboxMessages[0]?.message;
+    expect(message?.payloadJson).toEqual({ partyRef });
+    expect(message?.topic).toBe('party.registry.party-updated.v1');
+    expect((yield* search.query('Acme')).length).toBe(1);
+    expect(yield* search.query('Renamed Engines')).toEqual([]);
+
+    const { descriptor } = projectPartyUpdatedToSearchWorker;
+    const payload = yield* Schema.decodeUnknownEffect(descriptor.payloadSchema)(message?.payloadJson);
+    const context = attestOutboxWorkerHandlerContext({
+      ...baseContextInput,
+      topic: descriptor.topic,
+      workerKey: descriptor.workerKey,
+    });
+    yield* search.projector.project(context, { partyId: payload.partyRef.resourceId });
+    const hits = yield* search.query('Renamed Engines');
+    expect(hits.map((hit) => ({ ref: hit.ref, title: hit.title }))).toEqual([
+      { ref: partyRef, title: 'Renamed Engines' },
+    ]);
+    expect(yield* search.query('Acme')).toEqual([]);
+    yield* search.projector.project(context, { partyId: payload.partyRef.resourceId });
+    expect(yield* search.query('Renamed Engines')).toEqual(hits);
   }),
 );

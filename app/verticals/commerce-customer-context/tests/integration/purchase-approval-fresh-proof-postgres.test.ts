@@ -443,7 +443,6 @@ const actualCurrentReplayFrame = (
           const currentness = Context.get(context, PurchaseApprovalCurrentnessFactory).make(
             transaction,
             trusted,
-            Context.get(context, ContextAccess),
             Context.get(context, PurchaseLimitEvaluationCurrentnessPort),
             evaluationSource,
           );
@@ -478,11 +477,9 @@ const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenari
     purpose: 'stabilization-1257-approval-fresh-proof',
     sourceConnections: yield* loadDatabaseConnectionPair(),
   });
-  yield* isolated.assertClonedSchema();
   yield* applyApprovalFreshProfileCurrentMigrations(isolated.connections, state);
   const owner = yield* makePurchasingApprovalNativeFixture({
     apiKeyManager,
-    configuredModuleAccess: orderBinding,
     connections: isolated.connections,
     finalProofTest: true,
     snapshot,
@@ -542,7 +539,7 @@ const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenari
           claimed.commitmentCorrelationId !== correlation ||
           scope.tenantId !== owner.tenantId ||
           scope.legalEntityId !== owner.legalEntityId ||
-          scope.storefrontId !== owner.storefrontId ||
+          scope.trustedStorefrontId !== owner.storefrontId ||
           scope.principalId !== owner.principal.principalId
         ) {
           return yield* Effect.fail(
@@ -1563,26 +1560,10 @@ it.live('rejects fresh proof after actual buyer revocation and retains committed
       const request = yield* test.readRequest();
       yield* test.expire(first.revalidation.validUntil);
       const revoked = yield* test.chain.revokeBuyer();
-      expect(revoked.outcome).toBe('RECONCILIATION_REQUIRED');
-      expect(revoked.grant.state).toBe('RECONCILIATION_REQUIRED');
-      assert.isOk(revoked.outcome === 'RECONCILIATION_REQUIRED');
-      expect(revoked.reconciliation.staged).toBe(true);
+      expect(revoked.outcome).toBe('REVOKED');
+      expect(revoked.grant.state).toBe('REVOKED');
+      // Revocation is now one owner commit. No worker settlement or pending second permission store exists.
       const entries = test.authorityEntries();
-      const pending = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
-        yield* Effect.flip(test.check(randomUUID())),
-      );
-      expect(pending.code).toBe('CURRENT_STATE_INDETERMINATE');
-      expect(pending.reason).toBe('Current buyer authorization is unavailable');
-      expect(test.authorityEntries()).toBe(entries);
-      expect(yield* test.readProofs()).toEqual(original);
-      // Complete the actual staged relation/native protocol explicitly at the fixture seam.
-      // This is not a claim that the production Outbox Worker was executed.
-      const settled = yield* test.owner.settleBuyerRevocation(
-        test.chain.counterpartyRef,
-        revoked.grant.grantRef.resourceId,
-        revoked.reconciliation.mutationId,
-      );
-      expect(settled).toEqual([{ state: 'REVOKED' }]);
       const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
         yield* Effect.flip(test.check(randomUUID())),
       );

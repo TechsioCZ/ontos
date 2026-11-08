@@ -18,6 +18,7 @@ import {
   RecordsResponseSchema,
 } from '../../shared/apis/records.ts';
 import type { RecordsRequest } from '../../shared/apis/records.ts';
+import { crmRecordsReadDeclaration } from '../../shared/domain/access-declarations.ts';
 import { crmRecordsGrants, finishCrmRecords, persistenceService } from '../services/persistence.service.ts';
 
 import { clientReadEvidence } from './agent-review.ts';
@@ -43,7 +44,7 @@ const readFailure = (
 const moduleKey = 'demo.crm';
 const recordsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'demo.crm.api.records',
   moduleKey,
   role: 'api',
@@ -65,6 +66,9 @@ const makeRecordsServices: ReadServiceFactory<Services> = (transaction, scope) =
 
 export const recordsRead = defineRead(
   {
+    // The declared selectors are the reviewed CRM reach: all (Správce, Vedoucí), assigned (Obchodník),
+    // entrusted (externí partner). The gate resolves the caller's cell to a row predicate.
+    accessDeclaration: crmRecordsReadDeclaration,
     accessKind: 'list',
     entrypoint: recordsEntrypoint,
     evidencePolicy: {
@@ -74,7 +78,6 @@ export const recordsRead = defineRead(
     inputSchema: RecordsRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'demo.crm.api.records',
     resultSchema: RecordsResponseSchema,
@@ -85,7 +88,10 @@ export const recordsRead = defineRead(
     prepare: (_input, context) => crmRecordsGrants(context.scope).pipe(Effect.mapError(readFailure)),
     load: (input, context) =>
       Effect.all(
-        { records: context.services.loadRecords(input), directory: context.services.loadAssignmentDirectory() },
+        {
+          records: context.services.loadRecords(context.prepared, input),
+          directory: context.services.loadAssignmentDirectory(context.prepared),
+        },
         { concurrency: 1 },
       ).pipe(Effect.mapError(readFailure)),
     finish: (input: RecordsRequest, context) =>
@@ -101,7 +107,10 @@ export const recordsRead = defineRead(
             }),
         ),
         Effect.flatMap((result) =>
-          readAssignablePrincipals(context.loaded.directory, crmAssignmentPermission).pipe(
+          readAssignablePrincipals(context.loaded.directory, {
+            carrier: crmAssignmentPermission,
+            scope: context.scope,
+          }).pipe(
             Effect.mapError((cause) =>
               Object.defineProperty(
                 new ReadHandlerUnavailable({
@@ -147,5 +156,4 @@ export const recordsRead = defineRead(
     // oxlint-enable perfectionist/sort-objects
   },
   makeRecordsServices,
-  () => ({ kind: 'module', moduleId: moduleKey }),
 );

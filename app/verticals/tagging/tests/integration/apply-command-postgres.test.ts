@@ -1,20 +1,19 @@
 import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import {
-  ContextAccess,
   OperationContextUnavailable,
   TrustedPrincipalContextSchema,
   defineDatabaseIdentityEnrollment,
   loadDatabaseConnectionPair,
 } from '@app/core-runtime';
-import type { ActionServicePreparationContext, ContextAccessService, OperationalScope } from '@app/core-runtime';
+import type { ActionServicePreparationContext, OperationalScope } from '@app/core-runtime';
 import { installOperationalScope } from '@app/core-runtime/testing/actions';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Crypto, Effect, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import {
-  ApplyCommandPayloadSchema,
+  TaggingCommandPayloadSchema,
   TaggingReferenceUnavailable,
   TaggingRevisionConflict,
 } from '../../shared/actions/apply-command.ts';
@@ -49,24 +48,7 @@ const nativeTaggingCommands = Effect.scoped(
       scope,
       transaction: () => Effect.die('Command permission checks need no SQL snapshot'),
     };
-    let insideTransaction = false;
-    let permissionChecks = 0;
-    const access: ContextAccessService = {
-      contextPermissions: ({ targets }) =>
-        Effect.sync(() => {
-          expect(insideTransaction).toBe(false);
-          permissionChecks += 1;
-          return targets.map(({ moduleId, permission }) => ({
-            decision: 'allowed' as const,
-            key: `${moduleId}:${permission}`,
-          }));
-        }),
-      legalEntities: () => Effect.succeed([]),
-      modules: () => Effect.succeed([]),
-      resources: () => Effect.die('Company writer needs no per-task check'),
-      tenants: () => Effect.succeed([]),
-    };
-    const create = yield* Schema.decodeEffect(ApplyCommandPayloadSchema)({
+    const create = yield* Schema.decodeEffect(TaggingCommandPayloadSchema)({
       command: {
         _tag: 'CreateTag',
         color: 'blue',
@@ -75,21 +57,16 @@ const nativeTaggingCommands = Effect.scoped(
       },
       expectedRevision: 0,
     });
-    const update = yield* Schema.decodeEffect(ApplyCommandPayloadSchema)({
+    const update = yield* Schema.decodeEffect(TaggingCommandPayloadSchema)({
       command: { _tag: 'UpdateTag', id: resourceId, patch: { name: 'Upravený štítek' } },
       expectedRevision: 1,
     });
-    const createFactory = yield* prepareApplyCommandServices(create, context).pipe(
-      Effect.provideService(ContextAccess, access),
-    );
-    const updateFactory = yield* prepareApplyCommandServices(update, context).pipe(
-      Effect.provideService(ContextAccess, access),
-    );
-    expect(permissionChecks).toBe(2);
+    const createFactory = yield* prepareApplyCommandServices(create, context);
+    const updateFactory = yield* prepareApplyCommandServices(update, context);
+
     const result = yield* database
       .transaction(
         Effect.fn('TaggingCommandsTest.transaction')(function* nativeTransaction(tx) {
-          insideTransaction = true;
           const scoped = yield* installOperationalScope(tx, scope, defineDatabaseIdentityEnrollment([]));
           const creator = yield* createFactory(scoped, scope, context.compositionRevision);
           const created = yield* creator.apply(create.command, 0, resourceId);
@@ -124,7 +101,7 @@ const nativeTaggingCommands = Effect.scoped(
               yield* updateFactory(scoped, scope, 'another-composition').pipe(Effect.flip),
             ),
           ).toBe(true);
-          expect(permissionChecks).toBe(2);
+
           return yield* Effect.fail('fixture-rollback' as const);
         }),
       )
@@ -135,7 +112,7 @@ const nativeTaggingCommands = Effect.scoped(
 
 it.layer(NodeCrypto.layer, { excludeTestServices: true })('native tagging commands', (suite) => {
   suite.effect(
-    'prepares permissions outside SQL; revalidates identity, payload and revision',
+    'keeps prepared commands bound to identity, payload and revision after Core admission',
     () => nativeTaggingCommands,
   );
 });

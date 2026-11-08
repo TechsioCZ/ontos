@@ -114,19 +114,31 @@ const handleClaimPortalEnrollmentTransition = Effect.fn('ClaimPortalEnrollmentTr
 
 export const claimPortalEnrollmentTransitionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.portal-enrollment-transition.claim',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'portal-enrollment', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.claim-portal-enrollment-transition.access.v1',
     },
     // The generated-seam checker (check-module-entrypoint-boundaries.mts) matches this
     // quoted literal directly; the constant above stays the runtime source of truth.
+    accessWorkload: {
+      reason: 'The shared Storefront client claims the enrollment transition it started for the visitor',
+      workloads: ['commerce.storefront-client'],
+    },
     actionKey: 'commerce.customer-context.claim-portal-enrollment-transition',
     auditProfile: 'standard',
     domainErrorSchema: CommerceEnrollmentAttemptActionErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.claim-portal-enrollment-transition',
       moduleKey,
       role: 'action',

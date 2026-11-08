@@ -9,10 +9,13 @@ import type {
 import { Effect, Redacted } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { CommercePriceGroupResolutionGatewayCredentialService } from '../../shared/domain/commerce-price-group-resolution-gateway-credential.ts';
-import { PriceGroupCompatibilityGatewayCredentialService } from '../../shared/domain/price-group-compatibility-gateway-credential.ts';
-import { commercePriceGroupResolutionPortFromEnvironment } from '../../src/integrations/commerce-price-group-resolution.ts';
-import { priceGroupCompatibilityPortFromEnvironment } from '../../src/integrations/price-group-compatibility.ts';
+import { makeCommerceResolutionPort } from '../../src/integrations/commerce-price-group-resolution.ts';
+import { makePriceGroupCompatibilityPort } from '../../src/integrations/price-group-compatibility.ts';
+import type {
+  OwnerGatewayConnectionAcquire,
+  OwnerGatewayConnectionInput,
+} from '../../src/integrations/owner-gateway-connection.ts';
+import { ownerConnectionStub, verifiedTestScope } from '../support/owner-gateway-connection.fixture.ts';
 
 const compositionRevision = 'a'.repeat(64);
 
@@ -81,49 +84,91 @@ const compatibilityRequest: ValidatePriceGroupCompatibilityRequest = {
 };
 const compatibilityDecision: PriceGroupCompatibilityDecision = { evidence: compatibility, kind: 'USABLE' };
 
-const commerceOwnerCredential = {
-  issue: () =>
-    Effect.succeed({
-      baseUrl: new URL('https://commerce-customer.example.test'),
-      credential: Redacted.make('Bearer commerce-owner-issued'),
-    }),
+const principalId = '40000000-0000-4000-8000-000000000001';
+
+/** Records every owner connection the port requests, then answers with the stub credential for that owner. */
+const recordingOwner = (
+  issued: OwnerGatewayConnectionInput[],
+  credential: string,
+  baseUrl: string,
+): OwnerGatewayConnectionAcquire => {
+  const owner = ownerConnectionStub(credential, baseUrl);
+  return (input) => {
+    issued.push(input);
+    return owner(input);
+  };
 };
-const priceGroupOwnerCredential = {
-  issue: () =>
-    Effect.succeed({
-      baseUrl: new URL('https://price-groups.example.test'),
-      credential: Redacted.make('Bearer price-group-owner-issued'),
-    }),
-};
+
+const scopeFor = (requestCorrelation: string) =>
+  verifiedTestScope({ correlationId: requestCorrelation, legalEntityId, principalId, tenantId });
+
+const commercePort = (
+  requestCorrelation: string,
+  execute: Parameters<typeof makeCommerceResolutionPort>[0]['execute'],
+  acquire: OwnerGatewayConnectionAcquire,
+) =>
+  makeCommerceResolutionPort({
+    acquire,
+    context: {
+      compositionRevision,
+      legalEntityId,
+      requestCorrelation,
+      scope: scopeFor(requestCorrelation),
+      tenantId,
+    },
+    execute,
+  });
+
+const compatibilityPort = (
+  requestCorrelation: string,
+  execute: Parameters<typeof makePriceGroupCompatibilityPort>[0]['execute'],
+  acquire: OwnerGatewayConnectionAcquire,
+) =>
+  makePriceGroupCompatibilityPort({
+    acquire,
+    context: {
+      compositionRevision,
+      requestCorrelation,
+      scope: scopeFor(requestCorrelation),
+      tenantId,
+    },
+    execute,
+  });
+
+const commerceOwner = (issued: OwnerGatewayConnectionInput[]) =>
+  recordingOwner(issued, 'Bearer commerce-owner-issued', 'https://commerce-customer.example.test');
+const priceGroupOwner = (issued: OwnerGatewayConnectionInput[]) =>
+  recordingOwner(issued, 'Bearer price-group-owner-issued', 'https://price-groups.example.test');
 
 describe('Price Group interpretation owner adapters', () => {
   it.effect('sends the exact customer profile request and preserves the complete Commerce owner decision', () =>
     Effect.gen(function* exactCommerceResolution() {
       const calls: unknown[] = [];
-      const issued: unknown[] = [];
-      const port = yield* commercePriceGroupResolutionPortFromEnvironment(
-        { compositionRevision, legalEntityId, requestCorrelation: 'commerce-resolution-test', tenantId },
+      const issued: OwnerGatewayConnectionInput[] = [];
+      const port = commercePort(
+        'commerce-resolution-test',
         (payload, credential, correlation, options) => {
           calls.push({ correlation, credential: Redacted.value(credential), options, payload });
           return Effect.succeed(assignmentResponse);
         },
-      ).pipe(
-        Effect.provideService(CommercePriceGroupResolutionGatewayCredentialService, {
-          issue: (input) => {
-            issued.push(input);
-            return commerceOwnerCredential.issue();
-          },
-        }),
+        commerceOwner(issued),
       );
 
       const result = yield* port.resolve({ request: assignmentRequest, sellingLegalEntityId: legalEntityId });
 
       expect(result).toEqual(assignmentResponse);
-      expect(issued).toEqual([
+      expect(
+        issued.map(({ audience, compositionRevision: revision, legalEntityScope, requestCorrelation }) => ({
+          audience,
+          compositionRevision: revision,
+          legalEntityScope,
+          requestCorrelation,
+        })),
+      ).toEqual([
         {
           audience: 'commerce-customer-context',
           compositionRevision,
-          legalEntityId,
+          legalEntityScope: 'subject',
           requestCorrelation: 'commerce-resolution-test',
         },
       ]);
@@ -135,17 +180,14 @@ describe('Price Group interpretation owner adapters', () => {
           payload: assignmentRequest,
         },
       ]);
-    }).pipe(
-      Effect.provideService(CommercePriceGroupResolutionGatewayCredentialService, commerceOwnerCredential),
-      Effect.provideService(PriceGroupCompatibilityGatewayCredentialService, priceGroupOwnerCredential),
-    ),
+    }),
   );
 
   it.effect('rejects cross-Tenant requests and mismatched owner responses as unverifiable', () =>
     Effect.gen(function* rejectUnverifiableCommerceEvidence() {
       let executions = 0;
-      const port = yield* commercePriceGroupResolutionPortFromEnvironment(
-        { compositionRevision, legalEntityId, requestCorrelation: 'commerce-resolution-test', tenantId },
+      const port = commercePort(
+        'commerce-resolution-test',
         () => {
           executions += 1;
           return Effect.succeed(
@@ -154,6 +196,7 @@ describe('Price Group interpretation owner adapters', () => {
               : { ...assignmentResponse, effectiveAt: '2026-09-27T10:00:00.001Z' },
           );
         },
+        commerceOwner([]),
       );
       const crossTenantFailure = yield* port
         .resolve({
@@ -172,31 +215,20 @@ describe('Price Group interpretation owner adapters', () => {
       expect(mismatchedResponseFailure).toMatchObject({ kind: 'UNVERIFIABLE', owner: 'COMMERCE_ASSIGNMENT' });
       expect(mismatchedTimeFailure).toMatchObject({ kind: 'UNVERIFIABLE', owner: 'COMMERCE_ASSIGNMENT' });
       expect(executions).toBe(2);
-    }).pipe(
-      Effect.provideService(CommercePriceGroupResolutionGatewayCredentialService, commerceOwnerCredential),
-      Effect.provideService(PriceGroupCompatibilityGatewayCredentialService, priceGroupOwnerCredential),
-    ),
+    }),
   );
 
-  it.effect('rejects a basis Selling Legal Entity mismatch before credential issuance or owner execution', () => {
-    let credentialIssues = 0;
-    let executions = 0;
-    const credential = {
-      issue: () => {
-        credentialIssues += 1;
-        return Effect.succeed({
-          baseUrl: new URL('https://commerce-customer.example.test'),
-          credential: Redacted.make('Bearer commerce-owner-issued'),
-        });
-      },
-    };
-    return Effect.gen(function* rejectSellingLegalEntityMismatch() {
-      const port = yield* commercePriceGroupResolutionPortFromEnvironment(
-        { compositionRevision, legalEntityId, requestCorrelation: 'commerce-resolution-test', tenantId },
+  it.effect('rejects a basis Selling Legal Entity mismatch before owner connection or owner execution', () =>
+    Effect.gen(function* rejectSellingLegalEntityMismatch() {
+      const issued: OwnerGatewayConnectionInput[] = [];
+      let executions = 0;
+      const port = commercePort(
+        'commerce-resolution-test',
         () => {
           executions += 1;
           return Effect.succeed(assignmentResponse);
         },
+        commerceOwner(issued),
       );
       const failure = yield* port
         .resolve({
@@ -206,20 +238,21 @@ describe('Price Group interpretation owner adapters', () => {
         .pipe(Effect.flip);
 
       expect(failure).toMatchObject({ kind: 'UNVERIFIABLE', owner: 'COMMERCE_ASSIGNMENT' });
-      expect(credentialIssues).toBe(0);
+      expect(issued).toHaveLength(0);
       expect(executions).toBe(0);
-    }).pipe(Effect.provideService(CommercePriceGroupResolutionGatewayCredentialService, credential));
-  });
+    }),
+  );
 
   it.effect('sends exact compatibility evidence and preserves the owner decision', () =>
     Effect.gen(function* exactCompatibility() {
       const calls: unknown[] = [];
-      const port = yield* priceGroupCompatibilityPortFromEnvironment(
-        { compositionRevision, requestCorrelation: 'compatibility-test', tenantId },
+      const port = compatibilityPort(
+        'compatibility-test',
         (payload, credential, correlation, options) => {
           calls.push({ correlation, credential: Redacted.value(credential), options, payload });
           return Effect.succeed(compatibilityDecision);
         },
+        priceGroupOwner([]),
       );
 
       const result = yield* port.validate(compatibilityRequest);
@@ -233,16 +266,13 @@ describe('Price Group interpretation owner adapters', () => {
           payload: compatibilityRequest,
         },
       ]);
-    }).pipe(
-      Effect.provideService(CommercePriceGroupResolutionGatewayCredentialService, commerceOwnerCredential),
-      Effect.provideService(PriceGroupCompatibilityGatewayCredentialService, priceGroupOwnerCredential),
-    ),
+    }),
   );
 
   it.effect('fails closed when Price Group Catalog evidence is bound to another Group or operation time', () =>
     Effect.gen(function* rejectUnverifiableCompatibilityEvidence() {
-      const port = yield* priceGroupCompatibilityPortFromEnvironment(
-        { compositionRevision, requestCorrelation: 'compatibility-test', tenantId },
+      const port = compatibilityPort(
+        'compatibility-test',
         () =>
           Effect.succeed({
             evidence: {
@@ -252,13 +282,11 @@ describe('Price Group interpretation owner adapters', () => {
             },
             kind: 'USABLE',
           }),
+        priceGroupOwner([]),
       );
       const failure = yield* port.validate(compatibilityRequest).pipe(Effect.flip);
 
       expect(failure).toMatchObject({ kind: 'UNVERIFIABLE', owner: 'PRICE_GROUP_COMPATIBILITY' });
-    }).pipe(
-      Effect.provideService(CommercePriceGroupResolutionGatewayCredentialService, commerceOwnerCredential),
-      Effect.provideService(PriceGroupCompatibilityGatewayCredentialService, priceGroupOwnerCredential),
-    ),
+    }),
   );
 });

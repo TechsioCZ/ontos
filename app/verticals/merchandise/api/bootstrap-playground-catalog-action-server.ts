@@ -44,6 +44,7 @@ const execute = Effect.fn('BootstrapPlaygroundCatalogActionServer.execute')(func
       authorization: Redacted.make(request.headers['authorization']),
       'x-correlation-id': correlationId,
     },
+    successContract: 'result-or-proposal',
   });
 });
 

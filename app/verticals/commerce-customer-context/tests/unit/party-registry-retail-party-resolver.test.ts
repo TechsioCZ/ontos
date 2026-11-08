@@ -52,11 +52,13 @@ const partyRef = (resourceId: string, refTenantId = tenantId) => ({
 const response = (overrides: Partial<PartyDetailResponse> = {}) =>
   Schema.decodeUnknownSync(PartyDetailResponseSchema)({
     currentFactAssertions: [],
-    factHistory: null,
     party: {
       archivedAt: null,
+      businessName: null,
       createdAt: '2026-09-09T09:00:00.000Z',
       displayName: 'Retail Owner',
+      firstName: 'Retail',
+      lastName: 'Owner',
       partyRef: partyRef(partyId),
       partyType: 'PERSON',
       revision: 7,
@@ -200,6 +202,7 @@ const serveNativePartyContract = (compositionRevision: string) =>
     const gatewayHandlers = HttpApiBuilder.group(api, 'gatewayContext', (handlers) =>
       handlers
         .handle('issueGatewayContext', () => issue)
+        .handle('issueDelegatedGatewayContext', () => Effect.die('This direct gateway fixture must not delegate'))
         .handle('readWithApiKeyGatewayContext', () => Effect.succeed(new TextEncoder().encode('null')))
         .handle('issueApiKeyGatewayContext', ({ payload, request: incoming }) => {
           requests.push({ body: JSON.stringify(payload), headers: new Headers(incoming.headers), path: incoming.url });
@@ -425,6 +428,7 @@ it.effect('prepares the exact Retail Party before SQL and rejects a changed sele
     const context = {
       actionInvocationId: request.actionInvocationId,
       compositionRevision: request.compositionRevision,
+      evaluatePolicy: () => Effect.die('This owner evidence preparation must not evaluate unrelated policy'),
       scope: {
         authMethod: 'session' as const,
         correlationId: scope.requestCorrelation,
@@ -437,8 +441,13 @@ it.effect('prepares the exact Retail Party before SQL and rejects a changed sele
         return Effect.die('Unexpected SQL snapshot');
       },
     };
-    const executor = {
-      execute: () => {
+    const executor: typeof RetailPartyDetailExecutor.Service = {
+      execute: (selector, correlation, authority) => {
+        expect(selector).toEqual({ partyRef: partyRef(partyId) });
+        expect(correlation).toBe(scope.requestCorrelation);
+        expect(authority.scope).toBe(context.scope);
+        expect(authority.actionInvocationId).toBe(context.actionInvocationId);
+        expect(authority.compositionRevision).toBe(context.compositionRevision);
         calls += 1;
         return Effect.succeed(response());
       },

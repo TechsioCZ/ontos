@@ -9,7 +9,7 @@ import { previewPartyMatch } from '../services/party-matching-persistence.servic
 import { readUnavailable } from './read-outcome.ts';
 
 const partyMatchEntrypoint = defineTenantModuleEntrypoint({
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   access: 'read',
   entrypointKey: 'party.registry.api.party-match',
   moduleKey: 'party.registry',
@@ -22,6 +22,20 @@ const partyMatchUnavailable = readUnavailable('Party match preview is unavailabl
 /** UX preview only. Use the match-party Action for a durable identity decision and review case. */
 export const partyMatchRead = defineRead(
   {
+    accessActor: {
+      callers: ['commerce-customer-context'],
+      reason: 'Commerce Customer Context previews Party matches for a verified subject during enrollment.',
+      subject: 'identity',
+      subjectWorkloads: ['commerce.storefront-client'],
+    },
+    accessDeclaration: {
+      key: 'party.registry.party-match.preview',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'identity-review', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: partyMatchEntrypoint,
     evidencePolicy: {
@@ -31,7 +45,6 @@ export const partyMatchRead = defineRead(
     inputSchema: PartyMatchRequestSchema,
     legalEntityScope: 'optional',
     owningModuleKey: 'party.registry',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'party.registry.api.party-match',
     resultSchema: PartyMatchResponseSchema,
@@ -51,5 +64,4 @@ export const partyMatchRead = defineRead(
     Effect.succeed({
       preview: (candidate: PartyCandidate) => previewPartyMatch(transaction, scope.tenantId, candidate),
     }),
-  () => ({ kind: 'tenant', permission: 'manage_party_identity' }),
 );

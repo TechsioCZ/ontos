@@ -2,7 +2,8 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { assignableSalespeople, salespersonName } from '../../../../crm/records.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { Effect } from 'effect';
-// (Re)assign a client to a salesperson — Správce / Vedoucí only (demo.crm.assign, enforced by the reducer).
+// (Re)assign a client to a salesperson — Správce / Vedoucí only (the reassignment authority
+// `demo.crm.client-owner.assign`, enforced by the reducer).
 // The reason is stored in the assignment history; past visits keep their author (C00-03).
 import { dialogCloseLabel } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';

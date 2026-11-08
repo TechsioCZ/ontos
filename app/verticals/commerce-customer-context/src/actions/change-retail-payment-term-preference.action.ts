@@ -4,16 +4,10 @@
 import type {
   ActionHandlerContext,
   ActionServicePreparationContext,
-  ActionServicePreflight,
   OperationalScope,
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
-import {
-  OperationContextUnavailable,
-  defineAction,
-  defineActionBusinessPermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { OperationContextUnavailable, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 import { PaymentTermReferenceSchema, PaymentTermsTimestampSchema } from '../../shared/domain/payment-term-contracts.ts';
 import { isEffectiveAt } from '../../shared/domain/payment-terms.ts';
@@ -28,16 +22,15 @@ import type {
   ChangeRetailPaymentTermPreferenceResult,
   RetailPaymentTermPreferenceChange,
 } from '../../shared/actions/change-retail-payment-term-preference.ts';
-import { paymentTermCatalogPortFromEnvironment } from '../integrations/payment-term-catalog.ts';
+import { preparePaymentTermsChangeCatalog } from '../services/payment-terms-action-preflight.ts';
 import {
-  loadRetailChangeSnapshot,
   paymentTermsPersistenceForTransaction,
+  loadRetailChangeSnapshot,
   retailChangeDefinitionRequests,
 } from '../persistence/payment-term-persistence.ts';
-import { stableRevision } from '../integrations/order-finalization-pricing-context.ts';
-import { preparePaymentTermsChangeCatalog } from '../services/payment-terms-action-preflight.ts';
 import { createChangeRetailPaymentTermPreferenceCommerceCustomerContextRetailPaymentTermPreferenceChangedV1OutboxMessage } from './change-retail-payment-term-preference.commerce-customer-context-retail-payment-term-preference-changed-v1.outbox-message.ts';
 import type { ChangeRetailPaymentTermPreferenceCommerceCustomerContextRetailPaymentTermPreferenceChangedV1OutboxPayload } from './change-retail-payment-term-preference.commerce-customer-context-retail-payment-term-preference-changed-v1.outbox-message.ts';
+import { retailOwnerFacts } from './owner-access-facts.ts';
 
 const moduleKey = 'commerce.customer-context' as const;
 const eventType = 'commerce.customer-context.retail-payment-term-preference-changed.v1' as const;
@@ -259,89 +252,81 @@ const handleChangeRetailPaymentTermPreference = Effect.fn('ChangeRetailPaymentTe
   },
 );
 
-const prepareRetailPreferenceServices: ActionServicePreflight<
-  ChangeRetailPaymentTermPreferencePayload,
-  RetailPaymentTermPreferenceActionServices,
-  RetailPaymentTermPreferenceRejected
-> = Effect.fn('ChangeRetailPaymentTermPreferenceAction.prepareServices')(function* prepareServices(
+const preparePaymentTermsServices = Effect.fn('RetailPaymentTermPreferenceActionServices.prepare')(function* prepare(
   payload: ChangeRetailPaymentTermPreferencePayload,
   context: ActionServicePreparationContext,
 ) {
-  const selected = preferenceChangeEvidence(payload.change).paymentTermRef;
-  if (
-    payload.profileRef.tenantId !== context.scope.tenantId ||
-    (selected !== null && selected.tenantId !== context.scope.tenantId)
-  ) {
-    return yield* new RetailPaymentTermPreferenceRejected({
-      code: 'SCOPE_MISMATCH',
-      reason: 'The retail profile and selected Payment Term must belong to the trusted Tenant',
-      retryable: false,
-    });
-  }
-  const { legalEntityId } = context.scope;
-  if (legalEntityId === undefined) {
-    return yield* new OperationContextUnavailable({
-      code: 'operation_context_unavailable',
-      reason: 'Payment Terms changes require a trusted Legal Entity',
-    });
-  }
-  const preparedPayload = structuredClone(payload);
-  const payloadRevision = stableRevision(preparedPayload);
-  const prepareCatalog = yield* preparePaymentTermsChangeCatalog(
+  const selector = structuredClone(payload);
+  const bindCatalog = yield* preparePaymentTermsChangeCatalog(
     context,
-    (transaction, scope) => loadRetailChangeSnapshot(transaction, scope, preparedPayload),
-    (snapshot) => retailChangeDefinitionRequests(snapshot, preparedPayload),
+    (transaction, scope) => loadRetailChangeSnapshot(transaction, scope, selector),
+    (state) => retailChangeDefinitionRequests(state, selector),
   );
-  return (transaction: ScopedTransactionExecutor, scope: OperationalScope, compositionRevision: string) =>
-    prepareCatalog(transaction, scope, compositionRevision).pipe(
-      Effect.map((catalog) => {
-        const service = paymentTermsPersistenceForTransaction(
+  const samePayload = Schema.toEquivalence(Schema.toType(ChangeRetailPaymentTermPreferencePayloadSchema));
+  return (
+    transaction: ScopedTransactionExecutor,
+    scope: OperationalScope,
+    compositionRevision: string,
+  ): Effect.Effect<RetailPaymentTermPreferenceActionServices, OperationContextUnavailable> =>
+    bindCatalog(transaction, scope, compositionRevision).pipe(
+      Effect.flatMap((catalog) => {
+        const { legalEntityId } = scope;
+        if (legalEntityId === undefined) {
+          return Effect.fail(
+            new OperationContextUnavailable({
+              code: 'operation_context_unavailable',
+              reason: 'Payment Terms changes require the verified Legal Entity',
+            }),
+          );
+        }
+        const services = paymentTermsPersistenceForTransaction(
           { invoker: transaction, scope: { ...scope, legalEntityId } },
           { catalog },
         ).retailPreference;
-        return {
-          changePreference: (candidate, attribution) =>
-            stableRevision(candidate) === payloadRevision &&
-            attribution.actionInvocationId === context.actionInvocationId &&
-            attribution.tenantId === scope.tenantId &&
-            attribution.legalEntityId === legalEntityId &&
-            attribution.principalId === scope.principalId
-              ? service.changePreference(candidate, attribution)
+        return Effect.succeed({
+          changePreference: (candidate, actionContext) =>
+            samePayload(candidate, selector) &&
+            actionContext.actionInvocationId === context.actionInvocationId &&
+            actionContext.principalId === context.scope.principalId &&
+            actionContext.tenantId === context.scope.tenantId &&
+            actionContext.legalEntityId === context.scope.legalEntityId
+              ? services.changePreference(candidate, actionContext)
               : Effect.fail(
                   new RetailPaymentTermPreferenceRejected({
                     code: 'SCOPE_MISMATCH',
-                    reason: 'Prepared Retail Payment Term intent does not match',
+                    reason: 'Prepared Payment Terms intent changed',
                     retryable: false,
                   }),
                 ),
-        } satisfies RetailPaymentTermPreferenceActionServices;
+        } satisfies RetailPaymentTermPreferenceActionServices);
       }),
     );
 });
 
 export const changeRetailPaymentTermPreferenceAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.retail-payment-term-preference.change',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'payment-terms', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.change-retail-payment-term-preference.access.v1',
     },
+    accessOwnerFacts: (payload) =>
+      retailOwnerFacts(payload.profileRef.resourceId, 'retail.settings.payment_term_preference.manage'),
     actionKey: 'commerce.customer-context.change-retail-payment-term-preference',
     auditEvidenceSchema: RetailPaymentTermPreferenceAuditEvidenceSchema,
     auditProfile: 'standard',
-    businessPermission: defineActionBusinessPermission<ChangeRetailPaymentTermPreferencePayload>((payload, scope) => ({
-      permission: 'retail.settings.payment_term_preference.manage',
-      target: {
-        kind: 'retail_profile',
-        legalEntityId: scope.legalEntityId ?? '',
-        profileId: payload.profileRef.resourceId,
-        tenantId: scope.tenantId,
-      },
-    })),
     domainErrorSchema: RetailPaymentTermPreferenceRejected,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.change-retail-payment-term-preference',
       moduleKey: 'commerce.customer-context',
       role: 'action',
@@ -355,31 +340,19 @@ export const changeRetailPaymentTermPreferenceAction = defineAction(
     schemaVersion: '1',
   },
   handleChangeRetailPaymentTermPreference,
-  (transaction, scope, compositionRevision) => {
-    const { legalEntityId } = scope;
-    if (legalEntityId === undefined) {
-      return Effect.fail(
-        new OperationContextUnavailable({
-          code: 'operation_context_unavailable',
-          reason: 'Retail Payment Term Preference changes require a trusted Legal Entity scope',
-        }),
-      );
-    }
-    return Effect.gen(function* makeRetailPaymentTermPreferenceServices() {
-      const catalog = yield* paymentTermCatalogPortFromEnvironment({
-        compositionRevision,
-        legalEntityId,
-        requestCorrelation: scope.correlationId,
-        tenantId: scope.tenantId,
-      });
-      return paymentTermsPersistenceForTransaction(
-        {
-          invoker: transaction,
-          scope: { ...scope, legalEntityId },
-        },
-        { catalog },
-      ).retailPreference;
-    });
-  },
-  { prepareServices: prepareRetailPreferenceServices },
+  (transaction, scope) =>
+    scope.legalEntityId === undefined
+      ? Effect.fail(
+          new OperationContextUnavailable({
+            code: 'operation_context_unavailable',
+            reason: 'Payment Terms changes require the verified Legal Entity',
+          }),
+        )
+      : Effect.succeed(
+          paymentTermsPersistenceForTransaction({
+            invoker: transaction,
+            scope: { ...scope, legalEntityId: scope.legalEntityId },
+          }).retailPreference,
+        ),
+  { prepareServices: preparePaymentTermsServices },
 );

@@ -1,10 +1,15 @@
+import { inventoryRegistration } from '../../vertical.registration.ts';
 import {
   ActionRuntime,
+  ActiveApplicationCompositionService,
+  bindLiveAccessGate,
   GatewayAssertionRedemptionService,
   ReadHandlerUnavailable,
   ReadRuntime,
 } from '@app/core-runtime';
 import type { ActionRuntimeService } from '@app/core-runtime';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
+import { makeTestAccessGateLayers, testAccessSpecOf } from '@app/core-runtime/testing/access-gate';
 import { makeGovernedReadHttpHandler } from '@app/core-runtime/http/governed-read';
 import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -56,7 +61,7 @@ const nodeCrypto = Layer.build(NodeCrypto.layer).pipe(Effect.map((context) => Co
 
 const makeRegisteredPositionSetRuntime = Effect.fn('PositionSetTest.makeRegisteredRuntime')(
   function* makeRegisteredPositionSetRuntime(options: {
-    readonly denyPosition?: boolean;
+    readonly access: 'allowed' | 'denied';
     readonly ownerUnavailable?: boolean;
     readonly positions: typeof observation.positions;
   }) {
@@ -100,13 +105,11 @@ const makeRegisteredPositionSetRuntime = Effect.fn('PositionSetTest.makeRegister
         .setJti(jti)
         .sign(privateKey),
     );
+    const accessServices = yield* Layer.build(makeTestAccessGateLayers({ spec: testAccessSpecOf(options.access) }));
+    const accessDecision = yield* bindLiveAccessGate.pipe(Effect.provideContext(accessServices));
     const harness = yield* makeReadTestHarness({
-      businessPermissionDecision: (target) =>
-        options.denyPosition === true &&
-        target.target.kind === 'inventory_resource' &&
-        target.target.resource.resourceType === 'commerce.inventory.stock-position'
-          ? 'denied'
-          : 'allowed',
+      // The original Read and the unused approval provider share this exact gate and its ports.
+      accessDecision,
       compositionRevision: composition.composition.revision,
       executeOwnerQuery: (query) => {
         expect(query.sql).toContain('from "inventory"."stock_items"');
@@ -122,11 +125,24 @@ const makeRegisteredPositionSetRuntime = Effect.fn('PositionSetTest.makeRegister
       },
       operationTime: observation.observedAt,
       ownerAuthorizationDecision: 'allowed',
-      permissionDecision: 'allowed',
+      ownerRegistration: inventoryRegistration,
       scope,
     });
+    const ownerApprovals = yield* Layer.build(
+      makeOwnerActionApprovalsLive(ultramodernApiMarker, inventoryRegistration).pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            harness.ownerServices,
+            Layer.succeedContext(accessServices),
+            Layer.succeed(Crypto.Crypto, yield* Crypto.Crypto),
+            Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(composition) }),
+          ),
+        ),
+      ),
+    );
     let redemptions = 0;
     const serverConfiguration = Layer.mergeAll(
+      Layer.succeedContext(ownerApprovals),
       Layer.succeed(ActionRuntime, unusedActionRuntime),
       Layer.succeed(ActiveApplicationCompositionSource, { load: Effect.succeed(compositionDocument) }),
       ConfigProvider.layer(
@@ -183,7 +199,7 @@ const problems = makeGovernedReadProblems({
 
 const expectCommittedEvidenceAfterOwner = (statements: readonly string[]) => {
   const ownerQueryIndex = statements.findIndex((statement) => statement.includes('from "inventory"."stock_items"'));
-  const ownerCommitIndex = statements.indexOf('COMMIT');
+  const ownerCommitIndex = statements.indexOf('COMMIT', ownerQueryIndex + 1);
   const evidenceBeginIndex = statements.indexOf('BEGIN', ownerCommitIndex + 1);
   const evidenceIndex = statements.findIndex((statement) =>
     statement.startsWith('insert into "core"."data_access_events"'),
@@ -195,7 +211,7 @@ const expectCommittedEvidenceAfterOwner = (statements: readonly string[]) => {
   expect(
     statements.slice(evidenceBeginIndex + 1, evidenceIndex).some((statement) => statement.includes('set_config')),
   ).toBe(true);
-  expect(statements.filter((statement) => statement === 'COMMIT')).toHaveLength(2);
+  expect(statements.filter((statement) => statement === 'COMMIT')).toHaveLength(3);
   expect(statements).not.toContain('ROLLBACK');
   expect(statements.at(-2)).toContain('insert into "core"."data_access_events"');
   expect(statements.at(-1)).toBe('COMMIT');
@@ -204,7 +220,7 @@ const expectCommittedEvidenceAfterOwner = (statements: readonly string[]) => {
 describe('Current relevant StockPosition set HTTP request contract', () => {
   it.live('registered runtime and published client return the real broader owner-complete candidate set', () =>
     Effect.gen(function* registeredBroaderSet() {
-      const runtime = yield* makeRegisteredPositionSetRuntime({ positions: [position] });
+      const runtime = yield* makeRegisteredPositionSetRuntime({ access: 'allowed', positions: [position] });
       const result = yield* runtime.read(broadRequest);
       expect(result.outcome).toBe('COMPLETE');
       if (result.outcome === 'COMPLETE') {
@@ -225,7 +241,7 @@ describe('Current relevant StockPosition set HTTP request contract', () => {
 
   it.live('registered runtime preserves proven empty broader membership', () =>
     Effect.gen(function* registeredOwnerEmpty() {
-      const runtime = yield* makeRegisteredPositionSetRuntime({ positions: [] });
+      const runtime = yield* makeRegisteredPositionSetRuntime({ access: 'allowed', positions: [] });
       const result = yield* runtime.read(broadRequest);
       expect(result.outcome).toBe('COMPLETE');
       if (result.outcome === 'COMPLETE') {
@@ -239,26 +255,29 @@ describe('Current relevant StockPosition set HTTP request contract', () => {
     }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
   );
 
-  it.live('registered runtime releases no complete set when a candidate Position is forbidden', () =>
+  it.live('registered runtime releases no complete set when the gate denies its capability', () =>
     Effect.gen(function* registeredMemberDenied() {
-      const runtime = yield* makeRegisteredPositionSetRuntime({ denyPosition: true, positions: [position] });
+      const runtime = yield* makeRegisteredPositionSetRuntime({ access: 'denied', positions: [position] });
       const failure = yield* runtime.read(broadRequest).pipe(Effect.flip);
       expect(Schema.is(CurrentRelevantStockPositionSetForbiddenProblemSchema)(failure)).toBe(true);
       expect(runtime.snapshot().statuses).toEqual([403]);
       expect(runtime.snapshot().redemptions).toBe(1);
-      expect(runtime.snapshot().ownerQueries).toHaveLength(1);
-      // The owner observation runs in the transaction; the Position SpiceDB check runs after its commit
-      // (00dc1c50c), so the denial stops the read before any result is decoded or released.
-      expect(runtime.snapshot().stages).toContain('handler_executed');
+      expect(runtime.snapshot().ownerQueries).toEqual([]);
+      // The canonical capability gate refuses the request before any owner observation.
+      expect(runtime.snapshot().stages).not.toContain('handler_executed');
       expect(runtime.snapshot().stages).not.toContain('result_decoded');
-      expectCommittedEvidenceAfterOwner(runtime.snapshot().statements);
+      expect(runtime.snapshot().statements.at(-1)).toBe('COMMIT');
       expect(runtime.snapshot().evidenceWrites).toBe(1);
     }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
   );
 
   it.live('registered runtime maps unavailable owner observation to a sanitized typed 503 instead of empty', () =>
     Effect.gen(function* registeredOwnerUnavailable() {
-      const runtime = yield* makeRegisteredPositionSetRuntime({ ownerUnavailable: true, positions: [position] });
+      const runtime = yield* makeRegisteredPositionSetRuntime({
+        access: 'allowed',
+        ownerUnavailable: true,
+        positions: [position],
+      });
       const failure = yield* runtime.read(broadRequest).pipe(Effect.flip);
       expect(Schema.is(CurrentRelevantStockPositionSetUnavailableProblemSchema)(failure)).toBe(true);
       expect(JSON.stringify(failure)).not.toContain('private scripted owner outage');
@@ -271,7 +290,7 @@ describe('Current relevant StockPosition set HTTP request contract', () => {
 
   it.live('registered exact mode remains UNPROVEN without a composed Commerce verifier', () =>
     Effect.gen(function* registeredExactUnavailable() {
-      const runtime = yield* makeRegisteredPositionSetRuntime({ positions: [position] });
+      const runtime = yield* makeRegisteredPositionSetRuntime({ access: 'allowed', positions: [position] });
       const result = yield* runtime.read(request);
       expect(result).toEqual({ outcome: 'UNPROVEN', reason: 'COMMERCE_CONTEXT_UNVERIFIABLE' });
       expect(runtime.snapshot().statuses).toEqual([200]);

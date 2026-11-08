@@ -2,8 +2,12 @@ import { CoreSearchQueryRuntime, CoreSearchProjectionHitSchema } from '@app/core
 import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TasksProviderRequestSchema, TasksProviderResponseSchema } from '../../shared/apis/tasks-search.ts';
-import { loadSearch } from '../../src/services/search-read.ts';
+import { loadSearch as governedSearch } from '../../src/services/search-read.ts';
+
 import { company, otherCompany, otherTenant, ref, scope } from './search-fixtures.ts';
+
+const loadSearch = (operationScope: Parameters<typeof governedSearch>[0], query: string) =>
+  governedSearch(operationScope, query, { groups: [] });
 
 const hit = { archived: false, facets: [], metadata: [], ref, selectedLegalEntityId: company, title: 'Lidský název' };
 it.effect('wire contract requires owner resource, tenant and selected company', () =>

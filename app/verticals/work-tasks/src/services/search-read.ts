@@ -1,6 +1,9 @@
-import { CoreSearchQueryRuntime, ReadHandlerUnavailable } from '@app/core-runtime';
+import { CoreSearchQueryRuntime, ReadHandlerUnavailable, ReadPermissionDenied } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import type { ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
+import { workRecordsCarrier } from '../../shared/access-declarations.ts';
+import { DateTime, Effect, Schema } from 'effect';
 import { TasksProviderResponseSchema } from '../../shared/apis/tasks-search.ts';
 
 export const searchUnavailable = (cause?: unknown) =>
@@ -13,11 +16,42 @@ export const searchUnavailable = (cause?: unknown) =>
     { configurable: true, value: cause },
   );
 
-/** Company and tenant are trusted operation context, never provider input. */
-export const loadSearch = Effect.fn('Tasks.loadSearch')(function* loadSearch(scope: OperationalScope, query: string) {
+/** Resolve the actual records reach before the search transaction opens. */
+export const prepareTaskSearch = Effect.fn('Tasks.prepareSearch')(function* prepareTaskSearch(
+  scope: OperationalScope,
+  searchAccess: ListAccessPredicate | undefined,
+) {
+  if (scope.legalEntityId === undefined || searchAccess === undefined) {
+    return yield* searchUnavailable();
+  }
+  const gate = yield* AccessDecisionGate;
+  const records = yield* gate.list({
+    carrier: workRecordsCarrier,
+    legalEntityScope: 'required',
+    now: yield* DateTime.nowAsDate,
+    scope,
+  });
+  if (
+    records.decision.outcome === 'UNAVAILABLE' ||
+    (records.decision.outcome === 'ALLOWED' && records.predicate === undefined)
+  ) {
+    return yield* searchUnavailable();
+  }
+  if (records.decision.outcome !== 'ALLOWED' || records.predicate === undefined) {
+    return yield* new ReadPermissionDenied({ code: 'read_permission_denied', reason: 'Task records are forbidden' });
+  }
+  return { groups: [...records.predicate.groups, ...searchAccess.groups] };
+});
+
+/** Company, tenant and the already-proven row filter are trusted operation context. */
+export const loadSearch = Effect.fn('Tasks.loadSearch')(function* loadSearch(
+  scope: OperationalScope,
+  query: string,
+  listAccess: ListAccessPredicate,
+) {
   const runtime = yield* CoreSearchQueryRuntime;
   const { legalEntityId } = scope;
-  if (legalEntityId === undefined) {
+  if (legalEntityId === undefined || listAccess === undefined) {
     return yield* searchUnavailable();
   }
   const hits = yield* runtime
@@ -32,6 +66,7 @@ export const loadSearch = Effect.fn('Tasks.loadSearch')(function* loadSearch(sco
         tenantId: scope.tenantId,
       },
       scope,
+      { listAccess },
     )
     .pipe(Effect.mapError(searchUnavailable));
   const owned = hits.every(

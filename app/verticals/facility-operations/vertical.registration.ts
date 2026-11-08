@@ -5,9 +5,12 @@ import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { facilityOperationsManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
+import { overviewRead } from './src/api/overview.read.ts';
 import { rebuildSearchWorker } from './src/workers/rebuild-search.worker.ts';
+import { recordsRead } from './src/api/records.read.ts';
 import { refreshSearchWorker } from './src/workers/refresh-search.worker.ts';
 import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
+import { updatePersonalAgendaAction } from './src/actions/update-personal-agenda.action.ts';
 // </generated-module-registration-imports>
 
 export const facilityOperationsRegistration = defineVerticalRuntimeRegistration({
@@ -15,17 +18,20 @@ export const facilityOperationsRegistration = defineVerticalRuntimeRegistration(
     // <generated-module-registration-actions>
     applyCommandAction,
     requestSearchRebuildAction,
+    updatePersonalAgendaAction,
     // </generated-module-registration-actions>
   ],
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
       overview: () => import('./src/api/overview-client.ts'),
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       records: () => import('./src/api/records-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {
       // <generated-module-registration-components>
+      'record-discussion': () => import('./src/components/record-discussion.tsx'),
       // </generated-module-registration-components>
     },
     pages: {
@@ -58,6 +64,12 @@ export const facilityOperationsRegistration = defineVerticalRuntimeRegistration(
     rebuildSearchWorker,
     refreshSearchWorker,
     // </generated-module-registration-workers>
+  ],
+  reads: [
+    // <generated-module-registration-reads>
+    overviewRead,
+    recordsRead,
+    // </generated-module-registration-reads>
   ],
 });
 

@@ -1,6 +1,4 @@
-import { ContextAccess, ReadPermissionDenied, toBusinessPermissionAccessKey } from '@app/core-runtime';
-import type { ContextAccessService } from '@app/core-runtime';
-import { makePositionSetAuthorization } from '../../src/api/current-relevant-stock-position-set.read.ts';
+import { currentRelevantStockPositionSetRead } from '../../src/api/current-relevant-stock-position-set.read.ts';
 import { PricingPurchaseContextVerificationResponseSchema } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
 import { DateTime, Effect, Exit, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -19,11 +17,8 @@ import {
 } from '../../src/services/current-relevant-stock-position-set.service.ts';
 import { scope, request, observation, position, sharing } from '../support/current-relevant-stock-position-set.ts';
 
-const unusedPermissionChecks = () => Effect.succeed([]);
-
-/** The read's owner steps in order: prepare (Commerce verification), the observation, finish (authorization). */
+/** The admitted read's owner steps: Commerce verification, the observation, then completeness evaluation. */
 const readPositionSet = (dependencies: {
-  readonly authorizePositions: Parameters<typeof finishRelevantStockPositionSet>[4];
   readonly observe: (
     requested: RelevantStockPositionSetRequest['scope'],
   ) => Effect.Effect<RelevantStockPositionSetObservation, RelevantStockPositionSetUnavailable>;
@@ -33,13 +28,7 @@ const readPositionSet = (dependencies: {
     Effect.gen(function* readPositionSetSteps() {
       const prepared = yield* prepareRelevantStockPositionSet(input, dependencies.scope);
       const loaded = prepared.kind === 'RESULT' ? Option.none() : Option.some(yield* dependencies.observe(input.scope));
-      return yield* finishRelevantStockPositionSet(
-        input,
-        prepared,
-        loaded,
-        dependencies.scope,
-        dependencies.authorizePositions,
-      );
+      return yield* finishRelevantStockPositionSet(input, prepared, loaded, dependencies.scope);
     }),
 });
 
@@ -112,16 +101,11 @@ describe('Inventory owner Position-set completeness', () => {
   );
   it.effect('issues a safe broader candidate proof without client Commerce evidence', () =>
     Effect.gen(function* positionSetScenario4() {
-      let authorizedCount = 0;
       const broad = Schema.decodeUnknownSync(RelevantStockPositionSetRequestSchema)({
         mode: 'POTENTIALLY_RELEVANT_POSITIONS',
         scope: request.scope,
       });
       const result = yield* readPositionSet({
-        authorizePositions: (refs) =>
-          Effect.sync(() => {
-            authorizedCount = refs.length;
-          }),
         observe: () => Effect.succeed({ ...observation, sharing: [] }),
         scope,
       }).read(broad);
@@ -131,7 +115,6 @@ describe('Inventory owner Position-set completeness', () => {
         expect(result.sharingEligibility).toBe('NOT_EVALUATED');
         expect(result.completeness.scope.kind).toBe('SAFELY_BROADER_SCOPE');
       }
-      expect(authorizedCount).toBe(1);
     }),
   );
   it.effect('effective sharing boundary invalidates old proof even when rows do not change', () =>
@@ -188,7 +171,7 @@ describe('Inventory owner Position-set completeness', () => {
       }
     }),
   );
-  it.effect('never converts database failure or forbidden member into complete empty', () =>
+  it.effect('never converts database failure into complete empty', () =>
     Effect.gen(function* positionSetScenario7() {
       const broad = Schema.decodeUnknownSync(RelevantStockPositionSetRequestSchema)({
         mode: 'POTENTIALLY_RELEVANT_POSITIONS',
@@ -201,21 +184,11 @@ describe('Inventory owner Position-set completeness', () => {
       });
       const failed = yield* Effect.exit(
         readPositionSet({
-          authorizePositions: () => Effect.void,
           observe: () => Effect.fail(unavailable),
           scope,
         }).read(broad),
       );
       expect(Exit.isFailure(failed)).toBe(true);
-      const denied = yield* Effect.exit(
-        readPositionSet({
-          authorizePositions: () =>
-            Effect.fail(new ReadPermissionDenied({ code: 'read_permission_denied', reason: 'Forbidden Position' })),
-          observe: () => Effect.succeed(observation),
-          scope,
-        }).read(broad),
-      );
-      expect(Exit.isFailure(denied)).toBe(true);
     }),
   );
   it.effect('future observation and a forged scope never validate retained proof', () =>
@@ -239,46 +212,16 @@ describe('Inventory owner Position-set completeness', () => {
       }
     }),
   );
-  it.effect('actual generated read authorization rejects any denied or malformed returned Position', () =>
-    Effect.gen(function* checkReturnedPositionAuthorization() {
-      const refs = [position.stockPositionId, '99999999-9999-4999-8999-999999999999'].map((resourceId) => ({
-        moduleId: 'commerce.inventory' as const,
-        resourceId,
-        resourceType: 'commerce.inventory.stock-position',
-        tenantId: scope.tenantId,
-      }));
-      const access: ContextAccessService = {
-        businessPermissions: ({ targets }) =>
-          Effect.succeed(
-            targets.map((target, index) => ({
-              decision: index === 1 ? ('denied' as const) : ('allowed' as const),
-              key: toBusinessPermissionAccessKey(target),
-            })),
-          ),
-        legalEntities: unusedPermissionChecks,
-        modules: unusedPermissionChecks,
-        resources: unusedPermissionChecks,
-        tenants: unusedPermissionChecks,
-      };
-      const authorize = yield* makePositionSetAuthorization(scope).pipe(Effect.provideService(ContextAccess, access));
-      const outcome = yield* authorize(refs).pipe(
-        Effect.as('ALLOWED'),
-        Effect.catchTag('ReadPermissionDenied', () => Effect.succeed('DENIED')),
-      );
-      expect(outcome).toBe('DENIED');
-      const malformed = yield* makePositionSetAuthorization(scope).pipe(
-        Effect.provideService(ContextAccess, {
-          ...access,
-          businessPermissions: () => Effect.succeed([{ decision: 'allowed' as const, key: 'forged-key' }]),
-        }),
-      );
-      const malformedOutcome = yield* malformed(refs).pipe(
-        Effect.as('ALLOWED'),
-        Effect.catchTag('ReadPermissionUnavailable', () => Effect.succeed('UNAVAILABLE')),
-      );
-      expect(malformedOutcome).toBe('UNAVAILABLE');
-    }),
-  );
+  it('declares the canonical scope-wide capability for the complete owner Position-set', () => {
+    // O67-Q2 admits this complete owner set through its exact capability, not a second resource engine.
+    expect(currentRelevantStockPositionSetRead.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    expect(currentRelevantStockPositionSetRead.descriptor.accessDeclaration).toMatchObject({
+      key: 'commerce.inventory.stock-position.list-relevant',
+      kind: 'read',
+      selectors: [],
+    });
+    expect(currentRelevantStockPositionSetRead.descriptor.legalEntityScope).toBe('required');
+  });
   it.effect('query observation advances without invalidating unchanged material revision', () =>
     Effect.gen(function* revalidateLaterObservation() {
       const first = yield* evaluateRelevantStockPositionSet(request, observation, scope);
@@ -325,7 +268,6 @@ describe('Inventory owner Position-set completeness', () => {
       for (const interval of cases) {
         yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe(interval.applicationTime)));
         const result = yield* readPositionSet({
-          authorizePositions: () => Effect.void,
           observe: () => Effect.succeed(observation),
           scope,
         })
@@ -378,7 +320,6 @@ describe('Inventory owner Position-set completeness', () => {
     Effect.gen(function* positionSetScenario9() {
       let observed = false;
       const result = yield* readPositionSet({
-        authorizePositions: () => Effect.void,
         observe: () => {
           observed = true;
           return Effect.succeed(observation);

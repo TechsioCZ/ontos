@@ -17,7 +17,7 @@ type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
 const recordsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'legal.agreements.api.records',
   moduleKey: OWNER_MODULE_KEY,
   role: 'api',
@@ -25,6 +25,14 @@ const recordsEntrypoint = defineTenantModuleEntrypoint({
 
 export const recordsRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'legal.agreements.api-records.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'legal-agreements', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'list',
     entrypoint: recordsEntrypoint,
     evidencePolicy: {
@@ -34,7 +42,6 @@ export const recordsRead = defineRead(
     inputSchema: RecordsRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: OWNER_MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'legal.agreements.api.records',
     resultSchema: RecordsResponseSchema,
@@ -80,5 +87,4 @@ export const recordsRead = defineRead(
         ),
       ),
     ),
-  () => ({ kind: 'module', moduleId: OWNER_MODULE_KEY }),
 );

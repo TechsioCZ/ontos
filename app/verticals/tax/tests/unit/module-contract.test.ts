@@ -1,4 +1,6 @@
 import { decideModuleStateAccess } from '@app/core-runtime';
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
+import { getReadPermissionTargetResolver } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import { describe, expect, it } from 'effect-rstest';
 import { taxApi } from '../../shared/api.ts';
 import { getTaxReadiness } from '../../src/api/tax-client.ts';
@@ -13,6 +15,7 @@ import { declareSellerVatRegimeAction } from '../../src/actions/declare-seller-v
 import { endTaxRuleRevisionAction } from '../../src/actions/end-tax-rule-revision.action.ts';
 import { finalizeOrderTaxAction } from '../../src/actions/finalize-order-tax.action.ts';
 import { importSellerVatRegimeDeclarationsAction } from '../../src/actions/import-seller-vat-regime-declarations.action.ts';
+import { applicableTaxRuleSetRead } from '../../src/api/applicable-tax-rule-set.read.ts';
 import { finalOrderTaxRead } from '../../src/api/final-order-tax.read.ts';
 import { taxEvaluationRead } from '../../src/api/tax-evaluation.read.ts';
 import { taxManifest } from '../../vertical.manifest.ts';
@@ -27,6 +30,12 @@ const taxActionRegistrations = [
   finalizeOrderTaxAction,
   importSellerVatRegimeDeclarationsAction,
 ];
+
+const RISK_ORDER = ['routine', 'sensitive', 'critical'] as const;
+
+/** True when a declaration's risk tier is at least `sensitive` (O19: financial materiality is sensitive). */
+const atLeastSensitive = (risk: (typeof RISK_ORDER)[number]): boolean =>
+  RISK_ORDER.indexOf(risk) >= RISK_ORDER.indexOf('sensitive');
 
 const governanceActionKeys = [
   'commerce.tax.correct-tax-rule-revision',
@@ -58,12 +67,24 @@ describe('Tax module contract', () => {
     const { descriptor } = finalOrderTaxRead;
     expect(descriptor.entrypoint.scope).toBe('tenant');
     expect(descriptor.entrypoint.moduleKey).toBe('commerce.tax');
-    expect(descriptor.entrypoint.authorization).toEqual({
-      kind: 'context_permission',
-      permission: 'tax.governed.read',
+    expect(descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    // The one gate decides the read's own capability (CUTOVER-PLAN §3.2); the retired
+    // `context_permission` pair is not the carrier any more (O62).
+    expect(descriptor.accessDeclaration).toMatchObject({
+      key: 'commerce.tax.order-tax.read',
+      kind: 'read',
+      selectors: [],
+    });
+    expect(descriptor.accessActor).toEqual({
+      callers: ['commerce-order'],
+      reason: expect.any(String),
+      subject: 'identity',
     });
     expect(descriptor.legalEntityScope).toBe('required');
-    expect(descriptor.permissionTarget).toBe('module');
+    // A protected read carries no legacy permission target and no positional target resolver: the
+    // access gate decides its record (O62, CUTOVER-PLAN §4.3).
+    expect(Object.keys(descriptor)).not.toContain('permissionTarget');
+    expect(getReadPermissionTargetResolver(finalOrderTaxRead)).toBeUndefined();
     expect(descriptor.readKey).toBe('commerce.tax.api.final-order-tax');
     expect(descriptor.evidencePolicy).toEqual({
       captureMode: 'metadata_only',
@@ -82,6 +103,7 @@ describe('Tax module contract', () => {
     expect(Object.keys(taxManifest.publicSurface.api).toSorted()).toEqual([
       'applicable-tax-rule-set',
       'final-order-tax',
+      'owner-action-approvals',
       'seller-vat-regime-at-instant',
       'seller-vat-regime-history',
       'tax-correction-preview',
@@ -90,6 +112,7 @@ describe('Tax module contract', () => {
       'tax-privacy-owner-coverage',
       'tax-rule-history',
     ]);
+    expect(taxManifest.publicSurface.api['owner-action-approvals']).toBe(OwnerActionApprovalApi);
     expect(taxManifest.publicSurface.actions.map(({ descriptor }) => descriptor.actionKey).toSorted()).toEqual(
       governanceActionKeys,
     );
@@ -165,10 +188,17 @@ describe('Tax module contract', () => {
     const finalize = taxManifest.publicSurface.actions.find(
       ({ descriptor }) => descriptor.actionKey === 'commerce.tax.finalize-order-tax',
     );
-    expect(Object.keys(finalize?.descriptor ?? {})).not.toContain('businessPermission');
-    expect(finalize?.descriptor.entrypoint.authorization).toEqual({
-      kind: 'action_execution',
-      provisioning: 'explicit',
+    expect(Object.keys(finalize?.descriptor ?? {})).not.toContain('ownerPermissions');
+    expect(finalize?.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    expect(finalize?.descriptor.accessDeclaration).toMatchObject({
+      key: 'commerce.tax.order-tax.finalize',
+      kind: 'action',
+      selectors: [],
+    });
+    expect(finalize?.descriptor.accessActor).toEqual({
+      callers: ['commerce-order'],
+      reason: expect.any(String),
+      subject: 'identity',
     });
     expect(finalize?.descriptor.legalEntityScope).toBe('required');
   });
@@ -177,10 +207,12 @@ describe('Tax module contract', () => {
     const importAction = taxManifest.publicSurface.actions.find(
       ({ descriptor }) => descriptor.actionKey === 'commerce.tax.import-seller-vat-regime-declarations',
     );
-    expect(Object.keys(importAction?.descriptor ?? {})).not.toContain('businessPermission');
-    expect(importAction?.descriptor.entrypoint.authorization).toEqual({
-      kind: 'action_execution',
-      provisioning: 'explicit',
+    expect(Object.keys(importAction?.descriptor ?? {})).not.toContain('ownerPermissions');
+    expect(importAction?.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    expect(importAction?.descriptor.accessDeclaration).toMatchObject({
+      key: 'commerce.tax.seller-vat-regime-declaration.import',
+      kind: 'action',
+      selectors: [],
     });
     expect(importAction?.descriptor.legalEntityScope).toBe('required');
     expect(importAction?.descriptor.idempotency).toBe('required');
@@ -190,11 +222,25 @@ describe('Tax module contract', () => {
     const declare = taxManifest.publicSurface.actions.find(
       ({ descriptor }) => descriptor.actionKey === 'commerce.tax.declare-seller-vat-regime',
     );
-    expect(Object.keys(declare?.descriptor ?? {})).not.toContain('businessPermission');
-    expect(declare?.descriptor.entrypoint.authorization).toEqual({
-      kind: 'action_execution',
-      provisioning: 'explicit',
+    expect(Object.keys(declare?.descriptor ?? {})).not.toContain('ownerPermissions');
+    expect(declare?.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    expect(declare?.descriptor.accessDeclaration).toMatchObject({
+      key: 'commerce.tax.seller-vat-regime-declaration.declare',
+      kind: 'action',
+      selectors: [],
     });
     expect(declare?.descriptor.legalEntityScope).toBe('required');
+  });
+
+  it('a published Tax rate is financial materiality, so the applicable rule-set read is at least sensitive (O21)', () => {
+    // The read answers each applicable revision's `ratePercent`: a published Tax rate states a money
+    // outcome, which O21 classifies as financial materiality. A routine classification would let an
+    // agent run the read (O45) and would keep the exposure out of the catalog's sensitive surface.
+    const { accessDeclaration } = applicableTaxRuleSetRead.descriptor;
+    expect(accessDeclaration).toMatchObject({ key: 'commerce.tax.tax-rule-set.read', kind: 'read', selectors: [] });
+    expect(atLeastSensitive(accessDeclaration?.risk ?? 'routine')).toBe(true);
+    // Negative control: the very predicate refuses the `routine` classification this read carried
+    // before the O21 alignment, so the assertion above cannot pass vacuously.
+    expect(atLeastSensitive('routine')).toBe(false);
   });
 });

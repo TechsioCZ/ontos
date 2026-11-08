@@ -56,10 +56,13 @@ const loadOwners = Effect.fn('ProjectsPage.loadOwners')(function* loadOwners({
         candidates: [],
         status: 'status' in error && error.status === 403 ? 'forbidden' : 'unavailable',
       }),
-      onSuccess: (response) => ({
-        candidates: response.candidates,
-        status: response.candidates.length === 0 ? 'empty' : 'idle',
-      }),
+      onSuccess: (response) => {
+        // Field-projected results may omit personal names. Never render an unnamed candidate.
+        const candidates = response.candidates.filter(
+          (candidate): candidate is OwnerCandidate => candidate.displayName !== undefined,
+        );
+        return { candidates, status: candidates.length === 0 ? 'empty' : 'idle' };
+      },
     }),
   );
   setCandidates(result.candidates);
@@ -108,6 +111,9 @@ const createFromForm = Effect.fn('ProjectsPage.createFromForm')(function* create
 const projectDetailKey = 'projects.pages.projectDetail';
 
 type ProjectId = Project['projectId'];
+
+/** The Project as the fresh read returns it: Core's field projection may omit governed principal fields. */
+export type ProjectTargetRecord = Effect.Success<ReturnType<typeof executeFreshReadProject>>;
 
 /** What a copied projects URL names: one exact Project, nothing, or an explicit invalid selection. */
 export type ProjectSearchTarget =
@@ -196,7 +202,7 @@ export const projectTargetRequestKey = ({ projectId, scope }: ProjectTargetReque
 
 export type ProjectTargetState =
   | { readonly projectId: ProjectId; readonly status: 'loading' | 'forbidden' | 'missing' | 'unavailable' }
-  | { readonly project: Project; readonly projectId: ProjectId; readonly status: 'ready' };
+  | { readonly project: ProjectTargetRecord; readonly projectId: ProjectId; readonly status: 'ready' };
 
 export interface ProjectTargetNotice {
   readonly labelKey: string;
@@ -248,7 +254,10 @@ export const projectTargetFailureStatus = (failure: ProjectTargetFailure): 'forb
  * contract failure, not a reason to display adjacent data or fall back to a list row. The reader principal is part
  * of the request identity, and a superseded read can never publish, so another principal's response never applies.
  */
-export const projectTargetStateOf = (project: Project, request: ProjectTargetRequest): ProjectTargetState =>
+export const projectTargetStateOf = (
+  project: ProjectTargetRecord,
+  request: ProjectTargetRequest,
+): ProjectTargetState =>
   project.projectId === request.projectId && project.tenantId === request.scope.tenantId
     ? { project, projectId: request.projectId, status: 'ready' }
     : { projectId: request.projectId, status: 'unavailable' };
@@ -267,7 +276,7 @@ const interruptProjectTargetRead = (effect: Effect.Effect<void>): (() => void) =
 
 type ProjectTargetApply = (request: ProjectTargetRequest, state: ProjectTargetState) => void;
 type ProjectTargetClassify<Failure> = (failure: Failure) => 'forbidden' | 'missing' | 'unavailable';
-type ProjectTargetRead<Failure> = (projectId: ProjectId) => Effect.Effect<Project, Failure>;
+type ProjectTargetRead<Failure> = (projectId: ProjectId) => Effect.Effect<ProjectTargetRecord, Failure>;
 type ProjectTargetRun = (effect: Effect.Effect<void>) => () => void;
 
 /**
@@ -493,7 +502,7 @@ const ProjectIdentifier = ({ value }: { readonly value: string }) => (
   <span className="projects:font-mono projects:text-xs projects:break-all">{value}</span>
 );
 
-const ProjectDetail = ({ project }: { readonly project: Project }) => {
+const ProjectDetail = ({ project }: { readonly project: ProjectTargetRecord }) => {
   const { language, t } = useModernI18n();
   const archived = project.lifecycleState === 'archived';
   const shortText = Option.getOrNull(project.shortText);
@@ -532,12 +541,17 @@ const ProjectDetail = ({ project }: { readonly project: Project }) => {
             <p className="projects:whitespace-pre-line">{shortText}</p>
           )}
         </ProjectFact>
-        <ProjectFact label={t(`${projectDetailKey}.fields.owner`)}>
-          <ProjectIdentifier value={project.ownerPrincipalId} />
-        </ProjectFact>
-        <ProjectFact label={t(`${projectDetailKey}.fields.createdBy`)}>
-          <ProjectIdentifier value={project.createdByPrincipalId} />
-        </ProjectFact>
+        {/* Field-projected reads omit governed principals; an omitted field is not shown, never guessed. */}
+        {project.ownerPrincipalId !== undefined && (
+          <ProjectFact label={t(`${projectDetailKey}.fields.owner`)}>
+            <ProjectIdentifier value={project.ownerPrincipalId} />
+          </ProjectFact>
+        )}
+        {project.createdByPrincipalId !== undefined && (
+          <ProjectFact label={t(`${projectDetailKey}.fields.createdBy`)}>
+            <ProjectIdentifier value={project.createdByPrincipalId} />
+          </ProjectFact>
+        )}
         <ProjectFact label={t(`${projectDetailKey}.fields.createdAt`)}>
           {projectCreatedAt(project.createdAt, language)}
         </ProjectFact>

@@ -129,6 +129,9 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
       </div>
       <PageHeader description={t(`legal-agreements.demo.kinds.${selected.kind}`)} title={state.titleOf(selected)} />
       {feedback !== 'ready' && <output aria-live="polite">{t(`legal-agreements.demo.feedback.${feedback}`)}</output>}
+      {state.proposal !== undefined && (
+        <output aria-live="polite">{t('legal-agreements.demo.approvalRequired')}</output>
+      )}
       <div className="legalagreements:grid legalagreements:grid-cols-1 legalagreements:items-start legalagreements:gap-6 legalagreements:xl:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="legalagreements:min-w-0 legalagreements:space-y-6">
           <div className="legalagreements:grid legalagreements:gap-6 legalagreements:md:grid-cols-2">
@@ -393,6 +396,9 @@ const AgreementsDraftForm = ({ state }: { readonly state: ReturnType<typeof useR
     >
       <div className="legalagreements:space-y-4 legalagreements:py-2">
         {feedback !== 'ready' && <output aria-live="polite">{t(`legal-agreements.demo.feedback.${feedback}`)}</output>}
+        {state.proposal !== undefined && (
+          <output aria-live="polite">{t('legal-agreements.demo.approvalRequired')}</output>
+        )}
         {!editingDraft && (
           <Select
             items={withNativeLabels(

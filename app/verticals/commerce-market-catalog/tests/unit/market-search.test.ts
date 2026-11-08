@@ -3,27 +3,22 @@ import {
   CoreSearchQueryRuntime,
   CoreSearchIngestion,
   CoreSearchWorkerSnapshot,
-  ResourceContainmentRelationshipMutation,
   OperationContextUnavailable,
   OperationContextDenied,
   ReadHandlerUnavailable,
   ActionPermissionDenied,
+  ActionPermissionCheckError,
   CoreSearchProjectionHitSchema,
   createCoreSearchQueryRuntime,
   makeCoreSearchIngestion,
   makeInMemoryCoreSearchProjectionStore,
-  ResourceContainmentMutationUnavailable,
-  toModuleAccessObjectId,
-  toResourceAccessObjectId,
 } from '@app/core-runtime';
 import type {
   CoreSearchWorkerSnapshotService,
   CoreSearchQueryRuntimeService,
   CoreSearchIngestionService,
   CoreSearchProjectionStoreService,
-  ResourceContainmentRelationshipMutationService,
   OperationalScope,
-  ResourceContainmentRelationshipMutationInput,
 } from '@app/core-runtime';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
@@ -55,6 +50,7 @@ import {
 import type { MarketSearchSnapshot, MarketSearchSourceService } from '../../src/services/market-search-source.ts';
 import { marketSearchIngestionRegistrations } from '../../src/worker-host/search-ingestion-registrations.ts';
 import { outboxWorkers } from '../../src/workers/index.ts';
+import { commerceMarketCatalogRegistration } from '../../vertical.registration.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const companyId = '22222222-2222-4222-8222-222222222222';
@@ -137,18 +133,21 @@ const loadMarkets = (
   search: CoreSearchQueryRuntimeService,
   selectedScope: OperationalScope,
   input: { readonly query: string },
-) => loadMarketsWithContext(selectedScope, input).pipe(Effect.provideService(CoreSearchQueryRuntime, search));
+) =>
+  // Projection-only tests explicitly model a scope-wide gate answer; the registered Read
+  // controls below decide authority through the real runtime instead of this direct helper.
+  loadMarketsWithContext(selectedScope, input, { listAccess: { groups: [] } }).pipe(
+    Effect.provideService(CoreSearchQueryRuntime, search),
+  );
 const makeMarketSearchProjector = (
   source: MarketSearchSourceService,
   ingestion: CoreSearchIngestionService,
   store: CoreSearchProjectionStoreService,
-  containment: ResourceContainmentRelationshipMutationService,
 ) =>
   makeMarketSearchProjectorWithContext.pipe(
     Effect.provideService(MarketSearchSource, source),
     Effect.provideService(CoreSearchIngestion, ingestion),
     Effect.provideService(CoreSearchProjectionStore, store),
-    Effect.provideService(ResourceContainmentRelationshipMutation, containment),
   );
 const makeMarketSearchSource = (reader: CoreSearchWorkerSnapshotService) =>
   makeMarketSearchSourceWithContext.pipe(Effect.provideService(CoreSearchWorkerSnapshot, reader));
@@ -157,17 +156,14 @@ const searchHarness = Effect.gen(function* marketSearchHarness() {
   const store = makeInMemoryCoreSearchProjectionStore();
   const search = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
   let snapshot = initial;
-  const relationships: ResourceContainmentRelationshipMutationInput[] = [];
   const projector = yield* makeMarketSearchProjector(
     { load: () => Effect.succeed(snapshot) },
     makeCoreSearchIngestion(store, marketSearchIngestionRegistrations),
     store,
-    { touch: (input) => Effect.sync(() => relationships.push(input)).pipe(Effect.asVoid) },
   );
   yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe(june)));
   return {
     projector,
-    relationships,
     search,
     setSnapshot: (next: MarketSearchSnapshot) => {
       snapshot = next;
@@ -207,21 +203,6 @@ describe('Market search projection', () => {
       }
       // Relevance does not add new searchable evidence: the owner does not index the opaque Market ID.
       expect(yield* loadMarkets(harness.search, scope, { query: marketId })).toEqual([]);
-      expect(harness.relationships).toHaveLength(1);
-      expect(harness.relationships).toEqual([
-        {
-          relationships: [
-            {
-              container: {
-                objectId: toModuleAccessObjectId(tenantId, companyId, moduleId),
-                objectType: 'module_access',
-              },
-              relation: 'module',
-              resource: { objectId: toResourceAccessObjectId(tenantId, companyId, ref), objectType: 'resource' },
-            },
-          ],
-        },
-      ]);
     }),
   );
 
@@ -357,7 +338,6 @@ describe('Market search projection', () => {
         expect(yield* harness.projector.project(context, { marketId }).pipe(Effect.flip)).toBeInstanceOf(
           MarketSearchUnavailable,
         );
-        expect(harness.relationships).toHaveLength(1);
         expect(yield* loadMarkets(harness.search, scope, { query: 'cesky' })).toHaveLength(1);
       }
     }),
@@ -549,7 +529,7 @@ describe('Market search projection', () => {
     }),
   );
 
-  it.effect('replaces only this tenant resource set, repairs containment and removes stale rows idempotently', () =>
+  it.effect('replaces only this tenant resource set and removes stale rows idempotently', () =>
     Effect.gen(function* rebuildProjection() {
       const harness = yield* searchHarness;
       yield* harness.projector.project(context, { marketId });
@@ -557,43 +537,25 @@ describe('Market search projection', () => {
       yield* harness.projector.project(rebuildContext, { rebuild: true });
       yield* harness.projector.project(rebuildContext, { rebuild: true });
       expect(yield* loadMarkets(harness.search, scope, { query: 'AKROS' })).toHaveLength(1);
-      expect(harness.relationships).toHaveLength(3);
       harness.setSnapshot({ ...initial, projectionVersion: '3', records: [] });
       yield* harness.projector.project(rebuildContext, { rebuild: true });
       expect(yield* loadMarkets(harness.search, scope, { query: 'AKROS' })).toEqual([]);
     }),
   );
 
-  it.effect('refuses cross-tenant snapshots and never publishes documents when containment fails', () =>
-    Effect.gen(function* invalidSnapshotAndContainment() {
+  it.effect('refuses cross-tenant snapshots and never publishes their documents', () =>
+    Effect.gen(function* invalidSnapshot() {
       const harness = yield* searchHarness;
       harness.setSnapshot({ ...initial, tenantId: otherTenant });
       expect(yield* harness.projector.project(context, { marketId }).pipe(Effect.flip)).toBeInstanceOf(
         MarketSearchUnavailable,
       );
-      expect(harness.relationships).toEqual([]);
-      const store = makeInMemoryCoreSearchProjectionStore();
-      const projector = yield* makeMarketSearchProjector(
-        { load: () => Effect.succeed(initial) },
-        makeCoreSearchIngestion(store, marketSearchIngestionRegistrations),
-        store,
-        {
-          touch: () =>
-            Effect.fail(
-              new ResourceContainmentMutationUnavailable({
-                reason: 'Unavailable',
-              }),
-            ),
-        },
-      );
-      expect(yield* projector.project(context, { marketId }).pipe(Effect.flip)).toBeInstanceOf(MarketSearchUnavailable);
-      const search = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
-      expect(yield* loadMarkets(search, scope, { query: 'AKROS' })).toEqual([]);
+      expect(yield* loadMarkets(harness.search, scope, { query: 'AKROS' })).toEqual([]);
     }),
   );
 });
 
-it.effect('owner snapshot binds every query to trusted tenant and seller and closes before containment', () =>
+it.effect('owner snapshot binds every query to trusted tenant and seller and closes before indexing', () =>
   Effect.gen(function* ownerSnapshot() {
     const queries: { params: readonly unknown[]; sql: string }[] = [];
     let snapshotOpen = false;
@@ -637,16 +599,17 @@ it.effect('owner snapshot binds every query to trusted tenant and seller and clo
     };
     const source = yield* makeMarketSearchSource(reader);
     const store = makeInMemoryCoreSearchProjectionStore();
+    const ingestion = makeCoreSearchIngestion(store, marketSearchIngestionRegistrations);
     const projector = yield* makeMarketSearchProjector(
       source,
-      makeCoreSearchIngestion(store, marketSearchIngestionRegistrations),
-      store,
       {
-        touch: () =>
-          Effect.sync(() => {
-            expect(snapshotOpen).toBe(false);
-          }),
+        ...ingestion,
+        ingest: (input, workerContext) => {
+          expect(snapshotOpen).toBe(false);
+          return ingestion.ingest(input, workerContext);
+        },
       },
+      store,
     );
     yield* projector.project(context, { marketId });
     expect(queries).toHaveLength(1);
@@ -748,17 +711,18 @@ it.effect('does not infer a targeted market seller from the worker context or th
     expect(yield* loadMarkets(harness.search, { ...scope, legalEntityId: otherCompany }, { query })).toEqual([
       { ref, relevance: { score: 100, version: '1' }, selectedLegalEntityId: otherCompany, title: 'OTHER-SELLER' },
     ]);
-    expect(harness.relationships[0]?.relationships[0]?.container.objectId).toBe(
-      toModuleAccessObjectId(tenantId, otherCompany, moduleId),
-    );
   }).pipe(Effect.scoped, Effect.provide(NodeCrypto.layer)),
 );
 
 it.effect('governed rebuild requires explicit operator execution and queues committed intent only', () =>
   Effect.gen(function* governedRebuild() {
     const { descriptor } = requestSearchRebuildAction;
-    expect(descriptor.tenantPermission?.({})).toBe('manage_identity');
-    expect(descriptor.entrypoint.authorization).toEqual({ kind: 'action_execution', provisioning: 'explicit' });
+    expect(descriptor.accessDeclaration).toMatchObject({
+      key: 'commerce.market-catalog.search-index.rebuild',
+      kind: 'admin',
+      modes: ['run'],
+    });
+    expect(descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
     expect(descriptor.idempotency).toBe('required');
     const principal = {
       authBindingId: '77777777-7777-4777-8777-777777777777',
@@ -773,7 +737,11 @@ it.effect('governed rebuild requires explicit operator execution and queues comm
       registration: requestSearchRebuildAction,
       transport: { correlationId: 'rebuild-search-test', idempotencyKey: 'market-search-rebuild-1' },
     };
-    const allowed = yield* makeActionTestHarness({ actionPermission: 'allowed', tenantPermission: 'allowed' });
+    const allowed = yield* makeActionTestHarness({
+      access: 'allowed',
+      ownerRegistration: commerceMarketCatalogRegistration,
+      tenantPermission: 'allowed',
+    });
     const result = yield* allowed.runtime.runAction(request);
     expect(result.status).toBe('QUEUED');
     const { committed } = allowed.snapshot();
@@ -789,12 +757,20 @@ it.effect('governed rebuild requires explicit operator execution and queues comm
         },
       },
     ]);
-    const denied = yield* makeActionTestHarness({ actionPermission: 'denied', tenantPermission: 'allowed' });
+    const denied = yield* makeActionTestHarness({
+      access: 'denied',
+      ownerRegistration: commerceMarketCatalogRegistration,
+      tenantPermission: 'allowed',
+    });
     expect(yield* denied.runtime.runAction(request).pipe(Effect.flip)).toBeInstanceOf(ActionPermissionDenied);
     expect(denied.snapshot().committed).toEqual([]);
-    const notOperator = yield* makeActionTestHarness({ actionPermission: 'allowed', tenantPermission: 'denied' });
-    expect(yield* notOperator.runtime.runAction(request).pipe(Effect.flip)).toBeInstanceOf(ActionPermissionDenied);
-    expect(notOperator.snapshot().committed).toEqual([]);
+    const unavailable = yield* makeActionTestHarness({
+      access: 'unavailable',
+      ownerRegistration: commerceMarketCatalogRegistration,
+      tenantPermission: 'allowed',
+    });
+    expect(yield* unavailable.runtime.runAction(request).pipe(Effect.flip)).toBeInstanceOf(ActionPermissionCheckError);
+    expect(unavailable.snapshot().committed).toEqual([]);
   }),
 );
 

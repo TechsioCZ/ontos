@@ -37,6 +37,8 @@ import type { ConnectSession } from '../../../api/oauth-connections/connect-serv
 import { OAuthFlow } from '../../../api/oauth-connections/oauth-flow.ts';
 import { ConnectionUnauthorized, ConnectionUnavailable } from '../../../api/oauth-connections/errors.ts';
 import type { GrantRow } from '../../../api/oauth-connections/types.ts';
+import { makeCompositionSnapshot } from '../../fixtures/application-composition.ts';
+import { subjectInspectionFixture } from '../oauth-connections-admin/subject-inspection.fixture.ts';
 
 type OAuthAuthenticationObservation = Parameters<(typeof OAuthAuthenticationAudit)['Service']['record']>[0];
 const unexpectedAuthentication = () => Effect.die('MCP must not authenticate through a browser session');
@@ -95,6 +97,11 @@ const coreDatabase = Layer.effect(
   makeWithDefaults({ relations: coreRelations }).pipe(Effect.map((executor) => ({ executor }))),
 ).pipe(Layer.provide(scriptedDatabase));
 const unusedCollaborators = Layer.mergeAll(
+  Layer.unwrap(
+    makeCompositionSnapshot([]).pipe(
+      Effect.map((snapshot) => subjectInspectionFixture({ snapshot, subjects: [] }).layer),
+    ),
+  ),
   Layer.mock(ActionAuthority, {}),
   authDatabase,
   OAuthCredentialsLive.pipe(Layer.provide(authDatabase)),
@@ -115,11 +122,20 @@ rs.mock('../../../api/oauth-connections/server-config.ts', () => ({
 
 const principalId = '20000000-0000-4000-8000-000000000001';
 const session: ConnectSession = {
-  activeLegalEntityId: null,
+  activeLegalEntityId: '30000000-0000-4000-8000-000000000001',
   authBindingId: '40000000-0000-4000-8000-000000000001',
   companies: [],
   displayName: 'Connector user',
   principalId,
+  scope: {
+    authBindingId: '40000000-0000-4000-8000-000000000001',
+    authContextRef: 'better-auth-session:connector-session',
+    authMethod: 'session',
+    correlationId: 'consumer-ownership',
+    legalEntityId: '30000000-0000-4000-8000-000000000001',
+    principalId,
+    tenantId: '10000000-0000-4000-8000-000000000001',
+  },
   sessionId: 'connector-session',
   tenantId: '10000000-0000-4000-8000-000000000001',
   userId: 'connector-user',
@@ -278,6 +294,22 @@ it.effect('loads draft company names from Core and preserves company lookup fail
       expect(failed.failure).toBeInstanceOf(ConnectionUnavailable);
       expect(failed.failure).toMatchObject({ cause: unavailable });
     }
+  }).pipe(Effect.provideService(OAuthFlow, flow), Effect.provide(unusedCollaborators)),
+);
+
+it.effect('rejects a foreign retained draft before reading its company label or projecting requester authority', () =>
+  Effect.gen(function* foreignRetainedDraft() {
+    controls.grant = { ...grant(), tenantId: '10000000-0000-4000-8000-000000000099' };
+    const failure = yield* draftSummary(session, { oauthQuery: 'signed-query' }).pipe(
+      Effect.provideService(OAuthConnectionCompanies, {
+        names: () => Effect.die('A foreign retained draft must not read a company label'),
+      }),
+      Effect.flip,
+    );
+    expect(failure).toMatchObject({
+      _tag: 'ConnectionUnavailable',
+      cause: 'Retained connection scope differs from original requester',
+    });
   }).pipe(Effect.provideService(OAuthFlow, flow), Effect.provide(unusedCollaborators)),
 );
 

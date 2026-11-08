@@ -4,7 +4,6 @@ import {
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
   defineRead,
-  defineReadResourcePermission,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import { DateTime, Effect, Option, Schema } from 'effect';
@@ -20,7 +19,7 @@ const paymentTermCatalogModuleKey = 'payment.term-catalog';
 
 const paymentTermHistoryEntrypoint = defineTenantModuleEntrypoint({
   access: 'historical_read',
-  authorization: { kind: 'context_permission', permission: 'payment.term_catalog.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'payment.term-catalog.api.payment-term-history',
   moduleKey: paymentTermCatalogModuleKey,
   role: 'api',
@@ -76,6 +75,14 @@ export const readPaymentTermHistory = Effect.fn('PaymentTermHistoryRead.read')(f
 
 export const paymentTermHistoryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'payment.term-catalog.payment-term.read-history',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'payment-terms', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: paymentTermHistoryEntrypoint,
     evidencePolicy: {
@@ -85,13 +92,8 @@ export const paymentTermHistoryRead = defineRead(
     inputSchema: PaymentTermHistoryRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: paymentTermCatalogModuleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'payment.term-catalog.api.payment-term-history',
-    resourcePermission: defineReadResourcePermission<PaymentTermHistoryRequest>((input) => ({
-      permission: 'read',
-      resource: input.paymentTermRef,
-    })),
     resultSchema: PaymentTermHistoryResponseSchema,
     schemaVersion: '1',
   },
@@ -105,5 +107,4 @@ export const paymentTermHistoryRead = defineRead(
       ),
   },
   (transaction, scope) => paymentTermCatalogPersistenceForScope(transaction, scope),
-  () => ({ kind: 'module', moduleId: paymentTermCatalogModuleKey }),
 );

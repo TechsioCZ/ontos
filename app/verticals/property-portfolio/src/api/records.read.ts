@@ -19,7 +19,7 @@ const unavailable = (cause: unknown) => {
 
 const recordsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'property.portfolio.api.records',
   moduleKey,
   role: 'api',
@@ -30,6 +30,14 @@ const makeRecordsServices: ReadServiceFactory<Services> = (transaction, scope) =
 
 export const recordsRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'property.portfolio.api-records.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'property-portfolio', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: recordsEntrypoint,
     evidencePolicy: {
@@ -39,7 +47,6 @@ export const recordsRead = defineRead(
     inputSchema: RecordsRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'property.portfolio.api.records',
     resultSchema: RecordsResponseSchema,
@@ -82,5 +89,4 @@ export const recordsRead = defineRead(
       ),
   },
   makeRecordsServices,
-  () => ({ kind: 'module', moduleId: moduleKey }),
 );

@@ -5,14 +5,10 @@ import {
   PersonInvitationIdentityProvider,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
-import { Effect, Match, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import {
-  invitePeoplePerson,
-  setPeopleCompanyMembership,
-  setPeopleScopedRole,
-} from '../../api/auth/people-administration.ts';
+import { invitePeoplePerson, setPeopleCompanyMembership } from '../../api/auth/people-administration.ts';
 import { actionCoreFailure, actionSuccess, makeActionRuntimeDouble } from '../support/action-runtime-double.ts';
 
 const principal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
@@ -53,28 +49,6 @@ it.effect('runs company membership through the sensitive Core Action and returns
   }),
 );
 
-it.effect('keeps tenant role scope absent from trusted context and never infers scope from roleKey', () =>
-  Effect.gen(function* testRole() {
-    const { legalEntityId: _company, ...tenantPrincipal } = principal;
-    const role = { roleKey: 'admin', scope: { _tag: 'tenant' }, tenantId: principal.tenantId } as const;
-    const payload = { operation: 'assign', principalRef, reason: 'Správa tenantu', roleKey: 'admin' } as const;
-    const double = makeActionRuntimeDouble([
-      actionSuccess({ operation: 'assign', principalRef, projection: 'pending', role }),
-    ]);
-    const result = yield* setPeopleScopedRole({ principal: tenantPrincipal, transport }, payload).pipe(
-      Effect.provideService(ActionRuntime, double.runtime),
-    );
-    expect(
-      Match.value(result.role.scope).pipe(
-        Match.tag('tenant', () => true),
-        Match.orElse(() => false),
-      ),
-    ).toBe(true);
-    expect(double.principals).toEqual([tenantPrincipal]);
-    expect(double.payloads).toEqual([payload]);
-  }),
-);
-
 it.effect('does not turn ActionAlreadyCommitted into a second success or rerun a sensitive mutation', () =>
   Effect.gen(function* testCommitted() {
     const committed = new ActionAlreadyCommitted({
@@ -84,9 +58,9 @@ it.effect('does not turn ActionAlreadyCommitted into a second success or rerun a
     });
     const double = makeActionRuntimeDouble([actionCoreFailure(committed)]);
     const failure = yield* Effect.flip(
-      setPeopleScopedRole(
+      setPeopleCompanyMembership(
         { principal, transport },
-        { operation: 'revoke', principalRef, reason: 'Odchod', roleKey: 'admin' },
+        { affiliation: 'external', expectedRevision: 1, principalRef, reason: 'Odchod', status: 'departed' },
       ).pipe(Effect.provideService(ActionRuntime, double.runtime)),
     );
     expect(failure).toEqual(committed);

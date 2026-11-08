@@ -32,6 +32,10 @@ import type {
   PartyIdentityReaders,
   PartyIdentitySection,
 } from '../../src/routes/[lang]/prodej/strany/[partyId]/party-identity-data.ts';
+import {
+  customerHistoryRows,
+  customerIdentifierRows,
+} from '../../src/routes/[lang]/prodej/zakaznici/customers-model.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const otherTenantId = '10000000-0000-4000-8000-000000000002';
@@ -71,7 +75,7 @@ const identityResponse = Schema.decodeSync(PartyDetailResponseSchema)({
   currentFactAssertions: [
     {
       assertionId,
-      factKind: 'DISPLAY_NAME',
+      factKind: 'FIRST_NAME',
       isCurrent: true,
       partyRef,
       recordedAt: instant,
@@ -83,7 +87,6 @@ const identityResponse = Schema.decodeSync(PartyDetailResponseSchema)({
       value: 'Eva Bílá',
     },
   ],
-  factHistory: null,
   party: partyWire,
   resolution: {
     aliasChain: [],
@@ -123,7 +126,6 @@ const contactResponse = Schema.decodeSync(PartyContactPointsResponseSchema)({
         preferred: true,
         type: 'EMAIL',
       },
-      verification: { state: 'VERIFIED' },
     },
   ],
 });
@@ -145,7 +147,6 @@ const identifierResponse = Schema.decodeSync(PartyOfficialIdentifierHistoryRespo
       state: 'ACTIVE',
       validFrom: instant,
       validTo: null,
-      verification: 'VERIFIED',
     },
   ],
 });
@@ -336,7 +337,6 @@ it.effect('uses only the canonical Party ref returned by the exact detail read f
   Effect.gen(function* canonicalSecondaryReads() {
     const aliasResponse = yield* Schema.decodeEffect(PartyDetailResponseSchema)({
       currentFactAssertions: [],
-      factHistory: null,
       party: { ...partyWire, partyRef: canonicalPartyRef },
       resolution: {
         aliasChain: [partyRef],
@@ -364,7 +364,6 @@ it.effect('refuses a canonical ref that escapes the session tenant without fabri
   Effect.gen(function* refuseEscapedCanonical() {
     const escapedResponse = yield* Schema.decodeEffect(PartyDetailResponseSchema)({
       currentFactAssertions: [],
-      factHistory: null,
       party: partyWire,
       resolution: {
         aliasChain: [],
@@ -423,7 +422,7 @@ it('maps a ready Party detail to the display view without inventing optional val
   });
   expect(view.facts).toEqual([
     {
-      factKind: 'DISPLAY_NAME',
+      factKind: 'FIRST_NAME',
       recordedAt: DateTime.makeUnsafe(instant),
       validFrom: DateTime.makeUnsafe(instant),
       value: 'Eva Bílá',
@@ -442,4 +441,55 @@ it('maps a ready Party detail to the display view without inventing optional val
   expect(unnamed.archived).toBe(true);
   expect(unnamed.revision).toBe(8);
   expect(PARTY_IDENTITY_KEY).toBe('party-registry.pages.partyIdentity');
+});
+
+it('a reader without the identity and identifier value capabilities sees no name, fact value or identifier row', () => {
+  const withheldIdentity = Schema.decodeSync(PartyDetailResponseSchema)({
+    currentFactAssertions: [
+      {
+        assertionId,
+        factKind: 'FIRST_NAME',
+        isCurrent: true,
+        partyRef,
+        recordedAt: instant,
+        retractsAssertionId: null,
+        state: 'ACTIVE',
+        supersedesAssertionId: null,
+        validFrom: instant,
+        validTo: null,
+      },
+    ],
+    party: { archivedAt: null, createdAt: instant, partyRef, partyType: 'PERSON', revision: 7, updatedAt: instant },
+    resolution: { aliasChain: [], canonicalPartyRef: partyRef, kind: 'DIRECT', requestedPartyRef: partyRef },
+  });
+  const view = partyIdentityView(withheldIdentity);
+  expect(view.displayName).toBeUndefined();
+  expect(view.facts).toEqual([]);
+
+  const withheldIdentifiers = Schema.decodeSync(PartyOfficialIdentifierHistoryResponseSchema)({
+    items: [
+      {
+        identifierType: 'ICO',
+        namespace: 'CZ:ICO',
+        officialIdentifierRef: {
+          moduleId: 'party.registry',
+          resourceId: identifierId,
+          resourceType: 'party.registry.party-official-identifier',
+          tenantId,
+        },
+        partyRef,
+        recordedAt: instant,
+        state: 'ACTIVE',
+        validFrom: instant,
+        validTo: null,
+      },
+    ],
+  }).items;
+  // The withheld current ICO is neither editable nor replaced by an "add" row; only DIČ can be added.
+  expect(customerIdentifierRows(withheldIdentifiers, '2026-10-16T00:00:00.000Z')).toEqual([
+    { id: 'new-CZ_DIC', type: 'CZ_DIC' },
+  ]);
+  // An ended identifier with a withheld value has no history label to show either.
+  const ended = withheldIdentifiers.map((item) => ({ ...item, state: 'ENDED' as const }));
+  expect(customerHistoryRows([], ended)).toEqual([]);
 });

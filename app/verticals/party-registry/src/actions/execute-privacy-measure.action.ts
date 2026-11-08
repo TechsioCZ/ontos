@@ -56,6 +56,22 @@ const handleExecutePrivacyMeasure = Effect.fn('PartyExecutePrivacyMeasureAction.
 
 export const executePrivacyMeasureAction = defineAction(
   {
+    accessActor: {
+      callers: ['party-registry'],
+      reason: 'The Party Registry privacy measure worker executes owner work for a verified originating requester.',
+      subject: 'identity',
+    },
+    // No accessTarget: the measure is addressed by the Privacy coordinator's measure id, which is not
+    // an OntOS record UUID (O9). The declared `all` slot decides the capability scope-wide and a
+    // grant restricted to explicit record sets stays refused (deny.target_required, fail closed).
+    accessDeclaration: {
+      key: 'party.registry.privacy-measure.execute',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'privacy', level: 'manage' },
+      risk: 'critical',
+      selectors: ['all'],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.execute-privacy-measure.access.v1',
@@ -67,7 +83,7 @@ export const executePrivacyMeasureAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.execute-privacy-measure',
       moduleKey: OWNER,
       role: 'action',

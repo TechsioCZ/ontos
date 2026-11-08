@@ -1,3 +1,4 @@
+import { pendingProposalMessage } from '../../../../api/action-result.ts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -137,7 +138,10 @@ export const OrderCreateDialog = ({ customers, onCreated, onOpenChange, open, re
       createOrder({ lines, partyId: draft.partyId.trim(), revision }).pipe(
         Effect.match({
           onFailure: (error) => {
-            setServerError(isRevisionConflict(error) ? t(key('create.conflict')) : t(key('create.failed')));
+            setServerError(
+              pendingProposalMessage(error) ??
+                (isRevisionConflict(error) ? t(key('create.conflict')) : t(key('create.failed'))),
+            );
             setBusy(false);
           },
           onSuccess: () => {

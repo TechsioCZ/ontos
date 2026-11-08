@@ -9,7 +9,7 @@ type Controls = ReturnType<typeof useShellControls>;
 type Shell = NonNullable<Parameters<typeof useShellControls>[0]>;
 type PageProps = Pick<
   ComponentProps<typeof AuthenticatedDashboardLayout>,
-  'children' | 'currentModuleId' | 'currentEntrypointKey' | 'title'
+  'children' | 'currentAccessPage' | 'currentEntrypointKey' | 'currentModuleId' | 'title'
 >;
 
 export const ShellContentLayout = ({

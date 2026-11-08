@@ -4,7 +4,7 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import {
-  getActionBusinessPermissionTargetResolver,
+  getActionOwnerPermissionTargetResolver,
   getActionResourcePermissionTargetResolver,
 } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import type {
@@ -171,7 +171,7 @@ const scope = trustVerifiedGatewayPrincipalContext(
 );
 
 describe('External Stock Correlation lifecycle Actions', () => {
-  it('declares three independently idempotent, exact-resource authorized Actions', () => {
+  it('declares three independently idempotent, scope-wide authorized Actions', () => {
     const actions = [
       establishExternalStockCorrelationAction,
       correctExternalStockCorrelationAction,
@@ -185,42 +185,24 @@ describe('External Stock Correlation lifecycle Actions', () => {
         legalEntityScope: 'forbidden',
         owningModuleKey: 'commerce.inventory',
       });
+      // O67-Q2: staff Inventory capabilities are scope-wide, so the retired per-resource targets
+      // (`businessPermission`/`resourcePermission`) are gone and the one gate decides the scope.
+      expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+      expect(action.descriptor.accessDeclaration).toMatchObject({ kind: 'action', selectors: [] });
+      expect(action.descriptor).not.toHaveProperty('ownerPermissions');
+      expect(action.descriptor).not.toHaveProperty('resourcePermission');
     }
-
-    for (const [businessTarget, resourceTarget, resourceId] of [
+    // The retired resolvers are gone from every one of them; the one gate is the sole authority.
+    expect(
       [
-        getActionBusinessPermissionTargetResolver(establishExternalStockCorrelationAction)?.(establishPayload, scope),
-        getActionResourcePermissionTargetResolver(establishExternalStockCorrelationAction)?.(establishPayload, scope),
-        firstCorrelationId,
-      ],
-      [
-        getActionBusinessPermissionTargetResolver(correctExternalStockCorrelationAction)?.(correctPayload, scope),
-        getActionResourcePermissionTargetResolver(correctExternalStockCorrelationAction)?.(correctPayload, scope),
-        replacementCorrelationId,
-      ],
-      [
-        getActionBusinessPermissionTargetResolver(endExternalStockCorrelationAction)?.(endPayload, scope),
-        getActionResourcePermissionTargetResolver(endExternalStockCorrelationAction)?.(endPayload, scope),
-        replacementCorrelationId,
-      ],
-    ] as const) {
-      expect(businessTarget).toEqual({
-        permission: 'inventory.external_stock_correlation.manage',
-        target: {
-          kind: 'inventory_resource',
-          resource: {
-            moduleId: 'commerce.inventory',
-            resourceId,
-            resourceType: 'commerce.inventory.external-stock-correlation',
-          },
-          tenantId,
-        },
-      });
-      expect(resourceTarget).toEqual({
-        permission: 'write',
-        resource: correlationRef(resourceId),
-      });
-    }
+        getActionOwnerPermissionTargetResolver(establishExternalStockCorrelationAction),
+        getActionOwnerPermissionTargetResolver(correctExternalStockCorrelationAction),
+        getActionOwnerPermissionTargetResolver(endExternalStockCorrelationAction),
+        getActionResourcePermissionTargetResolver(establishExternalStockCorrelationAction),
+        getActionResourcePermissionTargetResolver(correctExternalStockCorrelationAction),
+        getActionResourcePermissionTargetResolver(endExternalStockCorrelationAction),
+      ].filter((resolver) => resolver !== undefined),
+    ).toEqual([]);
   });
 
   it.effect('establishes, corrects, and ends exact issuer-qualified identities with bounded evidence', () =>

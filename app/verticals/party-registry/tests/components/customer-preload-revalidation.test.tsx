@@ -71,8 +71,11 @@ const customer = Schema.decodeSync(CustomerListItemSchema)({
 });
 const party = Schema.decodeSync(PartySchema)({
   archivedAt: null,
+  businessName: 'Before',
   createdAt: instant,
   displayName: 'Before',
+  firstName: null,
+  lastName: null,
   partyRef,
   partyType: 'ORGANIZATION',
   revision: 1,
@@ -124,7 +127,6 @@ const snapshot: CustomerDetailSnapshot = {
     status: 'ready',
     value: {
       currentFactAssertions: [],
-      factHistory: Option.none(),
       party,
       resolution: { aliasChain: [], canonicalPartyRef: partyRef, kind: 'DIRECT', requestedPartyRef: partyRef },
     },

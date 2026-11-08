@@ -263,19 +263,17 @@ step demo-permissions "${WITH_ENV[@]}" node scripts/demo/reset-permissions.mts
 # People administration (Lidé a role): company administrators may run core.identity.manage-demo-account.
 step accounts-admin-grants "${WITH_ENV[@]}" node scripts/demo/accounts-admin-grants.mts
 step demo-seed-work-people "${WITH_ENV[@]}" node scripts/demo/seed-work-people.mts
-# Old baseline grants Nájempark staff to commercial 0020; only retain their intended Nájempark company.
-step company-membership-hygiene "${WITH_ENV[@]}" node scripts/demo/company-membership-hygiene.mts
 # Per-company navigation (core.legal_entity_navigation_exclusions): pages a demo company does not offer.
 step navigation-exclusions "${WITH_ENV[@]}" node scripts/demo/navigation-exclusions.mts
 # What each demo company says about itself on Home (core.legal_entities.welcome).
 step company-welcome "${WITH_ENV[@]}" node scripts/demo/company-welcome.mts
-# AI setup is a separate fail-closed native audited operation, never a best-effort reset side effect.
+# Native agent identity/profile metadata only. Profile modules and writePolicy do not grant MCP authority.
 step ai-profiles env ONTOS_AGENT_SETUP_EMAIL=obchod@demo.ontos \
   "ONTOS_AGENT_SETUP_PASSWORD=${ONTOS_DEMO_PASSWORD:-password1234}" \
   "${WITH_ENV[@]}" node scripts/demo/ai-profiles.mts --mode apply
 # Agentní entity: one presentable agent per company through the shell's admin endpoint (idempotent by name).
 step seed-agent-entities env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" node scripts/demo/seed-agent-entities.mts
-# SpiceDB is in-memory: re-add the company administrators as operators of the seeded agents (MCP „Za agenta“).
+# Native human-oversight intent only. Roles and current connection consent are separate prerequisites for MCP.
 step agent-operators env ONTOS_AGENT_SETUP_EMAIL=obchod@demo.ontos \
   "ONTOS_AGENT_SETUP_PASSWORD=${ONTOS_DEMO_PASSWORD:-password1234}" \
   "${WITH_ENV[@]}" node scripts/demo/setup-agent-operators.mts --mode apply
@@ -320,7 +318,9 @@ if [ "${DEMO_RESET:-1}" != 0 ]; then
     mise exec -- pnpm demo:seed:rental --apply
   # S00: Nájempark business cases; the three owned by „Externí obchodník“ are entrusted to external@najempark.demo.
   step demo-seed-siampark-cases env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" \
-    node scripts/demo/seed-siampark-cases.mts
+    ONTOS_DEMO_SEED_EMAIL=management@najempark.demo \
+    "ONTOS_DEMO_SEED_PASSWORD=${ONTOS_DEMO_PASSWORD:-password1234}" \
+    node scripts/demo/seed-siampark-cases.mts --apply
   # Štítky and Úkoly of Nájempark and Velkoobchod Hanák through the public Actions (adds missing names/titles only).
   step demo-seed-company-content env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" \
     node scripts/demo/seed-company-content.mts --apply

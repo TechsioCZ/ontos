@@ -170,8 +170,7 @@ const mapCoreProblem = (error: ActionCoreError): RequestSearchRebuildActionProbl
     Match.exhaustive,
   );
 
-export const mapRequestSearchRebuildActionProblem = (error: ActionCoreError): RequestSearchRebuildActionProblem =>
-  mapCoreProblem(error);
+export const mapRequestSearchRebuildActionProblem = mapCoreProblem;
 
 export const requestSearchRebuildActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   RequestSearchRebuildActionSchemaErrorMiddleware,

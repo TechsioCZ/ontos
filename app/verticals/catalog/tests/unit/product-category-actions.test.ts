@@ -1,3 +1,4 @@
+import { catalogRegistration } from '../../vertical.registration.ts';
 import { NodeCrypto } from '@effect/platform-node';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext, DomainEventContractMap } from '@app/core-runtime';
@@ -125,7 +126,8 @@ describe('Catalog Product Category Actions', () => {
     Effect.gen(function* categoryCaptureTest() {
       const captured: { actionInvocationId: string; result: unknown }[] = [];
       const harness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
+        access: 'allowed',
+        ownerRegistration: catalogRegistration,
         services: [
           bindActionTestServices(createProductCategoryAction, {
             ...defaultServices,
@@ -160,7 +162,8 @@ describe('Catalog Product Category Actions', () => {
   it.effect('does not commit a category Action when result capture fails', () =>
     Effect.gen(function* categoryCaptureFailureTest() {
       const harness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
+        access: 'allowed',
+        ownerRegistration: catalogRegistration,
         services: [
           bindActionTestServices(createProductCategoryAction, {
             ...defaultServices,
@@ -205,7 +208,7 @@ describe('Catalog Product Category Actions', () => {
     ]) {
       expect(action.descriptor.idempotency).toBe('required');
       expect(action.descriptor.legalEntityScope).toBe('forbidden');
-      expect(action.descriptor.entrypoint.authorization.kind).toBe('action_execution');
+      expect(action.descriptor.entrypoint.authorization.kind).toBe('protected');
     }
   });
 

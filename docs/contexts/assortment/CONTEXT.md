@@ -247,7 +247,7 @@ An atomic Permission protecting Assortment administration or governed reads: `as
 _Avoid_: `assortment.manage`, `assortment.admin`, `assortment.boundary.replace`, `assortment.assignment.*`, Rule/Binding authority implicitly granting Boundary management.
 
 **Assortment Administration Scope**:
-The exact trusted authorization target for one management operation. Rule authority targets exact policy meaning; Binding authority targets exact ordinary audience/Commercial Scope/Revision applicability; Boundary Create authority targets exact Tenant, identified subject, purpose, Commercial Scope, and complete proposed Admission Set policy scope; Boundary End authority targets the exact existing Boundary. A narrow grant never authorizes a broader or unrelated target.
+The exact trusted authorization target for one management operation. Rule authority targets exact policy meaning; Binding authority targets exact ordinary audience/Commercial Scope/Revision applicability; Boundary Create authority targets exact Tenant, identified subject, purpose, Commercial Scope, and complete proposed Admission Set policy scope; Boundary End authority targets the exact existing Boundary. A narrow grant never authorizes a broader or unrelated target. Replace preserves the ordered conjunction of the existing target requiring End authority, followed by the proposed target requiring Create authority; neither target can substitute for the other.
 _Avoid_: Permission code alone, Tenant membership as authority, Buyer/Catalog/Counterparty Access authority as Assortment administration, subject-only Boundary grant treated as arbitrary whitelist authority.
 
 ### Migration and reconciliation

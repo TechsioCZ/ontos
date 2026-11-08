@@ -19,6 +19,8 @@ export {
   executeRequestSearchRebuildWithAuthorization,
 } from './request-search-rebuild-action-client.ts';
 export type { RequestSearchRebuildActionClientOptions } from './request-search-rebuild-action-client.ts';
+export { executeUpdateEmployee, executeUpdateEmployeeWithAuthorization } from './update-employee-action-client.ts';
+export type { UpdateEmployeeActionClientOptions } from './update-employee-action-client.ts';
 // </generated-action-http-client-exports>
 
 // <generated-module-api-client-exports>

@@ -63,7 +63,7 @@ const recoverCorrectSku = Effect.fn('CorrectSkuRecoveryRead.recover')(function* 
 
 const correctSkuRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.correct-sku-recovery' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.correct-sku-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -71,6 +71,14 @@ const correctSkuRecoveryEntrypoint = defineTenantModuleEntrypoint({
 
 export const correctSkuRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.correct-sku-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'variant', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: correctSkuRecoveryEntrypoint,
     evidencePolicy: {
@@ -80,7 +88,6 @@ export const correctSkuRecoveryRead = defineRead(
     inputSchema: CorrectSkuRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.correct-sku-recovery',
     resultSchema: CorrectSkuRecoveryResponseSchema,
@@ -92,5 +99,4 @@ export const correctSkuRecoveryRead = defineRead(
   },
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

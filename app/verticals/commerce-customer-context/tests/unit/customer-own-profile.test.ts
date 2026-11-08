@@ -6,6 +6,7 @@ import { expect, it } from 'effect-rstest';
 import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
 import {
   projectCustomerOwnProfile,
+  customerPersonalNameFields,
   selectProfileContact,
   updateCustomerPartyProfile,
 } from '../../api/portal-auth/profile/party-profile.ts';
@@ -35,11 +36,14 @@ const partyRef = {
 const at = '2026-10-23T12:00:00.000Z';
 const detail = Schema.decodeUnknownEffect(PartyDetailResponseSchema)({
   currentFactAssertions: [],
-  factHistory: null,
+  factHistory: [],
   party: {
     archivedAt: null,
+    businessName: null,
     createdAt: at,
     displayName: 'Customer Name',
+    firstName: 'Customer',
+    lastName: 'Name',
     partyRef,
     partyType: 'PERSON',
     revision: 3,
@@ -47,6 +51,16 @@ const detail = Schema.decodeUnknownEffect(PartyDetailResponseSchema)({
   },
   resolution: { aliasChain: [], canonicalPartyRef: partyRef, kind: 'DIRECT', requestedPartyRef: partyRef },
 });
+it.effect('sends canonical personal-name fields and never mistakes omission for surname removal', () =>
+  Effect.gen(function* canonicalProfileNames() {
+    expect(yield* customerPersonalNameFields('New Customer', Option.some('Name'))).toEqual({
+      firstName: 'New',
+      lastName: 'Customer',
+    });
+    expect(yield* customerPersonalNameFields('Mononym', Option.none())).toEqual({ firstName: 'Mononym' });
+    expect((yield* customerPersonalNameFields('Mononym', Option.some('Name')).pipe(Effect.flip)).status).toBe(400);
+  }),
+);
 const contact = (id: string, preferred: boolean, revision = 1, current = true) => ({
   contactPointRef: {
     moduleId: 'party.registry',
@@ -71,7 +85,6 @@ const contact = (id: string, preferred: boolean, revision = 1, current = true) =
     preferred,
     type: 'EMAIL',
   },
-  verification: { state: 'UNVERIFIED' },
 });
 const firstId = '11111111-1111-4111-8111-111111111111';
 const secondId = '22222222-2222-4222-8222-222222222222';
@@ -183,19 +196,20 @@ it.effect(
       const contacts = yield* Schema.decodeUnknownEffect(PartyContactPointsResponseSchema)({
         items: [contact(firstId, true), contact(secondId, false)],
       });
-      const profile = projectCustomerOwnProfile(party, contacts);
+      const profile = yield* Effect.fromResult(projectCustomerOwnProfile(party, contacts));
       expect(profile.displayName).toBe('Customer Name');
       expect(profile.phone).toBe('');
       expect(profile.contactEmail).toBe('11111111@example.test');
       expect(profile.version).toMatch(/^[a-f0-9]{64}$/u);
       expect(profile.version).toBe('c7d43d14cf9b662ab6c8030b0be5ee593378001dbead5f085408fdb470deda5d');
-      expect(projectCustomerOwnProfile(party, { items: EffectArray.reverse(contacts.items) }).version).toBe(
-        profile.version,
-      );
+      expect(
+        (yield* Effect.fromResult(projectCustomerOwnProfile(party, { items: EffectArray.reverse(contacts.items) })))
+          .version,
+      ).toBe(profile.version);
       const changed = yield* Schema.decodeUnknownEffect(PartyContactPointsResponseSchema)({
         items: [contact(firstId, true), contact(secondId, false, 2)],
       });
-      expect(projectCustomerOwnProfile(party, changed).version).not.toBe(profile.version);
+      expect((yield* Effect.fromResult(projectCustomerOwnProfile(party, changed))).version).not.toBe(profile.version);
     }),
 );
 
@@ -208,7 +222,7 @@ it.effect('rejects a changed name plus an invalid phone before acquiring any nat
   Effect.gen(function* rejectInvalidPhoneBeforeCommands() {
     const party = yield* detail;
     const contacts = yield* Schema.decodeUnknownEffect(PartyContactPointsResponseSchema)({ items: [] });
-    const profile = projectCustomerOwnProfile(party, contacts);
+    const profile = yield* Effect.fromResult(projectCustomerOwnProfile(party, contacts));
     for (const phone of ['123456', 'not-a-phone', '---', '+000123456']) {
       // Run the real updater without a gateway service/configuration or command doubles. A name
       // command attempted first would fail as 503; invalid phone intent must instead fail as 400.
@@ -227,7 +241,7 @@ it.effect('rejects a changed name plus an invalid phone before acquiring any nat
       );
       expect(problem.status).toBe(400);
       expect(problem.code).toBe('invalid_request');
-      expect(Option.getOrUndefined(party.party.displayName)).toBe('Customer Name');
+      expect(Option.getOrUndefined(party.party.displayName ?? Option.none())).toBe('Customer Name');
     }
   }).pipe(Effect.provide(TestClock.layer()), Effect.provide(commercePortalAuthPlatformCryptoLive)),
 );
@@ -260,3 +274,49 @@ it('projects strict profile intent/completion evidence without editable PII', ()
   expect(JSON.stringify(record)).not.toContain(request.contactEmail);
   expect(Object.keys(record)).not.toContain('partyId');
 });
+
+it.effect('refuses redacted owner fields rather than projecting empty editable values', () =>
+  Effect.gen(function* redactedProfile() {
+    const party = yield* detail;
+    const contacts = yield* Schema.decodeUnknownEffect(PartyContactPointsResponseSchema)({
+      items: [contact(firstId, true)],
+    });
+    const { displayName: _redactedName, ...withoutName } = party.party;
+    expect(Result.isFailure(projectCustomerOwnProfile({ ...party, party: withoutName }, contacts))).toBe(true);
+    const { value: _redactedContact, ...withoutContactValue } = contact(firstId, true);
+    const redactedContacts = yield* Schema.decodeUnknownEffect(PartyContactPointsResponseSchema)({
+      items: [withoutContactValue],
+    });
+    expect(Result.isFailure(projectCustomerOwnProfile(party, redactedContacts))).toBe(true);
+    const emptyKnown = projectCustomerOwnProfile(
+      { ...party, party: { ...party.party, displayName: Option.none() } },
+      { items: [] },
+    );
+    expect(Result.isSuccess(emptyKnown) && emptyKnown.success.displayName === '').toBe(true);
+  }),
+);
+it.effect('does not overwrite an unknown surname or acquire a write credential for a redacted name', () =>
+  Effect.gen(function* redactedSurname() {
+    const party = yield* detail;
+    const contacts = { items: [] };
+    const profile = yield* Effect.fromResult(projectCustomerOwnProfile(party, contacts));
+    const { lastName: _redactedSurname, ...withoutSurname } = party.party;
+    const problem = yield* updateCustomerPartyProfile(
+      {
+        compositionRevision: 'c'.repeat(64),
+        legalEntityId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        partyId: party.party.partyRef.resourceId,
+        requestCorrelation: 'redacted-surname',
+        tenantId,
+      },
+      { ...profile, displayName: 'Changed Name' },
+      {
+        contacts,
+        detail: { ...party, party: withoutSurname },
+        partyRef: party.party.partyRef,
+        profile,
+      },
+    ).pipe(Effect.flip);
+    expect(problem.status).toBe(503);
+  }).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
+);

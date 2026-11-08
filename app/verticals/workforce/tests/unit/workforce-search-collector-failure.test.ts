@@ -1,3 +1,4 @@
+import { workforceRegistration } from '../../vertical.registration.ts';
 import { ActionCollectorError, ContextAccess } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { Effect, Schema } from 'effect';
@@ -18,7 +19,7 @@ import {
 } from '../../src/actions/request-search-rebuild-demo-workforce-search-rebuild-requested-v1.outbox-message.ts' with {
   rstest: 'importActual',
 };
-import { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
+import { WorkforceCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
 import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
 import { requestSearchRebuildAction } from '../../src/actions/request-search-rebuild.action.ts';
 import { employee, scope, unexpectedContextAccess } from './workforce-search-fixtures.ts';
@@ -56,7 +57,8 @@ it.effect('collector failure after a successful employee apply does not commit a
   Effect.gen(function* mutationCollectorFailure() {
     let applies = 0;
     const harness = yield* makeActionTestHarness({
-      actionPermission: 'allowed',
+      access: 'allowed',
+      ownerRegistration: workforceRegistration,
       services: [
         bindActionTestServices(applyCommandAction, {
           apply: () =>
@@ -68,7 +70,7 @@ it.effect('collector failure after a successful employee apply does not commit a
         }),
       ],
     });
-    const payload = yield* Schema.decodeEffect(ApplyCommandPayloadSchema)({
+    const payload = yield* Schema.decodeEffect(WorkforceCommandPayloadSchema)({
       command: {
         _tag: 'CreateEmployee',
         active: employee.active,
@@ -99,7 +101,7 @@ it.effect('collector failure after a successful employee apply does not commit a
 
 it.effect('rebuild collector failure never acknowledges QUEUED or commits an orphan Domain Event', () =>
   Effect.gen(function* rebuildCollectorFailure() {
-    const harness = yield* makeActionTestHarness({ actionPermission: 'allowed', tenantPermission: 'allowed' });
+    const harness = yield* makeActionTestHarness({ access: 'allowed', ownerRegistration: workforceRegistration });
     const failure = yield* harness.runtime
       .runAction({
         payload: {},

@@ -11,7 +11,7 @@ const availabilityModuleKey = 'commerce.availability';
 const currentAvailabilityReadKey = 'commerce.availability.api.current-availability';
 const currentAvailabilityEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'availability.resource.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: currentAvailabilityReadKey,
   moduleKey: availabilityModuleKey,
   role: 'api',
@@ -19,6 +19,14 @@ const currentAvailabilityEntrypoint = defineTenantModuleEntrypoint({
 
 export const currentAvailabilityRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.availability.current-availability.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'availability', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: currentAvailabilityEntrypoint,
     evidencePolicy: {
@@ -28,7 +36,6 @@ export const currentAvailabilityRead = defineRead(
     inputSchema: CurrentAvailabilityRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: availabilityModuleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: currentAvailabilityReadKey,
     resultSchema: CurrentAvailabilityResponseSchema,
@@ -41,5 +48,4 @@ export const currentAvailabilityRead = defineRead(
       ),
   },
   () => Effect.succeed({}),
-  () => ({ kind: 'module', moduleId: availabilityModuleKey }),
 );

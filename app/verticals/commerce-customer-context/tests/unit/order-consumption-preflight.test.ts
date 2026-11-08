@@ -68,16 +68,17 @@ const fixture = Effect.fn('OrderConsumptionPreflightTest.fixture')(function* fix
     },
     compositionRevision,
   );
-  const context = {
-    actionInvocationId: '50000000-0000-4000-8000-000000000001',
-    compositionRevision,
-    scope,
-    transaction: () => Effect.die('Immutable Order selectors must not open SQL during preparation'),
-  };
   const preflight = getActionServicePreflight(consumeOrderPurchaseApprovalAction);
   if (preflight === undefined) {
     return yield* Effect.die('The Order consumption Action must register preparation');
   }
+  const context = {
+    actionInvocationId: '50000000-0000-4000-8000-000000000001',
+    compositionRevision,
+    evaluatePolicy: () => Effect.die('Order evidence preparation does not evaluate execution Policies'),
+    scope,
+    transaction: () => Effect.die('Immutable Order selectors must not open SQL during preparation'),
+  } satisfies Parameters<typeof preflight>[1];
   const retained = orderFinalizationSnapshotFixture.request;
   const evidence = yield* Schema.decodeUnknownEffect(Schema.toType(CommittedOrderApprovalEvidenceResponseSchema))({
     ...payload,

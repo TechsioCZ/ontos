@@ -18,7 +18,10 @@ import {
   PricingCurrentMarketEvidenceResponseSchema,
 } from '../../shared/apis/pricing-current-market-evidence.ts';
 import { EffectivePeriodSchema, MarketDefinitionSchema } from '../../shared/market-contracts.ts';
-import { handlePricingCurrentMarketEvidence } from '../../src/api/pricing-current-market-evidence.read.ts';
+import {
+  handlePricingCurrentMarketEvidence,
+  pricingCurrentMarketEvidenceRead,
+} from '../../src/api/pricing-current-market-evidence.read.ts';
 import type {
   PricingCurrentMarketEvidencePersistence,
   PricingCurrentMarketSnapshot,
@@ -114,6 +117,25 @@ const operationalScope: OperationalScope = {
 };
 
 describe('Pricing Current Market evidence owner boundary', () => {
+  it('is a v2 protected read decided by its own sensitive declaration (A1)', () => {
+    // A1 classified this read PROTECT: the one access gate decides it, no legacy permission target or
+    // SpiceDB resource tuple is consulted, and the scope-wide declaration carries no record selectors.
+    expect(pricingCurrentMarketEvidenceRead.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    expect(pricingCurrentMarketEvidenceRead.descriptor.accessDeclaration).toMatchObject({
+      key: 'commerce.market-catalog.pricing-market-evidence.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'markets', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    });
+    expect(pricingCurrentMarketEvidenceRead.descriptor.accessActor).toEqual({
+      callers: ['pricing'],
+      reason: expect.any(String),
+      subject: 'identity',
+    });
+  });
+
   it.effect('issues exact present evidence and verifies the retained receipt through a later fence', () =>
     Effect.gen(function* presentAndReplay() {
       const initial = yield* readPricingCurrentMarketEvidence(persistence(presentSnapshot), request, trustedScope);

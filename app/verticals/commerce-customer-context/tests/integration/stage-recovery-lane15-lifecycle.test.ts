@@ -162,6 +162,7 @@ const makeScenario = Effect.fn('Lane15.makeScenario')(function* makeScenario() {
           ownerInvocationId: input.ownerInvocationId,
           password: Redacted.make('Lane15-fixture-password-only-9'),
           tenantId: input.tenantId,
+          verificationOrigin: new URL('https://portal.example.test'),
         }),
       ),
       Effect.map((created) => ({

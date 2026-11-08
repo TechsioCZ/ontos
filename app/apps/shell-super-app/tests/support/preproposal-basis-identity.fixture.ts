@@ -3,6 +3,7 @@ import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfig,
+  LegalEntityContext,
   LegalEntityContextLive,
   PrincipalResolver,
   PrincipalResolverLive,
@@ -12,6 +13,10 @@ import {
   makeDatabaseIdentityEnrollmentLive,
   parseDatabaseConfig,
 } from '@app/core-runtime';
+import type { LegalEntityContextService, OperationalScope } from '@app/core-runtime';
+import { makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
+import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
+import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';
 import {
   ActionPermissionLive,
   ActionRepositoryLive,
@@ -60,6 +65,14 @@ const identity = {
   principalId: PrincipalIdSchema,
   secret: Schema.RedactedFromValue(Schema.String),
 };
+// A module deployment credential is a service principal's managed key plus the provider key id the Shell binds it by.
+const moduleServiceIdentity = Schema.Struct({ ...identity, providerKeyId: ProviderSubjectIdSchema });
+// The buyer's actual signed-in Shell sessions, one with its Legal Entity selected and one in the Tenant only: a
+// module that relays the buyer's request assertion has it rechecked against the live session it names.
+const humanSessions = Schema.Struct({
+  legalEntity: Schema.Struct({ authContextRef: Schema.String, legalEntityId: LegalEntityIdSchema }),
+  tenant: Schema.Struct({ authContextRef: Schema.String }),
+});
 const ResponseSchema = Schema.Union([
   Schema.Struct({
     operation: Schema.Literal('PROVIDER_USER_CREATED'),
@@ -67,10 +80,14 @@ const ResponseSchema = Schema.Union([
     providerUserId: ProviderSubjectIdSchema,
   }),
   Schema.Struct({
+    buyer: Schema.Struct(identity),
     buyerPrincipalId: PrincipalIdSchema,
-    cccReader: Schema.Struct(identity),
+    buyerSessions: humanSessions,
+    catalog: moduleServiceIdentity,
+    cccReader: moduleServiceIdentity,
+    marketRelay: moduleServiceIdentity,
     operation: Schema.Literal('SERVICE_KEYS_CREATED'),
-    pricingIssuer: Schema.Struct(identity),
+    pricingIssuer: moduleServiceIdentity,
     protocol: Schema.Literal(protocol),
     tenantId: TenantIdSchema,
   }),
@@ -82,6 +99,30 @@ class PreproposalIdentityUnavailable extends Schema.TaggedError<PreproposalIdent
   { stage: Schema.String },
 ) {}
 const unavailable = (stage: string) => new PreproposalIdentityUnavailable({ stage });
+
+/** The companies the select check answers with: the Tenant's own active ones (O28). */
+const tenantCompaniesOf =
+  (legalEntityContext: LegalEntityContextService) => (input: { readonly scope: OperationalScope }) =>
+    legalEntityContext.listActiveForTenant(input.scope.tenantId).pipe(
+      Effect.map((entities) => entities.map((entity) => LegalEntityIdSchema.make(entity.legalEntityId))),
+      Effect.orDie,
+    );
+
+/**
+ * The owned database carries no v2 access intent, so the gate is scripted like the Core fixture's own
+ * (`access: 'allowed'`), as the other Shell native children do: every capability is ALLOWED and the
+ * selectable companies are the Tenant's own active ones.
+ */
+const scriptedIdentityAccessGate = Layer.unwrap(
+  Effect.gen(function* scriptedIdentityAccessGateLayers() {
+    const legalEntityContext = yield* LegalEntityContext;
+    const scripted = makeTestAccessDecision({ defaultAnswer: { outcome: 'ALLOWED' } });
+    return makeTestAccessGateLayers({
+      scopeAccess: { decide: scripted.decide, selectableLegalEntities: tenantCompaniesOf(legalEntityContext) },
+      spec: { defaultAnswer: { outcome: 'ALLOWED' } },
+    });
+  }),
+);
 const describe = Effect.sync(() =>
   process.stdout.write(
     `${JSON.stringify({
@@ -193,7 +234,14 @@ export const serve = Effect.scoped(
     const states = TenantModuleStateServiceLive.pipe(Layer.provide(persistence));
     const gate = ModuleStateGateLive.pipe(Layer.provide(states));
     const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(gate));
-    const scopes = OperationalScopeResolverLive.pipe(Layer.provide(Layer.mergeAll(persistence, ContextAccessLive)));
+    // The one access gate of this composition: the scope resolver and both runtimes ask it, so the
+    // fixture builds it once and shares it, exactly as the Shell root does.
+    const accessEnforcement = scriptedIdentityAccessGate.pipe(
+      Layer.provide(LegalEntityContextLive.pipe(Layer.provide(persistence))),
+    );
+    const scopes = OperationalScopeResolverLive.pipe(
+      Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, accessEnforcement)),
+    );
     const resolver = PrincipalResolverLive({ authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID }).pipe(
       Layer.provide(persistence),
     );
@@ -204,6 +252,7 @@ export const serve = Effect.scoped(
       ContextAccessLive,
       // This Shell fixture installs no dedicated database identities.
       makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([])),
+      accessEnforcement,
       LegalEntityContextLive.pipe(Layer.provide(persistence)),
       composition,
       staffAuthenticationNamespaceRegistryLayer(['shell-super-app']),
@@ -216,6 +265,7 @@ export const serve = Effect.scoped(
           gateway,
           scopes,
           ContextAccessLive,
+          accessEnforcement,
           ActionPermissionLive,
           ActionRepositoryLive,
           staffAuthenticationNamespaceRegistryLayer(['shell-super-app']),
@@ -315,6 +365,30 @@ export const serve = Effect.scoped(
             return yield* unavailable('actual-operator-context');
           }
           const { principal } = resolved;
+          if (principal.authContextRef === undefined || principal.legalEntityId === undefined) {
+            return yield* unavailable('actual-operator-session');
+          }
+          const buyerKey = yield* lifecycle.issue({
+            correlationId: `${suffix}:buyer:key`,
+            idempotencyKey: `${suffix}:buyer:key`,
+            name: 'Preproposal original buyer',
+            principal,
+            requestHeaders: headers,
+          });
+          if (buyerKey.cleanupPending) {
+            return yield* unavailable('buyer-self-binding');
+          }
+          const verifiedBuyer = yield* keys.verify(Redacted.value(buyerKey.secret));
+          const boundBuyer = yield* Context.get(runtime, PrincipalResolver).resolveBetterAuthApiKey(
+            verifiedBuyer.providerKeyId,
+          );
+          if (
+            boundBuyer.principalId !== principal.principalId ||
+            boundBuyer.tenantId !== principal.tenantId ||
+            boundBuyer.authBindingId !== buyerKey.authBindingId
+          ) {
+            return yield* unavailable('original-buyer-provider-binding');
+          }
           const produceService = Effect.fn('PreproposalIdentity.produceService')(function* produceService(
             name: string,
           ) {
@@ -337,16 +411,58 @@ export const serve = Effect.scoped(
             if (createdService.principalId === principal.principalId || key.cleanupPending) {
               return yield* unavailable('managed-service-binding');
             }
-            return { authBindingId: key.authBindingId, principalId: createdService.principalId, secret: key.secret };
+            const verified = yield* keys.verify(Redacted.value(key.secret));
+            return {
+              authBindingId: key.authBindingId,
+              principalId: createdService.principalId,
+              providerKeyId: verified.providerKeyId,
+              secret: key.secret,
+            };
           });
           const cccReader = yield* produceService('ccc-reader');
           const pricingIssuer = yield* produceService('pricing-issuer');
-          if (cccReader.principalId === pricingIssuer.principalId) {
+          const catalog = yield* produceService('catalog');
+          const marketRelay = yield* produceService('market-relay');
+          // A second sign-in stays in the Tenant: no Legal Entity is selected on that session.
+          const tenantSession = yield* authentication.signIn(
+            email,
+            password,
+            new Headers({ origin: authConfiguration.baseUrl }),
+          );
+          const tenantContext = yield* authentication.resolveTenantContext(
+            new Headers({
+              cookie: tenantSession.setCookieHeaders.map((value) => value.split(';')[0]).join('; '),
+              origin: authConfiguration.baseUrl,
+            }),
+          );
+          if (
+            tenantContext.state !== 'authenticated' ||
+            tenantContext.principal.principalId !== principal.principalId ||
+            tenantContext.principal.legalEntityId !== undefined ||
+            tenantContext.principal.authContextRef === undefined
+          ) {
+            return yield* unavailable('actual-tenant-session');
+          }
+          const servicePrincipals = [cccReader, pricingIssuer, catalog, marketRelay].map(
+            (service) => service.principalId,
+          );
+          if (new Set([principal.principalId, ...servicePrincipals]).size !== servicePrincipals.length + 1) {
             return yield* unavailable('distinct-service-identities');
           }
           return yield* send({
+            buyer: {
+              authBindingId: buyerKey.authBindingId,
+              principalId: principal.principalId,
+              secret: buyerKey.secret,
+            },
             buyerPrincipalId: principal.principalId,
+            buyerSessions: {
+              legalEntity: { authContextRef: principal.authContextRef, legalEntityId: principal.legalEntityId },
+              tenant: { authContextRef: tenantContext.principal.authContextRef },
+            },
+            catalog,
             cccReader,
+            marketRelay,
             operation: 'SERVICE_KEYS_CREATED',
             pricingIssuer,
             protocol,

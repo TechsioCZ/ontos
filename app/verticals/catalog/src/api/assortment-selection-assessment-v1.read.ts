@@ -41,7 +41,7 @@ export const readAssortmentSelectionAssessmentV1 = (
 
 const assortmentSelectionAssessmentV1Entrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.assortment-selection-assessment-v1' },
+  authorization: { kind: 'protected' },
   entrypointKey: assortmentSelectionAssessmentV1Key,
   moduleKey: catalogModuleKey,
   role: 'api',
@@ -49,6 +49,14 @@ const assortmentSelectionAssessmentV1Entrypoint = defineTenantModuleEntrypoint({
 
 export const assortmentSelectionAssessmentV1Read = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.assortment-selection-assessment-v1.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'selection-evidence', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: assortmentSelectionAssessmentV1Entrypoint,
     evidencePolicy: {
@@ -58,7 +66,6 @@ export const assortmentSelectionAssessmentV1Read = defineRead(
     inputSchema: AssortmentSelectionAssessmentV1RequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: catalogModuleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: assortmentSelectionAssessmentV1Key,
     resultSchema: AssortmentSelectionAssessmentV1ResponseSchema,
@@ -71,5 +78,4 @@ export const assortmentSelectionAssessmentV1Read = defineRead(
       ),
   },
   (transaction, scope) => Effect.succeed(servicesForScope(transaction, scope)),
-  () => ({ kind: 'module', moduleId: catalogModuleKey }),
 );

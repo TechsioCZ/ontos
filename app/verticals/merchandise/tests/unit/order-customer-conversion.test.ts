@@ -14,7 +14,6 @@ import {
   AKROS_LEGAL_ENTITY_ID,
   assertCommandAllowed,
   assertStorefrontScope,
-  staffCommandAllowed,
 } from '../../shared/actions/command-guard.ts';
 import { orderCustomerSeedEligible } from '../../scripts/order-presentation.ts';
 import { OrderIdSchema, PartyIdSchema } from '../../shared/domain/merchandise-model.ts';
@@ -122,7 +121,9 @@ const ownersFor = (overrides: Partial<Owners> = {}) => {
     contact: (payload, options) =>
       Effect.sync(() => {
         calls.push('contact');
-        expect(payload.verification.state).toBe('UNVERIFIED');
+        // Verification is owner-derived, never supplied by Merchandise as an authority claim.
+        expect('verification' in payload).toBe(false);
+        expect(payload.contactPoint).toEqual({ preferred: true, type: 'EMAIL', value: order.contact?.email });
         expect(payload.provenance.authoritative).toBe(false);
         expect(options.idempotencyKey).toBe('merchandise:order-customer:guest-order:email');
       }),
@@ -364,12 +365,10 @@ it.effect('linking preserves financial/stock snapshots and is idempotent after c
     expect(repeated.state).toBe(result.state);
   }),
 );
-it.effect('storefront, non-human principals and dispatch cannot convert order customers', () =>
+it.effect('storefront and non-human principals cannot convert order customers', () =>
   Effect.gen(function* guard() {
     yield* assertCommandAllowed('non_human', 'LinkOrderCustomer').pipe(Effect.flip);
     yield* assertStorefrontScope('api_key', AKROS_LEGAL_ENTITY_ID, 'LinkOrderCustomer').pipe(Effect.flip);
-    expect(staffCommandAllowed(AKROS_LEGAL_ENTITY_ID, false, 'LinkOrderCustomer')).toBe(false);
-    expect(staffCommandAllowed(AKROS_LEGAL_ENTITY_ID, true, 'LinkOrderCustomer')).toBe(true);
   }),
 );
 

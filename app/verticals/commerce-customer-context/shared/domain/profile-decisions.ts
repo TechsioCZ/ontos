@@ -1,4 +1,3 @@
-import type { AuthorizationMutationState } from '@app/core-runtime';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { Match, Schema } from 'effect';
 import type {
@@ -8,6 +7,7 @@ import type {
   ProfileLifecycleDecision,
   ProfileLifecycleOperation,
   ReconciliationOwnerOutcome,
+  RetailPortalBindingState,
   RetailPortalPermissionCode,
 } from './profile-contracts.ts';
 import { RECONCILIATION_REQUIRED_OWNERS } from './profile-contracts.ts';
@@ -235,23 +235,18 @@ export type RetailBindingAuthorizationCurrentness = typeof RetailBindingAuthoriz
 
 export const decideRetailBindingAuthorizationCurrentness = (input: {
   readonly authorizationOperation: 'grant' | 'revoke';
-  readonly authorizationState: AuthorizationMutationState;
+  readonly authorizationState: RetailPortalBindingState;
   readonly bindingState: 'ACTIVE' | 'REVOKED';
 }): RetailBindingAuthorizationCurrentness => {
-  if (
-    input.bindingState === 'REVOKED' ||
-    input.authorizationState === 'REVOKED' ||
-    input.authorizationState === 'PENDING_REVOKE' ||
-    (input.authorizationOperation === 'revoke' && input.authorizationState === 'RECONCILIATION_REQUIRED')
-  ) {
+  if (input.bindingState === 'REVOKED' || input.authorizationState === 'REVOKED') {
     return 'REVOKED';
   }
-  return input.bindingState === 'ACTIVE' && input.authorizationState === 'ACTIVE' ? 'ACTIVE' : 'UNAVAILABLE';
+  return input.authorizationOperation === 'grant' ? 'ACTIVE' : 'UNAVAILABLE';
 };
 
 interface RetailPortalAccessInput {
   readonly authorizationOperation: 'grant' | 'revoke';
-  readonly authorizationState: AuthorizationMutationState;
+  readonly authorizationState: RetailPortalBindingState;
   readonly authorizationStatus: 'AVAILABLE' | 'INDETERMINATE';
   readonly bindingState: 'ACTIVE' | 'REVOKED' | 'MISSING' | 'AMBIGUOUS';
   readonly boundProfile?: CommerceCustomerProfileRef;

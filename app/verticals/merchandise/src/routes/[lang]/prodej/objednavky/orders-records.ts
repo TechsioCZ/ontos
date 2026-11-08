@@ -1,9 +1,10 @@
-import { Data, Effect, Exit, Match, Predicate, Random, Result, Schema } from 'effect';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
+import { Data, Effect, Match, Predicate, Random, Result, Schema } from 'effect';
 import { definePageData, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, PageDataSnapshot } from '@app/shared-contracts/page-data';
 import { useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
-import { ApplyCommandPayloadSchema } from '../../../../../shared/actions/apply-command.ts';
 import type {
   Order,
   ProductRecord,
@@ -12,7 +13,10 @@ import type {
 } from '../../../../../shared/apis/records.ts';
 import type { OrderStatus, ProductId, VariantId } from '../../../../../shared/domain/merchandise-model.ts';
 import { OrderIdSchema, PartyIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
-import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
+import { executeManageCatalog } from '../../../../api/manage-catalog-action-client.ts';
+import { executeCleanupDemo } from '../../../../api/cleanup-demo-action-client.ts';
+import { executeChangeOrderStatus } from '../../../../api/change-order-status-action-client.ts';
+import { committedResult } from '../../../../api/action-result.ts';
 import { executeRecords } from '../../../../api/records-consumer.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { useSettledPageData } from '../../../../runtime/page-data-hooks.ts';
@@ -112,7 +116,7 @@ type LoadFailure = Effect.Error<ReturnType<typeof loadOrders>>;
 export const isRevisionConflict = (error: CreateFailure): boolean =>
   Match.value(error).pipe(
     Match.tag(
-      'ApplyCommandActionConflictProblem',
+      'ManageCatalogActionConflictProblem',
       (problem): boolean => problem.code === 'merchandise_revision_conflict',
     ),
     Match.orElse((): boolean => false),
@@ -368,13 +372,29 @@ export const preloadOrderDetails = (input: OrdersPageInput, records: RecordsResp
 
 /** One governed command. Every call carries a fresh idempotency key and the revision the caller last saw. */
 const submitCommand = Effect.fn('OrdersRecords.submitCommand')(function* submitCommand(
-  command: MerchandiseCommand,
+  command: Extract<
+    MerchandiseCommand,
+    { readonly _tag: 'CreateOrder' | 'EditOrder' | 'ResetDemoData' | 'RemoveDemoOrder' | 'ChangeOrderStatus' }
+  >,
   expectedRevision: number,
 ) {
   const requestCorrelation = yield* correlation('command');
   const idempotencyKey = yield* randomToken;
-  const payload = yield* Schema.encodeEffect(ApplyCommandPayloadSchema)({ command, expectedRevision });
-  return yield* executeApplyCommand(payload, requestCorrelation, { idempotencyKey }).pipe(
+  const options = { idempotencyKey };
+  const operation = Match.value(command).pipe(
+    Match.tag('CreateOrder', 'EditOrder', (value) =>
+      executeManageCatalog({ command: value, expectedRevision }, requestCorrelation, options),
+    ),
+    Match.tag('ResetDemoData', 'RemoveDemoOrder', (value) =>
+      executeCleanupDemo({ command: value, expectedRevision }, requestCorrelation, options),
+    ),
+    Match.tag('ChangeOrderStatus', (value) =>
+      executeChangeOrderStatus({ command: value, expectedRevision }, requestCorrelation, options),
+    ),
+    Match.exhaustive,
+  );
+  return yield* operation.pipe(
+    Effect.flatMap(committedResult),
     Effect.ensuring(
       Effect.sync(() => {
         ordersPageData.invalidate();
@@ -419,6 +439,7 @@ export const resetDemoData = Effect.fn('OrdersRecords.resetDemoData')(function* 
 interface StatusProgress {
   readonly changed: number;
   readonly failed: number;
+  readonly proposals?: readonly ActionProposalAccepted[];
   readonly revision: number;
 }
 
@@ -437,12 +458,18 @@ const applyStatusStep = (
   if (reason !== undefined) {
     command.reason = reason;
   }
-  return Effect.exit(submitCommand(command, progress.revision)).pipe(
-    Effect.map((outcome): StatusProgress =>
-      Exit.isSuccess(outcome)
-        ? { ...progress, changed: progress.changed + 1, revision: outcome.value.revision }
-        : { ...progress, failed: progress.failed + 1 },
-    ),
+  return submitCommand(command, progress.revision).pipe(
+    Effect.match({
+      onFailure: (failure): StatusProgress =>
+        Schema.is(ActionProposalAcceptedSchema)(failure)
+          ? { ...progress, proposals: [...(progress.proposals ?? []), failure] }
+          : { ...progress, failed: progress.failed + 1 },
+      onSuccess: (result): StatusProgress => ({
+        ...progress,
+        changed: progress.changed + 1,
+        revision: result.revision,
+      }),
+    }),
   );
 };
 

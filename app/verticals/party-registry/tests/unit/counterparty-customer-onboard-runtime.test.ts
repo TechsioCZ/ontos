@@ -1,3 +1,4 @@
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '@app/party-registry-identity-contracts';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { Effect, Predicate } from 'effect';
@@ -93,15 +94,14 @@ const request = (idempotencyKey: string) => ({
 it.effect('denies CUSTOMER onboarding before the owner handler when Action permission is absent', () =>
   Effect.gen(function* deniedOnboarding() {
     const harness = yield* makeActionTestHarness({
+      access: 'denied',
       databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-      actionPermission: 'denied',
-      legalEntityPermission: 'allowed',
+      ownerRegistration: partyRegistryBackendRegistration,
       services: [
         bindActionTestServices(counterpartyCustomerOnboardAction, {
           onboard: () => Effect.die('the denied Action must not execute its owner handler'),
         }),
       ],
-      tenantPermission: 'allowed',
     });
 
     const failure = yield* harness.runtime.runAction(request('denied-1')).pipe(Effect.flip);
@@ -117,9 +117,9 @@ it.effect('recovers a committed CUSTOMER onboarding invocation without replaying
   Effect.gen(function* recoverOnboarding() {
     let calls = 0;
     const harness = yield* makeActionTestHarness({
+      access: 'allowed',
       databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-      actionPermission: 'allowed',
-      legalEntityPermission: 'allowed',
+      ownerRegistration: partyRegistryBackendRegistration,
       services: [
         bindActionTestServices(counterpartyCustomerOnboardAction, {
           onboard: () =>
@@ -129,7 +129,6 @@ it.effect('recovers a committed CUSTOMER onboarding invocation without replaying
             }),
         }),
       ],
-      tenantPermission: 'allowed',
     });
 
     const result = yield* harness.runtime.runAction(request('recover-1'));
@@ -153,15 +152,14 @@ it.effect('recovers a committed CUSTOMER onboarding invocation without replaying
 it.effect('exact-equivalent onboarding commits no duplicate domain events', () =>
   Effect.gen(function* exactReplay() {
     const harness = yield* makeActionTestHarness({
+      access: 'allowed',
       databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-      actionPermission: 'allowed',
-      legalEntityPermission: 'allowed',
+      ownerRegistration: partyRegistryBackendRegistration,
       services: [
         bindActionTestServices(counterpartyCustomerOnboardAction, {
           onboard: () => Effect.succeed(persistenceResult({ counterpartyCreated: false, rolePeriodCreated: false })),
         }),
       ],
-      tenantPermission: 'allowed',
     });
 
     const result = yield* harness.runtime.runAction(request('exact-1'));

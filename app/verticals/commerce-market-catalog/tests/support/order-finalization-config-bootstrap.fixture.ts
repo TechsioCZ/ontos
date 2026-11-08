@@ -12,11 +12,14 @@ import {
   makeDatabaseIdentityEnrollmentLive,
 } from '@app/core-runtime';
 import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
+  TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
@@ -30,6 +33,7 @@ import {
   GatewayAssertionRedemptionLive,
 } from '../../api/auth/gateway-assertion-redemption.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { commerceMarketCatalogRegistration } from '../../vertical.registration.ts';
 import { createMarketAction } from '../../src/actions/create-market.action.ts';
 import { associateStorefrontAction } from '../../src/actions/associate-storefront.action.ts';
 import {
@@ -87,10 +91,18 @@ const main = Effect.scoped(
     const states = TenantModuleStateServiceLive.pipe(Layer.provide(persistence));
     const gate = ModuleStateGateLive.pipe(Layer.provide(states));
     const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(gate));
-    const scopes = OperationalScopeResolverLive.pipe(Layer.provide(Layer.mergeAll(persistence, ContextAccessLive)));
-    const actions = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+    // The owner's own access decision seam, composed exactly as the owner API composes it.
+    const access = AccessDecisionLive.pipe(
+      Layer.provideMerge(AccessEnforcementPortsLive),
+      Layer.provide(TenantIntentLoaderLive),
+      Layer.provide(persistence),
+    );
+    const scopes = OperationalScopeResolverLive.pipe(
+      Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, access)),
+    );
+    const actions = makeActionRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogRegistration).pipe(
       Layer.provide(
-        Layer.mergeAll(ActionRepositoryLive, ActionPermissionLive, gate, gateway, scopes, ContextAccessLive),
+        Layer.mergeAll(ActionRepositoryLive, ActionPermissionLive, gate, gateway, scopes, ContextAccessLive, access),
       ),
       Layer.provide(persistence),
       Layer.provide(ActionPrincipalVerifierLive),

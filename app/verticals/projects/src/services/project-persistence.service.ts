@@ -35,9 +35,10 @@ export interface CreateProjectValues {
   readonly prefix: string;
   readonly shortText: null | string;
 }
+/** The values an update may write. The owner column is not one of them: reassignment is its own
+ * capability (O10), so the update statement never names `ownerPrincipalId`. */
 export interface UpdateProjectValues {
   readonly name: string;
-  readonly owner: EligibleProjectOwner;
   readonly projectId: string;
   readonly shortText: null | string;
 }
@@ -88,11 +89,10 @@ const projectDto = (row: ProjectRecord): Project => ({
 const hierarchyConflict = (reason: string) =>
   new ProjectHierarchyConflict({ code: 'project_hierarchy_conflict', reason });
 
-export const isProjectDescendant = (
+export const projectDescendantIds = (
   hierarchy: readonly Readonly<{ parentProjectId: null | string; projectId: string }>[],
   projectId: string,
-  candidateId: string,
-): boolean => {
+): readonly string[] => {
   const children = new Map<string, string[]>();
   for (const row of hierarchy) {
     if (row.parentProjectId === null) {
@@ -109,14 +109,17 @@ export const isProjectDescendant = (
     if (descendant === undefined || descendants.has(descendant)) {
       continue;
     }
-    if (descendant === candidateId) {
-      return true;
-    }
     descendants.add(descendant);
     pending.push(...(children.get(descendant) ?? []));
   }
-  return false;
+  return [...descendants];
 };
+
+export const isProjectDescendant = (
+  hierarchy: readonly Readonly<{ parentProjectId: null | string; projectId: string }>[],
+  projectId: string,
+  candidateId: string,
+): boolean => projectDescendantIds(hierarchy, projectId).includes(candidateId);
 
 export const makeProjectPersistenceService = (transaction: ProjectsTransaction, evidence: ProjectOperationEvidence) => {
   const { tenantId } = evidence;
@@ -180,7 +183,6 @@ export const makeProjectPersistenceService = (transaction: ProjectsTransaction, 
         .update(projects)
         .set({
           name: values.name,
-          ownerPrincipalId: values.owner.principalId,
           shortText: values.shortText,
           updatedAt: now,
         })

@@ -1,7 +1,8 @@
 import { createRequire } from 'node:module';
+import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices, NodeSocketServer } from '@effect/platform-node';
-import { Deferred, Duration, Effect, FileSystem, Layer, Queue, Ref, Schema, Stream } from 'effect';
+import { Deferred, Duration, Effect, FileSystem, Layer, Path, Queue, Ref, Schema, Stream } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { Socket } from 'effect/socket';
 import { FetchHttpClient } from 'effect/http';
@@ -14,12 +15,18 @@ import {
   MarketRevisionNativeReadySchema,
   MarketRevisionNativeResponseSchema,
 } from '../support/market-revision-native-protocol.ts';
-import type { MarketRevisionNativeIssueSchema } from '../support/market-revision-native-protocol.ts';
+import type {
+  MarketRevisionNativeCustomerContextState,
+  MarketRevisionNativeIssueSchema,
+} from '../support/market-revision-native-protocol.ts';
 import type { CreateMarketResultSchema } from '../../shared/action-contracts.ts';
 
 class MarketRevisionNativeLauncherError extends Schema.TaggedError<MarketRevisionNativeLauncherError>()(
   'MarketRevisionNativeLauncherError',
-  { stage: Schema.optionalKey(MarketRevisionNativeIssueFailureStageSchema) },
+  {
+    message: Schema.optionalKey(Schema.String),
+    stage: Schema.optionalKey(MarketRevisionNativeIssueFailureStageSchema),
+  },
 ) {}
 const unavailable = () => new MarketRevisionNativeLauncherError({});
 export const marketRevisionNativeServices = NodeChildProcessSpawner.layer.pipe(
@@ -117,11 +124,37 @@ export const openMarketRevisionNativeChannel = Effect.fn('MarketRevisionNativeTr
 export const bundleMarketRevisionNativeChild = Effect.fn('MarketRevisionNativeLauncher.bundle')(
   function* bundleMarketRevisionNativeChild() {
     const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const directory = fileURLToPath(new URL('../../', import.meta.url));
+    const workspaceRoot = path.resolve(directory, '../..');
+    const resolveOwnerBuildIdentity = Effect.fn('MarketRevisionNativeLauncher.ownerBuildIdentity')(
+      function* ownerBuildIdentity(ownerDirectory: string) {
+        const generated = yield* Schema.decodeUnknownEffect(
+          Schema.fromJsonString(
+            Schema.Struct({
+              deliveryUnit: Schema.Struct({
+                buildMarker: Schema.String,
+                unitId: Schema.String.pipe(Schema.brand('UltramodernDeliveryUnitId')),
+              }),
+            }),
+          ),
+        )(yield* fs.readFileString(path.join(ownerDirectory, 'shared/ultramodern-build.json')));
+        return yield* Effect.try({
+          catch: (cause) => Object.defineProperty(unavailable(), 'cause', { value: cause }),
+          try: () =>
+            resolveUltramodernReleaseIdentity({
+              generationBuildMarker: generated.deliveryUnit.buildMarker,
+              unitId: generated.deliveryUnit.unitId,
+              workspaceRoot,
+            }),
+        });
+      },
+    );
     const cache = `${directory}/.cache/ontos-1250`;
     yield* fs.makeDirectory(cache, { recursive: true });
     const temporary = yield* fs.makeTempDirectoryScoped({ directory: cache, prefix: 'market-' });
     const aliases: string[] = [];
+    const publishedOwners: { readonly artifact: string; readonly specifier: string }[] = [];
     const runBundle = Effect.fn('MarketRevisionNativeLauncher.bundleEntry')(function* runBundle(
       args: readonly string[],
     ) {
@@ -130,23 +163,32 @@ export const bundleMarketRevisionNativeChild = Effect.fn('MarketRevisionNativeLa
         stderr: 'pipe',
         stdout: 'pipe',
       });
-      const [code] = yield* Effect.all(
-        [bundle.exitCode, Stream.runDrain(bundle.stderr), Stream.runDrain(bundle.stdout)],
+      const [code, diagnostics] = yield* Effect.all(
+        [bundle.exitCode, Stream.mkString(bundle.stderr.pipe(Stream.decodeText())), Stream.runDrain(bundle.stdout)],
         { concurrency: 3 },
       );
       if (code !== 0) {
-        return yield* unavailable();
+        return yield* new MarketRevisionNativeLauncherError({
+          message: `Native test bundle failed for ${args[0]}: ${diagnostics}`,
+        });
       }
       return yield* Effect.void;
     });
-    for (const [index, specifier] of [
-      '@app/shell-super-app/testing/api-key-gateway-native',
-      '@app/storefront-registry/testing/current-storefront-native',
-    ].entries()) {
+    for (const [index, [specifier, relativeDirectory]] of (
+      [
+        ['@app/shell-super-app/testing/api-key-gateway-native', '../../apps/shell-super-app'],
+        ['@app/storefront-registry/testing/current-storefront-native', '../storefront-registry'],
+        ['@app/commerce-customer-context/testing/market-retirement-native', '../commerce-customer-context'],
+      ] as const
+    ).entries()) {
+      const identity = yield* resolveOwnerBuildIdentity(path.resolve(directory, relativeDirectory));
       const originalUrl = pathToFileURL(
         createRequire(new URL('../../package.json', import.meta.url)).resolve(specifier),
       ).href;
-      const output = `${temporary}/public-owner-${index}.mjs`;
+      const ownerCache = fileURLToPath(new URL('../../node_modules/.cache/ontos-1094-exports/', originalUrl));
+      yield* fs.makeDirectory(ownerCache, { recursive: true });
+      const ownerTemporary = yield* fs.makeTempDirectoryScoped({ directory: ownerCache, prefix: 'native-' });
+      const output = `${ownerTemporary}/public-owner-${index}.mjs`;
       const originalUrlJson = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(originalUrl);
       yield* runBundle([
         fileURLToPath(originalUrl),
@@ -155,11 +197,15 @@ export const bundleMarketRevisionNativeChild = Effect.fn('MarketRevisionNativeLa
         '--format=esm',
         '--packages=external',
         `--define:import.meta.url=${originalUrlJson}`,
+        `--define:ULTRAMODERN_BUILD_MARKER=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(identity.buildMarker)}`,
+        `--define:ULTRAMODERN_SOURCE_REVISION=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(identity.sourceRevision)}`,
         `--outfile=${output}`,
       ]);
-      aliases.push(`--alias:${specifier}=${output}`);
+      aliases.push(`--alias:${specifier}=${output}`, `--external:${output}`);
+      publishedOwners.push({ artifact: output, specifier });
     }
     const artifact = `${temporary}/owner.mjs`;
+    const identity = yield* resolveOwnerBuildIdentity(directory);
     yield* runBundle([
       'tests/support/market-revision-native-child.ts',
       '--bundle',
@@ -167,20 +213,27 @@ export const bundleMarketRevisionNativeChild = Effect.fn('MarketRevisionNativeLa
       '--format=esm',
       '--packages=external',
       ...aliases,
+      `--define:ULTRAMODERN_BUILD_MARKER=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(identity.buildMarker)}`,
+      `--define:ULTRAMODERN_SOURCE_REVISION=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(identity.sourceRevision)}`,
       `--outfile=${artifact}`,
     ]);
-    return { artifact, directory };
+    return { artifact, directory, publishedOwners };
   },
 );
 
 /** Published launcher only: producer, database, runtime and HTTP verifier remain in the Market owner process. */
 export const makeMarketRevisionNativeFixture = Effect.fn('MarketRevisionNativeLauncher.make')(
-  function* makeMarketRevisionNativeFixture() {
+  function* makeMarketRevisionNativeFixture(
+    options: { readonly retirementManagementExecutor?: 'allowed' | 'denied' } = {},
+  ) {
     const { artifact, directory } = yield* bundleMarketRevisionNativeChild();
     const channel = yield* openMarketRevisionNativeChannel();
     const child = yield* ChildProcess.make(process.execPath, [artifact], {
       cwd: directory,
-      env: { [marketRevisionNativeSocketEnvironment]: channel.socketPath },
+      env: {
+        [marketRevisionNativeSocketEnvironment]: channel.socketPath,
+        ONTOS_NATIVE_MARKET_MANAGEMENT_EXECUTOR: options.retirementManagementExecutor ?? 'allowed',
+      },
       extendEnv: true,
       stderr: 'pipe',
       stdin: 'ignore',
@@ -237,6 +290,13 @@ export const makeMarketRevisionNativeFixture = Effect.fn('MarketRevisionNativeLa
     let original: typeof CreateMarketResultSchema.Type | undefined;
     return Object.freeze({
       ...ready,
+      closeStorefront: Effect.fn('MarketRevisionNativeLauncher.closeStorefront')(function* closeStorefront() {
+        const response = yield* exchange({ type: 'CLOSE_STOREFRONT' });
+        if (response.type !== 'STOREFRONT_CLOSED') {
+          return yield* unavailable();
+        }
+        return yield* Effect.void;
+      }),
       createR1: Effect.fn('MarketRevisionNativeLauncher.createR1')(function* createR1() {
         const response = yield* exchange({ type: 'CREATE_R1' });
         if (response.type !== 'CREATED') {
@@ -244,6 +304,13 @@ export const makeMarketRevisionNativeFixture = Effect.fn('MarketRevisionNativeLa
         }
         original = response.result;
         return response.result;
+      }),
+      evidence: Effect.fn('MarketRevisionNativeLauncher.evidence')(function* evidence() {
+        const response = yield* exchange({ type: 'EVIDENCE' });
+        if (response.type !== 'EVIDENCE') {
+          return yield* unavailable();
+        }
+        return response;
       }),
       issue: Effect.fn('MarketRevisionNativeLauncher.issue')(function* issue(
         input: typeof MarketRevisionNativeIssueSchema.Type,
@@ -274,6 +341,15 @@ export const makeMarketRevisionNativeFixture = Effect.fn('MarketRevisionNativeLa
         }
         return response.result;
       }),
+      setCustomerContextState: Effect.fn('MarketRevisionNativeLauncher.setCustomerContextState')(
+        function* setCustomerContextState(state: MarketRevisionNativeCustomerContextState) {
+          const response = yield* exchange({ state, type: 'SET_CCC_STATE' });
+          if (response.type !== 'CCC_STATE_SET' || response.state !== state) {
+            return yield* unavailable();
+          }
+          return yield* Effect.void;
+        },
+      ),
     });
   },
 );

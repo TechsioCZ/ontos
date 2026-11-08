@@ -46,14 +46,17 @@ const CATALOG_COMMANDS: ReadonlySet<string> = new Set([
   'ArchiveDemoProduct',
   'BulkUpdateProducts',
   'ChangePrice',
-  'ConfigureMarket',
   'CreateProduct',
-  'RemoveMarket',
-  'SetMarketProductOffers',
-  'SetProductMarketOffer',
   'CreateCategory',
   'UpdateCategory',
   'UpdateProduct',
+]);
+
+const MARKET_COMMANDS: ReadonlySet<string> = new Set([
+  'ConfigureMarket',
+  'RemoveMarket',
+  'SetMarketProductOffers',
+  'SetProductMarketOffer',
 ]);
 
 const isRevertible = (command: AgentCommand): boolean =>
@@ -154,6 +157,7 @@ export const productStillInPlace = (command: AgentCommand, current?: AgentComman
 export interface MerchandiseRights {
   readonly canEditOrders?: boolean | undefined;
   readonly canManageCatalog?: boolean | undefined;
+  readonly canManageMarkets?: boolean | undefined;
   readonly canWrite: boolean;
 }
 
@@ -168,6 +172,9 @@ export const blockedReasonOf = (command: AgentCommand, rights?: MerchandiseRight
   }
   if (CATALOG_COMMANDS.has(tag) && rights.canManageCatalog === false) {
     return 'Změny katalogu a cen schvaluje jen člověk se správou katalogu.';
+  }
+  if (MARKET_COMMANDS.has(tag) && rights.canManageMarkets !== true) {
+    return 'Změny sortimentu a ceníku trhu schvaluje jen člověk se správou trhu.';
   }
   if (tag === 'EditOrder' && rights.canEditOrders === false) {
     return 'Úpravy objednávek schvaluje jen člověk s oprávněním k úpravám objednávek.';

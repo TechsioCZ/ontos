@@ -6,15 +6,10 @@ import {
   CustomerGroupMembersRequestSchema,
   CustomerGroupMembersResponseSchema,
 } from '../../shared/apis/customer-group-members.ts';
-import type {
-  CustomerGroupMembersRequest,
-  CustomerGroupMembersResponse,
-} from '../../shared/apis/customer-group-members.ts';
+import type { CustomerGroupMembersRequest } from '../../shared/apis/customer-group-members.ts';
 import {
   customerGroupReadServiceFactory,
   customerGroupReadUnavailable,
-  customerGroupResourceTarget,
-  customerProfileResourceTarget,
   requireCustomerGroupReadLegalEntityId,
   requireCustomerGroupTenant,
   unwrapCustomerGroupLookup,
@@ -23,7 +18,7 @@ import type { CustomerGroupReadServices } from './customer-group-read-support.ts
 
 const customerGroupMembersEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'customer.group.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.customer-group-members',
   moduleKey: 'commerce.customer-context',
   role: 'api',
@@ -53,6 +48,14 @@ const handleCustomerGroupMembers = Effect.fn('CustomerGroupMembersRead.handle')(
 
 export const customerGroupMembersRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.customer-group.list-members',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'customer-groups', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'list',
     entrypoint: customerGroupMembersEntrypoint,
     evidencePolicy: {
@@ -62,7 +65,6 @@ export const customerGroupMembersRead = defineRead(
     inputSchema: CustomerGroupMembersRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: 'commerce.customer-context',
-    permissionTarget: 'resource',
     policies: [],
     readKey: 'commerce.customer-context.api.customer-group-members',
     resultSchema: CustomerGroupMembersResponseSchema,
@@ -70,6 +72,4 @@ export const customerGroupMembersRead = defineRead(
   },
   { load: handleCustomerGroupMembers },
   customerGroupReadServiceFactory,
-  ({ groupRef }: CustomerGroupMembersRequest) => customerGroupResourceTarget(groupRef),
-  (result: CustomerGroupMembersResponse) => result.items.map(({ profile }) => customerProfileResourceTarget(profile)),
 );

@@ -1,3 +1,4 @@
+import { SHARED_RUNTIME_IDENTITY, DatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { randomUUID } from 'node:crypto';
 
 import { memoryAdapter } from 'better-auth/adapters/memory';
@@ -6,56 +7,13 @@ import { eq, inArray, sql } from 'drizzle-orm';
 import { Cause, Context, DateTime, Deferred, Effect, Exit, Fiber, Layer, Redacted } from 'effect';
 import { describe, expect, it, rstest } from 'effect-rstest';
 
-import { DatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
-import { parseStageAccountsFile } from '@app/core-runtime/install/stage-accounts-file';
-
 import { loadAuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase, AuthDatabaseFromDatabaseConfigLive, makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { OAuthCredentialsLive } from '../../api/auth/db/oauth-credentials-live.ts';
 import { account, session, user } from '../../api/auth/db/schema.ts';
-import {
-  bootstrapStageAccounts,
-  ensureStageAccountAuthUser,
-} from '../../api/auth/stage-accounts-bootstrap-runtime-infrastructure.ts';
+import { ensureStageAccountAuthUser } from '../../api/auth/stage-accounts-bootstrap-runtime-infrastructure.ts';
 import { evaluateLiveChecks } from '../../api/oauth-connections/connection-service.ts';
 import { loadUserAccount } from '../../api/oauth-connections/grant-store.ts';
-
-/** A one-account stage accounts file with fresh identifiers, as the operator would write it. */
-const oneAccountFileSource = (): string =>
-  JSON.stringify({
-    actionAuthorization: { actionAssertions: [], roleGrants: [] },
-    retiredAccountEmails: [],
-    retiredTenants: [],
-    schemaVersion: 4,
-    scopedRoles: [],
-    tenants: [
-      {
-        accounts: [
-          {
-            affiliation: 'employee',
-            authBindingId: randomUUID(),
-            displayName: 'First',
-            email: `stage-first-${randomUUID()}@example.test`,
-            grants: { explicitActions: [], tenantRelations: [] },
-            password: randomUUID(),
-            principalId: randomUUID(),
-          },
-        ],
-        defaultLocale: 'cs',
-        displayName: 'Tenant A',
-        legalEntity: {
-          legalEntityId: randomUUID(),
-          legalName: 'Tenant A Legal',
-          registrationCountry: 'CZ',
-          registrationNumber: 'FIXTURE-A',
-        },
-        moduleKey: 'party.registry',
-        moduleStateId: randomUUID(),
-        slug: 'tenant-a',
-        tenantId: randomUUID(),
-      },
-    ],
-  });
 
 describe('stage-accounts-bootstrap', () => {
   it.live(
@@ -249,15 +207,15 @@ describe('stage-accounts-bootstrap', () => {
                 databaseClosed = true;
               }),
             );
-            const connections = yield* loadDatabaseConnectionPair();
-            const database = yield* makeAuthDatabase(connections.admin);
-            const accountsFile = yield* parseStageAccountsFile({ mode: 0o600, source: oneAccountFileSource() });
-            return yield* bootstrapStageAccounts({
-              accountsFile,
-              authBaseUrl: configuration.baseUrl,
-              authSecret: configuration.secret,
-              databaseAdminUrl: connections.admin.connectionString,
-            }).pipe(
+            const database = yield* makeAuthDatabase({ ...configuration, expectedRole: SHARED_RUNTIME_IDENTITY.role });
+            return yield* ensureStageAccountAuthUser(
+              { authBaseUrl: configuration.baseUrl, authSecret: configuration.secret },
+              {
+                displayName: 'First',
+                email: `stage-first-${randomUUID()}@example.test`,
+                password: Redacted.make(randomUUID()),
+              },
+            ).pipe(
               Effect.provideService(AuthDatabase, {
                 adapter: (options) => {
                   const adapter = sdkAdapter(options);

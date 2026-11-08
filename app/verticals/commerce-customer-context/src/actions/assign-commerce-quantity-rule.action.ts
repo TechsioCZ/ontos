@@ -118,6 +118,14 @@ const handleAssignCommerceQuantityRule = Effect.fn('AssignCommerceQuantityRuleAc
 
 export const assignCommerceQuantityRuleAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.commerce-quantity-rule.assign',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'commerce-policy', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.assign-commerce-quantity-rule.access.v1',
@@ -129,7 +137,7 @@ export const assignCommerceQuantityRuleAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.assign-commerce-quantity-rule',
       moduleKey: 'commerce.customer-context',
       role: 'action',
@@ -143,7 +151,7 @@ export const assignCommerceQuantityRuleAction = defineAction(
     schemaVersion: '2',
   },
   handleAssignCommerceQuantityRule,
-  customerCommercePolicyAdministrationServiceFactory,
+  (transaction, scope) => customerCommercePolicyAdministrationServiceFactory(transaction, scope),
 );
 
 // <generated-outbox-message-exports>

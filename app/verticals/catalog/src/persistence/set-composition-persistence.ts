@@ -87,6 +87,13 @@ const PublishSetCompositionOutcomeSchema = Schema.Union([
 ]);
 type PublishSetCompositionOutcome = typeof PublishSetCompositionOutcomeSchema.Type;
 
+type SetCompositionTargetInspection =
+  | { readonly outcome: PublishSetCompositionOutcome }
+  | {
+      readonly classification: ReturnType<typeof classifySetCompositionChange> | undefined;
+      readonly existing: typeof setCompositions.$inferSelect | undefined;
+    };
+
 interface StoredSetCompositionRevision {
   readonly effectiveFrom: Date;
   readonly effectiveTo?: Date;
@@ -322,7 +329,7 @@ export const setCompositionPersistenceForScope = (
 
   const inspectTarget = Effect.fn('SetCompositionPersistence.inspectTarget')(function* inspectTarget(
     input: PublishSetCompositionInput,
-  ) {
+  ): Effect.fn.Return<SetCompositionTargetInspection, SetCompositionPersistenceUnavailable> {
     const { revision } = input;
     const compositionId = revision.reference.resourceRef.resourceId;
     const productId = revision.productRef.resourceId;

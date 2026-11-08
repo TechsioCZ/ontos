@@ -1,5 +1,5 @@
 import { CoreSearchProjectionDocumentSchema, CoreSearchProjectionInvalid } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Struct } from 'effect';
 import { PropertyStateSchema } from '../../shared/apis/records.ts';
 import type { PropertyState } from '../../shared/apis/records.ts';
 import { SelectedLegalEntityIdSchema } from '../../shared/domain/search.ts';
@@ -21,13 +21,20 @@ export const invalidSearchSource = (cause?: unknown) =>
     reason: 'Property search requires a consistent owner and company snapshot',
   });
 
-const searchSourceSnapshotSchema = Schema.Struct({
+const currentSearchSourceSchema = Schema.Struct({
   companies: Schema.Array(Schema.Struct({ legalEntityId: SelectedLegalEntityIdSchema, state: PropertyStateSchema })),
-  projectionVersion: CoreSearchProjectionDocumentSchema.fields.projectionVersion,
   tenantId: AssetRefSchema.fields.tenantId,
 });
 
-const companyDocuments = (company: SearchSourceCompany, snapshot: SearchSourceSnapshot) => {
+const searchSourceSnapshotSchema = Schema.Struct({
+  ...currentSearchSourceSchema.fields,
+  projectionVersion: CoreSearchProjectionDocumentSchema.fields.projectionVersion,
+});
+const currentSearchDocumentSchema = Schema.Struct(
+  Struct.omit(CoreSearchProjectionDocumentSchema.fields, ['projectionVersion']),
+);
+
+const companyDocuments = (company: SearchSourceCompany) => {
   const { legalEntityId, state } = company;
   const properties = state.properties.filter(
     (property) => property.archive === undefined && property.lifecycleState !== 'DISPOSED',
@@ -44,7 +51,6 @@ const companyDocuments = (company: SearchSourceCompany, snapshot: SearchSourceSn
     archived: false,
     facets: [],
     metadata: [],
-    projectionVersion: snapshot.projectionVersion,
     selectedLegalEntityId: legalEntityId,
   };
   return [
@@ -67,14 +73,7 @@ const companyDocuments = (company: SearchSourceCompany, snapshot: SearchSourceSn
             {
               ...common,
               ref: unit.unitRef,
-              searchableText: [
-                unit.name,
-                unit.code,
-                property.name,
-                property.code,
-                property.address,
-                ...(unit.unitKind === null ? [] : [unit.unitKind]),
-              ],
+              searchableText: [unit.name, unit.code, ...(unit.unitKind === null ? [] : [unit.unitKind])],
               title: unit.name,
             },
           ];
@@ -95,8 +94,6 @@ const companyDocuments = (company: SearchSourceCompany, snapshot: SearchSourceSn
                 asset.category,
                 asset.code,
                 ...(asset.serialNumber === null ? [] : [asset.serialNumber]),
-                property.name,
-                property.code,
               ],
               title: asset.name,
             },
@@ -135,7 +132,7 @@ const companyMatchesScope = ({ legalEntityId, state }: SearchSourceCompany, tena
   );
 };
 
-const snapshotMatchesScope = (snapshot: SearchSourceSnapshot) => {
+const snapshotMatchesScope = (snapshot: Omit<SearchSourceSnapshot, 'projectionVersion'>) => {
   const identities = snapshot.companies.flatMap(({ state }) => [
     ...state.properties.map(({ propertyRef }) => propertyRef),
     ...state.units.map(({ unitRef }) => unitRef),
@@ -148,17 +145,30 @@ const snapshotMatchesScope = (snapshot: SearchSourceSnapshot) => {
   );
 };
 
-/** Only public register labels belong in search, never notes, people or archive evidence. */
+/** Current canonical owner evidence, shared by interactive search and versioned projection publication. */
+export const buildCurrentSearchDocuments = Effect.fn('PropertySearch.buildCurrentDocuments')(
+  function* buildCurrentDocuments(input: Omit<SearchSourceSnapshot, 'projectionVersion'>) {
+    const snapshot = yield* Schema.decodeUnknownEffect(currentSearchSourceSchema)(input).pipe(
+      Effect.mapError(invalidSearchSource),
+    );
+    if (!snapshotMatchesScope(snapshot)) {
+      return yield* invalidSearchSource();
+    }
+    return yield* Schema.decodeUnknownEffect(Schema.Array(currentSearchDocumentSchema))(
+      snapshot.companies.flatMap(companyDocuments),
+    ).pipe(Effect.mapError(invalidSearchSource));
+  },
+);
+
+/** Only public register labels belong in the versioned index, never notes, people or archive evidence. */
 export const buildSearchDocuments = Effect.fn('PropertySearch.buildDocuments')(function* buildDocuments(
   input: SearchSourceSnapshot,
 ) {
   const snapshot = yield* Schema.decodeUnknownEffect(searchSourceSnapshotSchema)(input).pipe(
     Effect.mapError(invalidSearchSource),
   );
-  if (!snapshotMatchesScope(snapshot)) {
-    return yield* invalidSearchSource();
-  }
+  const documents = yield* buildCurrentSearchDocuments(snapshot);
   return yield* Schema.decodeUnknownEffect(Schema.Array(CoreSearchProjectionDocumentSchema))(
-    snapshot.companies.flatMap((company) => companyDocuments(company, snapshot)),
+    documents.map((document) => ({ ...document, projectionVersion: snapshot.projectionVersion })),
   ).pipe(Effect.mapError(invalidSearchSource));
 });

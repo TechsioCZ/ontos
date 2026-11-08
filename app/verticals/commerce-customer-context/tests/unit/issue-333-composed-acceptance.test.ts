@@ -1,7 +1,9 @@
 import { CurrentPaymentTermsResponseSchema } from '@app/payment-term-catalog-contracts';
 import type { PaymentTermDefinition } from '@app/payment-term-catalog-contracts';
 import { CurrentSupportedCurrenciesResponseSchema } from '@app/pricing-contracts';
-import { Effect, Layer, Redacted, Schema } from 'effect';
+import type { GatewayDelegationRequest } from '@app/shared-contracts/gateway-context-server';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
+import { Effect, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -9,8 +11,6 @@ import {
   validateCzechLaunchActivation,
   validateCzechLaunchFixtureContracts,
 } from '../../../../scripts/czech-launch-commerce-fixture.mts';
-import { CatalogQuantityGatewayCredentialService } from '../../shared/domain/catalog-quantity-gateway-credential.ts';
-import { CommerceQuantityCatalogLineRequestSchema } from '../../shared/domain/commerce-quantity-catalog-port.ts';
 import {
   CustomerCommercePolicyChangedTagSchema,
   CustomerCommercePolicyTrustedActionContextSchema,
@@ -29,15 +29,17 @@ import type {
   PaymentTermPolicyRevision,
   PurchaseCurrencyPolicyRevision,
 } from '../../shared/domain/customer-commerce-policy.ts';
-import { PaymentTermCatalogGatewayCredentialService } from '../../shared/domain/payment-term-catalog-gateway-credential.ts';
 import { unavailablePurchaseCurrencyPurchasingContextPort } from '../../shared/domain/purchase-currency-context-port.ts';
 import { PurchaseCurrencyDependencyUnavailable } from '../../shared/domain/purchase-currency-dependency.ts';
-import { PurchaseCurrencyPricingGatewayCredentialService } from '../../shared/domain/purchase-currency-pricing-gateway-credential.ts';
-import { catalogQuantityPortFromEnvironment } from '../../src/integrations/catalog-quantity.ts';
 import { customerCommercePaymentTermsPolicyResolver } from '../../src/integrations/customer-commerce-payment-terms-policy.ts';
 import { paymentTermCatalogPortFromEnvironment } from '../../src/integrations/payment-term-catalog.ts';
 import { purchaseCurrencyPolicyPortForRepository } from '../../src/integrations/purchase-currency-policy.ts';
 import { purchaseCurrencyPricingPortFromEnvironment } from '../../src/integrations/purchase-currency-pricing.ts';
+import {
+  fakeDelegatedAcquire,
+  issuedDelegatedContext,
+  originatorSubject,
+} from '../support/delegated-gateway-acquisition.fixture.ts';
 
 const effectiveAt = '2026-10-01T00:00:00.000Z';
 const fixtureScope = CZECH_LAUNCH_COMMERCE_FIXTURE.scope;
@@ -278,7 +280,7 @@ it.effect('proves #333 Current Currency and Payment Term owner ports independent
 );
 
 it.effect('uses the Payment Term production adapter with the exact owner reference and semantic revision', () => {
-  const gatewayRequests: unknown[] = [];
+  const gatewayRequests: GatewayDelegationRequest[] = [];
   const ownerCalls: unknown[] = [];
   const ownerResponse = Schema.decodeUnknownSync(CurrentPaymentTermsResponseSchema)({
     ...CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts.paymentTermCatalog,
@@ -297,12 +299,16 @@ it.effect('uses the Payment Term production adapter with the exact owner referen
         compositionRevision: 'a'.repeat(64),
         legalEntityId: fixtureScope.sellingLegalEntityId,
         requestCorrelation: 'czech-launch-payment-term',
-        tenantId: fixtureScope.tenantId,
+        subject: originatorSubject('a'.repeat(64), fixtureScope.tenantId),
       },
       (payload, credential, correlation) => {
         ownerCalls.push({ correlation, credential: Redacted.value(credential), payload });
         return Effect.succeed(ownerResponse);
       },
+      fakeDelegatedAcquire(
+        issuedDelegatedContext({ compositionRevision: 'a'.repeat(64), token: 'payment-term-owner-issued' }),
+        gatewayRequests,
+      ),
     );
     const definitions = yield* port.resolveDefinitions([
       {
@@ -331,119 +337,17 @@ it.effect('uses the Payment Term production adapter with the exact owner referen
     expect(gatewayRequests).toEqual([
       {
         audience: 'payment-term-catalog',
-        compositionRevision: 'a'.repeat(64),
-        legalEntityId: fixtureScope.sellingLegalEntityId,
+        legalEntityScope: 'subject',
         requestCorrelation: 'czech-launch-payment-term',
-        tenantId: fixtureScope.tenantId,
+        subject: originatorSubject('a'.repeat(64), fixtureScope.tenantId),
       },
     ]);
     expect(definitions).toEqual([currentPaymentTerm satisfies PaymentTermDefinition]);
-  }).pipe(
-    Effect.provide(
-      Layer.succeed(PaymentTermCatalogGatewayCredentialService, {
-        issue: (input) =>
-          Effect.sync(() => {
-            gatewayRequests.push(input);
-            return {
-              baseUrl: new URL('https://shell.example.test/owner-api'),
-              credential: Redacted.make('Bearer payment-term-owner-issued'),
-            };
-          }),
-      }),
-    ),
-  );
-});
-
-it.effect('uses the Catalog production adapter and preserves owner quantity evidence and revisions', () => {
-  const gatewayRequests: unknown[] = [];
-  const ownerCalls: unknown[] = [];
-
-  return Effect.gen(function* catalogQuantityOwnerAdapter() {
-    const catalogOwnerResponse = yield* validateCzechLaunchActivation(activationOwnerFacts).pipe(
-      Effect.flatMap(({ catalogQuantity }) =>
-        catalogQuantity.status === 'READY'
-          ? Effect.succeed(catalogQuantity)
-          : Effect.die('Validated Czech Launch Catalog Quantity evidence must be READY'),
-      ),
-    );
-    const catalogLine = Schema.decodeUnknownSync(CommerceQuantityCatalogLineRequestSchema)({
-      lineId: 'czech-launch-line-1',
-      requestedQuantity: catalogOwnerResponse.quantity.requested,
-      selection: catalogOwnerResponse.selection,
-    });
-    const port = yield* catalogQuantityPortFromEnvironment(
-      {
-        compositionRevision: 'a'.repeat(64),
-        legalEntityId: fixtureScope.sellingLegalEntityId,
-        requestCorrelation: 'czech-launch-catalog-quantity',
-      },
-      (payload, credential, correlation, options) => {
-        ownerCalls.push({ correlation, credential: Redacted.value(credential), options, payload });
-        return Effect.succeed(catalogOwnerResponse);
-      },
-    );
-    const lines = yield* port.resolveCurrentSelections({
-      lines: [catalogLine],
-      observedAt: effectiveAt,
-      tenantId: fixtureScope.tenantId,
-    });
-
-    expect(ownerCalls).toEqual([
-      {
-        correlation: 'czech-launch-catalog-quantity',
-        credential: 'Bearer catalog-owner-issued',
-        options: { baseUrl: new URL('https://shell.example.test/owner-api'), compositionRevision: 'a'.repeat(64) },
-        payload: {
-          amount: catalogOwnerResponse.quantity.requested,
-          purpose: 'PURCHASE_ACCEPTANCE',
-          selection: catalogOwnerResponse.selection,
-        },
-      },
-    ]);
-    expect(gatewayRequests).toEqual([
-      {
-        audience: 'catalog',
-        compositionRevision: 'a'.repeat(64),
-        legalEntityId: fixtureScope.sellingLegalEntityId,
-        requestCorrelation: 'czech-launch-catalog-quantity',
-        tenantId: fixtureScope.tenantId,
-      },
-    ]);
-    expect(lines).toEqual([
-      {
-        lineId: 'czech-launch-line-1',
-        selection: {
-          basis: catalogOwnerResponse.quantityBasis,
-          catalogSelection: catalogOwnerResponse.selection,
-          completeness: catalogOwnerResponse.completeness,
-          divisible: catalogOwnerResponse.divisible,
-          equivalentSelectionKey: catalogOwnerResponse.equivalentSelectionKey,
-          hierarchyRevision: catalogOwnerResponse.hierarchyRevision,
-          normalizedQuantity: catalogOwnerResponse.quantity.resulting,
-          ownerRevision: catalogOwnerResponse.ownerRevision,
-          physicalMultiple: catalogOwnerResponse.quantity.step,
-          requestedQuantity: catalogOwnerResponse.quantity.requested,
-        },
-      },
-    ]);
-  }).pipe(
-    Effect.provide(
-      Layer.succeed(CatalogQuantityGatewayCredentialService, {
-        issue: (input) =>
-          Effect.sync(() => {
-            gatewayRequests.push(input);
-            return {
-              baseUrl: new URL('https://shell.example.test/owner-api'),
-              credential: Redacted.make('Bearer catalog-owner-issued'),
-            };
-          }),
-      }),
-    ),
-  );
+  }).pipe(Effect.provide(nodeCryptoLayer));
 });
 
 it.effect('uses the Pricing production adapter with the exact purchasing context and owner revision', () => {
-  const gatewayRequests: unknown[] = [];
+  const gatewayRequests: GatewayDelegationRequest[] = [];
   const ownerCalls: unknown[] = [];
   const pricingOwnerResponse = Schema.decodeUnknownSync(CurrentSupportedCurrenciesResponseSchema)(
     activationOwnerFacts.pricingCurrencies,
@@ -463,14 +367,17 @@ it.effect('uses the Pricing production adapter with the exact purchasing context
   return Effect.gen(function* pricingOwnerAdapter() {
     const port = yield* purchaseCurrencyPricingPortFromEnvironment(
       {
-        compositionRevision: 'a'.repeat(64),
-        legalEntityId: fixtureScope.sellingLegalEntityId,
         requestCorrelation: 'czech-launch-pricing',
+        subject: originatorSubject('a'.repeat(64), purchasingContext.tenantId),
       },
       (payload, credential, correlation, options) => {
         ownerCalls.push({ correlation, credential: Redacted.value(credential), options, payload });
         return Effect.succeed(pricingOwnerResponse);
       },
+      fakeDelegatedAcquire(
+        issuedDelegatedContext({ compositionRevision: 'a'.repeat(64), token: 'pricing-owner-issued' }),
+        gatewayRequests,
+      ),
     );
     const pricing = yield* port.resolveCurrent({
       effectiveAt,
@@ -491,24 +398,11 @@ it.effect('uses the Pricing production adapter with the exact purchasing context
     expect(gatewayRequests).toEqual([
       {
         audience: 'pricing',
-        compositionRevision: 'a'.repeat(64),
+        legalEntityScope: 'tenant',
         requestCorrelation: 'czech-launch-pricing',
-        tenantId: purchasingContext.tenantId,
+        subject: originatorSubject('a'.repeat(64), purchasingContext.tenantId),
       },
     ]);
     expect(pricing).toEqual(expectedPricingSupport);
-  }).pipe(
-    Effect.provide(
-      Layer.succeed(PurchaseCurrencyPricingGatewayCredentialService, {
-        issue: (input) =>
-          Effect.sync(() => {
-            gatewayRequests.push(input);
-            return {
-              baseUrl: new URL('https://shell.example.test/owner-api'),
-              credential: Redacted.make('Bearer pricing-owner-issued'),
-            };
-          }),
-      }),
-    ),
-  );
+  }).pipe(Effect.provide(nodeCryptoLayer));
 });

@@ -6,16 +6,21 @@ import {
   prepareCatalogOpenSelectionPopulation,
   validatePreparedCatalogScope,
 } from '../services/catalog-open-selection-preflight.ts';
-import type { ActionHandlerContext, ActionServiceFactory, ActionServicePreflight } from '@app/core-runtime';
+import type {
+  ActionHandlerContext,
+  ActionServiceFactory,
+  ActionServicePreparationContext,
+  ActionServicePreflight,
+} from '@app/core-runtime';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Schema, Option } from 'effect';
 
 import {
   ReviseAttributeDefinitionPayloadSchema,
   ReviseAttributeDefinitionResultSchema,
 } from '../../shared/actions/revise-attribute-definition.ts';
 import type { ReviseAttributeDefinitionPayload } from '../../shared/actions/revise-attribute-definition.ts';
-import { cartOpenSelectionPopulationFromEnvironment } from '../../shared/domain/catalog-open-selection-population.ts';
+import { cartOpenSelectionPopulationForScope } from '../../shared/domain/catalog-open-selection-population.ts';
 import { ProductAuditEvidenceSchema } from '../../shared/domain/product.ts';
 import {
   AttributePersistenceConflict,
@@ -90,7 +95,8 @@ const reviseAttributeDefinitionActionServices = Effect.fn('ReviseAttributeDefini
       readonly scope: Parameters<ActionServiceFactory<never>>[1];
     },
   ) {
-    const openSelections = preparedPopulation ?? (yield* cartOpenSelectionPopulationFromEnvironment);
+    const openSelections =
+      preparedPopulation ?? Option.getOrUndefined(yield* cartOpenSelectionPopulationForScope(scope));
     const services = yield* attributePersistenceForScope(
       transaction,
       scope,
@@ -122,20 +128,43 @@ const reviseAttributeDefinitionActionServices = Effect.fn('ReviseAttributeDefini
   },
 );
 
-const prepareReviseAttributeDefinitionActionServices: ActionServicePreflight<
+const ActionDomainErrorSchema = Schema.Union([
+  AttributePersistenceConflict,
+  AttributePersistenceNotFound,
+  CatalogPersistenceUnavailable,
+]);
+
+const prepareReviseAttributeDefinitionActionServices = Effect.fn('prepareReviseAttributeDefinitionActionServices')(
+  function* prepareServices(
+    _payload: typeof ReviseAttributeDefinitionPayloadSchema.Type,
+    context: ActionServicePreparationContext,
+  ) {
+    const population = yield* prepareCatalogOpenSelectionPopulation(context);
+    return (
+      transaction: Parameters<ActionServiceFactory<never>>[0],
+      scope: Parameters<ActionServiceFactory<never>>[1],
+      revision: Parameters<ActionServiceFactory<never>>[2],
+    ) =>
+      validatePreparedCatalogScope(context, scope, revision).pipe(
+        Effect.flatMap(() => reviseAttributeDefinitionActionServices(transaction, { population, scope })),
+      );
+  },
+) satisfies ActionServicePreflight<
   typeof ReviseAttributeDefinitionPayloadSchema.Type,
   Effect.Success<ReturnType<typeof reviseAttributeDefinitionActionServices>>,
-  never
-> = Effect.fn('prepareReviseAttributeDefinitionActionServices')(function* prepareServices(_payload, context) {
-  const population = yield* prepareCatalogOpenSelectionPopulation(context);
-  return (transaction, scope, revision) =>
-    validatePreparedCatalogScope(context, scope, revision).pipe(
-      Effect.flatMap(() => reviseAttributeDefinitionActionServices(transaction, { population, scope })),
-    );
-});
+  typeof ActionDomainErrorSchema.Type
+>;
 
 export const reviseAttributeDefinitionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.attribute-definition.revise',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'attribute-definition', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.revise-attribute-definition.access.v1',
@@ -143,15 +172,11 @@ export const reviseAttributeDefinitionAction = defineAction(
     actionKey: ACTION_KEY,
     auditEvidenceSchema: ProductAuditEvidenceSchema,
     auditProfile: 'standard',
-    domainErrorSchema: Schema.Union([
-      AttributePersistenceConflict,
-      AttributePersistenceNotFound,
-      CatalogPersistenceUnavailable,
-    ]),
+    domainErrorSchema: ActionDomainErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: CATALOG_MODULE_KEY,
       role: 'action',

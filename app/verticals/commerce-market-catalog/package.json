@@ -15,7 +15,6 @@
     "./outbox/commerce-market-catalog-market-created-v1": "./shared/outbox/commerce-market-catalog-market-created-v1.ts",
     "./outbox/commerce-market-catalog-market-definition-revised-v1": "./shared/outbox/commerce-market-catalog-market-definition-revised-v1.ts",
     "./outbox/commerce-market-catalog-market-retired-v1": "./shared/outbox/commerce-market-catalog-market-retired-v1.ts",
-    "./outbox/commerce-market-catalog-market-retirement-requested-v1": "./shared/outbox/commerce-market-catalog-market-retirement-requested-v1.ts",
     "./outbox/commerce-market-catalog-market-suspended-v1": "./shared/outbox/commerce-market-catalog-market-suspended-v1.ts",
     "./outbox/commerce-market-catalog-search-rebuild-requested-v1": "./shared/outbox/commerce-market-catalog-search-rebuild-requested-v1.ts",
     "./outbox/commerce-market-catalog-storefront-associated-v1": "./shared/outbox/commerce-market-catalog-storefront-associated-v1.ts",
@@ -96,7 +95,9 @@
     "typescript": "7.0.2",
     "zephyr-rspack-plugin": "1.2.4",
     "@app/shell-super-app": "workspace:*",
-    "tsrs": "0.21.0-ts7.1.0-beta"
+    "@app/storefront-registry": "workspace:*",
+    "tsrs": "0.21.0-ts7.1.0-beta",
+    "@app/commerce-customer-context": "workspace:*"
   },
   "modernjs": {
     "preset": "presetUltramodern",

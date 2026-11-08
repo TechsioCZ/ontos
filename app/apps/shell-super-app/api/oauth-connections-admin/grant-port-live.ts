@@ -5,11 +5,12 @@ import {
   OAuthConnectionCompanies,
   OAuthGrantOwners,
   OAuthGrantRegistry,
+  OperationalScopeResolver,
   oauthConnectionRevocationNotesRead,
   ReadRuntime,
 } from '@app/core-runtime';
-import type { OperationalScopeRequest } from '@app/core-runtime';
-import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
+import type { OperationalScope, OperationalScopeRequest } from '@app/core-runtime';
+import { SubjectAccessInspection } from '@app/core-runtime/access/enforcement';
 import {
   ConnectionStatusSchema,
   ConnectionSummarySchema as AdminConnectionSummarySchema,
@@ -46,12 +47,12 @@ const isListed = Schema.is(ConnectionStatusSchema);
 const actingKey = (row: GrantRow): string =>
   `${row.tenantId}|${row.legalEntityId}|${row.actingKind}|${row.actingPrincipalId}`;
 
-/** Live limits of every distinct acting principal (per company) among the rows. */
-const limitsOf = (rows: readonly GrantRow[]) =>
+/** Live limits of every distinct acting principal (per company) among the rows, in the asker's own scope. */
+const limitsOf = (asker: OperationalScope, rows: readonly GrantRow[]) =>
   Effect.forEach(
     [...new Map(rows.map((row) => [actingKey(row), row])).values()],
     (row) =>
-      loadActingAuthority({
+      loadActingAuthority(asker, {
         actingKind: row.actingKind,
         actingPrincipalId: row.actingPrincipalId,
         legalEntityId: row.legalEntityId,
@@ -121,9 +122,15 @@ export const GrantAdminLive = (request: GrantAdminRequest) =>
     Effect.gen(function* grantAdminService() {
       const registry = yield* OAuthGrantRegistry;
       const reads = yield* ReadRuntime;
+      // The asker's own resolved trusted scope: every acting principal's authority is asked from it (O66).
+      const asker = yield* (yield* OperationalScopeResolver).resolve({
+        correlationId: request.transport.correlationId,
+        legalEntityScope: 'required',
+        principal: request.principal,
+      });
       const services = Context.make(OAuthGrantRegistry, registry).pipe(
-        Context.add(ActionAuthority, yield* ActionAuthority),
         Context.add(ContextAccess, yield* ContextAccess),
+        Context.add(SubjectAccessInspection, yield* SubjectAccessInspection),
         Context.add(OAuthAuthenticationAudit, yield* OAuthAuthenticationAudit),
         Context.add(OAuthConnectionCompanies, yield* OAuthConnectionCompanies),
         Context.add(OAuthCredentials, yield* OAuthCredentials),
@@ -163,7 +170,7 @@ export const GrantAdminLive = (request: GrantAdminRequest) =>
       ) {
         const rowsById = new Map(rows.map((row) => [row.grantId, row]));
         const listed = rows.filter((row) => isListed(row.status));
-        const limits = yield* limitsOf(listed);
+        const limits = yield* limitsOf(asker, listed);
         const notes = yield* revokeNotesOf(listed);
         const joined = yield* Effect.forEach(
           summaries,
@@ -182,7 +189,7 @@ export const GrantAdminLive = (request: GrantAdminRequest) =>
       const list = Effect.fn('GrantAdmin.list')(
         function* list(filter: GrantListFilter) {
           const rows = (yield* registry.listGrants(filter)).map(toGrantRow);
-          const summaries = yield* connectionSummariesOf(filter.tenantId, rows);
+          const summaries = yield* connectionSummariesOf(filter.tenantId, rows, asker);
           const joined: readonly ConnectionSummary[] = yield* joinSummaries(rows, summaries);
           return joined;
         },
@@ -197,7 +204,7 @@ export const GrantAdminLive = (request: GrantAdminRequest) =>
             return Option.none<ConnectionSummary>();
           }
           const row = toGrantRow(retained.value);
-          const summaries = yield* connectionSummariesOf(row.tenantId, [row]);
+          const summaries = yield* connectionSummariesOf(row.tenantId, [row], asker);
           const [joined] = yield* joinSummaries([row], summaries);
           return Option.fromUndefinedOr(joined);
         },
@@ -206,7 +213,7 @@ export const GrantAdminLive = (request: GrantAdminRequest) =>
       );
 
       const update: GrantAdminPort<never>['update'] = (input) =>
-        updateConnection({
+        updateConnection(asker, {
           actorPrincipalId: input.actorPrincipalId,
           grantId: input.grantId,
           modules: input.modules === 'all' ? 'all' : [...input.modules],

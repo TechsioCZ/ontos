@@ -2,7 +2,7 @@ import { DateTime, Option, Result, Schema } from 'effect';
 
 import { AresIsoTimestampSchema, AresRegisteredAddressSchema, AresSubjectEvidenceSchema } from './ares-evidence.ts';
 import type { AresRegisteredAddress, AresSubjectEvidence } from './ares-evidence.ts';
-import type { StructuredAddress } from './contact-point.ts';
+import type { ContactPointProvenance, StructuredAddress } from './contact-point.ts';
 import type { PartyCandidate } from './identity-contracts.ts';
 
 export const AresCanonicalRouteSchema = Schema.Literals([
@@ -143,10 +143,14 @@ export interface AresCanonicalSnapshot {
   readonly factEvidence?: readonly AresCanonicalFactEvidence[];
   readonly partyType?: 'PERSON' | 'ORGANIZATION' | 'UNRESOLVED';
   readonly archived: boolean;
-  readonly displayName: string | null;
+  readonly businessName: string | null;
   readonly icoValues: readonly string[];
   readonly identityAmbiguous: boolean;
-  readonly registeredAddresses: readonly StructuredAddress[];
+  readonly registeredAddresses: readonly {
+    readonly address: StructuredAddress;
+    readonly registryContext?: { readonly jurisdiction: string; readonly registryKey: string };
+    readonly provenance: ContactPointProvenance;
+  }[];
 }
 
 const normalizeText = (value: string | null | undefined): string =>
@@ -212,7 +216,6 @@ export const prefillPartyCandidateFromAres = (input: typeof AresSubjectEvidenceS
       {
         identifierType: 'ICO',
         value: evidence.subject.ico,
-        verification: 'UNVERIFIED',
       },
     ],
     partyType: 'UNRESOLVED',
@@ -225,7 +228,7 @@ export const prefillPartyCandidateFromAres = (input: typeof AresSubjectEvidenceS
   };
   const businessName = Option.getOrUndefined(evidence.subject.businessName);
   if (businessName !== undefined && isSupportedBusinessName(businessName)) {
-    return { ...candidate, displayName: businessName };
+    return { ...candidate, businessName };
   }
   return candidate;
 };
@@ -275,13 +278,12 @@ const historicalConflict = (
   ) {
     return undefined;
   }
-  const icoValues = new Set(canonical.icoValues);
   const assertions = (canonical.factEvidence ?? []).filter(
     (assertion) =>
       assertion.fact === fact &&
       (fact === 'BUSINESS_NAME'
-        ? normalizeText(assertion.value) === normalizeText(canonical.displayName)
-        : icoValues.has(assertion.value)) &&
+        ? normalizeText(assertion.value) === normalizeText(canonical.businessName)
+        : canonical.icoValues.includes(assertion.value)) &&
       normalizeText(assertion.value) !== normalizeText(observedValue) &&
       acceptedEvidenceConflicts(assertion, evidence, fact),
   );
@@ -310,10 +312,10 @@ const businessNameDecision = (
   if (businessName === null || !isSupportedBusinessName(businessName)) {
     return blocked(fact, 'NO_CHANGE', 'provider_fact_absent_or_unsupported');
   }
-  if (normalizeText(canonical.displayName) === normalizeText(businessName)) {
+  if (normalizeText(canonical.businessName) === normalizeText(businessName)) {
     return blocked(fact, 'NO_CHANGE', 'canonical_fact_equal');
   }
-  if (canonical.displayName !== null) {
+  if (canonical.businessName !== null) {
     return blocked(fact, 'NEEDS_CONFIRMATION', 'canonical_fact_conflict');
   }
   return undefined;
@@ -328,7 +330,27 @@ const addressDecision = (
   if (address === undefined || !isSupportedAddress(address)) {
     return blocked(fact, 'NO_CHANGE', 'provider_fact_absent_or_unsupported');
   }
-  if (canonical.registeredAddresses.some((current) => aresRegisteredAddressMatches(address, current))) {
+  const aresScope = canonical.registeredAddresses.find(
+    ({ registryContext }) => registryContext?.registryKey === 'ARES' && registryContext.jurisdiction === 'CZ',
+  );
+  if (aresScope !== undefined) {
+    const { externalEvidence } = aresScope.provenance;
+    return externalEvidence?.provider === 'ares' &&
+      externalEvidence.fact === 'REGISTERED_ADDRESS' &&
+      externalEvidence.queryIco === evidence.queryIco &&
+      aresRegisteredAddressMatches(address, aresScope.address)
+      ? blocked(fact, 'NO_CHANGE', 'canonical_fact_equal')
+      : blocked(fact, 'NEEDS_CONFIRMATION', 'canonical_fact_conflict');
+  }
+  // Equal manual values remain untouched. They do not become provider observations.
+  if (
+    canonical.registeredAddresses.some(
+      (current) =>
+        current.registryContext === undefined &&
+        !current.provenance.authoritative &&
+        aresRegisteredAddressMatches(address, current.address),
+    )
+  ) {
     return blocked(fact, 'NO_CHANGE', 'canonical_fact_equal');
   }
   if (canonical.registeredAddresses.length > 0) {
@@ -359,7 +381,7 @@ const applyFactDecision = (
   canonical: AresCanonicalSnapshot,
   userConfirmed: boolean,
 ): AresFactDecision => {
-  // Only ORGANIZATION ICO assertions qualify for the current authoritative claim rule.
+  // The current ARES ICO enrichment policy supports ORGANIZATION facts, not identity matching.
   if (fact === 'ICO' && canonical.partyType !== 'ORGANIZATION') {
     return blocked(fact, 'NEEDS_CONFIRMATION', 'party_type_not_supported_for_authoritative_ico');
   }

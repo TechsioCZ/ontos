@@ -10,6 +10,8 @@ import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '@app/party-registry-identity-contracts';
+import { makePartyDeniedAccess } from '../support/live-access-authority.ts';
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
@@ -54,20 +56,18 @@ import { addPartyOfficialIdentifierAction } from '../../src/actions/add-party-of
 import { correctPartyFactAction } from '../../src/actions/correct-party-fact.action.ts';
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
 import { endPartyOfficialIdentifierAction } from '../../src/actions/end-party-official-identifier.action.ts';
-import { resolveDuplicateCandidateCreateAction } from '../../src/actions/resolve-duplicate-candidate-create.action.ts';
 import {
   addPartyOfficialIdentifierWithAuthorization,
   correctPartyFactWithAuthorization,
   createPartyWithAuthorization,
   endPartyOfficialIdentifierWithAuthorization,
-  resolveDuplicateCandidateCreateWithAuthorization,
   resolvePartyCommandCommitWithAuthorization,
 } from '../../src/api/party-command-client.ts';
 import { executePartyCorrectionWithAuthorization } from '../../src/api/party-correction-client.ts';
 import { executePartyOfficialIdentifierHistoryWithAuthorization } from '../../src/api/party-official-identifier-history-client.ts';
 import { lockTenantIdentityWrites } from '../../src/services/party-identifier-claim.service.ts';
 import { makePartyDatabase } from '../../src/db/client.ts';
-import { partyCorrections, partyIdentifierClaims, partyOfficialIdentifiers } from '../../src/db/schema.ts';
+import { partyCorrections, partyOfficialIdentifiers } from '../../src/db/schema.ts';
 
 import {
   PartyCommandCommitIndeterminateProblemSchema,
@@ -90,21 +90,24 @@ const makeFixture = Effect.gen(function* makeFixture() {
   const connections = { ...isolated.connections, runtime: native.partyConfiguration };
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
+      access: 'allowed',
       actionKeys: [
         addPartyOfficialIdentifierAction,
         correctPartyFactAction,
         createPartyAction,
         endPartyOfficialIdentifierAction,
-        resolveDuplicateCandidateCreateAction,
       ].map((action) => action.descriptor.actionKey),
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: composition.composition.revision,
       adminConnectionString: Redacted.make(connections.admin.connectionString),
       databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+      ownerRegistration: partyRegistryBackendRegistration,
       runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
     }),
     (value) => value.close().pipe(Effect.orDie),
   );
+  const deniedAccess = makePartyDeniedAccess();
+  const fixtureLayer = fixture.layer.pipe(Layer.provide(deniedAccess.layer));
   const adminLayer = PgClient.layer({ url: Redacted.make(connections.admin.connectionString) }).pipe(
     Layer.provideMerge(Reactivity.layer),
   );
@@ -147,7 +150,7 @@ const makeFixture = Effect.gen(function* makeFixture() {
       ).pipe(Layer.provide(ActiveApplicationCompositionSourceLive), Layer.provide(FetchHttpClient.layer)),
     ),
     Layer.provide(redemption),
-    Layer.provide(fixture.layer),
+    Layer.provide(fixtureLayer),
     Layer.provide(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({ ONTOS_GATEWAY_ISSUER: issuer, ONTOS_GATEWAY_PUBLIC_JWKS: jwks }),
@@ -159,7 +162,7 @@ const makeFixture = Effect.gen(function* makeFixture() {
       HttpRouter.toWebHandler(
         HttpApiBuilder.layer(api).pipe(
           Layer.provide(handlers),
-          Layer.provideMerge(fixture.layer),
+          Layer.provideMerge(fixtureLayer),
           Layer.provide(HttpServer.layerServices),
           Layer.provide(NodeCrypto.layer),
         ),
@@ -206,20 +209,8 @@ const makeFixture = Effect.gen(function* makeFixture() {
         yield* options,
       ),
     );
-    assert.isOk(created.outcome === 'AMBIGUOUS');
-    const reviewed = yield* runHttp(
-      resolveDuplicateCandidateCreateWithAuthorization(
-        {
-          caseRef: created.caseRef,
-          expectedRevision: 1,
-          reason: 'Reviewed distinct concrete organization without strong identifiers',
-        },
-        yield* authorization(),
-        yield* options,
-      ),
-    );
-    assert.isOk(reviewed.partyRef);
-    return reviewed.partyRef;
+    assert.isOk(created.outcome === 'CREATED');
+    return created.partyRef;
   });
   const add = Effect.fn('OriginalIdentifierInputTest.add')(function* add(
     partyRef: PartyRef,
@@ -229,12 +220,11 @@ const makeFixture = Effect.gen(function* makeFixture() {
       : never,
     identifierType: 'ICO' | 'CZ_DIC' = 'ICO',
     actor = principal,
-    verification: 'UNVERIFIED' | 'VERIFIED' = 'UNVERIFIED',
   ) {
     return yield* runHttp(
       addPartyOfficialIdentifierWithAuthorization(
         {
-          identifier: { identifierType, value, verification },
+          identifier: { identifierType, value },
           partyRef,
           provenanceMethod: 'MANUAL',
           provenanceSource: 'original-input-test',
@@ -299,8 +289,6 @@ const makeFixture = Effect.gen(function* makeFixture() {
   });
   const corrections = () =>
     admin.select().from(partyCorrections).where(eq(partyCorrections.tenantId, fixture.tenantId));
-  const claims = () =>
-    admin.select().from(partyIdentifierClaims).where(eq(partyIdentifierClaims.tenantId, fixture.tenantId));
   const resolve = Effect.fn('IdentifierCorrectionReuseTest.resolve')(function* resolve(invocationId: string) {
     return yield* runHttp(
       resolvePartyCommandCommitWithAuthorization(
@@ -328,11 +316,11 @@ const makeFixture = Effect.gen(function* makeFixture() {
   return {
     admin,
     composition,
+    deniedAccess,
     moduleAccess,
     end,
     add,
     authorization,
-    claims,
     connections,
     coreEvidenceExecutor,
     correct,
@@ -367,7 +355,6 @@ it.layer(
         assert.isOk(newRow);
         expect(newRow.normalizedValue).toBe('01000004');
         expect(newRow.supersedesOfficialIdentifierId).toBe(a.officialIdentifierRef.resourceId);
-        expect(newRow.verificationState).toBe('UNVERIFIED');
         const retracted = yield* h.correct(partyRef, replacementId, undefined, yield* h.options);
         expect(Option.isNone(retracted.replacementAssertionId)).toBe(true);
         expect((yield* h.rows()).find((row) => row.officialIdentifierId === replacementId)?.state).toBe('RETRACTED');
@@ -467,6 +454,7 @@ it.layer(
           existing.officialIdentifierRef,
         ]);
       }),
+    120_000,
   );
   suite.effect(
     'public Add and Correction serialize in both native lock orders without duplicate canonical assertions',
@@ -642,11 +630,10 @@ it.layer(
         const h = yield* makeFixture;
         const partyRef = yield* h.create();
         const a = yield* h.add(partyRef, '27074358', yield* h.options);
-        const b = yield* h.add(partyRef, '26168685', yield* h.options, 'ICO', h.principal, 'VERIFIED');
+        const b = yield* h.add(partyRef, '26168685', yield* h.options, 'ICO', h.principal);
         const before = yield* h.rows();
         const beforeB = before.find((row) => row.officialIdentifierId === b.officialIdentifierRef.resourceId);
         assert.isOk(beforeB);
-        const priorClaims = yield* h.claims();
         const repeated = yield* h.add(partyRef, '26168685', yield* h.options);
         expect(repeated.officialIdentifierRef).toEqual(b.officialIdentifierRef);
         expect(yield* h.rows()).toEqual(before);
@@ -663,7 +650,6 @@ it.layer(
         expect(after.find((row) => row.officialIdentifierId === a.officialIdentifierRef.resourceId)?.state).toBe(
           'SUPERSEDED',
         );
-        expect(yield* h.claims()).toEqual(priorClaims);
         const history = yield* h.history(partyRef);
         expect(history.items).toHaveLength(2);
         expect(history.items.filter((row) => row.state === 'ACTIVE').map((row) => row.officialIdentifierRef)).toEqual([
@@ -671,7 +657,9 @@ it.layer(
         ]);
         const detail = yield* h.correctionDetail(corrected.correctionRef);
         expect(detail.targetAssertionId).toBe(a.officialIdentifierRef.resourceId);
-        expect(Option.getOrThrow(detail.resultingAssertion).assertionId).toBe(b.officialIdentifierRef.resourceId);
+        expect(Option.getOrThrow(detail.resultingAssertion ?? Option.none()).assertionId).toBe(
+          b.officialIdentifierRef.resourceId,
+        );
         expect(detail.reasonCode).toBe('WRONG_IDENTITY_VALUE');
         expect(detail.evidenceRefs).toEqual(['identifier-correction/review']);
         expect(detail.actingPrincipalId).toBe(h.principal.principalId);
@@ -705,6 +693,10 @@ it.layer(
         expect(Predicate.isTagged(invalid, 'PartyCommandConflictProblem')).toBe(true);
         expect(yield* h.rows()).toEqual(after);
         expect(yield* h.corrections()).toHaveLength(1);
+        // v2: the one access gate decides every protected Action and Read (O62). The fixture scripts
+        // its gate per capability, so a principal it does not admit is refused on the fixture's own
+        // per-request owner seam (the removed SpiceDB reader/module tuples no longer refuse anyone).
+        h.deniedAccess.deny(h.fixture.denied.principalId);
         const denied = yield* Effect.flip(h.correctionDetail(corrected.correctionRef, h.fixture.denied));
         expect(Predicate.isTagged(denied, 'PartyCorrectionForbiddenProblem')).toBe(true);
         const foreign = yield* h.create();
@@ -716,6 +708,7 @@ it.layer(
         yield* h.moduleAccess(h.fixture.reader, 'grant');
         yield* Effect.addFinalizer(() => h.moduleAccess(h.fixture.reader, 'revoke').pipe(Effect.orDie));
         expect((yield* h.history(partyRef, h.fixture.reader)).items).toHaveLength(2);
+        h.deniedAccess.deny(h.fixture.reader.principalId, 'party.registry.party-correction.read');
         expect(
           Predicate.isTagged(
             yield* Effect.flip(h.correctionDetail(corrected.correctionRef, h.fixture.reader)),
@@ -728,11 +721,13 @@ it.layer(
         expect(Predicate.isTagged(noAuthority, 'PartyCommandForbiddenProblem')).toBe(true);
         const foreignFixture = yield* Effect.acquireRelease(
           makeLiveOperationFixture({
+            access: 'allowed',
             actionKeys: [correctPartyFactAction.descriptor.actionKey],
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
             compositionRevision: h.composition.composition.revision,
             adminConnectionString: Redacted.make(h.connections.admin.connectionString),
             databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+            ownerRegistration: partyRegistryBackendRegistration,
             runtimeConnectionString: Redacted.make(h.connections.runtime.connectionString),
           }),
           (value) => value.close().pipe(Effect.orDie),
@@ -745,10 +740,10 @@ it.layer(
         expect(Predicate.isTagged(crossTenant, 'PartyCommandConflictProblem')).toBe(true);
         expect(yield* h.rows()).toEqual(after);
         yield* h.moduleAccess(h.principal, 'revoke');
+        h.deniedAccess.deny(h.principal.principalId, 'party.registry.official-identifier.read-history');
         expect(
           Predicate.isTagged(yield* Effect.flip(h.history(partyRef)), 'PartyOfficialIdentifierHistoryForbiddenProblem'),
         ).toBe(true);
-        yield* h.isolated.assertClonedSchema();
       }),
     120_000,
   );

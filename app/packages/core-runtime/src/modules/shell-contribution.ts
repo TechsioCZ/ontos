@@ -1,18 +1,33 @@
 import { Result, Schema } from 'effect';
 
+import { AccessDeclarationSchema, accessCarrierIssue } from '../authorization/access-declaration.ts';
+import type { AccessDeclarationInput } from '../authorization/access-declaration.ts';
 import {
   CoreSearchPresentationDeclarationSchema,
   CoreSearchPresentationMetadataSchema,
   CoreShellIconSchema,
   CoreShellLabelSchema,
   CoreShellPageRoutePathSchema,
-  CoreShellStableKeySchema,
   coreShellRouteParameterNames,
 } from '../search/search-contract.ts';
 import type { CoreSearchPresentationMetadata } from '../search/search-contract.ts';
+import type { ModuleEntrypointDescriptor } from './module-entrypoint.ts';
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
 
-const stableKey = CoreShellStableKeySchema;
+const accessDeclaration = Schema.optionalKey(AccessDeclarationSchema);
+/** O62: a protected Shell carrier must declare its access; an unprotected one carries none. */
+const protectedDeclaration = Schema.makeFilter(
+  (descriptor: {
+    readonly accessDeclaration?: AccessDeclarationInput;
+    readonly entrypoint: ModuleEntrypointDescriptor;
+  }) => accessCarrierIssue(descriptor),
+);
+
+const stableKey = Schema.String.check(
+  Schema.isMinLength(3),
+  Schema.isMaxLength(200),
+  Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u),
+);
 const actionKey = stableKey.pipe(Schema.brand('ActionKey'));
 const apiKey = stableKey.pipe(Schema.brand('ApiKey'));
 const componentKey = stableKey.pipe(Schema.brand('ComponentKey'));
@@ -159,6 +174,7 @@ export const SHELL_NAVIGATION_CAPABILITIES = ['people_administration'] as const;
  * owns the sections, the module owns its label, icon and order within them.
  */
 export const ShellNavigationContributionSchema = Schema.Struct({
+  accessDeclaration,
   contributionKey,
   entrypoint: pageEntrypoint,
   groupKey,
@@ -169,7 +185,7 @@ export const ShellNavigationContributionSchema = Schema.Struct({
   order,
   pageKey,
   requiresCapability: Schema.optionalKey(Schema.Literals(SHELL_NAVIGATION_CAPABILITIES)),
-});
+}).check(protectedDeclaration);
 
 /**
  * The record a governed page opens: the page's own route parameter and the resource type that parameter identifies.
@@ -187,6 +203,7 @@ export const ShellPageRecordTargetSchema = Schema.Struct({
  * only after a genuine tenant membership and the owning module's tenant `module.access` permission.
  */
 export const ShellPageContributionSchema = Schema.Struct({
+  accessDeclaration,
   componentKey,
   contributionKey,
   entrypoint: pageEntrypoint,
@@ -198,7 +215,7 @@ export const ShellPageContributionSchema = Schema.Struct({
    */
   recordTarget: Schema.optionalKey(ShellPageRecordTargetSchema),
   routePath,
-});
+}).check(protectedDeclaration);
 
 /**
  * Offers a public component as the Home summary. The Shell renders the lowest `order` the person can open whose
@@ -210,48 +227,54 @@ export const ShellHomePlacementSchema = Schema.Struct({
 });
 
 export const ShellPublicComponentContributionSchema = Schema.Struct({
+  accessDeclaration,
   componentKey,
   contributionKey,
   entrypoint: componentEntrypoint,
   expose,
   home: Schema.optionalKey(ShellHomePlacementSchema),
-});
+}).check(protectedDeclaration);
 
 export const ShellSearchContributionSchema = Schema.Struct({
+  accessDeclaration,
   contributionKey,
   entrypoint: searchEntrypoint,
   /** Optional bounded presentation; absent keeps the existing search result usable without a declared destination. */
   presentation: Schema.optionalKey(CoreSearchPresentationDeclarationSchema),
   searchKey,
-});
+}).check(protectedDeclaration);
 
 export const ShellResourceDetailContributionSchema = Schema.Struct({
+  accessDeclaration,
   apiKey,
   contributionKey,
   entrypoint: readableApiEntrypoint,
   resourceType: stableKey,
-});
+}).check(protectedDeclaration);
 
 export const ShellTimelineContributionSchema = Schema.Struct({
+  accessDeclaration,
   apiKey,
   contributionKey,
   entrypoint: readableApiEntrypoint,
   resourceType: stableKey,
-});
+}).check(protectedDeclaration);
 
 export const ShellReportContributionSchema = Schema.Struct({
+  accessDeclaration,
   contributionKey,
   entrypoint: reportEntrypoint,
   reportKey,
-});
+}).check(protectedDeclaration);
 
 export const ShellMediaAttachmentContributionSchema = Schema.Struct({
+  accessDeclaration,
   actionKey,
   apiKey,
   contributionKey,
   entrypoint: writableApiEntrypoint,
   resourceType: stableKey,
-});
+}).check(protectedDeclaration);
 
 export const OntosShellContributionsSchema = Schema.Struct({
   mediaAttachments: Schema.Array(ShellMediaAttachmentContributionSchema),

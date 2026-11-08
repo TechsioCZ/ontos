@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import { v1 } from '@authzed/authzed-node';
 import {
   ActiveApplicationCompositionSnapshotSchema,
   applicationCompositionContentRevision,
@@ -15,12 +14,10 @@ import {
   lockApplicationCompositionPublication,
   OntosModuleDeploymentContractSchema,
   publishApplicationCompositionAuthority,
-  toContextPermissionAccessObjectId,
-  toLegalEntityAccessObjectId,
-  toModuleAccessObjectId,
 } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
+import { environmentTestAccessTarget, grantTestTenantRoleAccess } from '@app/core-runtime/testing/tenant-access';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import {
   MarketAffectedUseAssessmentResponseSchema,
@@ -34,6 +31,7 @@ import type {
   ReserveMarketRetirementResult,
 } from '@app/customer-market-retirement-contracts';
 import { eq, sql } from 'drizzle-orm';
+import { NodeServices } from '@effect/platform-node';
 import { Array as EffectArray, ConfigProvider, Effect, Layer, Order, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
@@ -45,7 +43,6 @@ import {
   outboxMessages,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { loadSpiceDbConfig } from '../../../../packages/core-runtime/src/permissions/config.ts';
-import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import {
   makeTestDatabaseFromClient,
   testDatabaseClients,
@@ -230,79 +227,34 @@ const seedBootstrapReference = (
     );
   });
 
-const relationship = (
-  resourceType: string,
-  resourceId: string,
-  relation: string,
-  subjectType: string,
-  subjectId: string,
-) =>
-  v1.Relationship.create({
-    relation,
-    resource: { objectId: resourceId, objectType: resourceType },
-    subject: { object: { objectId: subjectId, objectType: subjectType } },
-  });
-
+/**
+ * The manager's access through the one gate: membership of the Tenant and its company, and a role of the
+ * assessment Read and the reservation Action, projected into the SpiceDB the production runtime is pointed at.
+ */
 const installAssessmentPermission = Effect.fnUntraced(function* installAssessmentPermission(input: {
   readonly legalEntityId: string;
   readonly principalId: string;
   readonly tenantId: string;
 }) {
-  const objectId = toContextPermissionAccessObjectId(input.tenantId, input.legalEntityId, {
-    moduleId: 'commerce.customer-context',
-    permission: 'market.catalog.read',
-  });
-  if (objectId === undefined) {
-    return yield* Effect.die('Could not encode the Market assessment context permission');
-  }
-  const legalEntityObjectId = toLegalEntityAccessObjectId(input.tenantId, input.legalEntityId);
-  const moduleObjectId = toModuleAccessObjectId(input.tenantId, input.legalEntityId, 'commerce.customer-context');
-  if (legalEntityObjectId === undefined || moduleObjectId === undefined) {
-    return yield* Effect.die('Could not encode the Customer Context module permission');
-  }
   const configuration = yield* loadSpiceDbConfig({ envPath: '/dev/null' });
   const { caCertificate } = configuration;
   if (caCertificate === undefined) {
     return yield* Effect.die('SPICEDB_CA_CERT is required to reach SpiceDB over TLS');
   }
-  const client = newSpiceDbGrpcClient(configuration);
-  const relationships = [
-    relationship('module_access', moduleObjectId, 'legal_entity', 'legal_entity', legalEntityObjectId),
-    relationship('module_access', moduleObjectId, 'accessor', 'principal', input.principalId),
-    relationship('context_permission', objectId, 'tenant', 'tenant', input.tenantId),
-    relationship('context_permission', objectId, 'grantee', 'principal', input.principalId),
-  ];
-  const write = (operation: v1.RelationshipUpdate_Operation) =>
-    Effect.promise(() =>
-      client.promises.writeRelationships(
-        v1.WriteRelationshipsRequest.create({
-          updates: relationships.map((item) => v1.RelationshipUpdate.create({ operation, relationship: item })),
-        }),
-      ),
-    );
-  yield* write(v1.RelationshipUpdate_Operation.TOUCH);
-  const permission = yield* Effect.promise(() =>
-    client.promises.checkPermission(
-      v1.CheckPermissionRequest.create({
-        consistency: v1.Consistency.create({
-          requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' },
-        }),
-        permission: 'access',
-        resource: { objectId, objectType: 'context_permission' },
-        subject: { object: { objectId: input.principalId, objectType: 'principal' } },
-      }),
-    ),
-  );
-  if (permission.permissionship !== v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION) {
-    return yield* Effect.die('The Market assessment context permission could not be installed');
-  }
-  yield* Effect.addFinalizer(() =>
-    write(v1.RelationshipUpdate_Operation.DELETE).pipe(
-      Effect.ensuring(Effect.sync(() => client.close())),
-      Effect.asVoid,
-      Effect.orDie,
-    ),
-  );
+  yield* grantTestTenantRoleAccess({
+    ...(yield* environmentTestAccessTarget),
+    holders: [
+      {
+        capabilityKeys: [
+          'commerce.customer-context.market-use.assess',
+          'commerce.customer-context.market-retirement.reserve',
+        ],
+        principalId: input.principalId,
+      },
+    ],
+    legalEntityIds: [input.legalEntityId],
+    tenantId: input.tenantId,
+  });
   return { caCertificate, endpoint: configuration.endpoint, preSharedKey: configuration.preSharedKey };
 });
 
@@ -452,6 +404,7 @@ it.live(
           }),
         );
         const fixture = yield* makeLiveOperationFixture({
+          access: 'allowed',
           actionKeys: [ACTION_KEY],
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: snapshot.composition.revision,
@@ -605,7 +558,7 @@ it.live(
           ),
         );
       }),
-    ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, commercePortalAuthPlatformCryptoLive))),
   30_000,
 );
 
@@ -635,6 +588,7 @@ it.live(
           }),
         );
         const fixture = yield* makeLiveOperationFixture({
+          access: 'allowed',
           actionKeys: [ACTION_KEY],
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: snapshot.composition.revision,
@@ -756,7 +710,7 @@ it.live(
           expect(one(reservations, 'native reservation count').count, scenario.label).toBe('0');
         }
       }),
-    ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, commercePortalAuthPlatformCryptoLive))),
   30_000,
 );
 
@@ -786,6 +740,7 @@ it.live(
           }),
         );
         const fixture = yield* makeLiveOperationFixture({
+          access: 'allowed',
           actionKeys: [ACTION_KEY],
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: snapshot.composition.revision,
@@ -886,6 +841,6 @@ it.live(
           ),
         ).toMatchObject({ code: 'LIVE_REFERENCE_CONFLICT', status: 409 });
       }),
-    ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, commercePortalAuthPlatformCryptoLive))),
   30_000,
 );

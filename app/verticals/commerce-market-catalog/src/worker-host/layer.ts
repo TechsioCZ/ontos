@@ -5,14 +5,7 @@ import type { OutboxRuntime, CoreSearchIngestion, CoreSearchProjectionStore } fr
 import { makeDatabaseIdentityEnrollmentLive } from '@app/core-runtime';
 import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
 import { OutboxWorkerInfrastructureLive } from '@app/core-runtime/outbox/worker';
-import type {
-  OutboxWorkerLegalEntityScopeFanout,
-  ResourceContainmentRelationshipMutation,
-} from '@app/core-runtime/outbox/worker';
-import { MarketRetirementImpactAuthorityLive } from '../integrations/market-retirement-impact.ts';
-import type { MarketRetirementImpactAuthorityService } from '../services/market-retirement-impact-authority.ts';
-import type { MarketRetirementIntentStoreService } from '../services/market-retirement-worker.service.ts';
-import { MarketRetirementIntentStoreLive } from '../workers/complete-market-retirement.worker.ts';
+import type { OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
 import { MarketSearchProjectorLive } from '../services/market-search-projection.ts';
 import type { MarketSearchProjector } from '../services/market-search-projection.ts';
 import type { MarketSearchSource } from '../services/market-search-source.ts';
@@ -25,11 +18,7 @@ export const outboxWorkerDatabaseIdentityEnrollmentLive = makeDatabaseIdentityEn
   defineDatabaseIdentityEnrollment([]),
 );
 
-type MarketCatalogWorkerServices =
-  | MarketRetirementImpactAuthorityService
-  | MarketRetirementIntentStoreService
-  | OutboxRuntime
-  | MarketSearchProjector;
+type MarketCatalogWorkerServices = OutboxRuntime | MarketSearchProjector;
 
 /** Handler dependencies stay in `RIn`; `entry.ts` composes the scope fan-out once at the worker root. */
 export const outboxWorkerLayer: Layer.Layer<
@@ -40,10 +29,4 @@ export const outboxWorkerLayer: Layer.Layer<
   | CoreSearchIngestion
   | CoreSearchProjectionStore
   | MarketSearchSource
-  | ResourceContainmentRelationshipMutation
-> = Layer.mergeAll(
-  OutboxWorkerInfrastructureLive,
-  MarketRetirementIntentStoreLive,
-  MarketRetirementImpactAuthorityLive,
-  MarketSearchProjectorLive,
-);
+> = Layer.mergeAll(OutboxWorkerInfrastructureLive, MarketSearchProjectorLive);

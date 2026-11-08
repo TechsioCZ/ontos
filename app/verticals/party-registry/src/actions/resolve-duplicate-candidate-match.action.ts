@@ -25,11 +25,7 @@ import {
   PartyAliasWriteRejected,
 } from '../../shared/domain/merge-alias-resolution.ts';
 import { resolveDuplicateCandidateMatch } from '../services/party-matching-persistence.service.ts';
-import {
-  publishAttachedOfficialIdentifiers,
-  publishUpdatedOfficialIdentifiers,
-} from './attached-official-identifier-events.ts';
-import { OfficialIdentifierUpdatedEventSchema } from './update-party-official-identifier.action.ts';
+import { publishAttachedOfficialIdentifiers } from './attached-official-identifier-events.ts';
 
 export type { ResolveDuplicateCandidateMatchPayload } from '../../shared/actions/resolve-duplicate-candidate-match.ts';
 
@@ -53,17 +49,15 @@ interface Services {
 }
 const domainEvents = {
   'party.registry.official-identifier-added.v1': AddPartyOfficialIdentifierResultSchema,
-  'party.registry.official-identifier-updated.v1': OfficialIdentifierUpdatedEventSchema,
 } as const;
 const handle = Effect.fn('ResolveDuplicateCandidateMatchAction.handle')(function* resolveMatch(
   payload: ResolveDuplicateCandidateMatchPayload,
   context: ActionHandlerContext<typeof domainEvents, Services>,
 ) {
-  const {
-    addedOfficialIdentifierRefs = [],
-    updatedOfficialIdentifiers = [],
-    ...result
-  } = yield* context.services.resolve(payload, context.actionInvocationId);
+  const { addedOfficialIdentifierRefs = [], ...result } = yield* context.services.resolve(
+    payload,
+    context.actionInvocationId,
+  );
   yield* context.recordDataAccess({
     accessKind: 'read',
     queryHash: Hex.encode(sha256(utf8ToBytes(`duplicate-case-invariants:${payload.caseRef.resourceId}`))),
@@ -75,12 +69,20 @@ const handle = Effect.fn('ResolveDuplicateCandidateMatchAction.handle')(function
   });
   if (result.partyRef !== null) {
     yield* publishAttachedOfficialIdentifiers(context, result.partyRef, addedOfficialIdentifierRefs);
-    yield* publishUpdatedOfficialIdentifiers(context, result.partyRef, updatedOfficialIdentifiers, [], payload.reason);
   }
   return result;
 });
 export const resolveDuplicateCandidateMatchAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.duplicate-candidate.resolve-match',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'identity-review', level: 'manage' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessTarget: (payload) => ({ moduleKey: 'party.registry', recordKey: payload.caseRef.resourceId }),
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.resolve-duplicate-candidate-match.access.v1',
@@ -91,10 +93,7 @@ export const resolveDuplicateCandidateMatchAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.resolve-duplicate-candidate-match',
       moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
@@ -106,7 +105,6 @@ export const resolveDuplicateCandidateMatchAction = defineAction(
     policies: [],
     resultSchema: ResolveDuplicateCandidateMatchResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'review_party_identity',
   },
   handle,
   (transaction, scope) =>

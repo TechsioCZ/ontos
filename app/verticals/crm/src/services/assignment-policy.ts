@@ -1,4 +1,5 @@
-import { defineMicroverticalPolicy, denyPolicy } from '@app/core-runtime';
+import { AccessKeySchema, defineMicroverticalPreparationPolicy, denyPolicy } from '@app/core-runtime';
+import type { ActionPolicyEvaluatorInput } from '@app/core-runtime';
 import { loadAssignmentPreflightSnapshot, resolveAssignee } from '@app/core-runtime/auth/assignable-principals';
 import { and, eq } from 'drizzle-orm';
 import { Effect, Match, Schema } from 'effect';
@@ -8,7 +9,11 @@ import type { CrmState } from '../../shared/domain/state.ts';
 
 import { crmStates } from '../database/schema.ts';
 
-export const crmAssignmentPermission = { moduleId: 'demo.crm', permission: 'module.access' } as const;
+import { crmRecordsReadDeclaration } from '../../shared/domain/access-declarations.ts';
+
+export const crmAssignmentPermission = {
+  accessDeclaration: { ...crmRecordsReadDeclaration, key: AccessKeySchema.make(crmRecordsReadDeclaration.key) },
+};
 
 /** Historical owners stay in the document. Only a deliberate new assignment needs a current target. */
 export const assignmentPrincipalIds = (command: CrmCommand, state: CrmState, actorId: string): readonly string[] => {
@@ -69,51 +74,59 @@ const requiresPreflight = (command: CrmCommand) =>
     Match.orElse(() => false),
   );
 
-export const assignmentPolicy = defineMicroverticalPolicy<ApplyCommandPayload, 'demo.crm'>({
-  evaluate: Effect.fn('Crm.assignmentPreflight')(
-    function* assignmentPreflight({ payload, principal, transport }) {
-      if (!requiresPreflight(payload.command)) {
-        return;
-      }
-      const legalEntityId = yield* Effect.succeed(principal.legalEntityId).pipe(
-        Effect.filterOrFail(
-          (value) => value !== undefined,
-          () => denyPolicy('assignment_scope_required', 'Vyberte firmu.'),
-        ),
-      );
-      const { directory, value } = yield* loadAssignmentPreflightSnapshot(
-        { ...principal, correlationId: transport.correlationId, legalEntityId },
-        Effect.fn('Crm.assignmentSnapshot')(function* assignmentSnapshot(transaction) {
-          const [row] = yield* transaction
-            .select({ revision: crmStates.revision, state: crmStates.state })
-            .from(crmStates)
-            .where(and(eq(crmStates.tenantId, principal.tenantId), eq(crmStates.legalEntityId, legalEntityId)))
-            .limit(1);
-          return row === undefined
-            ? { revision: 0, state: initialCrmState }
-            : {
-                revision: row.revision,
-                state: yield* Schema.decodeUnknownEffect(CrmStateSchema)(withDefaultSlices(row.state)),
-              };
-        }),
-      );
-      if (value.revision !== payload.expectedRevision) {
-        return;
-      }
-      yield* Effect.forEach(
-        new Set(assignmentPrincipalIds(payload.command, value.state, principal.principalId)),
-        (principalId) =>
-          resolveAssignee(directory, { principalId, tenantId: principal.tenantId }, crmAssignmentPermission),
-        { concurrency: 1, discard: true },
-      );
-    },
-    Effect.catchTags({
-      AssignablePrincipalsUnavailable: () =>
-        Effect.fail(denyPolicy('assignment_unavailable', 'Přístup obchodníka nelze ověřit. Zkuste to znovu.')),
-      AssigneeIneligible: () =>
-        Effect.fail(denyPolicy('assignment_ineligible', 'Vybraný obchodník nemá aktivní přístup do CRM této firmy.')),
-    }),
-  ),
+export const assignmentPolicy = defineMicroverticalPreparationPolicy<ApplyCommandPayload, 'demo.crm'>({
   owningModuleKey: 'demo.crm',
   policyKey: 'demo.crm.assignment-target.v1',
 });
+
+export const evaluateAssignmentPolicy = Effect.fn('Crm.assignmentPreflight')(
+  function* assignmentPreflight({ payload, principal, transport }: ActionPolicyEvaluatorInput<ApplyCommandPayload>) {
+    if (!requiresPreflight(payload.command)) {
+      return;
+    }
+    const legalEntityId = yield* Effect.succeed(principal.legalEntityId).pipe(
+      Effect.filterOrFail(
+        (value) => value !== undefined,
+        () => denyPolicy('assignment_scope_required', 'Vyberte firmu.'),
+      ),
+    );
+    const { directory, value } = yield* loadAssignmentPreflightSnapshot(
+      { ...principal, correlationId: transport.correlationId, legalEntityId },
+      Effect.fn('Crm.assignmentSnapshot')(function* assignmentSnapshot(transaction) {
+        const [row] = yield* transaction
+          .select({ revision: crmStates.revision, state: crmStates.state })
+          .from(crmStates)
+          .where(and(eq(crmStates.tenantId, principal.tenantId), eq(crmStates.legalEntityId, legalEntityId)))
+          .limit(1);
+        return row === undefined
+          ? { revision: 0, state: initialCrmState }
+          : {
+              revision: row.revision,
+              state: yield* Schema.decodeUnknownEffect(CrmStateSchema)(withDefaultSlices(row.state)),
+            };
+      }),
+    );
+    if (value.revision !== payload.expectedRevision) {
+      return;
+    }
+    yield* Effect.forEach(
+      new Set(assignmentPrincipalIds(payload.command, value.state, principal.principalId)),
+      (principalId) =>
+        resolveAssignee(
+          directory,
+          { principalId, tenantId: principal.tenantId },
+          {
+            carrier: crmAssignmentPermission,
+            scope: { ...principal, correlationId: transport.correlationId, legalEntityId },
+          },
+        ),
+      { concurrency: 1, discard: true },
+    );
+  },
+  Effect.catchTags({
+    AssignablePrincipalsUnavailable: () =>
+      Effect.fail(denyPolicy('assignment_unavailable', 'Přístup obchodníka nelze ověřit. Zkuste to znovu.')),
+    AssigneeIneligible: () =>
+      Effect.fail(denyPolicy('assignment_ineligible', 'Vybraný obchodník nemá aktivní přístup do CRM této firmy.')),
+  }),
+);

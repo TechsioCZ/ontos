@@ -19,6 +19,11 @@ export {
   executeRequestSearchRebuildWithAuthorization,
 } from './request-search-rebuild-action-client.ts';
 export type { RequestSearchRebuildActionClientOptions } from './request-search-rebuild-action-client.ts';
+export {
+  executeUpdatePersonalAgenda,
+  executeUpdatePersonalAgendaWithAuthorization,
+} from './update-personal-agenda-action-client.ts';
+export type { UpdatePersonalAgendaActionClientOptions } from './update-personal-agenda-action-client.ts';
 // </generated-action-http-client-exports>
 
 // <generated-module-api-client-exports>

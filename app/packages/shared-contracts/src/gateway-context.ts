@@ -18,6 +18,7 @@ import { problemDetailsContentType, problemDetailsFields } from './problem-detai
 
 export const GATEWAY_ASSERTION_VERSION = 1 as const;
 export const EXTERNAL_GATEWAY_ASSERTION_VERSION = 2 as const;
+export const DELEGATED_GATEWAY_ASSERTION_VERSION = 3 as const;
 export const GATEWAY_ASSERTION_TTL_SECONDS = 300 as const;
 export const GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS = 30 as const;
 
@@ -27,6 +28,11 @@ const LegalEntityIdSchema = uuid.pipe(Schema.brand('LegalEntityId'));
 const epochSeconds = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
 const compositionRevision = Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u));
 const targetBuildMarker = nonEmptyString.check(Schema.isMaxLength(200), Schema.isTrimmed());
+const PrincipalIdSchema = uuid.pipe(Schema.brand('PrincipalId'));
+const TenantIdSchema = uuid.pipe(Schema.brand('TenantId'));
+const ActionInvocationIdSchema = uuid.pipe(Schema.brand('ActionInvocationId'));
+const EXACT_LIFETIME_ISSUE = 'exp must be exactly 300 seconds after iat';
+const SUBJECT_IS_PRINCIPAL_ISSUE = 'sub must equal principal.principalId';
 export const GatewayAudienceSchema = nonEmptyString.check(
   Schema.makeFilter((value) =>
     /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u.test(value) ? undefined : 'audience must be a stable topology app ID',
@@ -64,13 +70,13 @@ export const GatewayContextClaimsSchema = Schema.Struct({
     }
     if (claims.exp - claims.iat !== GATEWAY_ASSERTION_TTL_SECONDS) {
       issues.push({
-        issue: 'exp must be exactly 300 seconds after iat',
+        issue: EXACT_LIFETIME_ISSUE,
         path: ['exp'],
       });
     }
     if (claims.sub !== claims.principal.principalId) {
       issues.push({
-        issue: 'sub must equal principal.principalId',
+        issue: SUBJECT_IS_PRINCIPAL_ISSUE,
         path: ['sub'],
       });
     }
@@ -97,19 +103,56 @@ export const GatewayContextV2ClaimsSchema = Schema.Struct({
   Schema.makeFilter((claims) => [
     ...(claims.exp - claims.iat === GATEWAY_ASSERTION_TTL_SECONDS
       ? []
-      : [{ issue: 'exp must be exactly 300 seconds after iat', path: ['exp'] }]),
-    ...(claims.sub === claims.principal.principalId
-      ? []
-      : [{ issue: 'sub must equal principal.principalId', path: ['sub'] }]),
+      : [{ issue: EXACT_LIFETIME_ISSUE, path: ['exp'] }]),
+    ...(claims.sub === claims.principal.principalId ? [] : [{ issue: SUBJECT_IS_PRINCIPAL_ISSUE, path: ['sub'] }]),
     ...(claims.principal.authenticationNamespaceId === undefined
       ? [{ issue: 'version 2 requires an explicit authentication namespace', path: ['principal'] }]
       : []),
   ]),
 );
 export type GatewayContextV2Claims = typeof GatewayContextV2ClaimsSchema.Type;
+
+/** The calling module that presented the delegated request; only Shell signs this claim. */
+export const GatewayActorClaimSchema = Schema.Struct({
+  appId: GatewayAudienceSchema.pipe(Schema.brand('AppId')),
+  buildMarker: targetBuildMarker,
+  principalId: PrincipalIdSchema,
+});
+export type GatewayActorClaim = typeof GatewayActorClaimSchema.Type;
+
+/** Version 3 names the subject in `sub`/`principal` and the calling module in `act`. */
+export const GatewayContextV3ClaimsSchema = Schema.Struct({
+  act: GatewayActorClaimSchema,
+  aud: GatewayAudienceSchema,
+  compositionRevision,
+  exp: epochSeconds,
+  iat: epochSeconds,
+  iss: nonEmptyString,
+  jti: uuid,
+  principal: GatewayTrustedPrincipalContextSchema,
+  sub: uuid,
+  targetBuildMarker,
+  ver: Schema.Literal(DELEGATED_GATEWAY_ASSERTION_VERSION),
+}).check(
+  Schema.makeFilter((claims) => [
+    ...(claims.exp - claims.iat === GATEWAY_ASSERTION_TTL_SECONDS
+      ? []
+      : [{ issue: EXACT_LIFETIME_ISSUE, path: ['exp'] }]),
+    ...(claims.sub === claims.principal.principalId ? [] : [{ issue: SUBJECT_IS_PRINCIPAL_ISSUE, path: ['sub'] }]),
+    ...(claims.principal.authenticationNamespaceId === undefined
+      ? [{ issue: 'version 3 requires an explicit authentication namespace', path: ['principal'] }]
+      : []),
+    ...(claims.act.principalId === claims.sub
+      ? [{ issue: 'act.principalId must differ from sub', path: ['act', 'principalId'] }]
+      : []),
+  ]),
+);
+export type GatewayContextV3Claims = typeof GatewayContextV3ClaimsSchema.Type;
+
 export const SupportedGatewayContextClaimsSchema = Schema.Union([
   GatewayContextClaimsSchema,
   GatewayContextV2ClaimsSchema,
+  GatewayContextV3ClaimsSchema,
 ]);
 export type SupportedGatewayContextClaims = typeof SupportedGatewayContextClaimsSchema.Type;
 export const decodeSupportedGatewayContextClaims = Schema.decodeUnknownEffect(SupportedGatewayContextClaimsSchema, {
@@ -155,6 +198,39 @@ const ApiKeyGatewayReadResponseSchema = Schema.Uint8Array.pipe(
 
 /** Server-only response metadata; never exposed through CORS or persisted by an intermediary. */
 export const API_KEY_GATEWAY_CONTEXT_HEADER = 'x-ontos-gateway-context';
+
+/**
+ * Whom a module call is done for. `Assertion` carries the verified incoming token of a live request;
+ * `Originator` names the action invocation of asynchronous work whose requester the call acts for, and may
+ * name the one company that work belongs to when the invocation itself ran in the tenant context. The Shell
+ * admits that company only for a workload requester bound in the tenant; a person keeps the company the
+ * invocation recorded.
+ */
+export const GatewayDelegatedSubjectSchema = Schema.Union([
+  Schema.TaggedStruct('Assertion', {
+    sourceAssertion: Schema.RedactedFromValue(nonEmptyString),
+  }),
+  Schema.TaggedStruct('Originator', {
+    actionInvocationId: ActionInvocationIdSchema,
+    legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
+    tenantId: TenantIdSchema,
+  }),
+]);
+export type GatewayDelegatedSubject = typeof GatewayDelegatedSubjectSchema.Encoded;
+
+/** A module-to-module capability request; the calling module authenticates with its own key. */
+export const GatewayDelegatedContextRequestSchema = Schema.Struct({
+  audience: GatewayAudienceSchema,
+  compositionRevision,
+  exchangeId: uuid.pipe(Schema.brand('GatewayDelegationExchangeId')),
+  /**
+   * The company scope the caller states. `subject` carries the subject's Legal Entity, or none when the subject has
+   * none; `tenant` carries no Legal Entity.
+   */
+  legalEntityScope: Schema.Literals(['subject', 'tenant']),
+  subject: GatewayDelegatedSubjectSchema,
+});
+export type GatewayDelegatedContextRequest = typeof GatewayDelegatedContextRequestSchema.Encoded;
 
 export const GatewayContextResponseSchema = Schema.Struct({
   apiBaseUrl: Schema.String.check(
@@ -274,6 +350,22 @@ export const GatewayContextApiGroup = HttpApiGroup.make('gatewayContext')
       payload: ApiKeyGatewayReadRequestSchema,
       success: ApiKeyGatewayReadResponseSchema,
     }),
+  )
+  .add(
+    HttpApiEndpoint.post('issueDelegatedGatewayContext', '/auth/delegated/gateway-context', {
+      error: [
+        GatewayAuthenticationRequiredProblemSchema,
+        GatewayAudienceInvalidProblemSchema,
+        GatewayReloadRequiredProblemSchema,
+        GatewayForbiddenProblemSchema,
+        GatewayRateLimitedProblemSchema,
+        GatewayUnavailableProblemSchema,
+        GatewayInternalProblemSchema,
+      ],
+      headers: ApiKeyGatewayHeadersSchema,
+      payload: GatewayDelegatedContextRequestSchema,
+      success: GatewayContextResponseSchema,
+    }),
   );
 
 export const GatewayContextApi = HttpApi.make('shellGatewayContextApi').add(GatewayContextApiGroup);
@@ -282,6 +374,7 @@ export const shellGatewayContextContract = {
   apiPrefix: '/shell-super-app-api',
   documentContextPath: '/shell-super-app-api/shell/document-context',
   issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context',
+  issueDelegatedGatewayContextPath: '/shell-super-app-api/auth/delegated/gateway-context',
   issueDocumentGatewayContextsPath: '/shell-super-app-api/auth/gateway-contexts',
   issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context',
   ownerId: 'shell-super-app',
@@ -289,6 +382,14 @@ export const shellGatewayContextContract = {
 } as const;
 
 export const gatewayContextAuthorizationEntrypoints = [
+  {
+    authorization: { credential: 'api_key', kind: 'capability_issuance' },
+    deployment: shellGatewayContextContract.ownerId,
+    entrypointKey: 'shell.gateway-context.issue.delegated',
+    owner: shellGatewayContextContract.ownerId,
+    path: shellGatewayContextContract.issueDelegatedGatewayContextPath,
+    surface: 'capability_issuance',
+  },
   {
     authorization: { credential: 'session', kind: 'capability_issuance' },
     deployment: shellGatewayContextContract.ownerId,

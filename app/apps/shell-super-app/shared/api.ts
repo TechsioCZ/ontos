@@ -16,6 +16,13 @@ import {
 } from '@app/core-runtime/search-contract';
 import { GatewayContextApiGroup } from '@app/shared-contracts';
 import { EmailReceiptsApi } from '@app/email-delivery/receipt-api';
+import {
+  accessAdminApprovalsGroup,
+  accessAdminChangesGroup,
+  accessAdminExplainGroup,
+  accessAdminPeopleGroup,
+  accessAdminRolesGroup,
+} from './access-admin-api.ts';
 import { ExternalIdentityApiGroup } from '@app/shared-contracts/external-identity';
 import { ResourceIdentitySchema } from '@app/shared-contracts/resource-identity';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
@@ -49,15 +56,12 @@ import { DocumentGatewayApiGroup, DocumentGatewayAssertionSchema } from './docum
 import { OAuthConnectApiGroup } from './oauth-connect-api.ts';
 import {
   PEOPLE_PATHS,
-  PeopleRoleCatalogSchema,
   InvitePeopleRequestSchema,
   InvitePeopleResponseSchema,
   PeopleListRequestSchema,
   PeopleListResponseSchema,
   SetPeopleCompanyMembershipRequestSchema,
   SetPeopleCompanyMembershipResponseSchema,
-  SetPeopleRoleRequestSchema,
-  SetPeopleRoleResponseSchema,
 } from './people-api.ts';
 // @ontos-codesmith-core-read-contract-imports:start
 
@@ -230,8 +234,18 @@ export const IdentityListPayloadSchema = Schema.Struct({
   limit: Schema.Finite.check(Schema.isInt(), Schema.isBetween({ maximum: 100, minimum: 1 })),
   offset: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
 });
+/** A list row can omit governed binding metadata even when the list itself is admitted. */
+export const ApiKeyListItemSchema = Schema.Struct({
+  authBindingId: Schema.optionalKey(AuthBindingIdSchema),
+  cleanupPending: Schema.optionalKey(Schema.Boolean),
+  createdAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
+  enabled: Schema.optionalKey(Schema.Boolean),
+  expiresAt: Schema.optionalKey(Schema.Union([Schema.Null, Schema.DateTimeUtcFromString])),
+  name: Schema.optionalKey(Schema.Union([Schema.Null, Schema.String])),
+  start: Schema.optionalKey(Schema.Union([Schema.Null, Schema.String])),
+});
 export const SelfApiKeyListResponseSchema = Schema.Struct({
-  items: Schema.Array(ApiKeyLifecycleResponseSchema),
+  items: Schema.Array(ApiKeyListItemSchema),
   nextOffset: Schema.Union([Schema.Null, Schema.Finite]),
 });
 export const ManagedApiKeyListPayloadSchema = Schema.Union([
@@ -246,7 +260,7 @@ export const ManagedApiKeyListPayloadSchema = Schema.Union([
   }),
 ]);
 export const ManagedApiKeyListItemSchema = Schema.Struct({
-  displayName: Schema.String,
+  displayName: Schema.optionalKey(Schema.String),
   key: Schema.Union([
     Schema.Null,
     Schema.Struct({
@@ -741,7 +755,8 @@ const ShellSearchResultSchema = Schema.Union([
     matchedViaAlias: Schema.Boolean,
     ref: ResourceRefSchema,
     relevance: Schema.optionalKey(ShellSearchRelevanceSchema),
-    title: searchTitle,
+    // The Party name is a governed field: a caller without it receives the row without its title (O17, O58).
+    title: Schema.optionalKey(searchTitle),
   }),
   Schema.Struct({
     collision: Schema.optionalKey(
@@ -760,11 +775,11 @@ const ShellSearchResultSchema = Schema.Union([
       archived: Schema.Boolean,
       matchedViaAlias: Schema.Boolean,
       ref: ResourceRefSchema,
-      title: searchTitle,
+      title: Schema.optionalKey(searchTitle),
     }),
     ref: ResourceRefSchema,
     relevance: Schema.optionalKey(ShellSearchRelevanceSchema),
-    title: searchTitle,
+    title: Schema.optionalKey(searchTitle),
   }),
 ]);
 
@@ -1445,20 +1460,6 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
         }),
       )
       .add(
-        HttpApiEndpoint.post('listCompanyRoleCatalog', PEOPLE_PATHS.companyRoleCatalog, {
-          error: identityErrors,
-          payload: Schema.Struct({}),
-          success: PeopleRoleCatalogSchema,
-        }),
-      )
-      .add(
-        HttpApiEndpoint.post('listTenantRoleCatalog', PEOPLE_PATHS.tenantRoleCatalog, {
-          error: identityErrors,
-          payload: Schema.Struct({}),
-          success: PeopleRoleCatalogSchema,
-        }),
-      )
-      .add(
         HttpApiEndpoint.post('invitePerson', PEOPLE_PATHS.companyInvite, {
           error: identityErrors,
           headers: IdentityRequestHeadersSchema,
@@ -1486,22 +1487,6 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
           headers: IdentityRequestHeadersSchema,
           payload: SetPeopleCompanyMembershipRequestSchema,
           success: SetPeopleCompanyMembershipResponseSchema,
-        }),
-      )
-      .add(
-        HttpApiEndpoint.post('setPeopleCompanyRole', PEOPLE_PATHS.companyRole, {
-          error: identityErrors,
-          headers: IdentityRequestHeadersSchema,
-          payload: SetPeopleRoleRequestSchema,
-          success: SetPeopleRoleResponseSchema,
-        }),
-      )
-      .add(
-        HttpApiEndpoint.post('setPeopleTenantRole', PEOPLE_PATHS.tenantRole, {
-          error: identityErrors,
-          headers: IdentityRequestHeadersSchema,
-          payload: SetPeopleRoleRequestSchema,
-          success: SetPeopleRoleResponseSchema,
         }),
       ),
   )
@@ -1564,7 +1549,12 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   .add(ShellDocumentContextApiGroup)
   .add(ExternalIdentityApiGroup)
   .add(EmailReceiptsApi.groups.emailReceipts)
-  .add(OAuthConnectApiGroup);
+  .add(OAuthConnectApiGroup)
+  .add(accessAdminRolesGroup)
+  .add(accessAdminPeopleGroup)
+  .add(accessAdminChangesGroup)
+  .add(accessAdminApprovalsGroup)
+  .add(accessAdminExplainGroup);
 
 const authenticationEndpointPath = (endpoint: { readonly path: string }) =>
   `/shell-super-app-api${endpoint.path}` as const;

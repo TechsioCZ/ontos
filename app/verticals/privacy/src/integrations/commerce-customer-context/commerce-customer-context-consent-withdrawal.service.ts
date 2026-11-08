@@ -103,7 +103,7 @@ const profileProvenance = (provenance: AvailableProfile['provenance'], revision:
 };
 const completePermissions = (binding: AvailableBinding): boolean =>
   binding.completeness === 'FULL' &&
-  binding.permissionsFreshness.sourceModuleId === coreIdentityModule &&
+  binding.permissionsFreshness.sourceModuleId === ownerModule &&
   binding.permissionsFreshness.status === 'CURRENT' &&
   new Set(binding.grantedPermissions).size === binding.grantedPermissions.length &&
   binding.grantedPermissions.includes(consentPermission);
@@ -195,7 +195,7 @@ const verifiedBinding = (value: BindingResponse, principal: BoundPrincipal, scop
 const accessPermissionFreshness = (response: AccessResponse) => {
   const rows = response.provenance.filter((item) => item.projection === 'OWNING_CAPABILITY');
   const [row] = rows;
-  return rows.length === 1 && row?.freshness.status === 'CURRENT' && row.freshness.sourceModuleId === coreIdentityModule
+  return rows.length === 1 && row?.freshness.status === 'CURRENT' && row.freshness.sourceModuleId === ownerModule
     ? row.freshness
     : undefined;
 };

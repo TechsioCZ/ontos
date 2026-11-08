@@ -2,6 +2,8 @@
 // @ontos-action-http-owner property.leasing
 // @ontos-action-http-slug request-search-rebuild
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,6 +12,7 @@ import {
 } from '../actions/request-search-rebuild.ts';
 
 export { RequestSearchRebuildPayloadSchema } from '../actions/request-search-rebuild.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const RequestSearchRebuildActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RequestSearchRebuildActionInvalidProblem',
@@ -24,6 +27,7 @@ export const RequestSearchRebuildActionForbiddenProblemSchema = makeProblemDetai
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -138,7 +142,7 @@ export const requestSearchRebuildActionGroupDefinition = HttpApiGroup.make('requ
     HttpApiEndpoint.post('execute', '/property-leasing/actions/request-search-rebuild', {
       error: actionErrors,
       payload: Schema.toEncoded(RequestSearchRebuildPayloadSchema),
-      success: RequestSearchRebuildResultSchema,
+      success: [ActionProposalAcceptedSchema, RequestSearchRebuildResultSchema],
     }),
   )
   .middleware(RequestSearchRebuildActionSchemaErrorMiddleware);

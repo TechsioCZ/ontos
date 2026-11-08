@@ -1,30 +1,82 @@
+import { HttpApi } from 'effect/http-api';
 // TEST process driver; the registration, gateway and Core matching/ACK are real.
 import {
   ApplicationCompositionAuthorityError,
+  ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionService,
   CorePersistenceLive,
   DatabaseConfigLive,
   extractOutboxWorkerSubscriptions,
-  matchOutboxMessages,
+  extractVerticalRuntimeSafeDescriptors,
+  canonicalOntosPublicApiKey,
+  OntosActionContractSchema,
+  OntosApiContractSchema,
+  OntosOperationContractSchema,
+  OntosModuleRequirementsSchema,
   OntosOutboxSubscriptionContractSchema,
   OutboxRepositoryLive,
+  OutboxRuntime,
   OutboxRuntimeLive,
-  ResourceContainmentRelationshipMutation,
-  runOutboxCycle,
+  OutboxWorkerDescriptorError,
 } from '@app/core-runtime';
+import type { ActiveApplicationCompositionUnavailableError, OutboxCycleError } from '@app/core-runtime';
+import { defineOutboxWorkerEntry } from '@app/core-runtime/outbox/worker';
+import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { NodeCrypto, NodeRuntime, NodeServices, NodeStream } from '@effect/platform-node';
-import { Config, Context, DateTime, Effect, Fiber, Layer, Option, Queue, Redacted, Schema, Stream } from 'effect';
+import {
+  Config,
+  Context,
+  DateTime,
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  Queue,
+  Redacted,
+  Schema,
+  Stream,
+} from 'effect';
 import { PgClient } from '@effect/sql-pg';
+import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { partyRegistryManifest } from '../../vertical.manifest.ts';
+import { partyRegistryBackendRegistration, partyRegistryRuntimeManifest } from '../../vertical.runtime-declaration.ts';
 import { outboxWorkerDatabaseIdentityEnrollmentLive, outboxWorkerHandlerLayers } from '../../src/worker-host/layer.ts';
 import { outboxWorkers } from '../../src/workers/index.ts';
 import {
+  ExecutePrivacyMeasureWorkerRejected,
   PrivacyMeasureOwnerGateway,
   PrivacyMeasureOwnerGatewayLive,
 } from '../../src/workers/privacy-measure-owner-gateway.ts';
 
 const subscriptions = extractOutboxWorkerSubscriptions(outboxWorkers);
+const runtimeDescriptionSchema = Schema.Struct({
+  actions: Schema.Array(OntosActionContractSchema),
+  api: Schema.Array(OntosApiContractSchema),
+  operationContracts: Schema.Array(OntosOperationContractSchema),
+  outboxSubscriptions: Schema.Array(OntosOutboxSubscriptionContractSchema),
+  requirements: Schema.optionalKey(OntosModuleRequirementsSchema),
+});
+const ownerRuntime = extractVerticalRuntimeSafeDescriptors(partyRegistryBackendRegistration);
+const runtimeDescription = {
+  ...ownerRuntime,
+  api: Object.entries(partyRegistryRuntimeManifest.publicSurface.api).map(([key, api]) => {
+    if (!HttpApi.isHttpApi(api)) {
+      throw new Error('The actual owner public API declaration is not a genuine HttpApi');
+    }
+    return {
+      key: canonicalOntosPublicApiKey(ownerRuntime.moduleId, key),
+      operationKeys: Object.values(api.groups).flatMap((group) =>
+        Object.values(group.endpoints).map((endpoint) =>
+          group.topLevel ? endpoint.identifier : `${group.identifier}.${endpoint.identifier}`,
+        ),
+      ),
+    };
+  }),
+};
 const workerMessageSchema = Schema.Union([
   Schema.Struct({ type: Schema.Literal('barrier'), stage: Schema.Literals(['after-execute', 'after-report']) }),
   Schema.Struct({
@@ -43,6 +95,8 @@ const workerMessageSchema = Schema.Union([
   Schema.Struct({
     type: Schema.Literal('failed'),
     code: Schema.Literals(['composition-unavailable', 'worker-unavailable']),
+    reasonCode: Schema.Literals(['native-claim-admission', 'other']),
+    diagnostic: Schema.Array(Schema.Struct({ tag: Schema.String, code: Schema.String, reason: Schema.String })),
   }),
   Schema.Struct({
     marker: Schema.Struct({
@@ -58,7 +112,9 @@ const workerMessageSchema = Schema.Union([
       unitId: Schema.String,
       version: Schema.String,
     }),
+    originatorActions: Schema.Array(Schema.String),
     subscriptions: Schema.Array(OntosOutboxSubscriptionContractSchema),
+    runtime: runtimeDescriptionSchema,
   }),
 ]);
 const writeWorkerMessage = Effect.fn('PrivacyCompletionWorker.writeMessage')(
@@ -71,6 +127,50 @@ class PrivacyCompletionWorkerFailure extends Schema.TaggedError<PrivacyCompletio
   'PrivacyCompletionWorkerFailure',
   { reason: Schema.String },
 ) {}
+const failureReasonCode = (cause: unknown) =>
+  Schema.is(ApplicationCompositionAuthorityError)(cause) &&
+  cause.reason === 'The worker claim intrinsic admission could not be verified'
+    ? ('native-claim-admission' as const)
+    : ('other' as const);
+const declaredFailureSchema = Schema.Struct({
+  _tag: Schema.String.check(Schema.isPattern(/^[A-Za-z][A-Za-z0-9_]{0,95}$/u)),
+  code: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[A-Za-z][A-Za-z0-9_]{0,95}$/u))),
+  reason: Schema.optionalKey(Schema.String),
+  cause: Schema.optionalKey(Schema.Unknown),
+});
+const publicFailureReasons = new Set([
+  'The worker claim intrinsic admission could not be verified',
+  'The native worker claim has no current verified receiving authority',
+  'The required module operation could not be checked safely',
+  'The required module operation is not supported by the admitted composition',
+  'The compiled Outbox Worker subscription contract is invalid',
+  'The compiled Outbox Worker owner artifact is not approved by this Application Composition',
+  'The compiled Outbox Worker subscriptions differ from the complete approved owner contract',
+  'The complete Application Composition subscription catalog is unavailable',
+  'The genuine hosted worker cycle failed',
+]);
+const failureDiagnostic = (cause: unknown) => {
+  const diagnostic: { tag: string; code: string; reason: string }[] = [];
+  let current = cause;
+  for (let depth = 0; depth < 3; depth += 1) {
+    const declared = Schema.decodeUnknownOption(declaredFailureSchema)(current);
+    if (Option.isNone(declared)) {
+      break;
+    }
+    const { _tag, code, reason } = declared.value;
+    diagnostic.push({
+      tag: _tag,
+      code: code ?? 'not-declared',
+      // Only declared machine reasons and these exact public constants may leave the child.
+      reason:
+        reason !== undefined && (publicFailureReasons.has(reason) || /^[A-Za-z][A-Za-z0-9_]{0,95}$/u.test(reason))
+          ? reason
+          : 'redacted-unclassified-reason',
+    });
+    current = declared.value.cause;
+  }
+  return diagnostic;
+};
 const ownsWorkerConnection = (address: URL, database: string, user: string) =>
   database.startsWith('ontos_test_party_gateway_') &&
   ['postgres:', 'postgresql:'].includes(address.protocol) &&
@@ -148,7 +248,17 @@ const run = Effect.scoped(
     const real = Context.get(gatewayContext, PrivacyMeasureOwnerGateway);
     const hold = (stage: 'after-execute' | 'after-report') =>
       stage === barrier
-        ? writeWorkerMessage({ type: 'barrier', stage }).pipe(Effect.andThen(Effect.never))
+        ? writeWorkerMessage({ type: 'barrier', stage }).pipe(
+            Effect.mapError(
+              () =>
+                new ExecutePrivacyMeasureWorkerRejected({
+                  code: 'WORKER_CONTEXT_INVALID',
+                  reason: 'The bounded worker barrier response could not be encoded',
+                  retryable: false,
+                }),
+            ),
+            Effect.andThen(Effect.never),
+          )
         : Effect.void;
     const gateway = {
       load: real.load,
@@ -159,8 +269,6 @@ const run = Effect.scoped(
     };
     const runtime = Layer.merge(OutboxRuntimeLive, outboxWorkerHandlerLayers.projector).pipe(
       Layer.provide(outboxWorkerHandlerLayers.projectionSource),
-      // SpiceDB topology is not under test in this privacy completion driver.
-      Layer.provide(Layer.succeed(ResourceContainmentRelationshipMutation, { touch: () => Effect.void })),
       Layer.provide(outboxWorkerHandlerLayers.searchIngestion),
       Layer.provide(outboxWorkerHandlerLayers.searchProjectionStore),
       Layer.provide(outboxWorkerHandlerLayers.searchWorkerSnapshot),
@@ -170,8 +278,15 @@ const run = Effect.scoped(
       Layer.provide(Layer.mergeAll(DatabaseConfigLive, outboxWorkerDatabaseIdentityEnrollmentLive, NodeCrypto.layer)),
     );
     const context = yield* Layer.build(runtime);
+    const actualRuntime = Context.get(context, OutboxRuntime);
     const advances =
       retrySession === 'dead-letter' ? [0, 2000, 5000, 10_000, 19_000, 36_000, 69_000, 130_000, 200_000] : [advanceMs];
+    const completed = yield* Deferred.make<
+      true,
+      PrivacyCompletionWorkerFailure | OutboxCycleError | ActiveApplicationCompositionUnavailableError
+    >();
+    const recordActualFailure = (cause: OutboxCycleError | ActiveApplicationCompositionUnavailableError) =>
+      Deferred.fail(completed, cause).pipe(Effect.asVoid);
     const acknowledgements = yield* Queue.make<true, PrivacyCompletionWorkerFailure>({ capacity: 1 });
     yield* Effect.addFinalizer(() => Queue.shutdown(acknowledgements));
     let received = 0;
@@ -213,50 +328,97 @@ const run = Effect.scoped(
             Effect.forkScoped,
           )
         : undefined;
-    // Shell's installed-catalog matcher runs concurrently and skip-locks the same unmatched messages. While its
-    // transaction is open this worker's match skips them, and the claim would then miss their uncommitted
-    // deliveries. Match again until no unmatched message remains, so every cycle claims what was dispatched.
-    const unmatchedRemain = native<{ readonly unmatched: boolean }>`
-      select exists(select 1 from core.outbox_messages where matched_at is null) as unmatched`.pipe(
-      Effect.map(([probe]) => probe?.unmatched === true),
-      Effect.mapError(() => new PrivacyCompletionWorkerFailure({ reason: 'Unmatched Outbox messages are unreadable' })),
+    let cycleIndex = 0;
+    const observedRuntime: typeof actualRuntime = {
+      matchMessages: actualRuntime.matchMessages,
+      runCycle: (cycleInput) =>
+        Effect.gen(function* observeActualHostedCycle() {
+          const index = cycleIndex;
+          const advance = advances[index];
+          if (advance === undefined) {
+            return yield* Effect.never;
+          }
+          cycleIndex += 1;
+          if (cycleInput.compositionRevision !== revision) {
+            return yield* new OutboxWorkerDescriptorError({
+              code: 'outbox_worker_descriptor_invalid',
+              reason: 'The admitted worker revision differs from the exact test session',
+            });
+          }
+          if (index > 0) {
+            yield* Queue.take(acknowledgements).pipe(
+              Effect.mapError(
+                () =>
+                  new OutboxWorkerDescriptorError({
+                    code: 'outbox_worker_descriptor_invalid',
+                    reason: 'The bounded worker retry acknowledgement was refused',
+                  }),
+              ),
+            );
+          }
+          const matched = yield* actualRuntime.matchMessages({ compositionRevision: cycleInput.compositionRevision });
+          const cycle = yield* actualRuntime.runCycle({
+            ...cycleInput,
+            now: DateTime.toDateUtc(DateTime.addDuration(yield* DateTime.now, advance)),
+          });
+          yield* writeWorkerMessage({ type: 'cycle', matched, cycle }).pipe(
+            Effect.mapError(
+              () =>
+                new OutboxWorkerDescriptorError({
+                  code: 'outbox_worker_descriptor_invalid',
+                  reason: 'The actual worker cycle result could not be encoded',
+                }),
+            ),
+          );
+          if (index === advances.length - 1) {
+            yield* Deferred.succeed(completed, true);
+          }
+          return cycle;
+        }).pipe(Effect.tapError(recordActualFailure)),
+    };
+    const sourceAuthority = ActiveApplicationCompositionConfigLive.pipe(
+      Layer.provide(
+        ActiveApplicationCompositionSourceLive.pipe(
+          Layer.provide(
+            FetchHttpClient.layer.pipe(
+              Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+            ),
+          ),
+        ),
+      ),
     );
-    const matchSettled = Effect.fn('PrivacyCompletionWorker.matchSettled')(function* matchSettled(
-      attempt: number,
-    ): Effect.fn.Return<
-      Effect.Success<ReturnType<typeof matchOutboxMessages>>,
-      Effect.Error<ReturnType<typeof matchOutboxMessages>> | PrivacyCompletionWorkerFailure,
-      Effect.Services<ReturnType<typeof matchOutboxMessages>>
-    > {
-      const matched = yield* matchOutboxMessages({ compositionRevision: revision });
-      if (attempt >= 100 || !(yield* unmatchedRemain)) {
-        return matched;
-      }
-      yield* Effect.sleep('10 millis');
-      const later = yield* matchSettled(attempt + 1);
-      return {
-        deliveriesCreated: matched.deliveriesCreated + later.deliveriesCreated,
-        messagesMatched: matched.messagesMatched + later.messagesMatched,
-      };
+    const authority = Layer.effect(
+      ActiveApplicationCompositionService,
+      Effect.gen(function* observeActualCompositionSourceFailure() {
+        const actualAuthority = yield* ActiveApplicationCompositionService;
+        return { load: actualAuthority.load.pipe(Effect.tapError(recordActualFailure)) };
+      }),
+    ).pipe(Layer.provide(sourceAuthority));
+    const entry = defineOutboxWorkerEntry({
+      claimOwnerPrefix: 'privacy-completion-test',
+      expectedDeployment: ultramodernApiMarker,
+      layer: Layer.mergeAll(
+        Layer.succeedContext(Context.add(context, OutboxRuntime, observedRuntime)),
+        Layer.succeed(PrivacyMeasureOwnerGateway, gateway),
+        authority,
+      ),
+      ownerRegistration: partyRegistryBackendRegistration,
+      registrations: outboxWorkers,
+      subscriptions,
     });
-    for (const [index, advance] of advances.entries()) {
-      if (index > 0) {
-        yield* Queue.take(acknowledgements);
-      }
-      const result = yield* Effect.gen(function* actualCycle() {
-        const matched = yield* matchSettled(0);
-        const cycle = yield* runOutboxCycle({
-          claimOwner: `privacy-completion-${process.pid}`,
-          compositionRevision: revision,
-          maxDeliveries: 1,
-          now: DateTime.toDateUtc(DateTime.addDuration(yield* DateTime.now, advance)),
-          registrations: outboxWorkers,
-          subscriptions,
-        });
-        return { matched, cycle };
-      }).pipe(Effect.provideService(PrivacyMeasureOwnerGateway, gateway), Effect.provideContext(context));
-      yield* writeWorkerMessage({ type: 'cycle', ...result });
-    }
+    yield* Effect.raceFirst(
+      entry.runLoop({
+        config: { claimOwner: `privacy-completion-${process.pid}`, maxDeliveries: 1, pollIntervalMs: 10 },
+        health: {
+          cycleFailed: Deferred.fail(
+            completed,
+            new PrivacyCompletionWorkerFailure({ reason: 'The genuine hosted worker cycle failed' }),
+          ).pipe(Effect.asVoid),
+          cycleSucceeded: Effect.void,
+        },
+      }),
+      Deferred.await(completed),
+    );
     if (input !== undefined) {
       yield* Fiber.join(input);
     }
@@ -264,16 +426,25 @@ const run = Effect.scoped(
 );
 
 const program = process.argv.includes('--describe')
-  ? Schema.decodeUnknownEffect(workerMessageSchema)({ marker: ultramodernApiMarker, subscriptions }).pipe(
-      Effect.flatMap(writeWorkerMessage),
-    )
+  ? Schema.decodeUnknownEffect(workerMessageSchema)({
+      marker: ultramodernApiMarker,
+      originatorActions: partyRegistryManifest.originatorActions,
+      subscriptions,
+      runtime: runtimeDescription,
+    }).pipe(Effect.flatMap(writeWorkerMessage))
   : run.pipe(
       Effect.matchEffect({
         onFailure: (cause) =>
           writeWorkerMessage({
-            code: Schema.is(ApplicationCompositionAuthorityError)(cause)
-              ? 'composition-unavailable'
-              : 'worker-unavailable',
+            code:
+              Schema.is(ApplicationCompositionAuthorityError)(cause) ||
+              (Schema.is(OutboxWorkerDescriptorError)(cause) &&
+                cause.code === 'outbox_worker_descriptor_invalid' &&
+                cause.reason === 'The admitted worker revision differs from the exact test session')
+                ? 'composition-unavailable'
+                : 'worker-unavailable',
+            reasonCode: failureReasonCode(cause),
+            diagnostic: failureDiagnostic(cause),
             type: 'failed',
           }).pipe(Effect.andThen(Effect.fail(cause))),
         onSuccess: () => Effect.void,

@@ -23,26 +23,40 @@ const editableFields = {
   ownerPrincipalRef: Schema.optionalKey(PrincipalRefSchema),
   priority: Schema.optionalKey(MetricPrioritySchema),
 };
+const ApplyCreateMetricCommandSchema = Schema.TaggedStruct('CreateMetric', {
+  ...editableFields,
+  contextRefs: Schema.optionalKey(Schema.Array(ContextRefSchema).check(Schema.isMaxLength(12))),
+  title: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+});
+
+const ApplyUpdateMetricCommandSchema = Schema.TaggedStruct('UpdateMetric', {
+  ...editableFields,
+  metricRef: MetricRefSchema,
+  title: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+});
+
+const ApplyAssignMetricCommandSchema = Schema.TaggedStruct('AssignMetric', {
+  metricRef: MetricRefSchema,
+  ownerPrincipalRef: PrincipalRefSchema,
+});
+
+const ApplyChangeMetricStateCommandSchema = Schema.TaggedStruct('ChangeMetricState', {
+  metricRef: MetricRefSchema,
+  state: MetricStateSchema,
+});
+
 export const SalesInsightsCommandSchema = Schema.Union([
-  Schema.TaggedStruct('CreateMetric', {
-    ...editableFields,
-    contextRefs: Schema.optionalKey(Schema.Array(ContextRefSchema).check(Schema.isMaxLength(12))),
-    title: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  }),
-  Schema.TaggedStruct('UpdateMetric', {
-    ...editableFields,
-    metricRef: MetricRefSchema,
-    title: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-  }),
-  Schema.TaggedStruct('AssignMetric', { metricRef: MetricRefSchema, ownerPrincipalRef: PrincipalRefSchema }),
-  Schema.TaggedStruct('ChangeMetricState', { metricRef: MetricRefSchema, state: MetricStateSchema }),
+  ApplyCreateMetricCommandSchema,
+  ApplyUpdateMetricCommandSchema,
+  ApplyAssignMetricCommandSchema,
+  ApplyChangeMetricStateCommandSchema,
 ]);
 export type SalesInsightsCommand = typeof SalesInsightsCommandSchema.Type;
-export const ApplyCommandPayloadSchema = Schema.Struct({
+export const SalesInsightsCommandPayloadSchema = Schema.Struct({
   command: SalesInsightsCommandSchema,
   expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
-export type ApplyCommandPayload = typeof ApplyCommandPayloadSchema.Type;
+export type SalesInsightsCommandPayload = typeof SalesInsightsCommandPayloadSchema.Type;
 export const ApplyCommandResultSchema = Schema.Struct({ metric: MetricSchema, revision: Schema.Int });
 export const SalesInsightsErrorSchema = Schema.Union([
   SalesInsightsScopeMismatch,
@@ -63,3 +77,23 @@ export { SalesInsightsPersistenceUnavailable } from '../errors/sales-insights-pe
 export { SalesInsightsReferenceUnavailable } from '../errors/sales-insights-reference-unavailable.ts';
 export { SalesInsightsReferenceIneligible } from '../errors/sales-insights-reference-ineligible.ts';
 export { SalesInsightsPermissionDenied } from '../errors/sales-insights-permission-denied.ts';
+
+/** Scope-wide creation. Existing-record mutations have their own target-bearing Actions. */
+export const ApplyCommandPayloadSchema = Schema.Struct({
+  command: ApplyCreateMetricCommandSchema,
+  expectedRevision: SalesInsightsCommandPayloadSchema.fields.expectedRevision,
+});
+export const UpdateMetricPayloadSchema = Schema.Struct({
+  command: ApplyUpdateMetricCommandSchema,
+  expectedRevision: SalesInsightsCommandPayloadSchema.fields.expectedRevision,
+});
+export const AssignMetricPayloadSchema = Schema.Struct({
+  command: ApplyAssignMetricCommandSchema,
+  expectedRevision: SalesInsightsCommandPayloadSchema.fields.expectedRevision,
+});
+export const ChangeMetricStatePayloadSchema = Schema.Struct({
+  command: ApplyChangeMetricStateCommandSchema,
+  expectedRevision: SalesInsightsCommandPayloadSchema.fields.expectedRevision,
+});
+
+export type ApplyCommandPayload = typeof ApplyCommandPayloadSchema.Type;

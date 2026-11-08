@@ -1,3 +1,4 @@
+import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import {
   ActionPermissionDenied,
   OperationAuthenticationRequired,
@@ -15,6 +16,7 @@ import { expect, it } from 'effect-rstest';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { requestSearchRebuildAction } from '../../src/actions/request-search-rebuild.action.ts';
 import { PartyRegistryAuthenticationNamespaceRegistryLive } from '../../api/auth/action-principal.ts';
+import { makeTestOperationalScopeAccess } from '@app/core-runtime/testing/access-gate';
 
 // Explicit own receiving deployment audience; the approved owner root keeps its constant private.
 const ACTION_GATEWAY_AUDIENCE = 'party-registry' as const;
@@ -44,10 +46,7 @@ const active = {
   principalTenantId: principal.tenantId,
   tenantStatus: 'active',
 };
-const legalEntityAccess = {
-  legalEntities: ({ legalEntityIds }: { readonly legalEntityIds: readonly string[] }) =>
-    Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
-};
+const legalEntityAccess = makeTestOperationalScopeAccess();
 const request = {
   audience: ACTION_GATEWAY_AUDIENCE,
   correlationId: 'receiver-unit',
@@ -184,9 +183,8 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, PartyRegistryAuthenticationNamespaceRe
           );
         }),
     );
-    suite.effect('Commerce registration leaves normal Action and Tenant permission gates in force', () =>
+    suite.effect('Commerce registration leaves the one access gate in force for ordinary Actions', () =>
       Effect.gen(function* ordinaryActionPermissions() {
-        const deniedHarness = yield* makeActionTestHarness();
         const input = {
           audience: ACTION_GATEWAY_AUDIENCE,
           payload: {},
@@ -194,22 +192,18 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, PartyRegistryAuthenticationNamespaceRe
           registration: requestSearchRebuildAction,
           transport: { correlationId: 'receiver-action', idempotencyKey: 'receiver-action' },
         };
+        const deniedHarness = yield* makeActionTestHarness({
+          access: 'denied',
+          ownerRegistration: partyRegistryBackendRegistration,
+        });
         expect(Schema.is(ActionPermissionDenied)(yield* deniedHarness.runtime.runAction(input).pipe(Effect.flip))).toBe(
           true,
         );
         expect(deniedHarness.snapshot().committed.length).toBe(0);
-        const tenantDeniedHarness = yield* makeActionTestHarness({
-          actionPermission: 'allowed',
-          tenantPermission: 'denied',
-        });
-        expect(
-          Schema.is(ActionPermissionDenied)(yield* tenantDeniedHarness.runtime.runAction(input).pipe(Effect.flip)),
-        ).toBe(true);
-        expect(tenantDeniedHarness.snapshot().committed.length).toBe(0);
-        expect(tenantDeniedHarness.snapshot().stages.includes('handler_executed')).toBe(false);
+        expect(deniedHarness.snapshot().stages.includes('handler_executed')).toBe(false);
         const allowedHarness = yield* makeActionTestHarness({
-          actionPermission: 'allowed',
-          tenantPermission: 'allowed',
+          access: 'allowed',
+          ownerRegistration: partyRegistryBackendRegistration,
         });
         expect((yield* allowedHarness.runtime.runAction(input)).status).toBe('QUEUED');
         expect(allowedHarness.snapshot().committed.length).toBe(1);

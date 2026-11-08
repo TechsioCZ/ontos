@@ -1,31 +1,10 @@
 /**
- * Sales-demo role matrix (plan 22): who may read or write which module, as SpiceDB relationships.
- *
- * One `<module>.apply-command` executor grant covers every command of a module, so each demo vertical also
- * runs `shared/actions/command-guard.ts`, which rejects a fixed command list for non-human principals.
- * Pure data and pure builders only; `reset-permissions.mts` writes the result.
+ * Reviewed demo identity, Role and company assignment intent. reset-permissions.mts compiles these
+ * cells against the generated catalog and applies them through Core's canonical bootstrap.
+ * Restricted modules name their data and field capabilities explicitly, independent of navigation.
  */
-import {
-  toContextPermissionAccessObjectId,
-  toLegalEntityAccessObjectId,
-  toModuleAccessObjectId,
-} from '@app/core-runtime';
-import {
-  bootstrapRelationshipsFromNative,
-  companyMembershipAdmissionRelationships,
-  scopedActionRoleBootstrapRelationships,
-} from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
-import {
-  buildActionAuthorizationRelationships,
-  deriveScopedActionAuthorization,
-} from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
-import type { ActionAuthorizationProvisioningAction } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
-import { coreActionCatalog } from '../../packages/core-runtime/src/modules/actions/catalog.ts';
-import { deriveActionAuthorizationInstalledModuleScopes } from '../provision-current-action-authorization.mts';
-import { toIdentityNamespaceAccessObjectId } from '../../packages/core-runtime/src/permissions/context-access.ts';
-import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
-import { warmupAccounts } from './warmup-accounts.mts';
-import { Effect, Schema } from 'effect';
+import type { ModuleAccess, PolicyActorKind, PolicyRole } from './access-policy.mts';
+import { reviewedCompanyRole } from './reviewed-owner-role.mts';
 
 import {
   akrosDemoLegalEntityId,
@@ -37,23 +16,17 @@ import {
   rentalDemoLegalEntityId,
 } from './fixture-ids.mts';
 
-const commerceModule = 'commerce.customer-context';
-/** Market retirement impact summary and Market owner reads of commerce-customer-context. */
-const marketCatalogRead = 'market.catalog.read';
-const pipelineModule = 'demo.sales-pipeline';
-const commercialAdministratorLabel = 'Vedoucí obchodu';
+export type { ModuleAccess } from './access-policy.mts';
 
+const commerceModule = 'commerce.customer-context';
 const partyModule = 'party.registry';
 const workforceModule = 'demo.workforce';
 const operationsModule = 'facility.operations';
 const marketModule = 'commerce.market-catalog';
 const storefrontRegistryModule = 'commerce.storefront-registry';
-const tenantSuperadminRole = 'superadmin';
+const crmModule = 'demo.crm';
+const pipelineModule = 'demo.sales-pipeline';
 const principalResource = 'core.principal';
-const crmReadAll = 'demo.crm.read_all';
-const crmWriteAll = 'demo.crm.write_all';
-const eshopAdministratorLabel = 'Správce e-shopu';
-const proposalLifecycleActionKey = 'core.identity.mutate-agent-proposals';
 
 /**
  * Module IDs as declared in each `vertical.manifest.ts`. Vertical directories: party-registry, work-tasks,
@@ -73,47 +46,177 @@ export const demoModuleIds = [
   'property.portfolio',
   'property.leasing',
   'legal.agreements',
-  'demo.crm',
+  crmModule,
   'crm.activities',
   operationsModule,
   marketModule,
   storefrontRegistryModule,
 ] as const;
 export type DemoModuleId = (typeof demoModuleIds)[number];
-export const ModuleAccessSchema = Schema.Literals(['read', 'write']);
-export type ModuleAccess = typeof ModuleAccessSchema.Type;
 
 /**
- * Modules gated by generated `<module>.read_all` / `<module>.write_all` context permissions. Permission keys
- * allow only `[a-z0-9_]` segments, so `demo.sales-pipeline` uses `demo.sales_pipeline.read_all`.
- * party.registry uses Tenant/legal-entity relations instead; billing has no business permissions.
+ * One reviewed demo role. Its vocabulary is the reviewed matrix's own: which modules a person reaches, at
+ * read or write, which capabilities are named explicitly, which modules stay restricted to exactly those,
+ * whether the person reviews proposals, and whether the person is a company administrator or the tenant owner.
  */
-const contextPermissionModules: ReadonlySet<DemoModuleId> = new Set([
-  'demo.merchandise',
-  'demo.sales-insights',
-  pipelineModule,
-  'demo.tagging',
-  workforceModule,
-  'work.tasks',
-  'crm.activities',
-  operationsModule,
-]);
-export const contextPermissionKey = (moduleId: DemoModuleId, access: ModuleAccess) =>
-  `${moduleId.replaceAll('-', '_')}.${access === 'read' ? 'read_all' : 'write_all'}`;
+export interface DemoRole {
+  /** The person runs; an agent proposes the sensitive and critical work and runs only the routine. */
+  readonly actorKind?: PolicyActorKind;
+  /** Explicit capability keys a role names on top of its module access, by module. */
+  readonly capabilityKeys?: PolicyRole['capabilityKeys'];
+  readonly capabilityModes?: PolicyRole['capabilityModes'];
+  readonly capabilitySelectors?: PolicyRole['capabilitySelectors'];
+  /** Company administration: `access_admin` in the company scope, on top of the role's own cells. */
+  readonly companyAdmin?: true;
+  readonly label: string;
+  readonly modules: Readonly<Record<string, ModuleAccess>>;
+  /** The one reviewed capability a proposal reviewer approves, at its declared `approve` mode. */
+  readonly proposalReview?: true;
+  /** Modules opened without their generic capability set: only `capabilityKeys` apply. */
+  readonly restrictedModules?: readonly string[];
+  /** Tenant ownership: the `owner` membership in the tenant-context scope. */
+  readonly tenantOwner?: true;
+}
 
-/**
- * Owner-declared context permissions granted with any access to the module. The customers page reads the
- * customer segments (commerce customer groups) with `customer.group.read`.
- */
-const moduleReadPermissions = (moduleId: DemoModuleId): readonly string[] =>
-  moduleId === commerceModule ? ['customer.group.read'] : [];
+export const pipelineReadCapability = 'demo.sales-pipeline.api-records.read';
+export const pipelineWriteCapability = 'demo.sales-pipeline.apply-command.write';
+export const pipelineEntrustCapability = 'demo.sales-pipeline.opportunity-entrust.assign';
+export const pipelineSearchCapability = 'demo.sales-pipeline.search-opportunities.read';
+/** Navigation alone never grants records or entrustment administration. */
+export const pipelineRecordNavigationKeys = [
+  'demo.sales-pipeline.page-sales-pipeline-home.read',
+  'demo.sales-pipeline.navigation-records.read',
+  'demo.sales-pipeline.page-records.read',
+];
+/** Ordinary writers retain their existing agenda, AI page and search, but cannot reassign entrustment. */
+export const pipelineWriterKeys = [
+  ...pipelineRecordNavigationKeys,
+  'demo.sales-pipeline.navigation-ai.read',
+  'demo.sales-pipeline.page-ai.read',
+  pipelineReadCapability,
+  pipelineWriteCapability,
+  pipelineSearchCapability,
+];
 
-/** Native Privacy reads are separate company-scoped grants, not implied by module access. */
-export const privacyReadContextPermissions = [
-  'privacy.processing_catalog.read',
-  'privacy.notice.read',
-  'privacy.subjects.read',
-  'privacy.consent.read',
+/** Reviewed existing human Party reads. CRM workload-purpose reads are deliberately absent. */
+export const partyHumanReaderKeys = [
+  'party.registry.ares-subject.lookup',
+  'party.registry.contact-point-value.list',
+  'party.registry.contact-point-value.read',
+  'party.registry.contact-point.list',
+  'party.registry.contact-point.read',
+  'party.registry.contacts-page.open',
+  'party.registry.counterparty-identity.read',
+  'party.registry.counterparty-role.read-history',
+  'party.registry.counterparty-search-identity.read',
+  'party.registry.counterparty.read',
+  'party.registry.counterparty.search',
+  'party.registry.customer-detail-page.open',
+  'party.registry.customer.list',
+  'party.registry.customers-page.open',
+  'party.registry.duplicate-candidate.list',
+  'party.registry.duplicate-candidate.read',
+  'party.registry.guest-party.resolve',
+  'party.registry.identity-review-evidence.read',
+  'party.registry.official-identifier-value.read',
+  'party.registry.official-identifier-value.read-history',
+  'party.registry.official-identifier.read',
+  'party.registry.official-identifier.read-history',
+  'party.registry.organization-engagement.read',
+  'party.registry.owned-command-result.read',
+  'party.registry.party-correction-authority.read',
+  'party.registry.party-correction-evidence.read',
+  'party.registry.party-correction.read',
+  'party.registry.party-identity-page.open',
+  'party.registry.party-identity.read',
+  'party.registry.party-match-decision-evidence.read',
+  'party.registry.party-match.preview',
+  'party.registry.party-match.read',
+  'party.registry.party-merge.read-readiness',
+  'party.registry.party-relationship.read',
+  'party.registry.party-search-identity.read',
+  'party.registry.party.read',
+  'party.registry.party.search',
+  'party.registry.person-engagement.read',
+  'party.registry.privacy-measure.read-receipt',
+  'party.registry.search-label-value.read',
+  'party.registry.search-label.read',
+] as const;
+/** Reviewed existing human Party capabilities. The new CRM workload purposes are deliberately absent. */
+export const partyHumanWriterKeys = [
+  'party.registry.ares-subject.lookup',
+  'party.registry.contact-point-value.list',
+  'party.registry.contact-point-value.read',
+  'party.registry.contact-point.add',
+  'party.registry.contact-point.end',
+  'party.registry.contact-point.list',
+  'party.registry.contact-point.read',
+  'party.registry.contact-point.update',
+  'party.registry.contacts-page.open',
+  'party.registry.counterparty-identity.read',
+  'party.registry.counterparty-role.add',
+  'party.registry.counterparty-role.end',
+  'party.registry.counterparty-role.read-history',
+  'party.registry.counterparty-search-identity.read',
+  'party.registry.counterparty.create',
+  'party.registry.counterparty.onboard',
+  'party.registry.counterparty.read',
+  'party.registry.counterparty.search',
+  'party.registry.customer-detail-page.open',
+  'party.registry.customer.list',
+  'party.registry.customers-page.open',
+  'party.registry.duplicate-candidate.confirm',
+  'party.registry.duplicate-candidate.dismiss',
+  'party.registry.duplicate-candidate.list',
+  'party.registry.duplicate-candidate.read',
+  'party.registry.duplicate-candidate.request-evidence',
+  'party.registry.duplicate-candidate.resolve-create',
+  'party.registry.duplicate-candidate.resolve-match',
+  'party.registry.guest-party.resolve',
+  'party.registry.identity-review-evidence.read',
+  'party.registry.official-identifier-value.read',
+  'party.registry.official-identifier-value.read-history',
+  'party.registry.official-identifier.add',
+  'party.registry.official-identifier.end',
+  'party.registry.official-identifier.read',
+  'party.registry.official-identifier.read-history',
+  'party.registry.official-identifier.update',
+  'party.registry.organization-engagement.archive',
+  'party.registry.organization-engagement.attach',
+  'party.registry.organization-engagement.read',
+  'party.registry.organization-engagement.unarchive',
+  'party.registry.owned-command-result.read',
+  'party.registry.party-correction-authority.read',
+  'party.registry.party-correction-evidence.read',
+  'party.registry.party-correction.read',
+  'party.registry.party-fact.correct',
+  'party.registry.party-identity-page.open',
+  'party.registry.party-identity.read',
+  'party.registry.party-match-decision-evidence.read',
+  'party.registry.party-match.preview',
+  'party.registry.party-match.read',
+  'party.registry.party-match.record',
+  'party.registry.party-merge.read-readiness',
+  'party.registry.party-relationship.create',
+  'party.registry.party-relationship.end',
+  'party.registry.party-relationship.read',
+  'party.registry.party-relationship.update',
+  'party.registry.party-search-identity.read',
+  'party.registry.party.archive',
+  'party.registry.party.create',
+  'party.registry.party.read',
+  'party.registry.party.search',
+  'party.registry.party.unarchive',
+  'party.registry.party.update',
+  'party.registry.person-engagement.archive',
+  'party.registry.person-engagement.attach',
+  'party.registry.person-engagement.read',
+  'party.registry.person-engagement.unarchive',
+  'party.registry.privacy-measure.execute',
+  'party.registry.privacy-measure.read-receipt',
+  'party.registry.search-index.rebuild',
+  'party.registry.search-label-value.read',
+  'party.registry.search-label.read',
 ] as const;
 
 const everything = {
@@ -127,26 +230,11 @@ const everything = {
   [pipelineModule]: 'write',
   'work.tasks': 'write',
   [workforceModule]: 'write',
-} as const satisfies Readonly<Partial<Record<DemoModuleId, ModuleAccess>>>;
-
-export interface DemoRole {
-  /** Exact per-module Actions, replacing the automatic all-Actions grant for that module. */
-  readonly actionKeys?: Readonly<Partial<Record<DemoModuleId, readonly string[]>>>;
-  /** Explicit administrative roles; never inferred from a job, name, or principal kind. */
-  readonly companyRole?: 'admin';
-  /** Extra owner-declared context permissions (e.g. `demo.crm.read_assigned`) granted on top of module access. */
-  readonly contextPermissions?: Readonly<Partial<Record<DemoModuleId, readonly string[]>>>;
-  readonly label: string;
-  readonly modules: Readonly<Partial<Record<DemoModuleId, ModuleAccess>>>;
-  /** Explicit company-scoped proposal lifecycle execution; target business rights remain independently required. */
-  readonly proposalReview?: true;
-  /** Modules opened without the generic read_all/write_all grants (only `contextPermissions` apply). */
-  readonly restrictedModules?: readonly DemoModuleId[];
-  readonly tenantRole?: typeof tenantSuperadminRole;
-}
+} as const satisfies Readonly<Record<string, ModuleAccess>>;
 
 export const demoRoles = {
   accountant: {
+    capabilityKeys: { [partyModule]: partyHumanReaderKeys },
     label: 'Účetní',
     modules: {
       [commerceModule]: 'read',
@@ -160,32 +248,22 @@ export const demoRoles = {
       [partyModule]: 'read',
     },
     proposalReview: true,
-  },
-  agentBot: {
-    label: 'Agent (bot)',
-    modules: {
-      [commerceModule]: 'read',
-      'demo.merchandise': 'read',
-      'demo.sales-insights': 'read',
-      'demo.tagging': 'write',
-      'finance.billing': 'read',
-      'legal.agreements': 'read',
-      [partyModule]: 'read',
-      [pipelineModule]: 'write',
-      'work.tasks': 'write',
-      [workforceModule]: 'read',
-    },
+    restrictedModules: [partyModule],
   },
   headOfSales: {
-    companyRole: 'admin',
-    label: commercialAdministratorLabel,
+    capabilityKeys: { [partyModule]: partyHumanWriterKeys },
+    companyAdmin: true,
+    label: 'Vedoucí obchodu',
     modules: { ...everything, 'privacy.core': 'write' },
     proposalReview: true,
-    tenantRole: tenantSuperadminRole,
+    restrictedModules: [partyModule],
+    tenantOwner: true,
   },
   salesRep: {
+    capabilityKeys: { [partyModule]: partyHumanWriterKeys, [pipelineModule]: pipelineWriterKeys },
     label: 'Obchodník',
     proposalReview: true,
+    restrictedModules: [pipelineModule, partyModule],
     // Billing is visible but not writable: the rep cannot confirm or void invoices.
     modules: {
       [commerceModule]: 'write',
@@ -213,15 +291,9 @@ export const localDevelopmentAdministratorFixture = {
   affiliation: 'employee',
   legalEntityId: '71000000-0000-4000-8000-000000000010',
   principalId: '72000000-0000-4000-8000-000000000010',
-  role: { label: 'Local User', modules: {}, tenantRole: tenantSuperadminRole },
+  role: { label: 'Local User', modules: {}, tenantOwner: true } satisfies DemoRole,
   tenantId: '70000000-0000-4000-8000-000000000010',
-} as const satisfies {
-  readonly affiliation: 'employee';
-  readonly legalEntityId: string;
-  readonly principalId: string;
-  readonly role: DemoRole;
-  readonly tenantId: string;
-};
+} as const;
 
 const human = (key: string, displayName: string, role: DemoRoleKey) => ({
   authBindingId: demoId('core.auth-binding', key),
@@ -240,57 +312,21 @@ export const demoHumanAccounts = [
   human('sklad', 'Pavel Němec', 'warehouse'),
 ] as const;
 
-/** Service principal used by the agent MCP server through a managed API key. */
+/**
+ * Service principal used by the agent MCP server through a managed API key. It holds **no** v2 Role: the
+ * MCP bot is admitted by the gateway-delegation protocol (its key mints a single-use assertion for the
+ * audience it calls), not by a grant. A reviewed Role for a machine identity would be the retired
+ * scoped-role model under a new name (ADR-0030).
+ */
 export const agentBotPrincipal = {
   displayName: 'agent-bot',
   kind: 'service',
   principalId: demoId(principalResource, 'agent-bot'),
-  role: 'agentBot',
 } as const;
 
-export type DemoAction = ActionAuthorizationProvisioningAction;
-
-export interface DemoRelationship {
-  readonly relation: string;
-  readonly resourceId: string;
-  readonly resourceType: string;
-  readonly subjectId: string;
-  readonly subjectRelation?: string;
-  readonly subjectType: string;
-}
-
-/** Action keys owned by a module (`party.registry.create-party`, `demo.tagging.apply-command`, ...). */
-export const moduleActions = (actions: readonly DemoAction[], moduleId: string) =>
-  actions.filter(({ owningModuleKey }) => owningModuleKey === moduleId);
-
-const partyRelations = (access: ModuleAccess) =>
-  access === 'write'
-    ? {
-        legalEntity: ['counterparty_manager', 'counterparty_reader'],
-        // party_identity_reviewer: the customer form resolves its own no-candidate Duplicate Candidate Case
-        // as CREATE_NEW (a Candidate without a VERIFIED IČO is always AMBIGUOUS on create-party).
-        tenant: [
-          'party_identity_manager',
-          'party_identity_reader',
-          'party_identity_reviewer',
-          'party_relationship_manager',
-        ],
-      }
-    : { legalEntity: ['counterparty_reader'], tenant: ['party_identity_reader'] };
-
-const relationshipKey = (relationship: DemoRelationship) =>
-  [
-    relationship.resourceType,
-    relationship.resourceId,
-    relationship.relation,
-    relationship.subjectType,
-    relationship.subjectId,
-    relationship.subjectRelation ?? '',
-  ].join('|');
-
-/** Fixture labels only: authorization remains entirely in the generated SpiceDB relationships.
- * CRM representatives share an identical profile. All other human profiles remain isolated,
- * including supplemental grants that address this same key. Company scope stays in role identity.
+/**
+ * The reviewed Role key of one demo principal. Fixture labels only: authority stays entirely in the
+ * Role's compiled cells. CRM representatives share one profile; every other human profile stays isolated.
  */
 export const demoPrincipalRoleKey = (principalId: string): string => {
   const humanProfiles = {
@@ -325,232 +361,27 @@ export const demoPrincipalRoleKey = (principalId: string): string => {
   return literalProfiles.get(principalId) ?? `demo:${principalId}`;
 };
 
-export const roleRelationship = (
-  resourceType: string,
-  resourceId: string,
-  relation: string,
-  roleId: string,
-): DemoRelationship => ({
-  relation,
-  resourceId,
-  resourceType,
-  subjectId: roleId,
-  subjectRelation: 'member',
-  subjectType: 'scoped_role',
-});
-
-/** Optional Actions use the selected company, never an additional implicit tenant grant. */
-export const scopedDemoActionRelationships = (
-  principalId: string,
-  action: DemoAction,
-  legalEntityId: string,
-  tenantId: string = demoTenantId,
-  roleKey: string = demoPrincipalRoleKey(principalId),
-): readonly DemoRelationship[] => {
-  const scope = action.legalEntityScope === 'forbidden' ? { tenantId } : { legalEntityId, tenantId };
-  const roleId = toScopedRoleObjectId({ ...scope, roleKey });
-  return [
-    {
-      relation: 'member',
-      resourceId: roleId,
-      resourceType: 'scoped_role',
-      subjectId: principalId,
-      subjectType: 'principal',
-    },
-    ...(action.legalEntityScope === 'forbidden' ? [roleRelationship('tenant', tenantId, 'context_role', roleId)] : []),
-    ...scopedActionRoleBootstrapRelationships({ ...scope, action, roleKey }).map((relationship) => {
-      const { subjectRelation, ...directSubject } = relationship;
-      // Protobuf uses '' for a direct subject; the fixture port requires an absent optional userset.
-      return subjectRelation === '' ? directSubject : relationship;
-    }),
-  ];
-};
-
-const roleContextPermissions = (role: DemoRole, moduleId: DemoModuleId, access: ModuleAccess): readonly string[] => {
-  const restricted = (role.restrictedModules ?? []).includes(moduleId);
-  const generic =
-    contextPermissionModules.has(moduleId) && !restricted
-      ? (access === 'write' ? (['read', 'write'] as const) : (['read'] as const)).map((level) =>
-          contextPermissionKey(moduleId, level),
-        )
-      : [];
-  return [
-    ...generic,
-    ...(restricted ? [] : moduleReadPermissions(moduleId)),
-    ...(role.contextPermissions?.[moduleId] ?? []),
-  ];
-};
-
-/** Admin already opens company modules and executes their Actions; named Workforce permissions remain explicit. */
-export const companyAdministratorWorkforceRelationships = (
-  legalEntityId: string,
-  tenantId: string = demoTenantId,
-): readonly DemoRelationship[] => {
-  const roleId = toScopedRoleObjectId({ legalEntityId, roleKey: 'admin', tenantId });
-  const legal = toLegalEntityAccessObjectId(tenantId, legalEntityId) ?? '';
-  return (['read', 'write'] as const).flatMap((access) => {
-    const resourceId =
-      toContextPermissionAccessObjectId(tenantId, legalEntityId, {
-        moduleId: workforceModule,
-        permission: contextPermissionKey(workforceModule, access),
-      }) ?? '';
-    return [
-      {
-        relation: 'tenant',
-        resourceId,
-        resourceType: 'context_permission',
-        subjectId: tenantId,
-        subjectType: 'tenant',
-      },
-      {
-        relation: 'legal_entity',
-        resourceId,
-        resourceType: 'context_permission',
-        subjectId: legal,
-        subjectType: 'legal_entity',
-      },
-      roleRelationship('context_permission', resourceId, 'role_grantee', roleId),
-    ];
-  });
-};
-
-const proposalReviewActions = (role: DemoRole, actions: readonly DemoAction[]): readonly DemoAction[] =>
-  role.proposalReview === true
-    ? actions.filter(
-        (action) =>
-          action.actionKey === proposalLifecycleActionKey &&
-          action.owningModuleKey === 'core.identity' &&
-          action.legalEntityScope === 'required' &&
-          action.provisioning === 'explicit',
-      )
-    : [];
-
-/** Every relationship one principal needs for its role. `actions` is the current discovered Action set. */
-/**
- * Core modules (people administration, roles, Actions owned by Core) reach a company only through this edge. A company
- * administrator without it is denied the people pages even though the admin role itself is granted.
- */
-export const companyCoreModuleStructure = (tenantId: string, legalEntityId: string): readonly DemoRelationship[] => {
-  const coreModuleKeys = [...new Set(coreActionCatalog.map(({ owningModuleKey }) => owningModuleKey))];
-  return coreModuleKeys.map((moduleId) => ({
-    relation: 'legal_entity',
-    resourceId: toModuleAccessObjectId(tenantId, legalEntityId, moduleId) ?? '',
-    resourceType: 'module_access',
-    subjectId: toLegalEntityAccessObjectId(tenantId, legalEntityId) ?? '',
-    subjectType: 'legal_entity',
-  }));
-};
-
-export const principalRelationships = (
-  principalId: string,
-  role: DemoRole,
-  actions: readonly DemoAction[],
-  legalEntityId: string = demoLegalEntityId,
-  tenantId: string = demoTenantId,
-  roleKey: string = demoPrincipalRoleKey(principalId),
-): readonly DemoRelationship[] => {
-  const result: DemoRelationship[] = [];
-  const add = (resourceType: string, resourceId: string, relation: string, subjectType: string, subjectId: string) =>
-    result.push({ relation, resourceId, resourceType, subjectId, subjectType });
-  const companyRole = toScopedRoleObjectId({ legalEntityId, roleKey, tenantId });
-  add('scoped_role', companyRole, 'member', 'principal', principalId);
-  const grantAction = (descriptor: DemoAction) => {
-    result.push(...scopedDemoActionRelationships(principalId, descriptor, legalEntityId, tenantId, roleKey));
-  };
-  const grantContextPermission = (moduleId: DemoModuleId, permission: string) => {
-    const objectId = toContextPermissionAccessObjectId(tenantId, legalEntityId, { moduleId, permission }) ?? '';
-    add('context_permission', objectId, 'tenant', 'tenant', tenantId);
-    add(
-      'context_permission',
-      objectId,
-      'legal_entity',
-      'legal_entity',
-      toLegalEntityAccessObjectId(tenantId, legalEntityId) ?? '',
-    );
-    result.push({
-      relation: 'role_grantee',
-      resourceId: objectId,
-      resourceType: 'context_permission',
-      subjectId: companyRole,
-      subjectRelation: 'member',
-      subjectType: 'scoped_role',
-    });
-  };
-  const legal = toLegalEntityAccessObjectId(tenantId, legalEntityId) ?? '';
-  const moduleAccess = (moduleId: string) => toModuleAccessObjectId(tenantId, legalEntityId, moduleId) ?? '';
-  add('legal_entity', legal, 'tenant', 'tenant', tenantId);
-  add('tenant', tenantId, 'member', 'principal', principalId);
-  add('legal_entity', legal, 'member', 'principal', principalId);
-  for (const moduleId of ['core.shell']) {
-    add('module_access', moduleAccess(moduleId), 'legal_entity', 'legal_entity', legal);
-    result.push({
-      relation: 'accessor_role',
-      resourceId: moduleAccess(moduleId),
-      resourceType: 'module_access',
-      subjectId: companyRole,
-      subjectRelation: 'member',
-      subjectType: 'scoped_role',
-    });
-  }
-  for (const moduleId of demoModuleIds) {
-    const access = role.modules[moduleId];
-    if (access === undefined) {
-      continue;
-    }
-    add('module_access', moduleAccess(moduleId), 'legal_entity', 'legal_entity', legal);
-    result.push({
-      relation: 'accessor_role',
-      resourceId: moduleAccess(moduleId),
-      resourceType: 'module_access',
-      subjectId: companyRole,
-      subjectRelation: 'member',
-      subjectType: 'scoped_role',
-    });
-    for (const permission of roleContextPermissions(role, moduleId, access)) {
-      grantContextPermission(moduleId, permission);
-    }
-    if (moduleId === partyModule) {
-      const relations = partyRelations(access);
-      for (const relation of relations.tenant) {
-        result.push(roleRelationship('tenant', tenantId, relation, companyRole));
-      }
-      for (const relation of relations.legalEntity) {
-        result.push(roleRelationship('legal_entity', legal, relation, companyRole));
-      }
-    }
-    const actionKeys = role.actionKeys?.[moduleId];
-    for (const action of moduleActions(actions, moduleId)) {
-      if (
-        action.actionKey !== proposalLifecycleActionKey &&
-        (actionKeys === undefined ? access === 'write' : actionKeys.includes(action.actionKey))
-      ) {
-        grantAction(action);
-      }
-    }
-  }
-  for (const lifecycle of proposalReviewActions(role, actions)) {
-    grantAction(lifecycle);
-  }
-  if (role.companyRole !== undefined) {
-    const adminRole = toScopedRoleObjectId({ legalEntityId, roleKey: role.companyRole, tenantId });
-    add('scoped_role', adminRole, 'member', 'principal', principalId);
-    result.push(
-      roleRelationship('legal_entity', legal, 'admin', adminRole),
-      ...companyAdministratorWorkforceRelationships(legalEntityId, tenantId),
-      ...companyCoreModuleStructure(tenantId, legalEntityId),
-    );
-  }
-  if (role.tenantRole !== undefined) {
-    const adminRole = toScopedRoleObjectId({ roleKey: role.tenantRole, tenantId });
-    add('scoped_role', adminRole, 'member', 'principal', principalId);
-    result.push(roleRelationship('tenant', tenantId, tenantSuperadminRole, adminRole));
-  }
-  return [...new Map(result.map((row) => [relationshipKey(row), row])).values()];
-};
+export const crmReadCapability = 'demo.crm.api-records.read';
+export const crmWriteCapability = 'demo.crm.apply-command.write';
+export const crmAssignCapability = 'demo.crm.client-owner.assign';
+/** Navigation does not grant the underlying records or field groups. */
+export const crmNavigationKeys = [
+  ...['clients', 'visits', 'plan', 'imports', 'pairing', 'reports', 'ai'].flatMap((page) => [
+    `demo.crm.navigation-${page}.read`,
+    `demo.crm.page-${page}.read`,
+  ]),
+  'demo.crm.component-home-summary.read',
+  'demo.crm.page-crm-home.read',
+  'demo.crm.search-clients.read',
+  'demo.crm.search-contacts.read',
+];
+const crmManagerKeys = [...crmNavigationKeys, crmReadCapability, crmWriteCapability, crmAssignCapability];
+const crmRepKeys = [...crmNavigationKeys, crmReadCapability, crmWriteCapability];
 
 /** Rental capabilities are granted independently from the trading company's modules. */
 export const rentalDemoRoles = {
   accountant: {
+    capabilityKeys: { [partyModule]: partyHumanReaderKeys },
     label: 'Účetní pronájmů',
     modules: {
       [commerceModule]: 'read',
@@ -563,23 +394,11 @@ export const rentalDemoRoles = {
       'property.portfolio': 'read',
     },
     proposalReview: true,
-  },
-  agentBot: {
-    label: 'Agent pronájmů',
-    modules: {
-      [commerceModule]: 'read',
-      'demo.tagging': 'write',
-      'finance.billing': 'read',
-      'legal.agreements': 'read',
-      [partyModule]: 'read',
-      [pipelineModule]: 'write',
-      'property.portfolio': 'read',
-      'work.tasks': 'write',
-      [workforceModule]: 'read',
-    },
+    restrictedModules: [partyModule],
   },
   headOfSales: {
-    companyRole: 'admin',
+    capabilityKeys: { [partyModule]: partyHumanWriterKeys },
+    companyAdmin: true,
     label: 'Správce pronájmů',
     modules: {
       [commerceModule]: 'write',
@@ -595,8 +414,10 @@ export const rentalDemoRoles = {
       [workforceModule]: 'read',
     },
     proposalReview: true,
+    restrictedModules: [partyModule],
   },
   salesRep: {
+    capabilityKeys: { [partyModule]: partyHumanWriterKeys, [pipelineModule]: pipelineWriterKeys },
     label: 'Obchodník pronájmů',
     modules: {
       [commerceModule]: 'write',
@@ -613,28 +434,59 @@ export const rentalDemoRoles = {
       'work.tasks': 'write',
     },
     proposalReview: true,
+    restrictedModules: [pipelineModule, partyModule],
   },
 } as const satisfies Readonly<Partial<Record<DemoRoleKey, DemoRole>>>;
 
 /**
- * The original Nájempark accounts (`scripts/siampark/fixtures.mts` demoAccounts, created by `pnpm demo:reset`) in the
- * Nájempark company 0021, each with the `facility.operations` agendas. The external agent sees operational agendas only.
+ * The original Nájempark accounts (`scripts/siampark/fixtures.mts` demoAccounts, created by `pnpm demo:reset`) in
+ * the Nájempark company 0021, each with the `facility.operations` agendas. The external agent sees operational
+ * agendas only.
  */
+export const facilityOperationalKeys = [
+  'facility.operations.api-records.read',
+  'facility.operations.api-overview.read',
+  'facility.operations.page-facility-operations-home.read',
+  ...['overview', 'agenda'].flatMap((page) => [
+    `facility.operations.navigation-${page}.read`,
+    `facility.operations.page-${page}.read`,
+  ]),
+];
+/** The owner-declared, own-recipient/own-preferences Action, never the broad facility command. */
+export const facilityPersonalAgendaCapability = 'facility.operations.personal-agenda.update';
+export const facilityFullReaderKeys = [
+  ...facilityOperationalKeys,
+  'facility.operations.records-restricted.read',
+  'facility.operations.apply-command.write',
+  facilityPersonalAgendaCapability,
+  ...['assets', 'meters', 'purchasing', 'security', 'documents'].flatMap((page) => [
+    `facility.operations.navigation-${page}.read`,
+    `facility.operations.page-${page}.read`,
+  ]),
+  ...['assets', 'devices', 'documents', 'meters'].map((resource) => `facility.operations.search-${resource}.read`),
+];
 const withFacilityOperations = (role: DemoRole): DemoRole => ({
   ...role,
+  capabilityKeys: {
+    ...role.capabilityKeys,
+    [operationsModule]: facilityFullReaderKeys,
+  },
   modules: { ...role.modules, [operationsModule]: 'write' },
+  restrictedModules: [...(role.restrictedModules ?? []), operationsModule],
 });
 export const siamparkRentalPersonas = [
   {
     email: 'management@najempark.demo',
     principalId: '72000000-0000-4000-8000-000000000021',
-    // S00: Vedení keeps every CRM contact and entrusts chosen ones to the external salesperson (demo.crm.assign).
+    // S00: Vedení keeps every CRM contact and entrusts chosen ones to the external salesperson (demo.crm.client-owner.assign).
     role: (() => {
       const base = withFacilityOperations(rentalDemoRoles.headOfSales);
       return {
         ...base,
-        contextPermissions: { 'demo.crm': [crmReadAll, crmWriteAll, 'demo.crm.assign'] },
-        modules: { ...base.modules, 'crm.activities': 'write', 'demo.crm': 'write' },
+        capabilityKeys: { ...base.capabilityKeys, [crmModule]: crmManagerKeys },
+        capabilitySelectors: { [crmReadCapability]: 'all' },
+        modules: { ...base.modules, 'crm.activities': 'write', [crmModule]: 'write' },
+        restrictedModules: [...(base.restrictedModules ?? []), crmModule],
       } satisfies DemoRole;
     })(),
   },
@@ -651,116 +503,99 @@ export const siamparkRentalPersonas = [
   {
     email: 'external@najempark.demo',
     principalId: '72000000-0000-4000-8000-000000000024',
-    // S00: reads only the CRM clients entrusted to him (`demo.crm.read_assigned`, no write, no read_all) and the
-    // business cases entrusted to him: `demo.sales-pipeline` opened read-only WITHOUT `read_all`, so the owner's
-    // governed records read returns only opportunities with a per-case reader grant (scripts/demo/
-    // seed-siampark-cases.mts grants exactly the cases owned by his employee record). No write Action, no
-    // billing/finance, agreements, occupancy or party registry. Nájempark CRM data: scripts/demo/seed-siampark-crm.mts.
+    // External partners read entrusted CRM records and update only their own facility inbox/preferences.
     role: {
-      contextPermissions: {
-        'demo.crm': ['demo.crm.read_assigned'],
-        // S00: provoz read-only. Without read_all/write_all facility-operations returns only the calendar events assigned
-        // to him and operational meter data; no agenda or meter write (the apply-command Action stays granted only
-        // for his own inbox, preferences and export log). Live: scripts/demo/ops-operational-permissions.mts.
-        [operationsModule]: ['facility.operations.read_operational'],
+      capabilityKeys: {
+        [crmModule]: [...crmNavigationKeys, crmReadCapability],
+        [operationsModule]: [...facilityOperationalKeys, facilityPersonalAgendaCapability],
+        [pipelineModule]: [...pipelineRecordNavigationKeys, pipelineReadCapability],
       },
+      capabilityModes: { [facilityPersonalAgendaCapability]: ['run'] },
+      capabilitySelectors: { [crmReadCapability]: 'entrusted', [pipelineReadCapability]: 'entrusted' },
       label: 'Externí partner',
-      modules: { 'demo.crm': 'read', [operationsModule]: 'write', [pipelineModule]: 'read' },
-      restrictedModules: ['demo.crm', pipelineModule, operationsModule],
+      modules: { [crmModule]: 'read', [operationsModule]: 'read', [pipelineModule]: 'read' },
+      restrictedModules: [crmModule, operationsModule, pipelineModule],
     },
   },
   {
-    // Second Provoz login: the same role and grants as operations@ (index 1), applied through the index-4 entries in
-    // scripts/siampark/reset-demo.mts and the operations-execution grants below.
+    // Second Provoz login: the same role and grants as operations@ (index 1), applied through the index-4
+    // entries in `scripts/siampark/reset-demo.mts` and the operations-execution grants.
     email: 'provoz@najempark.demo',
     principalId: '72000000-0000-4000-8000-000000000025',
     role: withFacilityOperations(rentalDemoRoles.salesRep),
   },
 ] as const satisfies readonly { readonly email: string; readonly principalId: string; readonly role: DemoRole }[];
 
-export const rentalPermissionRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => [
-  ...demoHumanAccounts.flatMap((account) =>
-    account.role === 'warehouse'
-      ? []
-      : principalRelationships(account.principalId, rentalDemoRoles[account.role], actions, rentalDemoLegalEntityId),
-  ),
-  ...principalRelationships(agentBotPrincipal.principalId, rentalDemoRoles.agentBot, actions, rentalDemoLegalEntityId),
-  ...siamparkRentalPersonas.flatMap((persona) =>
-    principalRelationships(persona.principalId, persona.role, actions, rentalDemoLegalEntityId),
-  ),
-];
-
 /**
  * CRM company „Velkoobchod Hanák s.r.o.“ (0022). `demo.crm` is not a generic read_all/write_all module: managers
- * hold `demo.crm.read_all` + `demo.crm.write_all` + `demo.crm.assign`, sales reps only `demo.crm.read_assigned` +
- * `demo.crm.write_assigned`, and the crm owner filters clients by the assigned principal for them.
+ * hold read + write over every client, sales reps read and write only their assigned clients.
  */
-const crmManagerPermissions = [crmReadAll, crmWriteAll, 'demo.crm.assign'] as const;
-const crmRepPermissions = ['demo.crm.read_assigned', 'demo.crm.write_assigned'] as const;
 export const crmDemoRoles = {
   crmAdmin: {
-    companyRole: 'admin',
-    contextPermissions: { 'demo.crm': crmManagerPermissions },
+    capabilityKeys: { [crmModule]: crmManagerKeys, [partyModule]: partyHumanWriterKeys },
+    capabilitySelectors: { [crmReadCapability]: 'all' },
+    companyAdmin: true,
     label: 'Správce',
     modules: {
       [commerceModule]: 'write',
-      'demo.crm': 'write',
+      [crmModule]: 'write',
       'demo.tagging': 'write',
       [partyModule]: 'write',
       'work.tasks': 'write',
       [workforceModule]: 'write',
     },
     proposalReview: true,
+    restrictedModules: [crmModule, partyModule],
   },
   crmManager: {
-    contextPermissions: { 'demo.crm': crmManagerPermissions },
-    label: commercialAdministratorLabel,
+    capabilityKeys: { [crmModule]: crmManagerKeys, [partyModule]: partyHumanReaderKeys },
+    capabilitySelectors: { [crmReadCapability]: 'all' },
+    label: 'Vedoucí obchodu',
     modules: {
       [commerceModule]: 'read',
-      'demo.crm': 'write',
+      [crmModule]: 'write',
       'demo.tagging': 'read',
       [partyModule]: 'read',
       'work.tasks': 'write',
       [workforceModule]: 'write',
     },
     proposalReview: true,
+    restrictedModules: [crmModule, partyModule],
   },
   crmRep: {
-    contextPermissions: { 'demo.crm': crmRepPermissions },
+    capabilityKeys: { [crmModule]: crmRepKeys },
+    capabilitySelectors: { [crmReadCapability]: 'assigned' },
     label: 'Obchodník',
     proposalReview: true,
     // No party.registry: its customer list is company-wide and would bypass the assigned-client filter.
-    modules: { 'demo.crm': 'write', 'work.tasks': 'write', [workforceModule]: 'read' },
+    modules: { [crmModule]: 'write', 'work.tasks': 'write', [workforceModule]: 'read' },
+    restrictedModules: [crmModule],
   },
 } as const satisfies Readonly<Record<string, DemoRole>>;
 
 /**
- * Staff operator Actions over customer portal enrollment and portal bindings. Nothing but a company administrator runs
- * them (the storefront and Commerce workloads hold only their own journey Actions), so every e-shop administrator
- * preset carries them: a right no role can be granted is a defect.
+ * Staff operator capabilities over customer portal enrollment and portal bindings. Nothing but a company
+ * administrator runs them (the storefront and Commerce workloads hold only their own journey capabilities),
+ * so every e-shop administrator preset carries them: a right no role can be granted is a defect.
  */
 export const commerceEnrollmentOperatorActionKeys: readonly string[] = [
-  'commerce.customer-context.terminate-portal-enrollment',
-  'commerce.customer-context.open-profile-reconciliation',
-  'commerce.customer-context.resolve-profile-reconciliation',
-  'commerce.customer-context.recover-retail-portal-profile-binding',
-  'commerce.customer-context.revoke-retail-portal-profile-binding',
+  'commerce.customer-context.portal-enrollment.terminate',
+  'commerce.customer-context.profile-reconciliation.open',
+  'commerce.customer-context.profile-reconciliation.resolve',
+  'commerce.customer-context.retail-portal-profile-binding.recover',
+  'commerce.customer-context.retail-portal-profile-binding.revoke',
 ];
 
 /** E-shop company „Kavárna Doma s.r.o.“ (0023). */
 export const eshopDemoRoles = {
   akrosAdmin: {
-    actionKeys: {
-      [commerceModule]: commerceEnrollmentOperatorActionKeys,
-      'privacy.core': ['privacy.core.create-processing-purpose', 'privacy.core.create-notice-version'],
+    capabilityKeys: {
+      [commerceModule]: [`${commerceModule}.market-use.assess`, ...commerceEnrollmentOperatorActionKeys],
+      [partyModule]: partyHumanWriterKeys,
+      'privacy.core': ['privacy.core.processing-purpose.create', 'privacy.core.notice-version.create'],
     },
-    companyRole: 'admin',
-    contextPermissions: {
-      // Market retirement impact summary (commerce-customer-context market-affected-use-assessment).
-      [commerceModule]: [marketCatalogRead],
-      'privacy.core': ['privacy.processing_catalog.read', 'privacy.notice.read'],
-    },
-    label: eshopAdministratorLabel,
+    companyAdmin: true,
+    label: 'Správce e-shopu',
     modules: {
       // Like the Kavárna e-shop administrator: the customer list shows each customer's groups.
       [commerceModule]: 'read',
@@ -775,34 +610,15 @@ export const eshopDemoRoles = {
       [workforceModule]: 'write',
     },
     proposalReview: true,
-  },
-  akrosStorefront: {
-    actionKeys: {
-      [commerceModule]: [
-        'commerce.customer-context.start-portal-enrollment',
-        'commerce.customer-context.claim-portal-enrollment-transition',
-      ],
-    },
-    contextPermissions: {
-      [commerceModule]: [
-        'customer.profile.read_own',
-        'customer.profile.update_own',
-        'customer.consent.read_own',
-        'customer.consent.update_own',
-        'customer.password.change_own',
-      ],
-    },
-    label: 'AKROS storefront (API)',
-    // Market resolution for the locale paths (current-market-catalog, resolve-commerce-market).
-    modules: { [commerceModule]: 'read', 'demo.merchandise': 'write', [marketModule]: 'read', 'work.tasks': 'write' },
-    restrictedModules: [commerceModule],
+    restrictedModules: [partyModule],
   },
   eshopAdmin: {
-    actionKeys: { [commerceModule]: commerceEnrollmentOperatorActionKeys },
-    companyRole: 'admin',
-    // Market retirement impact summary (commerce-customer-context market-affected-use-assessment).
-    contextPermissions: { [commerceModule]: [marketCatalogRead] },
-    label: eshopAdministratorLabel,
+    capabilityKeys: {
+      [commerceModule]: [`${commerceModule}.market-use.assess`, ...commerceEnrollmentOperatorActionKeys],
+      [partyModule]: partyHumanWriterKeys,
+    },
+    companyAdmin: true,
+    label: 'Správce e-shopu',
     modules: {
       [commerceModule]: 'read',
       'demo.merchandise': 'write',
@@ -814,6 +630,7 @@ export const eshopDemoRoles = {
       [workforceModule]: 'write',
     },
     proposalReview: true,
+    restrictedModules: [partyModule],
   },
   fulfilment: {
     label: 'Expedice',
@@ -821,12 +638,10 @@ export const eshopDemoRoles = {
     modules: { 'demo.merchandise': 'write', [marketModule]: 'read', [storefrontRegistryModule]: 'read' },
     proposalReview: true,
   },
-  /** Non-human storefront BFF: merchandise reads and the apply-command Action (PlaceStorefrontOrder). */
-  storefront: { label: 'Storefront (API)', modules: { 'demo.merchandise': 'write' } },
 } as const satisfies Readonly<Record<string, DemoRole>>;
 
-type CompanyRoleKey = keyof typeof crmDemoRoles | keyof typeof eshopDemoRoles;
-const companyRoles = { ...crmDemoRoles, ...eshopDemoRoles } satisfies Readonly<Record<CompanyRoleKey, DemoRole>>;
+export type CompanyRoleKey = keyof typeof crmDemoRoles | keyof typeof eshopDemoRoles;
+export const companyRoles = { ...crmDemoRoles, ...eshopDemoRoles } satisfies Readonly<Record<CompanyRoleKey, DemoRole>>;
 
 const persona = (key: string, email: string, displayName: string, legalEntityId: string, role: CompanyRoleKey) => ({
   authBindingId: demoId('core.auth-binding', key),
@@ -867,13 +682,18 @@ export const crmPersonaPrincipalIds = {
   spravce: demoId(principalResource, 'hanak-spravce'),
 } as const;
 
-/** Service principal of the e-shop storefront BFF; its managed API key lands in `app/.env.demo.local`. */
+/**
+ * Service principal of the e-shop storefront BFF; its managed API key lands in `app/.env.demo.local`.
+ *
+ * It holds no v2 Role. The storefront's merchandise access is guarded by merchandise's own native service
+ * key protocol (`akrosServiceKeyGuard`), and its customer-portal journey runs as the declared
+ * `commerce.storefront-client` workload below.
+ */
 export const storefrontPrincipal = {
   displayName: 'kavarna-storefront',
   kind: 'service',
   legalEntityId: eshopDemoLegalEntityId,
   principalId: demoId(principalResource, 'kavarna-storefront'),
-  role: 'storefront',
 } as const;
 
 /** ŠroubShop's storefront BFF (the pseudonym cutover moved it off the legacy `akros-storefront` identity). */
@@ -882,34 +702,43 @@ export const akrosStorefrontPrincipal = {
   kind: 'service',
   legalEntityId: akrosDemoLegalEntityId,
   principalId: demoId(principalResource, 'sroubshop-storefront'),
-  role: 'akrosStorefront',
 } as const;
 
-export const companyPermissionRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => [
-  ...companyHumanAccounts.flatMap((account) =>
-    principalRelationships(account.principalId, companyRoles[account.role], actions, account.legalEntityId),
-  ),
-  ...principalRelationships(
-    akrosStorefrontPrincipal.principalId,
-    companyRoles[akrosStorefrontPrincipal.role],
-    actions,
-    akrosDemoLegalEntityId,
-  ),
-  ...principalRelationships(
-    storefrontPrincipal.principalId,
-    companyRoles[storefrontPrincipal.role],
-    actions,
-    storefrontPrincipal.legalEntityId,
-  ),
-];
+/** The declared workload of the shared Storefront client (O73). */
+export const STOREFRONT_CLIENT_WORKLOAD = 'commerce.storefront-client';
+/** The declared workload of the external identity provider that reserves and activates bindings (O73). */
+export const IDENTITY_PROVIDER_WORKLOAD = 'core.identity-provider';
+/** Exact owner-declared purpose key shared by CRM intake and its delegated Party calls. */
+export const CRM_PARTY_INTAKE_WORKLOAD = 'demo.crm.party-intake';
 
-/** Deliberate human affiliations only; role assignment never creates an SQL membership. */
+/**
+ * One registered machine workload (O73): a principal of the tenant and one `<module>.<workload-name>` key a
+ * carrier declares. A service principal is admitted **only** on a carrier that declares one of these keys,
+ * and only while Core holds this active binding; the kind alone grants nothing.
+ */
+export interface ReviewedWorkloadBinding {
+  readonly principalId: string;
+  readonly workloadKey: string;
+}
+
+/**
+ * The reviewed workload bindings of the demo tenant. Every entry names a key a carrier in this release
+ * declares and a principal whose live caller runs that carrier:
+ *
+ * - the two storefront BFFs and the Commerce customer portal run the portal-enrollment journey
+ *   (`commerce.customer-context.start-portal-enrollment`, `…-transition.claim`, and the delegated
+ *   `party.registry.party.create` / `ensure-retail-customer-profile` / `bind-retail-portal-profile`
+ *   subjects) — all of which declare `commerce.storefront-client`;
+ * - the Commerce customer portal is also the external identity provider that reserves and activates
+ *   principal bindings (`core.identity.reserve-principal-binding`, `…-binding.activate` and the
+ *   `core.identity` external-identity reads), which declare `core.identity-provider`.
+ *
+ * CRM intake runs only its slim read/link Action and delegated Party purpose as demo.crm.party-intake.
+ * No other reviewed service principal is bound: a key that no carrier of this release declares would be an
+ * invented grant, and a principal admitted on a declaration carrier would be a service cast as a person.
+ */
+/** Deliberate human affiliations only; a Role assignment never creates an SQL membership. */
 export const demoCompanyMemberships = [
-  ...warmupAccounts.map(({ legalEntityId, principalId }) => ({
-    affiliation: 'external' as const,
-    legalEntityId,
-    principalId,
-  })),
   ...demoHumanAccounts.map(({ principalId }) => ({
     affiliation: 'employee' as const,
     legalEntityId: demoLegalEntityId,
@@ -952,6 +781,7 @@ const COMMERCE_PORTAL = 'commerce-portal';
 export const commercePortalPrincipal = {
   apiKeyName: COMMERCE_PORTAL,
   displayName: 'Commerce · zákaznický portál',
+  kind: 'service',
   legalEntityId: akrosDemoLegalEntityId,
   principalId: demoId(principalResource, COMMERCE_PORTAL),
 } as const;
@@ -959,6 +789,7 @@ export const commercePortalPrincipal = {
 export const privacyConsentPrincipal = {
   apiKeyName: 'privacy-consent-authority',
   displayName: 'Privacy · Commerce consent authority reader',
+  kind: 'service',
   legalEntityId: akrosDemoLegalEntityId,
   principalId: demoId(principalResource, 'privacy-consent-authority'),
 } as const;
@@ -966,6 +797,7 @@ export const privacyConsentPrincipal = {
 export const marketRetirementPrincipal = {
   apiKeyName: 'market-retirement-authority',
   displayName: 'Market · retirement authority',
+  kind: 'service',
   legalEntityId: akrosDemoLegalEntityId,
   principalId: demoId(principalResource, 'market-retirement-authority'),
 } as const;
@@ -977,6 +809,7 @@ export const marketRetirementPrincipal = {
 export const kavarnaMarketAuthorityPrincipal = {
   apiKeyName: 'kavarna-market-authority',
   displayName: 'Market · Kavárna owner gateway',
+  kind: 'service',
   legalEntityId: eshopDemoLegalEntityId,
   principalId: demoId(principalResource, 'kavarna-market-authority'),
 } as const;
@@ -996,391 +829,253 @@ export interface CommercePortalWorkload {
   readonly tenantId: string;
 }
 
-export const demoCommercePortalWorkload: CommercePortalWorkload = {
-  ...commercePortalPrincipal,
-  roleKey: demoPrincipalRoleKey(commercePortalPrincipal.principalId),
-  tenantId: demoTenantId,
-};
-
-/** Exact company-scoped native reads; the Actions below are granted one by one. */
-export const commercePortalRole: DemoRole = {
-  contextPermissions: { 'privacy.core': privacyReadContextPermissions },
-  label: 'Commerce portal (service)',
-  modules: { 'commerce.customer-context': 'read', 'party.registry': 'read', 'privacy.core': 'read' },
-};
-
-/** The Actions the enrollment owners run on behalf of a customer. */
-export const commercePortalActionKeys: readonly string[] = [
-  'core.identity.reserve-principal-binding',
-  'core.identity.activate-principal-binding',
-  'core.identity.change-principal-binding-status',
-  'party.registry.create-party',
-  'party.registry.accept-retail-enrollment-evidence',
-  'party.registry.counterparty-customer-onboard',
-  'party.registry.add-contact-point',
-  // Customer self-service: the owner bridge edits the customer's own Party and contact points.
-  'party.registry.update-party',
-  'party.registry.update-contact-point',
-  'commerce.customer-context.ensure-retail-customer-profile',
-  'commerce.customer-context.bind-retail-portal-profile',
-  'commerce.customer-context.claim-portal-enrollment-transition',
-  'commerce.customer-context.record-portal-enrollment-outcome',
-];
-
-export const commercePortalRelationships = (
-  actions: readonly DemoAction[],
-  workload: CommercePortalWorkload = demoCommercePortalWorkload,
-): readonly DemoRelationship[] => {
-  const { legalEntityId, principalId, roleKey, tenantId } = workload;
-  const namespace = toIdentityNamespaceAccessObjectId(tenantId, COMMERCE_PORTAL_NAMESPACE) ?? '';
-  const roleId = toScopedRoleObjectId({ legalEntityId, roleKey, tenantId });
-  const relationships: DemoRelationship[] = [
-    {
-      relation: 'tenant',
-      resourceId: namespace,
-      resourceType: 'identity_namespace',
-      subjectId: tenantId,
-      subjectType: 'tenant',
-    },
-    roleRelationship('identity_namespace', namespace, 'provisioner', roleId),
-    ...principalRelationships(principalId, commercePortalRole, actions, legalEntityId, tenantId, roleKey),
-    // Business authority is independent of the exact Action executor allowlist below.
-    // Keep module access read-only: a write role would automatically grant every Party Action.
-    roleRelationship('tenant', tenantId, 'party_identity_manager', roleId),
-    roleRelationship(
-      'legal_entity',
-      toLegalEntityAccessObjectId(tenantId, legalEntityId) ?? '',
-      'counterparty_manager',
-      roleId,
-    ),
-  ];
-  for (const action of actions.filter(({ actionKey }) => commercePortalActionKeys.includes(actionKey))) {
-    relationships.push(...scopedDemoActionRelationships(principalId, action, legalEntityId, tenantId, roleKey));
-  }
-  return [...new Map(relationships.map((relationship) => [relationshipKey(relationship), relationship])).values()];
-};
-
-/** Privacy can resolve only the two Commerce authority facts, not read customer groups or execute Actions. */
-export const privacyConsentAuthorityRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] =>
-  principalRelationships(
-    privacyConsentPrincipal.principalId,
-    {
-      contextPermissions: {
-        'commerce.customer-context': ['customer.consent.resolve_authority', 'customer.notice.resolve_authority'],
-      },
-      label: 'Privacy consent authority reader',
-      modules: { 'commerce.customer-context': 'read' },
-      restrictedModules: ['commerce.customer-context'],
-    },
-    actions,
-    privacyConsentPrincipal.legalEntityId,
-  );
-
-export const marketRetirementActionKeys: readonly string[] = ['commerce.customer-context.reserve-market-retirement'];
-
-/** Market reads share one permission; retirement execution is restricted to exact company-scoped descriptors. */
-const marketOwnerGatewayRelationships = (
-  { legalEntityId, principalId }: { readonly legalEntityId: string; readonly principalId: string },
-  actions: readonly DemoAction[],
-): readonly DemoRelationship[] => {
-  const marketModuleAccess = toModuleAccessObjectId(demoTenantId, legalEntityId, marketModule) ?? '';
-  const storefrontModuleAccess = toModuleAccessObjectId(demoTenantId, legalEntityId, storefrontRegistryModule) ?? '';
-  const roleId = toScopedRoleObjectId({
-    legalEntityId,
-    roleKey: demoPrincipalRoleKey(principalId),
-    tenantId: demoTenantId,
-  });
-  return [
-    ...principalRelationships(
-      principalId,
-      {
-        actionKeys: { [commerceModule]: marketRetirementActionKeys },
-        contextPermissions: { [commerceModule]: [marketCatalogRead] },
-        label: 'Market retirement authority',
-        modules: { [commerceModule]: 'read' },
-        restrictedModules: [commerceModule],
-      },
-      actions.filter(
-        ({ actionKey, legalEntityScope, owningModuleKey, provisioning }) =>
-          marketRetirementActionKeys.includes(actionKey) &&
-          owningModuleKey === commerceModule &&
-          legalEntityScope === 'required' &&
-          provisioning === 'explicit',
-      ),
-      legalEntityId,
-    ),
-    {
-      relation: 'legal_entity',
-      resourceId: marketModuleAccess,
-      resourceType: 'module_access',
-      subjectId: toLegalEntityAccessObjectId(demoTenantId, legalEntityId) ?? '',
-      subjectType: 'legal_entity',
-    },
-    // Both CCC reads check resource#read on a Market-owner resource linked to this exact company module.
-    // reader_role supplies module->read_all and module->access, never resource#write or Market Actions.
-    roleRelationship('module_access', marketModuleAccess, 'reader_role', roleId),
-    // The same Market owner gateway validates Storefront Application currentness before an association.
-    {
-      relation: 'legal_entity',
-      resourceId: storefrontModuleAccess,
-      resourceType: 'module_access',
-      subjectId: toLegalEntityAccessObjectId(demoTenantId, legalEntityId) ?? '',
-      subjectType: 'legal_entity',
-    },
-    roleRelationship('module_access', storefrontModuleAccess, 'reader_role', roleId),
-  ];
-};
-
-export const marketRetirementRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] =>
-  marketOwnerGatewayRelationships(marketRetirementPrincipal, actions);
-
-export const kavarnaMarketAuthorityRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] =>
-  marketOwnerGatewayRelationships(kavarnaMarketAuthorityPrincipal, actions);
-
 const intakeName = 'crm-party-intake';
 
 export const crmPartyIntakePrincipal = {
   apiKeyName: intakeName,
   displayName: 'CRM · zakládání klientů v Party Registry',
   envVar: 'ONTOS_CRM_PARTY_INTAKE_API_KEY',
+  kind: 'service',
   principalId: demoId(principalResource, intakeName),
 } as const;
 
-/** Companies whose CRM writes clients into the registry. */
-export const crmIntakeLegalEntityIds: readonly string[] = [rentalDemoLegalEntityId, crmDemoLegalEntityId];
-
-/**
- * The only Actions the intake runs: four registry Actions and the CRM apply-command, where the CRM command guard
- * lets this principal run `LinkClientParty` only (it reads the clients through demo.crm.read_all).
- */
-export const crmIntakeActionKeys: readonly string[] = [
-  'party.registry.create-party',
-  'party.registry.resolve-duplicate-candidate-create',
-  'party.registry.counterparty-customer-onboard',
-  'party.registry.add-contact-point',
-  'demo.crm.apply-command',
+/** Exact reviewed bindings. Topology caller `crm` does not rename producer workload `demo.crm.party-intake`. */
+export const reviewedWorkloadBindings = (): readonly ReviewedWorkloadBinding[] => [
+  { principalId: storefrontPrincipal.principalId, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
+  { principalId: akrosStorefrontPrincipal.principalId, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
+  { principalId: commercePortalPrincipal.principalId, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
+  { principalId: commercePortalPrincipal.principalId, workloadKey: IDENTITY_PROVIDER_WORKLOAD },
+  { principalId: crmPartyIntakePrincipal.principalId, workloadKey: CRM_PARTY_INTAKE_WORKLOAD },
 ];
-const crmIntakePermissions = [crmReadAll, crmWriteAll] as const;
 
 /**
  * Tenant superadmin (obchod@demo.ontos): administrators can do everything, so in every company that uses the CRM
- * (Obchodní firma, Nájempark, Velkoobchod Hanák) it opens `demo.crm` with the CRM manager permissions
- * (`demo.crm.read_all` + `write_all` + `assign`) and its write Actions. Additive only: no SQL membership and no
- * Tenant or company membership edge (the superadmin is already admitted to these companies).
+ * (Obchodní firma, Nájempark, Velkoobchod Hanák) it opens `demo.crm` with the CRM manager capabilities and its write
+ * capabilities. Additive only: no SQL membership and no Tenant or company membership edge.
  */
 export const tenantAdministratorCrmLegalEntityIds: readonly string[] = [
   demoLegalEntityId,
   rentalDemoLegalEntityId,
   crmDemoLegalEntityId,
 ];
-export const tenantAdministratorCrmRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => {
-  const [administrator] = demoHumanAccounts;
-  return tenantAdministratorCrmLegalEntityIds.flatMap((legalEntityId) =>
-    principalRelationships(
-      administrator.principalId,
-      {
-        contextPermissions: { 'demo.crm': crmManagerPermissions },
-        label: 'Správce tenantu',
-        modules: { 'demo.crm': 'write' },
-      },
-      actions,
-      legalEntityId,
-      demoTenantId,
-      'tenant-administrator-crm',
-    ).filter(
-      (item) =>
-        !(item.relation === 'member' && (item.resourceType === 'tenant' || item.resourceType === 'legal_entity')),
-    ),
-  );
+export const tenantAdministratorCrmRole: DemoRole = {
+  capabilityKeys: { [crmModule]: crmManagerKeys },
+  capabilitySelectors: { [crmReadCapability]: 'all' },
+  label: 'Správce tenantu',
+  modules: { [crmModule]: 'read' },
+  restrictedModules: [crmModule],
+};
+/** The tenant administrator's explicit company-local pipeline overlay, not a tenant-wide record grant. */
+export const tenantAdministratorPipelineRole: DemoRole = {
+  capabilityKeys: { [pipelineModule]: [...pipelineWriterKeys, pipelineEntrustCapability] },
+  capabilitySelectors: { [pipelineReadCapability]: 'all' },
+  label: 'Správce příležitostí tenantu',
+  modules: { [pipelineModule]: 'write' },
+  proposalReview: true,
+  restrictedModules: [pipelineModule],
 };
 
-export const crmIntakeRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => {
-  const { principalId } = crmPartyIntakePrincipal;
-  const relationships = crmIntakeLegalEntityIds.flatMap((legalEntityId) => {
-    const roleId = toScopedRoleObjectId({
-      legalEntityId,
-      roleKey: demoPrincipalRoleKey(principalId),
-      tenantId: demoTenantId,
-    });
-    return [
-      ...principalRelationships(
-        principalId,
-        {
-          contextPermissions: { 'demo.crm': crmIntakePermissions },
-          label: 'CRM Party intake',
-          modules: { 'demo.crm': 'read', 'party.registry': 'read' },
-        },
-        actions,
-        legalEntityId,
-      ),
-      ...['party_identity_manager', 'party_identity_reviewer'].map((relation) =>
-        roleRelationship('tenant', demoTenantId, relation, roleId),
-      ),
-      roleRelationship(
-        'legal_entity',
-        toLegalEntityAccessObjectId(demoTenantId, legalEntityId) ?? '',
-        'counterparty_manager',
-        roleId,
-      ),
-      ...actions
-        .filter(({ actionKey }) => crmIntakeActionKeys.includes(actionKey))
-        .flatMap((action) => scopedDemoActionRelationships(principalId, action, legalEntityId)),
-    ];
-  });
-  return [...new Map(relationships.map((row) => [relationshipKey(row), row])).values()];
-};
-
-/** Published composition and persisted installation evidence, never inferred from the demo role matrix. */
-export interface DemoPermissionInstallation {
-  readonly companies: Parameters<typeof deriveActionAuthorizationInstalledModuleScopes>[3];
-  readonly moduleStates: Parameters<typeof deriveActionAuthorizationInstalledModuleScopes>[2];
-  readonly publishedModuleKeys: Parameters<typeof deriveActionAuthorizationInstalledModuleScopes>[0];
+/**
+ * One reviewed assignment of the demo tenant: a person, one Role key, and the company scope the Role and its
+ * cells belong to. `undefined` names the tenant context (tenant-level roles). A machine identity is never
+ * assigned a human Role: workloads need registered bindings; agents need canonical role/connection authority,
+ * never their display profile.
+ */
+export interface ReviewedDemoAssignment {
+  readonly legalEntityId?: string;
+  readonly principalId: string;
+  readonly role: DemoRole;
+  readonly roleKey: string;
 }
 
-/** Installed topology is independent of role policy, including optional Core Actions in tenant context. */
-const demoTopologyRelationships = (
-  actions: readonly DemoAction[],
-  installation: DemoPermissionInstallation,
-): readonly DemoRelationship[] => {
-  const coreActionKeys = new Set(coreActionCatalog.map(({ actionKey }) => actionKey));
-  const coreModuleKeys = new Set(coreActionCatalog.map(({ owningModuleKey }) => owningModuleKey));
-  const published = new Set(installation.publishedModuleKeys);
-  const scopes = deriveActionAuthorizationInstalledModuleScopes(
-    installation.publishedModuleKeys,
-    [demoTenantId],
-    installation.moduleStates,
-    installation.companies,
-  );
-  // Native module topology lets existing company roles inherit access; it grants no new accessor.
-  const modules = scopes.flatMap(({ legalEntityId, moduleKeys, tenantId }): readonly DemoRelationship[] =>
-    legalEntityId === undefined
-      ? []
-      : moduleKeys.map((moduleId) => ({
-          relation: 'legal_entity',
-          resourceId: toModuleAccessObjectId(tenantId, legalEntityId, moduleId) ?? '',
-          resourceType: 'module_access',
-          subjectId: toLegalEntityAccessObjectId(tenantId, legalEntityId) ?? '',
-          subjectType: 'legal_entity',
-        })),
-  );
-  const actionStructure = bootstrapRelationshipsFromNative(
-    buildActionAuthorizationRelationships(
-      deriveScopedActionAuthorization(
-        actions.filter(
-          ({ actionKey, owningModuleKey }) =>
-            coreActionKeys.has(actionKey) || (!coreModuleKeys.has(owningModuleKey) && published.has(owningModuleKey)),
-        ),
-        scopes,
-      ),
-    ),
-  ).map((relationship) => {
-    const { subjectRelation, ...directSubject } = relationship;
-    return subjectRelation === '' ? directSubject : relationship;
-  });
-  return [...modules, ...actionStructure];
+const assignment = (
+  principalId: string,
+  roleKey: string,
+  role: DemoRole,
+  legalEntityId?: string,
+): ReviewedDemoAssignment =>
+  legalEntityId === undefined
+    ? { principalId, role: reviewedCompanyRole(role), roleKey }
+    : {
+        legalEntityId,
+        principalId,
+        role: reviewedCompanyRole(role, legalEntityId, { principalId, tenantId: demoTenantId }),
+        roleKey,
+      };
+
+export const demoShellRoutingRoleKey = 'demo-shell-routing';
+export const tenantModuleTargetCapability = 'core.shell.tenant-module-target.resolve';
+/** Routing resolves a page target; the target page and its data still require their own cells. */
+export const demoShellRoutingRole: DemoRole = {
+  capabilityKeys: { 'core.shell': [tenantModuleTargetCapability] },
+  label: 'Směrování demo prostředí',
+  modules: { 'core.shell': 'read' },
+  restrictedModules: ['core.shell'],
 };
 
-/** Relationships for the four demo accounts and the bot, deduplicated. */
-export const demoPermissionRelationships = (
-  actions: readonly DemoAction[],
-  installation: DemoPermissionInstallation,
-): readonly DemoRelationship[] => {
-  const policy = [
-    ...warmupAccounts.flatMap(({ legalEntityId, principalId, role, roleKey }) =>
-      principalRelationships(principalId, role, [], legalEntityId, demoTenantId, roleKey),
-    ),
-    ...demoHumanAccounts.flatMap((account) =>
-      principalRelationships(account.principalId, demoRoles[account.role], actions),
-    ),
-    ...principalRelationships(agentBotPrincipal.principalId, demoRoles[agentBotPrincipal.role], actions),
-    ...rentalPermissionRelationships(actions),
-    ...companyPermissionRelationships(actions),
-    ...commercePortalRelationships(actions),
-    ...privacyConsentAuthorityRelationships(actions),
-    ...marketRetirementRelationships(actions),
-    ...crmIntakeRelationships(actions),
-    ...tenantAdministratorCrmRelationships(actions),
-  ];
-  const all = [
-    ...demoTopologyRelationships(actions, installation),
-    // Role policy survives uninstall, but only installation evidence may create Action objects.
-    ...policy.filter(({ resourceType }) => resourceType !== 'action'),
-  ];
-  return companyMembershipAdmissionRelationships(
-    [...new Map(all.map((relationship) => [relationshipKey(relationship), relationship])).values()],
-    demoCompanyMemberships.map(({ principalId }) => ({ principalId, tenantId: demoTenantId })),
-  );
-};
+/** Explicit tenant access membership for the reviewed people, never a service identity or warmup phantom. */
+export const demoTenantMemberships = [
+  ...new Set(
+    [...demoHumanAccounts, ...companyHumanAccounts, ...siamparkRentalPersonas].map(({ principalId }) => principalId),
+  ),
+].map((principalId) => ({ kind: 'member' as const, principalId }));
 
-/** Reviewed live-only restoration: exact executors, no module or context-permission union. */
-const ReviewedActionKeySchema = Schema.String.pipe(Schema.brand('ActionKey'));
-
-export class ReviewedDemoActionMissing extends Schema.TaggedError<ReviewedDemoActionMissing>()(
-  'ReviewedDemoActionMissing',
-  { actionKey: ReviewedActionKeySchema, message: Schema.String },
-) {}
-
-export const reviewedHumanActionAddonRelationships = Effect.fn('DemoPermissions.reviewedHumanActionAddons')(
-  function* reviewedHumanActionAddons(actions: readonly DemoAction[]) {
-    const operationsKeys = [
-      'crm.activities.apply-command',
-      'demo.workforce.apply-command',
-      'demo.merchandise.apply-command',
-      'demo.sales-insights.apply-command',
-      'finance.billing.apply-command',
-      'property.portfolio.apply-command',
-    ];
-    const selected = (keys: readonly string[]) =>
-      Effect.forEach(
-        keys,
-        (key) => {
-          const action = actions.find((candidate) => candidate.actionKey === key);
-          if (action === undefined) {
-            return Effect.fail(
-              new ReviewedDemoActionMissing({
-                actionKey: ReviewedActionKeySchema.make(key),
-                message: `Reviewed Action missing: ${key}`,
-              }),
-            );
-          }
-          return Effect.succeed(action);
-        },
-        { concurrency: 1 },
-      );
-    return [
-      ...(yield* selected(operationsKeys)).flatMap((action) =>
-        scopedDemoActionRelationships(
-          siamparkRentalPersonas[1].principalId,
-          action,
-          rentalDemoLegalEntityId,
-          demoTenantId,
-          'operations-execution',
-        ),
-      ),
-      // provoz@ joins the same operations-execution role: membership only, the role's grants are written above.
-      ...new Map(
-        (yield* selected(operationsKeys))
-          .flatMap((action) =>
-            scopedDemoActionRelationships(
-              siamparkRentalPersonas[4].principalId,
-              action,
-              rentalDemoLegalEntityId,
-              demoTenantId,
-              'operations-execution',
-            ),
-          )
-          .filter((row) => row.relation === 'member')
-          .map((row) => [row.resourceId, row] as const),
-      ).values(),
-      ...(yield* selected(['property.leasing.apply-command'])).flatMap((action) =>
-        scopedDemoActionRelationships(
-          demoHumanAccounts[1].principalId,
-          action,
-          demoLegalEntityId,
-          demoTenantId,
-          'rental-sales-execution',
-        ),
-      ),
-    ];
+export const companyAgentKeyAdministratorRole: DemoRole = {
+  capabilityKeys: {
+    'core.identity': [
+      'core.identity.company-agent-key.list-managed',
+      'core.identity.company-agent-key.read-personal-data',
+      'core.identity.company-agent-key.read-authentication-metadata',
+    ],
   },
-);
+  label: 'Správa klíčů firemních agentů',
+  modules: { 'core.identity': 'read' },
+  restrictedModules: ['core.identity'],
+};
+
+/**
+ * Every reviewed **person** assignment of the demo tenant, as canonical source: the four Obchodní-firma
+ * accounts, the Nájempark baseline personas, the CRM and e-shop company personas, and
+ * the tenant administrator's CRM overlay.
+ *
+ * A Role key must be unique inside the tenant, so each company's profile is namespaced by its company key.
+ */
+export const reviewedDemoAssignments = (): readonly ReviewedDemoAssignment[] => {
+  const [headOfSales, salesRep, accountant] = demoHumanAccounts;
+  const people: ReviewedDemoAssignment[] = [
+    assignment(headOfSales.principalId, 'sales-leadership', demoRoles.headOfSales, demoLegalEntityId),
+    assignment(salesRep.principalId, 'sales', demoRoles.salesRep, demoLegalEntityId),
+    assignment(accountant.principalId, 'accounting', demoRoles.accountant, demoLegalEntityId),
+    assignment(demoHumanAccounts[3].principalId, 'warehouse', demoRoles.warehouse, demoLegalEntityId),
+    ...siamparkRentalPersonas.map(({ principalId, role }) =>
+      assignment(principalId, demoPrincipalRoleKey(principalId), role, rentalDemoLegalEntityId),
+    ),
+    ...companyHumanAccounts.map(({ legalEntityId, principalId, role }) =>
+      // The company is part of the Role key: two companies may review the same job name with different
+      // rights (Kavárna's e-shop administrator vs ŠroubShop's), and one key must name exactly one policy.
+      assignment(
+        principalId,
+        `company-${legalEntityId.slice(-4)}-${demoPrincipalRoleKey(principalId)}`,
+        companyRoles[role],
+        legalEntityId,
+      ),
+    ),
+    ...tenantAdministratorCrmLegalEntityIds.map((legalEntityId) =>
+      assignment(
+        headOfSales.principalId,
+        `tenant-administrator-crm-${legalEntityId.slice(-4)}`,
+        tenantAdministratorCrmRole,
+        legalEntityId,
+      ),
+    ),
+    ...[demoLegalEntityId, rentalDemoLegalEntityId].map((legalEntityId) =>
+      assignment(
+        headOfSales.principalId,
+        `tenant-administrator-pipeline-${legalEntityId.slice(-4)}`,
+        tenantAdministratorPipelineRole,
+        legalEntityId,
+      ),
+    ),
+  ];
+  return [
+    ...people,
+    ...demoTenantMemberships.map(({ principalId }) =>
+      assignment(principalId, demoShellRoutingRoleKey, demoShellRoutingRole),
+    ),
+    ...people.flatMap(({ legalEntityId, principalId, role }) =>
+      legalEntityId === undefined || role.companyAdmin !== true
+        ? []
+        : [
+            assignment(
+              principalId,
+              `company-agent-keys-${legalEntityId.slice(-4)}`,
+              companyAgentKeyAdministratorRole,
+              legalEntityId,
+            ),
+          ],
+    ),
+  ];
+};
+
+/**
+ * The reviewed machine identities that have **no** v2 authority in this release, with the exact carrier gap
+ * that blocks each one. None is granted anything: a service principal admitted on a declaration carrier
+ * would be a service cast as a person, and a key no carrier declares would be an invented grant.
+ *
+ * Each is a genuine blocker for the owner of the carrier, not a decision to take here.
+ */
+export const unmappedServicePrincipals = [
+  {
+    carrier: 'commerce.customer-context (no declared consent-authority read)',
+    principalId: privacyConsentPrincipal.principalId,
+    reason:
+      'The legacy customer.consent.resolve_authority / customer.notice.resolve_authority context permissions have no declared v2 capability.',
+  },
+  {
+    carrier:
+      'commerce.customer-context.market-retirement.reserve (accessActor.callers=[commerce-market-catalog], subject=rights)',
+    principalId: marketRetirementPrincipal.principalId,
+    reason:
+      "The carrier delegates to the acting principal's rights, and the gateway principal is a service: it is refused on a rights carrier and declares no accessWorkload.",
+  },
+  {
+    carrier:
+      'commerce.customer-context.market-retirement.reserve (accessActor.callers=[commerce-market-catalog], subject=rights)',
+    principalId: kavarnaMarketAuthorityPrincipal.principalId,
+    reason:
+      "Same rights-delegated carrier as the AKROS market authority; Kavárna's gateway principal declares no accessWorkload either.",
+  },
+] as const;
+
+/**
+ * The service identities whose legacy Roles are gone with their callers, and why. Removing the Role is the
+ * point: an inert reviewed Role that nothing writes is exactly the retired scoped-role model under a new
+ * name, and a service principal admitted on a declaration carrier would be a service cast as a person.
+ */
+export const retiredServiceRoles = [
+  {
+    reason:
+      'The CRM intake is a service bound only to demo.crm.party-intake; its slim read, link-only Action and composed crm-to-Party calls replace the broad CRM/Party human Role.',
+    role: 'CRM Party intake (legacy broad CRM / Party permissions)',
+  },
+  {
+    reason:
+      "The storefront BFFs are admitted by merchandise's own native service-key protocol (akrosServiceKeyGuard) and by the registered commerce.storefront-client workload, not by a Role.",
+    role: 'storefront / akrosStorefront (demo.merchandise)',
+  },
+  {
+    reason:
+      'The customer portal runs the enrollment journey as the declared commerce.storefront-client workload, and reserves and activates bindings as the declared core.identity-provider workload; its read narrowing (party.registry, privacy.core) is not a carrier of this release.',
+    role: 'commerce-portal (core.identity / party.registry / privacy.core reads)',
+  },
+] as const;
+
+/**
+ * Every reviewed machine identity that needs a principal row in the demo tenant. A row is identity, not
+ * authority: the MCP bot, the storefront BFFs and the customer portal are admitted by the gateway protocol
+ * and the registered workload bindings, and the principals listed in `unmappedServicePrincipals` reach
+ * nothing until their carrier declares a workload key.
+ */
+export const reviewedMachinePrincipals = [
+  agentBotPrincipal,
+  storefrontPrincipal,
+  akrosStorefrontPrincipal,
+  commercePortalPrincipal,
+  privacyConsentPrincipal,
+  marketRetirementPrincipal,
+  kavarnaMarketAuthorityPrincipal,
+  crmPartyIntakePrincipal,
+] as const satisfies readonly {
+  readonly displayName: string;
+  readonly kind: string;
+  readonly principalId: string;
+}[];
+
+/** The legal entities the demo tenant installs; a role in one of them never reaches another. */
+export const demoLegalEntityIds: readonly string[] = [
+  demoLegalEntityId,
+  rentalDemoLegalEntityId,
+  crmDemoLegalEntityId,
+  eshopDemoLegalEntityId,
+  akrosDemoLegalEntityId,
+];

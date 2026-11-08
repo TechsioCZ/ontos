@@ -288,3 +288,27 @@ it.effect(
       expect((yield* candidates(store, 'ONTO')).every((document) => document.projectionVersion === '2')).toBe(true);
     }),
 );
+
+it.effect(
+  'rejects copied claims, company-scoped claims and unregistered worker identities before snapshot access',
+  () =>
+    Effect.gen(function* invalidWorkerIdentity() {
+      for (const context of [
+        { ...claim() },
+        attestOutboxWorkerHandlerContext({ ...claim(), legalEntityScope: 'required' }),
+        attestOutboxWorkerHandlerContext({ ...claim(), workerKey: 'projects.core.unregistered-search' }),
+        attestOutboxWorkerHandlerContext({ ...claim(), topic: 'projects.core.unregistered.v1' }),
+      ]) {
+        const failure = yield* refreshProjectSearchProjection(context).pipe(
+          Effect.provideService(CoreSearchWorkerSnapshot, {
+            read: () => Effect.die('Invalid claim must not read Projects'),
+          }),
+          Effect.provideService(CoreSearchIngestion, {
+            ingest: () => Effect.die('Invalid claim must not publish Projects'),
+          }),
+          Effect.flip,
+        );
+        expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
+      }
+    }),
+);

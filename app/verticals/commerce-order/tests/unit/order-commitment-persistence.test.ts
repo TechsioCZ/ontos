@@ -3,7 +3,7 @@ import { Effect, Schema } from 'effect';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { OrderAcceptanceBundleSchema } from '../../shared/domain/order-commitment.ts';
 import { commitmentAttempts, committedOrders, consumptionObligations } from '../../src/db/schema.ts';
-import { sameOrderBinding } from '../../src/services/order-commitment-persistence.ts';
+import { isBuyerSubject, sameOrderBinding } from '../../src/services/order-commitment-persistence.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const principalId = '22222222-2222-4222-8222-222222222222';
@@ -154,5 +154,13 @@ describe('Order durable commitment identity', () => {
         ).toEqual(['tenant_id', 'legal_entity_id']);
       }
     }
+  });
+});
+
+describe('Order delegated work subject', () => {
+  it('admits the buyer the record names and denies any other subject', () => {
+    const otherSubject = '44444444-4444-4444-8444-444444444444';
+    expect(isBuyerSubject(principalId, principalId)).toBe(true);
+    expect(isBuyerSubject(otherSubject, principalId)).toBe(false);
   });
 });

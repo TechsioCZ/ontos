@@ -2,7 +2,9 @@
 // @ontos-action-owner commerce.assortment
 // @ontos-action-slug retire-rule
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionAssortmentPermissions, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { assortmentCurrentnessFacts } from '../services/assortment-currentness.ts';
+import { retireRuleCurrentnessTarget } from './policy-administration-support.ts';
 import { Effect, Schema } from 'effect';
 import { RetireRulePayloadSchema, RetireRuleResultSchema } from '../../shared/actions/policy-administration.ts';
 import type { RetireRulePayload } from '../../shared/actions/policy-administration.ts';
@@ -15,7 +17,7 @@ import {
 } from '../../shared/domain/policy-errors.ts';
 import type { AssortmentPolicyPersistence } from '../services/policy-administration.service.ts';
 import { assortmentPolicyServiceFactory, stableRuleRef } from '../services/policy-administration.service.ts';
-import { retireRulePermissionTarget } from './policy-administration-support.ts';
+
 import {
   RetireRuleCommerceAssortmentRuleRetiredV1OutboxPayloadSchema,
   createRetireRuleCommerceAssortmentRuleRetiredV1OutboxMessage,
@@ -90,18 +92,24 @@ export const handleRetireRule = Effect.fn('RetireRuleAction.handle')(function* r
 
 export const retireRuleAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.assortment.rule.retire',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'rules', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'commerce.assortment.retire-rule.access.v1' },
+    accessOwnerFacts: (payload, scope) => assortmentCurrentnessFacts(retireRuleCurrentnessTarget(payload, scope)),
     actionKey: 'commerce.assortment.retire-rule',
-    assortmentPermissions: defineActionAssortmentPermissions<RetireRulePayload>((payload, scope) => [
-      retireRulePermissionTarget(payload, scope),
-    ]),
     auditEvidenceSchema: AssortmentPolicyAuditEvidenceSchema,
     auditProfile: 'sensitive',
     domainErrorSchema: ActionErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.assortment.retire-rule',
       moduleKey: 'commerce.assortment',
       role: 'action',

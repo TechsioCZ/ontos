@@ -21,7 +21,7 @@ import { CommentThread } from '../../../../ui/comment-thread.tsx';
 import { ChangeHistory } from '../../../../ui/change-history.tsx';
 import { LinkedDocuments } from '../../../../ui/linked-documents.tsx';
 import { downloadFile, MAX_UPLOAD_BYTES, uploadFile } from '../../../../ui/use-agenda.ts';
-import type { RunCommand } from './device-forms.tsx';
+import type { RunCommand, TaskLinkOutcome } from './device-forms.tsx';
 import { linkNewTask } from './device-forms.tsx';
 import {
   addDays,
@@ -323,6 +323,7 @@ interface CreateSecurityIncidentTaskInput {
   readonly onReload: () => Effect.Effect<void>;
   readonly revision: number;
   readonly setBusy: (busy: boolean) => void;
+  readonly t: ReturnType<typeof useModernI18n>['t'];
   readonly tenantId: string;
   readonly toast: ReturnType<typeof useToast>;
   readonly today: SecurityIncident['occurredOn'];
@@ -336,12 +337,13 @@ const createSecurityIncidentTask = Effect.fn('Facility.createSecurityIncidentTas
     onReload,
     revision,
     setBusy,
+    t,
     tenantId,
     toast,
     today,
   }: CreateSecurityIncidentTaskInput) {
     setBusy(true);
-    const ok = yield* linkNewTask({
+    const outcome = yield* linkNewTask({
       description: incident.description ?? '',
       device,
       dueDate: addDays(today, 3),
@@ -355,7 +357,15 @@ const createSecurityIncidentTask = Effect.fn('Facility.createSecurityIncidentTas
     });
     yield* onReload();
     setBusy(false);
-    toast.create(ok ? { title: k('taskCreated'), type: 'success' } : { title: k('report.taskFailed'), type: 'error' });
+    toast.create(
+      (
+        {
+          failed: { title: k('report.taskFailed'), type: 'error' },
+          linked: { title: k('taskCreated'), type: 'success' },
+          pending_approval: { title: t('facility-operations.common.errors.approval_required'), type: 'info' },
+        } satisfies Record<TaskLinkOutcome, Parameters<typeof toast.create>[0]>
+      )[outcome],
+    );
   },
 );
 
@@ -508,7 +518,7 @@ export const DeviceDetailPanel = ({
     changeSecurityIncidentState({ incident, k, run, setBusy, state, t, toast });
 
   const createTask = (incident: SecurityIncident) =>
-    createSecurityIncidentTask({ device, incident, k, onReload, revision, setBusy, tenantId, toast, today });
+    createSecurityIncidentTask({ device, incident, k, onReload, revision, setBusy, t, tenantId, toast, today });
 
   const upload = (file: File) => uploadSecurityAttachment({ device, file, k, kind, run, setBusy, t, toast });
 

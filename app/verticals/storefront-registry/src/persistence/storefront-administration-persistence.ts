@@ -1,4 +1,4 @@
-import type { ReadServiceFactory, ScopedRoutineInvocationError, ScopedRoutineInvoker } from '@app/core-runtime';
+import type { ActionServiceFactory, ScopedRoutineInvocationError, ScopedRoutineInvoker } from '@app/core-runtime';
 import { PersistenceFailure, defineScopedRoutine } from '@app/core-runtime';
 import type { RegisterStorefrontApplicationPayload } from '../../shared/actions/register-storefront-application.ts';
 import type { ReviseStorefrontApplicationPayload } from '../../shared/actions/revise-storefront-application.ts';
@@ -115,6 +115,6 @@ export const storefrontAdministrationPersistence = (
   revise: (command) => invoke(transaction, reviseRoutine, command, ReviseOutcomeSchema),
 });
 
-export const storefrontAdministrationPersistenceForScope: ReadServiceFactory<StorefrontAdministrationPersistence> = (
+export const storefrontAdministrationPersistenceForScope: ActionServiceFactory<StorefrontAdministrationPersistence> = (
   transaction,
 ) => Effect.succeed(storefrontAdministrationPersistence(transaction));

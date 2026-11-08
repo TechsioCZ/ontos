@@ -241,6 +241,17 @@ const handleConfigureAgent = Effect.fn('ConfigureAgentAction.handle')(function* 
 
 export const configureAgentAction = defineAction(
   {
+    // Agent profile administration is structural identity administration: a human administrator's own
+    // capability, never an agent's (O43, O81). v2 decides it with this declaration instead of the retired
+    // explicit Action-grant engine, so the entrypoint carries `protected` and no provisioning intent.
+    accessDeclaration: {
+      key: 'core.identity.agent-profile.configure',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'core.identity.configure-agent.access.v1',
@@ -252,7 +263,7 @@ export const configureAgentAction = defineAction(
     domainEvents: principalLifecycleDomainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.configure-agent',
       moduleKey: 'core.identity',
       role: 'action',

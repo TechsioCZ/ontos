@@ -84,7 +84,7 @@ export const tagAutosaveResult = <E>(
   write.pipe(
     Effect.match({
       onFailure: (error): RevisionedSaveResult =>
-        Predicate.isTagged(error, 'ApplyCommandActionConflictProblem') ? 'conflict' : 'failed',
+        Predicate.isTagged(error, 'UpdateTagActionConflictProblem') ? 'conflict' : 'failed',
       onSuccess: (applied): RevisionedSaveResult => (applied === 'applied' ? 'saved' : 'conflict'),
     }),
   );

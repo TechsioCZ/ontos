@@ -52,11 +52,21 @@ const compositionFixture = () => {
           ...contract.manifest.publicSurface,
           actions: [
             {
+              // A v2 protected Action: the capability lives in the declaration, never in a legacy
+              // `action_execution` provisioning intent (O62).
+              accessDeclaration: {
+                key: 'work.tasks.task.update',
+                kind: 'action',
+                modes: ['run'],
+                placement: { group: 'tasks', level: 'basic' },
+                risk: 'routine',
+                selectors: [],
+              },
               actionKey: 'work.tasks.update',
               auditProfile: 'standard',
               entrypoint: {
                 access: 'write',
-                authorization: { kind: 'action_execution', provisioning: 'explicit' },
+                authorization: { kind: 'protected' },
                 entrypointKey: 'work.tasks.update',
                 moduleKey: 'work.tasks',
                 role: 'action',
@@ -279,11 +289,16 @@ for (const propose of ['allowed', 'denied'] as const) {
               tenants: forbiddenContext,
             },
             {
-              checkActionAuthorities: (targets) => {
-                expect(targets).toEqual([
-                  { actionKey: 'work.tasks.update', legalEntityId, principalId: agentId, tenantId },
-                ]);
-                return Effect.succeed(targets.map((target) => ({ ...target, execute: 'denied', propose })));
+              // One gate question over the acting request's own trusted scope (O66): the Action key is
+              // the only scalar the caller names, and `insert` reads the Action's own propose answer.
+              checkActionAuthorities: (query) => {
+                expect(query.actionKeys).toEqual(['work.tasks.update']);
+                expect(query.scope.legalEntityId).toBe(legalEntityId);
+                expect(query.scope.principalId).toBe(agentId);
+                expect(query.scope.tenantId).toBe(tenantId);
+                return Effect.succeed(
+                  query.actionKeys.map((actionKey) => ({ actionKey, execute: 'denied' as const, propose })),
+                );
               },
               checkActionProposalPermission: forbiddenContext,
             },
@@ -381,15 +396,17 @@ for (const [name, execute, moduleDecision, proposerPermission, expected] of [
               tenants: forbiddenContext,
             },
             {
-              checkActionAuthorities: (targets) => {
+              // The actor and, for a claim, the proposer each ask in their own scope; one call per
+              // identity is what the runner proves happened, and the transaction is already closed.
+              checkActionAuthorities: (query) => {
                 expect(transactionOpen).toBe(false);
-                checks.push(...targets.map((target) => target.principalId));
-                for (const target of targets) {
-                  expect(target.actionKey).toBe('work.tasks.update');
-                  expect(target.legalEntityId).toBe(legalEntityId);
-                  expect(target.tenantId).toBe(tenantId);
-                }
-                return Effect.succeed(targets.map((target) => ({ ...target, execute, propose: proposerPermission })));
+                checks.push(query.scope.principalId);
+                expect(query.actionKeys).toEqual(['work.tasks.update']);
+                expect(query.scope.legalEntityId).toBe(legalEntityId);
+                expect(query.scope.tenantId).toBe(tenantId);
+                return Effect.succeed(
+                  query.actionKeys.map((actionKey) => ({ actionKey, execute, propose: proposerPermission })),
+                );
               },
               checkActionProposalPermission: () => Effect.die('Use exact bulk Action authority'),
             },
@@ -542,8 +559,14 @@ for (const mismatch of ['payload', 'scope', 'composition'] as const) {
               tenants: forbiddenContext,
             },
             {
-              checkActionAuthorities: (targets) =>
-                Effect.succeed(targets.map((target) => ({ ...target, execute: 'allowed', propose: 'allowed' }))),
+              checkActionAuthorities: (query) =>
+                Effect.succeed(
+                  query.actionKeys.map((actionKey) => ({
+                    actionKey,
+                    execute: 'allowed' as const,
+                    propose: 'allowed' as const,
+                  })),
+                ),
               checkActionProposalPermission: forbiddenContext,
             },
           ),

@@ -1,3 +1,4 @@
+import { inventoryRegistration } from '../../vertical.registration.ts';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { NodeCrypto } from '@effect/platform-node';
 import { Context, Crypto, Effect, Match, Ref, Schema } from 'effect';
@@ -7,6 +8,8 @@ import { makeActionRepository } from '../../../../packages/core-runtime/src/acti
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import {
+  accessScopeFences,
+  accessScopes,
   actionInvocations,
   auditEvents,
   coreRelations,
@@ -19,10 +22,10 @@ import {
   tenants,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
 import type { ContextAccessService } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
-import { toBusinessPermissionAccessKey } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
-import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/permissions/owner-authorization-overlay.ts';
+import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/access/enforcement/owner-overlay.ts';
 import { testOperationalScopeResolver } from '../../../../packages/core-runtime/tests/fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../../../../packages/core-runtime/tests/support/action-runtime-options.ts';
+import { makeScriptedBoundAccessGate } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
 import {
   makeTestDatabaseFromClient,
   testDatabaseClients,
@@ -93,6 +96,8 @@ const sourceTenantId = '11111111-1111-4111-8111-111111111111';
 const tenantId = 'a1111111-1111-4111-8111-111111111111';
 const legalEntityId = 'a2121212-1212-4121-8121-121212121212';
 const principalId = 'a3131313-1313-4131-8131-131313131313';
+const tenantScopeId = 'aa141414-1414-4141-8141-141414141414';
+const legalEntityScopeId = 'aa151515-1515-4151-8151-151515151515';
 const authBindingId = 'a4141414-1414-4141-8141-141414141414';
 const authenticationNamespaceId = 'test.inventory-owner-recovery.v1';
 
@@ -121,13 +126,11 @@ const allowedPermission = {
 };
 
 const contextAccess: ContextAccessService = {
-  businessPermissions: ({ targets }) =>
-    Effect.succeed(
-      targets.map((target) => ({ decision: 'allowed' as const, key: toBusinessPermissionAccessKey(target) })),
-    ),
   legalEntities: ({ legalEntityIds }) =>
     Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
   modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
+  ownerPermissions: ({ targets }) =>
+    Effect.succeed(targets.map((target) => ({ decision: 'allowed' as const, key: target.target.key }))),
   resources: ({ resources }) =>
     Effect.succeed(
       resources.map(({ moduleId, resourceId, resourceType }) => ({
@@ -176,6 +179,7 @@ const cleanupInventory = (database: InventoryTestDatabase) =>
 const cleanupCore = (database: TestDatabaseFromClient<typeof coreRelations>) =>
   database.transaction((transaction) =>
     Effect.gen(function* cleanupOwnerRecoveryCore() {
+      // Core retains access intent (D27), so the Tenant, its company and their access scopes stay.
       for (const table of [
         outboxMessages,
         domainEvents,
@@ -184,8 +188,6 @@ const cleanupCore = (database: TestDatabaseFromClient<typeof coreRelations>) =>
         actionInvocations,
         principalAuthBindings,
         principals,
-        legalEntities,
-        tenants,
       ]) {
         yield* transaction.delete(table).where(eq(table.tenantId, tenantId));
       }
@@ -206,21 +208,47 @@ it.live('repairs physical and reservation owner state before terminal recovery w
         Effect.all([cleanupInventory(admin), cleanupCore(coreAdmin)]).pipe(Effect.orDie),
       );
 
-      yield* coreAdmin.insert(tenants).values({
-        defaultLocale: 'en',
-        name: 'Inventory owner recovery acceptance',
-        slug: `inventory-owner-recovery-${tenantId}`,
-        status: 'active',
-        tenantId,
-      });
-      yield* coreAdmin.insert(legalEntities).values({
-        legalEntityId,
-        legalName: 'Inventory owner recovery legal entity',
-        registrationCountry: 'CZ',
-        registrationNumber: `OWNER-RECOVERY-${legalEntityId}`,
-        status: 'active',
-        tenantId,
-      });
+      yield* coreAdmin
+        .insert(tenants)
+        .values({
+          defaultLocale: 'en',
+          name: 'Inventory owner recovery acceptance',
+          slug: `inventory-owner-recovery-${tenantId}`,
+          status: 'active',
+          tenantId,
+        })
+        .onConflictDoNothing();
+      yield* coreAdmin
+        .insert(legalEntities)
+        .values({
+          legalEntityId,
+          legalName: 'Inventory owner recovery legal entity',
+          registrationCountry: 'CZ',
+          registrationNumber: `OWNER-RECOVERY-${legalEntityId}`,
+          status: 'active',
+          tenantId,
+        })
+        .onConflictDoNothing();
+      // The runner re-decides every protected Action under its access scope's shared fence. Seed the
+      // tenant context scope and the company scope with a Ready fence each, as Core bootstrap does.
+      yield* coreAdmin
+        .insert(accessScopes)
+        .values([
+          { scopeId: tenantScopeId, tenantContextId: tenantId, tenantId },
+          { legalEntityId, scopeId: legalEntityScopeId, tenantId },
+        ])
+        .onConflictDoNothing();
+      yield* coreAdmin
+        .insert(accessScopeFences)
+        .values(
+          [tenantScopeId, legalEntityScopeId].map((scopeId) => ({
+            revision: 1,
+            scopeId,
+            state: 'Ready' as const,
+            tenantId,
+          })),
+        )
+        .onConflictDoNothing();
       yield* coreAdmin.insert(principals).values({
         displayName: 'Inventory owner recovery operator',
         kind: 'human',
@@ -523,10 +551,12 @@ it.live('repairs physical and reservation owner state before terminal recovery w
         testOperationalScopeResolver,
         {
           ...openActionRuntimeOptions,
+          accessDecision: makeScriptedBoundAccessGate('allowed').bound,
           contextAccess,
           databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
 
           ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
+          ownerRegistration: inventoryRegistration,
         },
       );
       const recover = (kind: 'PHYSICAL_ISSUE' | 'RESERVATION_CREATE', replay: boolean) => {

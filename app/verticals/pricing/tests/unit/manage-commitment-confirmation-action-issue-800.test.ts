@@ -1,3 +1,4 @@
+import { pricingRegistration } from '../../vertical.registration.ts';
 import { pricingCommitmentAlgorithmFactoriesLive } from '../../src/integrations/commitment-confirmation-production.ts';
 import type {
   PricingCommitmentConfirmationIssued,
@@ -5,7 +6,8 @@ import type {
 } from '@app/pricing-contracts/domain/commitment-confirmation';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import type { DataAccessEventInput } from '@app/core-runtime';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { NodeCrypto } from '@effect/platform-node';
+import { DateTime, Effect, Layer, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
@@ -113,7 +115,7 @@ const context = (
   services: actionServices,
 });
 
-it.layer(pricingCommitmentAlgorithmFactoriesLive)(
+it.layer(Layer.mergeAll(pricingCommitmentAlgorithmFactoriesLive, NodeCrypto.layer))(
   'issue #800 Pricing Commitment Confirmation Action audit',
   (suite) => {
     suite.effect('records exact Current-backed issuance lineage and the trusted human caller', () =>
@@ -480,9 +482,8 @@ it.layer(pricingCommitmentAlgorithmFactoriesLive)(
             Effect.succeed({ confirmation: storedConfirmation, outcome: 'STORED' as const }),
         });
         const harness = yield* makeActionTestHarness({
-          actionPermission: 'allowed',
-          legalEntityAccess: 'allowed',
-          legalEntityPermission: 'allowed',
+          access: 'allowed',
+          ownerRegistration: pricingRegistration,
           services: [bindActionTestServices(manageCommitmentConfirmationAction, actionServices)],
         });
         const principal = {
@@ -649,9 +650,8 @@ it.layer(pricingCommitmentAlgorithmFactoriesLive)(
             }),
         });
         const harness = yield* makeActionTestHarness({
-          actionPermission: 'allowed',
-          legalEntityAccess: 'allowed',
-          legalEntityPermission: 'allowed',
+          access: 'allowed',
+          ownerRegistration: pricingRegistration,
           services: [bindActionTestServices(manageCommitmentConfirmationAction, actionServices)],
         });
         const principal = {

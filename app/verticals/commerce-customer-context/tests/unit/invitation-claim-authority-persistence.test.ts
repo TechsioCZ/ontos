@@ -1,5 +1,5 @@
 import { ScopedRoutineInvocationError } from '@app/core-runtime';
-import type { ContextAccessService, ScopedRoutineDefinition, ScopedRoutineParameter } from '@app/core-runtime';
+import type { ScopedRoutineDefinition, ScopedRoutineParameter } from '@app/core-runtime';
 import { Crypto, Effect, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -16,7 +16,10 @@ import {
   invitationClaimProofRoutineAllowlist,
   verifyCounterpartyInvitationClaimAuthorityForOwnerScope,
 } from '../../src/persistence/invitation-claim-authority-persistence.ts';
-import type { InvitationClaimScopedRoutineInvoker } from '../../src/persistence/invitation-claim-authority-persistence.ts';
+import type {
+  CurrentOwnerAccessDecisionInput,
+  InvitationClaimScopedRoutineInvoker,
+} from '../../src/persistence/invitation-claim-authority-persistence.ts';
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
 const otherTenantId = '20000000-0000-4000-8000-000000000002';
@@ -92,17 +95,6 @@ const invokerWith = (handler: RoutineHandler): InvitationClaimScopedRoutineInvok
     Effect.sync(() => handler(routine.routineKey, values)).pipe(
       Effect.flatMap((rows) => decodeRoutineRows(routine, rows)),
     ),
-});
-
-const contextAccess = (
-  decision: 'allowed' | 'denied' | 'unavailable' = 'allowed',
-  observe?: Parameters<NonNullable<ContextAccessService['businessPermissions']>>[0][],
-): Pick<ContextAccessService, 'businessPermissions'> => ({
-  businessPermissions: (input) =>
-    Effect.sync(() => {
-      observe?.push(input);
-      return input.targets.map(({ permission }) => ({ decision, key: permission }));
-    }),
 });
 
 const allowedOwnerAccess = () => Effect.succeed('ALLOWED' as const);
@@ -207,12 +199,7 @@ it.effect('issues and stages one proof without exposing its raw value to either 
           events.push('delivery.stage');
         }),
     };
-    const { proofLifecycle } = counterpartyInvitationClaimServicesForTransaction(
-      transaction,
-      contextAccess(),
-      crypto,
-      delivery,
-    );
+    const { proofLifecycle } = counterpartyInvitationClaimServicesForTransaction(transaction, crypto, delivery);
 
     const result = yield* proofLifecycle.issueAndStageDelivery(registrationInput);
 
@@ -254,7 +241,6 @@ it.effect('returns an issue replay without restaging delivery or replacing its s
         calls.push(key);
         return [{ operation_outcome: 'REPLAYED', proof_reference: 'existing-proof-reference' }];
       }),
-      contextAccess(),
       crypto,
       successfulDelivery(deliveries),
     );
@@ -283,7 +269,6 @@ it.effect('uses the explicit rotate operation before staging the replacement pro
     });
     const { proofLifecycle } = counterpartyInvitationClaimServicesForTransaction(
       transaction,
-      contextAccess(),
       crypto,
       successfulDelivery(),
     );
@@ -303,7 +288,6 @@ it.effect('fails closed when secure delivery staging fails and never marks deliv
         calls.push(key);
         return [{ operation_outcome: 'REGISTERED', proof_reference: proofReference }];
       }),
-      contextAccess(),
       crypto,
       {
         stage: () =>
@@ -339,7 +323,6 @@ it.effect('escrows a proof with the exact committed release identity and no plai
           ? [{ operation_outcome: 'REGISTERED', proof_reference: proofReference }]
           : [{ operation_outcome: 'STAGED', proof_reference: proofReference }],
       ),
-      contextAccess(),
       crypto,
       delivery,
     );
@@ -427,13 +410,11 @@ it.effect('binds redemption claimant and owner scope only from authenticated con
 it.effect('rejects a cross-Tenant claimant before authority or persistence can run', () =>
   Effect.gen(function* crossTenantClaim() {
     const routineCalls: string[] = [];
-    const authorityCalls: Parameters<NonNullable<ContextAccessService['businessPermissions']>>[0][] = [];
     const { claimAuthority } = counterpartyInvitationClaimServicesForTransaction(
       invokerWith((key) => {
         routineCalls.push(key);
         return [];
       }),
-      contextAccess('allowed', authorityCalls),
       crypto,
       successfulDelivery(),
     );
@@ -446,7 +427,6 @@ it.effect('rejects a cross-Tenant claimant before authority or persistence can r
     );
 
     expectViolation(failure, 'invitation_claimant_mismatch');
-    expect(authorityCalls).toEqual([]);
     expect(routineCalls).toEqual([]);
   }),
 );
@@ -454,37 +434,30 @@ it.effect('rejects a cross-Tenant claimant before authority or persistence can r
 it.effect('rechecks current inviter authority and stops before consumption when it is denied', () =>
   Effect.gen(function* deniedInviter() {
     const routineCalls: string[] = [];
-    const authorityCalls: Parameters<NonNullable<ContextAccessService['businessPermissions']>>[0][] = [];
+    const ownerChecks: CurrentOwnerAccessDecisionInput[] = [];
     const { claimAuthority } = counterpartyInvitationClaimServicesForTransaction(
       invokerWith((key) => {
         routineCalls.push(key);
         return [];
       }),
-      contextAccess('denied', authorityCalls),
       crypto,
       successfulDelivery(),
-      allowedOwnerAccess,
+      (input) => {
+        ownerChecks.push(input);
+        return Effect.succeed('DENIED' as const);
+      },
     );
 
     const failure = yield* Effect.flip(claimAuthority.verifyAndConsume(verificationInput));
 
     expectViolation(failure, 'inviter_authority_denied');
-    expect(authorityCalls).toEqual([
+    expect(ownerChecks).toEqual([
       {
+        counterpartyRef,
+        legalEntityId,
+        permission: 'counterparty.access.manage',
         principal: inviter,
-        targets: [
-          {
-            permission: 'counterparty.access.manage',
-            target: {
-              counterpartyId,
-              kind: 'counterparty_storefront',
-              legalEntityId,
-              storefrontId,
-              tenantId,
-            },
-          },
-        ],
-        trustedStorefrontId: storefrontId,
+        scope: permissionScope,
       },
     ]);
     expect(routineCalls).toEqual([]);
@@ -493,10 +466,8 @@ it.effect('rechecks current inviter authority and stops before consumption when 
 
 it.effect('owner pending revoke denies invitation claim before Core authority can race', () =>
   Effect.gen(function* denyOwnerRevokeBeforeCoreCheck() {
-    const authorityCalls: Parameters<NonNullable<ContextAccessService['businessPermissions']>>[0][] = [];
     const { claimAuthority } = counterpartyInvitationClaimServicesForTransaction(
       invokerWith(() => []),
-      contextAccess('allowed', authorityCalls),
       crypto,
       successfulDelivery(),
       () => Effect.succeed('DENIED' as const),
@@ -505,16 +476,13 @@ it.effect('owner pending revoke denies invitation claim before Core authority ca
     const failure = yield* Effect.flip(claimAuthority.verifyAndConsume(verificationInput));
 
     expectViolation(failure, 'inviter_authority_denied');
-    expect(authorityCalls).toEqual([]);
   }),
 );
 
 it.effect('fails closed when invitation authority has no owner reader', () =>
   Effect.gen(function* missingOwnerReader() {
-    const authorityCalls: Parameters<NonNullable<ContextAccessService['businessPermissions']>>[0][] = [];
     const { claimAuthority } = counterpartyInvitationClaimServicesForTransaction(
       invokerWith(() => []),
-      contextAccess('allowed', authorityCalls),
       crypto,
       successfulDelivery(),
     );
@@ -522,17 +490,14 @@ it.effect('fails closed when invitation authority has no owner reader', () =>
     const failure = yield* Effect.flip(claimAuthority.verifyAndConsume(verificationInput));
 
     expect(Schema.is(CounterpartyAccessUnavailable)(failure)).toBe(true);
-    expect(authorityCalls).toEqual([]);
   }),
 );
 
 it.effect('preflights the exact claimant, invitation, counterparty, and proof without consuming it', () =>
   Effect.gen(function* preflightExactness() {
     const routineCalls: { readonly key: string; readonly values: readonly unknown[] }[] = [];
-    const authorityCalls: Parameters<NonNullable<ContextAccessService['businessPermissions']>>[0][] = [];
     const result = yield* verifyCounterpartyInvitationClaimAuthorityForOwnerScope(
       {
-        contextAccess: contextAccess('allowed', authorityCalls),
         currentOwnerAccess: allowedOwnerAccess,
         transaction: invokerWith((key, values) => {
           routineCalls.push({ key, values });
@@ -564,24 +529,6 @@ it.effect('preflights the exact claimant, invitation, counterparty, and proof wi
         values: [invitationId, proofReference, counterpartyId, storefrontId, claimantId],
       },
     ]);
-    expect(authorityCalls).toEqual([
-      {
-        principal: inviter,
-        targets: [
-          {
-            permission: 'counterparty.access.manage',
-            target: {
-              counterpartyId,
-              kind: 'counterparty_storefront',
-              legalEntityId,
-              storefrontId,
-              tenantId,
-            },
-          },
-        ],
-        trustedStorefrontId: storefrontId,
-      },
-    ]);
   }),
 );
 
@@ -589,7 +536,6 @@ it.effect('preflight denies wrong claimant or Tenant before touching the owner r
   Effect.gen(function* preflightScopeMismatch() {
     const calls: string[] = [];
     const ownerScope = {
-      contextAccess: contextAccess(),
       currentOwnerAccess: allowedOwnerAccess,
       transaction: invokerWith((key, values) => {
         calls.push(key);
@@ -647,7 +593,6 @@ it.effect('preflight maps expired, revoked, consumed, and partial failures fail 
       const failure = yield* Effect.flip(
         verifyCounterpartyInvitationClaimAuthorityForOwnerScope(
           {
-            contextAccess: contextAccess(),
             currentOwnerAccess: allowedOwnerAccess,
             transaction: invokerWith(() => [
               {
@@ -682,7 +627,6 @@ it.effect('preflight maps expired, revoked, consumed, and partial failures fail 
     const unavailableFailure = yield* Effect.flip(
       verifyCounterpartyInvitationClaimAuthorityForOwnerScope(
         {
-          contextAccess: contextAccess(),
           currentOwnerAccess: () => Effect.succeed('UNAVAILABLE' as const),
           transaction: invokerWith(() => [
             {
@@ -724,7 +668,6 @@ it.effect('replays the stored same-Action attestation while preserving the exact
           },
         ];
       }),
-      contextAccess(),
       crypto,
       successfulDelivery(),
       allowedOwnerAccess,
@@ -760,7 +703,6 @@ it.effect('rejects reuse by a conflicting Action without releasing an attestatio
           verified_at: null,
         },
       ]),
-      contextAccess(),
       crypto,
       successfulDelivery(),
       allowedOwnerAccess,

@@ -1,3 +1,8 @@
+import { Hex } from 'effect/encoding';
+import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
+import { makeApiKeyGatewayNativeComposition } from '@app/shell-super-app/testing/api-key-gateway-native';
+import { pricingRegistration } from '../../vertical.registration.ts';
+import { pricingManifest } from '../../vertical.manifest.ts';
 // @effect-diagnostics strictEffectProvide:off -- Integration test entrypoint composes its layers once; expires: 2027-03-31.
 import { Buffer } from 'node:buffer';
 import { makeNativeReadTestContext } from '@app/core-runtime/testing/native-reads';
@@ -5,6 +10,9 @@ import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import {
+  extractVerticalRuntimeSafeDescriptors,
+  canonicalOntosPublicApiKey,
+  OntosModuleDeploymentContractSchema,
   defineDatabaseIdentityEnrollment,
   makeDatabaseIdentityEnrollmentLive,
   loadDatabaseConnectionPair,
@@ -13,13 +21,13 @@ import {
   DatabaseConfig,
   GatewayAssertionRedemptionService,
   GatewayAssertionReplayError,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
+  OntosShellRuntimeContractSchema,
+  validateActiveApplicationCompositionSnapshot,
   TenantModuleStateServiceLive,
   TrustedPrincipalContextSchema,
   makeActionRuntimeLive,
   parseDatabaseConfig,
-  canonicalizeApplicationComposition,
-  validateActiveApplicationCompositionSnapshot,
   makeContextPermissionRelationshipMutationLive,
 } from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
@@ -41,11 +49,14 @@ import {
   Effect,
   FileSystem,
   Layer,
+  Match,
+  Option,
   Path,
   Redacted,
   Schema,
   Stream,
   Config,
+  Array as EffectArray,
   ConfigProvider,
   Context,
   Queue,
@@ -56,15 +67,19 @@ import type { Cause } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { expect, it } from 'effect-rstest';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';
 import { classifyBulkOriginalChildDiagnostics } from '../unit/support/bulk-original-child-diagnostics.ts';
 import {
   ManageProductPriceOperationSchema,
   ManageProductPricesBulkPayloadSchema,
+  ManageProductPricesBulkResultSchema,
 } from '../../shared/actions/manage-product-prices-bulk.ts';
 import {
   ManageProductCommercialFeeOperationSchema,
   ManageProductCommercialFeesBulkPayloadSchema,
+  ManageProductCommercialFeesBulkResultSchema,
 } from '../../shared/actions/manage-product-commercial-fees-bulk.ts';
+import { requireExecutionResult } from '../support/action-execution-result.ts';
 import { pricePersistenceForScope } from '../../src/services/price-persistence.service.ts';
 import { commercialFeePersistenceForScope } from '../../src/services/commercial-fee-persistence.service.ts';
 import { currencySupportPersistenceForScope } from '../../src/persistence/currency-support-persistence.ts';
@@ -90,8 +105,10 @@ import {
   GATEWAY_ASSERTION_TTL_SECONDS,
   GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
   GatewayContextProtectedHeaderSchema,
+  GatewayDelegatedContextRequestSchema,
   SupportedGatewayContextClaimsSchema,
   decodeSupportedGatewayContextClaims,
+  shellGatewayContextContract,
 } from '@app/shared-contracts';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { FetchHttpClient, HttpServerRequest, HttpServerResponse, HttpClient, HttpClientRequest } from 'effect/http';
@@ -109,11 +126,6 @@ import {
   ExternalPriceInputBoundaryFactory,
   ExternalPriceSourceAuthorityGrantSchema,
 } from '../../src/services/external-price-input-boundary.service.ts';
-import {
-  CatalogSelectionGatewayCredentialService,
-  PricingCatalogSelectionUnavailable,
-} from '../../shared/domain/catalog-selection-gateway-credential.ts';
-import type { CatalogSelectionGatewayCredentialIssuer } from '../../shared/domain/catalog-selection-gateway-credential.ts';
 import { pricingApi } from '../../shared/api.ts';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import {
@@ -145,6 +157,15 @@ const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]))),
 );
 
+/**
+ * The disposable PostgreSQL container this suite runs against: a lane names its own, CI uses the
+ * shared `ontos-db`. Read through `Config` so the requirement is declared, never ambient.
+ */
+const databaseContainer = Effect.gen(function* fixtureDatabaseContainer() {
+  const configured = yield* Config.option(Config.String('ONTOS_TEST_DB_CONTAINER'));
+  const name = Option.getOrElse(configured, () => 'ontos-db').trim();
+  return name.length === 0 ? 'ontos-db' : name;
+});
 const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const initialAt = '2026-09-01T09:00:00.000Z';
 const scheduledAt = '2026-10-01T09:00:00.000Z';
@@ -157,6 +178,7 @@ const journalFingerprint = Effect.fn('BulkOriginalIntent.journalFingerprint')(fu
   readonly database: string;
   readonly user: string;
 }) {
+  const container = yield* databaseContainer;
   const child = yield* ChildProcess.make(
     'docker',
     [
@@ -164,7 +186,7 @@ const journalFingerprint = Effect.fn('BulkOriginalIntent.journalFingerprint')(fu
       '-i',
       '-e',
       'PGPASSWORD',
-      'ontos-db',
+      container,
       'psql',
       '--host',
       'localhost',
@@ -203,6 +225,7 @@ const copyOwnerBookkeeping = Effect.fn('BulkOriginalIntent.copyOwnerBookkeeping'
     readonly admin: { readonly connectionString: string; readonly database: string; readonly user: string };
   }) {
     const source = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+    const container = yield* databaseContainer;
     const before = yield* journalFingerprint(source.admin);
     const dump = yield* ChildProcess.make(
       'docker',
@@ -211,7 +234,7 @@ const copyOwnerBookkeeping = Effect.fn('BulkOriginalIntent.copyOwnerBookkeeping'
         '-i',
         '-e',
         'PGPASSWORD',
-        'ontos-db',
+        container,
         'pg_dump',
         '--host',
         'localhost',
@@ -240,7 +263,7 @@ const copyOwnerBookkeeping = Effect.fn('BulkOriginalIntent.copyOwnerBookkeeping'
         '-i',
         '-e',
         'PGPASSWORD',
-        'ontos-db',
+        container,
         'psql',
         '--host',
         'localhost',
@@ -398,7 +421,6 @@ const makeOwnedPriceFeeFixture = Effect.fn('test.makeOwnedPriceFeeFixture')(func
     mode: 'schema-only',
     purpose: 'stabilization-1278-bulk-intent',
   });
-  yield* isolated.assertClonedSchema();
   yield* copyOwnerBookkeeping(isolated.connections);
   yield* migrateOwner(isolated.connections);
   yield* verifyAppendOnlyPolicyRoleSets(isolated.connections.runtime);
@@ -1020,6 +1042,8 @@ class BulkOriginalIntentInfrastructureUnavailable extends Schema.TaggedError<Bul
       'public-key',
       'assertion-sign',
       'composition-digest',
+      'source-owner-contract',
+      'catalog-release-identity',
       'http-adapter',
       'http-dispose',
       'child-protocol',
@@ -1032,6 +1056,8 @@ const bulkInfrastructureUnavailable = (
     | 'public-key'
     | 'assertion-sign'
     | 'composition-digest'
+    | 'source-owner-contract'
+    | 'catalog-release-identity'
     | 'http-adapter'
     | 'http-dispose'
     | 'child-protocol',
@@ -1120,10 +1146,23 @@ const makeBulkTestSigningAuthority = Effect.fn('BulkOriginalIntent.makeTestSigni
   },
 );
 
+// The fixture Shell admits only a relayed requester assertion, never an Originator subject.
+const isAssertionSubject = (subject: (typeof GatewayDelegatedContextRequestSchema.Type)['subject']): boolean =>
+  Match.value(subject).pipe(
+    Match.tag('Assertion', () => true),
+    Match.tag('Originator', () => false),
+    Match.exhaustive,
+  );
+
 type BulkTestSigningAuthority = Effect.Success<ReturnType<typeof makeBulkTestSigningAuthority>>;
 
 interface BulkRegisteredRuntimeInput {
   readonly actor: BulkTestPrincipal;
+  // The v2 identities a native suite calls "denied": a person the live gate refuses completely
+  // (no assignment at all, so no company is selectable either) and a person who belongs to the tenant
+  // and company but holds no assignment for this capability. Both are refused; only the second still
+  // resolves a company context, which is what makes the two 403 codes distinguishable.
+  readonly capabilityDeniedPrincipalIds: readonly string[];
   readonly catalog: {
     // Explicit tenant-only projection of the same persisted Principal/binding. Both used Catalog reads forbid LE.
     readonly actor: BulkTestPrincipal;
@@ -1133,6 +1172,7 @@ interface BulkRegisteredRuntimeInput {
   };
   // Must be the actual two-owner snapshot, already published in this owned database.
   readonly composition: BulkTestComposition;
+  readonly deniedPrincipalIds: readonly string[];
   readonly runtimeConnectionString: Redacted.Redacted;
   readonly signing: BulkTestSigningAuthority;
 }
@@ -1147,69 +1187,114 @@ const bulkRegisteredRuntime = (input: BulkRegisteredRuntimeInput) => {
   const states = TenantModuleStateServiceLive.pipe(Layer.provide(persistence));
   const gate = ModuleStateGateLive.pipe(Layer.provide(states));
   const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(gate));
-  const scopes = OperationalScopeResolverLive.pipe(Layer.provide(Layer.mergeAll(persistence, ContextAccessLive)));
   const namespace = staffAuthenticationNamespaceRegistryLayer(['pricing']);
   const composition = makeActiveApplicationCompositionLayer(Effect.succeed(input.composition));
-  const common = Layer.mergeAll(persistence, ContextAccessLive, gate, gateway, scopes, namespace, composition);
-  const actions = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+  const selectableLegalEntityIds = input.actor.legalEntityId === undefined ? [] : [input.actor.legalEntityId];
+  const access = makeTestAccessGateLayers({
+    capabilityDeniedPrincipalIds: input.capabilityDeniedPrincipalIds,
+    deniedPrincipalIds: input.deniedPrincipalIds,
+    // The scope resolver asks the same seam which companies this actor may select (O28).
+    selectableLegalEntityIds,
+    spec: { defaultAnswer: { outcome: 'ALLOWED' } },
+  });
+  const scopes = OperationalScopeResolverLive.pipe(
+    Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, access)),
+  );
+  // The one access gate decides every protected read and Action (CUTOVER-PLAN §3.1).
+  const common = Layer.mergeAll(persistence, ContextAccessLive, gate, gateway, scopes, namespace, composition, access);
+  const actions = makeActionRuntimeLive(ultramodernDeliveryUnit, pricingRegistration).pipe(
     Layer.provide(Layer.mergeAll(common, ActionRepositoryLive, ActionPermissionLive)),
     Layer.provide(NodeCrypto.layer),
   );
-  const reads = ReadRuntimeLive.pipe(Layer.provide(common), Layer.provide(NodeCrypto.layer));
-  // TEST authority only: constrain identity/context/destination; never bypass Catalog's generated executor or policy.
-  const catalogCredentials = Layer.succeed(CatalogSelectionGatewayCredentialService, {
-    issue: Effect.fn('BulkOriginalIntent.issueCatalogCredential')(function* issueCatalogCredential(
-      request: Parameters<CatalogSelectionGatewayCredentialIssuer['issue']>[0],
-    ) {
-      if (
-        request.audience !== 'catalog' ||
-        request.compositionRevision !== input.composition.composition.revision ||
-        request.compositionRevision !== input.catalog.compositionRevision ||
-        request.legalEntityId !== input.actor.legalEntityId ||
-        input.catalog.actor.legalEntityId !== undefined ||
-        input.catalog.actor.tenantId !== input.actor.tenantId ||
-        input.catalog.actor.principalId !== input.actor.principalId ||
-        input.catalog.baseUrl.protocol !== 'http:' ||
-        input.catalog.baseUrl.hostname !== '127.0.0.1' ||
-        input.catalog.baseUrl.username !== '' ||
-        input.catalog.baseUrl.password !== '' ||
-        input.catalog.baseUrl.search !== '' ||
-        input.catalog.baseUrl.hash !== ''
-      ) {
-        return yield* new PricingCatalogSelectionUnavailable({
-          code: 'pricing_catalog_selection_unavailable',
-          reason: 'Owned TEST Catalog gateway identity or destination mismatch',
-          retryable: true,
-        });
-      }
-      const credential = yield* input.signing
-        .issue({
-          actor: input.catalog.actor,
-          audience: 'catalog',
-          buildMarker: input.catalog.buildMarker,
-          compositionRevision: request.compositionRevision,
-        })
-        .pipe(
-          Effect.mapError(
-            () =>
-              new PricingCatalogSelectionUnavailable({
-                code: 'pricing_catalog_selection_unavailable',
-                reason: 'Owned TEST Catalog assertion encoding failed',
-                retryable: true,
-              }),
-          ),
-        );
-      return { baseUrl: input.catalog.baseUrl, credential: Redacted.make(credential) };
-    }),
-  });
+  const reads = makeReadRuntimeLive(ultramodernDeliveryUnit, pricingRegistration).pipe(
+    Layer.provide(common),
+    Layer.provide(NodeCrypto.layer),
+  );
   // Keep these services in the provided HTTP context: registered Action factories resolve them during invocation.
-  return Layer.mergeAll(actions, reads, namespace, ExternalPriceInputBoundaryFactoryLive, catalogCredentials);
+  return Layer.mergeAll(actions, reads, namespace, ExternalPriceInputBoundaryFactoryLive);
 };
 
 const makeRegisteredBulkHttp = Effect.fn('BulkOriginalIntent.makeRegisteredHttp')(function* makeRegisteredBulkHttp(
   input: BulkRegisteredRuntimeInput,
 ) {
   const runtimeContext = yield* Layer.build(bulkRegisteredRuntime(input));
+  // TEST stand-in for the Shell Pricing reaches Catalog through with its own module credential: the
+  // delegated route admits only a tenant-scoped Catalog Assertion for this release and answers the
+  // owned TEST Catalog assertion; the Shell-relative owner path forwards to the actual Catalog receiver.
+  const catalogPath = '/catalog-api';
+  const shellContext = yield* Layer.build(NodeHttpServer.layerTest);
+  const shell = Context.get(shellContext, HttpServer.HttpServer);
+  const client = yield* HttpClient.HttpClient;
+  yield* shell.serve(
+    Effect.gen(function* fixtureShell() {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const url = new URL(request.url, 'https://shell.fixture');
+      if (url.pathname.startsWith(`${catalogPath}/`)) {
+        const headers: Record<string, string> = {};
+        for (const name of ['accept', 'authorization', 'content-type', 'idempotency-key', 'x-correlation-id']) {
+          const value = request.headers[name];
+          if (value !== undefined) {
+            headers[name] = value;
+          }
+        }
+        const target = HttpClientRequest.make(request.method)(
+          new URL(`${url.pathname.slice(catalogPath.length)}${url.search}`, input.catalog.baseUrl),
+          { headers },
+        );
+        const forward =
+          request.method === 'GET'
+            ? target
+            : HttpClientRequest.bodyText(target, yield* request.text, headers['content-type']);
+        const forwarded = yield* client
+          .execute(forward)
+          .pipe(Effect.mapError(() => bulkInfrastructureUnavailable('http-adapter')));
+        return HttpServerResponse.fromClientResponse(forwarded);
+      }
+      const payload = yield* request.json.pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(GatewayDelegatedContextRequestSchema)),
+        Effect.orElseSucceed(() => null),
+      );
+      if (
+        url.pathname !== shellGatewayContextContract.issueDelegatedGatewayContextPath ||
+        request.headers['x-api-key'] !== 'pricing-module-api-key-1278' ||
+        payload === null ||
+        payload.audience !== 'catalog' ||
+        payload.legalEntityScope !== 'tenant' ||
+        payload.compositionRevision !== input.composition.composition.revision ||
+        payload.compositionRevision !== input.catalog.compositionRevision ||
+        !isAssertionSubject(payload.subject) ||
+        input.catalog.actor.legalEntityId !== undefined ||
+        input.catalog.actor.tenantId !== input.actor.tenantId ||
+        input.catalog.actor.principalId !== input.actor.principalId
+      ) {
+        return HttpServerResponse.text('Delegated gateway context refused by the fixture Shell', { status: 403 });
+      }
+      const credential = yield* input.signing.issue({
+        actor: input.catalog.actor,
+        audience: 'catalog',
+        buildMarker: input.catalog.buildMarker,
+        compositionRevision: payload.compositionRevision,
+      });
+      return yield* HttpServerResponse.json({
+        apiBaseUrl: catalogPath,
+        compositionRevision: payload.compositionRevision,
+        // The owner assertion carries its own expiry; this only keeps the delegated answer live.
+        expiresAt: 2_000_000_000,
+        token: credential.replace(/^Bearer /u, ''),
+      });
+    }),
+  );
+  const shellAddress = yield* Schema.decodeUnknownEffect(Schema.Struct({ port: Schema.Int }))(shell.address);
+  const callerShell = ConfigProvider.layerAdd(
+    ConfigProvider.fromUnknown({
+      ONTOS_GATEWAY_MODULE_API_KEY: 'pricing-module-api-key-1278',
+      ONTOS_SHELL_GATEWAY_BASE_URL: new URL(
+        shellGatewayContextContract.apiPrefix,
+        `http://127.0.0.1:${shellAddress.port}`,
+      ).toString(),
+    }),
+    { asPrimary: true },
+  );
   // TEST limitation: atomic in-process single-use redemption, not production durable redemption configuration.
   const consumed = new Set<string>();
   const redemption = Layer.succeed(GatewayAssertionRedemptionService, {
@@ -1251,6 +1336,7 @@ const makeRegisteredBulkHttp = Effect.fn('BulkOriginalIntent.makeRegisteredHttp'
     principalVerifier,
     compositionSource,
     redemption,
+    callerShell,
   );
   const handlers = Layer.mergeAll(
     manageProductPricesBulkActionApiLive,
@@ -1318,29 +1404,41 @@ const makeRegisteredBulkHttp = Effect.fn('BulkOriginalIntent.makeRegisteredHttp'
     payload: Parameters<typeof executeManageProductPricesBulkWithAuthorization>[0],
     idempotencyKey: string,
   ) =>
-    Effect.gen(function* publicPriceBulk() {
-      return yield* executeManageProductPricesBulkWithAuthorization(payload, yield* issuePricing(), yield* nextId, {
-        baseUrl,
-        compositionRevision: input.composition.composition.revision,
-        idempotencyKey,
-      });
-    });
+    requireExecutionResult(
+      ManageProductPricesBulkResultSchema,
+      Effect.gen(function* publicPriceBulk() {
+        const result = yield* executeManageProductPricesBulkWithAuthorization(
+          payload,
+          yield* issuePricing(),
+          yield* nextId,
+          {
+            baseUrl,
+            compositionRevision: input.composition.composition.revision,
+            idempotencyKey,
+          },
+        );
+        return result;
+      }),
+    );
   const fee = (
     payload: Parameters<typeof executeManageProductCommercialFeesBulkWithAuthorization>[0],
     idempotencyKey: string,
   ) =>
-    Effect.gen(function* publicFeeBulk() {
-      return yield* executeManageProductCommercialFeesBulkWithAuthorization(
-        payload,
-        yield* issuePricing(),
-        yield* nextId,
-        {
-          baseUrl,
-          compositionRevision: input.composition.composition.revision,
-          idempotencyKey,
-        },
-      );
-    });
+    requireExecutionResult(
+      ManageProductCommercialFeesBulkResultSchema,
+      Effect.gen(function* publicFeeBulk() {
+        return yield* executeManageProductCommercialFeesBulkWithAuthorization(
+          payload,
+          yield* issuePricing(),
+          yield* nextId,
+          {
+            baseUrl,
+            compositionRevision: input.composition.composition.revision,
+            idempotencyKey,
+          },
+        );
+      }),
+    );
   return { baseUrl, context: runtimeContext, fee, issuePricing, price };
 });
 
@@ -1352,6 +1450,7 @@ const WholeCandidateCatalogBootstrapSchema = Schema.Struct({
   actor: TrustedPrincipalContextSchema,
   composition: ActiveApplicationCompositionSnapshotSchema,
   databaseName: Schema.String.check(Schema.isPattern(/^ontos_test_[a-z0-9_]+$/u)),
+  deniedPrincipalId: TrustedPrincipalContextSchema.fields.principalId,
   issuer: Schema.String,
   jwks: Schema.String,
   legalEntityId: legalEntityIdSchema,
@@ -1428,14 +1527,119 @@ const WholeCandidateCatalogDescriptionSchema = Schema.Struct({
   actionKeys: Schema.Array(Schema.String.pipe(Schema.brand('ActionKey'))),
   appId: Schema.Literal('catalog'),
   buildMarker: Schema.String,
+  contractDocument: Schema.String,
   type: Schema.Literal('description'),
   version: Schema.Literal(protocolVersion),
 }).annotate({ parseOptions: { onExcessProperty: 'error' } });
+
+const sourceContractUnavailable = () => bulkInfrastructureUnavailable('source-owner-contract');
+const compareFixtureApiKeys = (left: string, right: string): -1 | 0 | 1 => {
+  const compared = left.localeCompare(right);
+  if (compared < 0) {
+    return -1;
+  }
+  if (compared > 0) {
+    return 1;
+  }
+  return 0;
+};
+const fixtureDigest = Effect.fn('SourceOwnerFixture.digest')(function* digest(document: string) {
+  const crypto = yield* Crypto.Crypto;
+  return Hex.encode(new Uint8Array(yield* crypto.digest('SHA-256', new TextEncoder().encode(document))));
+});
+/** Controlled SOURCE fixture DTO from the actual owner; this is not a published receiver claim. */
+const makePricingSourceContract = Effect.fn('BulkOriginalIntent.sourceContract')(function* sourceContract() {
+  const owner = yield* Effect.try({
+    catch: sourceContractUnavailable,
+    try: () => extractVerticalRuntimeSafeDescriptors(pricingRegistration),
+  });
+  const manifest = pricingManifest;
+  const events = yield* Effect.all(
+    manifest.publicSurface.events.map((event) =>
+      Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))(
+        Schema.toJsonSchemaDocument(event.payloadSchema),
+      ).pipe(
+        Effect.flatMap((document) => fixtureDigest(`${document}\n`)),
+        Effect.map((payloadContract) => ({
+          key: event.key,
+          owningModuleId: event.owningModuleId,
+          payloadContract,
+          referencesResourceTypes: event.referencesResourceTypes,
+          tense: event.tense,
+          visibility: event.visibility,
+        })),
+      ),
+    ),
+  );
+  const apis = yield* Effect.forEach(Object.entries(manifest.publicSurface.api), ([key, api]) => {
+    if (!HttpApi.isHttpApi(api)) {
+      return Effect.fail(sourceContractUnavailable());
+    }
+    return Effect.succeed({
+      key: canonicalOntosPublicApiKey(owner.moduleId, key),
+      operationKeys: EffectArray.sort(
+        Object.values(api.groups).flatMap((group) =>
+          Object.values(group.endpoints).map((endpoint) =>
+            group.topLevel ? endpoint.identifier : `${group.identifier}.${endpoint.identifier}`,
+          ),
+        ),
+        compareFixtureApiKeys,
+      ),
+    });
+  });
+  const authoredManifest = {
+    activation: manifest.activation,
+    module: manifest.module,
+    publicSurface: {
+      actions: owner.actions,
+      api: apis,
+      businessPermissions: manifest.publicSurface.businessPermissions ?? [],
+      components: Object.values(manifest.publicSurface.components),
+      events,
+      operationContracts: owner.operationContracts,
+      reports: manifest.publicSurface.reports,
+      resourceTypes: manifest.publicSurface.resourceTypes,
+      search: manifest.publicSurface.search,
+      shellContributions: owner.shellContributions,
+    },
+  };
+  if (owner.requirements !== undefined) {
+    Object.assign(authoredManifest, { requirements: owner.requirements });
+  }
+  return yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema, { onExcessProperty: 'error' })({
+    deployment: { appId: ultramodernApiMarker.appId, buildMarker: ultramodernApiMarker.buildMarker },
+    manifest: authoredManifest,
+    runtime: { outboxSubscriptions: owner.outboxSubscriptions },
+    schemaVersion: '2',
+  });
+});
+
+const fixtureDeliveryUnitIdSchema = Schema.NonEmptyString.pipe(
+  Schema.brand('DeliveryUnitId'),
+  Schema.decodeTo(Schema.String),
+);
 
 const makeRegisteredBulkFixture = Effect.fn('BulkOriginalIntent.makeRegisteredFixture')(
   function* makeRegisteredBulkFixture() {
     const fs = yield* FileSystem.FileSystem;
     const appRoot = new URL('../../../../', import.meta.url).pathname;
+    // Resolve the real Catalog compiler identity independently from this source-loaded Pricing owner.
+    const catalogGeneration = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(
+        Schema.Struct({
+          deliveryUnit: Schema.Struct({ buildMarker: Schema.String, unitId: fixtureDeliveryUnitIdSchema }),
+        }),
+      ),
+    )(yield* fs.readFileString(`${appRoot}verticals/catalog/shared/ultramodern-build.json`));
+    const catalogIdentity = yield* Effect.try({
+      catch: () => bulkInfrastructureUnavailable('catalog-release-identity'),
+      try: () =>
+        resolveUltramodernReleaseIdentity({
+          generationBuildMarker: catalogGeneration.deliveryUnit.buildMarker,
+          unitId: catalogGeneration.deliveryUnit.unitId,
+          workspaceRoot: appRoot,
+        }),
+    });
     const directory = `${appRoot}verticals/catalog/.cache/ontos-1278/`;
     yield* fs.makeDirectory(directory, { recursive: true });
     const artifact = `${directory}${yield* nextId}.mjs`;
@@ -1453,6 +1657,8 @@ const makeRegisteredBulkFixture = Effect.fn('BulkOriginalIntent.makeRegisteredFi
         '--platform=node',
         '--format=esm',
         '--packages=external',
+        `--define:ULTRAMODERN_BUILD_MARKER=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(catalogIdentity.buildMarker)}`,
+        `--define:ULTRAMODERN_SOURCE_REVISION=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(catalogIdentity.sourceRevision)}`,
         `--outfile=${artifact}`,
       ],
       { cwd: appRoot, stderr: 'pipe', stdout: 'pipe' },
@@ -1481,36 +1687,32 @@ const makeRegisteredBulkFixture = Effect.fn('BulkOriginalIntent.makeRegisteredFi
     const description = yield* Schema.decodeUnknownEffect(
       Schema.fromJsonString(WholeCandidateCatalogDescriptionSchema),
     )(described.join('').trim());
-    // Obtain each owner's actual marker separately; never assume Catalog == Pricing.
-    const catalogComposition = yield* makeApplicationCompositionSnapshotFixture(['catalog'], description.buildMarker);
-    const pricingComposition = yield* makeApplicationCompositionSnapshotFixture(
-      ['pricing'],
-      ultramodernApiMarker.buildMarker,
+    // Keep the complete emitted Catalog document intact and bind it to the independently compiled receiver.
+    const catalogContract = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(OntosModuleDeploymentContractSchema),
+    )(description.contractDocument);
+    expect(description.buildMarker).toBe(catalogIdentity.buildMarker);
+    expect(catalogContract.deployment).toEqual({ appId: description.appId, buildMarker: description.buildMarker });
+    const pricingContract = yield* makePricingSourceContract();
+    const shellRuntimeDocument = yield* fs.readFileString(
+      `${appRoot}apps/shell-super-app/dist/public/.well-known/ontos-shell-runtime.json`,
     );
-    const combined = {
-      ...pricingComposition.composition,
-      modules: [...catalogComposition.composition.modules, ...pricingComposition.composition.modules],
-      revision: '0'.repeat(64),
-    };
-    const digest = yield* Effect.tryPromise({
-      catch: () => bulkInfrastructureUnavailable('composition-digest'),
-      try: () =>
-        globalThis.crypto.subtle.digest(
-          'SHA-256',
-          new TextEncoder().encode(canonicalizeApplicationComposition(combined)),
-        ),
-    });
-    const composition = yield* validateActiveApplicationCompositionSnapshot({
-      composition: { ...combined, revision: Buffer.from(digest).toString('hex') },
-      observedAt: pricingComposition.observedAt,
-      validUntil: pricingComposition.validUntil,
-    });
+    const shellRuntime = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
+      shellRuntimeDocument,
+    );
+    const composition = yield* makeApiKeyGatewayNativeComposition(
+      [
+        description.contractDocument,
+        yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(pricingContract),
+      ],
+      3_600_000,
+      { document: shellRuntimeDocument, receiverDeployment: shellRuntime.deployment },
+    ).pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: composition,
       mode: 'schema-only',
       purpose: 'stabilization-1278-bulk-intent',
     });
-    yield* isolated.assertClonedSchema();
     yield* copyOwnerBookkeeping(isolated.connections);
     yield* migrateOwner(isolated.connections);
     yield* verifyAppendOnlyPolicyRoleSets(isolated.connections.runtime);
@@ -1531,10 +1733,13 @@ const makeRegisteredBulkFixture = Effect.fn('BulkOriginalIntent.makeRegisteredFi
         ],
         adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
         allowedAudiences: ['catalog', 'pricing'],
+        applicationComposition: { load: Effect.succeed(composition) },
         authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
         compositionRevision: composition.composition.revision,
+        expectedDeployment: ultramodernDeliveryUnit,
         moduleAccess: 'configured-modules',
         moduleKeys: ['commerce.catalog', 'commerce.pricing'],
+        ownerRegistration: pricingRegistration,
         runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
       }),
       (value) => value.close().pipe(Effect.orDie),
@@ -1612,6 +1817,7 @@ const makeRegisteredBulkFixture = Effect.fn('BulkOriginalIntent.makeRegisteredFi
       actor: fixture.manager,
       composition,
       databaseName: isolated.connections.runtime.database,
+      deniedPrincipalId: fixture.denied.principalId,
       issuer: signing.issuer,
       jwks: signing.jwks,
       legalEntityId: WholeCandidateCatalogProducedSchema.fields.legalEntityId.make(fixture.legalEntityId),
@@ -1663,8 +1869,10 @@ const makeRegisteredBulkFixture = Effect.fn('BulkOriginalIntent.makeRegisteredFi
     expect(ready.handoffs.map((handoff) => handoff.selection)).toEqual(produced.selections);
     const runtimeInput = {
       actor,
+      capabilityDeniedPrincipalIds: [fixture.legalEntityOnly.principalId],
       catalog: { ...endpoint, actor: fixture.manager, buildMarker: produced.buildMarker },
       composition,
+      deniedPrincipalIds: [fixture.denied.principalId],
       runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
       signing,
     };

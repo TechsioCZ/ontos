@@ -1,47 +1,48 @@
-import type {
-  CoreSearchProjectionReplacement,
-  CoreSearchQueryRuntimeService,
-  ResourceContainmentRelationshipMutationInput,
-} from '@app/core-runtime';
+import type { CoreSearchProjectionReplacement } from '@app/core-runtime';
 import {
   ContextAccess,
-  CoreSearchProjectionHitSchema,
   CoreSearchProjectionReplacementSchema,
   CoreSearchProjectionStore,
   CoreSearchQueryRuntime,
-  ResourceContainmentMutationUnavailable,
-  ResourceContainmentRelationshipMutation,
   createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
+  trustVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
+import { makeTestBoundAccessGate } from '@app/core-runtime/testing/access-gate';
+import { RecordKeySchema } from '@app/core-runtime/access/ids';
+import { propertyPortfolioRegistration } from '../../vertical.registration.ts';
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
 import { NodeCrypto } from '@effect/platform-node';
 import { Context, Crypto, DateTime, Effect, Exit, Layer, Schema } from 'effect';
 import { expect, it, rs } from 'effect-rstest';
 
+import { searchStateRow } from '../support/search-state.ts';
 import { PropertyStateSchema } from '../../shared/apis/records.ts';
 import type { PropertyState } from '../../shared/apis/records.ts';
 import { AssetsProviderResponseSchema } from '../../shared/apis/assets-search.ts';
 import { assetsRead } from '../../src/search/assets.provider.ts';
 import { buildSearchDocuments } from '../../src/search/projection.ts';
 import type { SearchSourceSnapshot } from '../../src/search/projection.ts';
-import { loadOwnerSearch } from '../../src/search/search-read.ts';
 import { projectSearchSnapshot } from '../../src/services/search-projector.ts';
 import { applyPropertyCommand } from '../../src/services/persistence.service.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
 const otherCompany = '20000000-0000-4000-8000-000000000002';
-const scope = {
-  authBindingId: '60000000-0000-4000-8000-000000000001',
-  authContextRef: 'better-auth-session:property-asset-search-test',
-  authMethod: 'session',
-  correlationId: 'property-asset-search-test',
-  legalEntityId,
-  principalId: '30000000-0000-4000-8000-000000000001',
-  tenantId,
-} as const;
+const compositionRevision = 'a'.repeat(64);
+const scope = trustVerifiedGatewayPrincipalContext(
+  {
+    authBindingId: '60000000-0000-4000-8000-000000000001',
+    authContextRef: 'better-auth-session:property-asset-search-test',
+    authMethod: 'session',
+    correlationId: 'property-asset-search-test',
+    legalEntityId,
+    principalId: '30000000-0000-4000-8000-000000000001',
+    tenantId,
+  },
+  compositionRevision,
+);
 const context = attestOutboxWorkerHandlerContext({
   attemptNumber: 1,
   claimId: 'claim',
@@ -109,7 +110,7 @@ const assetDocuments = (snapshot: SearchSourceSnapshot) =>
     Effect.map((documents) => documents.filter(({ ref }) => ref.resourceType === 'property.portfolio.asset')),
   );
 
-it.effect('projects an actual asset with only approved own fields and the current parent property label', () =>
+it.effect('projects an actual asset with only approved own fields, never its parent property label', () =>
   Effect.gen(function* scenario() {
     const { assetRef, snapshot } = yield* fixture;
     const documents = yield* buildSearchDocuments(snapshot);
@@ -122,7 +123,7 @@ it.effect('projects an actual asset with only approved own fields and the curren
     expect(asset.ref).toEqual(assetRef);
     expect(asset.title).toBe('Kolový nakladač');
     expect(asset.selectedLegalEntityId).toBe(legalEntityId);
-    expect(asset.searchableText).toEqual(['Kolový nakladač', 'Stroj', 'LOAD-1', 'SN-42', 'Parková zahrada', 'PARK']);
+    expect(asset.searchableText).toEqual(['Kolový nakladač', 'Stroj', 'LOAD-1', 'SN-42']);
     // The unit is an eligibility parent only; it is not approved asset evidence.
     expect(asset.searchableText).not.toContain('Západní byt');
     expect(asset.searchableText).not.toContain('A101');
@@ -248,32 +249,97 @@ it.effect('fails closed for foreign, orphaned, mismatched or duplicate asset ide
 it.effect('serves an actual asset hit through the governed Read with verified Core relevance', () =>
   Effect.scoped(
     Effect.gen(function* scenario() {
-      const { snapshot } = yield* fixture;
-      const documents = yield* buildSearchDocuments(snapshot);
-      const asset = yield* Effect.fromNullishOr(
-        documents.find(({ ref }) => ref.resourceType === 'property.portfolio.asset'),
-      );
-      const hits = yield* Schema.decodeUnknownEffect(Schema.Array(CoreSearchProjectionHitSchema))([
-        { ...asset, relevance: { score: 200, version: '1' } },
-        {
-          ...asset,
-          ref: { ...asset.ref, resourceId: '40000000-0000-4000-8000-000000000009' },
-          relevance: { score: 100, version: '1' },
-          title: 'Nízká relevance',
-        },
-        { ...asset, relevance: { score: 900, version: '1' }, selectedLegalEntityId: otherCompany },
-        { ...asset, archived: true, relevance: { score: 800, version: '1' } },
-      ]);
-      const queries: Parameters<CoreSearchQueryRuntimeService['search']>[0][] = [];
+      const { company } = yield* fixture;
+      const original = yield* Effect.fromNullishOr(company.state.assets[0]);
+      const current = {
+        ...company.state,
+        assets: [
+          original,
+          {
+            ...original,
+            assetRef: { ...original.assetRef, resourceId: '40000000-0000-4000-8000-000000000009' },
+            name: 'Nízká relevance Kolový',
+          },
+        ],
+      };
       const cryptoServices = yield* Layer.build(NodeCrypto.layer);
       const crypto = Context.get(cryptoServices, Crypto.Crypto);
       const harness = yield* makeReadTestHarness({
-        executeOwnerQuery: () => Effect.succeed([]),
+        accessDecision: makeTestBoundAccessGate({
+          answers: {
+            'property.portfolio.search-assets.read': { outcome: 'ALLOWED', predicate: { groups: [] } },
+          },
+        }).bound,
+        compositionRevision,
+        executeOwnerQuery: () => Effect.succeed([searchStateRow(current)]),
         operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-01T09:00:00.000Z')),
         ownerAuthorizationDecision: 'allowed',
+        ownerRegistration: propertyPortfolioRegistration,
         permissionDecision: 'allowed',
         scope,
       }).pipe(Effect.provideService(Crypto.Crypto, crypto));
+      const result = yield* harness.runtime.runRead({
+        input: { query: 'Kolový' },
+        principal: scope,
+        registration: assetsRead,
+        transport: { correlationId: scope.correlationId },
+      });
+      expect(Schema.is(AssetsProviderResponseSchema)(result)).toBe(true);
+      expect(result.map(({ relevance, title }) => [title, relevance?.score])).toEqual([
+        ['Kolový nakladač', 800],
+        ['Nízká relevance Kolový', 700],
+      ]);
+      expect(result.every(({ selectedLegalEntityId }) => selectedLegalEntityId === legalEntityId)).toBe(true);
+      expect(harness.snapshot().ownerQueries).toHaveLength(1);
+      expect(harness.snapshot().statements).toContain('COMMIT');
+      expect(harness.snapshot().evidenceWrites).toBe(1);
+    }),
+  ),
+);
+
+it.effect('omits assets outside the canonical record predicate without retired resource checks', () =>
+  Effect.scoped(
+    Effect.gen(function* scenario() {
+      const { company } = yield* fixture;
+      const cryptoServices = yield* Layer.build(NodeCrypto.layer);
+      const crypto = Context.get(cryptoServices, Crypto.Crypto);
+      const harness = yield* makeReadTestHarness({
+        accessDecision: makeTestBoundAccessGate({
+          answers: {
+            'property.portfolio.search-assets.read': {
+              outcome: 'ALLOWED',
+              predicate: {
+                groups: [
+                  {
+                    clauses: [
+                      {
+                        conditions: [
+                          {
+                            _tag: 'RecordKeyIn',
+                            recordKeys: [RecordKeySchema.make('40000000-0000-4000-8000-000000000009')],
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+        }).bound,
+        compositionRevision,
+        executeOwnerQuery: () => Effect.succeed([searchStateRow(company.state)]),
+        operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-01T09:00:00.000Z')),
+        ownerAuthorizationDecision: 'allowed',
+        ownerRegistration: propertyPortfolioRegistration,
+        permissionDecision: 'allowed',
+        scope,
+      }).pipe(Effect.provideService(Crypto.Crypto, crypto));
+      const services = yield* Layer.build(harness.layer);
+      const access = Context.get(services, ContextAccess);
+      const check = rs
+        .spyOn(access, 'resources')
+        .mockImplementation(() => Effect.die('Retired resource authority was invoked'));
       const result = yield* harness.runtime
         .runRead({
           input: { query: 'Kolový' },
@@ -283,106 +349,25 @@ it.effect('serves an actual asset hit through the governed Read with verified Co
         })
         .pipe(
           Effect.provideService(CoreSearchQueryRuntime, {
-            search: (query) => {
-              queries.push(query);
-              return Effect.succeed(hits);
-            },
+            search: () => Effect.die('No current admitted asset means no index observation'),
           }),
-        );
-      expect(Schema.is(AssetsProviderResponseSchema)(result)).toBe(true);
-      expect(result.map(({ relevance, title }) => [title, relevance?.score])).toEqual([
-        ['Kolový nakladač', 200],
-        ['Nízká relevance', 100],
-      ]);
-      expect(result.every(({ selectedLegalEntityId }) => selectedLegalEntityId === legalEntityId)).toBe(true);
-      expect(queries[0]).toMatchObject({
-        includeArchived: false,
-        includeRelevance: true,
-        moduleId: 'property.portfolio',
-        query: 'Kolový',
-        resourceType: 'property.portfolio.asset',
-        selectedLegalEntityId: legalEntityId,
-        tenantId,
-      });
-    }),
-  ),
-);
-
-it.effect('checks every asset result resource and omits denied rows from the admitted collection', () =>
-  Effect.scoped(
-    Effect.gen(function* scenario() {
-      const { snapshot } = yield* fixture;
-      const documents = yield* buildSearchDocuments(snapshot);
-      const asset = yield* Effect.fromNullishOr(
-        documents.find(({ ref }) => ref.resourceType === 'property.portfolio.asset'),
-      );
-      const hit = yield* Schema.decodeUnknownEffect(CoreSearchProjectionHitSchema)({
-        ...asset,
-        relevance: { score: 10, version: '1' },
-      });
-      const cryptoServices = yield* Layer.build(NodeCrypto.layer);
-      const crypto = Context.get(cryptoServices, Crypto.Crypto);
-      const harness = yield* makeReadTestHarness({
-        executeOwnerQuery: () => Effect.succeed([]),
-        operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-01T09:00:00.000Z')),
-        ownerAuthorizationDecision: 'allowed',
-        permissionDecision: 'allowed',
-        scope,
-      }).pipe(Effect.provideService(Crypto.Crypto, crypto));
-      const services = yield* Layer.build(harness.layer);
-      const access = Context.get(services, ContextAccess);
-      const checked: unknown[] = [];
-      const check = rs.spyOn(access, 'resources').mockImplementation((input) => {
-        checked.push(input);
-        return Effect.succeed(
-          input.resources.map((ref) => ({
-            decision: 'denied' as const,
-            key: `${ref.moduleId}:${ref.resourceType}:${ref.resourceId}`,
-          })),
-        );
-      });
-      const result = yield* harness.runtime
-        .runRead({
-          input: { query: 'Kolový' },
-          principal: scope,
-          registration: assetsRead,
-          transport: { correlationId: scope.correlationId },
-        })
-        .pipe(
-          Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed([hit]) }),
           Effect.ensuring(Effect.sync(() => check.mockRestore())),
         );
       expect(result).toEqual([]);
-      expect(checked).toEqual([
-        {
-          legalEntityId,
-          permission: 'read',
-          principalId: scope.principalId,
-          resources: [
-            {
-              moduleId: asset.ref.moduleId,
-              resourceId: asset.ref.resourceId,
-              resourceType: asset.ref.resourceType,
-            },
-          ],
-          tenantId,
-        },
-      ]);
+      expect(check).not.toHaveBeenCalled();
       expect(harness.snapshot().evidenceWrites).toBe(1);
       expect(harness.snapshot().stages).toContain('evidence_persisted');
-      expect(harness.snapshot().ownerQueries).toEqual([]);
+      expect(harness.snapshot().ownerQueries).toHaveLength(1);
     }),
   ),
 );
 
-it.effect('publishes the complete asset type third after containment and preserves floor and tombstones', () =>
+it.effect('publishes the complete asset type third and preserves floor and tombstones', () =>
   Effect.gen(function* scenario() {
     const { company, snapshot } = yield* fixture;
     const store = makeInMemoryCoreSearchProjectionStore();
     const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
     const replacements: CoreSearchProjectionReplacement[] = [];
-    const touches: ResourceContainmentRelationshipMutationInput[] = [];
-    let containmentAllowed = true;
     const project = (source: SearchSourceSnapshot) =>
       projectSearchSnapshot(source, context, false).pipe(
         Effect.provideService(CoreSearchProjectionStore, {
@@ -396,18 +381,18 @@ it.effect('publishes the complete asset type third after containment and preserv
               replacements.push(replacement);
             }),
         }),
-        Effect.provideService(ResourceContainmentRelationshipMutation, {
-          touch: (input) => {
-            touches.push(input);
-            return containmentAllowed
-              ? Effect.void
-              : Effect.fail(new ResourceContainmentMutationUnavailable({ reason: 'Containment is unavailable' }));
-          },
-        }),
       );
     const search = (query: string) =>
-      loadOwnerSearch(scope, query, 'property.portfolio.asset').pipe(
-        Effect.provideService(CoreSearchQueryRuntime, runtime),
+      runtime.search(
+        {
+          includeArchived: false,
+          moduleId: 'property.portfolio',
+          query,
+          resourceType: 'property.portfolio.asset',
+          selectedLegalEntityId: legalEntityId,
+          tenantId,
+        },
+        scope,
       );
     yield* project(snapshot);
     expect(replacements.map(({ resourceType }) => resourceType)).toEqual([
@@ -416,7 +401,6 @@ it.effect('publishes the complete asset type third after containment and preserv
       'property.portfolio.asset',
     ]);
     expect(replacements[2]?.documents.map(({ title }) => title)).toEqual(['Kolový nakladač']);
-    expect(touches.map(({ relationships }) => relationships.length)).toEqual([3]);
     expect((yield* search('Kolový')).map(({ title }) => title)).toEqual(['Kolový nakladač']);
     const renamed = {
       ...snapshot,
@@ -430,16 +414,10 @@ it.effect('publishes the complete asset type third after containment and preserv
       })),
       projectionVersion: '2',
     };
-    containmentAllowed = false;
-    expect(Exit.isFailure(yield* Effect.exit(project(renamed)))).toBe(true);
-    expect(replacements).toHaveLength(3);
-    expect((yield* search('Kolový')).map(({ title }) => title)).toEqual(['Kolový nakladač']);
-    expect(yield* search('Přeskládaný')).toEqual([]);
-    containmentAllowed = true;
     yield* project(renamed);
     expect(yield* search('Kolový')).toEqual([]);
     expect((yield* search('Přeskládaný')).map(({ title }) => title)).toEqual(['Přeskládaný nakladač']);
-    expect((yield* search('Přejmenovaná')).length).toBe(1);
+    expect(yield* search('Přejmenovaná')).toEqual([]);
     const renamedCompany = yield* Effect.fromNullishOr(renamed.companies[0]);
     const empty = {
       ...renamed,

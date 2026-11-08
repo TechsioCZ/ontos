@@ -1,3 +1,4 @@
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import {
   MicroVerticalBuildMarkerSchema,
@@ -36,6 +37,7 @@ export const workTasksFoundationApi = HttpApi.make('WorkTasksApiFoundation').add
 
 export const workTasksApi = HttpApi.make('WorkTasksApi')
   .addHttpApi(workTasksFoundationApi)
+  .addHttpApi(OwnerActionApprovalApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(AgentReviewApi)
   .addHttpApi(ApplyCommandActionApi)

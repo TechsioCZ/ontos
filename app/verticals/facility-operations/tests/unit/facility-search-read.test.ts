@@ -1,7 +1,7 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { CoreSearchProjectionHitSchema, CoreSearchQueryRuntime, ContextAccess } from '@app/core-runtime';
-import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
-import { Context, Crypto, Effect, Exit, Layer, Schema } from 'effect';
+import { CoreSearchProjectionHitSchema, CoreSearchQueryRuntime } from '@app/core-runtime';
+import { runFacilitySearchScenario } from './facility-search-harness.ts';
+import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { AssetsProviderRelevanceSchema, AssetsProviderResponseSchema } from '../../shared/apis/assets-search.ts';
 import { DevicesProviderRelevanceSchema, DevicesProviderResponseSchema } from '../../shared/apis/devices-search.ts';
@@ -173,105 +173,26 @@ it.effect('requires tenant and selected company in all three wire schemas', () =
     }
     for (const read of [assetsRead, devicesRead, documentsRead]) {
       expect(read.descriptor.legalEntityScope).toBe('required');
-      expect(read.descriptor.entrypoint.authorization).toEqual({
-        kind: 'context_permission',
-        permission: 'facility.operations.read_all',
-      });
+      expect(read.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
     }
   }),
 );
 
-it.effect(
-  'Core checks every result resource after owner loading and filters denied rows only after agenda admission',
-  () =>
-    Effect.scoped(
-      Effect.gen(function* resourceGate() {
-        const cryptoServices = yield* Layer.build(NodeCrypto.layer);
-        const crypto = Context.get(cryptoServices, Crypto.Crypto);
-        const [document] = yield* buildFacilitySearchDocuments(snapshot);
-        if (document === undefined) {
-          return yield* Effect.die('Missing fixture');
-        }
-        const hit = yield* Schema.decodeUnknownEffect(CoreSearchProjectionHitSchema)(document);
-        for (const [decision, agendaPermission] of [
-          ['allowed', 'allowed'],
-          ['denied', 'allowed'],
-          ['allowed', 'denied'],
-        ] as const) {
-          const harness = yield* makeReadTestHarness({
-            executeOwnerQuery: () => Effect.die('No owner SQL expected'),
-            operationTime: new Date('2026-11-02T12:00:00Z'),
-            ownerAuthorizationDecision: 'allowed',
-            permissionDecision: 'allowed',
-            scope,
-          }).pipe(Effect.provideService(Crypto.Crypto, crypto));
-          const resources: unknown[] = [];
-          let loaded = false;
-          Object.assign(Context.get(yield* Layer.build(harness.layer), ContextAccess), {
-            contextPermissions: ({
-              targets,
-            }: {
-              readonly targets: readonly { readonly moduleId: string; readonly permission: string }[];
-            }) =>
-              Effect.succeed(
-                targets.map((target) => ({
-                  decision: agendaPermission,
-                  key: `${target.moduleId}:${target.permission}`,
-                })),
-              ),
-            resources: ({
-              resources: refs,
-            }: {
-              readonly resources: readonly {
-                readonly moduleId: string;
-                readonly resourceId: string;
-                readonly resourceType: string;
-              }[];
-            }) =>
-              Effect.sync(() => {
-                expect(loaded).toBe(true);
-                resources.push(...refs);
-                return refs.map((ref) => ({ decision, key: `${ref.moduleId}:${ref.resourceType}:${ref.resourceId}` }));
-              }),
-          });
-          const result = yield* Effect.exit(
-            harness.runtime
-              .runRead({
-                input: { query: 'cerpadlo' },
-                principal: scope,
-                registration: assetsRead,
-                transport: { correlationId: scope.correlationId },
-              })
-              .pipe(
-                Effect.provideService(CoreSearchQueryRuntime, {
-                  search: () =>
-                    Effect.sync(() => {
-                      loaded = true;
-                      return [hit];
-                    }),
-                }),
-              ),
-          );
-          expect(Exit.isSuccess(result)).toBe(agendaPermission === 'allowed');
-          if (Exit.isSuccess(result)) {
-            expect(result.value.map(({ ref }) => ref.resourceId)).toEqual(
-              decision === 'allowed' ? [hit.ref.resourceId] : [],
-            );
-          }
-          expect(loaded).toBe(agendaPermission === 'allowed');
-          expect(resources).toEqual(
-            agendaPermission === 'allowed'
-              ? [
-                  {
-                    moduleId: hit.ref.moduleId,
-                    resourceId: hit.ref.resourceId,
-                    resourceType: hit.ref.resourceType,
-                  },
-                ]
-              : [],
-          );
-        }
-        return yield* Effect.void;
-      }),
-    ),
+it.effect('the canonical list intersects current owner records after agenda admission', () =>
+  Effect.gen(function* recordReach() {
+    for (const resource of ['asset', 'device', 'document'] as const) {
+      const permitted = yield* runFacilitySearchScenario(resource);
+      expect(Exit.isSuccess(permitted.exit)).toBe(true);
+      if (Exit.isSuccess(permitted.exit)) {
+        expect(permitted.exit.value).toHaveLength(3);
+      }
+      const hidden = yield* runFacilitySearchScenario(resource, { operationalOnly: true });
+      expect(hidden.exit).toEqual(Exit.succeed([]));
+      expect(hidden.searched).toBe(false);
+      expect(hidden.snapshot.ownerQueries).toEqual([]);
+      const denied = yield* runFacilitySearchScenario(resource, { listOutcome: 'DENIED' });
+      expect(Exit.isFailure(denied.exit)).toBe(true);
+      expect(denied.searched).toBe(false);
+    }
+  }).pipe(Effect.provide(NodeCrypto.layer)),
 );

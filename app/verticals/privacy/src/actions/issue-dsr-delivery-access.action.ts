@@ -53,6 +53,14 @@ const handleIssueDsrDeliveryAccess = Effect.fn('IssueDsrDeliveryAccessAction.han
 
 export const issueDsrDeliveryAccessAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.dsr-delivery-access.issue',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'dsr-delivery', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.issue-dsr-delivery-access.access.v1',
@@ -64,7 +72,7 @@ export const issueDsrDeliveryAccessAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.issue-dsr-delivery-access',
       moduleKey: 'privacy.core',
       role: 'action',

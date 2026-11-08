@@ -1,16 +1,17 @@
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
+import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';
 import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import {
-  ContextAccess,
   OperationContextUnavailable,
   TrustedPrincipalContextSchema,
   defineDatabaseIdentityEnrollment,
   loadDatabaseConnectionPair,
 } from '@app/core-runtime';
-import type { ActionServicePreparationContext, ContextAccessService, OperationalScope } from '@app/core-runtime';
+import type { ActionServicePreparationContext, OperationalScope } from '@app/core-runtime';
 import { installOperationalScope } from '@app/core-runtime/testing/actions';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Crypto, Effect, Redacted, Schema } from 'effect';
+import { Crypto, Effect, Layer, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import {
@@ -51,20 +52,14 @@ const nativeSalesPipelineCommands = Effect.scoped(
     };
     let insideTransaction = false;
     let permissionChecks = 0;
-    const access: ContextAccessService = {
-      contextPermissions: ({ targets }) =>
+    const gate = makeTestAccessDecision({ defaultAnswer: { outcome: 'ALLOWED' } });
+    const access = {
+      ...gate,
+      list: (question: Parameters<typeof gate.list>[0]) =>
         Effect.sync(() => {
           expect(insideTransaction).toBe(false);
           permissionChecks += 1;
-          return targets.map(({ moduleId, permission }) => ({
-            decision: 'allowed' as const,
-            key: `${moduleId}:${permission}`,
-          }));
-        }),
-      legalEntities: () => Effect.succeed([]),
-      modules: () => Effect.succeed([]),
-      resources: () => Effect.die('Company writer needs no per-task check'),
-      tenants: () => Effect.succeed([]),
+        }).pipe(Effect.andThen(gate.list(question))),
     };
     const create = yield* Schema.decodeEffect(ApplyCommandPayloadSchema)({
       command: {
@@ -81,10 +76,10 @@ const nativeSalesPipelineCommands = Effect.scoped(
       expectedRevision: 1,
     });
     const createFactory = yield* prepareApplyCommandServices(create, context).pipe(
-      Effect.provideService(ContextAccess, access),
+      Effect.provideService(AccessDecisionGate, access),
     );
     const updateFactory = yield* prepareApplyCommandServices(update, context).pipe(
-      Effect.provideService(ContextAccess, access),
+      Effect.provideService(AccessDecisionGate, access),
     );
     expect(permissionChecks).toBe(2);
     const result = yield* database
@@ -136,9 +131,12 @@ const nativeSalesPipelineCommands = Effect.scoped(
   }),
 );
 
-it.layer(NodeCrypto.layer, { excludeTestServices: true })('native salesPipeline commands', (suite) => {
-  suite.effect(
-    'prepares permissions outside SQL; revalidates identity, payload and revision',
-    () => nativeSalesPipelineCommands,
-  );
-});
+it.layer(Layer.merge(NodeCrypto.layer, makeTestAccessGateLayers()), { excludeTestServices: true })(
+  'native salesPipeline commands',
+  (suite) => {
+    suite.effect(
+      'prepares permissions outside SQL; revalidates identity, payload and revision',
+      () => nativeSalesPipelineCommands,
+    );
+  },
+);

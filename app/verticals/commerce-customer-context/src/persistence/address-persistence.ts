@@ -351,7 +351,7 @@ const profileValues = (profile: AddressBookProfile) =>
   ] as const;
 
 const postalJson = (origin: SavedAddressOrigin | undefined): PostalAddress | null =>
-  origin?.kind === 'COMMERCE_ONLY' ? origin.postalAddress : null;
+  origin?.kind === 'COMMERCE_ONLY' ? (origin.postalAddress ?? null) : null;
 
 const sourceFields = (origin: SavedAddressOrigin | undefined) => ({
   contactPointResourceId: origin?.kind === 'PARTY_BACKED' ? origin.contactPointRef.resourceId : null,
@@ -1107,15 +1107,20 @@ export const composeAddressExternalResolutionPorts = (
 const resolvePostalAddress = (
   address: SavedAddress,
   external: AddressExternalResolutionPorts,
-): Effect.Effect<AddressLookup<ResolvedSavedPostalAddress>, AddressBookUnavailable> =>
-  address.origin.kind === 'COMMERCE_ONLY'
-    ? Effect.succeed(
+): Effect.Effect<AddressLookup<ResolvedSavedPostalAddress>, AddressBookUnavailable> => {
+  if (address.origin.kind !== 'COMMERCE_ONLY') {
+    return external.resolvePartyPostalAddress(address);
+  }
+  const { postalAddress } = address.origin;
+  return postalAddress === undefined
+    ? Effect.succeed(notFound<ResolvedSavedPostalAddress>())
+    : Effect.succeed(
         found({
           kind: 'COMMERCE_ONLY' as const,
-          postalAddress: address.origin.postalAddress,
+          postalAddress,
         }),
-      )
-    : external.resolvePartyPostalAddress(address);
+      );
+};
 
 const loadDefaultAddress = (
   transaction: CustomerContextAddressRoutineInvoker,

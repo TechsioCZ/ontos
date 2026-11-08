@@ -1,14 +1,13 @@
 import {
   ExternalIdentityAdmission,
+  GrantedProvisioningNamespaces,
   ReadRuntime,
   TrustedPrincipalContextSchema,
   activatePrincipalBindingAction,
-  defineRead,
-  defineSystemModuleEntrypoint,
-  externalIdentitySubjectForBinding,
   changePrincipalBindingStatusAction,
   readPrincipalBinding,
-  resolveExternalSubjectFromTransaction,
+  bindingSubjectRead,
+  resolveExternalSubjectRead,
   reservePrincipalBindingAction,
 } from '@app/core-runtime';
 import type {
@@ -17,15 +16,11 @@ import type {
   ReadCoreError,
   TrustedPrincipalContext,
 } from '@app/core-runtime';
-import {
+import { TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
+import type {
   ExternalIdentityError,
-  AuthenticationNamespaceIdSchema,
   AuthBindingIdSchema,
   ExternalAuthenticationSubjectSchema,
-  ResolveExternalSubjectResultSchema,
-  TenantIdSchema,
-} from '@app/core-runtime/auth/external-identity-contracts';
-import type {
   ExternalAuthenticationSubject,
   ReadPrincipalBindingPayloadSchema,
   ReadPrincipalBindingResultSchema,
@@ -114,7 +109,6 @@ const problem = <Tag extends string, Status extends number>(
   type: string,
 ) => ({ _tag, detail, status, title, type });
 
-const CORE_IDENTITY_MODULE_KEY = 'core.identity';
 const CORRELATION_ID_HEADER = 'x-correlation-id';
 const IDEMPOTENCY_KEY_HEADER = 'idempotency-key';
 const missingAuthorization = Redacted.make(Option.getOrUndefined(Option.none<string>()));
@@ -330,146 +324,19 @@ const requiredHeader = (
     : Effect.succeed(value);
 };
 
-const BindingSubjectLookupInputSchema = Schema.Struct({
-  authBindingId: AuthBindingIdSchema,
-  authenticationNamespaceId: AuthenticationNamespaceIdSchema,
-});
-
-type BindingSubjectReadServices = Readonly<{
-  readonly lookup: (input: {
-    readonly authBindingId: Schema.Schema.Type<typeof AuthBindingIdSchema>;
-    readonly authenticationNamespaceId: Schema.Schema.Type<typeof AuthenticationNamespaceIdSchema>;
-    readonly tenantId: string;
-  }) => Effect.Effect<ExternalAuthenticationSubject, ExternalIdentityFailure>;
-}>;
-
-type ResolveExternalSubjectReadResult = Schema.Schema.Type<typeof ResolveExternalSubjectResultSchema>;
-interface ResolveExternalSubjectReadInput {
-  readonly admission: ExternalIdentityAdmissionContext;
-  readonly subject: ExternalAuthenticationSubject;
-  readonly tenantId: string;
-}
-type ResolveExternalSubjectReadServices = Readonly<{
-  readonly resolve: (
-    input: ResolveExternalSubjectReadInput,
-  ) => Effect.Effect<ResolveExternalSubjectReadResult, ExternalIdentityFailure>;
-}>;
-
-const bindingSubjectRead = defineRead<
-  typeof BindingSubjectLookupInputSchema,
-  typeof ExternalAuthenticationSubjectSchema,
-  'core.identity',
-  BindingSubjectReadServices,
-  ExternalIdentityError,
-  never,
-  typeof ExternalIdentityError
->(
-  {
-    accessKind: 'detail',
-    domainErrorSchema: ExternalIdentityError,
-    entrypoint: defineSystemModuleEntrypoint({
-      access: 'read',
-      authorization: { kind: 'context_permission', permission: 'module.access' },
-      entrypointKey: 'core.identity.read-binding-subject',
-      moduleKey: CORE_IDENTITY_MODULE_KEY,
-      role: 'api',
-    }),
-    evidencePolicy: {
-      captureMode: 'metadata_only',
-      policyKey: 'core.identity.read-binding-subject.access.v1',
-    },
-    inputSchema: BindingSubjectLookupInputSchema,
-    legalEntityScope: 'forbidden',
-    owningModuleKey: CORE_IDENTITY_MODULE_KEY,
-    permissionTarget: 'tenant',
-    policies: [],
-    readKey: 'core.identity.read-binding-subject',
-    resultSchema: ExternalAuthenticationSubjectSchema,
-    schemaVersion: '1',
-  },
-  {
-    load: (input, context) =>
-      context.services
-        .lookup({
-          ...input,
-          tenantId: context.scope.tenantId,
-        })
-        .pipe(
-          Effect.mapError((failure) => new ExternalIdentityError({ code: failure.code })),
-          Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
-        ),
-  },
-  (transaction) =>
-    Effect.succeed({
-      lookup: (input: {
-        readonly authBindingId: Schema.Schema.Type<typeof AuthBindingIdSchema>;
-        readonly authenticationNamespaceId: Schema.Schema.Type<typeof AuthenticationNamespaceIdSchema>;
-        readonly tenantId: string;
-      }) => externalIdentitySubjectForBinding(transaction, input),
-    }),
-  () => ({ kind: 'tenant', permission: 'access' }),
-);
-
-const resolveExternalSubjectRead = defineRead<
-  typeof ExternalAuthenticationSubjectSchema,
-  typeof ResolveExternalSubjectResultSchema,
-  'core.identity',
-  ResolveExternalSubjectReadServices,
-  ExternalIdentityError,
-  ExternalIdentityAdmission,
-  typeof ExternalIdentityError
->(
-  {
-    accessKind: 'detail',
-    domainErrorSchema: ExternalIdentityError,
-    entrypoint: defineSystemModuleEntrypoint({
-      access: 'read',
-      authorization: { kind: 'context_permission', permission: 'module.access' },
-      entrypointKey: 'core.identity.resolve-external-subject',
-      moduleKey: CORE_IDENTITY_MODULE_KEY,
-      role: 'api',
-    }),
-    evidencePolicy: {
-      captureMode: 'metadata_only',
-      policyKey: 'core.identity.resolve-external-subject.access.v1',
-    },
-    inputSchema: ExternalAuthenticationSubjectSchema,
-    legalEntityScope: 'forbidden',
-    owningModuleKey: CORE_IDENTITY_MODULE_KEY,
-    permissionTarget: 'tenant',
-    policies: [],
-    readKey: 'core.identity.resolve-external-subject',
-    resultSchema: ResolveExternalSubjectResultSchema,
-    schemaVersion: '1',
-  },
-  {
-    load: (subject, context) =>
-      Effect.serviceOption(ExternalIdentityAdmission).pipe(
-        Effect.flatMap((admission) =>
-          Option.isNone(admission)
-            ? Effect.fail(new ExternalIdentityError({ code: 'identity_unavailable' }))
-            : context.services
-                .resolve({
-                  admission: admission.value,
-                  subject,
-                  tenantId: context.scope.tenantId,
-                })
-                .pipe(
-                  Effect.tapError(logAdmissionRefusal),
-                  Effect.mapError((failure) => new ExternalIdentityError({ code: failure.code })),
-                ),
-        ),
-        Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
-      ),
-  },
-  (transaction) => Effect.succeed({ resolve: resolveExternalSubjectFromTransaction(transaction) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
-);
+/**
+ * Core qualifies the namespace of a workload by its own registration (`namespace-authority.ts`). A
+ * workload authenticated in the staff namespace reaches another namespace only through a deployment
+ * grant, so every caller passes exactly the namespaces its grant check has already admitted.
+ */
+const grantedNamespaces = (authenticationNamespaceIds: readonly string[]) =>
+  Context.make(GrantedProvisioningNamespaces, { authenticationNamespaceIds });
 
 const runBindingRead = (
   principal: TrustedPrincipalContext,
   input: Schema.Schema.Type<typeof ReadPrincipalBindingPayloadSchema>,
   audience: string,
+  grantedNamespaceIds: readonly string[],
 ) =>
   Effect.all({ correlation: ExternalIdentityHttpCorrelationId, runtime: ReadRuntime }, { concurrency: 1 }).pipe(
     Effect.flatMap(({ correlation, runtime }) =>
@@ -481,12 +348,13 @@ const runBindingRead = (
         transport: { correlationId: correlation },
       }),
     ),
+    Effect.provideContext(grantedNamespaces(grantedNamespaceIds)),
     Effect.mapError(mapReadError),
   );
 
 const runBindingSubjectRead = (
   principal: TrustedPrincipalContext,
-  input: Schema.Schema.Type<typeof BindingSubjectLookupInputSchema>,
+  input: Schema.Schema.Type<typeof bindingSubjectRead.descriptor.inputSchema>,
   audience: string,
 ) =>
   Effect.all({ correlation: ExternalIdentityHttpCorrelationId, runtime: ReadRuntime }, { concurrency: 1 }).pipe(
@@ -535,12 +403,23 @@ const subjectFromPayload = (
   subjectType: payload.subjectType,
 });
 
+/**
+ * A binding-id lookup learns the binding's namespace only from the read itself, so it may see
+ * exactly the namespaces the deployment grants this workload for the operation; the caller then
+ * checks the grant again against the namespace the binding actually lives in.
+ */
 const requireBinding = (
   principal: TrustedPrincipalContext,
   authBindingId: Schema.Schema.Type<typeof AuthBindingIdSchema>,
   audience: string,
+  operation: ExternalIdentityWorkloadOperation,
 ) =>
-  runBindingRead(principal, { authBindingId, lookup: 'binding' }, audience).pipe(
+  ExternalIdentityWorkloadAuthorization.pipe(
+    Effect.flatMap((authorization) => authorization.grantedNamespaces(principal, operation)),
+    Effect.mapError(mapWorkloadError),
+    Effect.flatMap((grantedNamespaceIds) =>
+      runBindingRead(principal, { authBindingId, lookup: 'binding' }, audience, grantedNamespaceIds),
+    ),
     Effect.catchIf(Predicate.isTagged('ExternalIdentityForbiddenProblem'), () => Effect.fail(notFoundProblem())),
     Effect.filterOrFail(
       (result) => result.outcome === 'FOUND',
@@ -553,7 +432,8 @@ const requireSubjectBinding = (
   subject: Schema.Schema.Type<typeof ExternalAuthenticationSubjectSchema>,
   audience: string,
 ) =>
-  runBindingRead(principal, { ...subject, lookup: 'subject' }, audience).pipe(
+  // Callers have already checked the workload grant for this subject's exact namespace.
+  runBindingRead(principal, { ...subject, lookup: 'subject' }, audience, [subject.authenticationNamespaceId]).pipe(
     Effect.catchIf(Predicate.isTagged('ExternalIdentityForbiddenProblem'), () => Effect.fail(notFoundProblem())),
     Effect.filterOrFail(
       (result) => result.outcome === 'FOUND',
@@ -683,7 +563,11 @@ const runReserveAction = (
           registration: reservePrincipalBindingAction,
           requestHeaders: { authorization: missingAuthorization, [CORRELATION_ID_HEADER]: correlation },
         }),
-        Context.make(ExternalIdentityAdmission, admission),
+        Context.add(
+          grantedNamespaces([payload.reservation.authenticationNamespaceId]),
+          ExternalIdentityAdmission,
+          admission,
+        ),
       ),
     ),
   );
@@ -694,6 +578,7 @@ const runActivateAction = (
   idempotencyKey: string,
   audience: string,
   admission: ExternalIdentityAdmissionContext,
+  grantedNamespaceId: string,
 ) =>
   ExternalIdentityHttpCorrelationId.pipe(
     Effect.flatMap((correlation) =>
@@ -709,7 +594,7 @@ const runActivateAction = (
           registration: activatePrincipalBindingAction,
           requestHeaders: { authorization: missingAuthorization, [CORRELATION_ID_HEADER]: correlation },
         }),
-        Context.make(ExternalIdentityAdmission, admission),
+        Context.add(grantedNamespaces([grantedNamespaceId]), ExternalIdentityAdmission, admission),
       ),
     ),
   );
@@ -914,6 +799,7 @@ const activatePrincipalBindingHandler = Effect.fn('ExternalIdentityHttp.activate
               principal,
               payload.activation.authBindingId,
               ultramodernDeliveryUnit.appId,
+              'activate',
             );
             yield* requireBindingWorkloadGrant(principal, 'activate', binding.authenticationNamespaceId);
             const subject = yield* requireBindingSubject(principal, binding, ultramodernDeliveryUnit.appId);
@@ -944,6 +830,7 @@ const activatePrincipalBindingHandler = Effect.fn('ExternalIdentityHttp.activate
               idempotencyKey,
               ultramodernDeliveryUnit.appId,
               admission,
+              binding.authenticationNamespaceId,
             );
           }),
         );
@@ -967,6 +854,7 @@ const changePrincipalBindingStatusHandler = Effect.fn('ExternalIdentityHttp.chan
               principal,
               payload.change.authBindingId,
               ultramodernDeliveryUnit.appId,
+              'status',
             );
             yield* requireBindingWorkloadGrant(principal, 'status', binding.authenticationNamespaceId);
             let admission: ExternalIdentityAdmissionContext | undefined;
@@ -1016,7 +904,12 @@ const readPrincipalBindingHandler = Effect.fn('ExternalIdentityHttp.readPrincipa
             const apiKey = Redacted.make(request.headers['x-api-key']);
             const principal = yield* authenticateWorkloadPrincipal(apiKey);
             if (payload.lookup === 'binding') {
-              const binding = yield* requireBinding(principal, payload.authBindingId, ultramodernDeliveryUnit.appId);
+              const binding = yield* requireBinding(
+                principal,
+                payload.authBindingId,
+                ultramodernDeliveryUnit.appId,
+                'read',
+              );
               yield* requireBindingWorkloadGrant(principal, 'read', binding.authenticationNamespaceId);
               return binding;
             }
@@ -1024,7 +917,9 @@ const readPrincipalBindingHandler = Effect.fn('ExternalIdentityHttp.readPrincipa
               operation: 'read',
               targetAuthenticationNamespaceId: payload.authenticationNamespaceId,
             });
-            return yield* runBindingRead(principal, payload, ultramodernDeliveryUnit.appId);
+            return yield* runBindingRead(principal, payload, ultramodernDeliveryUnit.appId, [
+              payload.authenticationNamespaceId,
+            ]);
           }),
         );
       }),
@@ -1122,8 +1017,15 @@ const issueExternalGatewayContextHandler = Effect.fn('ExternalIdentityHttp.issue
             if (payload.legalEntityId !== undefined) {
               const selected = yield* validateAuthorizedLegalEntity({
                 legalEntityId: payload.legalEntityId,
-                principalId: resolved.principalId,
-                tenantId: resolved.tenantId,
+                scope: {
+                  authBindingId: resolved.authBindingId,
+                  authContextRef: payload.authenticationRef,
+                  authenticationNamespaceId: resolved.authenticationNamespaceId,
+                  authMethod: 'session',
+                  correlationId: requestCorrelation,
+                  principalId: resolved.principalId,
+                  tenantId: resolved.tenantId,
+                },
               }).pipe(Effect.mapError(mapLegalEntitySelectionProblem));
               const { legalEntityId: selectedLegalEntityId } = selected;
               legalEntityId = selectedLegalEntityId;

@@ -1,0 +1,298 @@
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
+import { Effect, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+import {
+  OntosMcpToolCatalogJsonSchema,
+  ONTOS_MODULE_MCP_TOOL_CATALOG_PATH,
+} from '../../packages/core-runtime/src/modules/mcp-contribution.ts';
+import { deriveOntosMcpContribution } from '../ontos-mcp-contribution.mts';
+import { taggingManifest } from '../../verticals/tagging/vertical.manifest.ts';
+import {
+  cases as taggingCases,
+  makeFixture as taggingFixture,
+} from '../../verticals/tagging/tests/unit/registered-action-http-fixture.ts';
+import { workforceManifest } from '../../verticals/workforce/vertical.manifest.ts';
+import {
+  cases as workforceCases,
+  makeFixture as workforceFixture,
+} from '../../verticals/workforce/tests/unit/registered-action-http-fixture.ts';
+import { salesInsightsManifest } from '../../verticals/sales-insights/vertical.manifest.ts';
+import {
+  cases as salesInsightsCases,
+  makeFixture as salesInsightsFixture,
+} from '../../verticals/sales-insights/tests/unit/registered-action-http-fixture.ts';
+import { merchandiseManifest } from '../../verticals/merchandise/vertical.manifest.ts';
+import {
+  cases as merchandiseCases,
+  makeFixture as merchandiseFixture,
+} from '../../verticals/merchandise/tests/unit/registered-action-http-fixture.ts';
+
+const expectedContribution = 'Expected the real owner MCP contribution';
+const catalogPath = '/.well-known/ontos-module-mcp-tools.json';
+const expectedRegistration = 'MCP route must have the actual owner registration';
+const createSlug = 'apply-command';
+
+it.effect(
+  'tagging derives MCP commands from real closed registrations and executes their published HTTP audit identities',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* transportIdentity() {
+        const manifest = taggingManifest;
+        const derived = deriveOntosMcpContribution({
+          actions: manifest.publicSurface.actions,
+          api: manifest.publicSurface.api,
+          appId: 'tagging',
+          authored: manifest.publicSurface.mcp,
+          moduleId: manifest.module.id,
+        });
+        if (derived === undefined) {
+          expect.unreachable(expectedContribution);
+        }
+        expect(derived.contribution.toolCatalog.path).toBe(ONTOS_MODULE_MCP_TOOL_CATALOG_PATH);
+        expect(derived.contribution.toolCatalog.path).toBe(catalogPath);
+        expect(derived.contribution.toolCatalog.sha256).toBe(
+          createHash('sha256').update(derived.toolCatalog).digest('hex'),
+        );
+        const catalog = yield* Schema.decodeEffect(OntosMcpToolCatalogJsonSchema)(derived.toolCatalog);
+        let exercised = 0;
+        for (const { command, slug } of taggingCases) {
+          const tool = catalog.tools.find((entry) => entry.invoke.commandTag === command._tag);
+          // Authored hidden tools stay hidden. The HTTP-only cleanup/image/review tests remain separate.
+          if (tool === undefined) {
+            expect(manifest.publicSurface.mcp?.commands?.[command._tag]).toBe('hidden');
+            continue;
+          }
+          expect(tool.invoke.path).toBe(`/tagging/actions/${slug}`);
+          expect(tool.access).toBe('write');
+          const registration = manifest.publicSurface.actions.find(
+            (action) => action.descriptor.actionKey === `demo.tagging.${slug}`,
+          );
+          if (registration === undefined) {
+            expect.unreachable(expectedRegistration);
+          }
+          yield* Schema.decodeUnknownEffect(registration.descriptor.payloadSchema)({ command, expectedRevision: 1 });
+          const { harness, request, writes } = yield* taggingFixture();
+          const response = yield* request(tool.invoke.path, command, `mcp-${slug}`);
+          expect(response.status).toBe(200);
+          expect(harness.snapshot().invocations[0]?.actionKey).toBe(registration.descriptor.actionKey);
+          expect(harness.snapshot().committed[0]?.actionKey).toBe(registration.descriptor.actionKey);
+          expect(writes).toEqual([command]);
+          if (slug !== createSlug) {
+            const retired = yield* request('/tagging/actions/apply-command', command, `old-mcp-${slug}`);
+            expect(retired.status).toBe(400);
+            expect(harness.snapshot().committed).toHaveLength(1);
+          }
+          exercised += 1;
+        }
+        expect(exercised).toBeGreaterThan(0);
+      }),
+    ),
+);
+
+it.effect(
+  'workforce derives MCP commands from real closed registrations and executes their published HTTP audit identities',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* transportIdentity() {
+        const manifest = workforceManifest;
+        const derived = deriveOntosMcpContribution({
+          actions: manifest.publicSurface.actions,
+          api: manifest.publicSurface.api,
+          appId: 'workforce',
+          authored: manifest.publicSurface.mcp,
+          moduleId: manifest.module.id,
+        });
+        if (derived === undefined) {
+          expect.unreachable(expectedContribution);
+        }
+        expect(derived.contribution.toolCatalog.path).toBe(ONTOS_MODULE_MCP_TOOL_CATALOG_PATH);
+        expect(derived.contribution.toolCatalog.path).toBe(catalogPath);
+        expect(derived.contribution.toolCatalog.sha256).toBe(
+          createHash('sha256').update(derived.toolCatalog).digest('hex'),
+        );
+        const catalog = yield* Schema.decodeEffect(OntosMcpToolCatalogJsonSchema)(derived.toolCatalog);
+        let exercised = 0;
+        for (const { command, slug } of workforceCases) {
+          const tool = catalog.tools.find((entry) => entry.invoke.commandTag === command._tag);
+          // Authored hidden tools stay hidden. The HTTP-only cleanup/image/review tests remain separate.
+          if (tool === undefined) {
+            expect(manifest.publicSurface.mcp?.commands?.[command._tag]).toBe('hidden');
+            continue;
+          }
+          expect(tool.invoke.path).toBe(`/workforce/actions/${slug}`);
+          expect(tool.access).toBe('write');
+          const registration = manifest.publicSurface.actions.find(
+            (action) => action.descriptor.actionKey === `demo.workforce.${slug}`,
+          );
+          if (registration === undefined) {
+            expect.unreachable(expectedRegistration);
+          }
+          yield* Schema.decodeUnknownEffect(registration.descriptor.payloadSchema)({ command, expectedRevision: 1 });
+          const { harness, request, writes } = yield* workforceFixture();
+          const response = yield* request(tool.invoke.path, command, `mcp-${slug}`);
+          expect(response.status).toBe(200);
+          expect(harness.snapshot().invocations[0]?.actionKey).toBe(registration.descriptor.actionKey);
+          expect(harness.snapshot().committed[0]?.actionKey).toBe(registration.descriptor.actionKey);
+          expect(writes).toEqual([command]);
+          if (slug !== createSlug) {
+            const retired = yield* request('/workforce/actions/apply-command', command, `old-mcp-${slug}`);
+            expect(retired.status).toBe(400);
+            expect(harness.snapshot().committed).toHaveLength(1);
+          }
+          exercised += 1;
+        }
+        expect(exercised).toBeGreaterThan(0);
+      }),
+    ),
+);
+
+it.effect(
+  'sales-insights derives MCP commands from real closed registrations and executes their published HTTP audit identities',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* transportIdentity() {
+        const manifest = salesInsightsManifest;
+        const derived = deriveOntosMcpContribution({
+          actions: manifest.publicSurface.actions,
+          api: manifest.publicSurface.api,
+          appId: 'sales-insights',
+          authored: manifest.publicSurface.mcp,
+          moduleId: manifest.module.id,
+        });
+        if (derived === undefined) {
+          expect.unreachable(expectedContribution);
+        }
+        expect(derived.contribution.toolCatalog.path).toBe(ONTOS_MODULE_MCP_TOOL_CATALOG_PATH);
+        expect(derived.contribution.toolCatalog.path).toBe(catalogPath);
+        expect(derived.contribution.toolCatalog.sha256).toBe(
+          createHash('sha256').update(derived.toolCatalog).digest('hex'),
+        );
+        const catalog = yield* Schema.decodeEffect(OntosMcpToolCatalogJsonSchema)(derived.toolCatalog);
+        let exercised = 0;
+        for (const { command, slug } of salesInsightsCases) {
+          const tool = catalog.tools.find((entry) => entry.invoke.commandTag === command._tag);
+          // Authored hidden tools stay hidden. The HTTP-only cleanup/image/review tests remain separate.
+          if (tool === undefined) {
+            expect(manifest.publicSurface.mcp?.commands?.[command._tag]).toBe('hidden');
+            continue;
+          }
+          expect(tool.invoke.path).toBe(`/sales-insights/actions/${slug}`);
+          expect(tool.access).toBe('write');
+          const registration = manifest.publicSurface.actions.find(
+            (action) => action.descriptor.actionKey === `demo.sales-insights.${slug}`,
+          );
+          if (registration === undefined) {
+            expect.unreachable(expectedRegistration);
+          }
+          yield* Schema.decodeUnknownEffect(registration.descriptor.payloadSchema)({ command, expectedRevision: 1 });
+          const { harness, request, writes } = yield* salesInsightsFixture();
+          const response = yield* request(tool.invoke.path, command, `mcp-${slug}`);
+          expect(response.status).toBe(200);
+          expect(harness.snapshot().invocations[0]?.actionKey).toBe(registration.descriptor.actionKey);
+          expect(harness.snapshot().committed[0]?.actionKey).toBe(registration.descriptor.actionKey);
+          expect(writes).toEqual([command]);
+          if (slug !== createSlug) {
+            const retired = yield* request('/sales-insights/actions/apply-command', command, `old-mcp-${slug}`);
+            expect(retired.status).toBe(400);
+            expect(harness.snapshot().committed).toHaveLength(1);
+          }
+          exercised += 1;
+        }
+        expect(exercised).toBeGreaterThan(0);
+      }),
+    ),
+);
+
+it.effect(
+  'merchandise derives MCP commands from real closed registrations and executes their published HTTP audit identities',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* transportIdentity() {
+        const manifest = merchandiseManifest;
+        const derived = deriveOntosMcpContribution({
+          actions: manifest.publicSurface.actions,
+          api: manifest.publicSurface.api,
+          appId: 'merchandise',
+          authored: manifest.publicSurface.mcp,
+          moduleId: manifest.module.id,
+        });
+        if (derived === undefined) {
+          expect.unreachable(expectedContribution);
+        }
+        expect(derived.contribution.toolCatalog.path).toBe(ONTOS_MODULE_MCP_TOOL_CATALOG_PATH);
+        expect(derived.contribution.toolCatalog.path).toBe(catalogPath);
+        expect(derived.contribution.toolCatalog.sha256).toBe(
+          createHash('sha256').update(derived.toolCatalog).digest('hex'),
+        );
+        const catalog = yield* Schema.decodeEffect(OntosMcpToolCatalogJsonSchema)(derived.toolCatalog);
+        let exercised = 0;
+        for (const { command, slug } of merchandiseCases) {
+          const tool = catalog.tools.find((entry) => entry.invoke.commandTag === command._tag);
+          // Authored hidden tools stay hidden. The HTTP-only cleanup/image/review tests remain separate.
+          if (tool === undefined) {
+            expect(manifest.publicSurface.mcp?.commands?.[command._tag]).toBe('hidden');
+            continue;
+          }
+          expect(tool.invoke.path).toBe(`/merchandise/actions/${slug}`);
+          expect(tool.access).toBe('write');
+          const registration = manifest.publicSurface.actions.find(
+            (action) => action.descriptor.actionKey === `demo.merchandise.${slug}`,
+          );
+          if (registration === undefined) {
+            expect.unreachable(expectedRegistration);
+          }
+          yield* Schema.decodeUnknownEffect(registration.descriptor.payloadSchema)({ command, expectedRevision: 1 });
+          const { harness, request, writes } = yield* merchandiseFixture();
+          const response = yield* request(tool.invoke.path, command, `mcp-${slug}`);
+          expect(response.status).toBe(200);
+          expect(harness.snapshot().invocations[0]?.actionKey).toBe(registration.descriptor.actionKey);
+          expect(harness.snapshot().committed[0]?.actionKey).toBe(registration.descriptor.actionKey);
+          expect(writes).toEqual([command]);
+          if (slug !== createSlug) {
+            const retired = yield* request('/merchandise/actions/apply-command', command, `old-mcp-${slug}`);
+            expect(retired.status).toBe(400);
+            expect(harness.snapshot().committed).toHaveLength(1);
+          }
+          exercised += 1;
+        }
+        expect(exercised).toBeGreaterThan(0);
+      }),
+    ),
+);
+
+it('all five owners publish canonical clients and schema-only contracts, with no private-path or legacy dispatch alias', () => {
+  const require = createRequire(new URL('../../package.json', import.meta.url));
+  const operations = [
+    { owner: 'crm-activities', slugs: [createSlug] },
+    { owner: 'tagging', slugs: [createSlug, 'assign-tag', 'delete-tag', 'unassign-tag', 'update-tag'] },
+    { owner: 'workforce', slugs: [createSlug, 'update-employee'] },
+    { owner: 'sales-insights', slugs: [createSlug, 'assign-metric', 'change-metric-state', 'update-metric'] },
+    {
+      owner: 'merchandise',
+      slugs: [
+        createSlug,
+        'change-order-status',
+        'change-product-images',
+        'cleanup-demo',
+        'manage-catalog',
+        'manage-markets',
+        'place-storefront-order',
+        'propose-order-changes',
+        'record-stock-movement',
+        'review-order-changes',
+      ],
+    },
+  ];
+  for (const { owner, slugs } of operations) {
+    for (const slug of slugs) {
+      expect(require.resolve(`@app/${owner}/clients/${slug}`)).toBe(
+        fileURLToPath(new URL(`../../verticals/${owner}/src/api/${slug}-action-client.ts`, import.meta.url)),
+      );
+      expect(require.resolve(`@app/${owner}/contracts/${slug}`)).toBe(
+        fileURLToPath(new URL(`../../verticals/${owner}/shared/actions/${slug}.ts`, import.meta.url)),
+      );
+    }
+  }
+});

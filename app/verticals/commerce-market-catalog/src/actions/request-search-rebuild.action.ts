@@ -37,6 +37,14 @@ export const handleRequestSearchRebuild = Effect.fn('MarketSearch.requestRebuild
 
 export const requestSearchRebuildAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.market-catalog.search-index.rebuild',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'maintenance', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.market-catalog.request-search-rebuild.access.v1',
@@ -47,7 +55,7 @@ export const requestSearchRebuildAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.market-catalog.request-search-rebuild',
       moduleKey,
       role: 'action',
@@ -59,7 +67,6 @@ export const requestSearchRebuildAction = defineAction(
     policies: [],
     resultSchema: RequestSearchRebuildResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_identity',
   },
   handleRequestSearchRebuild,
 );

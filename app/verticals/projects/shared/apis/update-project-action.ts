@@ -2,11 +2,14 @@
 // @ontos-action-http-owner projects.core
 // @ontos-action-http-slug update-project
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { UpdateProjectPayloadSchema, UpdateProjectResultSchema } from '../actions/update-project.ts';
 
 export { UpdateProjectPayloadSchema } from '../actions/update-project.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const UpdateProjectActionInvalidProblemSchema = makeProblemDetailsSchema(
   'UpdateProjectActionInvalidProblem',
@@ -21,6 +24,7 @@ export const UpdateProjectActionForbiddenProblemSchema = makeProblemDetailsSchem
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -49,7 +53,7 @@ export const UpdateProjectActionConflictProblemSchema = makeProblemDetailsSchema
 export const UpdateProjectActionIneligibleProblemSchema = makeProblemDetailsSchema(
   'UpdateProjectActionIneligibleProblem',
   422,
-  { code: Schema.Literals(['action_policy_denied', 'project_owner_ineligible']) },
+  { code: Schema.Literal('action_policy_denied') },
 );
 export const UpdateProjectActionPreconditionProblemSchema = makeProblemDetailsSchema(
   'UpdateProjectActionPreconditionProblem',
@@ -66,7 +70,6 @@ export const UpdateProjectActionUnavailableProblemSchema = makeRetryableProblemD
       'action_transaction_failed',
       'module_state_check_unavailable',
       'operation_context_unavailable',
-      'project_owner_eligibility_unavailable',
       'project_persistence_unavailable',
     ]),
   },
@@ -145,7 +148,7 @@ export const updateProjectActionGroupDefinition = HttpApiGroup.make('updateProje
     HttpApiEndpoint.post('execute', '/projects/actions/update-project', {
       error: actionErrors,
       payload: Schema.toEncoded(UpdateProjectPayloadSchema),
-      success: UpdateProjectResultSchema,
+      success: [ActionProposalAcceptedSchema, UpdateProjectResultSchema],
     }),
   )
   .middleware(UpdateProjectActionSchemaErrorMiddleware);

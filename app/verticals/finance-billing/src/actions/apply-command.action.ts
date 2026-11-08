@@ -117,12 +117,7 @@ const makeActionServices: ActionServiceFactory<Services> = () =>
       reason: 'Finance reference preparation is required',
     }),
   );
-export const prepareApplyCommandServices: ActionServicePreflight<
-  ApplyCommandPayload,
-  Services,
-  FinanceError,
-  Crypto.Crypto | FinanceValidatorRequirements
-> = Effect.fn('Finance.prepareApplyCommandServices')(function* prepareServices(
+export const prepareApplyCommandServices = Effect.fn('Finance.prepareApplyCommandServices')(function* prepareServices(
   payload: ApplyCommandPayload,
   context: ActionServicePreparationContext,
 ) {
@@ -178,10 +173,23 @@ export const prepareApplyCommandServices: ActionServicePreflight<
     const persistence = yield* persistenceService(transaction, scope);
     return { ...persistence, prepared: { payload, transition } };
   });
-});
+}) satisfies ActionServicePreflight<
+  ApplyCommandPayload,
+  Services,
+  FinanceError,
+  Crypto.Crypto | FinanceValidatorRequirements
+>;
 
 export const applyCommandAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'finance.billing.apply-command.write',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'finance-billing', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'finance.billing.apply-command.access.v1',
@@ -192,7 +200,7 @@ export const applyCommandAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'finance.billing.apply-command',
       moduleKey: financeModuleKey,
       role: 'action',

@@ -5,22 +5,33 @@ import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { taggingManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
+import { assignTagAction } from './src/actions/assign-tag.action.ts';
+import { deleteTagAction } from './src/actions/delete-tag.action.ts';
+import { recordsRead } from './src/api/records.read.ts';
+import { unassignTagAction } from './src/actions/unassign-tag.action.ts';
+import { updateTagAction } from './src/actions/update-tag.action.ts';
 // </generated-module-registration-imports>
 
 export const taggingRegistration = defineVerticalRuntimeRegistration({
   actions: [
     // <generated-module-registration-actions>
     applyCommandAction,
+    assignTagAction,
+    deleteTagAction,
+    unassignTagAction,
+    updateTagAction,
     // </generated-module-registration-actions>
   ],
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       records: () => import('./src/api/records-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {
       // <generated-module-registration-components>
+      'tag-controls': () => import('./src/components/tag-controls.tsx'),
       // </generated-module-registration-components>
     },
     pages: {
@@ -41,6 +52,11 @@ export const taggingRegistration = defineVerticalRuntimeRegistration({
   outboxWorkers: [
     // <generated-module-registration-workers>
     // </generated-module-registration-workers>
+  ],
+  reads: [
+    // <generated-module-registration-reads>
+    recordsRead,
+    // </generated-module-registration-reads>
   ],
 });
 

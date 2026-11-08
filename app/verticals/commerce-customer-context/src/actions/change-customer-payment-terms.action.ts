@@ -4,16 +4,10 @@
 import type {
   ActionHandlerContext,
   ActionServicePreparationContext,
-  ActionServicePreflight,
   OperationalScope,
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
-import {
-  OperationContextUnavailable,
-  defineAction,
-  defineActionBusinessPermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { OperationContextUnavailable, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { PaymentTermsTimestampSchema } from '../../shared/domain/payment-term-contracts.ts';
 import { CustomerPaymentTermsChangeSchema } from '../../shared/domain/payment-terms.ts';
@@ -27,16 +21,15 @@ import type {
   ChangeCustomerPaymentTermsPayload,
   ChangeCustomerPaymentTermsResult,
 } from '../../shared/actions/change-customer-payment-terms.ts';
-import { paymentTermCatalogPortFromEnvironment } from '../integrations/payment-term-catalog.ts';
-import {
-  customerChangeDefinitionRequests,
-  loadCustomerChangeSnapshot,
-  paymentTermsPersistenceForTransaction,
-} from '../persistence/payment-term-persistence.ts';
-import { stableRevision } from '../integrations/order-finalization-pricing-context.ts';
 import { preparePaymentTermsChangeCatalog } from '../services/payment-terms-action-preflight.ts';
+import {
+  paymentTermsPersistenceForTransaction,
+  loadCustomerChangeSnapshot,
+  customerChangeDefinitionRequests,
+} from '../persistence/payment-term-persistence.ts';
 import { createChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTermsChangedV1OutboxMessage } from './change-customer-payment-terms.commerce-customer-context-customer-payment-terms-changed-v1.outbox-message.ts';
 import type { ChangeCustomerPaymentTermsCommerceCustomerContextCustomerPaymentTermsChangedV1OutboxPayload } from './change-customer-payment-terms.commerce-customer-context-customer-payment-terms-changed-v1.outbox-message.ts';
+import { counterpartyOwnerFacts } from './owner-access-facts.ts';
 
 const { expectedRevision: revision, reason } = ChangeCustomerPaymentTermsPayloadSchema.fields;
 const moduleKey = 'commerce.customer-context' as const;
@@ -242,90 +235,82 @@ export const handleChangeCustomerPaymentTerms = Effect.fn(
   return result;
 });
 
-const prepareCustomerPaymentTermsServices: ActionServicePreflight<
-  ChangeCustomerPaymentTermsPayload,
-  ChangeCustomerPaymentTermsServices,
-  CustomerPaymentTermsActionRejected
-> = Effect.fn('ChangeCustomerPaymentTermsAction.prepareServices')(function* prepareServices(
+const preparePaymentTermsServices = Effect.fn('ChangeCustomerPaymentTermsServices.prepare')(function* prepare(
   payload: ChangeCustomerPaymentTermsPayload,
   context: ActionServicePreparationContext,
 ) {
-  if (!paymentTermsBelongToTenant(payload, context.scope.tenantId)) {
-    return yield* new CustomerPaymentTermsActionRejected({
-      code: 'SCOPE_MISMATCH',
-      reason: 'The Counterparty, profile, entitlement, and Payment Term must belong to the trusted Tenant',
-      retryable: false,
-    });
-  }
-  const { legalEntityId } = context.scope;
-  if (legalEntityId === undefined) {
-    return yield* new OperationContextUnavailable({
-      code: 'operation_context_unavailable',
-      reason: 'Payment Terms changes require a trusted Legal Entity',
-    });
-  }
-  const preparedPayload = structuredClone(payload);
-  const payloadRevision = stableRevision(preparedPayload);
-  const prepareCatalog = yield* preparePaymentTermsChangeCatalog(
+  const selector = structuredClone(payload);
+  const bindCatalog = yield* preparePaymentTermsChangeCatalog(
     context,
-    (transaction, scope) => loadCustomerChangeSnapshot(transaction, scope, preparedPayload),
-    (snapshot) => customerChangeDefinitionRequests(snapshot, preparedPayload),
+    (transaction, scope) => loadCustomerChangeSnapshot(transaction, scope, selector),
+    (state) => customerChangeDefinitionRequests(state, selector),
   );
-  return (transaction: ScopedTransactionExecutor, scope: OperationalScope, compositionRevision: string) =>
-    prepareCatalog(transaction, scope, compositionRevision).pipe(
-      Effect.map((catalog) => {
-        const service = paymentTermsPersistenceForTransaction(
+  const samePayload = Schema.toEquivalence(Schema.toType(ChangeCustomerPaymentTermsPayloadSchema));
+  return (
+    transaction: ScopedTransactionExecutor,
+    scope: OperationalScope,
+    compositionRevision: string,
+  ): Effect.Effect<ChangeCustomerPaymentTermsServices, OperationContextUnavailable> =>
+    bindCatalog(transaction, scope, compositionRevision).pipe(
+      Effect.flatMap((catalog) => {
+        const { legalEntityId } = scope;
+        if (legalEntityId === undefined) {
+          return Effect.fail(
+            new OperationContextUnavailable({
+              code: 'operation_context_unavailable',
+              reason: 'Payment Terms changes require the verified Legal Entity',
+            }),
+          );
+        }
+        const services = paymentTermsPersistenceForTransaction(
           { invoker: transaction, scope: { ...scope, legalEntityId } },
           { catalog },
         ).change;
-        return {
+        return Effect.succeed({
           change: (candidate, actionContext) =>
-            stableRevision(candidate) === payloadRevision &&
+            samePayload(candidate, selector) &&
             actionContext.actionInvocationId === context.actionInvocationId &&
-            actionContext.compositionRevision === context.compositionRevision &&
-            actionContext.scope.tenantId === scope.tenantId &&
-            actionContext.scope.legalEntityId === legalEntityId &&
-            actionContext.scope.principalId === scope.principalId &&
-            actionContext.scope.authBindingId === scope.authBindingId &&
-            actionContext.scope.correlationId === scope.correlationId
-              ? service.change(candidate, actionContext)
+            actionContext.scope.principalId === context.scope.principalId &&
+            actionContext.scope.tenantId === context.scope.tenantId &&
+            actionContext.scope.legalEntityId === context.scope.legalEntityId
+              ? services.change(candidate, actionContext)
               : Effect.fail(
                   new CustomerPaymentTermsActionRejected({
                     code: 'SCOPE_MISMATCH',
-                    reason: 'Prepared Payment Terms intent does not match',
+                    reason: 'Prepared Payment Terms intent changed',
                     retryable: false,
                   }),
                 ),
-        } satisfies ChangeCustomerPaymentTermsServices;
+        } satisfies ChangeCustomerPaymentTermsServices);
       }),
     );
 });
 
 export const changeCustomerPaymentTermsAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.customer-payment-terms.change',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'payment-terms', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.change-customer-payment-terms.access.v1',
     },
+    accessOwnerFacts: (payload) => counterpartyOwnerFacts(payload.counterpartyRef.resourceId),
     actionKey: 'commerce.customer-context.change-customer-payment-terms',
     auditEvidenceSchema: CustomerPaymentTermsAuditEvidenceSchema,
     auditProfile: 'standard',
-    businessPermission: defineActionBusinessPermission<ChangeCustomerPaymentTermsPayload>((payload, scope) => ({
-      permission: 'counterparty.settings.payment_terms.manage',
-      target: {
-        counterpartyId: payload.counterpartyRef.resourceId,
-        kind: 'counterparty',
-        legalEntityId: scope.legalEntityId ?? '',
-        tenantId: scope.tenantId,
-      },
-    })),
     domainErrorSchema: CustomerPaymentTermsActionRejected,
     domainEvents: {
       'commerce.customer-context.customer-payment-terms-changed.v1': CustomerPaymentTermsChangedEventSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.change-customer-payment-terms',
       moduleKey: 'commerce.customer-context',
       role: 'action',
@@ -339,31 +324,19 @@ export const changeCustomerPaymentTermsAction = defineAction(
     schemaVersion: '1',
   },
   handleChangeCustomerPaymentTerms,
-  (transaction, scope, compositionRevision) => {
-    const { legalEntityId } = scope;
-    if (legalEntityId === undefined) {
-      return Effect.fail(
-        new OperationContextUnavailable({
-          code: 'operation_context_unavailable',
-          reason: 'Customer Payment Term changes require a trusted Legal Entity scope',
-        }),
-      );
-    }
-    return Effect.gen(function* makeChangePaymentTermServices() {
-      const catalog = yield* paymentTermCatalogPortFromEnvironment({
-        compositionRevision,
-        legalEntityId,
-        requestCorrelation: scope.correlationId,
-        tenantId: scope.tenantId,
-      });
-      return paymentTermsPersistenceForTransaction(
-        {
-          invoker: transaction,
-          scope: { ...scope, legalEntityId },
-        },
-        { catalog },
-      ).change;
-    });
-  },
-  { prepareServices: prepareCustomerPaymentTermsServices },
+  (transaction, scope) =>
+    scope.legalEntityId === undefined
+      ? Effect.fail(
+          new OperationContextUnavailable({
+            code: 'operation_context_unavailable',
+            reason: 'Payment Terms changes require the verified Legal Entity',
+          }),
+        )
+      : Effect.succeed(
+          paymentTermsPersistenceForTransaction({
+            invoker: transaction,
+            scope: { ...scope, legalEntityId: scope.legalEntityId },
+          }).change,
+        ),
+  { prepareServices: preparePaymentTermsServices },
 );

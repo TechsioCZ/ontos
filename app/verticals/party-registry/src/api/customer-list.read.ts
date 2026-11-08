@@ -5,7 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadLoadContext } from '@app/core-runtime';
+import type { ReadHandlerContext } from '@app/core-runtime';
 import { Effect } from 'effect';
 
 import {
@@ -15,11 +15,12 @@ import {
 } from '../../shared/apis/customer-list.ts';
 import type { CustomerListItem, CustomerListRequest } from '../../shared/apis/customer-list.ts';
 import type { CounterpartyPersistenceUnavailable } from '../../shared/domain/counterparty-errors.ts';
+import { rowsVisibleToListAccess } from '../access/list-access-rows.ts';
 import { listCustomerRecords } from '../services/customer-list-persistence.service.ts';
 
 const customerListEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'party.registry.api.customer-list',
   moduleKey: 'party.registry',
   role: 'api',
@@ -43,6 +44,21 @@ const customerListUnavailable = (cause: CounterpartyPersistenceUnavailable) =>
 
 export const customerListRead = defineRead(
   {
+    accessActor: {
+      callers: ['crm'],
+      subject: 'rights',
+      subjectWorkloads: ['demo.crm.party-intake'],
+      reason:
+        'CRM reconciles owner-held client identities through native Party operations under its bound intake workload; humans retain existing rights.',
+    },
+    accessDeclaration: {
+      key: 'party.registry.customer.list',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'counterparties', level: 'basic' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
     accessKind: 'list',
     entrypoint: customerListEntrypoint,
     evidencePolicy: {
@@ -52,22 +68,24 @@ export const customerListRead = defineRead(
     inputSchema: CustomerListRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: 'party.registry',
-    permissionTarget: 'legal_entity',
     policies: [],
     readKey: 'party.registry.api.customer-list',
     resultSchema: CustomerListResponseSchema,
     schemaVersion: '1',
   },
-  {
-    load: (input, context: ReadLoadContext<CustomerListServices>) =>
-      context.services.list(input).pipe(
-        Effect.mapError(customerListUnavailable),
-        Effect.map((items) => ({
-          evidence: { resultCount: items.length },
-          result: { items },
-        })),
-      ),
-  },
+  (input, context: ReadHandlerContext<CustomerListServices>) =>
+    context.services.list(input).pipe(
+      Effect.mapError(customerListUnavailable),
+      // The gate's row filter bounds the customers this caller may see (D16, O25).
+      Effect.map((listed) => {
+        const items = rowsVisibleToListAccess({
+          filter: context.listAccess,
+          row: ({ counterpartyRef }) => ({ recordKey: counterpartyRef.resourceId }),
+          rows: listed,
+        });
+        return { evidence: { resultCount: items.length }, result: { items } };
+      }),
+    ),
   Effect.fn('CustomerListRead.services')(function* makeCustomerListServices(transaction, scope) {
     const { legalEntityId } = scope;
     if (legalEntityId === undefined) {
@@ -88,5 +106,4 @@ export const customerListRead = defineRead(
         ),
     };
   }),
-  () => ({ kind: 'legal_entity', permission: 'read_counterparty' }),
 );

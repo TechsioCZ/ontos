@@ -1,5 +1,3 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { rm } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -11,16 +9,12 @@ import {
   loadDatabaseConnectionPair,
   SHELL_GATEWAY_ISSUER_IDENTITY,
   ActiveApplicationCompositionSnapshotSchema,
-  ContextAccessLive,
   OntosModuleDeploymentContractSchema,
-  canonicalizeApplicationComposition,
-  validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeGatewayScopeGrantRegistrar, makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import {
   createPartyWithAuthorization,
   addContactPointWithAuthorization,
@@ -77,12 +71,18 @@ import {
   profileReactivationEligibilityEvaluatorFactoryLive,
   profileReconfirmationPolicyUnavailableLive,
 } from '../../src/integrations/profile-reactivation-eligibility.ts';
-import { profileRetailPermissionReaderFactoryLive } from '../../src/integrations/retail-permission-reader.ts';
 import { profileCounterpartyRoleEligibilityResolverFactoryLive } from '../../src/profile-counterparty-role-eligibility.ts';
 import { partyRegistryRetailPartyResolverFactoryLive } from '../../src/integrations/party-registry-retail-party-resolver.ts';
+import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import {
+  describePriceGroupTemporalOwner,
+  makePriceGroupTemporalComposition,
+} from '../support/price-group-temporal-protocol.ts';
 
 const appRoot = fileURLToPath(new URL('../../../../', import.meta.url));
+const GUEST_PARTY_RESOLVE_CAPABILITY = 'party.registry.guest-party.resolve';
 const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
@@ -90,91 +90,25 @@ const services = NodeChildProcessSpawner.layer.pipe(
 const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const MarkerSchema = Schema.Struct({ appId: Schema.Literal('party-registry'), buildMarker: Schema.String });
 const ReadySchema = Schema.Struct({ marker: MarkerSchema, port: Schema.Number, type: Schema.Literal('ready') });
-const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 
 const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorityFixture')(
   function* makeGuestAuthorityFixture() {
-    // An executable owner fixture is process infrastructure, never a private cross-owner import.
-    const artifact = `${appRoot}verticals/party-registry/node_modules/.cache/ontos-1241/${randomUUID()}.mjs`;
-    yield* Effect.addFinalizer(() => Effect.promise(() => rm(artifact, { force: true })));
-    const bundle = yield* ChildProcess.make(
-      'mise',
-      [
-        'exec',
-        '--',
-        'pnpm',
-        'exec',
-        'esbuild',
-        'verticals/party-registry/tests/support/tenant-party-http.ts',
-        '--bundle',
-        '--platform=node',
-        '--format=esm',
-        '--packages=external',
-        `--outfile=${artifact}`,
-      ],
-      { cwd: appRoot, extendEnv: true, stderr: 'pipe', stdout: 'pipe' },
+    // Existing public metadata extraction and TEST entry share the same canonical compiled owner identity.
+    const { artifact, contract, marker } = yield* describePriceGroupTemporalOwner('party-registry');
+    const base = yield* makeEnrollmentApplicationCompositionSnapshot(ultramodernDeliveryUnit.buildMarker, []);
+    const ownContract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
+      base.composition.modules.find(({ deployment }) => deployment.appId === ultramodernDeliveryUnit.appId)
+        ?.contractDocument,
     );
-    const [bundleExit] = yield* Effect.all(
-      [bundle.exitCode, Stream.runDrain(bundle.stdout), Stream.runDrain(bundle.stderr)],
-      { concurrency: 3 },
-    );
-    expect(bundleExit).toBe(0);
-    const description = yield* ChildProcess.make(process.execPath, [artifact, '--describe'], {
-      cwd: appRoot,
-      extendEnv: true,
-      stderr: 'pipe',
-      stdout: 'pipe',
-    });
-    const [lines, descriptionExit] = yield* Effect.all(
-      [
-        description.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runCollect),
-        description.exitCode,
-        Stream.runDrain(description.stderr),
-      ],
-      { concurrency: 3 },
-    );
-    expect(descriptionExit).toBe(0);
-    const marker = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(MarkerSchema))(lines[0]);
-    const base = yield* makeEnrollmentApplicationCompositionSnapshot(marker.buildMarker, ['party-registry']);
-    const contract = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)(
-      makeModuleContractFixture({
-        appId: 'party-registry',
-        buildMarker: marker.buildMarker,
-        moduleId: 'party.registry',
-      }),
-    );
-    const contractDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
-      contract,
-    );
-    const composition = {
-      ...base.composition,
-      modules: base.composition.modules.map((module) =>
-        module.deployment.appId === 'party-registry'
-          ? {
-              ...module,
-              contract: { ...module.contract, sha256: hash(contractDocument) },
-              contractDocument,
-              moduleId: 'party.registry',
-              publicContract: {
-                id: 'party.registry',
-                sha256: hash(contractDocument),
-                version: contract.schemaVersion,
-              },
-            }
-          : module,
-      ),
-      revision: '0'.repeat(64),
-    };
-    const snapshot = yield* validateActiveApplicationCompositionSnapshot({
-      ...base,
-      composition: { ...composition, revision: hash(canonicalizeApplicationComposition(composition)) },
-    });
+    const snapshot = yield* makePriceGroupTemporalComposition([
+      { contract: ownContract, marker: ultramodernDeliveryUnit },
+      { contract, marker },
+    ]);
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: snapshot,
       mode: 'schema-only',
       purpose: 'stabilization-1241-guest-evidence',
     });
-    yield* isolated.assertClonedSchema();
     const sourceConnections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
     const ownerSchema = yield* ChildProcess.make(
       'mise',
@@ -374,6 +308,7 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
     );
     const fixture = yield* Effect.acquireRelease(
       makeLiveOperationFixture({
+        access: 'allowed',
         actionExecutor: 'manager-only',
         actionKeys: [
           'party.registry.create-party',
@@ -387,9 +322,12 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
         additionalLegalEntity: 'same-tenant',
         adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
         allowedAudiences: ['party-registry', 'commerce-customer-context'],
+        applicationComposition: { load: Effect.succeed(snapshot) },
         authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
         compositionRevision: snapshot.composition.revision,
+        expectedDeployment: ultramodernDeliveryUnit,
         moduleKeys: ['party.registry', 'commerce.customer-context'],
+        ownerRegistration: commerceCustomerContextRegistration,
         runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
       }),
       (resource) => resource.close().pipe(Effect.orDie),
@@ -431,6 +369,15 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
     const ready = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReadySchema))(first.value);
     expect(ready.marker).toEqual(marker);
     const baseUrl = `http://127.0.0.1:${ready.port}/party-registry-api`;
+    // The Party fixture's own gate allows every capability until a suite revokes one over this control.
+    const partyControl = (path: 'grant-party-read' | 'revoke-party-read', capabilityPrefix: string) =>
+      Effect.promise(async () => {
+        const response = await fetch(
+          `http://127.0.0.1:${ready.port}/__1258/${path}?capabilityPrefix=${encodeURIComponent(capabilityPrefix)}`,
+          { method: 'POST' },
+        );
+        return response.status;
+      });
     const authorization = Effect.fn('GuestAuthorityTest.authorization')(function* authorization(actor = principal) {
       const id = yield* nextId;
       // Registration checks this same owned PostgreSQL clock; sample it once for both exact claims.
@@ -513,9 +460,11 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
     const anotherTenant = Effect.fn('GuestAuthorityTest.anotherTenant')(function* anotherTenant() {
       const other = yield* Effect.acquireRelease(
         makeLiveOperationFixture({
+          access: 'allowed',
           actionExecutor: 'manager-only',
           actionKeys: [
             'party.registry.create-party',
+            'party.registry.resolve-duplicate-candidate-create',
             'party.registry.add-contact-point',
             attributeGuestRetailCustomerAction.descriptor.actionKey,
           ],
@@ -534,28 +483,33 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
     });
     const authorizationContext = yield* Effect.context<Crypto.Crypto>();
     const guestFactory = Layer.succeed(PartyRegistryGuestResolverFactory, {
-      make: (scope) =>
-        makePartyRegistryGuestResolver(scope, (request, correlation) =>
-          Effect.gen(function* actualPartyGuestRead() {
-            const actor = actors.get(`${scope.tenantId}:${scope.legalEntityId}`);
-            assert.isOk(actor !== undefined);
-            return yield* executeGuestPartyResolutionWithAuthorization(
-              request,
-              yield* authorization(actor).pipe(Effect.provideContext(authorizationContext), Effect.orDie),
-              correlation,
-              {
-                baseUrl,
-                compositionRevision: snapshot.composition.revision,
-              },
-            );
-          }),
+      make: ({ scope }) =>
+        makePartyRegistryGuestResolver(
+          {
+            legalEntityId: scope.legalEntityId ?? '',
+            requestCorrelation: scope.correlationId,
+            tenantId: scope.tenantId,
+          },
+          (request, correlation) =>
+            Effect.gen(function* actualPartyGuestRead() {
+              const actor = actors.get(`${scope.tenantId}:${scope.legalEntityId}`);
+              assert.isOk(actor !== undefined);
+              return yield* executeGuestPartyResolutionWithAuthorization(
+                request,
+                yield* authorization(actor).pipe(Effect.provideContext(authorizationContext), Effect.orDie),
+                correlation,
+                {
+                  baseUrl,
+                  compositionRevision: snapshot.composition.revision,
+                },
+              );
+            }),
         ),
     });
     const owners = Layer.mergeAll(
       guestFactory,
       profileCounterpartyRoleEligibilityResolverFactoryLive,
       partyRegistryRetailPartyResolverFactoryLive,
-      profileRetailPermissionReaderFactoryLive.pipe(Layer.provide(ContextAccessLive)),
       profileReactivationEligibilityEvaluatorFactoryLive.pipe(
         Layer.provide(profileReconfirmationPolicyUnavailableLive),
       ),
@@ -613,19 +567,19 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
       return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.Unknown)))(row?.rows);
     });
     const permissions = Effect.fn('GuestAuthorityTest.permissionCounts')(function* permissionCounts(actor = principal) {
-      const [row] = yield* admin.execute<{ grantCount: number; mutationCount: number }>(
+      const [row] = yield* admin.execute<{ bindingCount: number; grantCount: number }>(
         sql`
         select (select count(*)::integer from commerce_customer_context.counterparty_commerce_access_grants
           where tenant_id = ${actor.tenantId} and legal_entity_id = ${actor.legalEntityId}) as "grantCount",
-          (select count(*)::integer from commerce_customer_context.retail_portal_profile_binding_permission_mutations
-          where tenant_id = ${actor.tenantId} and legal_entity_id = ${actor.legalEntityId}) as "mutationCount"
+          (select count(*)::integer from commerce_customer_context.retail_portal_profile_bindings
+          where tenant_id = ${actor.tenantId} and legal_entity_id = ${actor.legalEntityId}) as "bindingCount"
       `,
         'objects',
       );
       const counts = yield* Schema.decodeUnknownEffect(
-        Schema.Struct({ grantCount: Schema.Int, mutationCount: Schema.Int }),
+        Schema.Struct({ bindingCount: Schema.Int, grantCount: Schema.Int }),
       )(row);
-      expect(counts).toEqual({ grantCount: 0, mutationCount: 0 });
+      expect(counts).toEqual({ bindingCount: 0, grantCount: 0 });
       return counts;
     });
     const resolve = (
@@ -683,9 +637,9 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
       const created = yield* createPartyWithAuthorization(
         {
           candidate: {
-            displayName: `Guest organization ${ico}`,
+            businessName: `Guest organization ${ico}`,
             evidenceRefs: [evidence],
-            officialIdentifiers: [{ identifierType: 'ICO', value: ico, verification: 'VERIFIED' }],
+            officialIdentifiers: [{ identifierType: 'ICO', value: ico }],
             partyType: 'ORGANIZATION',
             provenance: { method: 'REVIEWED_DOCUMENT', source: 'guest-authority-native' },
             subjectEvidence: [subjectEvidence],
@@ -695,38 +649,38 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
         yield* authorization(actor),
         yield* options,
       );
-      assert.isOk(created.outcome === 'CREATED' || created.outcome === 'MATCHED_EXISTING');
+      if (created.outcome === 'AMBIGUOUS') {
+        const reviewed = yield* resolveDuplicateCandidateCreateWithAuthorization(
+          {
+            caseRef: created.caseRef,
+            expectedRevision: 1,
+            reason: 'Reviewed the exact organization independently of declared identifiers',
+          },
+          yield* authorization(actor),
+          yield* options,
+        );
+        assert.isOk(reviewed.partyRef !== null);
+        return reviewed.partyRef;
+      }
       return created.partyRef;
     });
     const addWeakContact = Effect.fn('GuestAuthorityTest.addWeakContact')(function* addWeakContact(
       partyRef: Parameters<typeof addContactPointWithAuthorization>[0]['partyRef'],
       evidence: string,
-      verifiedAt?: DateTime.Utc,
+      authoritativeSource = false,
     ) {
-      let verification: Parameters<typeof addContactPointWithAuthorization>[0]['verification'] = {
-        state: 'UNVERIFIED',
-      };
-      if (verifiedAt !== undefined) {
-        verification = {
-          method: 'MANUAL_CONFIRMATION',
-          state: 'VERIFIED',
-          verifiedAt,
-          verifierReference: 'channel-only',
-        };
-      }
       return yield* addContactPointWithAuthorization(
         {
           contactPoint: { preferred: false, type: 'EMAIL', value: `${yield* nextId}@guest.test` },
           partyRef,
           privacyClassification: 'PERSONAL',
           provenance: {
-            authoritative: verifiedAt !== undefined,
+            authoritative: authoritativeSource,
             evidenceReference: evidence,
             method: 'MANUAL_CONFIRMATION',
             source: 'USER_ASSERTION',
           },
           validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
-          verification,
         },
         yield* authorization(),
         yield* options,
@@ -746,6 +700,7 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
       fixture,
       legalEntityRef,
       options,
+      partyControl,
       permissions,
       principal,
       profiles,
@@ -776,6 +731,7 @@ const publicGuestAttributionAuthority = Effect.fn('GuestEvidenceTest.publicGuest
       fixture,
       legalEntityRef,
       options,
+      partyControl,
       profiles,
       snapshot,
     } = test;
@@ -787,9 +743,9 @@ const publicGuestAttributionAuthority = Effect.fn('GuestEvidenceTest.publicGuest
       >[number]['subjectKey']
     >()(yield* nextId);
     const candidate = {
-      displayName: 'Evidence-bound external organization',
+      businessName: 'Evidence-bound external organization',
       evidenceRefs: ['original-owner-proof'],
-      officialIdentifiers: [{ identifierType: 'ICO' as const, value: '27074358', verification: 'VERIFIED' as const }],
+      officialIdentifiers: [{ identifierType: 'ICO' as const, value: '27074358' }],
       partyType: 'ORGANIZATION' as const,
       provenance: { method: 'REVIEWED_DOCUMENT', source: 'guest-authority-native' },
       subjectEvidence: [
@@ -818,7 +774,6 @@ const publicGuestAttributionAuthority = Effect.fn('GuestEvidenceTest.publicGuest
           source: 'USER_ASSERTION',
         },
         validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
-        verification: { state: 'UNVERIFIED' },
       },
       yield* authorization(),
       yield* options,
@@ -846,7 +801,18 @@ const publicGuestAttributionAuthority = Effect.fn('GuestEvidenceTest.publicGuest
       yield* authorization(),
       yield* options,
     );
-    expect(proven).toMatchObject({ outcome: 'MATCHED_EXISTING', partyRef: created.partyRef });
+    assert.isOk(proven.outcome === 'AMBIGUOUS');
+    const provenMatch = yield* resolveDuplicateCandidateMatchWithAuthorization(
+      {
+        caseRef: proven.caseRef,
+        expectedRevision: 1,
+        reason: 'Reviewed this exact Guest binding against the canonical organization',
+        selectedPartyRef: created.partyRef,
+      },
+      yield* authorization(),
+      yield* options,
+    );
+    expect(provenMatch).toMatchObject({ outcome: 'MATCH_EXISTING', partyRef: created.partyRef });
     const idempotencyKey = yield* nextId;
     const requestedAt = DateTime.formatIso(yield* DateTime.now);
     const attributed = yield* attribute(provenRoot, evidenceRef, idempotencyKey, requestedAt);
@@ -871,6 +837,8 @@ const publicGuestAttributionAuthority = Effect.fn('GuestEvidenceTest.publicGuest
     expect((yield* attribute(`wrong-${provenRoot}`, evidenceRef, yield* nextId, requestedAt)).outcome).toBe(
       'PARTY_INVALID',
     );
+    // A caller without the guest-resolution right is refused by the Party owner itself.
+    expect(yield* partyControl('revoke-party-read', GUEST_PARTY_RESOLVE_CAPABILITY)).toBe(204);
     const denied = yield* executeGuestPartyResolutionWithAuthorization(
       {
         correlationRoot: provenRoot,
@@ -878,10 +846,11 @@ const publicGuestAttributionAuthority = Effect.fn('GuestEvidenceTest.publicGuest
         legalEntityRef,
         requestedAt: yield* DateTime.now,
       },
-      yield* authorization({ ...fixture.legalEntityOnly, legalEntityId: fixture.legalEntityId }),
+      yield* authorization(),
       yield* nextId,
       { baseUrl, compositionRevision: snapshot.composition.revision },
     ).pipe(Effect.flip);
+    expect(yield* partyControl('grant-party-read', GUEST_PARTY_RESOLVE_CAPABILITY)).toBe(204);
     expect(Predicate.isTagged(denied, 'GuestPartyResolutionForbiddenProblem')).toBe(true);
     expect(yield* profiles()).toHaveLength(initialProfiles.length + 1);
     const secondKey = Brand.nominal<
@@ -893,8 +862,8 @@ const publicGuestAttributionAuthority = Effect.fn('GuestEvidenceTest.publicGuest
       {
         candidate: {
           ...candidate,
-          displayName: 'Different external organization',
-          officialIdentifiers: [{ identifierType: 'ICO', value: '26168685', verification: 'VERIFIED' }],
+          businessName: 'Different external organization',
+          officialIdentifiers: [{ identifierType: 'ICO', value: '26168685' }],
           subjectEvidence: candidate.subjectEvidence.map((item) => ({ ...item, subjectKey: secondKey })),
         },
       },
@@ -914,7 +883,6 @@ const publicGuestAttributionAuthority = Effect.fn('GuestEvidenceTest.publicGuest
           source: 'USER_ASSERTION',
         },
         validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
-        verification: { state: 'UNVERIFIED' },
       },
       yield* authorization(),
       yield* options,
@@ -962,14 +930,14 @@ const publicWeakContactEnd = Effect.fn('GuestEvidenceTest.publicWeakContactEnd')
   ).toEqual({ outcome: 'PARTY_INVALID' });
   const beforeEnd = yield* DateTime.now;
   expect((yield* test.resolve(root, evidence, beforeEnd)).outcome).toBe('INVALID_OR_INSUFFICIENT_EVIDENCE');
-  yield* test.addWeakContact(party, `verified-${evidence}`, yield* DateTime.now);
-  expect((yield* test.resolve(`verified-${root}`, `verified-${evidence}`, yield* DateTime.now)).outcome).toBe(
+  yield* test.addWeakContact(party, `authoritative-${evidence}`, true);
+  expect((yield* test.resolve(`authoritative-${root}`, `authoritative-${evidence}`, yield* DateTime.now)).outcome).toBe(
     'INVALID_OR_INSUFFICIENT_EVIDENCE',
   );
   expect(
     yield* test.attribute(
-      `verified-${root}`,
-      `verified-${evidence}`,
+      `authoritative-${root}`,
+      `authoritative-${evidence}`,
       yield* nextId,
       DateTime.formatIso(yield* DateTime.now),
     ),
@@ -1022,8 +990,8 @@ const publicReviewedGuest = Effect.fn('GuestEvidenceTest.publicReviewedGuest')(f
   >()(yield* nextId);
   const originalEvidence = `original-person-${yield* nextId}`;
   const candidate = {
-    displayName: 'Reviewed concrete Guest person',
     evidenceRefs: [originalEvidence],
+    firstName: 'Reviewed concrete Guest person',
     officialIdentifiers: [],
     partyType: 'PERSON' as const,
     provenance: { method: 'DIRECT_INTERACTION', source: 'guest-review-native' },
@@ -1039,18 +1007,8 @@ const publicReviewedGuest = Effect.fn('GuestEvidenceTest.publicReviewedGuest')(f
     ],
     validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
   };
-  const openedSeed = yield* createPartyWithAuthorization(
-    { candidate },
-    yield* test.authorization(),
-    yield* test.options,
-  );
-  assert.isOk(openedSeed.outcome === 'AMBIGUOUS');
-  const seed = yield* resolveDuplicateCandidateCreateWithAuthorization(
-    { caseRef: openedSeed.caseRef, expectedRevision: 1, reason: 'Reviewed concrete person without strong identifier' },
-    yield* test.authorization(),
-    yield* test.options,
-  );
-  assert.isOk(seed.partyRef !== null);
+  const seed = yield* createPartyWithAuthorization({ candidate }, yield* test.authorization(), yield* test.options);
+  assert.isOk(seed.outcome === 'CREATED');
   yield* test.addWeakContact(seed.partyRef, evidence);
   const bound = {
     ...candidate,
@@ -1175,10 +1133,10 @@ const publicScopeAndArchive = Effect.fn('GuestEvidenceTest.publicScopeAndArchive
   const foreignCase = yield* createPartyWithAuthorization(
     {
       candidate: {
-        displayName: 'Foreign retained Guest candidate',
+        businessName: 'Foreign retained Guest candidate',
         evidenceRefs: [caseEvidence],
-        officialIdentifiers: [],
-        partyType: 'PERSON',
+        officialIdentifiers: [{ identifierType: 'ICO', value: '27074358' }],
+        partyType: 'ORGANIZATION',
         provenance: { method: 'DIRECT_INTERACTION', source: 'guest-scope-native' },
         subjectEvidence: [
           {
@@ -1186,7 +1144,7 @@ const publicScopeAndArchive = Effect.fn('GuestEvidenceTest.publicScopeAndArchive
             evidenceRef: caseEvidence,
             guestBinding: { correlationRoot: caseRoot, legalEntityRef: test.legalEntityRef },
             kind: 'ACTOR_ATTESTATION',
-            observedSubject: 'PERSON',
+            observedSubject: 'ORGANIZATION',
             statement: 'Observed this concrete foreign candidate',
             subjectKey: caseSubject,
           },

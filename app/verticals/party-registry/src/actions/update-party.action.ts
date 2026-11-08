@@ -98,6 +98,15 @@ const handle = Effect.fn('UpdatePartyAction.handle')(function* updateParty(
 });
 export const updatePartyAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.party.update',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'party-identity', level: 'extended' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessTarget: (payload) => ({ moduleKey: 'party.registry', recordKey: payload.partyRef.resourceId }),
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.update-party.access.v1',
@@ -108,10 +117,7 @@ export const updatePartyAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.update-party',
       moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
@@ -123,7 +129,6 @@ export const updatePartyAction = defineAction(
     policies: [],
     resultSchema: UpdatePartyResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_party_identity',
   },
   handle,
   (transaction, scope) =>
@@ -131,7 +136,9 @@ export const updatePartyAction = defineAction(
       update: (payload: UpdatePartyPayload, actionInvocationId: string) =>
         updatePartyRecord(transaction, scope.tenantId, {
           actionInvocationId,
-          displayName: payload.displayName,
+          firstName: payload.firstName,
+          lastName: payload.lastName,
+          businessName: payload.businessName,
           expectedRevision: payload.expectedRevision,
           externalEvidence: payload.externalEvidence,
           partyId: payload.partyRef.resourceId,

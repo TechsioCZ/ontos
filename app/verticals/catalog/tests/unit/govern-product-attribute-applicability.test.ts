@@ -129,7 +129,7 @@ describe('govern Product Attribute applicability Action', () => {
 
   it('declares conflict and unavailable failures under the governed Action lifecycle', () => {
     const { descriptor } = governProductAttributeApplicabilityAction;
-    expect(descriptor.entrypoint.authorization).toEqual({ kind: 'action_execution', provisioning: 'explicit' });
+    expect(descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
     expect(descriptor.idempotency).toBe('required');
     expect(descriptor.legalEntityScope).toBe('forbidden');
     expect(

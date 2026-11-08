@@ -1,4 +1,4 @@
-import { ReadHandlerUnavailable, ReadRuntime, TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { ReadHandlerUnavailable, ReadRuntime, isVerifiedGatewayPrincipalContext } from '@app/core-runtime';
 import type { ReadCoreError, TrustedPrincipalContext } from '@app/core-runtime';
 import { Crypto, Effect, Schema } from 'effect';
 
@@ -68,15 +68,19 @@ export const readCustomerOwnAddressBook = Effect.fn('CustomerOwnAddressBook.read
   const sessionRef = yield* Schema.decodeEffect(CommerceSessionReferenceSchema)(scope.sessionRef).pipe(
     Effect.catchTag('SchemaError', () => unavailable()),
   );
-  const principal = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
-    authBindingId: scope.authority.authBindingId,
-    authContextRef: sessionRef,
-    authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
-    authMethod: 'session',
-    legalEntityId: scope.legalEntityId,
-    principalId: scope.authority.principalId,
-    tenantId: scope.tenantId,
-  }).pipe(Effect.catchTag('SchemaError', () => unavailable()));
+  const { principal } = scope.authority;
+  if (
+    !isVerifiedGatewayPrincipalContext(principal) ||
+    principal.authBindingId !== scope.authority.authBindingId ||
+    principal.authContextRef !== sessionRef ||
+    principal.authenticationNamespaceId !== COMMERCE_AUTHENTICATION_NAMESPACE_ID ||
+    principal.authMethod !== 'session' ||
+    principal.legalEntityId !== scope.legalEntityId ||
+    principal.principalId !== scope.authority.principalId ||
+    principal.tenantId !== scope.tenantId
+  ) {
+    return yield* unavailable();
+  }
   const profile = {
     kind: 'RETAIL',
     profileRef: {

@@ -2,11 +2,13 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug confirm-gtin
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { ConfirmGtinPayloadSchema, ConfirmGtinResultSchema } from '../actions/confirm-gtin.ts';
 
 export { ConfirmGtinPayloadSchema } from '../actions/confirm-gtin.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const ConfirmGtinActionInvalidProblemSchema = makeProblemDetailsSchema('ConfirmGtinActionInvalidProblem', 400);
 export const ConfirmGtinActionAuthenticationProblemSchema = makeProblemDetailsSchema(
@@ -18,6 +20,7 @@ export const ConfirmGtinActionForbiddenProblemSchema = makeProblemDetailsSchema(
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -125,7 +128,7 @@ export const ConfirmGtinActionApi = HttpApi.make('ConfirmGtinActionApi').add(
       HttpApiEndpoint.post('execute', '/catalog/actions/confirm-gtin', {
         error: actionErrors,
         payload: Schema.toEncoded(ConfirmGtinPayloadSchema),
-        success: ConfirmGtinResultSchema,
+        success: [ActionProposalAcceptedSchema, ConfirmGtinResultSchema],
       }),
     )
     .middleware(ConfirmGtinActionSchemaErrorMiddleware),

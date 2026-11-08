@@ -6,9 +6,14 @@ import {
   prepareCatalogOpenSelectionPopulation,
   validatePreparedCatalogScope,
 } from '../services/catalog-open-selection-preflight.ts';
-import type { ActionHandlerContext, ActionServiceFactory, ActionServicePreflight } from '@app/core-runtime';
+import type {
+  ActionHandlerContext,
+  ActionServiceFactory,
+  ActionServicePreparationContext,
+  ActionServicePreflight,
+} from '@app/core-runtime';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect, Match, Schema } from 'effect';
+import { Effect, Match, Schema, Option } from 'effect';
 import { captureCatalogActionResult } from '../persistence/catalog-action-result-snapshot.ts';
 
 import {
@@ -25,7 +30,7 @@ import { PackageDefinitionSelectionRevisionSchema } from '../../shared/domain/ca
 import { PackageDefinitionRefSchema } from '../../shared/resources/package-definition.ts';
 import { packageActivationPersistenceForScope } from '../persistence/package-activation-persistence.ts';
 import type { PackageActivationPersistence } from '../persistence/package-activation-persistence.ts';
-import { cartOpenSelectionPopulationFromEnvironment } from '../../shared/domain/catalog-open-selection-population.ts';
+import { cartOpenSelectionPopulationForScope } from '../../shared/domain/catalog-open-selection-population.ts';
 import { packageActivationSelectionImpactForScope } from '../persistence/catalog-selection-change-impact.ts';
 import { packageContentBasisForTransaction } from './package-definition-action-support.ts';
 
@@ -111,7 +116,7 @@ const activatePackageDefinitionPersistenceServiceFactory = Effect.fn('ActivatePa
       readonly scope: Parameters<typeof packageActivationPersistenceForScope>[1];
     },
   ) {
-    const configuredPopulation = population ?? (yield* cartOpenSelectionPopulationFromEnvironment);
+    const configuredPopulation = population ?? Option.getOrUndefined(yield* cartOpenSelectionPopulationForScope(scope));
     return packageActivationPersistenceForScope(
       transaction,
       scope,
@@ -168,20 +173,37 @@ const activatePackageDefinitionActionServices = (
     ),
   );
 
-const prepareActivatePackageDefinitionActionServices: ActionServicePreflight<
+const prepareActivatePackageDefinitionActionServices = Effect.fn('prepareActivatePackageDefinitionActionServices')(
+  function* prepareServices(
+    _payload: typeof ActivatePackageDefinitionPayloadSchema.Type,
+    context: ActionServicePreparationContext,
+  ) {
+    const population = yield* prepareCatalogOpenSelectionPopulation(context);
+    return (
+      transaction: Parameters<ActionServiceFactory<never>>[0],
+      scope: Parameters<ActionServiceFactory<never>>[1],
+      revision: Parameters<ActionServiceFactory<never>>[2],
+    ) =>
+      validatePreparedCatalogScope(context, scope, revision).pipe(
+        Effect.flatMap(() => activatePackageDefinitionActionServices(transaction, { population, scope })),
+      );
+  },
+) satisfies ActionServicePreflight<
   typeof ActivatePackageDefinitionPayloadSchema.Type,
   Effect.Success<ReturnType<typeof activatePackageDefinitionActionServices>>,
-  never
-> = Effect.fn('prepareActivatePackageDefinitionActionServices')(function* prepareServices(_payload, context) {
-  const population = yield* prepareCatalogOpenSelectionPopulation(context);
-  return (transaction, scope, revision) =>
-    validatePreparedCatalogScope(context, scope, revision).pipe(
-      Effect.flatMap(() => activatePackageDefinitionActionServices(transaction, { population, scope })),
-    );
-});
+  typeof PackageDefinitionActionErrorSchema.Type
+>;
 
 export const activatePackageDefinitionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.package-definition.activate',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'package-definition', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.activate-package-definition.access.v1',
@@ -193,7 +215,7 @@ export const activatePackageDefinitionAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: moduleId,
       role: 'action',

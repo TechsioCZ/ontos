@@ -1,50 +1,15 @@
 /* oxlint-disable anti-slop/no-unknown-parameters -- The HTTP mapper is a schema-decoded generic boundary and revalidates every value before release; expires: 2027-03-31. */
-import { Cause, Clock, Effect, Match, Option, Random, Redacted, Ref, Result, Schema } from 'effect';
+import { Cause, Effect, Match, Option, Redacted, Result, Schema } from 'effect';
 import { HttpEffect, HttpServerResponse } from 'effect/http';
 import type { HttpServerRequest } from 'effect/http';
 
 import type { OperationalScopeRequest } from '../operations/context.ts';
 import type { TrustedPrincipalContext } from '../actions/context.ts';
 import { transportIdentifier } from '../actions/string-schemas.ts';
-import { withRequestPermissionDecisions } from '../permissions/context-access.ts';
 import type { ReadRegistration } from '../reads/definition.ts';
 import type { ReadCoreError } from '../reads/errors.ts';
 import { isReadCoreError } from '../reads/errors.ts';
 import { ReadRuntime } from '../reads/runtime.ts';
-import { observeReadPhase, readServerTiming, recordReadTiming } from '../reads/diagnostics.ts';
-import type { ReadTiming } from '../reads/diagnostics.ts';
-import { sanitizeErrorMessage } from '../observability/unavailable-mapping.ts';
-
-// Opaque diagnostics only: no services, sockets, identities or request data survive a request.
-const isolateReads = Ref.makeUnsafe<{ readonly id: string | null; readonly ordinal: number }>({
-  id: null,
-  ordinal: 0,
-});
-const nextIsolateRead = Random.nextInt.pipe(
-  Effect.flatMap((random) =>
-    Ref.modify(isolateReads, (previous) => {
-      const next = { id: previous.id ?? Math.abs(random).toString(36), ordinal: previous.ordinal + 1 };
-      return [next, next];
-    }),
-  ),
-);
-
-/**
- * Bounded, single-line identity of the first defect: its class and top stack frame, so a 500 names the code that
- * failed. The defect message is never logged: it can carry private database or payload detail.
- */
-const DefectIdentitySchema = Schema.Struct({ name: Schema.String, stack: Schema.optional(Schema.String) });
-const defectLogFields = (cause: Cause.Cause<unknown>) => {
-  const defect = Cause.findDefect(cause);
-  const identity = Result.isSuccess(defect)
-    ? Schema.decodeUnknownOption(DefectIdentitySchema)(defect.success)
-    : Option.none();
-  if (Option.isNone(identity)) {
-    return { defectClass: 'unknown' };
-  }
-  const frame = identity.value.stack?.split('\n').find((line) => line.trim().startsWith('at ')) ?? '';
-  return { defectClass: identity.value.name, defectFrame: sanitizeErrorMessage(frame.trim()) };
-};
 
 interface HttpProblem<Status extends number> {
   readonly status: Status;
@@ -214,6 +179,25 @@ export function classifyReadCoreError(
   );
 }
 
+const readCoreErrorDiagnostic = (error: ReadCoreError) =>
+  Match.value(error).pipe(
+    Match.tags({
+      ReadEvidenceValidationError: () => ({
+        failureCategory: 'evidence_validation',
+        reasonCode: 'read_evidence_invalid',
+      }),
+      ReadHandlerExecutionError: () => ({
+        failureCategory: 'core_execution',
+        reasonCode: 'read_handler_execution_failed',
+      }),
+      ReadResultValidationError: () => ({
+        failureCategory: 'result_validation',
+        reasonCode: 'read_result_invalid',
+      }),
+    }),
+    Match.option,
+  );
+
 const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
 );
@@ -261,6 +245,18 @@ type GovernedReadAuthenticatorRequirements<Authenticator> = Authenticator extend
 type GovernedReadDomainMapperResult<Mapper> = Mapper extends (...arguments_: never[]) => infer Problem
   ? Problem
   : never;
+
+const invokeGovernedReadDomainMapper = <
+  DomainFailure,
+  Mapper extends (error: DomainFailure) => GovernedReadDomainProblem,
+>(
+  mapper: Mapper,
+  error: DomainFailure,
+): GovernedReadDomainMapperResult<Mapper> =>
+  // SAFETY: calling the exact mapper produces its declared ReturnType; TypeScript cannot
+  // retain that relationship for a still-generic function value.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Validated generic invocation; expires: 2027-03-31.
+  mapper(error) as GovernedReadDomainMapperResult<Mapper>;
 
 interface GovernedReadHttpOptions<
   InputSchema extends Schema.ConstraintDecoder<unknown> & Schema.ConstraintEncoder<unknown>,
@@ -461,7 +457,7 @@ export function makeGovernedReadHttpHandler<
   DomainErrorSchema extends Schema.ConstraintDecoder<{
     readonly _tag: string;
   }> = typeof Schema.Never,
-  DomainProblem extends GovernedReadDomainProblem = never,
+  DomainErrorMapper extends ((error: DomainErrorSchema['Type']) => GovernedReadDomainProblem) | undefined = undefined,
 >(
   options: {
     /** Trusted receiver configuration, never supplied by the HTTP caller. */
@@ -490,36 +486,12 @@ export function makeGovernedReadHttpHandler<
       ReadRequirements,
       DomainErrorSchema
     >;
-  } & Readonly<{ mapDomainError?: ((error: DomainErrorSchema['Type']) => DomainProblem) | undefined }>,
+  } & Readonly<{ mapDomainError?: DomainErrorMapper }>,
 ) {
   return Effect.fn('GovernedReadHttp.handle')(function* handleGovernedRead({
     payload,
     request,
   }: GovernedReadRequest<Schema.Schema.Type<InputSchema>>) {
-    const isolate = yield* nextIsolateRead;
-    const timings = yield* Ref.make<readonly ReadTiming[]>([]);
-    let encodeStartedAt: bigint | undefined;
-    yield* HttpEffect.appendPreResponseHandler(
-      Effect.fn('GovernedRead.reportTiming')(function* reportReadTiming(
-        _request: HttpServerRequest.HttpServerRequest,
-        response: HttpServerResponse.HttpServerResponse,
-      ) {
-        if (encodeStartedAt !== undefined) {
-          yield* recordReadTiming(timings, 'read-encode', encodeStartedAt);
-        }
-        const entries = yield* Ref.get(timings);
-        yield* Effect.logInfo('Governed read phases completed').pipe(
-          Effect.annotateLogs({ isolate, readKey: options.registration.descriptor.readKey, timings: entries }),
-        );
-        const previous = response.headers['server-timing'];
-        const header = `owner-isolate;desc="${isolate.id}:${isolate.ordinal}", ${readServerTiming(entries)}`;
-        return HttpServerResponse.setHeader(
-          response,
-          'server-timing',
-          previous === undefined ? header : `${previous}, ${header}`,
-        );
-      }),
-    );
     let correlationId: string | undefined;
     const execute = Effect.gen(function* executeGovernedRead() {
       correlationId = request.headers['x-correlation-id'];
@@ -532,12 +504,10 @@ export function makeGovernedReadHttpHandler<
       if (Result.isFailure(Schema.decodeUnknownResult(ReadCorrelationIdSchema)(correlationId))) {
         return yield* Effect.fail(options.problems.invalid());
       }
-      const principal = yield* options
-        .authenticatePrincipal(Redacted.make(request.headers['authorization']), {
-          authentication: options.problems.authentication,
-          unavailable: options.problems.unavailable,
-        })
-        .pipe(observeReadPhase('read-authentication', timings));
+      const principal = yield* options.authenticatePrincipal(Redacted.make(request.headers['authorization']), {
+        authentication: options.problems.authentication,
+        unavailable: options.problems.unavailable,
+      });
       // HttpApi has decoded the payload; Core validates the schema's encoded input itself.
       const encodedInput = yield* Schema.encodeEffect(options.registration.descriptor.inputSchema)(payload).pipe(
         Effect.orDie,
@@ -553,7 +523,6 @@ export function makeGovernedReadHttpHandler<
           input: encodedInput,
           principal,
           registration: options.registration,
-          timings,
           transport: { correlationId },
         })
         .pipe(
@@ -564,7 +533,7 @@ export function makeGovernedReadHttpHandler<
               never,
               | Authentication
               | Forbidden
-              | DomainProblem
+              | GovernedReadDomainMapperResult<DomainErrorMapper>
               | Internal
               | Invalid
               | NotFound
@@ -574,20 +543,13 @@ export function makeGovernedReadHttpHandler<
               HttpServerRequest.HttpServerRequest
             > => {
               if (isReadCoreError(error)) {
-                const problem = classifyReadCoreError(error, options.problems);
-                const diagnostic =
-                  problem.status === 503 || problem.status === 500
-                    ? Effect.logError('Governed read failed').pipe(
-                        Effect.annotateLogs({
-                          code: error.code,
-                          correlationId,
-                          failureTag: error._tag,
-                          readKey: options.registration.descriptor.readKey,
-                          reason: error.reason,
-                        }),
-                      )
-                    : Effect.void;
-                return diagnostic.pipe(Effect.andThen(failProblem(problem)));
+                const failure = failProblem(classifyReadCoreError(error, options.problems));
+                const diagnostic = readCoreErrorDiagnostic(error);
+                return Option.isNone(diagnostic)
+                  ? failure
+                  : Effect.annotateLogs(Effect.logError('Governed-read HTTP Core failure'), diagnostic.value).pipe(
+                      Effect.andThen(failure),
+                    );
               }
               const { domainErrorSchema } = options.registration.descriptor;
               if (domainErrorSchema === undefined || options.mapDomainError === undefined) {
@@ -597,7 +559,15 @@ export function makeGovernedReadHttpHandler<
               if (Option.isNone(decoded)) {
                 return failProblem(options.problems.internal());
               }
-              const problem = options.mapDomainError(decoded.value);
+              const problem = invokeGovernedReadDomainMapper<
+                DomainErrorSchema['Type'],
+                Exclude<DomainErrorMapper, undefined>
+              >(
+                // SAFETY: the undefined branch returned above; this is the exact declared mapper.
+                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Narrowed generic optional mapper; expires: 2027-03-31.
+                options.mapDomainError as Exclude<DomainErrorMapper, undefined>,
+                decoded.value,
+              );
               return isGovernedReadDomainProblem(problem)
                 ? Effect.fail(problem)
                 : failProblem(options.problems.internal());
@@ -607,17 +577,10 @@ export function makeGovernedReadHttpHandler<
     });
 
     return yield* execute.pipe(
-      withRequestPermissionDecisions,
-      Effect.catchCauseIf(Cause.hasDies, (cause) =>
+      Effect.catchCauseIf(Cause.hasDies, () =>
         Effect.annotateLogs(Effect.logError('Unexpected governed-read HTTP defect'), {
           correlationId: correlationId === undefined || correlationId.trim().length === 0 ? 'missing' : correlationId,
-          ...defectLogFields(cause),
         }).pipe(Effect.andThen(Effect.fail(options.problems.internal()))),
-      ),
-      Effect.onExit(
-        Effect.fn('GovernedRead.beginEncoding')(function* beginEncoding() {
-          encodeStartedAt = yield* Clock.monotonicTimeNanos;
-        }),
       ),
     );
   });

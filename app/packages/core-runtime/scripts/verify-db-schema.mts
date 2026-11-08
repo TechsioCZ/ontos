@@ -351,8 +351,12 @@ const verifyApplicationCompositionAuthority = (
       authority.policy_count !== 1 ||
       authority.select_policy_count !== 1
     ) {
+      const details =
+        authority === undefined
+          ? 'table is missing'
+          : `owner access=${authority.can_assume_owner}, RLS=${authority.relrowsecurity}, SELECT=${authority.select_privilege}, writes=${authority.write_privilege}, policies=${authority.policy_count}, valid SELECT policies=${authority.select_policy_count}`;
       return yield* new DatabaseVerificationError({
-        reason: 'Application runtimes must only read the admin-owned Application Composition authority',
+        reason: `Application runtimes must only read the admin-owned Application Composition authority (${getTableName(table)}: ${details})`,
       });
     }
     return yield* Effect.void;

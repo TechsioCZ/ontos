@@ -1,5 +1,4 @@
-import { privacySubjectRefForParty } from '@app/privacy/domain/privacy-subject-identity';
-import { ConsentScopeSchema } from '@app/consent-authority-contracts';
+import { ConsentScopeSchema, privacySubjectRefForParty } from '@app/consent-authority-contracts';
 import type {
   ConsentScope,
   ConsentSelfServiceRequest,

@@ -118,6 +118,14 @@ const handleAdministerMarketBootstrapPolicy = Effect.fn('AdministerMarketBootstr
 
 export const administerMarketBootstrapPolicyAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.market-bootstrap-policy.administer',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'commerce-policy', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.administer-market-bootstrap-policy.access.v1',
@@ -129,7 +137,7 @@ export const administerMarketBootstrapPolicyAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.administer-market-bootstrap-policy',
       moduleKey: 'commerce.customer-context',
       role: 'action',
@@ -143,7 +151,7 @@ export const administerMarketBootstrapPolicyAction = defineAction(
     schemaVersion: '1',
   },
   handleAdministerMarketBootstrapPolicy,
-  customerCommercePolicyAdministrationServiceFactory,
+  (transaction, scope) => customerCommercePolicyAdministrationServiceFactory(transaction, scope),
 );
 
 // <generated-outbox-message-exports>

@@ -1,10 +1,10 @@
 import type {
-  ActionBusinessPermissionTarget,
   ActionHandlerContext,
   CoreSearchResourceRef,
   OperationalScope,
+  OwnerAccessFacts,
 } from '@app/core-runtime';
-import { ContextAccess, CoreSearchResourceRefSchema, OperationContextUnavailable } from '@app/core-runtime';
+import { CoreSearchResourceRefSchema, OperationContextUnavailable } from '@app/core-runtime';
 import { DateTime, Effect, Option, Schema, SchemaGetter } from 'effect';
 import { PurchaseApprovalCurrentnessFactory } from '../../shared/domain/purchase-approval-currentness-port.ts';
 import type { PurchaseApprovalCurrentnessService } from '../../shared/domain/purchase-approval-currentness-port.ts';
@@ -17,6 +17,7 @@ import {
 import type { PurchaseApprovalRequest } from '../../shared/domain/purchasing-approval.ts';
 import { purchasingApprovalWorkflowForScope } from '../persistence/purchasing-approval-persistence.ts';
 import type { PurchasingApprovalWorkflowService } from '../persistence/purchasing-approval-persistence.ts';
+import { counterpartyOwnerFacts } from './owner-access-facts.ts';
 
 type PurchasingApprovalDataAccessContext = Pick<
   ActionHandlerContext<Readonly<Record<string, never>>, unknown>,
@@ -94,39 +95,14 @@ export const recordPurchasingApprovalRequestResources = (
     { concurrency: 1, discard: true },
   );
 
-export const purchasingApprovalPermissionTarget = (input: {
+/**
+ * The purchasing-approval owner rule target: the counterparty whose own approval grant the overlay
+ * checks, storefront-scoped when the request carries a Storefront (O67-Q1, O70).
+ */
+export const purchasingApprovalOwnerFacts = (input: {
   readonly counterpartyRef: CoreSearchResourceRef;
-  readonly permission:
-    | 'counterparty.approval.decide'
-    | 'counterparty.approval_hierarchy.manage'
-    | 'counterparty.approval.request.manage'
-    | 'counterparty.purchase.submit';
-  readonly scope: OperationalScope;
   readonly storefrontId: string | null;
-}): ActionBusinessPermissionTarget => {
-  const resolved: ActionBusinessPermissionTarget = {
-    permission: input.permission,
-    target:
-      input.storefrontId === null
-        ? {
-            counterpartyId: input.counterpartyRef.resourceId,
-            kind: 'counterparty',
-            legalEntityId: input.scope.legalEntityId ?? '',
-            tenantId: input.scope.tenantId,
-          }
-        : {
-            counterpartyId: input.counterpartyRef.resourceId,
-            kind: 'counterparty_storefront',
-            legalEntityId: input.scope.legalEntityId ?? '',
-            storefrontId: input.storefrontId,
-            tenantId: input.scope.tenantId,
-          },
-  };
-  if (input.storefrontId !== null && input.scope.trustedStorefrontId !== undefined) {
-    return { ...resolved, trustedStorefrontId: input.scope.trustedStorefrontId };
-  }
-  return resolved;
-};
+}): OwnerAccessFacts => counterpartyOwnerFacts(input.counterpartyRef.resourceId, input.storefrontId);
 
 export const trustedPurchasingContext = (
   counterpartyRef: CoreSearchResourceRef,
@@ -165,50 +141,27 @@ const hasPurchasingApprovalScope = Schema.is(
   }),
 );
 
-export const purchasingApprovalCurrentnessServicesForScope = (
-  transaction: PurchasingApprovalTransaction,
-  scope: OperationalScope,
-) =>
-  Effect.all(
+export const purchasingApprovalCurrentnessServicesForScope = Effect.fn(
+  'PurchasingApprovalActionSupport.currentnessServicesForScope',
+)(function* currentnessServicesForScope(transaction: PurchasingApprovalTransaction, scope: OperationalScope) {
+  if (!hasPurchasingApprovalScope(scope)) {
+    return yield* new OperationContextUnavailable({
+      code: 'operation_context_unavailable',
+      reason: 'Current Purchasing Approval evidence requires trusted owner scope',
+    });
+  }
+  const { currentnessFactory, evaluationSourceFactory, purchaseLimitCurrentness } = yield* Effect.all(
     {
-      currentness: Effect.all(
-        {
-          contextAccess: ContextAccess,
-          currentnessFactory: PurchaseApprovalCurrentnessFactory,
-          evaluationSourceFactory: PurchaseLimitEvaluationSourceFactory,
-          purchaseLimitCurrentness: PurchaseLimitEvaluationCurrentnessPort,
-        },
-        { concurrency: 4 },
-      ).pipe(
-        Effect.flatMap(({ contextAccess, currentnessFactory, evaluationSourceFactory, purchaseLimitCurrentness }) =>
-          hasPurchasingApprovalScope(scope)
-            ? evaluationSourceFactory.make(transaction, scope).pipe(
-                Effect.mapError(purchaseApprovalEvaluationUnavailable),
-                Effect.map((evaluationSource) =>
-                  currentnessFactory.make(
-                    transaction,
-                    scope,
-                    contextAccess,
-                    purchaseLimitCurrentness,
-                    evaluationSource,
-                  ),
-                ),
-              )
-            : Effect.void,
-        ),
-      ),
-      workflow: purchasingApprovalWorkflowForScope(transaction, scope),
+      currentnessFactory: PurchaseApprovalCurrentnessFactory,
+      evaluationSourceFactory: PurchaseLimitEvaluationSourceFactory,
+      purchaseLimitCurrentness: PurchaseLimitEvaluationCurrentnessPort,
     },
-    { concurrency: 2 },
-  ).pipe(
-    Effect.flatMap(({ currentness, workflow }) =>
-      currentness === undefined
-        ? Effect.fail(
-            new OperationContextUnavailable({
-              code: 'operation_context_unavailable',
-              reason: 'Current Purchasing Approval evidence requires trusted owner scope',
-            }),
-          )
-        : Effect.succeed({ currentness, workflow } satisfies PurchasingApprovalCurrentnessServices),
-    ),
+    { concurrency: 3 },
   );
+  const evaluationSource = yield* evaluationSourceFactory
+    .make(transaction, scope)
+    .pipe(Effect.mapError(purchaseApprovalEvaluationUnavailable));
+  const currentness = currentnessFactory.make(transaction, scope, purchaseLimitCurrentness, evaluationSource);
+  const workflow = yield* purchasingApprovalWorkflowForScope(transaction, scope);
+  return { currentness, workflow } satisfies PurchasingApprovalCurrentnessServices;
+});

@@ -6,10 +6,10 @@ import path from 'node:path';
 
 import { hasCompleteGeneratedModuleApiSeam } from '../../generated-governed-http-boundary.mts';
 import { planGovernedContributionScaffold } from '../governed-contribution/scaffold.mts';
+import { readGeneratedSlotEntries, removeGeneratedSlotEntry } from '../shared.mts';
 
 const paymentVertical = 'payment-term-catalog';
 const moduleApiKind = 'module-api';
-const paymentReadPermission = 'payment.term_catalog.read';
 
 const appRoot = path.resolve(import.meta.dirname, '../../..');
 const paymentVerticalPath = 'verticals/payment-term-catalog';
@@ -80,17 +80,15 @@ const loadCustomerContractSources = (): Promise<Map<string, string>> => {
 };
 
 const focusOnCustomerAffectedUseSeam = (sources: ReadonlyMap<string, string>): ReadonlyMap<string, string> => {
+  const manifestApiStart = '// <generated-module-manifest-apis>';
+  const manifestApiEnd = '// </generated-module-manifest-apis>';
   const focused = new Map(
     [...sources].filter(
       ([file]) => !file.startsWith(`${customerVerticalPath}/shared/apis/`) || file === customerOwnerContractFile,
     ),
   );
   for (const [file, start, end] of [
-    [
-      `${customerVerticalPath}/vertical.manifest.ts`,
-      '// <generated-module-manifest-apis>',
-      '// </generated-module-manifest-apis>',
-    ],
+    [`${customerVerticalPath}/vertical.manifest.ts`, manifestApiStart, manifestApiEnd],
     [
       `${customerVerticalPath}/vertical.registration.ts`,
       '// <generated-module-registration-apis>',
@@ -132,6 +130,40 @@ const focusOnCustomerAffectedUseSeam = (sources: ReadonlyMap<string, string>): R
         .join('\n'),
     );
   }
+  const manifestFile = `${customerVerticalPath}/vertical.manifest.ts`;
+  const operationStart = '// <generated-module-manifest-operation-contracts>';
+  const operationEnd = '// </generated-module-manifest-operation-contracts>';
+  let manifest = focused.get(manifestFile);
+  if (manifest === undefined) {
+    expect.unreachable(`expected ${manifestFile}`);
+  }
+  const originalManifest = sources.get(manifestFile);
+  if (originalManifest === undefined) {
+    expect.unreachable(`expected original ${manifestFile}`);
+  }
+  const focusedApis = readGeneratedSlotEntries(manifest, manifestApiStart, manifestApiEnd);
+  const prunedApis = readGeneratedSlotEntries(originalManifest, manifestApiStart, manifestApiEnd).filter(
+    (entry) => !focusedApis.includes(entry),
+  );
+  const operations = readGeneratedSlotEntries(manifest, operationStart, operationEnd);
+  const targetOperations = operations.filter((entry) =>
+    entry.includes("apiKey: 'payment-term-affected-use-assessment'"),
+  );
+  expect(targetOperations).toHaveLength(1);
+  for (const operation of operations) {
+    const apiKey = /\bapiKey:\s*'(?<apiKey>[^']+)'/u.exec(operation)?.groups?.['apiKey'];
+    if (apiKey !== undefined && prunedApis.some((entry) => entry.startsWith(`'${apiKey}':`))) {
+      manifest = removeGeneratedSlotEntry(
+        manifest,
+        operationStart,
+        operationEnd,
+        (entry) => entry === operation,
+        'unfocused operation',
+      );
+    }
+  }
+  expect(readGeneratedSlotEntries(manifest, operationStart, operationEnd)).toEqual(targetOperations);
+  focused.set(manifestFile, manifest);
   return focused;
 };
 
@@ -143,9 +175,8 @@ it.effect(
   Effect.fn(function* publicContractPackageIdempotence() {
     const before = yield* Effect.promise(loadPaymentContractSources);
     const plan = yield* planGovernedContributionScaffold(appRoot, moduleApiKind, {
-      authorization: 'context_permission',
+      authorization: 'protected',
       name: 'current-payment-terms',
-      permission: paymentReadPermission,
       vertical: paymentVertical,
     }).pipe(Effect.provide(NodeServices.layer));
     const after = yield* Effect.promise(loadPaymentContractSources);
@@ -182,9 +213,8 @@ it.effect(
     ]) {
       expect(changed).not.toBe(original);
       const error = yield* planGovernedContributionScaffold(appRoot, moduleApiKind, {
-        authorization: 'context_permission',
+        authorization: 'protected',
         name: 'current-payment-terms',
-        permission: paymentReadPermission,
         vertical: paymentVertical,
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, {
@@ -238,9 +268,8 @@ it.effect(
   Effect.fn(function* customerPublicContractPackageIdempotence() {
     const before = yield* Effect.promise(loadCustomerContractSources);
     const plan = yield* planGovernedContributionScaffold(appRoot, moduleApiKind, {
-      authorization: 'context_permission',
+      authorization: 'protected',
       name: 'payment-term-affected-use-assessment',
-      permission: paymentReadPermission,
       vertical: 'commerce-customer-context',
     }).pipe(Effect.provide(NodeServices.layer));
     const after = yield* Effect.promise(loadCustomerContractSources);

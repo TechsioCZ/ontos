@@ -31,6 +31,7 @@
         "start": "Start",
         "complete": "Complete",
         "closedTask": "A completed or cancelled task cannot be edited.",
+        "approvalRequired": "The proposal is waiting for approval. The change has not been made yet.",
         "loadingNames": "Loading…",
         "cancel": "Cancel",
         "saving": "Saving…",

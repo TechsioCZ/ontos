@@ -46,8 +46,11 @@ const defaultKeptDraftLabels: KeptDraftLabels = {
   message: 'Neuložené změny zůstaly zachované.',
 };
 
-/** Autosave states in which nothing typed is waiting to be saved; `AutosaveStatus` publishes them. */
-const settledAutosaveStates = new Set(['idle', 'saved']);
+/**
+ * Autosave states in which nothing typed is waiting to be sent (saved, or handed over for approval);
+ * `AutosaveStatus` publishes them.
+ */
+const settledAutosaveStates = new Set(['idle', 'saved', 'proposed']);
 
 /** Form fields whose input the panel tracks; search boxes only filter and hold no draft. */
 const draftFieldSelector =

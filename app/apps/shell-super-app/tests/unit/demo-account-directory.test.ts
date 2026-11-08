@@ -9,8 +9,7 @@ import { Reactivity } from 'effect/reactivity';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 import { expect, it } from 'effect-rstest';
 
-import { scriptedPgClientLayer } from '../../../../packages/core-runtime/src/testing/scripted-pg-client.ts';
-import { testSqlConnection } from '../../../../packages/core-runtime/tests/support/sql-connection.ts';
+import { scriptedPgClientLayer, testSqlConnection } from '@app/core-runtime/testing/scripted-pg-client';
 import { AuthDatabase } from '../../api/auth/db/client.ts';
 import { authDatabaseSchema, authRelations } from '../../api/auth/db/schema.ts';
 import {
@@ -45,11 +44,20 @@ const retainedBindings = retainedAccounts.map(({ providerSubjectId }, index) => 
   providerSubjectId,
 }));
 const fixture = (
-  options: { readonly authOutage?: boolean; readonly denied?: boolean; readonly missing?: boolean } = {},
+  options: {
+    readonly administratorDenied?: boolean;
+    readonly authOutage?: boolean;
+    readonly denied?: boolean;
+    readonly missing?: boolean;
+    readonly missingBinding?: boolean;
+  } = {},
 ) =>
   Effect.gen(function* nativeDirectoryFixture() {
+    const observations: ('auth' | 'core')[] = [];
     const harness = yield* makeReadTestHarness({
       executeOwnerQuery: (query) => {
+        expect(observations).toEqual(['auth']);
+        observations.push('core');
         expect(query.scope).toEqual({ legalEntityId: company, tenantId: principal.tenantId });
         expect(query.sql).toContain('"core"."principal_auth_bindings"');
         expect(query.sql).toContain('"core"."principals"');
@@ -68,12 +76,14 @@ const fixture = (
         expect(query.params.filter((value) => Predicate.isString(value) && value.startsWith('retained-user-'))).toEqual(
           retainedAccounts.map((account) => account.providerSubjectId),
         );
-        return Effect.succeed(retainedBindings);
+        return Effect.succeed(options.missingBinding === true ? retainedBindings.slice(0, -1) : retainedBindings);
       },
+      legalEntityPermissionDecisions: { manage_people: options.administratorDenied === true ? 'denied' : 'allowed' },
       operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-10-25T12:00:00.000Z')),
       ownerAuthorizationDecision: 'allowed',
       permissionDecision: options.denied === true ? 'denied' : 'allowed',
       scope: { ...caller.principal, correlationId: transport.correlationId },
+      tenantPermissionDecisions: { manage_identity: options.administratorDenied === true ? 'denied' : 'allowed' },
     });
     const authQueries: string[] = [];
     const executor = yield* makeWithDefaults({ relations: authRelations }).pipe(
@@ -81,6 +91,8 @@ const fixture = (
         scriptedPgClientLayer(
           Effect.succeed(
             testSqlConnection((sql, params) => {
+              expect(observations).toEqual([]);
+              observations.push('auth');
               authQueries.push(sql);
               expect(sql).toContain('"auth"."user"');
               expect(sql).not.toContain('"core".');
@@ -103,7 +115,7 @@ const fixture = (
       Effect.provideService(ReadRuntime, harness.runtime),
       Effect.provide(provider),
     );
-    return { authQueries, directory, harness, read };
+    return { authQueries, directory, harness, observations, read };
   }).pipe(Effect.provide(NodeCrypto.layer));
 
 it.effect('resolves six unchanged presets through retained Auth users then exact scoped active Core bindings', () =>
@@ -130,6 +142,7 @@ it.effect('resolves six unchanged presets through retained Auth users then exact
       retainedBindings.map((binding) => binding.principalId),
     );
     expect(test.authQueries).toHaveLength(1);
+    expect(test.observations).toEqual(['auth', 'core']);
     expect(test.harness.snapshot().ownerQueries).toHaveLength(1);
     expect(test.harness.snapshot().evidenceWrites).toBe(1);
     expect(test.harness.snapshot().statements.at(-1)).toBe('COMMIT');
@@ -144,8 +157,25 @@ it.effect('does not query Auth or Core owner tables before native company admiss
     expect(test.authQueries).toEqual([]);
     expect(test.harness.snapshot().ownerQueries).toEqual([]);
     // Context denial has no verified scope in which to persist read evidence.
-    expect(test.harness.snapshot().stages).not.toContain('scope_resolved');
+    expect(test.harness.snapshot().stages).not.toContain('scope_validated');
     expect(test.harness.snapshot().evidenceWrites).toBe(0);
+  }),
+);
+
+it.effect('an admitted company without manage_identity or manage_people cannot query the Auth directory', () =>
+  Effect.gen(function* refusesUnprivilegedDirectory() {
+    const test = yield* fixture({ administratorDenied: true });
+    const failure = yield* test.read.pipe(Effect.flip);
+    expect(Predicate.isTagged(failure, 'DemoAccountForbidden')).toBe(true);
+    expect(test.observations).toEqual([]);
+    expect(test.authQueries).toEqual([]);
+    expect(test.harness.snapshot().ownerQueries).toEqual([]);
+    expect(test.harness.snapshot().stages).toEqual([
+      'input_decoded',
+      'scope_validated',
+      'module_state_checked',
+      'permission_checked',
+    ]);
   }),
 );
 
@@ -156,6 +186,18 @@ it.effect('does not fabricate a user ID or principal when a preset login has not
     expect(test.authQueries).toHaveLength(1);
     expect(test.harness.snapshot().ownerQueries).toEqual([]);
   }),
+);
+
+it.effect(
+  'does not fabricate a principal or return partial roles when a retained Auth user has no exact Core binding',
+  () =>
+    Effect.gen(function* missingCoreBinding() {
+      const test = yield* fixture({ missingBinding: true });
+      expect(Predicate.isTagged(yield* test.read.pipe(Effect.flip), 'DemoAccountUnavailable')).toBe(true);
+      expect(test.authQueries).toHaveLength(1);
+      expect(test.harness.snapshot().ownerQueries).toHaveLength(1);
+      expect(test.observations).toEqual(['auth', 'core']);
+    }),
 );
 
 it.effect(

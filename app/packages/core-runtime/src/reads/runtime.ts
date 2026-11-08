@@ -1,58 +1,62 @@
-import { ConnectionError, SqlError } from 'effect/sql/SqlError';
+import {
+  loadModuleOperationAdmission,
+  captureShellSystemReadRegistrations,
+  isBoundShellSystemRead,
+  operationCatalogLoader,
+  prepareOperationIntrinsicState,
+  validateBoundOperationOwner,
+  withModuleOperationExecution,
+  withoutModuleOperationExecution,
+} from '../modules/module-operation-execution.ts';
+import { ActiveApplicationCompositionService } from '../modules/active-application-composition.ts';
+import type { ShellSystemReadRegistrations } from '../modules/module-operation-execution.ts';
+import type { ActiveApplicationCompositionServiceContract } from '../modules/active-application-composition.ts';
+import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
+import type { OntosDeploymentIdentitySchema } from '../modules/manifest.ts';
+import { ConnectionError, SqlError, isSqlError } from 'effect/sql/SqlError';
 /* oxlint-disable sonarjs/no-duplicate-string, eslint/no-use-before-define, anti-slop/no-unknown-parameters, effect-native/no-throw-in-effect-callback, effect-native/no-native-error-construction -- Opaque owner resolver defects are captured immediately by Effect.try and sanitized to a typed Core failure; expires: 2027-03-31. */
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
-import { Cause, Context, Effect, Exit, Layer, Match, Option, Predicate, Schema } from 'effect';
+import { Cause, Context, DateTime, Effect, Exit, Layer, Match, Option, Predicate, Schema } from 'effect';
+import type { AccessDeclaration, AccessFieldGroup, AccessTarget } from '../authorization/access-declaration.ts';
+import type { AccessDecision, AccessRecordTarget, ParentReadRequirement } from '../access/decision/contract.ts';
+import type { GateInput } from '../access/enforcement/contract.ts';
+import type { ListAccessResolution } from '../access/decision/engine.ts';
+import { capabilityPolicyOf } from '../access/enforcement/capability.ts';
+import { withOptional } from '../access/decision/optional.ts';
+import type { ListAccessPredicate } from '../access/decision/list-access.ts';
+import { ModuleKeySchema, RecordKeySchema } from '../access/ids.ts';
+import type { BoundAccessGate } from '../operations/access-gate.ts';
+import { bindLiveAccessGate } from '../operations/access-gate.ts';
+import type { ActionPolicyTarget } from '../actions/policy.ts';
 import { transportIdentifier } from '../actions/string-schemas.ts';
-import { computeCanonicalValueHash, trackTransactionSettlement } from '../actions/repository.ts';
+import { computeCanonicalValueHash, recoverSqlTransactionError } from '../actions/repository.ts';
 import {
   decodeTrustedPrincipalContext,
   isTrustedSupportRecoveryPrincipalContext,
   readVerifiedGatewayCompositionRevision,
 } from '../auth/system-principal-context-provenance.ts';
-import { CONNECTION_SCOPE_REASON_CODE, isConnectionReadAllowed } from '../auth/oauth-connection-scope.ts';
 import { CoreDatabase } from '../db/client.ts';
 import { DatabaseIdentityEnrollmentContext } from '../db/database-identities.ts';
 import type { DatabaseIdentityEnrollment } from '../db/database-identity-manifest.ts';
-import { installOperationalScopeAt } from '../db/scoped-transaction.ts';
-import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
-import type { CoreTransaction } from '../db/types.ts';
-import {
-  lockApplicationCompositionAuthority,
-  lockApplicationCompositionReadScope,
-  precheckApplicationCompositionAdmission,
-} from '../modules/application-composition-authority.ts';
-import type { ModuleEntrypointDescriptor } from '../modules/module-entrypoint.ts';
+import { installOperationalScope } from '../db/scoped-transaction.ts';
+import type { CoreDbExecutor, CoreTransaction } from '../db/types.ts';
+import { insideDatabaseTransaction } from '../db/transaction-io-guard.ts';
+import { lockApplicationCompositionAuthority } from '../modules/application-composition-authority.ts';
+import { trustedTransactionTime } from '../operations/transaction-time.ts';
 import type { ModuleEntrypointGatewayService } from '../modules/module-entrypoint-gateway.ts';
 import { ModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import type { OperationalScope, OperationalScopeResolverService } from '../operations/context.ts';
 import { OperationalScopeResolver } from '../operations/context.ts';
 import {
   ContextAccess,
-  hasCanonicalInventoryAuthorizationTarget,
-  hasCanonicalPricingAuthorizationTargetIds,
-  isBusinessPermissionTargetCompatible,
-  isAssortmentPermissionTargetValid,
-  toAssortmentPermissionAccessKey,
-  toAssortmentPermissionAccessObjectId,
-  assortmentPermissionTargetRequiresLegalEntity,
-  toBusinessPermissionAccessKey,
+  isOwnerPermissionAccessTargetValid,
   toContextPermissionAccessKey,
 } from '../permissions/context-access.ts';
 import { LEGAL_ENTITY_PERMISSION_KEYS } from '../permissions/context-permissions.ts';
-import {
-  OwnerAuthorizationOverlay,
-  failClosedOwnerAuthorizationOverlay,
-} from '../permissions/owner-authorization-overlay.ts';
-import type { OwnerAuthorizationTarget } from '../permissions/owner-authorization-overlay.ts';
-import { insideDatabaseTransaction } from '../db/transaction-io-guard.ts';
-import { logUnavailableMapping, sanitizeErrorMessage } from '../observability/unavailable-mapping.ts';
-import type {
-  AssortmentPermissionAccessTarget,
-  AssortmentPermissionCommercialScope,
-  AssortmentPermissionSubject,
-} from '../permissions/context-access.ts';
-import type { ReadOwnerTransaction } from './context.ts';
+import { OwnerAuthorizationOverlay, failClosedOwnerAuthorizationOverlay } from '../access/enforcement/owner-overlay.ts';
+import type { OwnerAccessFacts, OwnerAuthorizationTarget } from '../access/enforcement/owner-overlay.ts';
 import { validateReadEvidenceMetadata } from './context.ts';
+import type { ReadOwnerTransaction } from './context.ts';
 import type {
   AtomicResolvedReadPermissionTarget,
   ReadConditionalPermissionDeclaration,
@@ -62,18 +66,22 @@ import type {
   ResolvedReadPermissionTarget,
 } from './definition.ts';
 import {
+  getReadAccessTargetResolver,
+  getReadOwnerFactsResolver,
   getReadConditionalPermissionPlan,
+  isReadRegistration,
   getReadDomainErrorSchema,
-  getReadStages,
   getReadPermissionTargetResolver,
   getReadPolicyImplementations,
   getReadResourcePermissionTargetResolver,
   getReadResultPermissionTargetResolver,
   getReadServiceFactory,
+  getReadStages,
+  projectReadResultFields,
 } from './definition.ts';
 import type { ReadCoreError } from './errors.ts';
 import {
-  ReadEvidenceValidationError,
+  ReadEvidencePersistenceError,
   ReadHandlerExecutionError,
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
@@ -84,12 +92,8 @@ import {
   ReadPolicyEvaluationError,
   ReadResultValidationError,
 } from './errors.ts';
-import { authorizeReadSearchCollection } from './search-result-authorization.ts';
 import { persistReadEvidence, persistScopedReadEvidence } from './repository.ts';
 import type { PersistReadEvidenceInput } from './repository.ts';
-import { observeReadPhase } from './diagnostics.ts';
-import type { ReadPhase, ReadTiming } from './diagnostics.ts';
-import type { Ref } from 'effect';
 
 const withOptionalProperty = <
   const Base extends object,
@@ -136,207 +140,31 @@ export const READ_RUNTIME_STAGES = [
 export type ReadRuntimeStage = (typeof READ_RUNTIME_STAGES)[number];
 
 export interface ReadRuntimeOptions {
+  /**
+   * The access gate bound to this composition's enforcement ports (CUTOVER-PLAN §3.1). Every read
+   * that carries a v2 access carrier is decided here and nowhere else, and a composition without it
+   * refuses every such read with a retryable 503 instead of an implicit allow (O62). Reads still on a
+   * legacy kind keep the legacy checks until the codemod moves them (C05).
+   */
+  readonly accessDecision?: BoundAccessGate;
+  readonly applicationComposition?: ActiveApplicationCompositionServiceContract;
+  /**
+   * The database-identity enrollment the scope install verifies against. It is owner-neutral: the
+   * same enrollment serves every owner's reads, and a governed read never installs a scope the
+   * connected request role has no authority for.
+   */
   readonly databaseIdentities: DatabaseIdentityEnrollment;
+  readonly expectedDeployment?: typeof OntosDeploymentIdentitySchema.Type;
   readonly onStage?: (stage: ReadRuntimeStage) => void;
   readonly ownerAuthorizationOverlay?: (typeof OwnerAuthorizationOverlay)['Service'];
+  readonly ownerRegistration?: VerticalRuntimeRegistration;
+  readonly shellSystemReads?: ShellSystemReadRegistrations;
 }
 
 const stableTargetKey = (value: string): boolean => value.length > 0 && value.length <= 300;
 const targetLegalEntityIdIsValid = Schema.is(Schema.String.check(Schema.isUUID()));
 const PermissionDecisionSchema = Schema.Literals(['allowed', 'denied', 'unavailable']);
 type PermissionDecision = typeof PermissionDecisionSchema.Type;
-
-const assortmentResourceIsValid = (resource: {
-  readonly moduleId: string;
-  readonly resourceId: string;
-  readonly resourceType: string;
-}): boolean =>
-  stableTargetKey(resource.moduleId) && stableTargetKey(resource.resourceId) && stableTargetKey(resource.resourceType);
-
-const assortmentSelectorIsValid = (
-  selector: {
-    readonly kind: string;
-    readonly target?: { readonly moduleId: string; readonly resourceId: string; readonly resourceType: string };
-  },
-  purpose?: 'VISIBILITY' | 'PURCHASE',
-): boolean =>
-  (selector.kind === 'ALL'
-    ? selector.target === undefined
-    : selector.target !== undefined && assortmentResourceIsValid(selector.target)) &&
-  (purpose !== 'VISIBILITY' || !['VARIANT', 'PACKAGE_OPTION'].includes(selector.kind));
-
-const assortmentScopeIsValid = (scope: {
-  readonly channel: { readonly moduleId: string; readonly resourceId: string; readonly resourceType: string };
-  readonly market?: { readonly moduleId: string; readonly resourceId: string; readonly resourceType: string };
-  readonly storefront?: { readonly moduleId: string; readonly resourceId: string; readonly resourceType: string };
-}): boolean =>
-  assortmentResourceIsValid(scope.channel) &&
-  (scope.market === undefined || assortmentResourceIsValid(scope.market)) &&
-  (scope.storefront === undefined || assortmentResourceIsValid(scope.storefront));
-
-const AssortmentSubjectKindSchema = Schema.Literals(['RETAIL_CUSTOMER_PROFILE', 'COUNTERPARTY']);
-const assortmentSubjectIsValid = (subject: AssortmentPermissionSubject): boolean =>
-  subject.kind === 'GUEST' ||
-  (Schema.is(AssortmentSubjectKindSchema)(subject.kind) && assortmentResourceIsValid(subject.ref));
-
-const storefrontScopeIsValid = (
-  commercialScope: AssortmentPermissionCommercialScope,
-  scope: OperationalScope,
-): boolean =>
-  commercialScope.storefront === undefined || scope.trustedStorefrontId === commercialScope.storefront.resourceId;
-
-const assortmentConfigurationTargetIsValid = (
-  target: Extract<AssortmentPermissionAccessTarget, { readonly kind: 'assortment_configuration' }>,
-): boolean =>
-  target.permission === 'assortment.configuration.read' &&
-  isAssortmentPermissionTargetValid(target) &&
-  assortmentResourceIsValid(target.resource);
-
-const assortmentDecisionTargetIsValid = (
-  target: Extract<AssortmentPermissionAccessTarget, { readonly kind: 'assortment_decision' }>,
-  scope: OperationalScope,
-): boolean =>
-  target.permission === 'assortment.decision.explain' &&
-  assortmentResourceIsValid(target.catalogSelection) &&
-  assortmentScopeIsValid(target.commercialScope) &&
-  assortmentSubjectIsValid(target.subject) &&
-  storefrontScopeIsValid(target.commercialScope, scope);
-
-const assortmentRuleTargetIsValid = (
-  target: Extract<AssortmentPermissionAccessTarget, { readonly kind: 'assortment_rule' }>,
-): boolean => {
-  if (target.mode === 'retire') {
-    return target.permission === 'assortment.rule.retire' && assortmentResourceIsValid(target.stableRule);
-  }
-  const expectedPermission = target.mode === 'create' ? 'assortment.rule.create' : 'assortment.rule.revision.create';
-  const lineageValid =
-    target.mode === 'create' ? stableTargetKey(target.stableCode) : assortmentResourceIsValid(target.stableRule);
-  return (
-    target.permission === expectedPermission &&
-    assortmentSelectorIsValid(target.selector, target.purpose) &&
-    lineageValid
-  );
-};
-
-const assortmentBindingTargetIsValid = (
-  target: Extract<AssortmentPermissionAccessTarget, { readonly kind: 'assortment_binding' }>,
-  scope: OperationalScope,
-): boolean => {
-  if (target.mode === 'end') {
-    return target.permission === 'assortment.binding.end' && assortmentResourceIsValid(target.binding);
-  }
-  let audienceValid = false;
-  if (target.audience.kind === 'SHARED') {
-    audienceValid = true;
-  } else if (target.audience.kind === 'COMMERCE_CUSTOMER_GROUP') {
-    audienceValid = assortmentResourceIsValid(target.audience.group);
-  } else {
-    audienceValid = assortmentSubjectIsValid(target.audience.subject);
-  }
-  return (
-    target.permission === 'assortment.binding.create' &&
-    assortmentResourceIsValid(target.ruleRevision) &&
-    audienceValid &&
-    assortmentScopeIsValid(target.commercialScope) &&
-    stableTargetKey(target.effectiveFrom) &&
-    storefrontScopeIsValid(target.commercialScope, scope)
-  );
-};
-
-const assortmentBoundaryTargetIsValid = (
-  target: Extract<AssortmentPermissionAccessTarget, { readonly kind: 'assortment_boundary' }>,
-  scope: OperationalScope,
-): boolean => {
-  if (target.mode === 'end') {
-    return target.permission === 'assortment.boundary.end' && assortmentResourceIsValid(target.boundary);
-  }
-  const admissionSetValid =
-    ((target.admissionSet.setKind === 'EMPTY' && target.admissionSet.memberCount === 0) ||
-      (target.admissionSet.setKind === 'ENTRIES' && target.admissionSet.memberCount > 0)) &&
-    target.admissionSet.memberCount === target.admissionSet.entries.length &&
-    target.admissionSet.contentHash.length === 64 &&
-    /^[0-9a-f]{64}$/u.test(target.admissionSet.contentHash) &&
-    target.admissionSet.entries.every((entry) => assortmentSelectorIsValid(entry, target.purpose));
-  return (
-    target.permission === 'assortment.boundary.create' &&
-    assortmentSubjectIsValid(target.subject) &&
-    assortmentScopeIsValid(target.commercialScope) &&
-    stableTargetKey(target.effectiveFrom) &&
-    storefrontScopeIsValid(target.commercialScope, scope) &&
-    admissionSetValid
-  );
-};
-
-const assortmentPermissionTargetIsValid = (
-  target: AssortmentPermissionAccessTarget,
-  scope: OperationalScope,
-): boolean => {
-  if (target.kind === 'assortment_configuration') {
-    return assortmentConfigurationTargetIsValid(target);
-  }
-  if (target.kind === 'assortment_decision') {
-    return assortmentDecisionTargetIsValid(target, scope);
-  }
-  if (target.kind === 'assortment_rule') {
-    return assortmentRuleTargetIsValid(target);
-  }
-  if (target.kind === 'assortment_binding') {
-    return assortmentBindingTargetIsValid(target, scope);
-  }
-  return assortmentBoundaryTargetIsValid(target, scope);
-};
-
-const assortmentPermissionTargetHasTrustedStorefrontMismatch = (
-  target: AssortmentPermissionAccessTarget,
-  scope: OperationalScope,
-): boolean => {
-  const storefront =
-    target.kind === 'assortment_decision' ||
-    (target.kind === 'assortment_binding' && target.mode === 'create') ||
-    (target.kind === 'assortment_boundary' && target.mode === 'create')
-      ? target.commercialScope.storefront
-      : undefined;
-  if (storefront === undefined) {
-    return false;
-  }
-  return (
-    scope.trustedStorefrontId !== storefront.resourceId &&
-    assortmentPermissionTargetIsValid(target, { ...scope, trustedStorefrontId: storefront.resourceId })
-  );
-};
-
-const businessPermissionTargetIsValid = (
-  target: Extract<AtomicResolvedReadPermissionTarget, { readonly kind: 'business_permission' }>,
-  scope?: OperationalScope,
-): boolean => {
-  const business = target.businessPermission.target;
-  if (
-    !stableTargetKey(target.businessPermission.permission) ||
-    !stableTargetKey(business.tenantId) ||
-    !isBusinessPermissionTargetCompatible(target.businessPermission) ||
-    !hasCanonicalPricingAuthorizationTargetIds(business) ||
-    !hasCanonicalInventoryAuthorizationTarget(business)
-  ) {
-    return false;
-  }
-  if (business.kind === 'pricing_catalog' || business.kind === 'price_group') {
-    return (
-      scope?.legalEntityId === undefined &&
-      scope?.trustedStorefrontId === undefined &&
-      target.trustedStorefrontId === undefined
-    );
-  }
-  if (business.kind === 'inventory_resource') {
-    return target.trustedStorefrontId === undefined;
-  }
-  return (
-    stableTargetKey(business.legalEntityId) &&
-    (business.kind !== 'counterparty_storefront' ||
-      (stableTargetKey(business.storefrontId) &&
-        target.trustedStorefrontId === business.storefrontId &&
-        scope?.trustedStorefrontId === business.storefrontId))
-  );
-};
 
 const legalEntityTargetIsValid = (
   target: Extract<AtomicResolvedReadPermissionTarget, { readonly kind: 'legal_entity' }>,
@@ -346,12 +174,10 @@ const legalEntityTargetIsValid = (
     LEGAL_ENTITY_PERMISSION_KEYS.some((permission) => permission === target.permission));
 
 const atomicTargetIsValid = (target: AtomicResolvedReadPermissionTarget, scope?: OperationalScope): boolean => {
-  if (target.kind === 'assortment_permission') {
-    return scope === undefined ? false : assortmentPermissionTargetIsValid(target.assortmentPermission, scope);
+  if (target.kind === 'owner_permission') {
+    return scope === undefined ? false : isOwnerPermissionAccessTargetValid(target.ownerPermission, scope);
   }
-  if (target.kind === 'business_permission') {
-    return businessPermissionTargetIsValid(target, scope);
-  }
+
   if (target.kind === 'tenant') {
     return true;
   }
@@ -374,37 +200,8 @@ const usesForbiddenAlternativeTenantPermission = (target: AtomicResolvedReadPerm
 const canonicalPermissionTarget = (target: ResolvedReadPermissionTarget): AtomicResolvedReadPermissionTarget =>
   target.kind === 'any_of' ? target.targets[0] : target;
 
-interface SelectedPeopleResultDescriptor {
-  readonly accessKind: string;
-  readonly entrypoint: ModuleEntrypointDescriptor;
-  readonly legalEntityScope: string;
-  readonly owningModuleKey: string;
-  readonly readKey: string;
-}
-
-/** The approved system directory alternative still requires every selected-company resource check. */
-const allowsSelectedPeopleResultChecks = (
-  descriptor: SelectedPeopleResultDescriptor,
-  permissionTarget: ResolvedReadPermissionTarget,
-  scope: OperationalScope,
-): boolean =>
-  permissionTarget.kind === 'any_of' &&
-  descriptor.readKey === 'core.identity.search.people' &&
-  descriptor.owningModuleKey === 'core.identity' &&
-  descriptor.entrypoint.scope === 'system' &&
-  descriptor.accessKind === 'search' &&
-  descriptor.legalEntityScope === 'required' &&
-  scope.legalEntityId !== undefined &&
-  permissionTarget.targets.length === 2 &&
-  permissionTarget.targets[0].kind === 'tenant' &&
-  permissionTarget.targets[0].permission === 'read_people' &&
-  permissionTarget.targets[1].kind === 'legal_entity' &&
-  permissionTarget.targets[1].permission === 'read_people' &&
-  (permissionTarget.targets[1].legalEntityId === undefined ||
-    permissionTarget.targets[1].legalEntityId === scope.legalEntityId);
-
 const targetIsValid = (
-  declared: 'assortment_permission' | 'business_permission' | 'legal_entity' | 'module' | 'resource' | 'tenant',
+  declared: 'owner_permission' | 'legal_entity' | 'module' | 'resource' | 'tenant',
   target: ResolvedReadPermissionTarget,
   scope: OperationalScope,
 ): boolean => {
@@ -440,22 +237,6 @@ const toOwnerAuthorizationTarget = (
 ): OwnerAuthorizationTarget =>
   Match.value(target).pipe(
     Match.discriminatorsExhaustive('kind')({
-      assortment_permission: (assortmentTarget) => ({
-        kind: 'assortment_permission' as const,
-        target: assortmentTarget.assortmentPermission,
-      }),
-      business_permission: (businessTarget) =>
-        withOptionalProperty(
-          {
-            kind: 'business_permission' as const,
-            permission: businessTarget.businessPermission.permission,
-            target: businessTarget.businessPermission.target,
-          },
-          businessTarget.trustedStorefrontId !== undefined,
-          'trustedStorefrontId',
-          businessTarget.trustedStorefrontId,
-          {},
-        ),
       legal_entity: (legalEntityTarget) =>
         withOptionalProperty(
           {
@@ -478,6 +259,10 @@ const toOwnerAuthorizationTarget = (
           scope.legalEntityId,
           {},
         ),
+      owner_permission: (ownerTarget) => ({
+        kind: 'owner_permission' as const,
+        target: ownerTarget.ownerPermission,
+      }),
       resource: (resourceTarget) => ({
         kind: 'resource' as const,
         permission: 'read' as const,
@@ -507,15 +292,17 @@ const resolveConditionalPermissionPlan = <Input>(
       ),
     try: () => {
       const plan = getReadConditionalPermissionPlan(declaration);
-      const { kind, requiredKinds, requirements } = plan.resolve(input, scope);
-      if (!declaration.branchTags.includes(kind)) {
+      const selected = plan.select(input);
+      const branch = plan.branches[selected.kind];
+      if (branch === undefined || !declaration.branchTags.includes(selected.kind)) {
         throw new Error('Unknown conditional Read permission branch');
       }
+      const requirements = branch.resolve(input, selected, scope);
       if (
-        requirements.length !== requiredKinds.length ||
+        requirements.length !== branch.requiredKinds.length ||
         requirements.length === 0 ||
         requirements.some((requirement, index) => {
-          const declaredKind = requiredKinds[index];
+          const declaredKind = branch.requiredKinds[index];
           if (declaredKind !== requirement.kind) {
             return true;
           }
@@ -524,6 +311,12 @@ const resolveConditionalPermissionPlan = <Input>(
               requirement.permission !== 'read' ||
               !atomicTargetIsValid({ kind: 'resource', resource: requirement.resource }, scope)
             );
+          }
+          if (
+            requirement.kind === 'owner_permission' &&
+            (plan.ownerContract === undefined || requirement.ownerPermission.contract !== plan.ownerContract)
+          ) {
+            return true;
           }
           return !atomicTargetIsValid(requirement, scope);
         })
@@ -541,62 +334,25 @@ const resolveConditionalPermissionPlan = <Input>(
     },
   });
 
-const readBusinessTargetResourceId = (
-  target: Extract<AtomicResolvedReadPermissionTarget, { kind: 'business_permission' }>['businessPermission']['target'],
-): string => {
-  if (target.kind === 'retail_profile') {
-    return target.profileId;
-  }
-  if (target.kind === 'counterparty') {
-    return target.counterpartyId;
-  }
-  if (target.kind === 'counterparty_storefront') {
-    return `${target.counterpartyId}:${target.storefrontId}`;
-  }
-  if (target.kind === 'pricing_catalog') {
-    return target.pricingCatalogId;
-  }
-  if (target.kind === 'price_group') {
-    return `${target.pricingCatalogId}:${target.priceGroupId}`;
-  }
-  if (target.kind === 'tax_selling_legal_entity') {
-    return target.legalEntityId;
-  }
-  return target.resource.resourceId;
-};
-
-const targetMetadata = (target: ResolvedReadPermissionTarget, scope: OperationalScope) => {
+/**
+ * The policy/evidence metadata of one legacy permission target, named by the owner contract the
+ * policy input and the evidence row share. Every branch is checked against that contract instead of
+ * widening into a union of object literals whose absent keys would carry an explicit `undefined`.
+ */
+const targetMetadata = (target: ResolvedReadPermissionTarget, _scope: OperationalScope): ActionPolicyTarget => {
   const canonical = canonicalPermissionTarget(target);
-  if (canonical.kind === 'business_permission') {
-    const business = canonical.businessPermission.target;
-    if (business.kind === 'inventory_resource') {
-      return {
-        targetModuleKey: business.resource.moduleId,
-        targetResourceId: business.resource.resourceId,
-        targetResourceType: business.resource.resourceType,
-      };
-    }
-    return {
-      targetModuleKey: canonical.businessPermission.permission,
-      targetResourceId: readBusinessTargetResourceId(business),
-      targetResourceType: business.kind,
-    };
-  }
+
   if (canonical.kind === 'legal_entity') {
     return canonical.legalEntityId === undefined
       ? {}
       : { targetResourceId: canonical.legalEntityId, targetResourceType: 'core.identity.legal-entity' };
   }
-  if (canonical.kind === 'assortment_permission') {
+  if (canonical.kind === 'owner_permission') {
     return {
-      targetModuleKey: canonical.assortmentPermission.kind,
-      targetResourceId:
-        toAssortmentPermissionAccessObjectId(
-          scope.tenantId,
-          scope.legalEntityId ?? '',
-          canonical.assortmentPermission,
-        ) ?? 'assortment-unavailable',
-      targetResourceType: 'assortment_permission',
+      targetModuleKey: canonical.ownerPermission.transportModuleKey,
+      targetResourceId: canonical.ownerPermission.transportObjectId,
+      targetResourceType:
+        canonical.ownerPermission.transportResourceType ?? canonical.ownerPermission.contract.targetResourceType,
     };
   }
   if (canonical.kind === 'tenant') {
@@ -623,84 +379,28 @@ const decisionFor = (
   return unexpected.length === 0 && decision?.key === expectedKey ? decision.decision : 'unavailable';
 };
 
-const checkBusinessPermissionTarget = <AccessValue extends (typeof ContextAccess)['Service']>(
+const checkOwnerPermissionTarget = <AccessValue extends (typeof ContextAccess)['Service']>(
   contextAccess: AccessValue,
   scope: OperationalScope,
-  target: Extract<AtomicResolvedReadPermissionTarget, { readonly kind: 'business_permission' }>,
-): Effect.Effect<PermissionDecision> => {
-  const business = target.businessPermission.target;
-  const tenantOnlyPricingTarget = business.kind === 'pricing_catalog' || business.kind === 'price_group';
-  if (business.tenantId !== scope.tenantId) {
-    return Effect.succeed('unavailable');
-  }
-  let scopeMismatch: boolean;
-  if (business.kind === 'inventory_resource') {
-    scopeMismatch = target.trustedStorefrontId !== undefined;
-  } else if (tenantOnlyPricingTarget) {
-    scopeMismatch =
-      scope.legalEntityId !== undefined ||
-      scope.trustedStorefrontId !== undefined ||
-      target.trustedStorefrontId !== undefined;
-  } else {
-    scopeMismatch =
-      business.legalEntityId !== scope.legalEntityId ||
-      (business.kind === 'counterparty_storefront'
-        ? scope.trustedStorefrontId !== business.storefrontId ||
-          target.trustedStorefrontId !== scope.trustedStorefrontId
-        : target.trustedStorefrontId !== undefined);
-  }
-  if (scopeMismatch) {
-    return Effect.succeed('unavailable');
-  }
-  if (contextAccess.businessPermissions === undefined) {
-    return Effect.succeed('unavailable');
-  }
-  const checkInput = withOptionalProperty(
-    {
-      principal: { principalId: scope.principalId, tenantId: scope.tenantId },
-      targets: [target.businessPermission],
-    },
-    scope.trustedStorefrontId !== undefined,
-    'trustedStorefrontId',
-    scope.trustedStorefrontId,
-    {},
-  );
-  return contextAccess
-    .businessPermissions(checkInput)
-    .pipe(Effect.map((decisions) => decisionFor(decisions, toBusinessPermissionAccessKey(target.businessPermission))));
-};
-
-const checkAssortmentPermissionTarget = <AccessValue extends (typeof ContextAccess)['Service']>(
-  contextAccess: AccessValue,
-  scope: OperationalScope,
-  target: Extract<AtomicResolvedReadPermissionTarget, { readonly kind: 'assortment_permission' }>,
+  target: Extract<AtomicResolvedReadPermissionTarget, { readonly kind: 'owner_permission' }>,
 ): Effect.Effect<PermissionDecision> => {
   if (
-    contextAccess.assortmentPermissions === undefined ||
-    (scope.legalEntityId === undefined && assortmentPermissionTargetRequiresLegalEntity(target.assortmentPermission))
+    contextAccess.ownerPermissions === undefined ||
+    !isOwnerPermissionAccessTargetValid(target.ownerPermission, scope)
   ) {
     return Effect.succeed('unavailable');
   }
-  const { legalEntityId } = scope;
-  const targetEntry = {
-    target: target.assortmentPermission,
-  };
   const principal = { principalId: scope.principalId, tenantId: scope.tenantId };
-  const requestWithoutLegalEntity =
-    scope.trustedStorefrontId === undefined
-      ? { principal, targets: [targetEntry] }
-      : { principal, targets: [targetEntry], trustedStorefrontId: scope.trustedStorefrontId };
+  const requestBase = { principal, targets: [{ target: target.ownerPermission }] };
+  const requestWithEntity =
+    scope.legalEntityId === undefined ? requestBase : { ...requestBase, legalEntityId: scope.legalEntityId };
   const request =
-    legalEntityId === undefined ? requestWithoutLegalEntity : { ...requestWithoutLegalEntity, legalEntityId };
-  return contextAccess.assortmentPermissions(request).pipe(
-    Effect.map((decisions) => {
-      const expectedKey = toAssortmentPermissionAccessKey(scope.tenantId, legalEntityId, targetEntry.target);
-      if (expectedKey === undefined) {
-        return 'unavailable';
-      }
-      return decisionFor(decisions, expectedKey);
-    }),
-  );
+    scope.trustedStorefrontId === undefined
+      ? requestWithEntity
+      : { ...requestWithEntity, trustedStorefrontId: scope.trustedStorefrontId };
+  return contextAccess
+    .ownerPermissions(request)
+    .pipe(Effect.map((decisions) => decisionFor(decisions, target.ownerPermission.key)));
 };
 
 const checkAtomicPermissionTarget = <AccessValue extends (typeof ContextAccess)['Service']>(
@@ -709,12 +409,10 @@ const checkAtomicPermissionTarget = <AccessValue extends (typeof ContextAccess)[
   target: AtomicResolvedReadPermissionTarget,
   allowMissingLegalEntity: boolean,
 ): Effect.Effect<PermissionDecision> => {
-  if (target.kind === 'assortment_permission') {
-    return checkAssortmentPermissionTarget(contextAccess, scope, target);
+  if (target.kind === 'owner_permission') {
+    return checkOwnerPermissionTarget(contextAccess, scope, target);
   }
-  if (target.kind === 'business_permission') {
-    return checkBusinessPermissionTarget(contextAccess, scope, target);
-  }
+
   if (target.kind === 'tenant') {
     return contextAccess
       .tenants({
@@ -790,32 +488,6 @@ const checkPermissionTarget = <AccessValue extends (typeof ContextAccess)['Servi
   );
 };
 
-/** A static module check needs only the verified identity, not owner resolvers or persisted scope state.
- * Start it beside scope revalidation, but consume it only after that revalidation and module gating succeed.
- * The decision belongs to this runRead invocation; no gateway-token or cross-request authorization is cached.
- */
-const prefetchEntrypointModuleAccess = <AccessValue extends (typeof ContextAccess)['Service']>(
-  contextAccess: AccessValue,
-  principal: Pick<OperationalScope, 'legalEntityId' | 'principalId' | 'tenantId'>,
-  entrypoint: ModuleEntrypointDescriptor,
-): Effect.Effect<Option.Option<PermissionDecision>> => {
-  if (
-    entrypoint.authorization.kind !== 'context_permission' ||
-    entrypoint.authorization.permission !== 'module.access' ||
-    principal.legalEntityId === undefined
-  ) {
-    return Effect.succeedNone;
-  }
-  return contextAccess
-    .modules({
-      legalEntityId: principal.legalEntityId,
-      moduleIds: [entrypoint.moduleKey],
-      principalId: principal.principalId,
-      tenantId: principal.tenantId,
-    })
-    .pipe(Effect.map((decisions) => Option.some(decisionFor(decisions, entrypoint.moduleKey))));
-};
-
 const checkEntrypointContextPermission = <AccessValue extends (typeof ContextAccess)['Service']>(
   contextAccess: AccessValue,
   scope: OperationalScope,
@@ -830,23 +502,21 @@ const checkEntrypointContextPermission = <AccessValue extends (typeof ContextAcc
     'entrypoint' | 'legalEntityScope' | 'permissionTarget'
   >,
   permissionTarget: AtomicResolvedReadPermissionTarget,
-): Effect.Effect<Option.Option<PermissionDecision>> => {
+  primaryDecision: PermissionDecision,
+): Effect.Effect<PermissionDecision> => {
   const { entrypoint } = descriptor;
   const { authorization } = entrypoint;
   if (authorization.kind !== 'context_permission') {
-    return Effect.succeedSome('allowed');
+    return Effect.succeed('allowed');
   }
   if (
     (authorization.permission === 'module.access' &&
       permissionTarget.kind === 'module' &&
       permissionTarget.moduleId === entrypoint.moduleKey) ||
-    (permissionTarget.kind === 'business_permission' &&
-      permissionTarget.businessPermission.permission === authorization.permission) ||
-    (permissionTarget.kind === 'assortment_permission' &&
-      permissionTarget.assortmentPermission.permission === authorization.permission)
+    (permissionTarget.kind === 'owner_permission' &&
+      permissionTarget.ownerPermission.definition.key === authorization.permission)
   ) {
-    // The primary permission target already decides the entrypoint's permission.
-    return Effect.succeedNone;
+    return Effect.succeed(primaryDecision);
   }
   // Optional tenant-owned Reads keep their module gate at tenant scope. A real
   // context permission is required; absent Legal Entity never implies a grant.
@@ -862,10 +532,10 @@ const checkEntrypointContextPermission = <AccessValue extends (typeof ContextAcc
       scope,
       { kind: 'module', moduleId: entrypoint.moduleKey },
       entrypoint.scope === 'system',
-    ).pipe(Effect.asSome);
+    );
   }
   if (contextAccess.contextPermissions === undefined) {
-    return Effect.succeedSome('unavailable');
+    return Effect.succeed('unavailable');
   }
   const target = {
     moduleId: entrypoint.moduleKey,
@@ -886,7 +556,7 @@ const checkEntrypointContextPermission = <AccessValue extends (typeof ContextAcc
         };
   return contextAccess
     .contextPermissions(request)
-    .pipe(Effect.map((decisions) => Option.some(decisionFor(decisions, toContextPermissionAccessKey(target)))));
+    .pipe(Effect.map((decisions) => decisionFor(decisions, toContextPermissionAccessKey(target))));
 };
 
 const sanitizeReadHandlerFailure = <DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>>(
@@ -925,15 +595,6 @@ const preserveFailureCause = <Failure extends object>(failure: Failure, cause: u
     writable: false,
   });
 
-const compositionNoLongerAdmits = (cause: unknown) =>
-  preserveFailureCause(
-    new ReadHandlerUnavailable({
-      code: 'read_handler_unavailable',
-      reason: 'The approved Application Composition no longer admits this Read',
-    }),
-    cause,
-  );
-
 const mapReadTransactionSqlFailure = (failure: SqlError): ReadHandlerExecutionError | ReadHandlerUnavailable =>
   preserveFailureCause(
     Schema.is(ConnectionError)(failure.reason)
@@ -953,6 +614,42 @@ const mapReadTransactionSqlFailure = (failure: SqlError): ReadHandlerExecutionEr
  * Recover the settlement SqlError only when every other defect is one of this body's own captured
  * failures, so an outage keeps its connection classification. Other defects and interruption stay.
  */
+const makeReadSettlementRecovery = () => {
+  const bodyFailures = new Set<unknown>();
+  return {
+    capture: <A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+      body.pipe(
+        Effect.tapCause((cause) =>
+          Effect.sync(() => {
+            for (const reason of cause.reasons) {
+              if (Cause.isFailReason(reason)) {
+                bodyFailures.add(reason.error);
+              }
+            }
+          }),
+        ),
+      ),
+    recover: <A, E, R>(transaction: Effect.Effect<A, E, R>): Effect.Effect<A, E | SqlError, R> =>
+      transaction.pipe(
+        Effect.catchCause((cause): Effect.Effect<never, E | SqlError> => {
+          let settlement: SqlError | undefined;
+          for (const reason of cause.reasons) {
+            if (Cause.isInterruptReason(reason)) {
+              return Effect.failCause(cause);
+            }
+            if (Cause.isDieReason(reason)) {
+              if (isSqlError(reason.defect)) {
+                settlement = reason.defect;
+              } else if (!bodyFailures.has(reason.defect)) {
+                return Effect.failCause(cause);
+              }
+            }
+          }
+          return settlement === undefined ? Effect.failCause(cause) : Effect.fail(settlement);
+        }),
+      ),
+  };
+};
 
 type ReadEvidenceCaptureMode = ReadRegistration<
   Schema.ConstraintDecoder<unknown>,
@@ -1010,10 +707,17 @@ const resolveReadPermissionTarget = Effect.fn('Runtime.resolveReadPermissionTarg
     scope: OperationalScope,
   ) {
     const permissionResolver = getReadPermissionTargetResolver(registration);
+    const declaredPermissionTarget = registration.descriptor.permissionTarget;
+    if (declaredPermissionTarget === undefined) {
+      return yield* new ReadHandlerExecutionError({
+        code: 'read_handler_execution_failed',
+        reason: 'The legacy Read permission target is unavailable',
+      });
+    }
     let permissionTarget: ResolvedReadPermissionTarget;
     let conditionalAdditionalTargets: readonly AtomicResolvedReadPermissionTarget[] = [];
-    if (registration.descriptor.permissionTarget === 'conditional') {
-      if (Predicate.isFunction(permissionResolver)) {
+    if (declaredPermissionTarget === 'conditional') {
+      if (permissionResolver === undefined || Predicate.isFunction(permissionResolver)) {
         return yield* new ReadHandlerExecutionError({
           code: 'read_handler_execution_failed',
           reason: 'The conditional Read permission declaration is unavailable',
@@ -1030,33 +734,25 @@ const resolveReadPermissionTarget = Effect.fn('Runtime.resolveReadPermissionTarg
       }
       permissionTarget = yield* Effect.try({
         catch: (resolverDefect) =>
-          preserveFailureCause(
-            new ReadHandlerExecutionError({
-              code: 'read_handler_execution_failed',
-              reason: 'The declared read permission target could not be resolved',
-            }),
-            resolverDefect,
-          ),
+          Schema.is(ReadPermissionUnavailable)(resolverDefect)
+            ? resolverDefect
+            : preserveFailureCause(
+                new ReadHandlerExecutionError({
+                  code: 'read_handler_execution_failed',
+                  reason: 'The declared read permission target could not be resolved',
+                }),
+                resolverDefect,
+              ),
         try: () => permissionResolver(decodedInput, scope),
       });
       if (
-        !targetIsValid(registration.descriptor.permissionTarget, permissionTarget, scope) ||
-        (registration.descriptor.resultAuthorization?.kind === 'owner-legal-entity-scope' &&
-          (scope.legalEntityId === undefined ||
-            permissionTarget.kind !== 'module' ||
-            permissionTarget.moduleId !== registration.descriptor.owningModuleKey)) ||
-        ((getReadResultPermissionTargetResolver(registration) !== undefined ||
-          registration.descriptor.resultAuthorization?.kind === 'search-collection') &&
-          permissionTarget.kind === 'any_of' &&
-          !allowsSelectedPeopleResultChecks(registration.descriptor, permissionTarget, scope))
+        !targetIsValid(declaredPermissionTarget, permissionTarget, scope) ||
+        (getReadResultPermissionTargetResolver(registration) !== undefined && permissionTarget.kind === 'any_of')
       ) {
-        if (
-          permissionTarget.kind === 'assortment_permission' &&
-          assortmentPermissionTargetHasTrustedStorefrontMismatch(permissionTarget.assortmentPermission, scope)
-        ) {
+        if (permissionTarget.kind === 'owner_permission') {
           return yield* new ReadPermissionUnavailable({
             code: 'read_permission_unavailable',
-            reason: 'The trusted storefront scope does not match the requested Assortment target',
+            reason: 'The owner permission target cannot be verified in the trusted scope',
           });
         }
         return yield* new ReadHandlerExecutionError({
@@ -1186,7 +882,7 @@ const checkResultPermissions = Effect.fn('ReadRuntime.checkResultPermissions')(f
   if (permissionTarget.kind === 'tenant') {
     return yield* checkTenantResultPermission(contextAccess, scope, permissionTarget);
   }
-  if (permissionTarget.kind === 'business_permission' || permissionTarget.kind === 'assortment_permission') {
+  if (permissionTarget.kind === 'owner_permission') {
     return yield* new ReadHandlerExecutionError({
       code: 'read_handler_execution_failed',
       reason: 'Policy-permission reads must not use generic result resource filtering',
@@ -1225,6 +921,221 @@ const checkResultPermissions = Effect.fn('ReadRuntime.checkResultPermissions')(f
   return yield* Effect.void;
 });
 
+/**
+ * The record target of a record-scoped read, resolved from the declaration's own resolver (O9, O27).
+ * A malformed target is a Core authoring defect, so it is a retryable unavailability, never an allow.
+ */
+const ReadAccessRecordTargetSchema = Schema.Struct({ moduleKey: ModuleKeySchema, recordKey: RecordKeySchema });
+const decodeReadAccessRecordTarget = Schema.decodeUnknownOption(ReadAccessRecordTargetSchema);
+
+const resolveReadAccessTarget = <Input>(
+  input: Input,
+  scope: OperationalScope,
+  resolver: ((input: Input, scope: OperationalScope) => AccessTarget) | undefined,
+): Effect.Effect<Option.Option<AccessRecordTarget>, ReadPermissionUnavailable> => {
+  if (resolver === undefined) {
+    return Effect.succeed(Option.none<AccessRecordTarget>());
+  }
+  return Effect.try({
+    catch: (cause) =>
+      preserveFailureCause(
+        new ReadPermissionUnavailable({
+          code: 'read_permission_unavailable',
+          reason: 'The declared read access target could not be resolved safely',
+        }),
+        cause,
+      ),
+    try: () => resolver(input, scope),
+  }).pipe(
+    Effect.flatMap((declared) => {
+      const decoded = decodeReadAccessRecordTarget(declared);
+      return Option.isNone(decoded)
+        ? Effect.fail(
+            new ReadPermissionUnavailable({
+              code: 'read_permission_unavailable',
+              reason: 'The declared read access target is invalid',
+            }),
+          )
+        : Effect.succeed(Option.some(decoded.value));
+    }),
+  );
+};
+
+/** The evidence/policy metadata of a v2 record target; a scope-wide read names no record (Q2). */
+const accessTargetMetadata = (
+  declaration: AccessDeclaration | undefined,
+  target: Option.Option<AccessRecordTarget>,
+): Readonly<Record<string, string>> =>
+  Option.isNone(target)
+    ? {}
+    : {
+        targetModuleKey: target.value.moduleKey,
+        targetResourceId: target.value.recordKey,
+        targetResourceType: declaration?.key ?? target.value.moduleKey,
+      };
+
+/** Reads that answer one row per query: their rows are filtered by the gate's list predicate (O25). */
+const ROW_SCOPED_READ_ACCESS_KINDS: ReadonlySet<string> = new Set(['list', 'report', 'search']);
+
+/**
+ * The owner-local facts of a governed read (O70): a flat string map naming the owner records the
+ * owner's own business rule is about. They are resolved from the decoded input before the decision,
+ * handed to the owner overlay only, and never reach the decision engine. An empty map is no facts,
+ * and a defect or a non-string fact is a retryable 503, never an allow.
+ */
+const OwnerAccessFactsSchema = Schema.Record(Schema.String, Schema.String);
+const decodeOwnerAccessFacts = Schema.decodeUnknownOption(OwnerAccessFactsSchema);
+
+const resolveReadOwnerFacts = <Input>(
+  input: Input,
+  scope: OperationalScope,
+  resolver: ((input: Input, scope: OperationalScope) => OwnerAccessFacts) | undefined,
+): Effect.Effect<Option.Option<OwnerAccessFacts>, ReadPermissionUnavailable> => {
+  if (resolver === undefined) {
+    return Effect.succeed(Option.none<OwnerAccessFacts>());
+  }
+  return Effect.try({
+    catch: (cause) =>
+      preserveFailureCause(
+        new ReadPermissionUnavailable({
+          code: 'read_permission_unavailable',
+          reason: 'The owner-local facts of this read could not be resolved safely',
+        }),
+        cause,
+      ),
+    try: () => resolver(input, scope),
+  }).pipe(
+    Effect.flatMap((declared) => {
+      const decoded = decodeOwnerAccessFacts(declared);
+      return Option.isNone(decoded)
+        ? Effect.fail(
+            new ReadPermissionUnavailable({
+              code: 'read_permission_unavailable',
+              reason: 'The owner-local facts of this read are invalid',
+            }),
+          )
+        : Effect.succeed(Option.some(decoded.value));
+    }),
+  );
+};
+
+const NO_OWNER_AUTHORIZATION_TARGETS: readonly OwnerAuthorizationTarget[] = Object.freeze([]);
+const NO_PERMISSION_DECISIONS: readonly PermissionDecision[] = Object.freeze([]);
+const NO_ACCESS_FIELD_GROUPS: readonly AccessFieldGroup[] = Object.freeze([]);
+/** No declared result path is projected out; one shared empty list, never a fresh mutable array. */
+const NO_FIELD_PATHS: readonly (readonly string[])[] = Object.freeze([]);
+
+/**
+ * What the access gate answered for one read (CUTOVER-PLAN §3.1): the decision, the row predicate a
+ * list hands to its owner (O25) and the declared result paths this caller may not see (O17).
+ */
+interface ReadGateAuthorization {
+  readonly decision: PermissionDecision;
+  /** The declared result paths this caller may not see; empty when every field group is granted. */
+  readonly deniedFieldPaths: readonly (readonly string[])[];
+  /** Present exactly for a row-scoped read; the owner applies it inside its own query (D16, O25). */
+  readonly listAccess?: ListAccessPredicate;
+}
+
+/** A composition without the gate, and an unavailable gate, answer the same retryable 503 (O62). */
+const UNAVAILABLE_GATE_AUTHORIZATION: ReadGateAuthorization = Object.freeze({
+  decision: 'unavailable',
+  deniedFieldPaths: NO_FIELD_PATHS,
+});
+
+/** A read still on a legacy kind is not decided here, so it receives no predicate and no projection. */
+const LEGACY_GATE_AUTHORIZATION: ReadGateAuthorization = Object.freeze({
+  decision: 'allowed',
+  deniedFieldPaths: NO_FIELD_PATHS,
+});
+
+/**
+ * The parent read of one declared field group (D14, O58, O74). A record-scoped read names the one
+ * record it returns; a scope-wide read names none, because its own capability is the parent read,
+ * decided scope-wide in this same scope.
+ */
+const parentReadOf = (
+  readTarget: Option.Option<AccessRecordTarget>,
+  parent: AccessDeclaration,
+): ParentReadRequirement | undefined => {
+  const capability = capabilityPolicyOf(parent);
+  if (Option.isSome(readTarget)) {
+    return { capability, target: readTarget.value };
+  }
+  return parent.selectors.length === 0 ? { capability } : undefined;
+};
+
+/** The legacy targets and metadata of a read still on a legacy kind; removed with those kinds (C03b). */
+interface LegacyReadAuthorization {
+  readonly conditionalAdditionalTargets: readonly AtomicResolvedReadPermissionTarget[];
+  readonly ownerAuthorizationTargets: readonly OwnerAuthorizationTarget[];
+  readonly permissionTarget: ResolvedReadPermissionTarget;
+  readonly permissionTargetMetadata: ActionPolicyTarget;
+  readonly resourcePermissionTarget: Option.Option<ReadResourcePermissionTarget>;
+}
+
+const unavailableReadComposition = (cause?: unknown) =>
+  preserveFailureCause(
+    new ReadHandlerUnavailable({
+      code: 'read_handler_unavailable',
+      reason: 'The receiving owner release is not approved by the active Application Composition',
+    }),
+    cause,
+  );
+
+const fenceReadRevision = Effect.fn('ReadRuntime.fenceNativeRevision')(function* fenceNativeRevision(
+  transaction: CoreTransaction,
+  inboundRevision: string | undefined,
+  admittedRevision: string | undefined,
+) {
+  if (inboundRevision !== undefined && admittedRevision !== undefined && inboundRevision !== admittedRevision) {
+    return yield* unavailableReadComposition();
+  }
+  const revision = admittedRevision ?? inboundRevision;
+  if (revision !== undefined) {
+    yield* lockApplicationCompositionAuthority(transaction, revision, 'read').pipe(
+      Effect.mapError(unavailableReadComposition),
+    );
+  }
+  return yield* Effect.void;
+});
+
+const readEvidenceFailure = (cause: unknown) =>
+  preserveFailureCause(
+    new ReadEvidencePersistenceError({
+      code: 'read_evidence_persistence_failed',
+      reason: 'Required read evidence could not be persisted',
+    }),
+    cause,
+  );
+
+/** Revalidate after remote finish and hold the publication fence through the separate evidence commit. */
+const persistReadEvidenceForComposition = (
+  executor: CoreDbExecutor,
+  input: PersistReadEvidenceInput,
+  enrollment: DatabaseIdentityEnrollment,
+  revision: string | undefined,
+) => {
+  if (revision === undefined) {
+    return persistScopedReadEvidence(executor, input, enrollment);
+  }
+  return executor
+    .transaction((transaction) =>
+      fenceReadRevision(transaction, revision, revision).pipe(
+        Effect.andThen(() => installOperationalScope(transaction, input.scope, enrollment)),
+        Effect.andThen(() => persistReadEvidence(transaction, input)),
+        insideDatabaseTransaction(input.readKey),
+      ),
+    )
+    .pipe(
+      recoverSqlTransactionError,
+      Effect.catchTags({
+        OperationContextUnavailable: (cause) => Effect.fail(readEvidenceFailure(cause)),
+        SqlError: (cause) => Effect.fail(readEvidenceFailure(cause)),
+      }),
+    );
+};
+
 const readRuntimeFromDependencies = <
   DatabaseValue extends (typeof CoreDatabase)['Service'],
   GatewayValue extends ModuleEntrypointGatewayService,
@@ -1235,13 +1146,20 @@ const readRuntimeFromDependencies = <
   gateway: GatewayValue,
   scopeResolver: ScopeValue,
   contextAccess: AccessValue,
-  // oxlint-disable-next-line effect-native/no-dependency-parameters -- Runtime construction keeps the optional owner seam injectable for Core unit and integration harnesses.
+  // oxlint-disable-next-line effect-native/no-dependency-parameters -- Runtime construction keeps the owner seams injectable for Core unit and integration harnesses.
   options: ReadRuntimeOptions,
 ) => {
+  const shellSystemReads = captureShellSystemReadRegistrations(options.shellSystemReads);
+  const withReadExecution: typeof withModuleOperationExecution = (input, effect) =>
+    isBoundShellSystemRead(input.registration, shellSystemReads)
+      ? withoutModuleOperationExecution(effect)
+      : withModuleOperationExecution(input, effect);
+  const operationAuthority = options.expectedDeployment === undefined ? undefined : options.applicationComposition;
   const stage = (value: ReadRuntimeStage): void => options.onStage?.(value);
   const ownerAuthorizationOverlay = options.ownerAuthorizationOverlay ?? failClosedOwnerAuthorizationOverlay;
+  const { accessDecision } = options;
 
-  const runReadBody = Effect.fn('ReadRuntime.runRead')(function* runReadEffect<
+  const runReadBoundary = Effect.fn('ReadRuntime.runRead')(function* runReadEffect<
     InputSchema extends Schema.ConstraintDecoder<unknown>,
     ResultSchema extends Schema.ConstraintDecoder<unknown>,
     Owner extends string,
@@ -1265,11 +1183,14 @@ const readRuntimeFromDependencies = <
       Requirements,
       DomainErrorSchema
     >;
-    /** Request-owned timing collector; never derived from the read payload. */
-    readonly timings?: Ref.Ref<readonly ReadTiming[]>;
     readonly transport: unknown;
   }): Effect.fn.Return<ResultSchema['Type'], ReadCoreError | DomainErrorSchema['Type'], Requirements> {
-    const observe = (phase: ReadPhase) => observeReadPhase(phase, input.timings);
+    if (!isReadRegistration(input.registration)) {
+      return yield* new ReadHandlerUnavailable({
+        code: 'read_handler_unavailable',
+        reason: 'The Read registration is unavailable',
+      });
+    }
     const decodedInput = yield* Schema.decodeUnknownEffect(input.registration.descriptor.inputSchema, {
       onExcessProperty: 'error',
     })(input.input).pipe(
@@ -1320,360 +1241,550 @@ const readRuntimeFromDependencies = <
       ),
     );
     stage('input_decoded');
-    const transportMetadata = withOptionalProperty(
-      { correlationId: transport.correlationId },
-      transport.traceId !== undefined,
-      'traceId',
-      transport.traceId,
-      {},
-    );
-    const evidenceFor = (
-      scope: OperationalScope,
-      permissionTargetMetadata: ReturnType<typeof targetMetadata>,
-      outcome: Pick<PersistReadEvidenceInput, 'outcome' | 'outcomeCode' | 'outcomeStage' | 'policyKey'>,
-    ): PersistReadEvidenceInput =>
-      withOptionalProperty(
-        {
-          accessKind: input.registration.descriptor.accessKind,
-          captureMode: input.registration.descriptor.evidencePolicy.captureMode,
-          ...outcome,
-        },
-        queryHash !== undefined,
-        'queryHash',
-        queryHash,
-        {
-          readKey: input.registration.descriptor.readKey,
-          resultCount: 0,
-          scope,
-          servingModuleKey: input.registration.descriptor.owningModuleKey,
-          ...permissionTargetMetadata,
-        },
-      );
-
+    const { descriptor } = input.registration;
+    const usesAccessGate = descriptor.entrypoint.authorization.kind === 'protected';
     /**
-     * The only database transaction of a Read. It admits the verified composition revision (when the
-     * gateway supplied one) and runs owner work. Callers keep every network round trip (SpiceDB checks)
-     * and CPU-heavy step (result decoding, evidence fingerprints) outside it: under concurrency a
-     * transaction left idle across such work pins one of the few pooled connections every request needs.
+     * The registered, decoded carriers of this read: definition time already decoded, validated and
+     * froze them, so no request decodes them again (O5, O58, O59, O72). A protected read without any
+     * carrier is answered by the gate's own `deny.declaration_missing`, never by an implicit allow
+     * (O62).
      */
-    const readTransaction = <Value, Failure, Environment>(
-      body: (transaction: CoreTransaction) => Effect.Effect<Value, Failure, Environment>,
-    ) => {
-      const settlement = trackTransactionSettlement();
-      return database.executor
-        .transaction((transaction) =>
-          // Between BEGIN and COMMIT nothing reaches SpiceDB, a module, the network, or a second pooled connection.
-          body(transaction).pipe(insideDatabaseTransaction(input.registration.descriptor.readKey), settlement.capture),
-        )
-        .pipe(
-          settlement.recover,
-          observe('read-transaction'),
-          Effect.tapError((failure) =>
-            Schema.is(SqlError)(failure)
-              ? Effect.logError('Unexpected governed read transaction failure', failure)
-              : Effect.void,
-          ),
-          Effect.tapError((transactionFailure) =>
-            Schema.is(SqlError)(transactionFailure) && Schema.is(ConnectionError)(transactionFailure.reason)
-              ? logUnavailableMapping('read-transaction-connection', 'read-transaction', 'SqlError/ConnectionError', {
-                  errorMessage: sanitizeErrorMessage(transactionFailure.message),
-                })
-              : Effect.void,
-          ),
-          Effect.mapError((transactionFailure) =>
-            Schema.is(SqlError)(transactionFailure)
-              ? mapReadTransactionSqlFailure(transactionFailure)
-              : transactionFailure,
-          ),
+    // An absent carrier stays absent, so the gate sees exactly what the descriptor declares (O59, D5).
+    const accessCarrier: GateInput['carrier'] = withOptional(
+      withOptional(
+        withOptional({}, 'accessDeclaration', descriptor.accessDeclaration),
+        'accessWorkload',
+        descriptor.accessWorkload,
+      ),
+      'accessActor',
+      descriptor.accessActor,
+    );
+    /**
+     * A field group is always decided on rights (D6, O17). An `identity` read admits its relayed subject
+     * before any grant is read, so its groups keep the read's callers but decide the subject's own grants
+     * for the field capability. A workload subject holds no field grant, so the groups name no workload
+     * subject and its governed fields are projected out, whichever mode admitted it to the read.
+     */
+    const fieldGroupActor =
+      descriptor.accessActor === undefined
+        ? undefined
+        : Object.freeze({
+            callers: descriptor.accessActor.callers,
+            reason: descriptor.accessActor.reason,
+            subject: 'rights' as const,
+          });
+
+    /** The legacy resolution of a read still on a legacy kind; removed with those kinds (C03b). */
+    const prepareLegacyReadAuthorization = Effect.fn('ReadRuntime.prepareLegacyReadAuthorization')(
+      function* prepareLegacyReadAuthorizationEffect(
+        legacyInput: InputSchema['Type'],
+        scope: OperationalScope,
+      ): Effect.fn.Return<LegacyReadAuthorization, ReadCoreError> {
+        const { conditionalAdditionalTargets, permissionTarget } = yield* resolveReadPermissionTarget(
+          input.registration,
+          legacyInput,
+          scope,
         );
-    };
-
-    const admittedTransaction = <Value, Failure, Environment>(
-      body: (
-        transaction: CoreTransaction,
-        scoped: ScopedTransactionExecutor,
-      ) => Effect.Effect<Value, Failure, Environment>,
-    ) =>
-      readTransaction(
-        Effect.fn('ReadRuntime.admittedTransaction')(function* admittedTransactionBody(transaction: CoreTransaction) {
-          const { scoped } = yield* installOperationalScopeAt(transaction, scope, options.databaseIdentities);
-          if (compositionRevision !== undefined) {
-            yield* lockApplicationCompositionAuthority(transaction, compositionRevision, 'read').pipe(
-              Effect.mapError(compositionNoLongerAdmits),
-              observe('read-authority'),
-            );
-          }
-          return yield* body(transaction, scoped);
-        }),
-      );
-
-    /** A definite denial is recorded only while the composition still admits this Read. */
-    const recordDenial = (evidence: PersistReadEvidenceInput, failure: ReadPermissionDenied | ReadPolicyDenied) =>
-      admittedTransaction((transaction) => persistReadEvidence(transaction, evidence)).pipe(
-        Effect.andThen(Effect.fail(failure)),
-      );
-
-    // A stale revision runs no owner callback and spends no authorization round trip.
-    if (compositionRevision !== undefined) {
-      yield* precheckApplicationCompositionAdmission(database.executor, compositionRevision, 'read').pipe(
-        Effect.mapError(compositionNoLongerAdmits),
-        observe('read-admission'),
-      );
-    }
-    // Revalidate scope, fetch module state, and check the static module permission independently.
-    // No owner callback or transaction starts until all admission and authorization gates have succeeded.
-    const resolveScope = scopeResolver.resolve(
-      withOptionalProperty(
-        withOptionalProperty(
-          {
-            correlationId: transport.correlationId,
-            legalEntityScope: input.registration.descriptor.legalEntityScope,
-            principal,
-          },
-          transport.traceId !== undefined,
-          'traceId',
-          transport.traceId,
-          {},
-        ),
-        input.audience !== undefined,
-        'audience',
-        input.audience,
-        {},
-      ),
-    );
-    const [scope, snapshotExit, moduleAccessPrefetch] = yield* Effect.all(
-      [
-        resolveScope.pipe(observe('read-scope')),
-        // Preserve scope-validation failure precedence; consume a snapshot failure only after scope succeeds.
-        Effect.exit(
-          gateway.prepareSnapshot(principal, [input.registration.descriptor.entrypoint]).pipe(observe('read-module')),
-        ),
-        prefetchEntrypointModuleAccess(contextAccess, principal, input.registration.descriptor.entrypoint).pipe(
-          observe('read-permission'),
-        ),
-      ],
-      { concurrency: 3 },
-    );
-    const prefetchedModuleAccess =
-      scope.tenantId === principal.tenantId &&
-      scope.principalId === principal.principalId &&
-      scope.legalEntityId === principal.legalEntityId
-        ? moduleAccessPrefetch
-        : Option.none<PermissionDecision>();
-    stage('scope_validated');
-    const { conditionalAdditionalTargets, permissionTarget } = yield* resolveReadPermissionTarget(
-      input.registration,
-      decodedInput,
-      scope,
-    );
-    // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- Preserve primary-before-resource resolver execution because owner callbacks may throw or observe mutable state.
-    const resourcePermissionTarget = yield* resolveReadResourcePermissionTarget(
-      decodedInput,
-      scope,
-      getReadResourcePermissionTargetResolver(input.registration),
-    );
-    const ownerAuthorizationTargets: readonly OwnerAuthorizationTarget[] = Object.freeze([
-      ...(permissionTarget.kind === 'any_of' ? permissionTarget.targets : [permissionTarget]).map((target) =>
-        toOwnerAuthorizationTarget(target, scope),
-      ),
-      ...conditionalAdditionalTargets.map((target) => toOwnerAuthorizationTarget(target, scope)),
-      ...(Option.isNone(resourcePermissionTarget)
-        ? []
-        : [
-            {
-              kind: 'resource' as const,
-              permission: 'read' as const,
-              resource: resourcePermissionTarget.value.resource,
-            },
-          ]),
-    ]);
-    const permissionTargetMetadata = targetMetadata(permissionTarget, scope);
-    const {
-      evidencePolicy: { policyKey },
-    } = input.registration.descriptor;
-    const snapshot = yield* scope.tenantId === principal.tenantId
-      ? snapshotExit
-      : gateway.prepareSnapshot(scope, [input.registration.descriptor.entrypoint]);
-    yield* gateway.check(snapshot, input.registration.descriptor.entrypoint);
-    stage('module_state_checked');
-
-    // Every decision is independent of the others, so they share one SpiceDB round trip instead of one each.
-    const [permissionDecision, resourcePermissionDecision, conditionalAdditionalDecisions, entrypointDecision] =
-      yield* Effect.all(
-        [
-          permissionTarget.kind === 'module' &&
-          permissionTarget.moduleId === input.registration.descriptor.entrypoint.moduleKey &&
-          Option.isSome(prefetchedModuleAccess)
-            ? Effect.succeed(prefetchedModuleAccess.value)
-            : checkPermissionTarget(
-                contextAccess,
-                scope,
-                permissionTarget,
-                input.registration.descriptor.legalEntityScope === 'forbidden',
-              ),
-          Option.isNone(resourcePermissionTarget)
-            ? Effect.succeed<PermissionDecision>('allowed')
-            : checkAtomicPermissionTarget(
-                contextAccess,
-                scope,
+        // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- Preserve primary-before-resource resolver execution because owner callbacks may throw or observe mutable state.
+        const resourcePermissionTarget = yield* resolveReadResourcePermissionTarget(
+          legacyInput,
+          scope,
+          getReadResourcePermissionTargetResolver(input.registration),
+        );
+        const ownerAuthorizationTargets: readonly OwnerAuthorizationTarget[] = Object.freeze([
+          ...(permissionTarget.kind === 'any_of' ? permissionTarget.targets : [permissionTarget]).map((target) =>
+            toOwnerAuthorizationTarget(target, scope),
+          ),
+          ...conditionalAdditionalTargets.map((target) => toOwnerAuthorizationTarget(target, scope)),
+          ...(Option.isNone(resourcePermissionTarget)
+            ? []
+            : [
                 {
-                  kind: 'resource',
+                  kind: 'resource' as const,
+                  permission: 'read' as const,
                   resource: resourcePermissionTarget.value.resource,
                 },
-                false,
-              ),
-          Effect.forEach(
-            conditionalAdditionalTargets,
-            (target) => checkAtomicPermissionTarget(contextAccess, scope, target, false),
-            { concurrency: 3 },
-          ),
-          Option.isSome(prefetchedModuleAccess)
-            ? Effect.succeed(prefetchedModuleAccess)
-            : checkEntrypointContextPermission(
-                contextAccess,
-                scope,
-                input.registration.descriptor,
-                canonicalPermissionTarget(permissionTarget),
-              ),
-        ],
-        { concurrency: 4 },
+              ]),
+        ]);
+        return Object.freeze({
+          conditionalAdditionalTargets,
+          ownerAuthorizationTargets,
+          permissionTarget,
+          permissionTargetMetadata: targetMetadata(permissionTarget, scope),
+          resourcePermissionTarget,
+        });
+      },
+    );
+
+    /**
+     * The one v2 authorization question this read asks (CUTOVER-PLAN §3.1): a single-record read is
+     * decided with its record target, a list, report or search read is decided as a list whose
+     * predicate the owner applies inside its own query (O25), and the field groups this caller lacks
+     * are projected out of the result (D14, O58, O17).
+     * The gate owns its scoped reads and decision evidence; no owner transaction is held over its
+     * network calls. Owner SQL and final disclosure reacquire the composition fence independently.
+     */
+    const authorizeThroughGate = Effect.fn('ReadRuntime.authorizeThroughGate')(function* authorizeThroughGateEffect(
+      readScope: OperationalScope,
+      readTarget: Option.Option<AccessRecordTarget>,
+    ): Effect.fn.Return<ReadGateAuthorization, ReadPermissionUnavailable> {
+      if (accessDecision === undefined) {
+        return UNAVAILABLE_GATE_AUTHORIZATION;
+      }
+      const now = yield* DateTime.nowAsDate;
+      const question = withOptionalProperty(
+        {
+          carrier: accessCarrier,
+          legalEntityScope: descriptor.legalEntityScope,
+          now,
+          scope: readScope,
+        },
+        Option.isSome(readTarget),
+        'target',
+        Option.getOrUndefined(readTarget),
+        {},
       );
-    const entrypointPermissionDecision = Option.getOrElse(entrypointDecision, () => permissionDecision);
-    const authorizationDecisions = [
-      permissionDecision,
-      resourcePermissionDecision,
-      ...conditionalAdditionalDecisions,
-      entrypointPermissionDecision,
-    ];
-    stage('permission_checked');
-    if (authorizationDecisions.includes('denied')) {
-      return yield* recordDenial(
-        evidenceFor(scope, permissionTargetMetadata, {
-          outcome: 'denied',
-          outcomeCode: 'spicedb_permission_denied',
-          outcomeStage: 'authz',
-          policyKey,
-        }),
-        new ReadPermissionDenied({
+      const rowScoped = ROW_SCOPED_READ_ACCESS_KINDS.has(descriptor.accessKind);
+      const listing: ListAccessResolution | undefined = rowScoped ? yield* accessDecision.list(question) : undefined;
+      const decision: AccessDecision =
+        listing === undefined ? yield* accessDecision.decide(question) : listing.decision;
+      // A read is never proposable, so only an ALLOWED decision may read (O45).
+      if (decision.outcome !== 'ALLOWED') {
+        return decision.outcome === 'UNAVAILABLE'
+          ? UNAVAILABLE_GATE_AUTHORIZATION
+          : { decision: 'denied', deniedFieldPaths: NO_FIELD_PATHS };
+      }
+      const listAccess = listing?.predicate;
+      if (rowScoped && listAccess === undefined) {
+        // A list answer without a predicate describes no matching row, so it never widens into an
+        // unfiltered read of the scope (B1, D16, O25).
+        return { decision: 'denied', deniedFieldPaths: NO_FIELD_PATHS };
+      }
+      const deniedFieldPaths = yield* decideReadFieldPaths(now, readScope, readTarget);
+      return withOptionalProperty(
+        { decision: 'allowed' as const, deniedFieldPaths },
+        listAccess !== undefined,
+        'listAccess',
+        listAccess,
+        {},
+      );
+    });
+
+    /**
+     * The declared result paths this caller may not read (O17). Field access rides the parent read it
+     * belongs to (D14, O58, O74): a record-scoped read decides each group with the record it returns
+     * and that record's own parent read; a scope-wide read has no record, so its groups ride the
+     * read's own capability decided scope-wide in this same scope; and a row-scoped read applies that
+     * same scope-wide shape with its row filter bounding the rows they apply to (O25).
+     */
+    const decideReadFieldPaths = Effect.fn('ReadRuntime.decideReadFieldPaths')(function* decideReadFieldPathsEffect(
+      decidedAt: Date,
+      readScope: OperationalScope,
+      readTarget: Option.Option<AccessRecordTarget>,
+    ): Effect.fn.Return<readonly (readonly string[])[], ReadPermissionUnavailable> {
+      const groups = descriptor.accessFieldGroups ?? NO_ACCESS_FIELD_GROUPS;
+      const parent = descriptor.accessDeclaration;
+      if (groups.length === 0) {
+        return NO_FIELD_PATHS;
+      }
+      if (accessDecision === undefined || parent === undefined) {
+        // Definition time refuses a field group without its parent declaration (O58); a registration
+        // that lost one is a Core defect, so the read answers a retryable 503, never a projection.
+        return yield* new ReadPermissionUnavailable({
+          code: 'read_permission_unavailable',
+          reason: 'The declared read field groups could not be decided',
+        });
+      }
+      const rowScoped = ROW_SCOPED_READ_ACCESS_KINDS.has(descriptor.accessKind);
+      const parentRead = parentReadOf(readTarget, parent);
+      const answers = yield* Effect.forEach(
+        groups,
+        (group) => {
+          // A group rides its read's caller contract: a relayed or workload caller the read admits is
+          // decided on the group, not refused for a carrier that names no actor (D6).
+          const carrier = withOptional({ ...accessCarrier, accessDeclaration: group }, 'accessActor', fieldGroupActor);
+          return rowScoped
+            ? accessDecision
+                .list({ carrier, legalEntityScope: descriptor.legalEntityScope, now: decidedAt, scope: readScope })
+                .pipe(Effect.map((listing) => listing.decision))
+            : accessDecision.decide(
+                withOptionalProperty(
+                  withOptionalProperty(
+                    {
+                      carrier,
+                      legalEntityScope: descriptor.legalEntityScope,
+                      now: decidedAt,
+                      scope: readScope,
+                    },
+                    parentRead !== undefined,
+                    'parentRead',
+                    parentRead,
+                    {},
+                  ),
+                  Option.isSome(readTarget),
+                  'target',
+                  Option.getOrUndefined(readTarget),
+                  {},
+                ),
+              );
+        },
+        { concurrency: 1 },
+      );
+      const unavailable = answers.some((answer) => answer.outcome === 'UNAVAILABLE');
+      if (unavailable) {
+        // An unreadable field decision is retryable, never a silent projection (O48b).
+        return yield* new ReadPermissionUnavailable({
+          code: 'read_permission_unavailable',
+          reason: 'Read field authorization is temporarily unavailable',
+        });
+      }
+      return groups.flatMap((group, index) =>
+        answers[index]?.outcome === 'ALLOWED' ? [] : group.fields.map((field) => field.split('.')),
+      );
+    });
+
+    /** Transitional: the legacy checks of a read still on a legacy kind; removed with those kinds (C03b). */
+    const checkLegacyReadAuthorization = Effect.fn('ReadRuntime.checkLegacyReadAuthorization')(
+      function* checkLegacyReadAuthorizationEffect(legacy: LegacyReadAuthorization, readScope: OperationalScope) {
+        const permissionDecision = yield* checkPermissionTarget(
+          contextAccess,
+          readScope,
+          legacy.permissionTarget,
+          input.registration.descriptor.legalEntityScope === 'forbidden',
+        );
+        const resourcePermissionDecision: PermissionDecision = Option.isSome(legacy.resourcePermissionTarget)
+          ? yield* checkAtomicPermissionTarget(
+              contextAccess,
+              readScope,
+              { kind: 'resource', resource: legacy.resourcePermissionTarget.value.resource },
+              false,
+            )
+          : 'allowed';
+        const conditionalAdditionalDecisions = yield* Effect.forEach(
+          legacy.conditionalAdditionalTargets,
+          (target) => checkAtomicPermissionTarget(contextAccess, readScope, target, false),
+          { concurrency: 3 },
+        );
+        const entrypointPermissionDecision = yield* checkEntrypointContextPermission(
+          contextAccess,
+          readScope,
+          input.registration.descriptor,
+          canonicalPermissionTarget(legacy.permissionTarget),
+          permissionDecision,
+        );
+        return [
+          permissionDecision,
+          resourcePermissionDecision,
+          ...conditionalAdditionalDecisions,
+          entrypointPermissionDecision,
+        ];
+      },
+    );
+
+    /** The receiving owner release must be the one the active Application Composition admits. */
+    const admitReadComposition = Effect.fn('ReadRuntime.admitReadComposition')(function* admitReadCompositionEffect(
+      earlyCompositionRevision: string | undefined,
+    ) {
+      const admission =
+        options.applicationComposition !== undefined && options.expectedDeployment !== undefined
+          ? yield* loadModuleOperationAdmission(
+              options.applicationComposition,
+              options.expectedDeployment,
+              input.registration,
+              principal,
+              options.ownerRegistration,
+              shellSystemReads,
+            ).pipe(Effect.mapError(unavailableReadComposition))
+          : undefined;
+      const admittedCompositionRevision = admission?.revision ?? compositionRevision;
+      if (earlyCompositionRevision !== undefined && earlyCompositionRevision !== admittedCompositionRevision) {
+        return yield* unavailableReadComposition();
+      }
+      if (admission?.catalog !== undefined) {
+        yield* validateBoundOperationOwner(input.registration, admission.catalog, options.ownerRegistration).pipe(
+          Effect.mapError(unavailableReadComposition),
+        );
+      }
+      return admittedCompositionRevision;
+    });
+
+    const executeTrustedRead = Effect.fn('ReadRuntime.executeTrustedRead')(function* executeTrustedReadEffect(
+      executor: CoreDbExecutor,
+    ) {
+      const scope = yield* scopeResolver.resolve(
+        withOptionalProperty(
+          withOptionalProperty(
+            {
+              correlationId: transport.correlationId,
+              legalEntityScope: input.registration.descriptor.legalEntityScope,
+              principal,
+            },
+            transport.traceId !== undefined,
+            'traceId',
+            transport.traceId,
+            {},
+          ),
+          input.audience !== undefined,
+          'audience',
+          input.audience,
+          {},
+        ),
+      );
+      stage('scope_validated');
+      // The descriptor decides which authority answers (O62, O68): a v2 carrier is decided by the one
+      // access gate, and a descriptor still on a legacy kind keeps the legacy checks until C05 moves it.
+      const accessTarget = usesAccessGate
+        ? yield* resolveReadAccessTarget(decodedInput, scope, getReadAccessTargetResolver(input.registration))
+        : Option.none<AccessRecordTarget>();
+      const accessOwnerFacts = usesAccessGate
+        ? yield* resolveReadOwnerFacts(decodedInput, scope, getReadOwnerFactsResolver(input.registration))
+        : Option.none<OwnerAccessFacts>();
+      const legacyAuthorization = usesAccessGate
+        ? Option.none<LegacyReadAuthorization>()
+        : Option.some(yield* prepareLegacyReadAuthorization(decodedInput, scope));
+      const permissionTarget = Option.isSome(legacyAuthorization)
+        ? legacyAuthorization.value.permissionTarget
+        : undefined;
+      const ownerAuthorizationTargets: readonly OwnerAuthorizationTarget[] = Option.isSome(legacyAuthorization)
+        ? legacyAuthorization.value.ownerAuthorizationTargets
+        : NO_OWNER_AUTHORIZATION_TARGETS;
+      const permissionTargetMetadata = Option.isSome(legacyAuthorization)
+        ? legacyAuthorization.value.permissionTargetMetadata
+        : accessTargetMetadata(descriptor.accessDeclaration, accessTarget);
+      const { earlyCompositionRevision, intrinsicDependencies } = yield* prepareOperationIntrinsicState(
+        input.registration,
+        principal,
+        { ...options, shellSystemReads },
+      ).pipe(Effect.mapError(unavailableReadComposition));
+      const snapshot = yield* gateway.prepareSnapshot(
+        scope,
+        [input.registration.descriptor.entrypoint],
+        intrinsicDependencies,
+      );
+      yield* gateway.check(snapshot, input.registration.descriptor.entrypoint);
+      stage('module_state_checked');
+
+      const gateAuthorization: ReadGateAuthorization = usesAccessGate
+        ? yield* authorizeThroughGate(scope, accessTarget)
+        : LEGACY_GATE_AUTHORIZATION;
+      const gatePermissionDecision: PermissionDecision = gateAuthorization.decision;
+      const legacyPermissionDecisions: readonly PermissionDecision[] = Option.isSome(legacyAuthorization)
+        ? yield* checkLegacyReadAuthorization(legacyAuthorization.value, scope)
+        : NO_PERMISSION_DECISIONS;
+      const authorizationDecisions: readonly PermissionDecision[] = [
+        gatePermissionDecision,
+        ...legacyPermissionDecisions,
+      ];
+      stage('permission_checked');
+      if (authorizationDecisions.includes('denied')) {
+        yield* persistReadEvidenceForComposition(
+          executor,
+          withOptionalProperty(
+            {
+              accessKind: input.registration.descriptor.accessKind,
+              captureMode: input.registration.descriptor.evidencePolicy.captureMode,
+              outcome: 'denied',
+              outcomeCode: usesAccessGate ? 'access_denied' : 'spicedb_permission_denied',
+              outcomeStage: 'authz',
+              policyKey: input.registration.descriptor.evidencePolicy.policyKey,
+            },
+            queryHash !== undefined,
+            'queryHash',
+            queryHash,
+            {
+              readKey: input.registration.descriptor.readKey,
+              resultCount: 0,
+              scope,
+              servingModuleKey: input.registration.descriptor.owningModuleKey,
+              ...permissionTargetMetadata,
+            },
+          ),
+          options.databaseIdentities,
+          earlyCompositionRevision ?? compositionRevision,
+        );
+        return yield* new ReadPermissionDenied({
           code: 'read_permission_denied',
           reason: 'The principal is not permitted to perform this read',
-        }),
-      );
-    }
-    if (authorizationDecisions.some((decision) => decision !== 'allowed')) {
-      return yield* new ReadPermissionUnavailable({
-        code: 'read_permission_unavailable',
-        reason: 'Read authorization is temporarily unavailable',
-      });
-    }
-    if (!isConnectionReadAllowed(principal, input.registration.descriptor)) {
-      return yield* recordDenial(
-        evidenceFor(scope, permissionTargetMetadata, {
-          outcome: 'denied',
-          outcomeCode: CONNECTION_SCOPE_REASON_CODE,
-          outcomeStage: 'authz',
-          policyKey,
-        }),
-        new ReadPermissionDenied({
-          code: 'read_permission_denied',
-          reason: 'The connected application may not read this module',
-        }),
-      );
-    }
+        });
+      }
+      if (authorizationDecisions.some((decision) => decision !== 'allowed')) {
+        return yield* new ReadPermissionUnavailable({
+          code: 'read_permission_unavailable',
+          reason: 'Read authorization is temporarily unavailable',
+        });
+      }
 
-    const policies = getReadPolicyImplementations(input.registration);
-    yield* Effect.forEach(
-      input.registration.descriptor.policies.entries(),
-      ([index, policyDescriptor]): Effect.Effect<void, ReadCoreError> => {
-        const policy = policies[index];
-        if (policy === undefined) {
-          return Effect.fail(
-            new ReadPolicyEvaluationError({
-              code: 'read_policy_evaluation_failed',
-              reason: 'A required read Policy is unavailable',
-            }),
-          );
-        }
-        const { descriptor } = input.registration;
-        return policy
-          .evaluate({
-            action: {
-              actionKey: descriptor.readKey,
-              owningModuleKey: descriptor.owningModuleKey,
-              schemaVersion: descriptor.schemaVersion,
-            },
-            payload: decodedInput,
-            principal: scope,
-            target: permissionTargetMetadata,
-            transport: transportMetadata,
-          })
+      const admittedCompositionRevision = yield* admitReadComposition(earlyCompositionRevision);
+      const executionRevision = admittedCompositionRevision ?? '';
+      const policies = getReadPolicyImplementations(input.registration);
+      yield* withReadExecution(
+        {
+          loadCatalog: operationCatalogLoader(operationAuthority, executionRevision),
+          ownerRegistration: options.ownerRegistration,
+          phase: 'execution',
+          registration: input.registration,
+          revision: executionRevision,
+          scope,
+        },
+        Effect.forEach(
+          input.registration.descriptor.policies.entries(),
+          ([index, policyDescriptor]): Effect.Effect<void, ReadCoreError> => {
+            const policy = policies[index];
+            if (policy === undefined) {
+              return Effect.fail(
+                new ReadPolicyEvaluationError({
+                  code: 'read_policy_evaluation_failed',
+                  reason: 'A required read Policy is unavailable',
+                }),
+              );
+            }
+            return policy
+              .evaluate({
+                action: {
+                  actionKey: descriptor.readKey,
+                  owningModuleKey: descriptor.owningModuleKey,
+                  schemaVersion: descriptor.schemaVersion,
+                },
+                payload: decodedInput,
+                principal: scope,
+                target: permissionTargetMetadata,
+                transport: withOptionalProperty(
+                  { correlationId: transport.correlationId },
+                  transport.traceId !== undefined,
+                  'traceId',
+                  transport.traceId,
+                  {},
+                ),
+              })
+              .pipe(
+                Effect.catchTag('PolicyDenied', (failure) =>
+                  persistReadEvidenceForComposition(
+                    executor,
+                    withOptionalProperty(
+                      {
+                        accessKind: descriptor.accessKind,
+                        captureMode: descriptor.evidencePolicy.captureMode,
+                        outcome: 'denied',
+                        outcomeCode: failure.reasonCode,
+                        outcomeStage: 'policy',
+                        policyKey: descriptor.evidencePolicy.policyKey,
+                      },
+                      queryHash !== undefined,
+                      'queryHash',
+                      queryHash,
+                      {
+                        readKey: descriptor.readKey,
+                        resultCount: 0,
+                        scope,
+                        servingModuleKey: descriptor.owningModuleKey,
+                        ...permissionTargetMetadata,
+                      },
+                    ),
+                    options.databaseIdentities,
+                    admittedCompositionRevision,
+                  ).pipe(
+                    Effect.andThen(
+                      Effect.fail(
+                        new ReadPolicyDenied({
+                          code: 'read_policy_denied',
+                          httpStatus: policyDescriptor.denialStatus,
+                          policyReasonCode: failure.reasonCode,
+                          reason: failure.reason,
+                        }),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+          },
+          { concurrency: 1, discard: true },
+        ),
+      );
+      stage('policies_checked');
+
+      const trustedSettlement = makeReadSettlementRecovery();
+      const sanitizeOwnerFailure = Effect.mapError((failure: unknown) =>
+        sanitizeReadHandlerFailure(getReadDomainErrorSchema(input.registration), failure),
+      );
+      /**
+       * A short, admitted, scoped, guarded owner transaction for `finish`: an evaluation that
+       * interleaves remote owner calls with owner-state reads opens one per read, and no remote call
+       * ever runs while one is open (D14).
+       */
+      const ownerTransaction: ReadOwnerTransaction = (use) =>
+        executor
+          .transaction((transaction) =>
+            fenceReadRevision(transaction, compositionRevision, admittedCompositionRevision).pipe(
+              Effect.andThen(() => installOperationalScope(transaction, scope, options.databaseIdentities)),
+              Effect.flatMap((nextScoped) => use(nextScoped)),
+              insideDatabaseTransaction(descriptor.readKey),
+            ),
+          )
           .pipe(
-            Effect.catchTag('PolicyDenied', (failure) =>
-              recordDenial(
-                evidenceFor(scope, permissionTargetMetadata, {
-                  outcome: 'denied',
-                  outcomeCode: failure.reasonCode,
-                  outcomeStage: 'policy',
-                  policyKey: descriptor.evidencePolicy.policyKey,
-                }),
-                new ReadPolicyDenied({
-                  code: 'read_policy_denied',
-                  httpStatus: policyDescriptor.denialStatus,
-                  policyReasonCode: failure.reasonCode,
-                  reason: failure.reason,
-                }),
+            Effect.mapError((cause) =>
+              new ReadHandlerUnavailable({
+                code: 'read_handler_unavailable',
+                reason: 'The owner transaction scope is unavailable',
+              }).pipe((failure) => preserveFailureCause(failure, cause)),
+            ),
+          );
+      // The gate's own row and field answers reach every owner step, exactly as a single-handler Read
+      // receives them (O17, O25): a staged `load` applies the row filter in its own query and a staged
+      // `finish` filters fields with the same answer.
+      const ownerStepsContext = Object.freeze(
+        withOptional(
+          withOptional(
+            withOptional(
+              { readKey: descriptor.readKey, scope, transaction: ownerTransaction },
+              'compositionRevision',
+              admittedCompositionRevision,
+            ),
+            'listAccess',
+            gateAuthorization.listAccess,
+          ),
+          'deniedFieldPaths',
+          usesAccessGate ? gateAuthorization.deniedFieldPaths : undefined,
+        ),
+      );
+      const authorizedReadProgram = Effect.gen(function* executeAuthorizedRead() {
+        // Owner `prepare`: SpiceDB grants and other remote calls, before any transaction exists, so a
+        // slow authorization round trip never holds a pooled connection. It yields the transaction step.
+        const loadWith = yield* Effect.suspend(() =>
+          getReadStages(input.registration)(decodedInput, ownerStepsContext),
+        ).pipe(sanitizeOwnerFailure);
+        const readTransactionBody = Effect.fn('ReadRuntime.readTransactionBody')(function* readTransactionBodyEffect(
+          transaction: CoreTransaction,
+        ) {
+          yield* fenceReadRevision(transaction, compositionRevision, admittedCompositionRevision);
+          const scoped = yield* installOperationalScope(transaction, scope, options.databaseIdentities);
+          stage('scope_installed');
+          const operationAt = yield* trustedTransactionTime(transaction);
+          const ownerAuthorizationDecision = yield* ownerAuthorizationOverlay.authorize(
+            scoped,
+            Object.freeze(
+              withOptionalProperty(
+                withOptionalProperty(
+                  {
+                    capabilityKey: descriptor.accessDeclaration?.key ?? descriptor.readKey,
+                    operation: 'read' as const,
+                    operationAt,
+                    operationKey: input.registration.descriptor.readKey,
+                    owningModuleKey: input.registration.descriptor.owningModuleKey,
+                    scope,
+                    targets: ownerAuthorizationTargets,
+                  },
+                  Option.isSome(accessTarget),
+                  'target',
+                  Option.getOrUndefined(accessTarget),
+                  {},
+                ),
+                Option.isSome(accessOwnerFacts),
+                'ownerFacts',
+                Option.getOrUndefined(accessOwnerFacts),
+                {},
               ),
             ),
           );
-      },
-      { concurrency: 1, discard: true },
-    );
-    stage('policies_checked');
-
-    const sanitizeOwnerFailure = Effect.mapError((failure: unknown) =>
-      sanitizeReadHandlerFailure(getReadDomainErrorSchema(input.registration), failure),
-    );
-    /** A short admitted, scoped, guarded owner transaction for `finish` (owner-state reads between remote calls). */
-    const ownerTransaction: ReadOwnerTransaction = (use) => admittedTransaction((_transaction, scoped) => use(scoped));
-    const ownerContext = Object.freeze({
-      compositionRevision,
-      readKey: input.registration.descriptor.readKey,
-      scope,
-      transaction: ownerTransaction,
-    });
-
-    const executeAuthorizedRead = Effect.fn('ReadRuntime.executeAuthorizedRead')(function* executeAuthorizedRead() {
-      // Owner `prepare` and the owner authorization overlay's remote inputs: SpiceDB grants and other
-      // remote calls, before any transaction exists.
-      const [loadWith, ownerAuthorizationCheck] = yield* Effect.all(
-        [
-          getReadStages(input.registration)(decodedInput, ownerContext).pipe(sanitizeOwnerFailure),
-          ownerAuthorizationOverlay.prepare(
-            Object.freeze({
-              operation: 'read' as const,
-              operationKey: input.registration.descriptor.readKey,
-              owningModuleKey: input.registration.descriptor.owningModuleKey,
-              scope,
-              targets: ownerAuthorizationTargets,
-            }),
-          ),
-        ],
-        { concurrency: 2 },
-      ).pipe(observe('read-prepare'));
-      // Owner work: the transaction holds only the scope installation, owner authorization state, and `load`.
-      // Remote I/O and a second pooled connection refuse to run inside it (`insideDatabaseTransaction`).
-      const finishOwner = yield* readTransaction(
-        Effect.fn('ReadRuntime.readTransactionBody')(function* readTransactionBody(transaction: CoreTransaction) {
-          const { operationAt, scoped } = yield* compositionRevision === undefined
-            ? installOperationalScopeAt(transaction, scope, options.databaseIdentities).pipe(observe('read-rls'))
-            : lockApplicationCompositionReadScope(
-                transaction,
-                compositionRevision,
-                scope,
-                options.databaseIdentities,
-              ).pipe(Effect.mapError(compositionNoLongerAdmits), observe('read-authority'));
-          stage('scope_installed');
-          const ownerAuthorizationDecision = yield* ownerAuthorizationCheck(scoped, operationAt);
           if (ownerAuthorizationDecision === 'denied') {
             return yield* new ReadPermissionDenied({
               code: 'read_permission_denied',
@@ -1686,19 +1797,49 @@ const readRuntimeFromDependencies = <
               reason: 'Owner-local Read authorization is temporarily unavailable',
             });
           }
-          const services = yield* getReadServiceFactory(input.registration)(scoped, scope, compositionRevision);
-          const finish = yield* loadWith(services).pipe(sanitizeOwnerFailure, observe('read-owner'));
+          const services = yield* getReadServiceFactory(input.registration)(
+            scoped,
+            scope,
+            admittedCompositionRevision,
+            gateAuthorization.listAccess,
+          );
+          // Owner `load` (scoped database reads only) runs inside this transaction and returns the
+          // after-commit `finish`; the connection is back in the pool before `finish` runs.
+          const finish = yield* loadWith(services).pipe(sanitizeOwnerFailure);
           stage('handler_executed');
           // @effect-diagnostics-next-line returnEffectInGen:off -- The after-commit step leaves the transaction unevaluated.
           return finish;
-        }),
-      );
-      // The connection is back in the pool: owner `finish`, result validation, result authorization, and evidence.
-      const handlerResult = yield* finishOwner.pipe(sanitizeOwnerFailure);
-      const decodeResult = (candidate: unknown) =>
-        Schema.decodeUnknownEffect(Schema.toType(input.registration.descriptor.resultSchema), {
+        });
+        const transactionResult = executor
+          .transaction((transaction) =>
+            readTransactionBody(transaction).pipe(
+              insideDatabaseTransaction(descriptor.readKey),
+              trustedSettlement.capture,
+            ),
+          )
+          .pipe(
+            trustedSettlement.recover,
+            Effect.tapError((failure) =>
+              Schema.is(SqlError)(failure)
+                ? Effect.logError('Unexpected governed read transaction failure', failure)
+                : Effect.void,
+            ),
+            Effect.mapError((transactionFailure) =>
+              Schema.is(SqlError)(transactionFailure)
+                ? mapReadTransactionSqlFailure(transactionFailure)
+                : transactionFailure,
+            ),
+          );
+        // The connection is back in the pool: owner `finish`, result validation, result authorization,
+        // and evidence. A `finish` that must read owner state between remote calls uses the same short
+        // `ownerTransaction`, and no remote call ever runs while one is open.
+        // The transaction's own failures (scope install, settlement, an unavailable transaction time)
+        // propagate untouched; only the owner's after-commit step is sanitized as an owner failure.
+        const finish = yield* transactionResult;
+        const handlerResult = yield* finish.pipe(sanitizeOwnerFailure);
+        const result = yield* Schema.decodeUnknownEffect(Schema.toType(input.registration.descriptor.resultSchema), {
           onExcessProperty: 'error',
-        })(candidate).pipe(
+        })(handlerResult.result).pipe(
           Effect.mapError((parseIssue) =>
             preserveFailureCause(
               new ReadResultValidationError({
@@ -1708,143 +1849,167 @@ const readRuntimeFromDependencies = <
               parseIssue,
             ),
           ),
-          observe('read-validation'),
         );
-      let result = yield* decodeResult(handlerResult.result);
-      stage('result_decoded');
-      const resultPermissionResolver = getReadResultPermissionTargetResolver(input.registration);
-      const { resultAuthorization } = input.registration.descriptor;
-      let authorizedSearchCount: number | undefined;
-      if (resultAuthorization?.kind === 'search-collection') {
-        const filtered = yield* authorizeReadSearchCollection(resultAuthorization, result, scope, (resources) => {
-          const request = {
-            permission: 'read' as const,
-            principalId: scope.principalId,
-            resources,
-            tenantId: scope.tenantId,
-          };
-          if (permissionTarget.kind === 'tenant') {
-            if (contextAccess.tenantResources !== undefined) {
-              return contextAccess.tenantResources(request);
-            }
-          } else if (scope.legalEntityId !== undefined) {
-            return contextAccess.resources({ ...request, legalEntityId: scope.legalEntityId });
-          }
-          return Effect.fail(
-            new ReadPermissionUnavailable({
-              code: 'read_permission_unavailable',
-              reason: 'Search result authorization is temporarily unavailable',
-            }),
-          );
-        });
-        result = yield* decodeResult(filtered.result);
-        authorizedSearchCount = filtered.resultCount;
-      } else if (resultPermissionResolver !== undefined) {
-        yield* checkResultPermissions(contextAccess, result, scope, permissionTarget, resultPermissionResolver);
-      }
-      const ownerEvidence = yield* validateReadEvidenceMetadata(
-        input.registration.descriptor.evidencePolicy.captureMode,
-        handlerResult.evidence,
-      );
-      // Never persist candidate counts, fingerprints or a denied single-record target for a collection.
-      const evidence: typeof ownerEvidence =
-        authorizedSearchCount === undefined ? ownerEvidence : { resultCount: authorizedSearchCount };
-      const ownerResource = evidence.targetResource;
-      if (
-        ownerResource !== undefined &&
-        ((permissionTargetMetadata.targetResourceId !== undefined &&
-          permissionTargetMetadata.targetResourceId !== ownerResource.resourceId) ||
-          (permissionTargetMetadata.targetResourceType !== undefined &&
-            permissionTargetMetadata.targetResourceType !== ownerResource.resourceType) ||
-          (permissionTargetMetadata.targetModuleKey !== undefined &&
-            permissionTargetMetadata.targetModuleKey !== input.registration.descriptor.owningModuleKey))
-      ) {
-        return yield* new ReadEvidenceValidationError({
-          code: 'read_evidence_invalid',
-          reason: 'Owner read evidence conflicts with the declared resource target',
-        });
-      }
-      const evidenceTarget =
-        ownerResource === undefined
-          ? permissionTargetMetadata
-          : {
-              targetModuleKey: input.registration.descriptor.owningModuleKey,
-              targetResourceId: ownerResource.resourceId,
-              targetResourceType: ownerResource.resourceType,
-            };
-      yield* persistScopedReadEvidence(
-        database.executor,
-        withOptionalProperty(
+        stage('result_decoded');
+        const resultPermissionResolver = getReadResultPermissionTargetResolver(input.registration);
+        if (resultPermissionResolver !== undefined && permissionTarget !== undefined) {
+          // Legacy result filtering; a v2 row-scoped read applies the gate's list predicate in its
+          // own query instead (O25), so this path belongs to the legacy kinds only (C03b).
+          yield* checkResultPermissions(contextAccess, result, scope, permissionTarget, resultPermissionResolver);
+        }
+        const evidence = yield* validateReadEvidenceMetadata(
+          input.registration.descriptor.evidencePolicy.captureMode,
+          handlerResult.evidence,
+        );
+        // The governed read committed with the connection back in the pool, so the allowed evidence
+        // opens its own short scoped transaction instead of riding a transaction that is already gone.
+        yield* persistReadEvidenceForComposition(
+          executor,
           withOptionalProperty(
             withOptionalProperty(
-              {
-                accessKind: ownerResource === undefined ? input.registration.descriptor.accessKind : 'detail',
-                captureMode: input.registration.descriptor.evidencePolicy.captureMode,
-                outcome: 'allowed',
-                outcomeCode: 'read_allowed',
-                outcomeStage: 'evidence',
-                policyKey,
-              },
-              queryHash !== undefined,
-              'queryHash',
-              queryHash,
-              {
-                readKey: input.registration.descriptor.readKey,
-                resultCount: evidence.resultCount,
-              },
+              withOptionalProperty(
+                {
+                  accessKind: input.registration.descriptor.accessKind,
+                  captureMode: input.registration.descriptor.evidencePolicy.captureMode,
+                  outcome: 'allowed',
+                  outcomeCode: 'read_allowed',
+                  outcomeStage: 'evidence',
+                  policyKey: input.registration.descriptor.evidencePolicy.policyKey,
+                },
+                queryHash !== undefined,
+                'queryHash',
+                queryHash,
+                {
+                  readKey: input.registration.descriptor.readKey,
+                  resultCount: evidence.resultCount,
+                },
+              ),
+              evidence.resultFingerprintHash !== undefined,
+              'resultFingerprintHash',
+              evidence.resultFingerprintHash,
+              {},
             ),
-            evidence.resultFingerprintHash !== undefined,
-            'resultFingerprintHash',
-            evidence.resultFingerprintHash,
-            {},
+            evidence.resultFingerprintSchema !== undefined,
+            'resultFingerprintSchema',
+            evidence.resultFingerprintSchema,
+            {
+              scope,
+              servingModuleKey: input.registration.descriptor.owningModuleKey,
+              ...permissionTargetMetadata,
+            },
           ),
-          evidence.resultFingerprintSchema !== undefined,
-          'resultFingerprintSchema',
-          evidence.resultFingerprintSchema,
+          options.databaseIdentities,
+          admittedCompositionRevision,
+        );
+        stage('evidence_persisted');
+        // The complete payload was decoded, validated and hashed by its owner above; the caller
+        // receives the projection of the field groups it may read (O17).
+        const projected = projectReadResultFields(
+          result,
+          gateAuthorization.deniedFieldPaths,
+          input.registration.descriptor.resultSchema,
+        );
+        if (Option.isNone(projected)) {
+          return yield* new ReadPermissionUnavailable({
+            code: 'read_permission_unavailable',
+            reason: 'The read result could not be projected onto the field groups this caller may read',
+          });
+        }
+        return projected.value;
+      });
+      const transactionExit = yield* Effect.exit(
+        withReadExecution(
           {
+            loadCatalog: operationCatalogLoader(operationAuthority, executionRevision),
+            ownerRegistration: options.ownerRegistration,
+            phase: 'execution',
+            registration: input.registration,
+            revision: executionRevision,
             scope,
-            servingModuleKey: input.registration.descriptor.owningModuleKey,
-            ...evidenceTarget,
           },
+          authorizedReadProgram,
         ),
-        options.databaseIdentities,
-      ).pipe(observe('read-audit'));
-      stage('evidence_persisted');
-      return result;
+      );
+      if (Exit.isSuccess(transactionExit)) {
+        return transactionExit.value;
+      }
+      const { cause } = transactionExit;
+      if (
+        !cause.reasons.some((reason) => Cause.isFailReason(reason) && Schema.is(ReadPermissionDenied)(reason.error))
+      ) {
+        return yield* Effect.failCause(cause);
+      }
+      const evidenceExit = yield* Effect.exit(
+        persistReadEvidenceForComposition(
+          executor,
+          withOptionalProperty(
+            {
+              accessKind: input.registration.descriptor.accessKind,
+              captureMode: input.registration.descriptor.evidencePolicy.captureMode,
+              outcome: 'denied',
+              outcomeCode: 'read_permission_denied',
+              outcomeStage: 'authz',
+              policyKey: input.registration.descriptor.evidencePolicy.policyKey,
+            },
+            queryHash !== undefined,
+            'queryHash',
+            queryHash,
+            {
+              readKey: input.registration.descriptor.readKey,
+              resultCount: 0,
+              scope,
+              servingModuleKey: input.registration.descriptor.owningModuleKey,
+              ...permissionTargetMetadata,
+            },
+          ),
+          options.databaseIdentities,
+          admittedCompositionRevision,
+        ),
+      );
+      return yield* Effect.failCause(Exit.isFailure(evidenceExit) ? Cause.combine(evidenceExit.cause, cause) : cause);
     });
-    const readExit = yield* Effect.exit(executeAuthorizedRead());
-    if (Exit.isSuccess(readExit)) {
-      return readExit.value;
+    if (compositionRevision !== undefined) {
+      // Verified admission must settle before any owner prepare or authorization network work.
+      // Each later SQL phase reacquires the fence, including evidence after remote finish.
+      const governedSettlement = makeReadSettlementRecovery();
+      yield* database.executor
+        .transaction(
+          Effect.fn('ReadRuntime.governedReadTransaction')(function* governedReadTransaction(
+            transaction: CoreTransaction,
+          ) {
+            yield* lockApplicationCompositionAuthority(transaction, compositionRevision, 'read').pipe(
+              Effect.mapError((cause) =>
+                preserveFailureCause(
+                  new ReadHandlerUnavailable({
+                    code: 'read_handler_unavailable',
+                    reason: 'The approved Application Composition no longer admits this Read',
+                  }),
+                  cause,
+                ),
+              ),
+            );
+            return yield* Effect.void;
+          }, governedSettlement.capture),
+        )
+        .pipe(
+          governedSettlement.recover,
+          Effect.catchCause((cause) =>
+            Effect.failCause(
+              cause.pipe(
+                Cause.map((transactionFailure) =>
+                  Schema.is(SqlError)(transactionFailure)
+                    ? mapReadTransactionSqlFailure(transactionFailure)
+                    : transactionFailure,
+                ),
+              ),
+            ),
+          ),
+        );
     }
-    const { cause } = readExit;
-    if (!cause.reasons.some((reason) => Cause.isFailReason(reason) && Schema.is(ReadPermissionDenied)(reason.error))) {
-      return yield* Effect.failCause(cause);
-    }
-    // A late definite denial (owner-local state or a forbidden result resource) is recorded after rollback.
-    const evidenceExit = yield* Effect.exit(
-      persistScopedReadEvidence(
-        database.executor,
-        evidenceFor(scope, permissionTargetMetadata, {
-          outcome: 'denied',
-          outcomeCode: 'read_permission_denied',
-          outcomeStage: 'authz',
-          policyKey,
-        }),
-        options.databaseIdentities,
-      ),
-    );
-    return yield* Effect.failCause(Exit.isFailure(evidenceExit) ? Cause.combine(evidenceExit.cause, cause) : cause);
+    return yield* executeTrustedRead(database.executor);
   });
 
-  // Every log line emitted while a read runs names that read, including the 503 mapping warnings.
-  const runRead: typeof runReadBody = (input) =>
-    runReadBody(input).pipe(
-      Effect.annotateLogs({
-        owner: input.registration.descriptor.owningModuleKey,
-        read: input.registration.descriptor.readKey,
-      }),
-    );
-
+  const runRead: typeof runReadBoundary = (input) => withoutModuleOperationExecution(runReadBoundary(input));
   return Object.freeze({ runRead });
 };
 
@@ -1856,20 +2021,94 @@ export class ReadRuntime extends Context.Service<ReadRuntime, ReadRuntimeService
   '@app/core-runtime/reads/runtime/ReadRuntime',
 ) {}
 
+const readRuntimeDependencies = Effect.gen(function* readRuntimeDependencies() {
+  const ownerAuthorizationOverlay = yield* Effect.serviceOption(OwnerAuthorizationOverlay);
+  const databaseIdentities = yield* DatabaseIdentityEnrollmentContext;
+  const database = yield* CoreDatabase;
+  const gateway = yield* ModuleEntrypointGateway;
+  const scopeResolver = yield* OperationalScopeResolver;
+  const contextAccess = yield* ContextAccess;
+  const accessDecision = yield* bindLiveAccessGate;
+  return {
+    accessDecision,
+    contextAccess,
+    database,
+    databaseIdentities,
+    gateway,
+    ownerAuthorizationOverlay: Option.isSome(ownerAuthorizationOverlay)
+      ? ownerAuthorizationOverlay.value
+      : failClosedOwnerAuthorizationOverlay,
+    scopeResolver,
+  };
+});
+
+/** Core system reads use their own gates without an owner deployment's Composition admission. */
 export const ReadRuntimeLive = Layer.effect(
   ReadRuntime,
-  Effect.gen(function* makeReadRuntimeService() {
-    const databaseIdentities = yield* DatabaseIdentityEnrollmentContext;
-    const ownerAuthorizationOverlay = yield* Effect.serviceOption(OwnerAuthorizationOverlay);
-    const database = yield* CoreDatabase;
-    const gateway = yield* ModuleEntrypointGateway;
-    const scopeResolver = yield* OperationalScopeResolver;
-    const contextAccess = yield* ContextAccess;
-    return readRuntimeFromDependencies(database, gateway, scopeResolver, contextAccess, {
-      databaseIdentities,
-      ownerAuthorizationOverlay: Option.isSome(ownerAuthorizationOverlay)
-        ? ownerAuthorizationOverlay.value
-        : failClosedOwnerAuthorizationOverlay,
-    });
-  }),
+  readRuntimeDependencies.pipe(
+    Effect.map(
+      ({
+        accessDecision,
+        contextAccess,
+        database,
+        databaseIdentities,
+        gateway,
+        ownerAuthorizationOverlay,
+        scopeResolver,
+      }) =>
+        readRuntimeFromDependencies(database, gateway, scopeResolver, contextAccess, {
+          accessDecision,
+          databaseIdentities,
+          ownerAuthorizationOverlay,
+        }),
+    ),
+  ),
 );
+
+/** Bind the actual receiving artifact and existing authority without reading the source at startup. */
+export const makeReadRuntimeLive = (
+  expectedDeployment: typeof OntosDeploymentIdentitySchema.Type,
+  hosting?: VerticalRuntimeRegistration | { readonly shellSystemReads: ShellSystemReadRegistrations },
+) =>
+  Layer.effect(
+    ReadRuntime,
+    Effect.gen(function* makeOwnedReadRuntimeService() {
+      const applicationComposition = yield* ActiveApplicationCompositionService;
+      const {
+        accessDecision,
+        contextAccess,
+        database,
+        databaseIdentities,
+        gateway,
+        ownerAuthorizationOverlay,
+        scopeResolver,
+      } = yield* readRuntimeDependencies;
+      const ownerRegistration = hosting !== undefined && 'shellSystemReads' in hosting ? undefined : hosting;
+      const shellSystemReads =
+        hosting !== undefined && 'shellSystemReads' in hosting ? hosting.shellSystemReads : undefined;
+      const options: ReadRuntimeOptions =
+        ownerRegistration === undefined
+          ? {
+              accessDecision,
+              applicationComposition,
+              databaseIdentities,
+              expectedDeployment,
+              ownerAuthorizationOverlay,
+            }
+          : {
+              accessDecision,
+              applicationComposition,
+              databaseIdentities,
+              expectedDeployment,
+              ownerAuthorizationOverlay,
+              ownerRegistration,
+            };
+      return readRuntimeFromDependencies(
+        database,
+        gateway,
+        scopeResolver,
+        contextAccess,
+        shellSystemReads === undefined ? options : { ...options, shellSystemReads },
+      );
+    }),
+  );

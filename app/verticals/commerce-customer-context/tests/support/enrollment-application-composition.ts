@@ -1,69 +1,36 @@
 import {
   ActiveApplicationCompositionService,
-  ActiveApplicationCompositionUnavailableError,
   canonicalizeApplicationComposition,
-  OntosModuleDeploymentContractSchema,
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
 import {
   makeApplicationCompositionSnapshotFixture,
-  makeModuleContractFixture,
+  makeOwnerApplicationCompositionFixture,
 } from '@app/core-runtime/testing/module-contract';
+import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime';
 import { sha256 as sha256Bytes } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { Effect, Layer, Schema } from 'effect';
+import { ConfigProvider, Effect, Layer } from 'effect';
 import { Hex } from 'effect/encoding';
+import { FetchHttpClient } from 'effect/http';
 
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 
 const digest = (document: string): string => Hex.encode(sha256Bytes(utf8ToBytes(document)));
-const contractJson = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
 
 /** The real owner's identity, embedded document, and content-addressed release are validated together. */
 export const makeEnrollmentApplicationCompositionSnapshot = Effect.fn('EnrollmentTests.makeApplicationComposition')(
   function* makeEnrollmentApplicationComposition(buildMarker: string, additionalAppIds: readonly string[]) {
-    const snapshot = yield* makeApplicationCompositionSnapshotFixture(
-      [ultramodernApiMarker.appId, ...additionalAppIds],
+    const { snapshot } = yield* makeOwnerApplicationCompositionFixture({
+      appId: ultramodernApiMarker.appId,
       buildMarker,
-    );
-    const contract = yield* Schema.decodeEffect(OntosModuleDeploymentContractSchema)(
-      makeModuleContractFixture({
-        appId: ultramodernApiMarker.appId,
-        buildMarker,
-        moduleId: 'commerce.customer-context',
-      }),
-    ).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ActiveApplicationCompositionUnavailableError({
-            cause,
-            reason: 'The enrollment test deployment contract is invalid',
-          }),
-      ),
-    );
-    const contractDocument = yield* Schema.encodeEffect(contractJson)(contract).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ActiveApplicationCompositionUnavailableError({
-            cause,
-            reason: 'The enrollment test deployment contract could not be encoded',
-          }),
-      ),
-    );
-    const sha256 = digest(contractDocument);
+      ownerRegistration: commerceCustomerContextRegistration,
+    });
+    const additional = yield* makeApplicationCompositionSnapshotFixture(additionalAppIds, buildMarker);
     const composition = {
       ...snapshot.composition,
-      modules: snapshot.composition.modules.map((module) =>
-        module.deployment.appId === ultramodernApiMarker.appId
-          ? {
-              ...module,
-              contract: { ...module.contract, sha256 },
-              contractDocument,
-              moduleId: contract.manifest.module.id,
-              publicContract: { id: contract.manifest.module.id, sha256, version: contract.schemaVersion },
-            }
-          : module,
-      ),
+      modules: [...snapshot.composition.modules, ...additional.composition.modules],
       revision: '0'.repeat(64),
     };
     return yield* validateActiveApplicationCompositionSnapshot({
@@ -83,3 +50,28 @@ export const enrollmentApplicationCompositionRevision = enrollmentApplicationCom
 export const enrollmentApplicationCompositionLayer = Layer.succeed(ActiveApplicationCompositionService, {
   load: enrollmentApplicationCompositionSnapshot,
 });
+
+const compositionSourceUrl = 'https://composition.enrollment-acceptance.test/active';
+
+/**
+ * The verification material the deployed gateway verifier and the production composition admission
+ * read: the fixture's own snapshot served from the controlled composition source, with the caller's
+ * gateway keys layered on top. This fixture builds the snapshot in process, so — unlike the
+ * deployment's own support — it reads no published Shell artifact.
+ */
+export const enrollmentApplicationCompositionVerificationLayer = (
+  snapshot: ActiveApplicationCompositionSnapshot,
+  gatewayConfiguration: Readonly<Record<string, string>> = {},
+) =>
+  Layer.mergeAll(
+    ConfigProvider.layer(
+      ConfigProvider.fromUnknown({
+        ...gatewayConfiguration,
+        ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: compositionSourceUrl,
+      }),
+    ),
+    Layer.succeed(FetchHttpClient.Fetch, async (input, init) => {
+      const request = new Request(input, init);
+      return request.url === compositionSourceUrl ? Response.json(snapshot) : await fetch(request);
+    }),
+  );

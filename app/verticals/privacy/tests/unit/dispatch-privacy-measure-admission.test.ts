@@ -1,4 +1,5 @@
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -7,6 +8,8 @@ import { PrivacyMeasureHandoffSchema } from '../../shared/domain/privacy-measure
 import { dispatchPrivacyMeasureAction } from '../../src/actions/dispatch-privacy-measure.action.ts';
 import { PrivacyOperationPersistenceError } from '../../src/persistence/privacy-operation-repository.ts';
 import type { PrivacyOperationRepositoryService } from '../../src/persistence/privacy-operation-repository.ts';
+
+import { privacyRegistration } from '../../vertical.registration.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000002';
@@ -44,21 +47,29 @@ const request = (idempotencyKey: string) => ({
   registration: dispatchPrivacyMeasureAction,
   transport: { correlationId: 'privacy-dispatch-unit', idempotencyKey },
 });
-const harnessFor = (admitMeasureDispatch: PrivacyOperationRepositoryService['admitMeasureDispatch']) =>
-  makeActionTestHarness({
-    actionPermission: 'allowed',
-    legalEntityPermission: 'allowed',
+const harnessFor = Effect.fn('PrivacyDispatchTest.harness')(function* harnessFor(
+  admitMeasureDispatch: PrivacyOperationRepositoryService['admitMeasureDispatch'],
+) {
+  const owner = yield* makeOwnerApplicationCompositionFixture({ ownerRegistration: privacyRegistration });
+  const harness = yield* makeActionTestHarness({
+    access: 'allowed',
+    applicationComposition: owner.applicationComposition,
+    expectedDeployment: owner.expectedDeployment,
+    ownerRegistration: privacyRegistration,
     services: [bindActionTestServices(dispatchPrivacyMeasureAction, { admitMeasureDispatch })],
-    tenantPermission: 'allowed',
   });
+  return { ...harness, compositionRevision: owner.snapshot.composition.revision };
+});
 
 it.effect('registered dispatch emits one linked event and targeted message only for a new owner insertion', () =>
   Effect.gen(function* insertedDispatch() {
     let calls = 0;
+    const ownerInvocations: string[] = [];
     const harness = yield* harnessFor((tenant, legalEntity, invocation, input) =>
       Effect.sync(() => {
         expect([tenant, legalEntity]).toEqual([tenantId, legalEntityId]);
         expect(invocation.length).toBeGreaterThan(0);
+        ownerInvocations.push(invocation);
         expect(input).toEqual(handoff);
         calls += 1;
         return { created: calls === 1, handoff };
@@ -68,10 +79,26 @@ it.effect('registered dispatch emits one linked event and targeted message only 
     expect(yield* harness.runtime.runAction(request('transport:2'))).toEqual(handoff);
     const { committed } = harness.snapshot();
     expect(committed).toHaveLength(2);
-    expect(committed[0]?.evidence.domainEvents).toHaveLength(1);
+    expect(ownerInvocations).toEqual(committed.map(({ actionInvocationId }) => actionInvocationId));
+    expect(new Set(ownerInvocations).size).toBe(2);
+    expect(committed.map(({ actionKey, transport }) => ({ actionKey, transport }))).toEqual([
+      { actionKey: 'privacy.core.dispatch-privacy-measure', transport: request('transport:1').transport },
+      { actionKey: 'privacy.core.dispatch-privacy-measure', transport: request('transport:2').transport },
+    ]);
+    expect(committed[0]?.evidence.domainEvents).toEqual([
+      {
+        eventType: 'privacy.measure.dispatched',
+        payloadJson: { handoff },
+        producerModuleKey: 'privacy.core',
+        subjectModuleKey: 'privacy.core',
+        subjectResourceId: handoff.measureId,
+        subjectResourceType: 'privacy.core.privacy-measure',
+      },
+    ]);
     expect(committed[0]?.evidence.outboxMessages).toHaveLength(1);
     expect(committed[0]?.evidence.outboxMessages[0]).toMatchObject({
-      completion: { consumerModuleKey: 'party.registry', originalRevision: 'a'.repeat(64) },
+      completion: { consumerModuleKey: 'party.registry', originalRevision: harness.compositionRevision },
+      domainEventIndex: 0,
       message: { payloadJson: { handoff }, producerModuleKey: 'privacy.core', topic: 'privacy.measure.dispatched' },
     });
     expect(committed[1]?.evidence.domainEvents).toEqual([]);

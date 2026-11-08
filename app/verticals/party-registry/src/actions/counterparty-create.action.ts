@@ -149,6 +149,14 @@ const handleCounterpartyCreate = Effect.fn('CounterpartyCreateAction.handleCount
 
 export const counterpartyCreateAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.counterparty.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'counterparties', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.counterparty-create.access.v1',
@@ -162,16 +170,12 @@ export const counterpartyCreateAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.counterparty-create',
       moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
-    legalEntityPermission: 'manage_counterparty',
     legalEntityScope: 'required',
     owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: CounterpartyCreatePayloadSchema,

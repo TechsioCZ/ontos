@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { InvoiceSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import type { RecordsResponse } from '../../shared/apis/records.ts';
 import { FinanceInvoiceTable } from '../../src/routes/[lang]/finance/invoices-table.tsx';
+import { financePageScope } from '../../src/routes/[lang]/finance/finance-page-scope.ts';
 import { preloadFinanceRecords, useFinanceRecords } from '../../src/routes/[lang]/finance/use-finance-records.ts';
 
 /**
@@ -138,9 +139,16 @@ const messageOf = (feedback: string, html: string) => ({
 });
 
 /** The real table, fed by the real ledger hook; the render captures the hook result for assertions. */
+/** The verified Shell context the page receives; the ledger cache is keyed by its scope. */
+const shellContext = {
+  legalEntityId: 'b0000000-0000-4000-8000-000000000011',
+  principalId: 'principal-accountant',
+  tenantId,
+};
+
 const rendered: ReturnType<typeof useFinanceRecords>[] = [];
 const LedgerHarness = () => {
-  const vm = useFinanceRecords();
+  const vm = useFinanceRecords({ scope: financePageScope(shellContext) });
   rendered.push(vm);
   return createElement(FinanceInvoiceTable, { vm });
 };
@@ -164,7 +172,7 @@ const preload = (
   Effect.gen(function* preloadLedger() {
     mocks.location.search = { partyId, ...search };
     mocks.records.mockReturnValue(Effect.succeed(ledger));
-    yield* preloadFinanceRecords(`?partyId=${partyId}`);
+    yield* preloadFinanceRecords(`?partyId=${partyId}`, shellContext);
   });
 
 /** Lets the store's runtime run a fiber turn. */

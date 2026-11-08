@@ -3,7 +3,7 @@ import { expect, it } from 'effect-rstest';
 
 import type { OperationalScope } from '@app/core-runtime';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionHandler } from '@app/core-runtime/testing/actions';
 import type {
   ActionAccessEvidencePolicy,
   DomainEventContractMap,

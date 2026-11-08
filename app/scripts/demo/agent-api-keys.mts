@@ -6,6 +6,7 @@ import { Command, Flag } from 'effect/cli';
 import { IdentityLifecycle } from '../../apps/shell-super-app/api/auth/identity-lifecycle.ts';
 import { AgentProfileOperatorLive, authenticateAgentProfileOperator } from './agent-profile-operator.mts';
 import { AgentProfileSetupError } from './agent-profile-setup.mts';
+import { selectAgentOperatorCompany } from './agent-operator-session.mts';
 
 const targetFlags = {
   company: Flag.String('company'),
@@ -25,13 +26,14 @@ const issue = Command.make('issue', { ...targetFlags, name: Flag.String('name') 
         session.close.pipe(Effect.ignore),
       );
       const service = yield* IdentityLifecycle;
+      const principal = yield* selectAgentOperatorCompany(operator, input.company);
       const result = yield* service.issue({
         correlationId: randomUUID(),
         idempotencyKey: input.idempotencyKey,
         managedPrincipalId: input.principal,
         managedScope: 'company-agent',
         name: input.name,
-        principal: { ...operator.principal, legalEntityId: input.company },
+        principal,
         requestHeaders: operator.requestHeaders,
       });
       yield* Console.log(
@@ -57,6 +59,7 @@ const revoke = Command.make(
           session.close.pipe(Effect.ignore),
         );
         const service = yield* IdentityLifecycle;
+        const principal = yield* selectAgentOperatorCompany(operator, input.company);
         const result = yield* service.setStatus({
           authBindingId: input.binding,
           correlationId: randomUUID(),
@@ -65,7 +68,7 @@ const revoke = Command.make(
           managedPrincipalId: input.principal,
           managedScope: 'company-agent',
           newStatus: 'revoked',
-          principal: { ...operator.principal, legalEntityId: input.company },
+          principal,
           reason: input.reason,
         });
         yield* Console.log(

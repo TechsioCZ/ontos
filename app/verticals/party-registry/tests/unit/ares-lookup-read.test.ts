@@ -76,7 +76,7 @@ const request = Schema.decodeSync(AresLookupRequestSchema)({
 it('declares a tenant-authorized Party evidence Read with optional Legal Entity context', () => {
   expect(aresLookupRead.descriptor.accessKind).toBe('detail');
   expect(aresLookupRead.descriptor.legalEntityScope).toBe('optional');
-  expect(aresLookupRead.descriptor.permissionTarget).toBe('tenant');
+  expect(aresLookupRead.descriptor.accessDeclaration?.key).toBe('party.registry.ares-subject.lookup');
   expect(aresLookupRead.descriptor.owningModuleKey).toBe('party.registry');
   expect(aresLookupRead.descriptor.readKey).toBe('party.registry.api.ares-lookup');
   expect(aresLookupRead.descriptor.evidencePolicy.captureMode).toBe('metadata_only');

@@ -150,14 +150,10 @@ describe('Catalog Product Action contracts', () => {
       reactivateProductAction,
       correctProductAction,
     ]) {
-      expect(action.descriptor.entrypoint.authorization).toEqual({
-        kind: 'action_execution',
-        provisioning: 'explicit',
-      });
+      expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
       expect(action.descriptor.entrypoint.scope).toBe('tenant');
       expect(action.descriptor.legalEntityScope).toBe('forbidden');
       expect(action.descriptor.idempotency).toBe('required');
-      expect(action.descriptor.resourcePermission).toBeUndefined();
     }
   });
 

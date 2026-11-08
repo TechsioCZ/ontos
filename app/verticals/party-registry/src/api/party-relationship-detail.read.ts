@@ -20,7 +20,7 @@ import type {
 import { findPartyRelationshipRecord } from '../services/party-relationship-persistence.service.ts';
 
 const partyRelationshipDetailEntrypoint = defineTenantModuleEntrypoint({
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   access: 'read',
   entrypointKey: 'party.registry.api.party-relationship-detail',
   moduleKey: 'party.registry',
@@ -45,6 +45,15 @@ interface Services {
 
 export const partyRelationshipDetailRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'party.registry.party-relationship.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'contact-data', level: 'extended' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessTarget: (input) => ({ moduleKey: 'party.registry', recordKey: input.relationshipRef.resourceId }),
     accessKind: 'detail',
     entrypoint: partyRelationshipDetailEntrypoint,
     evidencePolicy: {
@@ -54,7 +63,6 @@ export const partyRelationshipDetailRead = defineRead(
     inputSchema: PartyRelationshipDetailRequestSchema,
     legalEntityScope: 'optional',
     owningModuleKey: 'party.registry',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'party.registry.api.party-relationship-detail',
     resultSchema: PartyRelationshipDetailResponseSchema,
@@ -88,5 +96,4 @@ export const partyRelationshipDetailRead = defineRead(
       find: (relationshipId: string) =>
         findPartyRelationshipRecord(transaction, scope.tenantId, relationshipId).pipe(Effect.map(Option.fromNullishOr)),
     }),
-  () => ({ kind: 'tenant', permission: 'read_party_identity' }),
 );

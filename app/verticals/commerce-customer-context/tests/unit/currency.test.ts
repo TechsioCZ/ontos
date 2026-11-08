@@ -1,6 +1,6 @@
 import { expect, it } from 'effect-rstest';
-import { DateTime, Effect, Schema } from 'effect';
-import { getReadConditionalPermissionPlan } from '../../../../packages/core-runtime/src/reads/definition.ts';
+import { Effect, Schema } from 'effect';
+import { getReadOwnerFactsResolver } from '../../../../packages/core-runtime/src/reads/definition.ts';
 
 import {
   PurchaseCurrencyResolutionDomainConflictProblemSchema,
@@ -24,7 +24,6 @@ import { PurchaseCurrencyPolicyPort } from '../../shared/domain/purchase-currenc
 import { PurchaseCurrencyPricingPort } from '../../shared/domain/purchase-currency-pricing-port.ts';
 import { PurchaseCurrencyDependencyUnavailable } from '../../shared/domain/purchase-currency-dependency.ts';
 import {
-  emptyCustomerCommercePolicySet,
   CurrentPurchaseCurrencyPolicyCandidateSchema,
   CurrentPurchaseCurrencyPolicySetSchema,
 } from '../../shared/domain/customer-commerce-policy-administration.ts';
@@ -33,12 +32,9 @@ import type {
   CurrentPurchaseCurrencyPolicySet,
 } from '../../shared/domain/customer-commerce-policy-administration.ts';
 import {
-  verifyPurchaseCurrencyReadSnapshot,
   handlePurchaseCurrencyResolution,
   makePurchaseCurrencyResolutionServices,
-  purchaseCurrencyGuestPermissionTargets,
-  purchaseCurrencyProfilePermissionTargets,
-  purchaseCurrencyResolutionPermission,
+  purchaseCurrencyResolutionRead,
 } from '../../src/api/purchase-currency-resolution.read.ts';
 import { composeCurrentPurchaseCurrencyPolicy } from '../../src/integrations/purchase-currency-policy.ts';
 
@@ -607,76 +603,46 @@ it.effect('rejects a Current profile subject with a different Counterparty', () 
   }),
 );
 
-it('declares finite Guest and Profile authorization branches for Launch resolution', () => {
+it('declares one scope-wide capability and names the subject record for the owner rule', () => {
+  const read = purchaseCurrencyResolutionRead;
+  // One declaration cannot branch per subject, so the Guest/Profile branch rule moved into the owner
+  // facts and the v2 capability gates the read itself (O62.4, O67-Q1, O70).
+  expect(read.descriptor.accessDeclaration).toMatchObject({
+    key: 'commerce.customer-context.purchase-currency.resolve',
+    kind: 'read',
+    selectors: [],
+  });
+  const ownerFacts = getReadOwnerFactsResolver(read);
+  expect(ownerFacts).toBeDefined();
+  const { request } = baseResolution();
   const scope = {
     authMethod: 'system' as const,
-    correlationId: 'purchase-currency-permission-targets',
+    correlationId: 'purchase-currency-owner-facts',
     legalEntityId: sellingLegalEntityId,
-    principalId: '50000000-0000-4000-8000-000000000001',
+    principalId: supportRootId,
     tenantId,
     trustedStorefrontId: purchasingContext.storefrontId,
   };
-  const plan = getReadConditionalPermissionPlan(purchaseCurrencyResolutionPermission);
-  expect(purchaseCurrencyResolutionPermission.branchTags).toEqual(['GUEST', 'PROFILE']);
-  expect(purchaseCurrencyGuestPermissionTargets()).toEqual([{ kind: 'module', moduleId: 'commerce.customer-context' }]);
-  expect(plan.resolve({ ...baseResolution().request, subject: guestSubject }, scope)).toEqual({
-    kind: 'GUEST',
-    requiredKinds: ['module'],
-    requirements: purchaseCurrencyGuestPermissionTargets(),
-  });
-  expect(plan.resolve(baseResolution().request, scope)).toEqual({
-    kind: 'PROFILE',
-    requiredKinds: ['business_permission', 'resource_read'],
-    requirements: purchaseCurrencyProfilePermissionTargets(baseResolution().request, retailSubject, scope),
+  // A Guest names no owner record; a Retail profile names its own capability; a Counterparty subject
+  // names the Counterparty whose grant the overlay checks.
+  expect(ownerFacts?.({ ...request, subject: guestSubject }, scope)).toEqual({});
+  expect(ownerFacts?.({ ...request, subject: retailSubject }, scope)).toEqual({
+    retailPermission: 'retail.profile.read',
+    retailProfileId: profileRef.resourceId,
   });
   expect(
-    purchaseCurrencyProfilePermissionTargets(
-      baseResolution().request,
-      { authorizationSubject: { kind: 'RETAIL' }, kind: 'PROFILE', profileRef },
+    ownerFacts?.(
+      {
+        ...request,
+        subject: {
+          authorizationSubject: { counterpartyRef, kind: 'COUNTERPARTY' },
+          kind: 'PROFILE',
+          profileRef: counterpartyProfileRef,
+        },
+      },
       scope,
     ),
-  ).toMatchObject([
-    {
-      businessPermission: {
-        permission: 'retail.profile.read',
-        target: { kind: 'retail_profile', profileId: profileRef.resourceId },
-      },
-      kind: 'business_permission',
-    },
-    { kind: 'resource_read', permission: 'read', resource: { resourceId: profileRef.resourceId } },
-  ]);
-  const counterpartyRequest = {
-    ...baseResolution().request,
-    subject: {
-      authorizationSubject: { counterpartyRef, kind: 'COUNTERPARTY' as const },
-      kind: 'PROFILE' as const,
-      profileRef: counterpartyProfileRef,
-    },
-  };
-  const counterpartyTargets = purchaseCurrencyProfilePermissionTargets(
-    counterpartyRequest,
-    counterpartyRequest.subject,
-    scope,
-  );
-  expect(plan.resolve(counterpartyRequest, scope)).toEqual({
-    kind: 'PROFILE',
-    requiredKinds: ['business_permission', 'resource_read'],
-    requirements: counterpartyTargets,
-  });
-  expect(counterpartyTargets).toMatchObject([
-    {
-      businessPermission: {
-        permission: 'counterparty.profile.read',
-        target: { counterpartyId: counterpartyRef.resourceId, kind: 'counterparty' },
-      },
-      kind: 'business_permission',
-    },
-    {
-      kind: 'resource_read',
-      permission: 'read',
-      resource: { resourceId: counterpartyProfileRef.resourceId },
-    },
-  ]);
+  ).toEqual({ counterpartyId: counterpartyRef.resourceId });
 });
 
 it.effect('loads Current policy and pricing without a preference persistence dependency', () =>
@@ -785,55 +751,4 @@ it.effect('fails closed when the purchasing-context owner is not configured', ()
       expect(failure.retryable).toBe(true);
     }
   }),
-);
-
-it.effect(
-  'rejects owner policy changes and exact policy or Pricing End boundaries after released currency resolution',
-  () =>
-    Effect.gen(function* revalidateResolvedCurrency() {
-      const snapshot = emptyCustomerCommercePolicySet('PURCHASE_CURRENCY');
-      const response = resolvePurchaseCurrency({
-        policy,
-        pricing: pricingSupport('pricing:1', ['CZK', 'EUR']),
-        request: {
-          contextRevision: 'context:1',
-          purchasingContext,
-          requestedAt: '2026-09-09T10:00:01.000Z',
-          subject: guestSubject,
-        },
-      });
-      if (!Schema.is(PurchaseCurrencyResolvedSchema)(response)) {
-        return yield* Effect.die('The currency fixture must resolve');
-      }
-      const boundary = '2026-09-09T10:00:02.000Z';
-      const boundaryAt = DateTime.toEpochMillis(DateTime.makeUnsafe(boundary));
-      yield* verifyPurchaseCurrencyReadSnapshot(snapshot, { ...snapshot }, response, boundaryAt);
-      const changed = yield* Effect.flip(
-        verifyPurchaseCurrencyReadSnapshot(snapshot, { ...snapshot, generation: 1 }, response, boundaryAt),
-      );
-      expect(changed.code).toBe('currency_policy_unavailable');
-      for (const expiring of [
-        {
-          ...response,
-          evidence: {
-            ...response.evidence,
-            policyCompleteness: { ...response.evidence.policyCompleteness, nextApplicabilityBoundary: boundary },
-          },
-        },
-        {
-          ...response,
-          evidence: {
-            ...response.evidence,
-            pricingSupport: { ...response.evidence.pricingSupport, nextApplicabilityBoundary: boundary },
-          },
-        },
-      ]) {
-        yield* verifyPurchaseCurrencyReadSnapshot(snapshot, snapshot, expiring, boundaryAt - 1);
-        const expired = yield* Effect.flip(
-          verifyPurchaseCurrencyReadSnapshot(snapshot, snapshot, expiring, boundaryAt),
-        );
-        expect(expired.code).toBe('currency_policy_unavailable');
-      }
-      return yield* Effect.void;
-    }),
 );

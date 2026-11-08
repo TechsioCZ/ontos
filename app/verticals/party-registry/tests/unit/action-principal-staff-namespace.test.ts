@@ -9,6 +9,7 @@ import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
+import { makeTestOperationalScopeAccess } from '@app/core-runtime/testing/access-gate';
 
 /**
  * Every Shell-issued assertion for a staff session names the staff authentication namespace, and
@@ -49,7 +50,7 @@ const makeResolver = makeOperationalScopeResolver(
         tenantStatus: 'active' as const,
       }),
   },
-  { legalEntities: () => Effect.succeed([]) },
+  makeTestOperationalScopeAccess({ legalEntityIds: () => [] }),
 );
 
 const resolveFor = (audience: string) =>

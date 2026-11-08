@@ -1,43 +1,63 @@
 /** Focused server-only entrypoint used to bundle the combined Outbox Worker host and its MicroVertical entries. */
-export { SHARED_RUNTIME_IDENTITY } from '../db/database-identity-manifest.ts';
-export { databaseRuntime } from '#database-runtime';
-export { configureDatabasePool } from '../db/pool-configuration.ts';
-export { openDatabaseClient } from '../db/database-client.ts';
-export {
-  ApplicationCompositionSchema,
-  ApplicationCompositionModuleSchema,
-} from '../modules/application-composition.ts';
-export {
-  ActionAuthorizationPreflightDatabase,
-  ActionAuthorizationPreflightDatabaseLive,
-} from '../permissions/action-authorization-preflight.ts';
+export { defineAction, defineActionOwnerPermissions, defineActionResourcePermission } from '../actions/definition.ts';
 export { ActionPermissionCheckError } from '../actions/errors.ts';
-export { ActiveApplicationCompositionConfigLive } from '../modules/active-application-composition.ts';
-export { OntosModuleIdSchema } from '../modules/manifest.ts';
+export { commitActionThenReject } from '../actions/context.ts';
+export { defineMicroverticalPolicy, denyPolicy } from '../actions/policy.ts';
+export {
+  isTrustedSystemPrincipalContext,
+  isVerifiedGatewayPrincipalContext,
+  readVerifiedGatewayActor,
+  readVerifiedGatewayCompositionRevision,
+  readVerifiedGatewayScopeAssertion,
+} from '../auth/system-principal-context-provenance.ts';
+export {
+  defineRead,
+  defineReadConditionalPermission,
+  defineReadOwnerPermission,
+  defineReadResourcePermission,
+} from '../reads/definition.ts';
+export { OperationContextUnavailable } from '../operations/operation-context-unavailable.ts';
+export { defineVerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
+export { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '../modules/module-dependency-contracts.ts';
+export {
+  ShellNavigationContributionSchema,
+  ShellPageContributionSchema,
+  ShellPublicComponentContributionSchema,
+  ShellReportContributionSchema,
+  ShellSearchContributionSchema,
+} from '../modules/shell-contribution.ts';
+export { requireModuleOperation } from '../modules/module-operation-requirement.ts';
+export {
+  ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionService,
+  validateActiveApplicationCompositionSnapshot,
+} from '../modules/active-application-composition.ts';
+export { ApplicationCompositionSchema } from '../modules/application-composition.ts';
+export { defineOntosModuleManifest, OntosModuleIdSchema } from '../modules/manifest.ts';
 export { defineTenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
-export { defineScopedRoutine, scopedRoutineInvokerFromTransaction } from '../db/scoped-routine.ts';
+export { defineScopedRoutine } from '../db/scoped-routine.ts';
 export { findPostgresFailure, isPostgresUniqueViolation } from '../database/postgres-failure.ts';
-export { OperationContextUnavailable } from '../operations/errors.ts';
-export { BusinessPermissionCodeSchema, defineBusinessPermissionCatalog } from '../permissions/business-permission.ts';
-export { AuthorizationMutationReconciliationUnavailable } from '../permissions/authorization-reconciler.ts';
+export { DatabaseTransactionFailure, decodeDatabaseDriverFailure } from '../database/driver-failure.ts';
 export {
-  AuthorizationMutationSagaError,
-  reconcileCommittedAuthorizationMutation,
-} from '../permissions/authorization-mutation-saga.ts';
-export { AuthorizationMutationStateSchema } from '../permissions/authorization-mutation.ts';
-export {
-  BusinessPermissionRelationshipMutation,
-  BusinessPermissionRelationshipMutationLive,
-} from '../permissions/business-permission-mutation.ts';
+  BusinessPermissionCodeSchema,
+  defineBusinessPermission,
+  defineBusinessPermissionCatalog,
+} from '../permissions/business-permission.ts';
 export {
   ContextAccess,
   ContextAccessLive,
-  toBusinessPermissionAccessKey,
-  toBusinessPermissionAccessObjectId,
+  createOwnerPermissionAccessTarget,
+  isOwnerPermissionAccessTargetMetadataValid,
+  isOwnerPermissionAccessTargetValid,
 } from '../permissions/context-access.ts';
 export { PrincipalEligibility, PrincipalRefSchema } from '../permissions/principal-ref.ts';
-export { defineRead } from '../reads/definition.ts';
-export { ReadHandlerNotFound, ReadHandlerUnavailable, ReadPermissionDenied } from '../reads/errors.ts';
+export {
+  ReadHandlerNotFound,
+  ReadHandlerUnavailable,
+  ReadPermissionDenied,
+  ReadPermissionUnavailable,
+  ReadPolicyDenied,
+} from '../reads/errors.ts';
 export {
   gatewayScopedTenantLegalEntityRlsPolicies,
   gatewayScopedTenantRlsPolicies,
@@ -46,34 +66,17 @@ export {
   tenantLegalEntityRlsPolicies,
   tenantRlsPolicies,
 } from '../db/scoped-transaction.ts';
-export { DatabaseConfig, DatabaseConfigLive, makeDatabaseConfigLive } from '../db/config.ts';
-export { DatabaseIdentityEnrollmentContext, makeDatabaseIdentityEnrollmentLive } from '../db/database-identities.ts';
+export { DatabaseConfigLive, makeDatabaseConfigLive } from '../db/config.ts';
 export { CorePersistenceLive } from '../runtime-infrastructure.ts';
 export { CoreSearchIngestion, CoreSearchIngestionLive } from '../search/ingestion.ts';
-export {
-  coreSearchIngestionRegistryLayer,
-  CoreSearchIngestionRegistry,
-  defineCoreSearchIngestionRegistrations,
-} from '../search/ingestion-registry.ts';
 export { CoreSearchProjectionStoreLive } from '../search/persistence.ts';
 export {
   CoreSearchProjectionDocumentSchema,
-  CoreSearchProjectionHitSchema,
-  CoreSearchProjectionInvalid,
   CoreSearchProjectionMutationSchema,
-  CoreSearchProjectionReplacementSchema,
   CoreSearchProjectionStore,
   CoreSearchResourceRefSchema,
 } from '../search/projection.ts';
 export { CoreSearchWorkerSnapshot, CoreSearchWorkerSnapshotLive } from '../search/worker-snapshot.ts';
-export { CoreSearchQueryRuntime } from '../search/query-runtime.ts';
-export {
-  CORE_SEARCH_RELEVANCE_MAX_SCORE,
-  matchesCoreSearchValues,
-  normalizeCoreSearchText,
-  parseCoreSearchQuery,
-} from '../search/search-contract.ts';
-export { coreSearchRelevance } from '../search/search-ranking.ts';
 export {
   defineOutboxWorker,
   extractOutboxWorkerSubscriptions,
@@ -81,15 +84,11 @@ export {
 } from './definition.ts';
 export { defineOutboxWorkerCompletion, OutboxWorkerCompletionPublicationError } from './completion-publication.ts';
 export {
-  ResourceContainmentMutationUnavailable,
-  ResourceContainmentRelationshipMutation,
-  ResourceContainmentRelationshipMutationLive,
-  createResourceContainmentRelationshipMutationClient,
-  makeResourceContainmentRelationshipMutation,
-  makeResourceContainmentRelationshipMutationLive,
-  ownerResourceModuleContainment,
-} from '../permissions/resource-containment-mutation.ts';
-export { defineOutboxWorkerEntry, OutboxWorkerInfrastructureLive, startOutboxWorkerHost } from './process.ts';
+  defineOutboxWorkerEntry,
+  hostedOutboxWorkerEntry,
+  OutboxWorkerInfrastructureLive,
+  startOutboxWorkerHost,
+} from './process.ts';
 export { OutboxRepositoryLive } from './repository.ts';
 export {
   makeOutboxWorkerLegalEntityScopeFanout,
@@ -122,13 +121,6 @@ export type {
   OutboxWorkerTenantScopeService,
   OutboxWorkerTenantScopeView,
 } from './tenant-scope.ts';
-export type {
-  ResourceContainmentRelationship,
-  ResourceContainmentRelationshipMutationClient,
-  ResourceContainmentRelationshipMutationInput,
-  ResourceContainmentRelationshipMutationService,
-  SpiceDbResourceReference,
-} from '../permissions/resource-containment-mutation.ts';
 export type { CoreSearchIngestionService } from '../search/ingestion.ts';
 export type {
   CoreSearchProjectionDocument,
@@ -140,3 +132,5 @@ export type {
   CoreSearchWorkerSnapshotService,
   CoreSearchWorkerSnapshotView,
 } from '../search/worker-snapshot.ts';
+
+export type { OwnerPermissionAccessTarget, OwnerPermissionContract } from '../permissions/context-access.ts';

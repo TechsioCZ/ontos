@@ -69,10 +69,7 @@ const recoverGovernProductAttributeApplicability = Effect.fn('GovernProductAttri
 
 const governProductAttributeApplicabilityRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: {
-    kind: 'context_permission',
-    permission: 'commerce.catalog.read.govern-product-attribute-applicability-recovery',
-  },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.govern-product-attribute-applicability-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -80,6 +77,14 @@ const governProductAttributeApplicabilityRecoveryEntrypoint = defineTenantModule
 
 export const governProductAttributeApplicabilityRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.govern-product-attribute-applicability-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: governProductAttributeApplicabilityRecoveryEntrypoint,
     evidencePolicy: {
@@ -89,7 +94,6 @@ export const governProductAttributeApplicabilityRecoveryRead = defineRead(
     inputSchema: GovernProductAttributeApplicabilityRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.govern-product-attribute-applicability-recovery',
     resultSchema: GovernProductAttributeApplicabilityRecoveryResponseSchema,
@@ -103,5 +107,4 @@ export const governProductAttributeApplicabilityRecoveryRead = defineRead(
   },
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

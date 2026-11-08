@@ -64,7 +64,7 @@ const recoverActivateLocalOverride = Effect.fn('ActivateLocalOverrideRecoveryRea
 
 const activateLocalOverrideRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.activate-local-override-recovery' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.activate-local-override-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -72,6 +72,14 @@ const activateLocalOverrideRecoveryEntrypoint = defineTenantModuleEntrypoint({
 
 export const activateLocalOverrideRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.activate-local-override-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'catalog-source', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: activateLocalOverrideRecoveryEntrypoint,
     evidencePolicy: {
@@ -81,7 +89,6 @@ export const activateLocalOverrideRecoveryRead = defineRead(
     inputSchema: ActivateLocalOverrideRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.activate-local-override-recovery',
     resultSchema: ActivateLocalOverrideRecoveryResponseSchema,
@@ -95,5 +102,4 @@ export const activateLocalOverrideRecoveryRead = defineRead(
   },
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

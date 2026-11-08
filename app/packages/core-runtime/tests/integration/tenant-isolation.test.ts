@@ -31,13 +31,16 @@ import {
 } from '../../src/db/schema.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { makeOperationalScopeRepository, makeOperationalScopeResolver } from '../../src/operations/context.ts';
-import type { ReadLoadContext } from '../../src/reads/context.ts';
+import { makeTestOperationalScopeAccess } from '../../src/testing/access-gate.ts';
+import type { ReadHandlerContext } from '../../src/reads/context.ts';
 import { defineRead } from '../../src/reads/definition.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
 import { findPostgresFailure } from '../../src/database/postgres-failure.ts';
+import { fixtureReadAccess } from '../support/access-declaration-fixtures.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient, makeTestPgSession } from '../support/database.ts';
-import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
+import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
+import { makeTestOperationOwner } from '../support/action-runtime-options.ts';
 
 type DatabaseQueryFailureSelf = typeof DatabaseQueryFailureContract.Type;
 const DatabaseQueryFailureContract = Schema.TaggedStruct('DatabaseQueryFailure', {
@@ -306,6 +309,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('tenant isolation', (s
       }) => {
         const registration = defineRead(
           {
+            accessDeclaration: fixtureReadAccess('core.shell'),
             accessKind: 'list',
             entrypoint,
             evidencePolicy: {
@@ -321,14 +325,12 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('tenant isolation', (s
             resultSchema: Schema.Array(Schema.String),
             schemaVersion: '1',
           },
-          {
-            load: (
-              _input,
-              context: ReadLoadContext<{
-                readonly listWithoutPredicates: () => Effect.Effect<readonly { readonly value: string }[]>;
-              }>,
-            ) => context.services.listWithoutPredicates().pipe(Effect.map(toReadResult)),
-          },
+          (
+            _input,
+            context: ReadHandlerContext<{
+              readonly listWithoutPredicates: () => Effect.Effect<readonly { readonly value: string }[]>;
+            }>,
+          ) => context.services.listWithoutPredicates().pipe(Effect.map(toReadResult)),
           (transaction) => {
             const rows = transaction.select().from(records);
             return Effect.succeed({
@@ -351,10 +353,14 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('tenant isolation', (s
             openModuleEntrypointGateway,
             yield* makeOperationalScopeResolver(
               makeOperationalScopeRepository({ executor: runtimeDatabase }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
-              contextAccess,
+              makeTestOperationalScopeAccess(),
             ),
             contextAccess,
-            { databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT },
+            {
+              databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+              ownerRegistration: makeTestOperationOwner({ moduleId: 'core.shell', reads: [registration] })
+                .ownerRegistration,
+            },
           );
           return yield* runtime
             .runRead({

@@ -8,7 +8,6 @@ import {
 } from '../domain/access-contract.ts';
 import { CounterpartyPermissionCodeSchema } from '../domain/permission-catalog.ts';
 import { CounterpartyCommerceAccessGrantRefSchema } from '../resources/counterparty-commerce-access-grant.ts';
-import { AccessAuthorizationMutationEvidenceSchema } from '../domain/access-authorization-mutation.ts';
 
 export const RevokeCounterpartyCommerceAccessPayloadSchema = Schema.Struct({
   counterpartyRef: CounterpartyRefSchema,
@@ -20,14 +19,7 @@ export const RevokeCounterpartyCommerceAccessPayloadSchema = Schema.Struct({
 });
 export type RevokeCounterpartyCommerceAccessPayload = typeof RevokeCounterpartyCommerceAccessPayloadSchema.Type;
 
-export const RevokeCounterpartyCommerceAccessResultSchema = Schema.Union([
-  Schema.Struct({
-    grant: CounterpartyAccessGrantSchema,
-    outcome: Schema.Literals(['REVOKED', 'ALREADY_REVOKED', 'LAST_ADMIN_PROTECTED', 'SCOPE_MISMATCH']),
-  }),
-  Schema.Struct({
-    grant: CounterpartyAccessGrantSchema,
-    outcome: Schema.Literal('RECONCILIATION_REQUIRED'),
-    reconciliation: AccessAuthorizationMutationEvidenceSchema,
-  }),
-]);
+export const RevokeCounterpartyCommerceAccessResultSchema = Schema.Struct({
+  grant: CounterpartyAccessGrantSchema,
+  outcome: Schema.Literals(['REVOKED', 'ALREADY_REVOKED', 'LAST_ADMIN_PROTECTED', 'SCOPE_MISMATCH']),
+});

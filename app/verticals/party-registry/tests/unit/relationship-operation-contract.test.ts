@@ -37,8 +37,10 @@ it('relationship writes are idempotent tenant Actions with dedicated authority',
     expect(descriptor.idempotency).toBe('required');
     expect(descriptor.legalEntityScope).toBe('optional');
     expect(descriptor.owningModuleKey).toBe('party.registry');
-    // SAFETY: These resolvers are intentionally payload-independent tenant authority declarations.
-    expect(descriptor.tenantPermission?.({} as never)).toBe('manage_party_relationships');
+    // The one gate decides these Actions from their own declaration (O62); each names the
+    // Relationship record the payload carries (O9, O27).
+    expect(descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    expect(descriptor.accessDeclaration?.kind).toBe('action');
   }
   expect(Object.keys(createPartyRelationshipAction.descriptor.domainEvents)).toEqual([
     'party.registry.relationship-created.v1',
@@ -54,7 +56,10 @@ it('relationship writes are idempotent tenant Actions with dedicated authority',
 it.effect('relationship detail is a tenant-authorized governed read of one ResourceRef', () =>
   Effect.gen(function* schemaContract1() {
     expect(partyRelationshipDetailRead.descriptor.legalEntityScope).toBe('optional');
-    expect(partyRelationshipDetailRead.descriptor.permissionTarget).toBe('tenant');
+    // The read is decided on the relationship record it answers, never on a tenant-wide fallback (O9).
+    expect(partyRelationshipDetailRead.descriptor.accessDeclaration?.key).toBe(
+      'party.registry.party-relationship.read',
+    );
     expect(partyRelationshipDetailRead.descriptor.accessKind).toBe('detail');
     expect(
       yield* Schema.decodeEffect(PartyRelationshipDetailRequestSchema)({

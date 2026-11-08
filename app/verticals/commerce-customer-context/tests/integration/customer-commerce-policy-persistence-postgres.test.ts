@@ -1,20 +1,19 @@
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { randomUUID } from 'node:crypto';
 import {
   ActionRuntime,
   ReadRuntime,
-  ContextAccessLive,
-  ContextAccess,
-  defineDatabaseIdentityEnrollment,
   makeOperationalScopeRepository,
   makeOperationalScopeResolver,
   scopedRoutineInvokerFromTransaction,
   TrustedPrincipalContextSchema,
-  ContextPermissionRelationshipMutation,
-  ContextPermissionRelationshipMutationLive,
-  PrincipalRefSchema,
+  OntosModuleDeploymentContractSchema,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { makeTestOperationalScopeAccess } from '@app/core-runtime/testing/access-gate';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeQuantityProfileOwnedDatabase } from '../support/quantity-profile-owned-database.ts';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
@@ -33,17 +32,18 @@ import { createCounterpartyPurchasingProfileAction } from '../../src/actions/cre
 import { suspendCustomerProfileAction } from '../../src/actions/suspend-customer-profile.action.ts';
 import { archiveCustomerProfileAction } from '../../src/actions/archive-customer-profile.action.ts';
 import { PartyRegistryRetailPartyResolverFactory } from '../../src/integrations/party-registry-retail-party-resolver.ts';
-import { RetailPartyDetailExecutor } from '../../src/integrations/retail-party-detail-executor.ts';
-import { PartyDetailResponseSchema } from '@app/party-registry/api/client';
 import { ProfileCounterpartyRoleEligibilityResolverFactory } from '../../src/profile-counterparty-role-eligibility.ts';
 import { partyRegistryGuestResolverFactoryLive } from '../../src/integrations/party-registry-guest-resolver.ts';
-import { profileRetailPermissionReaderFactoryLive } from '../../src/integrations/retail-permission-reader.ts';
 import {
   profileReactivationEligibilityEvaluatorFactoryLive,
   profileReconfirmationPolicyUnavailableLive,
 } from '../../src/integrations/profile-reactivation-eligibility.ts';
 import { commerceCustomerContextOwnerAuthorizationOverlayLive } from '../../src/persistence/owner-authorization-overlay.ts';
 import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import {
+  describePriceGroupTemporalOwner,
+  makePriceGroupTemporalComposition,
+} from '../support/price-group-temporal-protocol.ts';
 
 import { PgClient } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
@@ -64,10 +64,23 @@ const transport = () => ({
   targetModuleKey: 'commerce.customer-context',
 });
 const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixture')(function* makeFixture() {
-  const snapshot = yield* makeEnrollmentApplicationCompositionSnapshot('quantity-profile-admission-native', []);
+  const base = yield* makeEnrollmentApplicationCompositionSnapshot(ultramodernApiMarker.buildMarker, []);
+  const ownModule = base.composition.modules.find(({ deployment }) => deployment.appId === ultramodernApiMarker.appId);
+  assert.isOk(ownModule !== undefined);
+  const ownContract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
+    ownModule.contractDocument,
+  );
+  const party = yield* describePriceGroupTemporalOwner('party-registry');
+  // Actual owner declarations and compiled identities; the helper's served Federation metadata is
+  // SOURCE/TEST-only. The controlled Party facts below do not prove provider transport or deployment.
+  const snapshot = yield* makePriceGroupTemporalComposition([
+    { contract: ownContract, marker: ownContract.deployment },
+    { contract: party.contract, marker: party.marker },
+  ]);
   const { isolated } = yield* makeQuantityProfileOwnedDatabase(snapshot);
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
+      access: 'allowed',
       actionExecutor: 'manager-only',
       actionKeys: [
         ensureRetailCustomerProfileAction.descriptor.actionKey,
@@ -80,9 +93,13 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
       ],
       additionalLegalEntity: 'same-tenant',
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
+      applicationComposition: { load: Effect.succeed(snapshot) },
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: snapshot.composition.revision,
-      moduleKeys: ['commerce.customer-context'],
+      expectedDeployment: ultramodernApiMarker,
+      // Party already belongs to the fixture namespace; this seeds its state without adding grants.
+      moduleKeys: ['commerce.customer-context', 'party.registry'],
+      ownerRegistration: commerceCustomerContextRegistration,
       runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     }),
     (resource) => resource.close().pipe(Effect.orDie),
@@ -97,28 +114,6 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
   // Unknown input fails closed. CCC identities are produced by the registered Actions below;
   // this fixture makes no claim about Party producer correctness or transport availability.
   const owners = Layer.mergeAll(
-    Layer.succeed(RetailPartyDetailExecutor, {
-      execute: ({ partyRef }) =>
-        Effect.succeed(
-          Schema.decodeUnknownSync(PartyDetailResponseSchema)({
-            currentFactAssertions: [],
-            factHistory: null,
-            party: {
-              archivedAt:
-                partyRef.tenantId === fixture.tenantId && partyIds.has(partyRef.resourceId)
-                  ? null
-                  : '2020-01-01T00:00:00.000Z',
-              createdAt: '2020-01-01T00:00:00.000Z',
-              displayName: 'Retail fixture',
-              partyRef,
-              partyType: 'PERSON',
-              revision: 1,
-              updatedAt: '2020-01-01T00:00:00.000Z',
-            },
-            resolution: { aliasChain: [], canonicalPartyRef: partyRef, kind: 'DIRECT', requestedPartyRef: partyRef },
-          }),
-        ),
-    }),
     Layer.succeed(PartyRegistryRetailPartyResolverFactory, {
       make: (scope) => (request) =>
         Effect.succeed(
@@ -145,18 +140,13 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
                 outcome: 'ELIGIBLE' as const,
                 roleResourceId: roleId,
                 roleResourceRevision: '2026-01-01T00:00:00.000Z',
-                validUntil: null,
               }
             : { outcome: 'INDETERMINATE' as const },
         ),
     }),
     partyRegistryGuestResolverFactoryLive,
-    profileRetailPermissionReaderFactoryLive.pipe(Layer.provide(ContextAccessLive)),
     profileReactivationEligibilityEvaluatorFactoryLive.pipe(Layer.provide(profileReconfirmationPolicyUnavailableLive)),
-    commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(
-      Layer.provide(profileRetailPermissionReaderFactoryLive),
-      Layer.provide(ContextAccessLive),
-    ),
+    commerceCustomerContextOwnerAuthorizationOverlayLive,
   );
   const context = yield* Layer.build(fixture.layer.pipe(Layer.provideMerge(owners)));
   const runtime = Context.get(context, ActionRuntime);
@@ -216,21 +206,6 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
   const counterparty = yield* createCounterparty;
   yield* fixture.grantResourceAccess(retail.profileRef, fixture.manager.principalId, 'writer');
   yield* fixture.grantResourceAccess(counterparty.profileRef, fixture.manager.principalId, 'writer');
-  yield* ContextPermissionRelationshipMutation.pipe(
-    Effect.flatMap((permission) =>
-      permission.mutate({
-        legalEntityId: fixture.legalEntityId,
-        operation: 'grant',
-        principal: Schema.decodeUnknownSync(PrincipalRefSchema)({
-          principalId: fixture.manager.principalId,
-          tenantId: fixture.tenantId,
-        }),
-        target: { moduleId: 'commerce.customer-context', permission: 'customer_commerce_policy.quantity.read' },
-        tenantId: fixture.tenantId,
-      }),
-    ),
-    Effect.provide(ContextPermissionRelationshipMutationLive),
-  );
   return {
     context,
     counterparty,
@@ -1151,23 +1126,19 @@ const runOwnedPolicyAcceptance = Effect.fn('QuantityProfileAdmissionTests.ownedP
     );
 
     // Execute the real domain service and owner-local SQL on an otherwise empty seller partition.
-    const replacementScope = yield* ContextAccess.pipe(
-      Effect.flatMap((actualContextAccess) =>
-        makeOperationalScopeResolver(
-          // This seller partition enrolls no dedicated database identities, like the fixture's Core-only owner.
-          makeOperationalScopeRepository({ executor: coreRuntime }, defineDatabaseIdentityEnrollment([])),
-          actualContextAccess,
-        ).pipe(
-          Effect.flatMap((resolver) =>
-            resolver.resolve({
-              correlationId: 'owned-policy-secondary-scope',
-              legalEntityScope: 'required',
-              principal: Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(owner.secondary.manager),
-            }),
-          ),
-        ),
+    // The one gate answers the scope questions now (CUTOVER-PLAN §3.1): the retired ContextAccess
+    // port is gone, so the suite scripts the allowed scope decision directly.
+    const replacementScope = yield* makeOperationalScopeResolver(
+      makeOperationalScopeRepository({ executor: coreRuntime }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+      makeTestOperationalScopeAccess(),
+    ).pipe(
+      Effect.flatMap((resolver) =>
+        resolver.resolve({
+          correlationId: 'owned-policy-secondary-scope',
+          legalEntityScope: 'required',
+          principal: Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(owner.secondary.manager),
+        }),
       ),
-      Effect.provide(ContextAccessLive),
       Effect.provideContext(owner.context),
     );
     yield* scoped(

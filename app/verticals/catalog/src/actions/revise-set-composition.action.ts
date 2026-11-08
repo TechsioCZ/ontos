@@ -6,7 +6,12 @@ import {
   prepareCatalogOpenSelectionPopulation,
   validatePreparedCatalogScope,
 } from '../services/catalog-open-selection-preflight.ts';
-import type { ActionHandlerContext, ActionServiceFactory, ActionServicePreflight } from '@app/core-runtime';
+import type {
+  ActionHandlerContext,
+  ActionServiceFactory,
+  ActionServicePreparationContext,
+  ActionServicePreflight,
+} from '@app/core-runtime';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 
@@ -104,20 +109,37 @@ const reviseSetCompositionActionServices = (
     })),
   );
 
-const prepareReviseSetCompositionActionServices: ActionServicePreflight<
+const prepareReviseSetCompositionActionServices = Effect.fn('prepareReviseSetCompositionActionServices')(
+  function* prepareServices(
+    _payload: typeof ReviseSetCompositionPayloadSchema.Type,
+    context: ActionServicePreparationContext,
+  ) {
+    const population = yield* prepareCatalogOpenSelectionPopulation(context);
+    return (
+      transaction: Parameters<ActionServiceFactory<never>>[0],
+      scope: Parameters<ActionServiceFactory<never>>[1],
+      revision: Parameters<ActionServiceFactory<never>>[2],
+    ) =>
+      validatePreparedCatalogScope(context, scope, revision).pipe(
+        Effect.flatMap(() => reviseSetCompositionActionServices(transaction, { population, scope })),
+      );
+  },
+) satisfies ActionServicePreflight<
   typeof ReviseSetCompositionPayloadSchema.Type,
   Effect.Success<ReturnType<typeof reviseSetCompositionActionServices>>,
-  never
-> = Effect.fn('prepareReviseSetCompositionActionServices')(function* prepareServices(_payload, context) {
-  const population = yield* prepareCatalogOpenSelectionPopulation(context);
-  return (transaction, scope, revision) =>
-    validatePreparedCatalogScope(context, scope, revision).pipe(
-      Effect.flatMap(() => reviseSetCompositionActionServices(transaction, { population, scope })),
-    );
-});
+  typeof SetCompositionActionError.Type
+>;
 
 export const reviseSetCompositionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.set-composition.revise',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'set-composition', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.revise-set-composition.access.v1',
@@ -128,7 +150,7 @@ export const reviseSetCompositionAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.catalog.revise-set-composition',
       moduleKey: MODULE_KEY,
       role: 'action',

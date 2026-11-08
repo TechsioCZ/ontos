@@ -8,6 +8,7 @@ import {
   InvitePersonResultSchema,
 } from '../../src/auth/person-invitation.ts';
 import { PrincipalManagementErrorSchema } from '../../src/auth/principal-management-errors.ts';
+import { coreActionCatalog } from '../../src/modules/actions/catalog.ts';
 import { invitePersonAction } from '../../src/modules/actions/invite-person.action.ts';
 import {
   ManageAgentStatusAuditEvidenceSchema,
@@ -17,12 +18,6 @@ import {
 } from '../../src/modules/actions/manage-agent-status.action.ts';
 import { principalLifecycleDomainEvents } from '../../src/modules/actions/principal-lifecycle-event.ts';
 import { setCompanyMembershipAction } from '../../src/modules/actions/set-company-membership.action.ts';
-import { setScopedRoleMembershipAction } from '../../src/modules/actions/set-scoped-role-membership.action.ts';
-import {
-  OutboxPayloadSchema,
-  ScopedRoleMembershipAuditEvidenceSchema,
-  outboxTopic,
-} from '../../src/outbox/core-identity-scoped-role-membership-changed-v1.ts';
 import { CompanyMembershipSchema } from '../../src/permissions/company-membership.ts';
 
 const principalId = '11111111-1111-4111-8111-111111111111';
@@ -33,14 +28,15 @@ for (const { action, legalEntityScope, slug } of [
   { action: invitePersonAction, legalEntityScope: 'required', slug: 'invite-person' },
   { action: manageAgentStatusAction, legalEntityScope: 'required', slug: 'manage-agent-status' },
   { action: setCompanyMembershipAction, legalEntityScope: 'required', slug: 'set-company-membership' },
-  { action: setScopedRoleMembershipAction, legalEntityScope: 'optional', slug: 'set-scoped-role-membership' },
 ]) {
   it(`${slug} retains its native identity, explicit authority and sensitive evidence contract`, () => {
     const { descriptor } = action;
     expect(descriptor.actionKey).toBe(`core.identity.${slug}`);
     expect(descriptor.entrypoint).toMatchObject({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      // The v2 carrier: the capability lives only in the Action's access declaration, so the entrypoint is
+      // `protected` and the gate decides it; the legacy `action_execution` provisioning is gone.
+      authorization: { kind: 'protected' },
       entrypointKey: `core.identity.${slug}`,
       moduleKey: 'core.identity',
       role: 'action',
@@ -67,17 +63,15 @@ it('retains native domain handlers and transaction service factories', () => {
     getActionHandler(invitePersonAction),
     getActionHandler(manageAgentStatusAction),
     getActionHandler(setCompanyMembershipAction),
-    getActionHandler(setScopedRoleMembershipAction),
     getActionServiceFactory(invitePersonAction),
     getActionServiceFactory(manageAgentStatusAction),
     getActionServiceFactory(setCompanyMembershipAction),
-    getActionServiceFactory(setScopedRoleMembershipAction),
   ]) {
     expect(implementation).toBeTypeOf('function');
   }
 });
 
-it('retains the domain-owned codecs and lifecycle or scoped-role outbox declarations', () => {
+it('retains the domain-owned codecs and the principal lifecycle outbox declarations', () => {
   expect(invitePersonAction.descriptor.payloadSchema).toBe(InvitePersonPayloadSchema);
   expect(invitePersonAction.descriptor.resultSchema).toBe(InvitePersonResultSchema);
   expect(invitePersonAction.descriptor.auditEvidenceSchema).toBe(InvitePersonAuditEvidenceSchema);
@@ -91,8 +85,19 @@ it('retains the domain-owned codecs and lifecycle or scoped-role outbox declarat
       expect(Object.entries(action.descriptor.domainEvents).find(([key]) => key === eventType)?.[1]).toBe(schema);
     }
   }
-  expect(setScopedRoleMembershipAction.descriptor.auditEvidenceSchema).toBe(ScopedRoleMembershipAuditEvidenceSchema);
-  expect(setScopedRoleMembershipAction.descriptor.domainEvents).toEqual({ [outboxTopic]: OutboxPayloadSchema });
+});
+
+it('retires the legacy scoped-role Action: roles are written only by canonical access intent', () => {
+  // A scoped-role membership was a graph write with no canonical intent behind it. It is gone from the
+  // catalog, and no Core Action claims its key, so nothing can grant authority outside access intent.
+  expect(coreActionCatalog.some(({ actionKey }) => actionKey === 'core.identity.set-scoped-role-membership')).toBe(
+    false,
+  );
+  expect(
+    coreActionCatalog.some(({ actionKey }) =>
+      ['core.identity.set-scoped-role-membership', 'core.identity.role-catalog'].includes(actionKey),
+    ),
+  ).toBe(false);
 });
 
 it('retains agent status concurrency expectations and mandatory archive reasons', () => {
@@ -113,7 +118,7 @@ it('retains agent status concurrency expectations and mandatory archive reasons'
   }
 });
 
-it('retains company membership revisions and derives scoped-role authority outside the payload', () => {
+it('retains company membership revisions and derives the company from the scope, not the payload', () => {
   const decodeMembership = Schema.decodeUnknownSync(setCompanyMembershipAction.descriptor.payloadSchema, {
     onExcessProperty: 'error',
   });
@@ -127,11 +132,4 @@ it('retains company membership revisions and derives scoped-role authority outsi
   expect(decodeMembership(membership)).toEqual({ ...membership, affiliation: Option.none() });
   expect(() => decodeMembership({ ...membership, expectedRevision: -1 })).toThrow();
   expect(() => decodeMembership({ ...membership, legalEntityId: tenantId })).toThrow();
-  const decodeRole = Schema.decodeUnknownSync(setScopedRoleMembershipAction.descriptor.payloadSchema, {
-    onExcessProperty: 'error',
-  });
-  const role = { operation: 'assign', principalRef, reason: 'Explicit scoped grant', roleKey: 'company-admin' };
-  expect(decodeRole(role)).toEqual(role);
-  expect(() => decodeRole({ ...role, scope: { tenantId } })).toThrow();
-  expect(() => decodeRole({ ...role, legalEntityId: tenantId })).toThrow();
 });

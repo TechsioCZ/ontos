@@ -2,10 +2,7 @@
 import type { ReadLoadContext } from '@app/core-runtime';
 import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect } from 'effect';
-import type {
-  VerifyEffectiveCustomerGroupMembershipSetV1Request,
-  VerifyEffectiveCustomerGroupMembershipSetV1Response,
-} from '../../shared/apis/verify-effective-customer-group-membership-set-v1.ts';
+import type { VerifyEffectiveCustomerGroupMembershipSetV1Request } from '../../shared/apis/verify-effective-customer-group-membership-set-v1.ts';
 import {
   VerifyEffectiveCustomerGroupMembershipSetV1RequestSchema,
   VerifyEffectiveCustomerGroupMembershipSetV1ResponseSchema,
@@ -14,7 +11,6 @@ import { computeEffectiveCustomerGroupMembershipSetProof } from './effective-cus
 import {
   customerGroupReadServiceFactory,
   customerGroupReadUnavailable,
-  customerProfileResourceTarget,
   requireCustomerGroupReadLegalEntityId,
   requireCustomerGroupTenant,
   unwrapCustomerGroupLookup,
@@ -23,7 +19,7 @@ import type { CustomerGroupReadServices } from './customer-group-read-support.ts
 
 const verifyEffectiveCustomerGroupMembershipSetV1Entrypoint = defineTenantModuleEntrypoint({
   access: 'historical_read',
-  authorization: { kind: 'context_permission', permission: 'customer.group.history.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.verify-effective-customer-group-membership-set-v1',
   moduleKey: 'commerce.customer-context',
   role: 'api',
@@ -74,6 +70,14 @@ const handleVerifyEffectiveCustomerGroupMembershipSetV1 = Effect.fn(
 
 export const verifyEffectiveCustomerGroupMembershipSetV1Read = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.customer-group-membership.verify-set-v1',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'customer-groups', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: verifyEffectiveCustomerGroupMembershipSetV1Entrypoint,
     evidencePolicy: {
@@ -83,7 +87,6 @@ export const verifyEffectiveCustomerGroupMembershipSetV1Read = defineRead(
     inputSchema: VerifyEffectiveCustomerGroupMembershipSetV1RequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: 'commerce.customer-context',
-    permissionTarget: 'resource',
     policies: [],
     readKey: 'commerce.customer-context.api.verify-effective-customer-group-membership-set-v1',
     resultSchema: VerifyEffectiveCustomerGroupMembershipSetV1ResponseSchema,
@@ -91,9 +94,4 @@ export const verifyEffectiveCustomerGroupMembershipSetV1Read = defineRead(
   },
   { load: handleVerifyEffectiveCustomerGroupMembershipSetV1 },
   customerGroupReadServiceFactory,
-  ({ profile }: VerifyEffectiveCustomerGroupMembershipSetV1Request) => ({
-    kind: 'resource' as const,
-    resource: customerProfileResourceTarget(profile),
-  }),
-  (_result: VerifyEffectiveCustomerGroupMembershipSetV1Response) => [],
 );

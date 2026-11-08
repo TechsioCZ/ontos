@@ -1,9 +1,10 @@
-import { ConfigProvider, Effect, Exit, Fiber, Layer, Predicate, Redacted, Schema } from 'effect';
+import { Cause, ConfigProvider, DateTime, Effect, Exit, Fiber, Layer, Predicate, Redacted, Schema } from 'effect';
 import { expect, rs, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 import { decodeJwt, decodeProtectedHeader, exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import {
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
+  GatewayActorClaimSchema,
   GatewayContextClaimsSchema,
   GatewayContextV2ClaimsSchema,
 } from '@app/shared-contracts';
@@ -22,7 +23,12 @@ import {
 } from '../../../../packages/gateway-principal-verifier/src/server.ts';
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 import type { GatewayIssuerConfigValue } from '../../api/auth/gateway-issuer-config.ts';
-import { GatewayIssuer, issueGatewayContextAssertion, makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
+import {
+  GatewayIssuer,
+  GatewayIssuerError,
+  issueGatewayContextAssertion,
+  makeGatewayIssuerLayer,
+} from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerLayerOptions } from '../../api/auth/gateway-issuer.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
@@ -138,7 +144,7 @@ it.effect('memoises configuration within the refresh window and issues signed as
       jwtVerify(result.token, publicKey, {
         algorithms: ['EdDSA'],
         audience: 'property-registry',
-        currentDate: new Date(1_700_000_001_000),
+        currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(1_700_000_001_000)),
         issuer,
       }),
     );
@@ -214,7 +220,7 @@ it.effect('shares cached configuration across concurrent valid issuances', () =>
             jwtVerify(result.token, publicKey, {
               algorithms: ['EdDSA'],
               audience: 'property-registry',
-              currentDate: new Date(1_700_000_001_000),
+              currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(1_700_000_001_000)),
               issuer,
             }),
           );
@@ -372,7 +378,7 @@ it.effect('issues and verifies v2 assertions for namespaced principals', () =>
       jwtVerify(result.token, publicKey, {
         algorithms: ['EdDSA'],
         audience: 'property-registry',
-        currentDate: new Date(1_700_000_001_000),
+        currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(1_700_000_001_000)),
         issuer,
       }),
     );
@@ -542,7 +548,7 @@ it.effect('allows the next issuance after interrupting a pending key import', ()
       jwtVerify(result.token, publicKey, {
         algorithms: ['EdDSA'],
         audience: 'property-registry',
-        currentDate: new Date(1_700_000_001_000),
+        currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(1_700_000_001_000)),
         issuer,
       }),
     );
@@ -597,7 +603,7 @@ it.effect('refreshes configuration after 30 seconds and replaces the rotated sig
       jwtVerify(initialResult.token, initialPublicKey, {
         algorithms: ['EdDSA'],
         audience: 'property-registry',
-        currentDate: new Date(1_700_000_001_000),
+        currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(1_700_000_001_000)),
         issuer,
       }),
     );
@@ -605,7 +611,7 @@ it.effect('refreshes configuration after 30 seconds and replaces the rotated sig
       jwtVerify(rotatedResult.token, rotatedPublicKey, {
         algorithms: ['EdDSA'],
         audience: 'property-registry',
-        currentDate: new Date(1_700_000_001_000),
+        currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(1_700_000_001_000)),
         issuer,
       }),
     );
@@ -682,7 +688,7 @@ it.effect('retries a failed key import on the next issuance', () =>
       jwtVerify(result.token, publicKey, {
         algorithms: ['EdDSA'],
         audience: 'property-registry',
-        currentDate: new Date(1_700_000_001_000),
+        currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(1_700_000_001_000)),
         issuer,
       }),
     );
@@ -1000,5 +1006,135 @@ it.effect('passes every issued audience to the scope grant registrar', () =>
 
     expect(inputs.map(({ audience }) => audience)).toEqual(audiences);
     expect(inputs.map(({ assertion }) => Redacted.value(assertion))).toEqual(results.map(({ token }) => token));
+  }),
+);
+
+it.effect('retains the original proof interval while issuing a fresh destination assertion', () =>
+  Effect.gen(function* retainedRelayInterval() {
+    const { configuration } = yield* makeConfiguration();
+    const result = yield* issueGatewayContextAssertion({
+      audience: 'property-registry',
+      compositionRevision,
+      principal: namespacedPrincipal,
+      sourceValidity: { expiresAt: 1_700_000_150, issuedAt: 1_699_999_850 },
+    }).pipe(
+      Effect.provide(
+        makeGatewayIssuerLayer(
+          dependencies(configuration, {
+            generateJti: Effect.succeed('60000000-0000-4000-8000-000000000002'),
+          }),
+        ).pipe(Layer.provide(scopeGrantRegistrarLayer())),
+      ),
+    );
+    const claims = decodeJwt(result.token);
+    expect(claims.iat).toBe(1_699_999_850);
+    expect(claims.exp).toBe(1_700_000_150);
+    expect(result.expiresAt).toBe(1_700_000_150);
+    expect(claims.jti).toBe('60000000-0000-4000-8000-000000000002');
+    expect(claims['principal']).toEqual(namespacedPrincipal);
+    expect(Schema.is(GatewayContextV2ClaimsSchema)(claims)).toBe(true);
+  }),
+);
+
+it.effect('rejects expired, future and extended source intervals before allocating a destination identity', () =>
+  Effect.gen(function* invalidRelayIntervals() {
+    const { configuration } = yield* makeConfiguration();
+    let allocations = 0;
+    const layer = makeGatewayIssuerLayer(
+      dependencies(configuration, {
+        generateJti: Effect.sync(() => {
+          allocations += 1;
+          return '60000000-0000-4000-8000-000000000002';
+        }),
+      }),
+    ).pipe(Layer.provide(scopeGrantRegistrarLayer()));
+    for (const sourceValidity of [
+      { expiresAt: 1_700_000_000, issuedAt: 1_699_999_700 },
+      { expiresAt: 1_700_000_301, issuedAt: 1_700_000_001 },
+      { expiresAt: 1_700_000_300, issuedAt: 1_699_999_850 },
+    ]) {
+      const error = yield* issueGatewayContextAssertion({
+        audience: 'property-registry',
+        compositionRevision,
+        principal,
+        sourceValidity,
+      }).pipe(Effect.provide(layer), Effect.flip);
+      expect(error.stage).toBe('clock');
+    }
+    expect(allocations).toBe(0);
+  }),
+);
+
+const actorFor = (principalId: string) =>
+  Schema.decodeUnknownSync(GatewayActorClaimSchema)({
+    appId: 'property-registry',
+    buildMarker: 'property-registry-build',
+    principalId,
+  });
+const callingModule = actorFor('60000000-0000-4000-8000-000000000009');
+
+/** Issues one destination assertion for a subject, naming the calling module when an actor is given. */
+const issueForSubject = (subject: typeof namespacedPrincipal | typeof principal, actor?: typeof callingModule) =>
+  Effect.gen(function* issueForSubjectProgram() {
+    const { configuration, publicKey } = yield* makeConfiguration();
+    const request = { audience: 'property-registry', compositionRevision, principal: subject };
+    const issued =
+      actor === undefined ? issueGatewayContextAssertion(request) : issueGatewayContextAssertion({ ...request, actor });
+    const exit = yield* Effect.exit(
+      issued.pipe(
+        Effect.provide(
+          makeGatewayIssuerLayer(dependencies(configuration)).pipe(Layer.provide(scopeGrantRegistrarLayer())),
+        ),
+      ),
+    );
+    return { exit, publicKey };
+  });
+
+it.effect('signs version 3 with the calling module as act when an actor is given', () =>
+  Effect.gen(function* signsActorAssertion() {
+    const { exit, publicKey } = yield* issueForSubject(namespacedPrincipal, callingModule);
+    expect(Exit.isSuccess(exit)).toBe(true);
+    if (!Exit.isSuccess(exit)) {
+      return;
+    }
+    const verified = yield* Effect.promise(() =>
+      jwtVerify(exit.value.token, publicKey, {
+        algorithms: ['EdDSA'],
+        audience: 'property-registry',
+        currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(1_700_000_001_000)),
+        issuer,
+      }),
+    );
+    expect(verified.payload['ver']).toBe(3);
+    expect(verified.payload['act']).toEqual(callingModule);
+    expect(verified.payload.sub).toBe(namespacedPrincipal.principalId);
+  }),
+);
+
+it.effect('refuses an actor that is the subject, so a version 3 assertion always names two parties', () =>
+  Effect.gen(function* refusesActorSubject() {
+    const { exit } = yield* issueForSubject(namespacedPrincipal, actorFor(namespacedPrincipal.principalId));
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      const failure = Cause.squash(exit.cause);
+      expect(Schema.is(GatewayIssuerError)(failure)).toBe(true);
+      if (Schema.is(GatewayIssuerError)(failure)) {
+        expect(failure.stage).toBe('principal');
+      }
+    }
+  }),
+);
+
+it.effect('refuses an actor for a subject without an authentication namespace', () =>
+  Effect.gen(function* refusesUnnamespacedSubject() {
+    const { exit } = yield* issueForSubject(principal, callingModule);
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      const failure = Cause.squash(exit.cause);
+      expect(Schema.is(GatewayIssuerError)(failure)).toBe(true);
+      if (Schema.is(GatewayIssuerError)(failure)) {
+        expect(failure.stage).toBe('principal');
+      }
+    }
   }),
 );

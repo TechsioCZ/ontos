@@ -7,7 +7,7 @@ import {
   SavedAddressDetailResponseSchema,
 } from '../../shared/apis/saved-address-detail.ts';
 import type { SavedAddressDetailRequest, SavedAddressDetailResponse } from '../../shared/apis/saved-address-detail.ts';
-import { profileTarget } from './address-read-support.ts';
+import { addressBookProfileOwnerFacts } from './read-owner-facts.ts';
 import { addressReadServicesForTransaction } from '../persistence/address-persistence.ts';
 
 export interface SavedAddressDetailServices {
@@ -18,14 +18,35 @@ export interface SavedAddressDetailServices {
 }
 const savedAddressDetailEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'authenticated_principal' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.saved-address-detail',
   moduleKey: 'commerce.customer-context',
   role: 'api',
 });
 export const savedAddressDetailRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.saved-address.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'address-book', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+    accessFieldGroups: [
+      {
+        fieldClass: 'personal_data',
+        fields: ['address.label', 'address.origin.postalAddress'],
+        key: 'commerce.customer-context.saved-address-detail.personal.read',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'sensitive-fields', level: 'extended' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
     accessKind: 'detail',
+    accessOwnerFacts: addressBookProfileOwnerFacts,
     entrypoint: savedAddressDetailEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',
@@ -34,7 +55,6 @@ export const savedAddressDetailRead = defineRead(
     inputSchema: SavedAddressDetailRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: 'commerce.customer-context',
-    permissionTarget: 'business_permission',
     policies: [],
     readKey: 'commerce.customer-context.api.saved-address-detail',
     resultSchema: SavedAddressDetailResponseSchema,
@@ -48,5 +68,4 @@ export const savedAddressDetailRead = defineRead(
   },
   (transaction, scope) =>
     Effect.succeed<SavedAddressDetailServices>(addressReadServicesForTransaction(transaction, scope)),
-  profileTarget,
 );

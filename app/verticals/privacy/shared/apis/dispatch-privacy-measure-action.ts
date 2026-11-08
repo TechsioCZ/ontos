@@ -2,6 +2,7 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug dispatch-privacy-measure
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/dispatch-privacy-measure.ts';
 
 export { DispatchPrivacyMeasurePayloadSchema } from '../actions/dispatch-privacy-measure.ts';
-
 export const DispatchPrivacyMeasureActionInvalidProblemSchema = makeProblemDetailsSchema(
   'DispatchPrivacyMeasureActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const DispatchPrivacyMeasureActionForbiddenProblemSchema = makeProblemDet
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -142,7 +143,7 @@ export const dispatchPrivacyMeasureActionGroupDefinition = HttpApiGroup.make('di
     HttpApiEndpoint.post('execute', '/privacy/actions/dispatch-privacy-measure', {
       error: actionErrors,
       payload: Schema.toEncoded(DispatchPrivacyMeasurePayloadSchema),
-      success: DispatchPrivacyMeasureResultSchema,
+      success: [ActionProposalAcceptedSchema, DispatchPrivacyMeasureResultSchema],
     }),
   )
   .middleware(DispatchPrivacyMeasureActionSchemaErrorMiddleware);

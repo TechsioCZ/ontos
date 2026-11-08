@@ -14,7 +14,6 @@ const actions = [
   { action: 'mutate-agent-proposals', handler: 'handleMutateAgentProposals', legalEntityScope: 'required' },
   { action: 'replace-agent-operators', handler: 'handleReplaceAgentOperators', legalEntityScope: 'required' },
   { action: 'set-company-membership', handler: 'handleSetCompanyMembership', legalEntityScope: 'required' },
-  { action: 'set-scoped-role-membership', handler: 'handleSetScopedRoleMembership', legalEntityScope: 'optional' },
 ] as const;
 
 afterEach(() => {
@@ -62,10 +61,9 @@ for (const { action, handler, legalEntityScope } of actions) {
       });
       const config: ActionScaffoldConfig = {
         action,
-        authorization: 'action_execution',
+        authorization: 'protected',
         legalEntityScope,
         module: 'core.identity',
-        provisioning: 'explicit',
         scope: 'core',
       };
       const result = yield* scaffoldAction({ ...core._context, config }, core).pipe(
@@ -96,7 +94,7 @@ for (const { action, handler, legalEntityScope } of actions) {
         `entrypointKey: 'core.identity.${action}'`,
         "moduleKey: 'core.identity'",
         "owningModuleKey: 'core.identity'",
-        "authorization: { kind: 'action_execution', provisioning: 'explicit' }",
+        "authorization: { kind: 'protected' }",
         "idempotency: 'required'",
         `legalEntityScope: '${legalEntityScope}'`,
         "schemaVersion: '1'",

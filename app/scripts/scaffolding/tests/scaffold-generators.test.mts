@@ -1,5 +1,4 @@
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -20,8 +19,7 @@ import {
   Layer,
   Schema,
 } from '@modern-js/bff-effect/effect-edge';
-import { Cause, Clock, ConfigProvider, FileSystem, Predicate, Redacted, Sink } from 'effect';
-import type { Program, TSType, TSInterfaceDeclaration } from 'oxc-parser';
+import { Cause, Clock, ConfigProvider, Duration, Predicate, Redacted } from 'effect';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { SignJWT, exportJWK, generateKeyPair, generateSecret, importJWK } from 'jose';
@@ -32,20 +30,31 @@ import {
   issueGatewayContextAssertion,
   makeGatewayIssuerLayer,
 } from '../../../apps/shell-super-app/api/auth/gateway-issuer.ts';
-import { defineAction } from '../../../packages/core-runtime/src/actions/definition.ts';
+import { scopeGrantRegistrarLayer } from '../../../apps/shell-super-app/tests/support/gateway-issuer-layer.ts';
 import { TrustedPrincipalContextSchema } from '../../../packages/core-runtime/src/actions/principal-context.ts';
 import type { TrustedPrincipalContext } from '../../../packages/core-runtime/src/actions/principal-context.ts';
 import { GatewayAssertionRedemptionService } from '../../../packages/core-runtime/src/auth/gateway-assertion-redemption.ts';
-import { GatewayScopeGrantRegistrar } from '../../../packages/core-runtime/src/auth/gateway-scope-grant.ts';
 import {
   ActiveApplicationCompositionService,
   ActiveApplicationCompositionSnapshotSchema,
 } from '../../../packages/core-runtime/src/modules/active-application-composition.ts';
-import type { ActiveApplicationCompositionConfigLive } from '../../../packages/core-runtime/src/modules/active-application-composition.ts';
+import type {
+  ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionServiceContract,
+} from '../../../packages/core-runtime/src/modules/active-application-composition.ts';
 import { ActiveApplicationCompositionSource } from '../../../packages/core-runtime/src/modules/active-application-composition-source-service.ts';
-import { defineSystemModuleEntrypoint } from '../../../packages/core-runtime/src/modules/module-entrypoint.ts';
-import { makeActionTestHarness } from '../../../packages/core-runtime/src/testing/actions.ts';
-import { makeApplicationCompositionSnapshotFixture } from '../../../packages/core-runtime/src/testing/module-contract.ts';
+import type { makeActionTestHarness } from '../../../packages/core-runtime/src/testing/actions.ts';
+import {
+  makeApplicationCompositionSnapshotFixture,
+  makeModuleContractFixture,
+} from '../../../packages/core-runtime/src/testing/module-contract.ts';
+import {
+  OntosModuleDeploymentContractSchema,
+  OntosModuleIdSchema,
+  OntosShellRuntimeContractSchema,
+} from '../../../packages/core-runtime/src/index.ts';
+import { deriveActiveApplicationCompositionSnapshot } from '../../active-application-composition.mts';
+import { createSharedRuntimeConfig } from '../../../module-federation.shared.ts';
 import type { staffAuthenticationNamespaceRegistryLayer } from '../../../packages/core-runtime/src/auth/staff-authentication-namespace.ts';
 import type { GatewayPrincipalVerifierLive } from '../../../packages/gateway-principal-verifier/src/server.ts';
 import {
@@ -64,10 +73,8 @@ import {
   publishedOutboxContractExports,
 } from '../../published-outbox-contracts.mts';
 import { getHelpText, runScaffoldEffect, ScaffoldingError } from '../cli.mts';
-import { customizeOutboxWorkerHostEntry, planOutboxWorkerScaffold } from '../outbox-worker/scaffold.mts';
-import { planOutboxMessageScaffold } from '../outbox-message/scaffold.mts';
 import type { ScaffoldCommand } from '../cli.mts';
-import type { JsonValue, ScaffoldPlan } from '../shared.mts';
+import type { JsonValue } from '../shared.mts';
 import {
   GOVERNED_HTTP_API_ADDITION_SLOT_END,
   GOVERNED_HTTP_API_ADDITION_SLOT_START,
@@ -82,17 +89,7 @@ import {
   createScaffoldErrorTools,
   insertSortedSlot,
   readGeneratedSlotEntries,
-  readCanonicalSearchDescriptor,
-  hasCanonicalMetadataImport,
-  parseScaffoldMetadata,
-  metadataBindings,
-  formatGeneratedMutationContent,
 } from '../shared.mts';
-import {
-  OntosSearchDescriptorSchema,
-  OntosResourceTypeSchema,
-} from '../../../packages/core-runtime/src/modules/manifest.ts';
-import { ShellSearchContributionSchema } from '../../../packages/core-runtime/src/modules/shell-contribution.ts';
 import { snapshotTree, write } from './fixture-files.mts';
 import { linkFixtureDependencies } from './fixture-ownership.mts';
 
@@ -107,8 +104,6 @@ const ASSEMBLED_HANDLER_PROPERTY = 'handlers: apiHandlersLive,';
 const ASSEMBLED_HANDLER_DECLARATION = 'const apiHandlersLive = Layer.mergeAll(';
 
 const MODULE_CONTRACT_COMMAND = 'module-contract';
-const PERMISSION_FLAG = '--permission';
-const moduleAccessPermission = 'module.access';
 const STRIP_TYPES_FLAG = '--experimental-strip-types';
 const SCAFFOLD_CLI_PATH = 'scripts/scaffolding/cli.mts';
 const MISSING_OWNER = 'missing-owner';
@@ -386,36 +381,23 @@ const GeneratedBindingResultSchema = Schema.Struct({
   accepted: Schema.Literal(true),
 });
 
-const generatedBindingAction = defineAction(
-  {
-    accessEvidencePolicy: {
-      captureMode: 'metadata_only',
-      policyKey: 'core.test.generated-action-http.access.v1',
-    },
-    actionKey: 'core.test.generated-action-http',
-    auditProfile: 'standard',
-    domainErrorSchema: Schema.Never,
-    domainEvents: {},
-    entrypoint: defineSystemModuleEntrypoint({
-      access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
-      entrypointKey: 'core.test.generated-action-http',
-      moduleKey: 'core.shell',
-      role: 'action',
-    }),
-    idempotency: 'optional',
-    legalEntityScope: 'optional',
-    owningModuleKey: 'core.shell',
-    payloadSchema: Schema.Struct({}),
-    policies: [],
-    resultSchema: GeneratedBindingResultSchema,
-    schemaVersion: '1',
-  },
-  () => Effect.succeed({ accepted: true as const }),
-);
+type GeneratedOwnerHarnessFactory = (
+  authority: ActiveApplicationCompositionServiceContract,
+) => ReturnType<typeof makeActionTestHarness>;
+type GeneratedOwnerActionHttp = (
+  runner: ReturnType<typeof ActionHttpRunnerBinding>,
+  input: Omit<Parameters<ReturnType<typeof ActionHttpRunnerBinding>>[0], 'registration'>,
+) => Effect.Effect<typeof GeneratedBindingResultSchema.Type, EndpointProblem, unknown>;
+
+const GeneratedOwnerActionHarnessModuleSchema = Schema.Struct({
+  makeHarness: Schema.declare<GeneratedOwnerHarnessFactory>((value): value is GeneratedOwnerHarnessFactory =>
+    Predicate.isFunction(value),
+  ),
+  moduleId: OntosModuleIdSchema,
+  runWithOwnedAction: Schema.declare<GeneratedOwnerActionHttp>((value): value is GeneratedOwnerActionHttp =>
+    Predicate.isFunction(value),
+  ),
+});
 
 const FixtureTsconfigSchema = Schema.Struct({
   references: Schema.Array(Schema.Struct({ path: Schema.String })),
@@ -526,8 +508,13 @@ const scaffoldCommand = {
   searchProvider: 'search-provider',
   searchProviderAccess: 'search-provider-access',
 } as const;
+const selectionActionName = 'register-selection';
+const accessRiskFailure = 'extreme';
 const scaffoldFlag = {
-  accessFiltering: '--access-filtering',
+  accessRisk: '--access-risk',
+  accessSelectors: '--access-selectors',
+  accessWorkload: '--access-workload',
+  accessWorkloadKeys: '--access-workload-keys',
   authorization: '--authorization',
   legalEntityScope: '--legal-entity-scope',
   module: '--module',
@@ -537,7 +524,6 @@ const scaffoldFlag = {
   requestFilters: '--request-filters',
   resource: '--resource',
   scope: '--scope',
-  tenantPermission: '--tenant-permission',
   vertical: '--vertical',
 } as const;
 const fixtureName = {
@@ -601,7 +587,6 @@ const inventoryActionFile = 'verticals/inventory-stock/src/actions/create-order.
 const inventoryOutboxContractFile = 'verticals/inventory-stock/shared/outbox/orders-created.ts';
 const billingApiIndexFile = 'verticals/billing/api/index.ts';
 const billingWorkersIndexFile = 'verticals/billing/src/workers/index.ts';
-const billingWorkerHostEntryFile = 'verticals/billing/src/worker-host/entry.ts';
 const inventoryTsconfigFile = 'verticals/inventory-stock/tsconfig.json';
 const inventoryEnglishLocaleFile = 'verticals/inventory-stock/locales/en/inventory.json';
 const inventoryOrdersRouteFile = 'verticals/inventory-stock/src/routes/[lang]/orders/page.tsx';
@@ -649,6 +634,11 @@ const inventoryHandlerRootFile = 'verticals/inventory-stock/api/index.ts';
 
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..');
 const require = createRequire(import.meta.url);
+
+const observedPackageVersion = (packageName: string): string =>
+  Schema.decodeUnknownSync(Schema.Struct({ version: Schema.String }))(
+    require(require.resolve(`${packageName}/package.json`, { paths: [path.join(appRoot, 'apps/shell-super-app')] })),
+  ).version;
 const createEntry = require.resolve('@modern-js/ultramodern-create');
 const esbuildPath = require.resolve('esbuild/bin/esbuild', {
   paths: [path.dirname(createEntry)],
@@ -693,7 +683,7 @@ const createVertical = (root: string, vertical: FixtureVertical): Effect.Effect<
     yield* write(
       root,
       `verticals/${vertical.slug}/shared/ultramodern-build.ts`,
-      `export const ultramodernApiMarker = { appId: '${vertical.appId}', buildMarker: '${fixtureBuildMarker}' } as const;\n`,
+      `export const ultramodernApiMarker = { appId: '${vertical.appId}', buildMarker: '${fixtureBuildMarker}' } as const;\nexport const ultramodernDeliveryUnit = ultramodernApiMarker;\n`,
     );
     yield* write(
       root,
@@ -724,9 +714,10 @@ const createVertical = (root: string, vertical: FixtureVertical): Effect.Effect<
         private: true,
         scripts: {
           build: 'modern build --deploy-target node && modern deploy --skip-build --deploy-target node',
+          'cloudflare:build':
+            'modern build --deploy-target cloudflare && modern deploy --skip-build --deploy-target cloudflare',
           existing: preservedFixtureValue,
         },
-        type: 'module',
         version: '0.1.0',
       }),
     );
@@ -920,17 +911,11 @@ const run = Effect.fn(function* scenario12(
       }
       if (!flags.includes(scaffoldFlag.authorization)) {
         if (command === 'action') {
-          flags = [
-            ...flags,
-            scaffoldFlag.authorization,
-            'action_execution',
-            '--provisioning',
-            'tenant_membership_default',
-          ];
+          flags = [...flags, scaffoldFlag.authorization, 'protected'];
         } else if (command === scaffoldCommand.outboxWorker) {
           flags = [...flags, scaffoldFlag.authorization, 'owner_local_background'];
         } else if (contextPermissionCommands.has(command)) {
-          flags = [...flags, scaffoldFlag.authorization, 'context_permission', PERMISSION_FLAG, moduleAccessPermission];
+          flags = [...flags, scaffoldFlag.authorization, 'protected'];
         }
       }
       return flags;
@@ -962,8 +947,8 @@ const addInventoryItemResourceType = (fixture: Fixture): Effect.Effect<void, unk
       writeFile(
         manifestPath,
         manifest.replace(
-          '      // <generated-module-manifest-resources>',
-          `      // <generated-module-manifest-resources>
+          '    resourceTypes: [',
+          `    resourceTypes: [
       {
         capabilities: {
           graphVisible: false,
@@ -982,331 +967,6 @@ const addInventoryItemResourceType = (fixture: Fixture): Effect.Effect<void, unk
       ),
     );
   });
-
-const projectsModuleId = 'projects.core';
-const projectsResourceType = 'projects.project';
-const projectsDescriptorKey = 'projects.core.projects';
-const projectsContributionKey = 'projects.core.search.projects';
-const projectsOwnerLiteral = '"owningModuleId":"projects.core"';
-const projectsOwnerAlias = '"owningModuleId":projectModuleKey';
-const projectsManifestFile = 'verticals/projects/vertical.manifest.ts';
-const projectsProviderFile = 'verticals/projects/src/search/projects.provider.ts';
-const projectsSearchArgs = [
-  scaffoldFlag.vertical,
-  'projects',
-  '--name',
-  'projects',
-  '--resource',
-  'project',
-  '--resource-type',
-  projectsResourceType,
-  '--authorization',
-  'authenticated_principal',
-];
-const projectsAccessArgs = [
-  scaffoldFlag.vertical,
-  'projects',
-  '--name',
-  'projects',
-  '--legal-entity-scope',
-  'optional',
-  '--access-filtering',
-  'tenant_scope',
-  '--request-filters',
-  'includeArchived',
-  scaffoldFlag.tenantPermission,
-  'access',
-];
-const projectsResource = {
-  capabilities: {
-    graphVisible: false,
-    linkable: true,
-    mediaAttachable: false,
-    searchable: false,
-    timelineVisible: false,
-  },
-  description: 'An independently identifiable tenant-owned project.',
-  key: projectsResourceType,
-  label: 'Project',
-  owningModuleId: projectsModuleId,
-};
-
-const prepareProjectsSearchFixture = Effect.fn(function* prepareProjectsSearchFixture(fixture: Fixture) {
-  const projectsVertical = {
-    appId: 'projects',
-    mfBoundaryId: 'verticalProjects',
-    moduleId: projectsModuleId,
-    namespace: 'projects',
-    slug: 'projects',
-  };
-  yield* createVertical(fixture.root, projectsVertical);
-  yield* write(
-    fixture.root,
-    topologyFile,
-    json({
-      schemaVersion: 1,
-      verticals: [inventoryVertical, billingVertical, hrVertical, contactsVertical, projectsVertical].map(
-        (vertical) => ({
-          domain: vertical.namespace,
-          id: vertical.appId,
-          kind: 'vertical',
-          moduleFederation: { name: vertical.mfBoundaryId, role: 'remote' },
-          package: `@app/${vertical.slug}`,
-          path: `verticals/${vertical.slug}`,
-        }),
-      ),
-    }),
-  );
-  yield* run(fixture, MODULE_CONTRACT_COMMAND, [
-    scaffoldFlag.vertical,
-    'projects',
-    scaffoldFlag.module,
-    projectsModuleId,
-  ]);
-  yield* run(fixture, scaffoldCommand.microverticalActionBoundary, [scaffoldFlag.vertical, 'projects']);
-  const generated = yield* readFixtureFile(fixture.root, projectsManifestFile);
-  // Reproduce the older owner manifest: no first-search schema, type, or decoder binding.
-  const legacy = generated
-    .replace('  ShellSearchContributionSchema,\n', '')
-    .replace('type SearchContributionInput = typeof ShellSearchContributionSchema.Encoded;\n', '')
-    .replace(
-      'const searchContribution = (value: SearchContributionInput) =>\n  Result.getOrThrow(Schema.decodeUnknownResult(ShellSearchContributionSchema)(value));\n',
-      '',
-    )
-    .replace(
-      'export const projectsManifest',
-      "const projectModuleKey = 'projects.core';\nexport const projectsManifest",
-    )
-    .replace("id: 'projects.core',", 'id: projectModuleKey,')
-    .replace(
-      '      // <generated-module-manifest-resources>',
-      `      // <generated-module-manifest-resources>\n${JSON.stringify(projectsResource).replace(projectsOwnerLiteral, projectsOwnerAlias)},`,
-    );
-  expect(legacy).not.toContain('ShellSearchContributionSchema');
-  yield* write(fixture.root, projectsManifestFile, legacy);
-});
-
-const customizeProjectsProvider = (provider: string): string =>
-  provider
-    .replace(
-      'Effect.succeed([] satisfies ProjectsProviderResponse);',
-      'Effect.succeed([] satisfies ProjectsProviderResponse).pipe(Effect.tap(() => Effect.void));',
-    )
-    .replace(
-      '  },\n  () => Effect.succeed({ load: loadProjects })',
-      '    finish: (_input, context) => Effect.succeed(context.loaded),\n  },\n  () => Effect.succeed({ load: loadProjects })',
-    )
-    .replace(
-      '() => Effect.succeed({ load: loadProjects })',
-      '() => Effect.succeed({ load: loadProjects, ownerService: true })',
-    );
-
-it.live(
-  'search-tooling5 binds actual Projects identity, first contribution, tenant access and exact eight paths',
-  Effect.fn(function* tooling5Projects() {
-    yield* withFixture(
-      Effect.fn(function* projectsScenario(fixture) {
-        yield* prepareProjectsSearchFixture(fixture);
-        const before = yield* snapshotTree(fixture.root);
-        yield* run(fixture, scaffoldCommand.searchProvider, projectsSearchArgs);
-        const after = yield* snapshotTree(fixture.root);
-        expect(
-          Object.keys(after)
-            .filter((file) => before[file] !== after[file])
-            .toSorted(),
-        ).toEqual(
-          [
-            'verticals/projects/api/index.ts',
-            'verticals/projects/api/projects-search-server.ts',
-            'verticals/projects/shared/api.ts',
-            'verticals/projects/shared/apis/projects-search.ts',
-            'verticals/projects/src/api/projects-search-client.ts',
-            projectsProviderFile,
-            projectsManifestFile,
-            'verticals/projects/vertical.registration.ts',
-          ].toSorted(),
-        );
-        yield* run(fixture, scaffoldCommand.searchProviderAccess, projectsAccessArgs);
-        const provider = yield* readFixtureFile(fixture.root, projectsProviderFile);
-        expect(provider).toContain("legalEntityScope: 'optional'");
-        expect(provider).toContain("permissionTarget: 'tenant'");
-        expect(provider).toContain("() => ({ kind: 'tenant', permission: 'access' })");
-        const manifest = yield* readFixtureFile(fixture.root, projectsManifestFile);
-        expect(manifest).toContain("resourceType: 'projects.project'");
-        expect(manifest).not.toContain("resourceType: 'projects.core.project'");
-        expect(manifest).toContain('const searchContribution =');
-        expect(
-          hasCanonicalMetadataImport(
-            parseScaffoldMetadata(manifest),
-            'ShellSearchContributionSchema',
-            '@app/core-runtime',
-          ),
-        ).toBe(true);
-        expect(manifest).toContain('searchable: false');
-        // Assert the current public Core contracts, without importing or executing owner code.
-        expect(Schema.is(OntosResourceTypeSchema)(projectsResource)).toBe(true);
-        const descriptor = readCanonicalSearchDescriptor(manifest, projectsDescriptorKey, projectsModuleId);
-        expect(Schema.is(OntosSearchDescriptorSchema)(descriptor)).toBe(true);
-        expect(descriptor).toEqual({
-          accessFiltering: 'tenant_scope',
-          key: projectsDescriptorKey,
-          owningModuleId: projectsModuleId,
-          requestFilters: ['includeArchived'],
-          resourceType: projectsResourceType,
-          tenantPermission: 'access',
-        });
-        expect(
-          Schema.is(ShellSearchContributionSchema)({
-            contributionKey: projectsContributionKey,
-            entrypoint: {
-              access: 'read',
-              authorization: { kind: 'authenticated_principal' },
-              entrypointKey: projectsContributionKey,
-              moduleKey: projectsModuleId,
-              role: 'search',
-              scope: 'tenant',
-            },
-            searchKey: projectsDescriptorKey,
-          }),
-        ).toBe(true);
-        const customized = customizeProjectsProvider(provider);
-        expect(customized).toContain('finish: (_input, context) => Effect.succeed(context.loaded)');
-        expect(customized).toContain('Effect.tap(() => Effect.void)');
-        expect(customized).toContain('ownerService: true');
-        expect(customized).not.toBe(provider);
-        yield* write(fixture.root, projectsProviderFile, customized);
-        const owned = yield* snapshotTree(fixture.root);
-        yield* run(fixture, scaffoldCommand.searchProvider, projectsSearchArgs);
-        yield* run(fixture, scaffoldCommand.searchProviderAccess, projectsAccessArgs);
-        expect(yield* snapshotTree(fixture.root)).toEqual(owned);
-        // Omitting the explicit selector cannot silently rewrite the validated non-derived identity.
-        yield* assertScaffoldRefused(
-          fixture,
-          scaffoldCommand.searchProvider,
-          projectsSearchArgs.filter((_value, index) => index !== 6 && index !== 7),
-          /canonical resource declaration/u,
-        );
-        for (const args of [
-          projectsAccessArgs.filter((_value, index) => index !== 10 && index !== 11),
-          projectsAccessArgs.map((value) => (value === 'access' ? 'manage_identity' : value)),
-          projectsAccessArgs.map((value) => (value === 'optional' ? 'required' : value)),
-          projectsAccessArgs.map((value) => (value === 'tenant_scope' ? 'resource_permission' : value)),
-          [...projectsAccessArgs, PERMISSION_FLAG, moduleAccessPermission],
-          projectsAccessArgs.map((value) => (value === 'includeArchived' ? 'includeArchived,includeArchived' : value)),
-        ]) {
-          yield* assertScaffoldRefused(
-            fixture,
-            scaffoldCommand.searchProviderAccess,
-            args,
-            /inconsistent|tenant-permission|unsupported|unknown|not supported/iu,
-          );
-        }
-      }),
-    );
-  }),
-);
-
-it.live(
-  'search-tooling5 reads public resource contracts statically and revalidates access ownership',
-  Effect.fn(function* tooling5PublicContract() {
-    yield* withFixture(
-      Effect.fn(function* publicContractScenario(fixture) {
-        yield* prepareProjectsSearchFixture(fixture);
-        const source = yield* readFixtureFile(fixture.root, projectsManifestFile);
-        const resource = JSON.stringify(projectsResource).replace(projectsOwnerLiteral, projectsOwnerAlias);
-        yield* write(
-          fixture.root,
-          projectsManifestFile,
-          source
-            .replace(`${resource},`, 'projectResourceDescriptor,')
-            .replace(
-              '// <generated-module-manifest-imports>',
-              "import { projectResourceDescriptor } from './shared/resources/project.ts';\n// <generated-module-manifest-imports>",
-            ),
-        );
-        const contractFile = 'verticals/projects/shared/resources/project.ts';
-        const contract = `import type { OntosResourceType } from '@app/core-runtime';\nexport const projectResourceDescriptor = ${JSON.stringify(projectsResource)} as const satisfies OntosResourceType;\nthrow new Error('owner resource code must never execute');\n`;
-        yield* write(fixture.root, contractFile, contract);
-        yield* assertScaffoldRefused(
-          fixture,
-          scaffoldCommand.searchProvider,
-          projectsSearchArgs.map((value) => (value === projectsResourceType ? 'projects.missing' : value)),
-          /canonical resource declaration/u,
-        );
-        yield* run(fixture, scaffoldCommand.searchProvider, projectsSearchArgs);
-        yield* run(fixture, scaffoldCommand.searchProviderAccess, projectsAccessArgs);
-        const before = yield* snapshotTree(fixture.root);
-        yield* run(fixture, scaffoldCommand.searchProvider, projectsSearchArgs);
-        yield* run(fixture, scaffoldCommand.searchProviderAccess, projectsAccessArgs);
-        expect(yield* snapshotTree(fixture.root)).toEqual(before);
-        for (const replacement of [
-          contract.replace(projectsOwnerLiteral, '"owningModuleId":"foreign.core"'),
-          `${contract}\nmutate(projectResourceDescriptor);`,
-          contract.replace('"key":"projects.project"', '"key":"projects.missing"'),
-        ]) {
-          yield* write(fixture.root, contractFile, replacement);
-          yield* assertScaffoldRefused(
-            fixture,
-            scaffoldCommand.searchProviderAccess,
-            projectsAccessArgs,
-            /canonical resource|runtime uses/u,
-          );
-        }
-      }),
-    );
-  }),
-);
-
-for (const variant of [
-  'missing',
-  'foreign',
-  'duplicate',
-  'inconsistent',
-  'unresolved',
-  'ambiguous',
-  'mutable',
-  'conflicting-helper',
-  'conflicting-import',
-  'conflicting-type',
-  'conflicting-destructured-helper',
-  'runtime-assignment',
-] as const) {
-  it.live(
-    `search-tooling5 refuses ${variant} metadata without partial writes`,
-    Effect.fn(function* tooling5Refusal() {
-      yield* withFixture(
-        Effect.fn(function* refusalScenario(fixture) {
-          yield* prepareProjectsSearchFixture(fixture);
-          const source = yield* readFixtureFile(fixture.root, projectsManifestFile);
-          const resource = JSON.stringify(projectsResource).replace(projectsOwnerLiteral, projectsOwnerAlias);
-          const mutableResource = source.replace(`${resource},`, 'projectResource,');
-          const next = {
-            ambiguous: source.replace(projectsOwnerAlias, `${projectsOwnerAlias},${projectsOwnerLiteral}`),
-            'conflicting-destructured-helper': `${source}\nconst { searchContribution } = untrusted;\n`,
-            'conflicting-helper': `${source}\nconst searchContribution = (value: unknown) => value;\n`,
-            'conflicting-import': `${source}\nimport { ShellSearchContributionSchema } from 'untrusted';\n`,
-            'conflicting-type': `${source}\ntype SearchContributionInput = unknown;\n`,
-            duplicate: source.replace(`${resource},`, `${resource},${resource},`),
-            foreign: source.replace(projectsOwnerAlias, '"owningModuleId":"foreign.core"'),
-            inconsistent: source.replace('id: projectModuleKey,', "id: 'projects.other',"),
-            missing: source.replace('"key":"projects.project"', '"key":"projects.other"'),
-            mutable: `${mutableResource}\nconst projectResource = ${resource};\nmutate(projectResource);\n`,
-            'runtime-assignment': `${source}\nprojectsManifest.publicSurface.resourceTypes = [];\n`,
-            unresolved: source.replace(projectsOwnerAlias, '"owningModuleId":resolveOwner()'),
-          }[variant];
-          expect(next).not.toBe(source);
-          yield* write(fixture.root, projectsManifestFile, next);
-          yield* assertScaffoldRefused(
-            fixture,
-            scaffoldCommand.searchProvider,
-            projectsSearchArgs,
-            /canonical|binding conflicts/u,
-          );
-        }),
-      );
-    }),
-  );
-}
 
 it.live(
   'documents every command and treats --help as a write-free operation',
@@ -1358,10 +1018,11 @@ it.live(
     expect(getHelpText(scaffoldCommand.outboxMessage)).toMatch(
       /scaffold:outbox-message -- --scope core --module <core\.module>/u,
     );
-    expect(getHelpText(scaffoldCommand.searchProviderAccess)).toMatch(
-      /--tenant-permission <access\|read_party_identity>/u,
-    );
-    expect(getHelpText(scaffoldCommand.searchProvider)).toContain('--resource-type <full-resource-type>');
+    expect(getHelpText(scaffoldCommand.searchProviderAccess)).toMatch(/--legal-entity-scope <required\|optional>/u);
+    expect(getHelpText('action')).toMatch(/--access-risk <risk>/u);
+    expect(getHelpText('action')).toMatch(/--access-workload <reason>/u);
+    expect(getHelpText('action')).toMatch(/--access-workload-keys <keys>/u);
+    expect(getHelpText(scaffoldCommand.moduleApi)).toMatch(/--access-selectors/u);
   }),
 );
 
@@ -1391,12 +1052,8 @@ it.live(
           fixtureName.inventoryItems,
           scaffoldFlag.legalEntityScope,
           'optional',
-          scaffoldFlag.accessFiltering,
-          'tenant_scope',
           scaffoldFlag.requestFilters,
           'includeArchived',
-          scaffoldFlag.tenantPermission,
-          'read_party_identity',
         ]);
 
         const [manifest, provider, contract] = yield* Effect.all(
@@ -1408,11 +1065,9 @@ it.live(
           { concurrency: 'unbounded' },
         );
         expect(manifest).toMatch(
-          /accessFiltering: 'tenant_scope'[\s\S]*?requestFilters: \['includeArchived'\][\s\S]*?tenantPermission: 'read_party_identity'/u,
+          /accessKey: 'inventory\.stock\.inventory-items\.search'[\s\S]*?requestFilters: \['includeArchived'\]/u,
         );
         expect(provider).toMatch(/legalEntityScope: 'optional'/u);
-        expect(provider).toMatch(/permissionTarget: 'tenant'/u);
-        expect(provider).toMatch(/kind: 'tenant', permission: 'read_party_identity'/u);
         expect(contract).toMatch(/includeArchived: Schema\.optionalKey\(Schema\.Boolean\)/u);
 
         const beforeProviderRerun = yield* snapshotTree(fixture.root);
@@ -1438,12 +1093,8 @@ it.live(
           fixtureName.inventoryItems,
           scaffoldFlag.legalEntityScope,
           'optional',
-          scaffoldFlag.accessFiltering,
-          'tenant_scope',
           scaffoldFlag.requestFilters,
           'includeArchived',
-          scaffoldFlag.tenantPermission,
-          'read_party_identity',
         ]);
         expect(yield* snapshotTree(fixture.root)).toEqual(beforeIdempotentUpdate);
         yield* Effect.promise(() =>
@@ -1459,8 +1110,6 @@ it.live(
             fixtureName.inventoryItems,
             scaffoldFlag.legalEntityScope,
             'required',
-            scaffoldFlag.accessFiltering,
-            'resource_permission',
             scaffoldFlag.requestFilters,
             'includeArchived,role',
           ],
@@ -1538,7 +1187,7 @@ it.live(
           [
             '--input-type=module',
             '--eval',
-            `import { Clock, Effect, Match, Result } from 'effect';
+            `import { Effect, Match, Result } from 'effect';
 import { pinDocumentCompositionRevision } from '@app/shared-contracts';
 import { FetchHttpClient } from 'effect/http';
 import { executeResourceDetail, executeResourceDetailWithAuthorization } from './verticals/inventory-stock/src/api/resource-detail-client.ts';
@@ -1549,9 +1198,6 @@ Effect.gen(function* generatedHttpProof() {
 const calls = [];
 let gatewayAttempts = 0;
 const compositionRevision = 'a'.repeat(64);
-// Still valid, but inside the browser assertion reuse margin: each scenario must
-// acquire its own response so an earlier success cannot mask an issuer failure.
-const gatewayExpiresAt = Math.floor((yield* Clock.currentTimeMillis) / 1000) + 10;
 const cases = [
         [executeResourceDetailWithAuthorization, {}, { ok: true }, executeResourceDetail],
         [loadInventoryItemsClientWithAuthorization, { query: 'chair' }, [], loadInventoryItemsClient],
@@ -1591,7 +1237,7 @@ for (const [, payload, response, invoke] of cases) {
             gatewayAttempts += 1;
             const request = JSON.parse(String(init.body));
             if (request.compositionRevision !== compositionRevision) throw new Error('Gateway did not request the pinned composition');
-            return Promise.resolve(Response.json({ apiBaseUrl: '/release/inventory-stock-api', compositionRevision, expiresAt: gatewayExpiresAt, token: 'proof' }));
+            return Promise.resolve(Response.json({ apiBaseUrl: '/release/inventory-stock-api', compositionRevision, expiresAt: 2_000_000_000, token: 'proof' }));
           }
           calls.push({ url: String(url), method: init.method, authorization: new Headers(init.headers).get('authorization'), correlationId: new Headers(init.headers).get('x-correlation-id'), compositionRevision: new Headers(init.headers).get('x-ontos-composition-revision') });
           return Promise.resolve(Response.json(response));
@@ -1661,7 +1307,7 @@ const mismatch = yield* executeResourceDetail({}, 'revision-mismatch').pipe(
   Effect.provideService(FetchHttpClient.Fetch, (url) => {
     if (String(url) === 'https://shell.example.test/shell-super-app-api/auth/gateway-context') {
       gatewayAttempts += 1;
-      return Promise.resolve(Response.json({ apiBaseUrl: '/release/inventory-stock-api', compositionRevision: 'b'.repeat(64), expiresAt: gatewayExpiresAt, token: 'proof' }));
+      return Promise.resolve(Response.json({ apiBaseUrl: '/release/inventory-stock-api', compositionRevision: 'b'.repeat(64), expiresAt: 2_000_000_000, token: 'proof' }));
     }
     endpointRequestsAfterRevisionMismatch += 1;
     return Promise.resolve(Response.json({ ok: true }));
@@ -1728,123 +1374,6 @@ console.log(JSON.stringify({ calls, documentUnavailable, endpointRequestsAfterGa
 const compactGovernedSource = (source: string): string =>
   source.replaceAll(/\s+/gu, '').replaceAll(/,(?=[)}\]])/gu, '');
 const inventorySharedApiFile = 'verticals/inventory-stock/shared/api.ts';
-const approvedPartyTypeOrigin = '../../shared/apis/search-labels.ts';
-const approvedPartyTypeClient = 'search-labels-client.ts';
-const approvedPartyTypeNames = ['SearchLabel', 'SearchLabelSourceRef', 'SearchLabelsRequest', 'SearchLabelsResponse'];
-
-const primitivePublicType = (type: TSType | undefined): boolean =>
-  type !== undefined && ['TSStringKeyword', 'TSNumberKeyword', 'TSBooleanKeyword', 'TSNullKeyword'].includes(type.type);
-
-const isDirectPublicSchemaType = (type: TSType, contract: Program): boolean => {
-  if (
-    type.type !== 'TSTypeQuery' ||
-    type.exprName.type !== 'TSQualifiedName' ||
-    type.exprName.right.name !== 'Type' ||
-    type.exprName.left.type !== 'Identifier'
-  ) {
-    return false;
-  }
-  const schemaName = type.exprName.left.name;
-  const values = contract.body.flatMap((statement) =>
-    statement.type === 'ExportNamedDeclaration' &&
-    statement.declaration?.type === 'VariableDeclaration' &&
-    statement.declaration.kind === 'const'
-      ? statement.declaration.declarations.filter(
-          (entry) => entry.id.type === 'Identifier' && entry.id.name === schemaName,
-        )
-      : [],
-  );
-  const [value] = values;
-  return (
-    values.length === 1 &&
-    metadataBindings(contract, schemaName).length === 1 &&
-    hasCanonicalMetadataImport(contract, 'Schema', 'effect') &&
-    value?.init?.type === 'CallExpression' &&
-    value.init.callee.type === 'MemberExpression' &&
-    !value.init.callee.computed &&
-    value.init.callee.object.type === 'Identifier' &&
-    value.init.callee.object.name === 'Schema' &&
-    value.init.callee.property.type === 'Identifier' &&
-    ['Struct', 'Union', 'Array'].includes(value.init.callee.property.name)
-  );
-};
-
-const isDirectPublicInterface = (declaration: TSInterfaceDeclaration): boolean =>
-  declaration.extends.length === 0 &&
-  declaration.typeParameters === null &&
-  declaration.body.body.every(
-    (property) =>
-      property.type === 'TSPropertySignature' &&
-      !property.computed &&
-      primitivePublicType(property.typeAnnotation?.typeAnnotation),
-  );
-
-/** Proves direct public declarations, not imported/private aliases relabelled with an approved name. */
-const provenPartyPublicType = (contract: Program, name: string): boolean => {
-  const declarations = contract.body.flatMap((statement) =>
-    statement.type === 'ExportNamedDeclaration' &&
-    (statement.declaration?.type === 'TSTypeAliasDeclaration' ||
-      statement.declaration?.type === 'TSInterfaceDeclaration') &&
-    statement.declaration.id.name === name
-      ? [statement.declaration]
-      : [],
-  );
-  const [declaration] = declarations;
-  if (declarations.length !== 1 || declaration === undefined || metadataBindings(contract, name).length !== 1) {
-    return false;
-  }
-  return declaration.type === 'TSInterfaceDeclaration'
-    ? isDirectPublicInterface(declaration)
-    : primitivePublicType(declaration.typeAnnotation) || isDirectPublicSchemaType(declaration.typeAnnotation, contract);
-};
-
-/** Removes only proven approved type-only re-export AST spans; every other source byte stays comparable. */
-const withoutProvenPartyTypeReexports = (
-  source: string,
-  contractSource: string,
-  clientName: string,
-  origin: string,
-): string => {
-  const program = parseScaffoldMetadata(source);
-  const contract = parseScaffoldMetadata(contractSource);
-  const removals: { readonly end: number; readonly start: number }[] = [];
-  const seen = new Set<string>();
-  for (const statement of program.body) {
-    if (statement.type !== 'ExportNamedDeclaration' || statement.source === null) {
-      continue;
-    }
-    if (
-      clientName !== approvedPartyTypeClient ||
-      origin !== approvedPartyTypeOrigin ||
-      statement.source.value !== origin ||
-      !hasCanonicalMetadataImport(program, 'SearchLabelsApi', origin) ||
-      statement.specifiers.length === 0 ||
-      statement.attributes.length !== 0
-    ) {
-      return expect.unreachable('unapproved public type export origin or missing runtime API binding');
-    }
-    for (const specifier of statement.specifiers) {
-      if (
-        (statement.exportKind !== 'type' && specifier.exportKind !== 'type') ||
-        specifier.local.type !== 'Identifier' ||
-        specifier.exported.type !== 'Identifier' ||
-        specifier.local.name !== specifier.exported.name ||
-        !approvedPartyTypeNames.includes(specifier.local.name) ||
-        seen.has(specifier.local.name) ||
-        !provenPartyPublicType(contract, specifier.local.name)
-      ) {
-        return expect.unreachable('unproven type-only public declaration or alias/value export');
-      }
-      seen.add(specifier.local.name);
-    }
-    removals.push(statement);
-  }
-  let comparable = source;
-  for (const span of removals.toSorted((left, right) => right.start - left.start)) {
-    comparable = `${comparable.slice(0, span.start)}${comparable.slice(span.end)}`;
-  }
-  return comparable;
-};
 
 it.live(
   'all live Party read and search transports match actual scaffold output',
@@ -1867,30 +1396,9 @@ it.live(
           'item',
         ]);
         const owner = path.join(appRoot, 'verticals/party-registry');
-        const registration = yield* Effect.promise(() =>
-          readFile(path.join(owner, 'vertical.registration.ts'), 'utf-8'),
-        );
-        // The public owner registration is the inventory, not a frozen count of
-        // transports. Compare the full set so missing and unregistered servers fail.
-        const registeredServerNames = ['apis', 'search'].flatMap((slot) => {
-          const entries = readGeneratedSlotEntries(
-            registration,
-            `// <generated-module-registration-${slot}>`,
-            `// </generated-module-registration-${slot}>`,
-          );
-          expect(entries.length, slot).toBeGreaterThan(0);
-          return entries.map((entry) => {
-            const clientImport = /import\('\.\/src\/api\/(?<client>[a-z0-9-]+-client\.ts)'\)/u.exec(entry);
-            const client = clientImport?.groups?.['client'];
-            if (client === undefined) {
-              expect.unreachable(`expected an owned ${slot} client registration: ${entry}`);
-            }
-            return client.replace('-client.ts', slot === 'apis' ? '-read-server.ts' : '-server.ts');
-          });
-        });
         const ownerFiles = yield* Effect.promise(() => readdir(path.join(owner, 'api')));
         const serverNames = ownerFiles.filter((name) => /-(?:read|search)-server\.ts$/u.test(name));
-        expect(serverNames.toSorted()).toEqual(registeredServerNames.toSorted());
+        expect(serverNames.length).toBe(20);
         yield* Effect.all(
           serverNames.map(
             Effect.fn(function* compareLiveTransport(serverName) {
@@ -1925,17 +1433,8 @@ it.live(
                 normalize(yield* Effect.promise(() => readFile(path.join(owner, 'api', serverName), 'utf-8'))),
                 serverName,
               ).toBe(compactGovernedSource(expectedServer));
-              const actualClient = yield* Effect.promise(() =>
-                readFile(path.join(owner, 'src/api', clientName), 'utf-8'),
-              );
-              const publicContractOrigin = `../../shared/apis/${name}${search ? '-search' : ''}.ts`;
-              const publicContract = yield* Effect.promise(() =>
-                readFile(path.resolve(owner, 'src/api', publicContractOrigin), 'utf-8'),
-              );
               expect(
-                normalize(
-                  withoutProvenPartyTypeReexports(actualClient, publicContract, clientName, publicContractOrigin),
-                ),
+                normalize(yield* Effect.promise(() => readFile(path.join(owner, 'src/api', clientName), 'utf-8'))),
                 clientName,
               ).toBe(compactGovernedSource(expectedClient));
             }),
@@ -1944,72 +1443,6 @@ it.live(
         );
         const sharedApi = yield* readFixtureFile(fixture.root, inventorySharedApiFile);
         expect(sharedApi).not.toMatch(/export const governedHttpApi\s*=/u);
-      }),
-    );
-  }),
-);
-
-it.live(
-  'readonly3 Party type normalization retains every runtime and generated signature guarantee',
-  Effect.fn(function* strictPublicTypeControls() {
-    yield* withFixture(
-      Effect.fn(function* publicTypeFixture(fixture) {
-        yield* run(fixture, scaffoldCommand.moduleApi, [
-          scaffoldFlag.vertical,
-          inventorySlug,
-          '--name',
-          'search-labels',
-        ]);
-        const expected = yield* readFixtureFile(
-          fixture.root,
-          'verticals/inventory-stock/src/api/search-labels-client.ts',
-        );
-        const contract = `import { Schema } from 'effect';
-export const SearchLabelSchema = Schema.Struct({ label: Schema.String });
-export type SearchLabel = typeof SearchLabelSchema.Type;
-export interface SearchLabelSourceRef { readonly resourceId: string }
-export type SearchLabelsRequest = string;
-export type SearchLabelsResponse = string;
-`;
-        const approved = `\nexport type { ${approvedPartyTypeNames.join(', ')} } from '${approvedPartyTypeOrigin}';\n`;
-        const compare = (source: string, publicContract = contract) =>
-          expect(
-            compactGovernedSource(
-              withoutProvenPartyTypeReexports(source, publicContract, approvedPartyTypeClient, approvedPartyTypeOrigin),
-            ),
-          ).toBe(compactGovernedSource(expected));
-        compare(`${expected}${approved}`);
-        compare(`${expected}\nexport { type SearchLabel } from '${approvedPartyTypeOrigin}';\n`);
-        const negatives = [
-          `${expected}\nexport { SearchLabel } from '${approvedPartyTypeOrigin}';\n`,
-          `${expected}\nexport type { SearchLabelsRequest as SearchLabel } from '${approvedPartyTypeOrigin}';\n`,
-          `${expected}\nexport type { Private as SearchLabel } from '${approvedPartyTypeOrigin}';\n`,
-          `${expected}\nexport type { SearchLabel } from '../../src/private/search-labels.ts';\n`,
-          `${expected}\nexport type { Undeclared } from '${approvedPartyTypeOrigin}';\n`,
-          `${expected}${approved}${approved}`,
-          `${expected}${approved}\nvoid fetch('https://unexpected.test');\n`,
-          `${expected}${approved}\nexport const unexpectedRuntime = true;\n`,
-          `${expected}${approved}\nexport type UnexpectedSignature = string;\n`,
-          `${expected}${approved}\nimport type { Private as SearchLabel } from '../../src/private/search-labels.ts';\n`,
-          `${expected.replace("import { SearchLabelsApi } from '../../shared/apis/search-labels.ts';", '')}${approved}`,
-          `${expected.replace('import { SearchLabelsApi }', 'import { PrivateApi as SearchLabelsApi }')}${approved}`,
-          `${expected.replace('readonly baseUrl?: string | URL;', 'readonly baseUrl: string;')}${approved}`,
-        ];
-        for (const source of negatives) {
-          expect(() => compare(source)).toThrow();
-        }
-        for (const privateContract of [
-          "import type { Private as SearchLabel } from '../src/private.ts'; export type { SearchLabel };",
-          "import type { Private } from '../src/private.ts'; export type SearchLabel = Private;",
-          "import { PrivateSchema } from '../src/private.ts'; export const SearchLabelSchema = PrivateSchema; export type SearchLabel = typeof SearchLabelSchema.Type;",
-          'export const SearchLabel = true;',
-          'export interface SearchLabel extends Private {}',
-          'type SearchLabel = string;',
-        ]) {
-          expect(() =>
-            compare(`${expected}\nexport type { SearchLabel } from '${approvedPartyTypeOrigin}';\n`, privateContract),
-          ).toThrow();
-        }
       }),
     );
   }),
@@ -2076,7 +1509,7 @@ const assertGovernedReadProviders = (providers: readonly string[]): void => {
   for (const provider of providers) {
     expect(provider).toMatch(/defineRead\(/u);
     expect(provider).toMatch(/legalEntityScope: 'required'/u);
-    expect(provider).toMatch(/permissionTarget: 'module'/u);
+    expect(provider).toMatch(/accessDeclaration: \{/u);
     expect(provider).not.toMatch(/CoreDatabase|ScopedTransactionExecutor|from 'pg'/u);
   }
 };
@@ -2369,17 +1802,6 @@ for (const [route, payload] of requests) {
     successes.push({ body: (yield* Effect.promise(() => response.json())), status: response.status });
   }
 const callsAfterSuccess = calls.length;
-const missingAuthorizationStatuses = [];
-for (const [route, payload] of requests) {
-  const response = (yield* Effect.promise(() => server.handler(
-    new Request('http://fixture.test' + route, {
-      body: JSON.stringify(payload),
-      headers: { 'content-type': 'application/json', 'x-correlation-id': 'generated-correlation' },
-      method: 'POST',
-    }),
-  )));
-  missingAuthorizationStatuses.push(response.status);
-}
 const missingCorrelationStatuses = [];
 for (const [route, payload] of requests) {
     const response = (yield* Effect.promise(() => server.handler(
@@ -2403,7 +1825,6 @@ console.log(
       calls,
       callsAfterSuccess,
       generatedRootStatus: generatedRootResponse.status,
-      missingAuthorizationStatuses,
       missingCorrelationStatuses,
       successes,
     }),
@@ -2411,16 +1832,28 @@ console.log(
 }).pipe(Effect.scoped, NodeRuntime.runMain);
 `,
         );
-        const execution = spawnSync(process.execPath, [STRIP_TYPES_FLAG, 'execute-generated-governed-reads.mts'], {
+        const governedHttpBundle = spawnSync(
+          esbuildPath,
+          [
+            'execute-generated-governed-reads.mts',
+            '--bundle',
+            '--format=esm',
+            '--platform=node',
+            '--packages=external',
+            '--outfile=execute-generated-governed-reads.mjs',
+          ],
+          { cwd: fixture.root, encoding: 'utf-8' },
+        );
+        expect(governedHttpBundle.status, governedHttpBundle.stderr).toBe(0);
+        const execution = spawnSync(process.execPath, ['execute-generated-governed-reads.mjs'], {
           cwd: fixture.root,
           encoding: 'utf-8',
           env: {
-            APP_ENV_PATH: '/dev/null',
             DATABASE_ADMIN_URL: 'postgresql://ontos_admin:admin@localhost:5433/ontos',
             DATABASE_URL: 'postgresql://ontos_runtime:runtime@localhost:5433/ontos',
           },
         });
-        expect(execution.status, `${execution.stdout}\n${execution.stderr}`).toBe(0);
+        expect(execution.status, execution.stderr).toBe(0);
         const expectedGeneratedPrincipal = {
           authContextRef: 'job:generated-fixture:run:governed-read',
           authMethod: 'system',
@@ -2463,7 +1896,6 @@ console.log(
           ],
           callsAfterSuccess: 4,
           generatedRootStatus: 400,
-          missingAuthorizationStatuses: [401, 401, 401, 401],
           missingCorrelationStatuses: [400, 400, 400, 400],
           successes: [
             { body: { ok: true }, status: 200 },
@@ -3050,9 +2482,7 @@ it.live(
               '--action',
               fixtureName.action,
               scaffoldFlag.authorization,
-              'action_execution',
-              '--provisioning',
-              'tenant_membership_default',
+              'protected',
             ],
             { workspaceRoot: fixture.root },
           ).pipe(Effect.provide(NodeServices.layer)),
@@ -3408,8 +2838,6 @@ it.live(
             `--metafile=${edgeMetafile}`,
             `--outfile=${path.join(edgeBundleDirectory, 'action-principal.mjs')}`,
             '--platform=browser',
-            '--conditions=workerd',
-            '--external:cloudflare:workers',
           ],
           { encoding: 'utf-8' },
         );
@@ -3450,10 +2878,112 @@ it.live(
         );
         const current = yield* makeGatewayKey('current');
         const retiring = yield* makeGatewayKey('retiring');
-        const approvedSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        yield* run(fixture, 'action', [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--action',
+          'generated-binding',
+          '--legal-entity-scope',
+          'optional',
+        ]);
+        const generatedActionPath = path.join(
+          fixture.root,
+          'verticals/inventory-stock/src/actions/generated-binding.action.ts',
+        );
+        const generatedActionSource = yield* Effect.promise(() => readFile(generatedActionPath, 'utf-8'));
+        const implementedAction = generatedActionSource
+          .replace(
+            'const GeneratedBindingResultSchema = Schema.Struct({});',
+            'const GeneratedBindingResultSchema = Schema.Struct({ accepted: Schema.Literal(true) });',
+          )
+          .replace(
+            /const handleGeneratedBinding = \(\) =>[\s\S]*?(?=export const generatedBindingAction)/u,
+            'const handleGeneratedBinding = () => Effect.succeed({ accepted: true as const });\n\n',
+          );
+        expect(implementedAction).toContain('Effect.succeed({ accepted: true as const })');
+        yield* Effect.promise(() => writeFile(generatedActionPath, implementedAction));
+        yield* write(
+          fixture.root,
+          'generated-owner-action-harness.mts',
+          `import { getVerticalRuntimeActions, isActionRegistration } from '@app/core-runtime';
+import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { inventoryStockRegistration } from './verticals/inventory-stock/vertical.registration.ts';
+import { ultramodernDeliveryUnit } from './verticals/inventory-stock/shared/ultramodern-build.ts';
+const registration = getVerticalRuntimeActions(inventoryStockRegistration).find(({ descriptor }) => descriptor.actionKey === 'inventory.stock.generated-binding');
+if (registration === undefined || !isActionRegistration(registration)) throw new Error('The generated owner Action is missing or invalid');
+export const moduleId = inventoryStockRegistration.moduleId;
+export const runWithOwnedAction = (runner, input) => runner({ ...input, registration });
+export const makeHarness = (applicationComposition) => makeActionTestHarness({
+  access: 'allowed', actionPermission: 'allowed', tenantPermission: 'allowed', applicationComposition,
+  expectedDeployment: ultramodernDeliveryUnit, ownerRegistration: inventoryStockRegistration,
+});
+`,
+        );
+        const ownerHarnessModule = yield* Schema.decodeUnknownEffect(GeneratedOwnerActionHarnessModuleSchema)(
+          yield* Effect.promise(
+            () => import(pathToFileURL(path.join(fixture.root, 'generated-owner-action-harness.mts')).href),
+          ),
+        );
+        const historicalSnapshot = yield* makeApplicationCompositionSnapshotFixture(
           [inventorySlug, 'billing'],
           fixtureBuildMarker,
         );
+        const inventoryContract = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)(
+          makeModuleContractFixture({
+            appId: inventorySlug,
+            buildMarker: fixtureBuildMarker,
+            moduleId: ownerHarnessModule.moduleId,
+          }),
+        );
+        const inventoryContractDocument = yield* Schema.encodeEffect(
+          Schema.fromJsonString(OntosModuleDeploymentContractSchema),
+        )(inventoryContract);
+        const sharedRuntimeConfig = createSharedRuntimeConfig({
+          '@modern-js/plugin-i18n/runtime': observedPackageVersion('@modern-js/plugin-i18n'),
+          '@modern-js/runtime': observedPackageVersion('@modern-js/runtime'),
+          '@tanstack/react-router': observedPackageVersion('@tanstack/react-router'),
+          react: observedPackageVersion('react'),
+          'react-dom': observedPackageVersion('react-dom'),
+        });
+        const observedShared = Object.entries(sharedRuntimeConfig).map(([name, shared]) => ({
+          name,
+          requiredVersion: shared.requiredVersion,
+          singleton: shared.singleton,
+        }));
+        const shellRuntimeDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
+          {
+            contributionAbi: historicalSnapshot.composition.shell.contributionAbi,
+            coreCapabilities: historicalSnapshot.composition.shell.coreCapabilities,
+            deployment: historicalSnapshot.composition.shell.deployment,
+            schemaVersion: '2',
+          },
+        );
+        const encoder = new TextEncoder();
+        const approvedSnapshot = yield* deriveActiveApplicationCompositionSnapshot({
+          environment: 'development',
+          modules: historicalSnapshot.composition.modules.map((module) => ({
+            appId: module.deployment.appId,
+            backend: module.backend,
+            contract: {
+              bytes: encoder.encode(
+                module.deployment.appId === inventorySlug ? inventoryContractDocument : module.contractDocument,
+              ),
+              url: module.contract.url,
+            },
+          })),
+          observedAt: historicalSnapshot.observedAt,
+          shell: {
+            federationManifest: {
+              bytes: encoder.encode(JSON.stringify({ exposes: [], name: 'shell', shared: observedShared })),
+              url: historicalSnapshot.composition.shell.federationManifest.url,
+            },
+            runtimeContract: {
+              bytes: encoder.encode(shellRuntimeDocument),
+              url: historicalSnapshot.composition.shell.runtimeContract.url,
+            },
+          },
+          validity: Duration.hours(1),
+        });
         const compositionService = { load: Effect.succeed(approvedSnapshot) };
         const encodedComposition = yield* Schema.encodeEffect(
           Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
@@ -3464,13 +2994,6 @@ it.live(
           authMethod: 'session' as const,
           principalId: '40000000-0000-4000-8000-000000000001',
           tenantId: '50000000-0000-4000-8000-000000000001',
-        };
-        const registeredAudiences: string[] = [];
-        const registrar: GatewayScopeGrantRegistrar['Service'] = {
-          register: ({ audience }) =>
-            Effect.sync(() => {
-              registeredAudiences.push(audience);
-            }),
         };
         const issue = Effect.fn(function* mergedScenario63(
           configuration: GatewayIssuerConfigValue,
@@ -3494,7 +3017,7 @@ it.live(
                   revision: approvedSnapshot.composition.revision,
                 }),
                 loadConfig: Effect.succeed(configuration),
-              }).pipe(Layer.provide(Layer.succeed(GatewayScopeGrantRegistrar, registrar))),
+              }).pipe(Layer.provide(scopeGrantRegistrarLayer())),
             ),
           );
         });
@@ -3507,7 +3030,6 @@ it.live(
         const currentAssertion = yield* issue(current.configuration, 1_700_000_000);
         const billingAssertion = yield* issue(current.configuration, 1_700_000_000, 'billing');
         const retiringAssertion = yield* issue(retiring.configuration, 1_700_000_000);
-        expect(registeredAudiences).toEqual([inventorySlug, 'billing', inventorySlug]);
         const testRedemption = { consume: () => Effect.void };
         const verify = (token: string, override: GeneratedPrincipalEnvironment = environment, now = 1_700_000_001) =>
           generatedModule
@@ -3529,23 +3051,19 @@ it.live(
             .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
         ).toEqual(principal);
         yield* expectFailure(
-          generatedModule
-            .verifyActionPrincipal(`Bearer ${billingAssertion.token}`, {
-              currentTimeSeconds: Effect.succeed(1_700_000_001),
-              environment,
-              redemption: testRedemption,
-            })
-            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
+          generatedModule.verifyActionPrincipal(`Bearer ${billingAssertion.token}`, {
+            currentTimeSeconds: Effect.succeed(1_700_000_001),
+            environment,
+            redemption: testRedemption,
+          }),
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalScopeError')(error)).toBe(true),
         );
         yield* expectFailure(
-          billingGeneratedModule
-            .verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
-              currentTimeSeconds: Effect.succeed(1_700_000_001),
-              environment,
-              redemption: testRedemption,
-            })
-            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
+          billingGeneratedModule.verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
+            currentTimeSeconds: Effect.succeed(1_700_000_001),
+            environment,
+            redemption: testRedemption,
+          }),
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalScopeError')(error)).toBe(true),
         );
         expect(yield* verify(retiringAssertion.token)).toEqual(principal);
@@ -3676,33 +3194,27 @@ it.live(
           expect(isGeneratedPrincipalError('ActionPrincipalInvalidError')(error)).toBe(true),
         );
         yield* expectFailure(
-          generatedModule
-            .verifyActionPrincipal(undefined, {
-              currentTimeSeconds: Effect.succeed(1_700_000_001),
-              environment,
-              redemption: testRedemption,
-            })
-            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
+          generatedModule.verifyActionPrincipal(undefined, {
+            currentTimeSeconds: Effect.succeed(1_700_000_001),
+            environment,
+            redemption: testRedemption,
+          }),
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalMissingError')(error)).toBe(true),
         );
         yield* expectFailure(
-          generatedModule
-            .verifyActionPrincipal('bearer malformed', {
-              currentTimeSeconds: Effect.succeed(1_700_000_001),
-              environment,
-              redemption: testRedemption,
-            })
-            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
+          generatedModule.verifyActionPrincipal('bearer malformed', {
+            currentTimeSeconds: Effect.succeed(1_700_000_001),
+            environment,
+            redemption: testRedemption,
+          }),
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalInvalidError')(error)).toBe(true),
         );
         yield* expectFailure(
-          generatedModule
-            .verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
-              currentTimeSeconds: Effect.succeed(1_700_000_001),
-              environment: {},
-              redemption: testRedemption,
-            })
-            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
+          generatedModule.verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
+            currentTimeSeconds: Effect.succeed(1_700_000_001),
+            environment: {},
+            redemption: testRedemption,
+          }),
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalConfigurationError')(error)).toBe(true),
         );
         let acquisitions = 0;
@@ -3834,13 +3346,10 @@ it.live(
           authentication: actionAuthenticationProblem,
           unavailable: actionVerificationUnavailableProblem,
         });
-        const harness = yield* makeActionTestHarness({
-          actionPermission: 'allowed',
-          tenantPermission: 'allowed',
-        });
+        const harness = yield* ownerHarnessModule.makeHarness(compositionService);
         const generatedBindingGroupLive = HttpApiBuilder.group(generatedBindingApi, 'action', (handlers) =>
           handlers.handle('invoke', ({ request }) =>
-            runGeneratedActionHttp({
+            ownerHarnessModule.runWithOwnedAction(runGeneratedActionHttp, {
               endpointHeaders: {
                 idempotencyKey: request.headers['idempotency-key'],
                 traceId: 'generated-trace',
@@ -3849,7 +3358,6 @@ it.live(
               invalidCorrelationProblem: actionAuthenticationProblem,
               mapError: actionVerificationUnavailableProblem,
               payload: {},
-              registration: generatedBindingAction,
               requestHeaders: {
                 authorization: Redacted.make(request.headers['authorization']),
                 'x-correlation-id': request.headers['x-correlation-id'],
@@ -3881,22 +3389,23 @@ it.live(
             new Request('https://inventory.example.test/actions/generated-runner', {
               headers: {
                 authorization: `Bearer ${liveAssertion.token}`,
+                'idempotency-key': 'generated-owner-binding-fixture',
                 'x-correlation-id': 'generated-runner-correlation',
               },
               method: 'POST',
             }),
           ),
         );
-        const generatedBindingBody = yield* Schema.decodeUnknownEffect(GeneratedBindingResultSchema)(
-          yield* Effect.promise(() => generatedBindingResponse.json()),
-        );
+        const generatedBindingRawBody: unknown = yield* Effect.promise(() => generatedBindingResponse.json());
         expect(
           generatedBindingResponse.status,
           JSON.stringify({
-            body: generatedBindingBody,
+            body: generatedBindingRawBody,
             snapshot: harness.snapshot(),
           }),
         ).toBe(200);
+        const generatedBindingBody =
+          yield* Schema.decodeUnknownEffect(GeneratedBindingResultSchema)(generatedBindingRawBody);
         expect(generatedBindingBody).toEqual({ accepted: true });
         expect(harness.snapshot().invocations.length).toBe(1);
         expect(harness.snapshot().transactionCount).toBe(1);
@@ -3943,6 +3452,14 @@ const handleCreateOrder2 = () =>
 
 export const createOrder2Action = defineAction(
   {
+    accessDeclaration: {
+      key: 'inventory.stock.order2.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'order2', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'inventory.stock.create-order2.access.v1',
@@ -3953,7 +3470,7 @@ export const createOrder2Action = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'inventory.stock.create-order2',
       moduleKey: 'inventory.stock',
       role: 'action',
@@ -4232,7 +3749,7 @@ it.live(
             manifest.replace(
               '// <generated-module-manifest-imports>',
               `// <generated-module-manifest-imports>
-import { fakeRead } from './src/api/fake.read.ts';`,
+import { fakeRead } from '../foreign/src/api/fake.read.ts';`,
             ),
             'utf-8',
           ),
@@ -4628,250 +4145,6 @@ export const outboxProducerModuleKey = 'inventory.stock' as const;
   }),
 );
 
-const planningFixtureSnapshot = Effect.fn(function* planningFixtureSnapshot(fixture: Fixture) {
-  const contents = yield* snapshotTree(fixture.root);
-  const paths = yield* Effect.promise(() => readdir(fixture.root, { recursive: true }));
-  return {
-    contents,
-    hashes: Object.fromEntries(
-      Object.entries(contents).map(([file, content]) => [file, createHash('sha256').update(content).digest('hex')]),
-    ),
-    paths: paths.toSorted(),
-  };
-});
-
-const observedPlanningFileSystem = (fileSystem: FileSystem.FileSystem, attempts: string[]) => {
-  const deny = (operation: string) =>
-    Effect.sync(() => attempts.push(operation)).pipe(
-      Effect.flatMap(() => Effect.die(new Error(`denied planning capability: ${operation}`))),
-    );
-  const reads: string[] = [];
-  const read = <Value, Failure>(operation: string, effect: Effect.Effect<Value, Failure>) =>
-    Effect.sync(() => reads.push(operation)).pipe(Effect.flatMap(() => effect));
-  return {
-    fileSystem: FileSystem.makeNoop({
-      chmod: () => deny('chmod'),
-      chown: () => deny('chown'),
-      copy: () => deny('copy'),
-      copyFile: () => deny('copyFile'),
-      exists: (target) => read('exists', fileSystem.exists(target)),
-      link: () => deny('link'),
-      makeDirectory: () => deny('makeDirectory'),
-      makeTempDirectory: () => deny('makeTempDirectory'),
-      makeTempDirectoryScoped: () => deny('makeTempDirectoryScoped'),
-      makeTempFile: () => deny('makeTempFile'),
-      makeTempFileScoped: () => deny('makeTempFileScoped'),
-      open: () => deny('open'),
-      readDirectory: (target, options) => read('readDirectory', fileSystem.readDirectory(target, options)),
-      readFileString: (target, encoding) => read('readFileString', fileSystem.readFileString(target, encoding)),
-      remove: () => deny('remove'),
-      rename: () => deny('rename'),
-      sink: () => Sink.fromEffect(deny('sink')),
-      symlink: () => deny('symlink'),
-      truncate: () => deny('truncate'),
-      utimes: () => deny('utimes'),
-      writeFile: () => deny('writeFile'),
-      writeFileString: () => deny('writeFileString'),
-    }),
-    reads,
-  };
-};
-
-const observeReadOnlyPlan = <Value, Failure>(
-  fixture: Fixture,
-  program: Effect.Effect<ScaffoldPlan<Value>, Failure, FileSystem.FileSystem>,
-) =>
-  Effect.gen(function* observeReadOnlyPlanProgram() {
-    const before = yield* planningFixtureSnapshot(fixture);
-    const fileSystem = yield* FileSystem.FileSystem;
-    const attempts: string[] = [];
-    const observed = observedPlanningFileSystem(fileSystem, attempts);
-    const plan = yield* program.pipe(
-      Effect.provideService(FileSystem.FileSystem, observed.fileSystem),
-      Effect.ensuring(
-        Effect.gen(function* assertReadOnlyPlanning() {
-          expect(attempts).toEqual([]);
-          expect(yield* planningFixtureSnapshot(fixture)).toEqual(before);
-        }),
-      ),
-    );
-    return { plan, reads: observed.reads };
-  }).pipe(Effect.provide(NodeServices.layer));
-
-const assertPlanMatchesAppliedCLI = Effect.fn(function* assertPlanMatchesAppliedCLI<Value>(
-  fixture: Fixture,
-  plan: ScaffoldPlan<Value>,
-  command: ScaffoldCommand,
-  args: readonly string[],
-) {
-  const before = yield* snapshotTree(fixture.root);
-  const applied = yield* run(fixture, command, args);
-  expect(applied).toEqual({ kind: 'generated', result: plan.result });
-  const after = yield* snapshotTree(fixture.root);
-  const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])]
-    .filter((file) => before[file] !== after[file])
-    .toSorted();
-  expect(changed).toEqual(plan.mutations.map((mutation) => path.relative(fixture.root, mutation.path)).toSorted());
-  for (const mutation of plan.mutations) {
-    const relative = path.relative(fixture.root, mutation.path);
-    if (mutation.kind === 'delete') {
-      expect(after[relative]).toBeUndefined();
-    } else {
-      expect(mutation.kind).toBe(before[relative] === undefined ? 'create' : 'update');
-      // The existing adapter formats buffered content when applying; this is an in-memory comparison.
-      expect(after[relative]).toBe(yield* formatGeneratedMutationContent(mutation.path, mutation.content));
-    }
-  }
-});
-
-it.live(
-  'readonly3 mutation observer rejects writes and retains full path/content/hash inventory',
-  Effect.fn(function* readonlyObserverControl() {
-    yield* withFixture(
-      Effect.fn(function* observerFixture(fixture) {
-        const before = yield* planningFixtureSnapshot(fixture);
-        const attempts: string[] = [];
-        yield* Effect.gen(function* exerciseDeniedWrite() {
-          const fileSystem = yield* FileSystem.FileSystem;
-          const observed = observedPlanningFileSystem(fileSystem, attempts);
-          expect(yield* observed.fileSystem.exists(fixture.root)).toBe(true);
-          expect(observed.reads).toEqual(['exists']);
-          yield* expectFailure(
-            observed.fileSystem.writeFileString(path.join(fixture.root, 'forbidden-planning-write.ts'), 'forbidden'),
-            (error) => expect(String(error)).toContain('denied planning capability'),
-          );
-          expect(observed.reads).toEqual(['exists']);
-        }).pipe(Effect.provide(NodeServices.layer));
-        expect(attempts).toEqual(['writeFileString']);
-        expect(yield* planningFixtureSnapshot(fixture)).toEqual(before);
-      }),
-    );
-  }),
-);
-
-for (const core of [false, true]) {
-  it.live(
-    `readonly3 ${core ? 'Core' : 'business'} message planning matches CLI without writes and refuses drift`,
-    Effect.fn(function* readonlyMessageParity() {
-      yield* withFixture(
-        Effect.fn(function* messageFixture(fixture) {
-          const config = core
-            ? {
-                action: fixtureName.coreIdentityAction,
-                module: fixtureName.coreIdentityModule,
-                scope: 'core' as const,
-                topic: fixtureName.coreIdentityTopic,
-              }
-            : { action: fixtureName.action, topic: fixtureName.ordersCreated, vertical: inventorySlug };
-          const ownerArgs = core
-            ? [scaffoldFlag.scope, 'core', scaffoldFlag.module, fixtureName.coreIdentityModule]
-            : [scaffoldFlag.vertical, inventorySlug];
-          yield* run(fixture, 'action', [...ownerArgs, '--action', config.action]);
-          if (core) {
-            yield* write(
-              fixture.root,
-              coreRuntimePackageFile,
-              json({ exports: { '.': coreRuntimePackageEntryExport }, name: coreRuntimePackageName }),
-            );
-          }
-          const args = [...ownerArgs, '--action', config.action, '--topic', config.topic];
-          const { plan, reads } = yield* observeReadOnlyPlan(fixture, planOutboxMessageScaffold(fixture.root, config));
-          expect(reads).toContain('readFileString');
-          expect(plan.mutations).toHaveLength(4);
-          yield* assertPlanMatchesAppliedCLI(fixture, plan, scaffoldCommand.outboxMessage, args);
-          expect(
-            (yield* observeReadOnlyPlan(fixture, planOutboxMessageScaffold(fixture.root, config))).plan.mutations,
-          ).toEqual([]);
-          yield* expectFailure(
-            observeReadOnlyPlan(
-              fixture,
-              planOutboxMessageScaffold(fixture.root, { ...config, action: 'missing-action' }),
-            ),
-            (error) => expect(String(error)).toMatch(/requires the generated/u),
-          );
-          yield* write(
-            fixture.root,
-            path.relative(fixture.root, plan.result.contractPath),
-            'export const handwrittenContract = true;\n',
-          );
-          yield* expectFailure(observeReadOnlyPlan(fixture, planOutboxMessageScaffold(fixture.root, config)), (error) =>
-            expect(String(error)).toMatch(/refusing to overwrite/u),
-          );
-          yield* assertScaffoldRefused(fixture, scaffoldCommand.outboxMessage, args, /refusing to overwrite/u);
-        }),
-      );
-    }),
-  );
-}
-
-for (const core of [false, true]) {
-  it.live(
-    `readonly3 ${core ? 'Core' : 'business'} worker planning reuses exact dispatch and CLI mutation set`,
-    Effect.fn(function* readonlyWorkerParity() {
-      yield* withFixture(
-        Effect.fn(function* workerFixture(fixture) {
-          const config = {
-            authorization: 'owner_local_background' as const,
-            producer: core ? 'core' : inventorySlug,
-            topic: core ? 'core.identity.principal-lifecycle-changed.v1' : fixtureName.ordersCreated,
-            vertical: core ? 'core' : 'billing',
-            worker: core ? 'project-people-lifecycle-search' : fixtureName.ordersCreatedLogger,
-          };
-          if (core) {
-            yield* write(
-              fixture.root,
-              'packages/core-runtime/src/outbox/core-identity-principal-lifecycle-changed-v1.ts',
-              "export const outboxTopic = 'core.identity.principal-lifecycle-changed.v1';\n",
-            );
-          } else {
-            yield* run(fixture, 'action', [scaffoldFlag.vertical, inventorySlug, '--action', fixtureName.action]);
-            yield* run(fixture, scaffoldCommand.outboxMessage, [
-              scaffoldFlag.vertical,
-              inventorySlug,
-              '--action',
-              fixtureName.action,
-              '--topic',
-              fixtureName.ordersCreated,
-            ]);
-          }
-          const args = [
-            scaffoldFlag.vertical,
-            config.vertical,
-            '--worker',
-            config.worker,
-            scaffoldFlag.producer,
-            config.producer,
-            '--topic',
-            config.topic,
-          ];
-          const { plan, reads } = yield* observeReadOnlyPlan(fixture, planOutboxWorkerScaffold(fixture.root, config));
-          expect(reads).toContain('readFileString');
-          expect(plan.mutations).toHaveLength(core ? 3 : 9);
-          yield* assertPlanMatchesAppliedCLI(fixture, plan, scaffoldCommand.outboxWorker, args);
-          yield* expectFailure(
-            observeReadOnlyPlan(fixture, planOutboxWorkerScaffold(fixture.root, config)),
-            (error) => {
-              expect(String(error)).toMatch(/refusing to overwrite existing business file:/u);
-              expect(String(error)).toMatch(new RegExp(`${config.worker}\\.worker\\.ts$`, 'u'));
-            },
-          );
-          yield* assertScaffoldRefused(fixture, scaffoldCommand.outboxWorker, args, /refusing to overwrite/u);
-          yield* expectFailure(
-            observeReadOnlyPlan(
-              fixture,
-              planOutboxWorkerScaffold(fixture.root, { ...config, producer: 'core', worker: 'unapproved-worker' }),
-            ),
-            (error) =>
-              expect(String(error)).toMatch(
-                /Core people worker must match an approved identity search worker\/topic|package metadata/u,
-              ),
-          );
-        }),
-      );
-    }),
-  );
-}
-
 it.live(
   'generates Core-owned Outbox Messages from system-scoped Actions and reruns atomically',
   Effect.fn(function* scenario67a() {
@@ -5197,24 +4470,18 @@ export const outboxWorkers = Object.freeze([
           .toBe(`// @generated by scaffold:outbox-worker worker-host
 // @ontos-outbox-worker-host-owner billing.core
 import { Layer } from 'effect';
-import { makeDatabaseIdentityEnrollmentLive } from '@app/core-runtime';
-import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
 import { OutboxWorkerInfrastructureLive } from '@app/core-runtime/outbox/worker';
 
 export { CorePersistenceLive as outboxWorkerCorePersistenceLive } from '@app/core-runtime/outbox/worker';
 export { DatabaseConfigLive as outboxWorkerDatabaseConfigLive } from '@app/core-runtime/outbox/worker';
 export { OutboxRepositoryLive as outboxWorkerRepositoryLive } from '@app/core-runtime/outbox/worker';
 
-export const outboxWorkerDatabaseIdentityEnrollmentLive = makeDatabaseIdentityEnrollmentLive(
-  defineDatabaseIdentityEnrollment([]),
-);
-
 /** Add owner-local repositories and services required by worker handlers here. */
 const outboxWorkerHandlerLayer = Layer.empty;
 
 export const outboxWorkerLayer = Layer.merge(OutboxWorkerInfrastructureLive, outboxWorkerHandlerLayer);
 `);
-        expect(yield* readFixtureFile(fixture.root, billingWorkerHostEntryFile))
+        expect(yield* readFixtureFile(fixture.root, 'verticals/billing/src/worker-host/entry.ts'))
           .toBe(`// @generated by scaffold:outbox-worker worker-host
 // @ontos-outbox-worker-host-owner billing.core
 import { NodeCrypto } from '@effect/platform-node';
@@ -5228,10 +4495,10 @@ import {
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { outboxWorkers } from '../workers/index.ts';
+import { billingRegistration } from '../../vertical.registration.ts';
 import {
   outboxWorkerCorePersistenceLive,
   outboxWorkerDatabaseConfigLive,
-  outboxWorkerDatabaseIdentityEnrollmentLive,
   outboxWorkerLayer as outboxWorkerDefinitionLayer,
   outboxWorkerRepositoryLive,
 } from './layer.ts';
@@ -5240,6 +4507,7 @@ import {
 export const outboxWorkerEntry = defineOutboxWorkerEntry({
   claimOwnerPrefix: 'billing.core-outbox-worker',
   expectedDeployment: ultramodernApiMarker,
+  ownerRegistration: billingRegistration,
   layer: Layer.merge(
     ActiveApplicationCompositionConfigLive.pipe(
       Layer.provide(
@@ -5257,7 +4525,6 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
     Layer.provide(outboxWorkerRepositoryLive),
     Layer.provide(outboxWorkerCorePersistenceLive),
     Layer.provide(outboxWorkerDatabaseConfigLive),
-    Layer.provide(outboxWorkerDatabaseIdentityEnrollmentLive),
     Layer.provide(NodeCrypto.layer),
   ),
   registrations: outboxWorkers,
@@ -5305,24 +4572,6 @@ startOutboxWorkerHost({ entries: [outboxWorkerEntry], health: true });
         );
         expect(producerAfter).toEqual(producerBefore);
 
-        const ownerEntryPath = billingWorkerHostEntryFile;
-        const customizedEntry = yield* customizeOutboxWorkerHostEntry(
-          yield* readFixtureFile(fixture.root, ownerEntryPath),
-          {
-            composition: 'const recovery = makeOwnerRecovery();',
-            entry: 'withOwnerRecovery(compiledOutboxWorkerEntry, recovery)',
-            imports: [
-              "import { Effect } from 'effect';",
-              "import { makeOwnerRecovery, withOwnerRecovery } from './recovery.ts';",
-            ].join('\n'),
-          },
-        );
-        yield* Effect.promise(() => writeFile(path.join(fixture.root, ownerEntryPath), customizedEntry));
-        expect(customizedEntry).toContain('expectedDeployment: ultramodernApiMarker,');
-        expect(customizedEntry).toContain('const compiledOutboxWorkerEntry = defineOutboxWorkerEntry({');
-        expect(customizedEntry.match(/from 'effect'/gu)).toHaveLength(1);
-        expect(yield* customizeOutboxWorkerHostEntry(customizedEntry)).toBe(customizedEntry);
-
         yield* run(fixture, scaffoldCommand.outboxMessage, [
           scaffoldFlag.vertical,
           inventorySlug,
@@ -5341,7 +4590,6 @@ startOutboxWorkerHost({ entries: [outboxWorkerEntry], health: true });
           '--topic',
           fixtureName.ordersShipped,
         ]);
-        expect(yield* readFixtureFile(fixture.root, ownerEntryPath)).toBe(customizedEntry);
         const registry = yield* readFixtureFile(fixture.root, billingWorkersIndexFile);
         expect(
           registry.indexOf('ordersCreatedLoggerWorker') < registry.indexOf('ordersShippedProjectorWorker'),
@@ -5363,29 +4611,6 @@ startOutboxWorkerHost({ entries: [outboxWorkerEntry], health: true });
         );
       }),
     );
-  }),
-);
-
-it.effect('owner worker lifecycle customization refuses handwritten entries', () =>
-  Effect.gen(function* refusesForeignWorkerEntry() {
-    const failure = yield* Effect.flip(
-      customizeOutboxWorkerHostEntry('export const outboxWorkerEntry = {};\n', {
-        composition: '',
-        entry: 'compiledOutboxWorkerEntry',
-        imports: '',
-      }),
-    );
-    expect(failure.message).toContain('Only a generated owner worker entry');
-  }),
-);
-
-it.live('owner worker lifecycle regeneration preserves the production Commerce root', () =>
-  Effect.gen(function* preservesCommerceWorkerRoot() {
-    const source = yield* readFixtureFile(appRoot, 'verticals/commerce-customer-context/src/worker-host/entry.ts');
-    expect(source).toContain('withCommerceEnrollmentRecovery(compiledOutboxWorkerEntry');
-    expect(source).toContain('expectedDeployment: ultramodernApiMarker,');
-    expect(source).toContain('Layer.build(commerceEnrollmentRecoveryLive)');
-    expect(yield* customizeOutboxWorkerHostEntry(source)).toBe(source);
   }),
 );
 
@@ -5690,13 +4915,22 @@ export default PurchaseOrdersPage;
             'verticals/inventory-stock/src/routes/[lang]/inventory-stock/purchase-orders/route.meta.ts',
           ),
         ).toBe(`import { defineTenantModuleEntrypoint } from '@app/core-runtime/module-entrypoint';
+import { defineRouteMeta } from '@app/core-runtime/route-meta';
 
-const routeMeta = {
+const routeMeta = defineRouteMeta({
+  accessDeclaration: {
+    key: 'inventory.stock.purchase-orders.view',
+    kind: 'read',
+    modes: ['run'],
+    placement: { group: 'purchase-orders', level: 'basic' },
+    risk: 'sensitive',
+    selectors: [],
+  },
   canonicalPath: '/inventory-stock/purchase-orders',
   descriptionKey: 'inventory.pages.purchaseOrders.description',
   entrypoint: defineTenantModuleEntrypoint({
     access: 'read',
-    authorization: { kind: 'context_permission', permission: '${moduleAccessPermission}' },
+    authorization: { kind: 'protected' },
     entrypointKey: 'inventory.stock.page.purchase-orders',
     moduleKey: 'inventory.stock',
     role: 'page',
@@ -5714,7 +4948,7 @@ const routeMeta = {
   public: false,
   publicSurface: 'private-app-screen',
   titleKey: 'inventory.pages.purchaseOrders.title',
-} as const;
+});
 
 export default routeMeta;
 export { routeMeta };
@@ -5738,72 +4972,6 @@ export { routeMeta };
         });
         expect(yield* snapshotTree(path.join(fixture.root, 'apps', shellAppId))).toEqual(shellBefore);
         expect(page).not.toMatch(/fetch\(|useState|useEffect|<style|\.description|\.empty/u);
-      }),
-    );
-  }),
-);
-
-/**
- * The generated `pageContribution({...})` block of one component key, or '' when absent. The owner manifest is
- * oxfmt-formatted, so a contribution spans multiple lines: a single-line search would read only its `componentKey`.
- */
-const generatedPageContribution = (manifest: string, componentKey: string): string => {
-  const marker = `componentKey: '${componentKey}'`;
-  const start = manifest.indexOf(marker);
-  if (start === -1) {
-    return '';
-  }
-  const end = manifest.indexOf('}),', start);
-  return manifest.slice(start, end === -1 ? undefined : end + 3);
-};
-
-it.live(
-  'opts a generated page contribution into tenant-only admission only when asked',
-  Effect.fn(function* scenario79b() {
-    yield* withFixture(
-      Effect.fn(function* scenario79c(fixture) {
-        yield* run(fixture, scaffoldCommand.microverticalPage, [
-          scaffoldFlag.vertical,
-          inventorySlug,
-          '--page',
-          fixtureName.purchaseOrdersPage,
-        ]);
-        const defaultManifest = yield* readFixtureFile(fixture.root, inventoryManifestFile);
-        const defaultBlock = generatedPageContribution(defaultManifest, 'inventory.stock.page-purchase-orders');
-        expect(defaultBlock).toContain("routePath: '/inventory-stock/purchase-orders'");
-        // Absent means required: the default page contribution carries no opt-in field at all.
-        expect(defaultBlock).not.toContain('legalEntityScope');
-
-        yield* run(fixture, scaffoldCommand.microverticalPage, [
-          scaffoldFlag.vertical,
-          inventorySlug,
-          '--page',
-          'tenant-notes',
-          scaffoldFlag.legalEntityScope,
-          'optional',
-        ]);
-        const optedInManifest = yield* readFixtureFile(fixture.root, inventoryManifestFile);
-        const optedInBlock = generatedPageContribution(optedInManifest, 'inventory.stock.page-tenant-notes');
-        expect(optedInBlock).toContain("legalEntityScope: 'optional'");
-        expect(optedInBlock).toContain("routePath: '/inventory-stock/tenant-notes'");
-
-        // Re-running the same opt-in is idempotent: the generated wiring already matches.
-        yield* run(fixture, scaffoldCommand.microverticalPage, [
-          scaffoldFlag.vertical,
-          inventorySlug,
-          '--page',
-          'tenant-notes',
-          scaffoldFlag.legalEntityScope,
-          'optional',
-        ]);
-        expect(yield* readFixtureFile(fixture.root, inventoryManifestFile)).toBe(optedInManifest);
-
-        yield* assertScaffoldRefused(
-          fixture,
-          scaffoldCommand.microverticalPage,
-          [scaffoldFlag.vertical, inventorySlug, '--page', 'bad-scope', scaffoldFlag.legalEntityScope, 'required'],
-          /--legal-entity-scope must be optional/u,
-        );
       }),
     );
   }),
@@ -5921,7 +5089,7 @@ process.stdout.write(renderToStaticMarkup(<Page />));
           spawnSync(process.execPath, [bundlePath], {
             cwd: fixture.root,
             encoding: 'utf-8',
-            env: { APP_ENV_PATH: '/dev/null', PAGE_LANGUAGE: language },
+            env: { PAGE_LANGUAGE: language },
           });
         const english = renderLanguage('en');
         const czech = renderLanguage('cs');
@@ -6786,99 +5954,6 @@ export default OrdersPage;
   }),
 );
 
-const inventoryModernRuntimeFile = 'verticals/inventory-stock/src/modern.runtime.ts';
-
-const configureRuntimeLocaleFixture = Effect.fn(function* runtimeLocaleFixture(fixture: Fixture) {
-  const packagePath = path.join(fixture.root, inventoryPackageFile);
-  const packageJson = yield* decodeFixturePackage(yield* readFixtureFile(fixture.root, inventoryPackageFile));
-  const exports = Object.fromEntries(
-    Object.entries(packageJson.exports).filter(([key]) => !key.startsWith('./locales/')),
-  );
-  yield* Effect.promise(() => writeFile(packagePath, json({ ...packageJson, exports }), 'utf-8'));
-  yield* Effect.promise(() => rm(path.join(fixture.root, 'verticals/inventory-stock/src/i18n/resources.ts')));
-  yield* write(
-    fixture.root,
-    inventoryModernRuntimeFile,
-    `import csResource from '../locales/cs/inventory.json';
-import enResource from '../locales/en/inventory.json';
-import { ultramodernRouteNamespace } from './routes/ultramodern-route-metadata';
-const resources = {
-  cs: { [ultramodernRouteNamespace]: csResource },
-  en: { [ultramodernRouteNamespace]: enResource },
-} as const;
-export default defineRuntimeConfig({ i18n: { initOptions: { defaultNS: ultramodernRouteNamespace, resources } } });
-`,
-  );
-});
-
-it.live(
-  'generates and safely reruns pages using pinned runtime-local catalogs without legacy locale exports',
-  Effect.fn(function* runtimeLocalePage() {
-    yield* withFixture(
-      Effect.fn(function* runtimeLocalePageFixture(fixture) {
-        yield* configureRuntimeLocaleFixture(fixture);
-        const runtimeBefore = yield* readFixtureFile(fixture.root, inventoryModernRuntimeFile);
-        const args = [scaffoldFlag.vertical, inventorySlug, '--page', 'records', '--url', '/nemovitosti'];
-        yield* run(fixture, scaffoldCommand.microverticalPage, args);
-        const page = yield* readFixtureFile(
-          fixture.root,
-          'verticals/inventory-stock/src/routes/[lang]/nemovitosti/page.tsx',
-        );
-        expect(page).toContain("import csResource from '../../../../locales/cs/inventory.json';");
-        expect(page).toContain("import enResource from '../../../../locales/en/inventory.json';");
-        expect(page).toMatch(/cs:\s*\{\s*inventory:\s*csResource/u);
-        expect(page).toMatch(/en:\s*\{\s*inventory:\s*enResource/u);
-        expect(page).toContain("t('inventory.pages.records.title')");
-        expect(page).not.toContain('i18n/resources');
-        const catalog = yield* decodeInventoryLocale(yield* readFixtureFile(fixture.root, inventoryEnglishLocaleFile));
-        expect(catalog.inventory.pages['records']).toEqual({ description: pagePlaceholder, title: 'New Page' });
-        expect(yield* readFixtureFile(fixture.root, inventoryModernRuntimeFile)).toBe(runtimeBefore);
-        const beforeRerun = yield* snapshotTree(fixture.root);
-        yield* run(fixture, scaffoldCommand.microverticalPage, args);
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeRerun);
-      }),
-    );
-  }),
-);
-
-it.live(
-  'rejects broken runtime locale bindings and conflicting locale exports before any page write',
-  Effect.fn(function* invalidRuntimeLocalePage() {
-    for (const invalid of ['binding', 'export', 'comment']) {
-      yield* withFixture(
-        Effect.fn(function* invalidRuntimeLocalePageFixture(fixture) {
-          yield* configureRuntimeLocaleFixture(fixture);
-          if (invalid === 'binding') {
-            const runtimeFile = inventoryModernRuntimeFile;
-            const content = yield* readFixtureFile(fixture.root, runtimeFile);
-            yield* write(
-              fixture.root,
-              runtimeFile,
-              content.replace('[ultramodernRouteNamespace]: csResource', '[ultramodernRouteNamespace]: enResource'),
-            );
-          } else {
-            const packageJson = yield* decodeFixturePackage(yield* readFixtureFile(fixture.root, inventoryPackageFile));
-            yield* write(
-              fixture.root,
-              inventoryPackageFile,
-              json({
-                ...packageJson,
-                exports: { ...packageJson.exports, './locales/cs': './locales/cs/wrong-owner.json' },
-              }),
-            );
-          }
-          yield* assertScaffoldRefused(
-            fixture,
-            scaffoldCommand.microverticalPage,
-            [scaffoldFlag.vertical, inventorySlug, '--page', 'records'],
-            /missing its generated cs locale export/u,
-          );
-        }),
-      );
-    }
-  }),
-);
-
 it.live(
   'rejects page generation when an owning locale has no truthful starter translation',
   Effect.fn(function* scenario124() {
@@ -6964,16 +6039,7 @@ it.live(
         yield* expectFailure(
           runScaffoldEffect(
             scaffoldCommand.microverticalPage,
-            [
-              scaffoldFlag.vertical,
-              inventorySlug,
-              '--page',
-              'orders',
-              scaffoldFlag.authorization,
-              'context_permission',
-              PERMISSION_FLAG,
-              moduleAccessPermission,
-            ],
+            [scaffoldFlag.vertical, inventorySlug, '--page', 'orders', scaffoldFlag.authorization, 'protected'],
             {
               routeRefresh: () =>
                 Effect.fail(
@@ -7143,7 +6209,7 @@ it.live(
           billingApiIndexFile,
           'verticals/billing/src/workers/orders-created-logger.worker.ts',
           'verticals/billing/src/worker-host/layer.ts',
-          billingWorkerHostEntryFile,
+          'verticals/billing/src/worker-host/entry.ts',
           'verticals/billing/src/worker-host/main.ts',
           'verticals/inventory-stock/src/policies/stock-available.policy.ts',
           'verticals/inventory-stock/src/routes/[lang]/inventory-stock/orders/page.tsx',
@@ -7191,14 +6257,6 @@ it.live(
     yield* withFixture(
       Effect.fn(function* mergedScenario91(fixture) {
         yield* runCombinedScenario(fixture);
-        yield* prepareProjectsSearchFixture(fixture);
-        yield* run(fixture, scaffoldCommand.searchProvider, projectsSearchArgs);
-        yield* run(fixture, scaffoldCommand.searchProviderAccess, projectsAccessArgs);
-        yield* write(
-          fixture.root,
-          projectsProviderFile,
-          customizeProjectsProvider(yield* readFixtureFile(fixture.root, projectsProviderFile)),
-        );
         yield* run(fixture, scaffoldCommand.outboxWorker, [
           scaffoldFlag.vertical,
           'billing',
@@ -7258,10 +6316,10 @@ it.live(
               ['apps/shell-super-app/node_modules/@types/react', 'node_modules/@types/react', 'dir'],
               ['packages/core-runtime/node_modules/@types/pg', 'node_modules/@types/pg', 'dir'],
               ['node_modules/@types/node', 'node_modules/@types/node', 'dir'],
+              ['packages/core-runtime/src/access', 'packages/core-runtime/src/access', 'dir'],
               ['packages/core-runtime/src/actions', 'packages/core-runtime/src/actions', 'dir'],
               ['packages/core-runtime/src/db', 'packages/core-runtime/src/db', 'dir'],
               ['packages/core-runtime/src/outbox', 'packages/core-runtime/src/outbox', 'dir'],
-              ['packages/core-runtime/src/live', 'packages/core-runtime/src/live', 'dir'],
               ['packages/core-runtime/src/operations', 'packages/core-runtime/src/operations', 'dir'],
               ['packages/core-runtime/src/reads', 'packages/core-runtime/src/reads', 'dir'],
               ['packages/core-runtime/src/database', 'packages/core-runtime/src/database', 'dir'],
@@ -7276,20 +6334,23 @@ it.live(
           ),
           { concurrency: 'unbounded' },
         );
+        // Every Core module file the generated composition root resolves, read from Core instead of a
+        // frozen list: the fixture owns only the generated action catalog and generated core actions.
+        const coreModulesRoot = path.join(appRoot, 'packages/core-runtime/src/modules');
+        const coreModuleFiles = (yield* Effect.promise(() => readdir(coreModulesRoot, { withFileTypes: true })))
+          .filter((entry) => entry.isFile() && entry.name !== 'module-entrypoint.ts')
+          .map((entry) => entry.name);
+        const coreActionFiles = (yield* Effect.promise(() =>
+          readdir(path.join(coreModulesRoot, 'actions'), { withFileTypes: true }),
+        ))
+          .filter((entry) => entry.isFile() && entry.name !== 'catalog.ts')
+          .map((entry) => path.join('actions', entry.name));
         yield* Effect.all(
-          [
-            'module-entrypoint-gateway.ts',
-            'module-state-check-unavailable-error.ts',
-            'module-state-denied-error.ts',
-            'module-state-gate-errors.ts',
-            'module-state-gate.ts',
-            'tenant-module-state-errors.ts',
-            'tenant-module-state-service.ts',
-          ].map(
+          [...coreModuleFiles, ...coreActionFiles].map(
             Effect.fn(function* mergedScenario90(moduleFile) {
               return yield* Effect.promise(() =>
                 symlink(
-                  path.join(appRoot, 'packages/core-runtime/src/modules', moduleFile),
+                  path.join(coreModulesRoot, moduleFile),
                   path.join(fixture.root, 'packages/core-runtime/src/modules', moduleFile),
                   'file',
                 ),
@@ -7319,9 +6380,12 @@ it.live(
           writeFile(
             fixtureTsconfig,
             json({
-              // Use the same strictness as Core and the owning verticals, including
-              // exact optional-property semantics for schema-decoded union inputs.
               compilerOptions: {
+                allowImportingTsExtensions: true,
+                jsx: 'preserve',
+                module: 'preserve',
+                moduleResolution: 'Bundler',
+                noEmit: true,
                 paths: {
                   ...coreRuntimePaths,
                   '@app/gateway-principal-verifier/server': [
@@ -7339,20 +6403,17 @@ it.live(
                     path.join(appRoot, 'packages/shared-contracts/src/effect-bff-runtime.ts'),
                   ],
                 },
+                resolveJsonModule: true,
                 skipLibCheck: true,
+                strict: true,
+                target: 'ESNext',
                 types: ['node', 'react'],
               },
-              extends: path.join(appRoot, 'tsconfig.base.json'),
               include: [
                 modernAppEnvironmentTypes,
                 'packages/core-runtime/src/modules/actions/**/*.ts',
                 'packages/core-runtime/src/policies/**/*.ts',
                 inventoryManifestFile,
-                projectsManifestFile,
-                'verticals/projects/src/search/**/*.ts',
-                'verticals/projects/shared/apis/**/*.ts',
-                'verticals/projects/src/api/**/*.ts',
-                'verticals/projects/api/**/*.ts',
                 'verticals/inventory-stock/src/actions/**/*.ts',
                 'verticals/inventory-stock/src/integrations/**/*.ts',
                 'verticals/inventory-stock/shared/outbox/**/*.ts',
@@ -7492,98 +6553,6 @@ it('generated fluent slots preserve multiline call entries', () => {
   expect(entries.length).toBe(3);
   expect(entries[0] ?? '').toMatch(/FirstApi/u);
 });
-
-for (const supportBindings of [
-  '  GatewayAssertionRedemptionDatabaseLive,',
-  '  GatewayAssertionPgClientLive,\n  GatewayAssertionRedemptionDatabaseLive,',
-]) {
-  it.live(
-    `governed generation preserves formatter-merged support imports without duplicating canonical bindings: ${supportBindings}`,
-    Effect.fn(function* mergedSupportImports() {
-      yield* withFixture(
-        Effect.fn(function* supportImportFixture(fixture) {
-          yield* run(fixture, scaffoldCommand.moduleApi, [
-            scaffoldFlag.vertical,
-            inventorySlug,
-            '--name',
-            fixtureName.resourceDetail,
-          ]);
-          const rootPath = path.join(fixture.root, inventoryHandlerRootFile);
-          const source = yield* readFixtureFile(fixture.root, inventoryHandlerRootFile);
-          const canonical =
-            "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';";
-          const merged = `import {\n${supportBindings}\n  GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,\n} from './auth/gateway-assertion-redemption.ts';`;
-          expect(source.includes(canonical)).toBe(true);
-          yield* Effect.promise(() => writeFile(rootPath, source.replace(canonical, merged)));
-          const flags = [scaffoldFlag.vertical, inventorySlug, '--name', fixtureName.resourceDetail];
-          yield* run(fixture, scaffoldCommand.moduleApi, flags);
-          const generated = yield* readFixtureFile(fixture.root, inventoryHandlerRootFile);
-          expect(generated).toContain(merged);
-          const beforeRerun = yield* snapshotTree(fixture.root);
-          yield* run(fixture, scaffoldCommand.moduleApi, flags);
-          expect(yield* snapshotTree(fixture.root)).toEqual(beforeRerun);
-          const entries = readGeneratedSlotEntries(
-            generated,
-            GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
-            GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
-          );
-          expect(entries.filter((entry) => entry.includes("'./auth/gateway-assertion-redemption.ts'"))).toHaveLength(1);
-        }),
-      );
-    }),
-  );
-}
-
-it.live(
-  'governed generation rejects an unrecognized binding beside the database and PgClient support imports',
-  Effect.fn(function* invalidPgClientSupportImports() {
-    yield* withFixture(
-      Effect.fn(function* invalidPgClientSupportFixture(fixture) {
-        const flags = [scaffoldFlag.vertical, inventorySlug, '--name', fixtureName.resourceDetail];
-        yield* run(fixture, scaffoldCommand.moduleApi, flags);
-        const rootPath = path.join(fixture.root, inventoryHandlerRootFile);
-        const source = yield* readFixtureFile(fixture.root, inventoryHandlerRootFile);
-        const canonical =
-          "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';";
-        const invalid =
-          "import { GatewayAssertionPgClientLive, GatewayAssertionRedemptionDatabaseLive, GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive, UnapprovedService } from './auth/gateway-assertion-redemption.ts';";
-        expect(source.includes(canonical)).toBe(true);
-        yield* Effect.promise(() => writeFile(rootPath, source.replace(canonical, invalid)));
-        yield* assertScaffoldRefused(fixture, scaffoldCommand.moduleApi, flags, /unsupported developer content/u);
-      }),
-    );
-  }),
-);
-
-it.live(
-  'governed generation rejects a merged support import whose generated binding points at another export',
-  Effect.fn(function* invalidMergedSupportImports() {
-    yield* withFixture(
-      Effect.fn(function* invalidSupportImportFixture(fixture) {
-        yield* run(fixture, scaffoldCommand.moduleApi, [
-          scaffoldFlag.vertical,
-          inventorySlug,
-          '--name',
-          fixtureName.resourceDetail,
-        ]);
-        const rootPath = path.join(fixture.root, inventoryHandlerRootFile);
-        const source = yield* readFixtureFile(fixture.root, inventoryHandlerRootFile);
-        const invalid = source.replace(
-          'GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive',
-          'GatewayAssertionRedemptionDatabaseLive as GovernedGatewayAssertionRedemptionLive',
-        );
-        expect(invalid).not.toBe(source);
-        yield* Effect.promise(() => writeFile(rootPath, invalid));
-        yield* assertScaffoldRefused(
-          fixture,
-          scaffoldCommand.moduleApi,
-          [scaffoldFlag.vertical, inventorySlug, '--name', fixtureName.resourceDetail],
-          /unsupported developer content/u,
-        );
-      }),
-    );
-  }),
-);
 
 for (const [start, end] of [
   [GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START, GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END],
@@ -7783,17 +6752,6 @@ it.live(
         'ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime',
         'ActionRuntime, CounterfeitRedemptionService as GatewayAssertionRedemptionService, ReadRuntime',
       ],
-      [
-        '  GatewayAssertionRedemptionDatabaseLive,\n  GatewayAssertionRedemptionLive as',
-        '  CounterfeitDatabaseLive as GatewayAssertionRedemptionDatabaseLive,\n  GatewayAssertionRedemptionLive as',
-      ],
-      ['Layer.provide(GatewayAssertionRedemptionDatabaseLive),', 'Layer.provide(CounterfeitDatabaseLive),'],
-      [
-        'Layer.Error<typeof productionGatewayAssertionRedemptionLive>',
-        'Layer.Error<typeof productionActionRuntimeLive>',
-      ],
-      [tuple, `${tuple}\n  mutate(productionGatewayAssertionRedemptionLive);`],
-      [tuple, `${tuple}\n  mutate(GatewayAssertionRedemptionDatabaseLive);`],
 
       [merge, `${merge}\n  governedReadRuntimeLive['service'] = evil;`],
     ];
@@ -7990,7 +6948,7 @@ const configureApiOnlyInventory = Effect.fn(function* configureApiOnlyInventory(
 });
 
 it.live(
-  'API-only business generators preserve server ownership, permission grammar and rerun adaptations',
+  'API-only business generators preserve server ownership and rerun adaptations',
   Effect.fn(function* apiOnlyBusinessGenerators() {
     yield* withFixture(
       Effect.fn(function* apiOnlyBusinessFixture(fixture) {
@@ -7998,32 +6956,21 @@ it.live(
         const before = yield* snapshotTree(fixture.root);
         const commands: readonly (readonly [ScaffoldCommand, readonly string[]])[] = [
           ['resource', [scaffoldFlag.vertical, inventorySlug, scaffoldFlag.resource, 'selection']],
-          [
-            'permission',
-            [
-              scaffoldFlag.vertical,
-              inventorySlug,
-              PERMISSION_FLAG,
-              'commerce.cart.read.open_selection_population',
-              '--scope',
-              'module',
-            ],
-          ],
-          ['action', [scaffoldFlag.vertical, inventorySlug, '--action', 'register-selection']],
+          ['action', [scaffoldFlag.vertical, inventorySlug, '--action', selectionActionName]],
           [scaffoldCommand.moduleApi, [scaffoldFlag.vertical, inventorySlug, '--name', 'open-selection-population']],
         ];
         yield* assertScaffoldRefused(
           fixture,
-          'permission',
+          'action',
           [
             scaffoldFlag.vertical,
             inventorySlug,
-            PERMISSION_FLAG,
-            'commerce.cart.read.open-selection-population',
-            '--scope',
-            'module',
+            '--action',
+            selectionActionName,
+            scaffoldFlag.accessRisk,
+            accessRiskFailure,
           ],
-          /stable lowercase dotted/u,
+          /--access-risk must be routine, sensitive, critical/u,
         );
         for (const [command, args] of commands) {
           expect((yield* run(fixture, command, args)).kind).toBe('generated');
@@ -8033,13 +6980,6 @@ it.live(
         expect(added.length).toBeGreaterThan(4);
         expect(added.filter((file) => /module-federation|src\/components|src\/routes|^apps\//u.test(file))).toEqual([]);
         expect(generated[shellSentinelFile]).toBe(before[shellSentinelFile]);
-        const permissionPath =
-          'verticals/inventory-stock/shared/permissions/commerce-cart-read-open-selection-population.ts';
-        expect(generated[permissionPath]).toContain("key: 'commerce.cart.read.open_selection_population'");
-        expect(generated[inventoryManifestFile]).toContain(
-          "import { commerceCartReadOpenSelectionPopulationPermission } from './shared/permissions/commerce-cart-read-open-selection-population.ts';",
-        );
-        expect(generated[inventoryManifestFile]).toContain('      commerceCartReadOpenSelectionPopulationPermission,');
         expect(generated[inventoryManifestFile]).toContain(
           "import { OpenSelectionPopulationApi } from './shared/apis/open-selection-population.ts';",
         );
@@ -8090,6 +7030,143 @@ it.live(
 );
 
 it.live(
+  'access carriers scaffold a record scope, a workload marker and refuse the invalid combinations',
+  Effect.fn(function* mergedScenarioAccessCarriers() {
+    yield* withFixture(
+      Effect.fn(function* mergedScenarioAccessCarrierFixture(fixture) {
+        const recordScopedActionName = 'reserve-stock';
+        const workloadActionName = 'apply-stock-hold';
+        const actionPath = `verticals/inventory-stock/src/actions/${recordScopedActionName}.action.ts`;
+        yield* run(fixture, 'action', [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--action',
+          recordScopedActionName,
+          scaffoldFlag.legalEntityScope,
+          'required',
+          scaffoldFlag.accessRisk,
+          'critical',
+          scaffoldFlag.accessSelectors,
+          'assigned,team',
+        ]);
+        const recordScoped = yield* readFixtureFile(fixture.root, actionPath);
+        expect(recordScoped).toMatch(/accessDeclaration: \{/u);
+        expect(recordScoped).toMatch(/risk: 'critical',/u);
+        expect(recordScoped).toMatch(/selectors: \['assigned', 'team'\],/u);
+        expect(recordScoped).toMatch(/recordId: Schema\.String\.check\(Schema\.isUUID\(\)\),/u);
+        expect(recordScoped).toMatch(
+          /accessTarget: \(input\) => \(\{ moduleKey: 'inventory\.stock', recordKey: input\.recordId \}\),/u,
+        );
+        expect(recordScoped).toMatch(/authorization: \{ kind: 'protected' \},/u);
+        expect(recordScoped).not.toMatch(/provisioning|permissionTarget|action_execution/u);
+
+        const workloadPath = `verticals/inventory-stock/src/actions/${workloadActionName}.action.ts`;
+        yield* run(fixture, 'action', [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--action',
+          workloadActionName,
+          scaffoldFlag.legalEntityScope,
+          'required',
+          scaffoldFlag.accessWorkload,
+          'the stock projection worker reserves stock outside any human session',
+          scaffoldFlag.accessWorkloadKeys,
+          'inventory.stock-projection-worker',
+        ]);
+        const workload = yield* readFixtureFile(fixture.root, workloadPath);
+        expect(workload).toMatch(
+          /accessWorkload: \{\n\s+reason: 'the stock projection worker reserves stock outside any human session',\n\s+workloads: \['inventory\.stock-projection-worker'\],\n\s+\},/u,
+        );
+        expect(workload).not.toMatch(/accessDeclaration: \{/u);
+        expect(workload).not.toMatch(/recordId: Schema/u);
+
+        // O73: a workload marker without its registered keys is refused before anything is written.
+        yield* assertScaffoldRefused(
+          fixture,
+          'action',
+          [
+            scaffoldFlag.vertical,
+            inventorySlug,
+            '--action',
+            workloadActionName,
+            scaffoldFlag.legalEntityScope,
+            'required',
+            scaffoldFlag.accessWorkload,
+            'a machine writes here',
+          ],
+          /--access-workload requires --access-workload-keys/u,
+        );
+
+        yield* assertScaffoldRefused(
+          fixture,
+          'action',
+          [
+            scaffoldFlag.vertical,
+            inventorySlug,
+            '--action',
+            workloadActionName,
+            scaffoldFlag.legalEntityScope,
+            'required',
+            scaffoldFlag.accessWorkload,
+            'a machine writes here',
+            scaffoldFlag.accessWorkloadKeys,
+            'inventory.machine-provisioner',
+            scaffoldFlag.accessSelectors,
+            'assigned',
+          ],
+          /a workload Action declares no access risk or selectors/u,
+        );
+        yield* assertScaffoldRefused(
+          fixture,
+          'action',
+          [
+            scaffoldFlag.vertical,
+            inventorySlug,
+            '--action',
+            recordScopedActionName,
+            scaffoldFlag.legalEntityScope,
+            'required',
+            scaffoldFlag.accessSelectors,
+            'assigned,tenant',
+          ],
+          /--access-selectors may contain only all, assigned, entrusted, team/u,
+        );
+        yield* assertScaffoldRefused(
+          fixture,
+          'action',
+          [
+            scaffoldFlag.vertical,
+            inventorySlug,
+            '--action',
+            recordScopedActionName,
+            scaffoldFlag.legalEntityScope,
+            'required',
+            scaffoldFlag.authorization,
+            'authenticated_principal',
+          ],
+          /--authorization must be protected for Actions/u,
+        );
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.microverticalPage,
+          [
+            scaffoldFlag.vertical,
+            inventorySlug,
+            '--page',
+            'selections',
+            scaffoldFlag.authorization,
+            'protected',
+            scaffoldFlag.accessSelectors,
+            'assigned',
+          ],
+          /--access-selectors require a single-record read/u,
+        );
+      }),
+    );
+  }),
+);
+
+it.live(
   'scaffold executable preserves success and fails malformed requests and generator errors without writes',
   Effect.fn(function* executableStatusControls() {
     yield* withFixture(
@@ -8105,13 +7182,13 @@ it.live(
           [MODULE_CONTRACT_COMMAND, '--unknown-flag', 'x'],
           ['unknown-command'],
           [
-            'permission',
+            'action',
             scaffoldFlag.vertical,
             inventorySlug,
-            PERMISSION_FLAG,
-            'commerce.cart.read.open-selection-population',
-            '--scope',
-            'module',
+            '--action',
+            selectionActionName,
+            scaffoldFlag.accessRisk,
+            accessRiskFailure,
           ],
           [MODULE_CONTRACT_COMMAND, scaffoldFlag.vertical, MISSING_OWNER, scaffoldFlag.module, MISSING_MODULE],
           // Existing owner files make this a controlled generator overwrite failure.

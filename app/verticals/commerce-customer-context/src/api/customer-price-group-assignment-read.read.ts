@@ -26,9 +26,7 @@ import {
   customerPriceGroupAssignmentStoreForTransaction,
   customerPriceGroupProfileValidationForTransaction,
 } from '../persistence/price-group-persistence.ts';
-import { customerPriceGroupReadPermission } from './customer-price-group-read-permission.ts';
-
-export { customerPriceGroupReadPermission as customerPriceGroupAssignmentReadPermission } from './customer-price-group-read-permission.ts';
+import { customerPriceGroupOwnerFacts } from './customer-price-group-read-permission.ts';
 
 export interface CustomerPriceGroupAssignmentReadServices {
   readonly now: Effect.Effect<PriceGroupInstant>;
@@ -95,17 +93,28 @@ export const readCustomerPriceGroupAssignments = Effect.fn(
   } satisfies CustomerPriceGroupAssignmentReadResponse;
 });
 
+const CUSTOMER_CONTEXT_MODULE_ID = 'commerce.customer-context' as const;
+
 const customerPriceGroupAssignmentReadEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.customer-price-group-assignment-read',
-  moduleKey: 'commerce.customer-context',
+  moduleKey: CUSTOMER_CONTEXT_MODULE_ID,
   role: 'api',
 });
 
 export const customerPriceGroupAssignmentReadRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.customer-price-group-assignment.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'customer-pricing', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'list',
+    accessOwnerFacts: customerPriceGroupOwnerFacts,
     domainErrorSchema: Schema.Never,
     entrypoint: customerPriceGroupAssignmentReadEntrypoint,
     evidencePolicy: {
@@ -114,8 +123,7 @@ export const customerPriceGroupAssignmentReadRead = defineRead(
     },
     inputSchema: CustomerPriceGroupAssignmentReadRequestSchema,
     legalEntityScope: 'required',
-    owningModuleKey: 'commerce.customer-context',
-    permissionTarget: 'conditional',
+    owningModuleKey: CUSTOMER_CONTEXT_MODULE_ID,
     policies: [],
     readKey: 'commerce.customer-context.api.customer-price-group-assignment-read',
     resultSchema: CustomerPriceGroupAssignmentReadResponseSchema,
@@ -149,5 +157,4 @@ export const customerPriceGroupAssignmentReadRead = defineRead(
       store: customerPriceGroupAssignmentStoreForTransaction(transaction, trustedScope),
     });
   },
-  customerPriceGroupReadPermission,
 );

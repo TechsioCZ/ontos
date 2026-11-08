@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.assortment
 // @ontos-action-http-slug end-closed-assortment-boundary
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/end-closed-assortment-boundary.ts';
 
 export { EndClosedAssortmentBoundaryPayloadSchema } from '../actions/end-closed-assortment-boundary.ts';
-
 const EndClosedAssortmentBoundaryActionHeadersSchema = Schema.Struct({
   'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
 });
@@ -28,6 +28,7 @@ export const EndClosedAssortmentBoundaryActionForbiddenProblemSchema = makeProbl
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -139,7 +140,7 @@ export const EndClosedAssortmentBoundaryActionApi = HttpApi.make('EndClosedAssor
         error: actionErrors,
         headers: EndClosedAssortmentBoundaryActionHeadersSchema,
         payload: Schema.toEncoded(EndClosedAssortmentBoundaryPayloadSchema),
-        success: EndClosedAssortmentBoundaryResultSchema,
+        success: [ActionProposalAcceptedSchema, EndClosedAssortmentBoundaryResultSchema],
       }),
     )
     .middleware(EndClosedAssortmentBoundaryActionSchemaErrorMiddleware),

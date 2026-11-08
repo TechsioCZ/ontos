@@ -518,7 +518,7 @@ const migrateDomainRegroup = Effect.fn('migrateDomainRegroup')(function* runMigr
     .pipe(Effect.catchTag('DryRunRollback', () => Console.log('dry run: rolled back, nothing changed')));
   if (!dryRun) {
     yield* Console.log(
-      'domain regroup migration committed. Next: node scripts/demo/migrate-domain-regroup-authorization.mts (SpiceDB grants), fast-forward the runtime, pnpm install, build the changed apps, DEMO_RESET=0 DEMO_SKIP_BUILD=1 scripts/demo/up.sh, restart the agent MCP server.',
+      'Domain regroup migration committed. Authorization v2 has no tuple migration. Rebuild reviewed access through the canonical demo bootstrap and verify it before resuming the demo.',
     );
   }
 });

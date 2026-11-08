@@ -47,26 +47,32 @@ const bulkPatchFields = {
   role: Schema.optionalKey(EmployeeRoleSchema),
 };
 
+const ApplyCreateEmployeeCommandSchema = Schema.TaggedStruct('CreateEmployee', {
+  ...employeeFields,
+  id: EmployeeIdSchema,
+});
+
+const ApplyUpdateEmployeeCommandSchema = Schema.TaggedStruct('UpdateEmployee', {
+  id: EmployeeIdSchema,
+  patch: Schema.Struct(employeePatchFields),
+});
+
+const ApplyBulkUpdateEmployeesCommandSchema = Schema.TaggedStruct('BulkUpdateEmployees', {
+  ids: Schema.Array(EmployeeIdSchema).check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+  patch: Schema.Struct(bulkPatchFields),
+});
+
 export const WorkforceCommandSchema = Schema.Union([
-  Schema.TaggedStruct('CreateEmployee', {
-    ...employeeFields,
-    id: EmployeeIdSchema,
-  }),
-  Schema.TaggedStruct('UpdateEmployee', {
-    id: EmployeeIdSchema,
-    patch: Schema.Struct(employeePatchFields),
-  }),
-  Schema.TaggedStruct('BulkUpdateEmployees', {
-    ids: Schema.Array(EmployeeIdSchema).check(Schema.isMinLength(1), Schema.isMaxLength(500)),
-    patch: Schema.Struct(bulkPatchFields),
-  }),
+  ApplyCreateEmployeeCommandSchema,
+  ApplyUpdateEmployeeCommandSchema,
+  ApplyBulkUpdateEmployeesCommandSchema,
 ]);
 export type WorkforceCommand = typeof WorkforceCommandSchema.Type;
-export const ApplyCommandPayloadSchema = Schema.Struct({
+export const WorkforceCommandPayloadSchema = Schema.Struct({
   command: WorkforceCommandSchema,
   expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
-export type ApplyCommandPayload = typeof ApplyCommandPayloadSchema.Type;
+export type WorkforceCommandPayload = typeof WorkforceCommandPayloadSchema.Type;
 /** Create and update return one Employee; a bulk update returns every Employee it changed. */
 export const ApplyCommandResultSchema = Schema.Struct({
   employees: Schema.Array(EmployeeSchema),
@@ -94,3 +100,15 @@ export { WorkforceReferenceUnavailable } from '../errors/workforce-reference-una
 export { WorkforceReferenceIneligible } from '../errors/workforce-reference-ineligible.ts';
 export { WorkforcePermissionDenied } from '../errors/workforce-permission-denied.ts';
 export { WorkforceDuplicateEmail } from '../errors/workforce-duplicate-email.ts';
+
+/** Scope-wide creation. Every existing-record mutation belongs to the complete employee.update target set. */
+export const ApplyCommandPayloadSchema = Schema.Struct({
+  command: ApplyCreateEmployeeCommandSchema,
+  expectedRevision: WorkforceCommandPayloadSchema.fields.expectedRevision,
+});
+export const UpdateEmployeePayloadSchema = Schema.Struct({
+  command: Schema.Union([ApplyUpdateEmployeeCommandSchema, ApplyBulkUpdateEmployeesCommandSchema]),
+  expectedRevision: WorkforceCommandPayloadSchema.fields.expectedRevision,
+});
+
+export type ApplyCommandPayload = typeof ApplyCommandPayloadSchema.Type;

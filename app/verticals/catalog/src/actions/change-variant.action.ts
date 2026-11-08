@@ -6,14 +6,19 @@ import {
   prepareCatalogOpenSelectionPopulation,
   validatePreparedCatalogScope,
 } from '../services/catalog-open-selection-preflight.ts';
-import type { ActionHandlerContext, ActionServiceFactory, ActionServicePreflight } from '@app/core-runtime';
-import { Effect, Match, Schema } from 'effect';
+import type {
+  ActionHandlerContext,
+  ActionServiceFactory,
+  ActionServicePreparationContext,
+  ActionServicePreflight,
+} from '@app/core-runtime';
+import { Effect, Match, Option, Schema } from 'effect';
 import type { Crypto } from 'effect';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 
 import { ChangeVariantPayloadSchema, ChangeVariantResultSchema } from '../../shared/actions/change-variant.ts';
 import type { ChangeVariantPayload, ChangeVariantResult } from '../../shared/actions/change-variant.ts';
-import { cartOpenSelectionPopulationFromEnvironment } from '../../shared/domain/catalog-open-selection-population.ts';
+import { cartOpenSelectionPopulationForScope } from '../../shared/domain/catalog-open-selection-population.ts';
 import { decideVariantUseChange } from '../../shared/domain/variant-use-change.ts';
 import type { VariantUseChangeOperation } from '../../shared/domain/variant-use-change.ts';
 import type { VariantPersistence } from '../persistence/variant-persistence.ts';
@@ -165,7 +170,7 @@ const changeVariantActionServices = Effect.fn('ChangeVariantAction.makeServices'
     readonly scope: Parameters<ActionServiceFactory<never>>[1];
   },
 ) {
-  const openSelections = preparedPopulation ?? (yield* cartOpenSelectionPopulationFromEnvironment);
+  const openSelections = preparedPopulation ?? Option.getOrUndefined(yield* cartOpenSelectionPopulationForScope(scope));
   return yield* variantPersistenceForScope(transaction, scope).pipe(
     Effect.map((services): ChangeVariantServices => ({
       ...services,
@@ -195,20 +200,35 @@ const changeVariantActionServices = Effect.fn('ChangeVariantAction.makeServices'
   );
 });
 
-const prepareChangeVariantActionServices: ActionServicePreflight<
-  typeof ChangeVariantPayloadSchema.Type,
-  Effect.Success<ReturnType<typeof changeVariantActionServices>>,
-  never
-> = Effect.fn('prepareChangeVariantActionServices')(function* prepareServices(_payload, context) {
+const prepareChangeVariantActionServices = Effect.fn('prepareChangeVariantActionServices')(function* prepareServices(
+  _payload: typeof ChangeVariantPayloadSchema.Type,
+  context: ActionServicePreparationContext,
+) {
   const population = yield* prepareCatalogOpenSelectionPopulation(context);
-  return (transaction, scope, revision) =>
+  return (
+    transaction: Parameters<ActionServiceFactory<never>>[0],
+    scope: Parameters<ActionServiceFactory<never>>[1],
+    revision: Parameters<ActionServiceFactory<never>>[2],
+  ) =>
     validatePreparedCatalogScope(context, scope, revision).pipe(
       Effect.flatMap(() => changeVariantActionServices(transaction, { population, scope })),
     );
-});
+}) satisfies ActionServicePreflight<
+  typeof ChangeVariantPayloadSchema.Type,
+  Effect.Success<ReturnType<typeof changeVariantActionServices>>,
+  typeof VariantActionErrorSchema.Type
+>;
 
 export const changeVariantAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.variant.change',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'variant', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.change-variant.access.v1',
@@ -220,7 +240,7 @@ export const changeVariantAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

@@ -24,7 +24,7 @@ const unavailable = (cause: unknown) => {
 
 const variantHistoryEntrypoint = defineTenantModuleEntrypoint({
   access: 'historical_read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.variant-history' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.variant-history',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -66,6 +66,14 @@ export const readVariantHistory = Effect.fn('VariantHistoryRead.readVariantHisto
 
 export const variantHistoryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.variant-history.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'variant', level: 'extended' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: variantHistoryEntrypoint,
     evidencePolicy: {
@@ -75,7 +83,6 @@ export const variantHistoryRead = defineRead(
     inputSchema: VariantHistoryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.variant-history',
     resultSchema: VariantHistoryResponseSchema,
@@ -86,5 +93,4 @@ export const variantHistoryRead = defineRead(
       Effect.suspend(() => readVariantHistory(input, context.scope.tenantId, context.services)),
   },
   (transaction, scope) => Effect.succeed(variantHistoryForScope(transaction, scope)),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

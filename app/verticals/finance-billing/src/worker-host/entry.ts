@@ -10,7 +10,6 @@ import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-
 import { Layer } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import {
-  ResourceContainmentRelationshipMutationLive,
   ActiveApplicationCompositionConfigLive,
   defineOutboxWorkerEntry,
   extractOutboxWorkerSubscriptions,
@@ -51,7 +50,6 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
     Layer.provide(SearchSourceLive),
     Layer.provide(CoreSearchWorkerSnapshotLive),
     Layer.provide(CoreSearchProjectionStoreLive),
-    Layer.provide(ResourceContainmentRelationshipMutationLive),
     Layer.provide(SearchIngestionRegistryLive),
     Layer.provide(outboxWorkerRepositoryLive),
     Layer.provide(outboxWorkerCorePersistenceLive),

@@ -1,14 +1,17 @@
-import { createHash } from 'node:crypto';
-import nodePath from 'node:path';
-import { build } from 'esbuild';
+import { HttpApi } from 'effect/http-api';
 // Explicit TEST assembly: production Privacy defaults remain unavailable.
 import {
   defineDatabaseIdentityEnrollment,
   makeDatabaseIdentityEnrollmentLive,
   ActionAuthorizationPreflightDatabaseLive,
   ContextAccessLive,
-  CorePersistenceLive,
-  DatabaseConfigLive,
+  extractVerticalRuntimeSafeDescriptors,
+  canonicalOntosPublicApiKey,
+  OntosActionContractSchema,
+  OntosApiContractSchema,
+  OntosOperationContractSchema,
+  OntosOutboxSubscriptionContractSchema,
+  OntosModuleRequirementsSchema,
   GatewayAssertionRedemptionService,
   GatewayAssertionReplayError,
   GatewayAssertionRedemptionUnavailableError,
@@ -16,6 +19,8 @@ import {
   ReadRuntimeLive,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
+import { CoreDatabase, testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import {
   ActionPermissionLive,
   ActionRepositoryLive,
@@ -28,22 +33,19 @@ import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/module
 import { executePrivacyMeasureExecutionWithAuthorization } from '@app/party-registry/api/client';
 import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
-import {
-  NodeChildProcessSpawner,
-  NodeCrypto,
-  NodeHttpServer,
-  NodeHttpServerRequest,
-  NodeServices,
-} from '@effect/platform-node';
+import { NodeCrypto, NodeHttpServer, NodeHttpServerRequest, NodeServices } from '@effect/platform-node';
 import { runMain } from '@effect/platform-node/NodeRuntime';
-import { Clock, Config, Crypto, Effect, FileSystem, Layer, Option, Redacted, Schema, Stream } from 'effect';
+import { Clock, Config, Crypto, Deferred, Effect, FiberHandle, Layer, Option, Redacted, Schema } from 'effect';
 import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { PgClient } from '@effect/sql-pg';
 import { Reactivity } from 'effect/reactivity';
 import { Hex } from 'effect/encoding';
-import { ChildProcess } from 'effect/process';
 
 import { makePrivacyApiRuntime } from '../../api/index.ts';
+import { makePrivacyCompletionAccessGate } from './access-gate.ts';
+import { privacyRegistration } from '../../vertical.registration.ts';
+import { privacyManifest } from '../../vertical.manifest.ts';
+import { outboxWorkerEntry } from '../../src/worker-host/entry.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { OwnerExecutionAuthority } from '../../src/actions/privacy-owner-execution-authority.ts';
 import { PrivacyOperationPersistenceError } from '../../src/persistence/privacy-operation-repository.ts';
@@ -54,6 +56,32 @@ class PrivacyCompletionHttpFailure extends Schema.TaggedError<PrivacyCompletionH
   'PrivacyCompletionHttpFailure',
   { reason: Schema.String },
 ) {}
+const completeActualPrivacyWatchdog = Effect.scoped(
+  Effect.gen(function* completeActualPrivacyWatchdogCycle() {
+    type Failure = Effect.Error<ReturnType<typeof outboxWorkerEntry.runLoop>> | PrivacyCompletionHttpFailure;
+    const completed = yield* Deferred.make<true, Failure>();
+    const handle = yield* FiberHandle.make<Effect.Success<ReturnType<typeof outboxWorkerEntry.runLoop>>, Failure>();
+    const loop = outboxWorkerEntry.runLoop({
+      config: {
+        claimOwner: `privacy.core-outbox-worker:privacy-completion-${process.pid}`,
+        maxDeliveries: 1,
+        pollIntervalMs: 10,
+      },
+      health: {
+        cycleFailed: Deferred.fail(
+          completed,
+          new PrivacyCompletionHttpFailure({ reason: 'The actual Privacy watchdog cycle failed' }),
+        ).pipe(Effect.asVoid),
+        cycleSucceeded: Deferred.succeed(completed, true).pipe(Effect.asVoid),
+      },
+    });
+    yield* FiberHandle.run(
+      handle,
+      loop.pipe(Effect.tapCause((cause) => Deferred.failCause(completed, cause).pipe(Effect.asVoid))),
+    );
+    yield* Deferred.await(completed);
+  }),
+);
 // Closed TEST transport fault. It cannot supply an outcome or bypass the real Action.
 export const makeReportResponseLossControl = () => {
   let armed = false;
@@ -86,107 +114,6 @@ export const makeReportResponseLossControl = () => {
     observe: () => ({ armed, committedResponseStatus, discardedResponses }),
   };
 };
-// Immutable historical TEST producer, not a rewrite of the current registered action.
-declare global {
-  interface ImportMeta {
-    readonly ONTOS_1258_LEGACY_DISPATCH_BUILD?: boolean;
-  }
-}
-const legacyBuild = import.meta.ONTOS_1258_LEGACY_DISPATCH_BUILD === true;
-const legacyRevision = '0325cbf9ffdb36a2e3781b8292df25d67d564f10';
-const legacySha256 = 'dc8a3848294951d5f54ce8758e506ca556ce37c42911c2a693c406a02a5c8132';
-const legacyDispatchSource =
-  "// @generated by OntOS Codesmith Action v1\n// @ontos-action-owner privacy.core\n// @ontos-action-slug dispatch-privacy-measure\nimport type { ActionHandlerContext } from '@app/core-runtime';\nimport { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';\nimport { Effect } from 'effect';\n\nimport {\n  DispatchPrivacyMeasurePayloadSchema,\n  DispatchPrivacyMeasureResultSchema,\n} from '../../shared/actions/dispatch-privacy-measure.ts';\nimport type { DispatchPrivacyMeasurePayload } from '../../shared/actions/dispatch-privacy-measure.ts';\nimport { validatePrivacyMeasureHandoff } from '../../shared/domain/privacy-measure-handoff.ts';\nimport { OutboxPayloadSchema } from '../../shared/outbox/privacy-measure-dispatched.ts';\nimport { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';\nimport type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';\nimport { createDispatchPrivacyMeasurePrivacyMeasureDispatchedOutboxMessage as createOutboxMessage } from './dispatch-privacy-measure-privacy-measure-dispatched.outbox-message.ts';\nimport {\n  PrivacyActionAuditEvidenceSchema,\n  PrivacyActionErrorSchema,\n  PrivacyActionRejected,\n  completePrivacyAction,\n  requirePrivacyActionScope,\n} from './privacy-operation-action-support.ts';\n\nconst domainEvents = { 'privacy.measure.dispatched': OutboxPayloadSchema } as const;\nconst MODULE_KEY = 'privacy.core' as const;\n\nconst handleDispatchPrivacyMeasure = Effect.fn('DispatchPrivacyMeasureAction.handle')(\n  function* handleDispatchPrivacyMeasure(\n    payload: DispatchPrivacyMeasurePayload,\n    context: ActionHandlerContext<typeof domainEvents, PrivacyOperationRepositoryService>,\n  ) {\n    const scope = yield* requirePrivacyActionScope(context.scope);\n    const reasons = validatePrivacyMeasureHandoff(payload.handoff);\n    if (reasons.length > 0 || payload.handoff.tenantId !== scope.tenantId) {\n      return yield* new PrivacyActionRejected({\n        code: 'privacy_action_rejected',\n        reason: reasons.join('; ') || 'Privacy Measure must belong to the trusted Tenant',\n      });\n    }\n    const result = yield* context.services.dispatchMeasure(\n      scope.tenantId,\n      scope.legalEntityId,\n      context.actionInvocationId,\n      payload.handoff,\n    );\n    const eventPayload = { handoff: result };\n    const event = yield* context.addDomainEvent({\n      eventType: 'privacy.measure.dispatched',\n      payloadJson: eventPayload,\n      producerModuleKey: MODULE_KEY,\n      subjectModuleKey: MODULE_KEY,\n      subjectResourceId: result.measureId,\n      subjectResourceType: 'privacy.core.privacy-measure',\n    });\n    yield* context.addOutboxMessage(event, createOutboxMessage(eventPayload));\n    return yield* completePrivacyAction(context, 'dispatch-privacy-measure', result.measureId, result);\n  },\n);\n\nexport const dispatchPrivacyMeasureAction = defineAction(\n  {\n    accessEvidencePolicy: {\n      captureMode: 'metadata_only',\n      policyKey: 'privacy.core.dispatch-privacy-measure.access.v1',\n    },\n    actionKey: 'privacy.core.dispatch-privacy-measure',\n    auditEvidenceSchema: PrivacyActionAuditEvidenceSchema,\n    auditProfile: 'standard',\n    domainErrorSchema: PrivacyActionErrorSchema,\n    domainEvents,\n    entrypoint: defineTenantModuleEntrypoint({\n      access: 'write',\n      authorization: { kind: 'action_execution', provisioning: 'explicit' },\n      entrypointKey: 'privacy.core.dispatch-privacy-measure',\n      moduleKey: MODULE_KEY,\n      role: 'action',\n    }),\n    idempotency: 'required',\n    legalEntityScope: 'required',\n    owningModuleKey: MODULE_KEY,\n    payloadSchema: DispatchPrivacyMeasurePayloadSchema,\n    policies: [],\n    resultSchema: DispatchPrivacyMeasureResultSchema,\n    schemaVersion: '1',\n  },\n  handleDispatchPrivacyMeasure,\n  privacyOperationRepositoryForScope,\n);\n\n// <generated-outbox-message-exports>\n// </generated-outbox-message-exports>\n";
-const legacyStartupFlag = '--serve-legacy-dispatch';
-const legacySelection = process.argv.includes(legacyStartupFlag);
-const legacyDescription = {
-  marker: ultramodernApiMarker,
-  producerRevision: legacyRevision,
-  producerSha256: legacySha256,
-  protocolVersion: 1,
-  selection: legacyStartupFlag,
-};
-const legacyServer = Effect.scoped(
-  Effect.gen(function* buildFrozenOldDispatchServer() {
-    if (createHash('sha256').update(legacyDispatchSource).digest('hex') !== legacySha256) {
-      return yield* new PrivacyCompletionHttpFailure({ reason: 'Frozen legacy producer source hash mismatch' });
-    }
-    const directory = yield* Config.String('ONTOS_1258_PRIVACY_DIRECTORY');
-    const creatorPid = yield* Config.Int('ONTOS_1258_CREATOR_PID');
-    const fs = yield* FileSystem.FileSystem;
-    const canonical = yield* fs.realPath(directory);
-    if (canonical !== directory || !canonical.endsWith('/verticals/privacy') || process.ppid !== creatorPid) {
-      return yield* new PrivacyCompletionHttpFailure({ reason: 'Frozen producer launch is not creator-bound' });
-    }
-    const output = yield* fs.makeTempDirectoryScoped({
-      directory: `${canonical}/node_modules`,
-      prefix: '.1258-old-writer-',
-    });
-    yield* fs.chmod(output, 0o700);
-    const artifact = `${output}/legacy.mjs`;
-    const expectedAction = nodePath.resolve(canonical, 'src/actions/dispatch-privacy-measure.action.ts');
-    let replaced = 0;
-    yield* Effect.tryPromise({
-      catch: () => new PrivacyCompletionHttpFailure({ reason: 'Frozen producer artifact build failed' }),
-      try: async () => {
-        await build({
-          bundle: true,
-          define: { 'import.meta.ONTOS_1258_LEGACY_DISPATCH_BUILD': 'true' },
-          entryPoints: [nodePath.resolve(canonical, 'tests/support/privacy-completion-http.ts')],
-          format: 'esm',
-          logLevel: 'silent',
-          outfile: artifact,
-          packages: 'external',
-          platform: 'node',
-          plugins: [
-            {
-              name: 'exact-frozen-privacy-dispatch',
-              setup(builder) {
-                // esbuild serializes this JavaScript pattern into Go's regexp dialect, which has no u flag.
-                const actionFilter = /dispatch-privacy-measure\.action\.ts$/u;
-                const goFilter = new RegExp(actionFilter.source, actionFilter.flags.replace('u', ''));
-                builder.onLoad({ filter: goFilter }, (args) => {
-                  const matches = nodePath.resolve(args.path) === expectedAction;
-                  replaced += matches ? 1 : 0;
-                  return matches
-                    ? {
-                        contents: legacyDispatchSource,
-                        loader: 'ts',
-                        resolveDir: nodePath.resolve(canonical, 'src/actions'),
-                      }
-                    : undefined;
-                });
-              },
-            },
-          ],
-        });
-      },
-    });
-    if (replaced !== 1) {
-      return yield* new PrivacyCompletionHttpFailure({
-        reason: 'Frozen producer must replace exactly one owner action',
-      });
-    }
-    const child = yield* ChildProcess.make(process.execPath, [artifact, legacyStartupFlag], {
-      env: { ONTOS_1258_LEGACY_WRAPPER_PID: String(process.pid) },
-      extendEnv: true,
-      stderr: 'pipe',
-      stdout: 'pipe',
-    });
-    const [code] = yield* Effect.all(
-      [
-        child.exitCode,
-        child.stdout.pipe(Stream.runForEach((chunk) => Effect.sync(() => process.stdout.write(chunk)))),
-        Stream.runDrain(child.stderr),
-      ],
-      { concurrency: 3 },
-    );
-    if (code !== 0) {
-      return yield* new PrivacyCompletionHttpFailure({ reason: 'Frozen producer runtime failed' });
-    }
-    return yield* Effect.void;
-  }),
-);
 const unavailable = () =>
   new PrivacyOperationPersistenceError({
     code: 'privacy_operation_persistence_unavailable',
@@ -289,16 +216,6 @@ const serve = Effect.scoped(
       ),
     );
     yield* verifyRuntimeCapabilities(runtime, settings);
-    if (legacyBuild) {
-      const expectedOid = yield* Config.String('ONTOS_1258_OWNED_DATABASE_OID');
-      const wrapper = yield* Config.Int('ONTOS_1258_LEGACY_WRAPPER_PID');
-      const identities = yield* runtime<{
-        readonly oid: string;
-      }>`select oid::text as oid from pg_database where datname=current_database()`;
-      if (identities[0]?.oid !== expectedOid || process.ppid !== wrapper || !legacySelection) {
-        return yield* new PrivacyCompletionHttpFailure({ reason: 'Frozen runtime physical identity was refused' });
-      }
-    }
     let redemptionAvailable = true;
     let authorityAvailable = true;
     const responseLoss = makeReportResponseLossControl();
@@ -326,6 +243,13 @@ const serve = Effect.scoped(
       }),
     });
     const crypto = yield* Crypto.Crypto;
+    // Every owner runtime and approval store uses the already validated case pool.
+    const executor = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, runtime));
+    const persistence = Layer.succeed(CoreDatabase, { executor });
+    const identitiesAndCrypto = Layer.mergeAll(
+      Layer.succeed(Crypto.Crypto, crypto),
+      makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([])),
+    );
     const authority = Layer.succeed(OwnerExecutionAuthority, {
       resolve: Effect.fn('PrivacyCompletionTest.authoritativeReceipt')(function* resolve(request, context) {
         if (!authorityAvailable) {
@@ -381,43 +305,41 @@ const serve = Effect.scoped(
       }),
     });
     const source = ActiveApplicationCompositionSourceLive.pipe(Layer.provide(FetchHttpClient.layer));
-    const moduleState = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
+    const moduleState = TenantModuleStateServiceLive.pipe(Layer.provide(persistence));
     const gate = ModuleStateGateLive.pipe(Layer.provide(moduleState));
     const entrypoint = ModuleEntrypointGatewayLive.pipe(Layer.provide(gate));
+    // The one access gate this suite scripts (C04 harness shape); the legacy pair stays beside it
+    // until the runners stop requiring `ActionPermission`/`ContextAccess` (C14).
+    const accessGate = makePrivacyCompletionAccessGate();
     const scope = OperationalScopeResolverLive.pipe(
-      Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive)),
+      Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, accessGate.layer)),
     );
     const infrastructure = Layer.mergeAll(
-      CorePersistenceLive,
+      persistence,
       ContextAccessLive,
       gate,
       entrypoint,
       scope,
       ActionRepositoryLive,
       ActionPermissionLive,
-      ActionAuthorizationPreflightDatabaseLive.pipe(Layer.provideMerge(CorePersistenceLive)),
+      ActionAuthorizationPreflightDatabaseLive.pipe(Layer.provideMerge(persistence)),
       ActiveApplicationCompositionConfigLive.pipe(Layer.provide(source)),
+      accessGate.layer,
     );
-    const action = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+    const ownerApprovals = makeOwnerActionApprovalsLive(ultramodernDeliveryUnit, privacyRegistration).pipe(
       Layer.provideMerge(authority),
       Layer.provide(infrastructure),
-      Layer.provide(
-        Layer.mergeAll(
-          DatabaseConfigLive,
-          NodeCrypto.layer,
-          makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([])),
-        ),
-      ),
+      Layer.provide(identitiesAndCrypto),
+    );
+    const action = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+      Layer.provideMerge(ownerApprovals),
+      Layer.provideMerge(authority),
+      Layer.provide(infrastructure),
+      Layer.provide(identitiesAndCrypto),
     );
     const read = ReadRuntimeLive.pipe(
-      Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive, entrypoint, scope)),
-      Layer.provide(
-        Layer.mergeAll(
-          DatabaseConfigLive,
-          NodeCrypto.layer,
-          makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([])),
-        ),
-      ),
+      Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, entrypoint, scope, accessGate.layer)),
+      Layer.provide(identitiesAndCrypto),
     );
     const api = makePrivacyApiRuntime(read, action, redemption);
     const handler = yield* Effect.acquireRelease(
@@ -428,6 +350,12 @@ const serve = Effect.scoped(
     yield* server.serve(
       Effect.gen(function* privacyRequest() {
         const request = yield* HttpServerRequest.HttpServerRequest;
+        if (request.method === 'POST' && request.url === '/__1258/dispatch-watchdog/complete') {
+          return yield* completeActualPrivacyWatchdog.pipe(
+            Effect.map(() => HttpServerResponse.empty({ status: 204 })),
+            Effect.catch((error) => HttpServerResponse.json({ errorTag: error._tag }, { status: 503 })),
+          );
+        }
         if (request.method === 'POST' && request.url === '/__1258/report-response/discard-next') {
           return HttpServerResponse.empty({ status: responseLoss.arm() ? 204 : 409 });
         }
@@ -473,52 +401,46 @@ const serve = Effect.scoped(
         Schema.Struct({ marker: Schema.Unknown, port: Schema.Number, type: Schema.Literal('ready') }),
       ),
     )({ marker: ultramodernApiMarker, port: address.port, type: 'ready' });
-    yield* legacyBuild
-      ? Schema.encodeEffect(
-          Schema.fromJsonString(
-            Schema.Struct({
-              legacy: Schema.Struct({
-                producerRevision: Schema.String,
-                producerSha256: Schema.String,
-                runtimePid: Schema.Int,
-                wrapperPid: Schema.Int,
-              }),
-              marker: Schema.Unknown,
-              port: Schema.Number,
-              type: Schema.Literal('ready'),
-            }),
-          ),
-        )({
-          legacy: {
-            producerRevision: legacyRevision,
-            producerSha256: legacySha256,
-            runtimePid: process.pid,
-            wrapperPid: process.ppid,
-          },
-          marker: ultramodernApiMarker,
-          port: address.port,
-          type: 'ready',
-        }).pipe(Effect.flatMap((line) => Effect.sync(() => process.stdout.write(`${line}\n`))))
-      : Effect.sync(() => process.stdout.write(`${ready}\n`));
+    yield* Effect.sync(() => process.stdout.write(`${ready}\n`));
     return yield* Effect.never;
   }),
 );
 
-const describe = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(ultramodernApiMarker).pipe(
-  Effect.flatMap((line) => Effect.sync(() => process.stdout.write(`${line}\n`))),
-);
+const ownerRuntime = extractVerticalRuntimeSafeDescriptors(privacyRegistration);
+const descriptionSchema = Schema.Struct({
+  marker: Schema.Unknown,
+  runtime: Schema.Struct({
+    actions: Schema.Array(OntosActionContractSchema),
+    api: Schema.Array(OntosApiContractSchema),
+    operationContracts: Schema.Array(OntosOperationContractSchema),
+    outboxSubscriptions: Schema.Array(OntosOutboxSubscriptionContractSchema),
+    requirements: Schema.optionalKey(OntosModuleRequirementsSchema),
+  }),
+});
+const describe = Schema.encodeEffect(Schema.fromJsonString(descriptionSchema))({
+  marker: ultramodernApiMarker,
+  runtime: {
+    ...ownerRuntime,
+    api: Object.entries(privacyManifest.publicSurface.api).map(([key, api]) => {
+      if (!HttpApi.isHttpApi(api)) {
+        throw new Error('The actual owner public API declaration is not a genuine HttpApi');
+      }
+      return {
+        key: canonicalOntosPublicApiKey(ownerRuntime.moduleId, key),
+        operationKeys: Object.values(api.groups).flatMap((group) =>
+          Object.values(group.endpoints).map((endpoint) =>
+            group.topLevel ? endpoint.identifier : `${group.identifier}.${endpoint.identifier}`,
+          ),
+        ),
+      };
+    }),
+  },
+}).pipe(Effect.flatMap((line) => Effect.sync(() => process.stdout.write(`${line}\n`))));
 runMain(
   Effect.scoped(
     Effect.gen(function* completionProcessEntry() {
       if (process.argv.includes('--describe')) {
-        return yield* legacySelection
-          ? Effect.sync(() => process.stdout.write(`${JSON.stringify(legacyDescription)}\n`))
-          : describe;
-      }
-      if (legacySelection && !legacyBuild) {
-        return yield* legacyServer.pipe(
-          Effect.provide(NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer))),
-        );
+        return yield* describe;
       }
       const services = yield* Layer.build(
         Layer.mergeAll(NodeHttpServer.layerTest, NodeCrypto.layer, NodeServices.layer),

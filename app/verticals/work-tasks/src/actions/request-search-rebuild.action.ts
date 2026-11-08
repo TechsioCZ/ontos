@@ -35,6 +35,14 @@ export const handleRequestSearchRebuild = Effect.fn('WorkTasks.requestSearchRebu
 });
 export const requestSearchRebuildAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'work.tasks.request-search-rebuild.write',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'work-tasks', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'work.tasks.request-search-rebuild.access.v1' },
     actionKey: 'work.tasks.request-search-rebuild',
     auditProfile: 'standard',
@@ -42,7 +50,7 @@ export const requestSearchRebuildAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'work.tasks.request-search-rebuild',
       moduleKey: moduleId,
       role: 'action',

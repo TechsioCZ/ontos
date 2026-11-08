@@ -3,6 +3,9 @@ import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
+import type { ListAccessPredicate } from '../../src/access/decision/list-access.ts';
+import { AccessTeamIdSchema } from '../../src/access/decision/authority.ts';
+import { AgentIdSchema, PrincipalIdSchema, RecordKeySchema } from '../../src/access/ids.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
 import { attestOutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
 import type { OutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
@@ -16,7 +19,12 @@ import {
   createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
 } from '../../src/search/projection.ts';
-import type { CoreSearchProjectionHit, CoreSearchProjectionStoreService } from '../../src/search/projection.ts';
+import type {
+  CoreSearchAuthorization,
+  CoreSearchProjectionHit,
+  CoreSearchProjectionStoreService,
+  CoreSearchTextField,
+} from '../../src/search/projection.ts';
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Any));
 
@@ -822,3 +830,223 @@ it.effect(
     });
   },
 );
+
+const assignedPrincipalId = '40000000-0000-4000-8000-00000000000a';
+const otherPrincipalId = '40000000-0000-4000-8000-00000000000b';
+const otherTeamId = '60000000-0000-4000-8000-000000000001';
+const otherAgentId = '70000000-0000-4000-8000-000000000001';
+
+/** Owner predicates as the gate builds them: positive clauses only, never a negation. */
+const ownerFilter = {
+  all: { groups: [] } satisfies ListAccessPredicate,
+  assignedTo: (principalId: string): ListAccessPredicate => ({
+    groups: [
+      {
+        clauses: [
+          {
+            conditions: [
+              { _tag: 'AssignedTo', holder: { _tag: 'Principal', principalId: PrincipalIdSchema.make(principalId) } },
+            ],
+          },
+        ],
+      },
+    ],
+  }),
+  assignedToAgent: (agentId: string): ListAccessPredicate => ({
+    groups: [
+      {
+        clauses: [
+          { conditions: [{ _tag: 'AssignedTo', holder: { _tag: 'Agent', agentId: AgentIdSchema.make(agentId) } }] },
+        ],
+      },
+    ],
+  }),
+  recordKeys: (first: string, ...rest: readonly string[]): ListAccessPredicate => ({
+    groups: [
+      {
+        clauses: [
+          {
+            conditions: [
+              {
+                _tag: 'RecordKeyIn',
+                recordKeys: [RecordKeySchema.make(first), ...rest.map((id) => RecordKeySchema.make(id))],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  }),
+  teamMemberOf: (first: string, ...rest: readonly string[]): ListAccessPredicate => ({
+    groups: [
+      {
+        clauses: [
+          {
+            conditions: [
+              {
+                _tag: 'TeamMemberOf',
+                teamIds: [AccessTeamIdSchema.make(first), ...rest.map((id) => AccessTeamIdSchema.make(id))],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  }),
+};
+
+const assignedParty = (resourceId: string, assigned?: string) => {
+  const document = { ...party(), ref: { ...partyRef, resourceId } };
+  return assigned === undefined ? document : { ...document, assignedPrincipalId: assigned };
+};
+
+const partySearchRequest = (query: string) => ({
+  includeArchived: false,
+  moduleId: partyRef.moduleId,
+  query,
+  resourceType: partyRef.resourceType,
+  tenantId,
+});
+
+it.effect('Core Search applies the owner row filter inside the candidate query', () => {
+  const store = makeInMemoryCoreSearchProjectionStore();
+  const assignedResourceId = '30000000-0000-4000-8000-000000000011';
+  const foreignResourceId = '30000000-0000-4000-8000-000000000012';
+  const request = {
+    includeArchived: false,
+    moduleId: partyRef.moduleId,
+    query: 'acme',
+    resourceType: partyRef.resourceType,
+    tenantId,
+  };
+  return Effect.gen(function* filterCandidatesByListAccess() {
+    const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
+    yield* store.apply(
+      { document: assignedParty(assignedResourceId, assignedPrincipalId), kind: 'upsert' },
+      workerContext(),
+    );
+    yield* store.apply({ document: assignedParty(foreignResourceId), kind: 'upsert' }, workerContext());
+    const visible = (authorization: CoreSearchAuthorization) =>
+      runtime
+        .search(request, searchScope(tenantId), authorization)
+        .pipe(Effect.map((hits) => hits.map(({ ref }) => ref.resourceId)));
+    // Every row of the scope, one assigned row, one named record.
+    expect((yield* visible({ listAccess: ownerFilter.all })).toSorted()).toEqual(
+      [assignedResourceId, foreignResourceId].toSorted(),
+    );
+    expect(yield* visible({ listAccess: ownerFilter.assignedTo(assignedPrincipalId) })).toEqual([assignedResourceId]);
+    expect(yield* visible({ listAccess: ownerFilter.recordKeys(foreignResourceId) })).toEqual([foreignResourceId]);
+    // Denial stays a denial: no assigned row, and an owner dimension the index cannot project,
+    // never widen to "every row".
+    expect(yield* visible({ listAccess: ownerFilter.assignedTo(otherPrincipalId) })).toEqual([]);
+    expect(yield* visible({ listAccess: ownerFilter.assignedToAgent(otherAgentId) })).toEqual([]);
+    expect(yield* visible({ listAccess: ownerFilter.teamMemberOf(otherTeamId) })).toEqual([]);
+    // An unavailable projection is a failure, not an empty authorized result.
+    const unavailableStore: CoreSearchProjectionStoreService = {
+      ...store,
+      queryCandidates: () =>
+        Effect.fail(
+          new CoreSearchProjectionUnavailable({
+            code: 'core_search_projection_unavailable',
+            reason: 'Projection test store unavailable',
+          }),
+        ),
+    };
+    const unavailableRuntime = yield* createCoreSearchQueryRuntime.pipe(
+      Effect.provideService(CoreSearchProjectionStore, unavailableStore),
+    );
+    const failure = yield* Effect.flip(
+      unavailableRuntime.search(request, searchScope(tenantId), { listAccess: ownerFilter.all }),
+    );
+    expect(Schema.is(CoreSearchProjectionUnavailable)(failure)).toBe(true);
+  });
+});
+
+it.effect('Core Search keeps a denied title out of matching, ordering and result metadata', () => {
+  const store = makeInMemoryCoreSearchProjectionStore();
+  const firstResourceId = '30000000-0000-4000-8000-000000000021';
+  const secondResourceId = '30000000-0000-4000-8000-000000000022';
+  return Effect.gen(function* hideDeniedTitle() {
+    const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
+    // The titles sort opposite to the resource keys, so the order proves which key ordered the hits.
+    yield* store.apply(
+      {
+        document: {
+          ...party(),
+          ref: { ...partyRef, resourceId: firstResourceId },
+          searchableText: ['public-alpha'],
+          title: 'Zzz Private Person',
+        },
+        kind: 'upsert',
+      },
+      workerContext(),
+    );
+    yield* store.apply(
+      {
+        document: {
+          ...party(),
+          ref: { ...partyRef, resourceId: secondResourceId },
+          searchableText: ['public-beta'],
+          title: 'Aaa Other Person',
+        },
+        kind: 'upsert',
+      },
+      workerContext(),
+    );
+    const search = (query: string, hiddenTextFields?: readonly CoreSearchTextField[]) =>
+      runtime.search(
+        partySearchRequest(query),
+        searchScope(tenantId),
+        hiddenTextFields === undefined ? undefined : { hiddenTextFields },
+      );
+    const readable = yield* search('private person');
+    expect(readable.map(({ ref }) => ref.resourceId)).toEqual([firstResourceId]);
+    expect(readable[0]?.title).toBe('Zzz Private Person');
+    // A denied title is unguessable: no match, no count and no hit-dependent difference.
+    expect(yield* search('private person', ['title'])).toEqual([]);
+    expect(yield* search('aaa other', ['title'])).toEqual([]);
+    // Readable text still matches, and the hidden title no longer orders the hits.
+    const byPublicText = yield* search('public-', ['title']);
+    expect(byPublicText.map(({ ref }) => ref.resourceId)).toEqual([firstResourceId, secondResourceId]);
+    expect(byPublicText.map(({ title }) => title)).toEqual(['[redacted]', '[redacted]']);
+    expect((yield* search('public-')).map(({ ref }) => ref.resourceId)).toEqual([secondResourceId, firstResourceId]);
+  });
+});
+
+it.effect('Core Search keeps denied searchable and alias text out of matching', () => {
+  const store = makeInMemoryCoreSearchProjectionStore();
+  return Effect.gen(function* hideDeniedSearchableText() {
+    const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
+    yield* store.apply(
+      {
+        document: {
+          ...party(),
+          aliases: [{ kind: 'resource', ref: aliasRef, searchableText: ['Former Private Name'] }],
+          searchableText: ['public-alpha'],
+          title: 'Acme, s.r.o.',
+        },
+        kind: 'upsert',
+      },
+      workerContext(),
+    );
+    const search = (query: string, hiddenTextFields?: readonly CoreSearchTextField[]) =>
+      runtime.search(
+        {
+          includeArchived: false,
+          moduleId: partyRef.moduleId,
+          query,
+          resourceType: partyRef.resourceType,
+          tenantId,
+        },
+        searchScope(tenantId),
+        hiddenTextFields === undefined ? undefined : { hiddenTextFields },
+      );
+    const aliasHit = yield* search('former private');
+    expect(aliasHit.map(({ matchedRef }) => matchedRef)).toEqual([aliasRef]);
+    // The alias name is a personal name too: denying searchable text removes it from the match.
+    expect(yield* search('former private', ['searchableText'])).toEqual([]);
+    expect(yield* search('public-alpha', ['searchableText'])).toEqual([]);
+    // The title stays matchable when only searchable text is denied.
+    expect((yield* search('acme', ['searchableText'])).length).toBe(1);
+  });
+});

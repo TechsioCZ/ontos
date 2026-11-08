@@ -10,6 +10,7 @@
       "home": "Domů"
     },
     "common": {
+      "approvalRequired": "Návrh čeká na schválení. Změna zatím nebyla provedena.",
       "loading": "Načítání…",
       "errorTitle": "Data CRM se nepodařilo načíst",
       "errorDescription": "Zkuste to prosím znovu.",

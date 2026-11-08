@@ -6,7 +6,7 @@ import {
 } from '../modules/active-application-composition.ts';
 import { buildApplicationCompositionCatalog } from '../modules/application-composition-catalog.ts';
 import { defineSystemModuleEntrypoint } from '../modules/module-entrypoint.ts';
-import { ActionAuthority } from '../permissions/action-authority.ts';
+import { ActionAuthority } from '../permissions/action-authority-contract.ts';
 import { ContextAccess } from '../permissions/context-access.ts';
 import type { ReadPrepareContext, ReadLoadContext, ReadFinishContext } from '../reads/context.ts';
 import { defineRead } from '../reads/definition.ts';
@@ -96,18 +96,13 @@ const prepare = Effect.fn('AgentProposalQueueRead.prepare')(function* prepare(
       ];
     });
   });
+  // One gate question per Action over this request's own trusted scope: the queue lists exactly the
+  // Actions the acting person may run, and no scalar identity is re-derived from client input (O66).
   const decisions = yield* (yield* ActionAuthority)
-    .checkActionAuthorities(declared.map(({ actionKey }) => ({ actionKey, legalEntityId, principalId, tenantId })))
+    .checkActionAuthorities({ actionKeys: declared.map(({ actionKey }) => actionKey), scope: context.scope })
     .pipe(Effect.mapError(unavailable));
   const executable = new Set(
-    decisions.flatMap((decision) =>
-      decision.execute === 'allowed' &&
-      decision.legalEntityId === legalEntityId &&
-      decision.principalId === principalId &&
-      decision.tenantId === tenantId
-        ? [decision.actionKey]
-        : [],
-    ),
+    decisions.flatMap((decision) => (decision.execute === 'allowed' ? [decision.actionKey] : [])),
   );
   const actions = declared.filter(
     (action) =>

@@ -58,7 +58,7 @@ const identityView: PartyIdentityView = {
   displayName: 'Eva Bílá',
   facts: [
     {
-      factKind: 'DISPLAY_NAME',
+      factKind: 'FIRST_NAME',
       recordedAt: DateTime.makeUnsafe(instant),
       validFrom: DateTime.makeUnsafe(instant),
       value: 'Eva Bílá',
@@ -76,14 +76,12 @@ const identifier: PartyIdentifierView = {
   validFrom: DateTime.makeUnsafe(instant),
   validTo: Option.none(),
   value: '12345678',
-  verification: 'VERIFIED',
 };
 const contact: PartyContactView = {
   contactType: 'EMAIL',
   displayValue: 'eva@example.cz',
   preferred: true,
   purposes: [],
-  verification: 'VERIFIED',
 };
 
 const readyRead: PartyIdentityReadView = {
@@ -96,7 +94,6 @@ const readyRead: PartyIdentityReadView = {
 const identityResponse = (ref: PartyRef, displayName: string) =>
   Schema.decodeSync(PartyDetailResponseSchema)({
     currentFactAssertions: [],
-    factHistory: null,
     party: {
       archivedAt: null,
       createdAt: instant,

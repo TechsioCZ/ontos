@@ -2,12 +2,7 @@ import { SearchSource } from '../../src/services/search-source.ts';
 import { SearchProjectionUnavailable } from '../../shared/domain/search-projection-error.ts';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import {
-  CoreSearchProjectionHitSchema,
-  CoreSearchQueryRuntime,
-  CoreSearchProjectionStore,
-  ResourceContainmentRelationshipMutation,
-} from '@app/core-runtime';
+import { CoreSearchProjectionHitSchema, CoreSearchQueryRuntime, CoreSearchProjectionStore } from '@app/core-runtime';
 import { FinanceStateSchema, FinanceInvoiceResourceIdSchema } from '../../shared/apis/records.ts';
 import { buildSearchDocuments, loadSearchHits, createSearchProjector } from '../../src/services/search-projection.ts';
 import { InvoicesProviderRequestSchema, InvoicesProviderResponseSchema } from '../../shared/apis/invoices-search.ts';
@@ -184,27 +179,20 @@ it('raw results require tenant and company; each provider retains the native mod
   ).toBe(false);
   expect(invoicesRead.descriptor.legalEntityScope).toBe('required');
   expect(documentsRead.descriptor.legalEntityScope).toBe('required');
-  expect(invoicesRead.descriptor.permissionTarget).toBe('module');
+  expect(invoicesRead.descriptor.accessDeclaration?.key).toBe('finance.billing.search-invoices.read');
   for (const registration of [invoicesRead, documentsRead]) {
-    expect(registration.descriptor.resultAuthorization).toEqual({
-      accessFiltering: 'legal_entity_scope',
-      kind: 'owner-legal-entity-scope',
-      requiredModuleAccess: true,
-    });
-    expect(registration.descriptor.entrypoint.authorization).toEqual({
-      kind: 'context_permission',
-      permission: 'module.access',
-    });
+    expect(Object.hasOwn(registration.descriptor, 'resultAuthorization')).toBe(false);
+    expect(registration.descriptor.accessDeclaration?.selectors).toEqual([]);
+    expect(registration.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
   }
 });
-it.effect('full replacement updates titles, prunes deletion and touches containment only post snapshot', () =>
+it.effect('full replacement updates titles and prunes deletion only after the snapshot closes', () =>
   Effect.gen(function* test() {
     const original = yield* state();
     let current = original;
     let projectionVersion = '1';
     let snapshotClosed = false;
     const replacements: unknown[] = [];
-    const touched: unknown[] = [];
     const projector = yield* createSearchProjector.pipe(
       Effect.provideService(SearchSource, {
         load: () =>
@@ -222,21 +210,8 @@ it.effect('full replacement updates titles, prunes deletion and touches containm
           return Effect.void;
         },
       }),
-      Effect.provideService(ResourceContainmentRelationshipMutation, {
-        touch: (request) => {
-          expect(snapshotClosed).toBe(true);
-          touched.push(request);
-          return Effect.void;
-        },
-      }),
     );
     yield* projector.project(context);
-    expect(touched).toHaveLength(1);
-    expect(touched[0]).toMatchObject({
-      relationships: [
-        { container: { objectType: 'module_access' }, relation: 'module', resource: { objectType: 'resource' } },
-      ],
-    });
     current = {
       ...original,
       documents: (original.documents ?? []).map((document) => ({ ...document, fileName: 'Nová příloha.pdf' })),
@@ -263,9 +238,6 @@ it.effect('full replacement updates titles, prunes deletion and touches containm
         apply: () => Effect.void,
         queryCandidates: () => Effect.succeed([]),
         replace: () => Effect.die('cross-tenant replace'),
-      }),
-      Effect.provideService(ResourceContainmentRelationshipMutation, {
-        touch: () => Effect.die('cross-tenant containment'),
       }),
     );
     expect(Schema.is(SearchProjectionUnavailable)(yield* deniedProjector.project(context).pipe(Effect.flip))).toBe(

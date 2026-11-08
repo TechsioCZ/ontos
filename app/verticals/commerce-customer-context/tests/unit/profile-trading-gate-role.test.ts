@@ -1,5 +1,15 @@
-import { Effect, Result, Schema } from 'effect';
-import { ReadHandlerUnavailable } from '@app/core-runtime';
+import { NodeCrypto } from '@effect/platform-node';
+import { PartyRegistryGuestResolverFactory } from '../../src/integrations/party-registry-guest-resolver.ts';
+import { PartyRegistryRetailPartyResolverFactory } from '../../src/integrations/party-registry-retail-party-resolver.ts';
+import { ProfileReactivationEligibilityEvaluatorFactory } from '../../src/integrations/profile-reactivation-eligibility.ts';
+import { Effect, Layer, Result, Schema } from 'effect';
+import {
+  ReadHandlerUnavailable,
+  TrustedPrincipalContextSchema,
+  trustVerifiedGatewayPrincipalContext,
+} from '@app/core-runtime';
+import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
+import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { TestClock } from 'effect/testing';
 import { runReadOwnerSteps } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import { expect, it } from 'effect-rstest';
@@ -11,6 +21,7 @@ import type {
 } from '../../src/persistence/profile-persistence.ts';
 import { customerProfileTradingGateRead } from '../../src/api/customer-profile-trading-gate.read.ts';
 import { ProfileCounterpartyRoleEligibilityResolverFactory } from '../../src/profile-counterparty-role-eligibility.ts';
+import type { ProfileCounterpartyRoleEligibilityScope } from '../../src/profile-counterparty-role-eligibility.ts';
 import { profilePersistenceServicesForTransaction } from '../../src/persistence/profile-persistence.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -41,30 +52,57 @@ const request = {
   },
 };
 
-const transaction: ProfileScopedRoutineInvoker = {
-  invoke: () =>
-    Effect.succeed([
-      {
-        outcome: 'PROFILE_AVAILABLE',
-        payload: {
-          createdAt: '2026-09-09T09:00:00.000Z',
-          profileId,
-          profileKind: 'COUNTERPARTY',
-          revision: 3,
-          scopeLegalEntityId: legalEntityId,
-          state: 'ACTIVE',
-          subject: {
-            counterpartyResourceId: counterpartyId,
-            counterpartyResourceRevision: 'counterparty:7',
-            customerRoleResourceId: roleId,
-            customerRoleResourceRevision: '2026-09-09T08:00:00.000Z',
-            kind: 'COUNTERPARTY',
-          },
-          updatedAt: '2026-09-09T09:00:00.000Z',
-        },
+const tradingRows = [
+  {
+    outcome: 'PROFILE_AVAILABLE',
+    payload: {
+      createdAt: '2026-09-09T09:00:00.000Z',
+      profileId,
+      profileKind: 'COUNTERPARTY',
+      revision: 3,
+      scopeLegalEntityId: legalEntityId,
+      state: 'ACTIVE',
+      subject: {
+        counterpartyResourceId: counterpartyId,
+        counterpartyResourceRevision: 'counterparty:7',
+        customerRoleResourceId: roleId,
+        customerRoleResourceRevision: '2026-09-09T08:00:00.000Z',
+        kind: 'COUNTERPARTY',
       },
-    ]),
-};
+      updatedAt: '2026-09-09T09:00:00.000Z',
+    },
+  },
+];
+
+const transaction: ProfileScopedRoutineInvoker = { invoke: () => Effect.succeed(tradingRows) };
+
+const normalizedStatement = (statement: string) => statement.trim().toLowerCase();
+
+const observedRoleFactory = (
+  snapshot: () => { readonly statements: readonly string[] },
+  prepared: () => void,
+  managedLegalEntityId: string,
+  observedAt: string,
+  validUntil: string,
+) => ({
+  make: (roleScope: ProfileCounterpartyRoleEligibilityScope) => () =>
+    Effect.sync(() => {
+      const statements = snapshot().statements.map(normalizedStatement);
+      expect(statements.lastIndexOf('begin')).toBeLessThanOrEqual(
+        Math.max(statements.lastIndexOf('commit'), statements.lastIndexOf('rollback')),
+      );
+      expect(roleScope.operationalScope.principalId).toBe(principalId);
+      prepared();
+      return {
+        managedLegalEntityId,
+        observedAt,
+        outcome: 'ELIGIBLE' as const,
+        roleResourceId: roleId,
+        roleResourceRevision: observedAt,
+        validUntil,
+      };
+    }),
+});
 
 const gateWith = (eligibility: CounterpartyRoleEligibility) =>
   profilePersistenceServicesForTransaction(transaction, scope, {
@@ -144,6 +182,7 @@ it.effect('rejects a prepared role that reaches its End during the trading-gate 
     const end = '2026-09-09T10:00:01.000Z';
     const role = {
       managedLegalEntityId: legalEntityId,
+      observedAt: '2026-09-09T10:00:00.000Z',
       outcome: 'ELIGIBLE' as const,
       roleResourceId: roleId,
       roleResourceRevision: '2026-09-09T10:00:00.000Z',
@@ -166,5 +205,98 @@ it.effect('rejects a prepared role that reaches its End during the trading-gate 
     if (Result.isFailure(result)) {
       expect(Schema.is(ReadHandlerUnavailable)(result.failure)).toBe(true);
     }
-  }).pipe(Effect.provide(TestClock.layer())),
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        TestClock.layer(),
+        NodeCrypto.layer,
+        Layer.succeed(PartyRegistryGuestResolverFactory, {
+          make: () => () => Effect.die('Trading gate must not resolve a Guest Party'),
+        }),
+        Layer.succeed(PartyRegistryRetailPartyResolverFactory, {
+          make: () => () => Effect.die('Trading gate must not resolve a Retail Party'),
+        }),
+        Layer.succeed(ProfileReactivationEligibilityEvaluatorFactory, {
+          make: () => () => Effect.die('Trading gate must not reactivate a profile'),
+          observe: () => Effect.die('Trading gate must not prepare a profile reactivation'),
+        }),
+      ),
+    ),
+  ),
+);
+
+it.effect(
+  'runs the original trading registration with released Party preparation and bounded current-role evidence',
+  () =>
+    Effect.gen(function* nativeTradingRoleLifecycle() {
+      const observedAt = '2026-09-09T10:00:00.000Z';
+      const validUntil = '2026-09-09T10:00:01.000Z';
+      const principal = trustVerifiedGatewayPrincipalContext(
+        Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+          authBindingId: '70000000-0000-4000-8000-000000000001',
+          authContextRef: 'session:trading-role',
+          authMethod: 'session',
+          legalEntityId,
+          principalId,
+          tenantId,
+        }),
+        'a'.repeat(64),
+      );
+      yield* Effect.forEach(
+        ['CURRENT', 'GATE_DENIED', 'EXPIRED_DURING_LOAD', 'FOREIGN_COMPANY'] as const,
+        Effect.fnUntraced(function* roleCase(scenario) {
+          yield* TestClock.setTime(Date.parse(observedAt));
+          let preparations = 0;
+          let ownerLoads = 0;
+          const harness = yield* makeReadTestHarness({
+            access: scenario === 'GATE_DENIED' ? 'denied' : 'allowed',
+            compositionRevision: 'a'.repeat(64),
+            executeOwnerQuery: ({ sql }) => {
+              if (!sql.includes('read_profile_trading_gate')) {
+                return Effect.die(`Unexpected trading owner query: ${sql}`);
+              }
+              ownerLoads += 1;
+              return Effect.succeed(tradingRows).pipe(
+                Effect.tap(() =>
+                  scenario === 'EXPIRED_DURING_LOAD' ? TestClock.setTime(Date.parse(validUntil)) : Effect.void,
+                ),
+              );
+            },
+            operationTime: new Date(observedAt),
+            ownerAuthorizationDecision: 'allowed',
+            ownerRegistration: commerceCustomerContextRegistration,
+            scope: { ...principal, correlationId: 'trading-native' },
+          });
+          const result = yield* harness.runtime
+            .runRead({
+              input: request,
+              principal,
+              registration: customerProfileTradingGateRead,
+              transport: { correlationId: 'trading-native' },
+            })
+            .pipe(
+              Effect.provideService(
+                ProfileCounterpartyRoleEligibilityResolverFactory,
+                observedRoleFactory(
+                  harness.snapshot,
+                  () => {
+                    preparations += 1;
+                  },
+                  scenario === 'FOREIGN_COMPANY' ? otherLegalEntityId : legalEntityId,
+                  observedAt,
+                  validUntil,
+                ),
+              ),
+              Effect.result,
+            );
+          expect(Result.isSuccess(result)).toBe(scenario === 'CURRENT' || scenario === 'FOREIGN_COMPANY');
+          expect(preparations).toBe(scenario === 'GATE_DENIED' ? 0 : 1);
+          expect(ownerLoads).toBe(scenario === 'GATE_DENIED' ? 0 : 1);
+          if (Result.isSuccess(result)) {
+            expect(result.success.gate.canAcceptNewOrder).toBe(scenario === 'CURRENT');
+          }
+        }),
+        { concurrency: 1, discard: true },
+      );
+    }).pipe(Effect.provide(TestClock.layer()), Effect.provide(NodeCrypto.layer)),
 );

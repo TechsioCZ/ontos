@@ -1,6 +1,7 @@
 import { ContextAccess, LegalEntityContext } from '@app/core-runtime';
-import type { LegalEntityContextUnavailableError, SafeLegalEntity } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import type { LegalEntityContextUnavailableError, OperationalScope, SafeLegalEntity } from '@app/core-runtime';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import { DateTime, Effect, Schema } from 'effect';
 
 import { observeGatewayPhase } from './gateway-timing.ts';
 
@@ -57,42 +58,49 @@ export const canSelectTenantContext = Effect.fn('ContextSelection.canSelectTenan
   },
 );
 
+/**
+ * The companies this person may select, as the one access gate answers it (O28, CUTOVER-PLAN §3.2):
+ * `access_legal_entity#select` in one engine snapshot, never a per-company permission loop. An
+ * unreadable authority stays a retryable failure, so it can never narrow into "no companies".
+ */
+const selectableLegalEntityIds = Effect.fn('LegalEntitySelection.selectableLegalEntityIds')(
+  function* selectableLegalEntityIdsEffect(scope: OperationalScope) {
+    const access = yield* AccessDecisionGate;
+    const now = yield* DateTime.nowAsDate;
+    const selectable = yield* access
+      .selectableLegalEntities({ now, scope })
+      .pipe(observeGatewayPhase('legal-entity-spicedb'));
+    return new Set<string>(selectable);
+  },
+);
+
 export const resolveAuthorizedLegalEntities = Effect.fn('LegalEntitySelection.resolveAuthorizedLegalEntities')(
   function* resolveAuthorizedLegalEntitiesEffect(input: {
-    readonly principalId: string;
     readonly savedLegalEntityId?: string;
-    readonly tenantId: string;
+    readonly scope: OperationalScope;
   }): Effect.fn.Return<
     LegalEntitySelectionResolution,
     LegalEntitySelectionUnavailableError,
-    ContextAccess | LegalEntityContext
+    LegalEntityContext | AccessDecisionGate
   > {
     const legalEntityContext = yield* LegalEntityContext;
-    const contextAccess = yield* ContextAccess;
-    const candidates = yield* legalEntityContext.listActiveForTenant(input.tenantId).pipe(
-      observeGatewayPhase('legal-entity-sql'),
-      Effect.mapError((failureCause) => new LegalEntitySelectionUnavailableErrorValue({ failureCause })),
+    const [candidates, selectable] = yield* Effect.all(
+      [
+        legalEntityContext.listActiveForTenant(input.scope.tenantId).pipe(
+          observeGatewayPhase('legal-entity-sql'),
+          Effect.mapError((failureCause) => new LegalEntitySelectionUnavailableErrorValue({ failureCause })),
+        ),
+        selectableLegalEntityIds(input.scope).pipe(
+          Effect.mapError((failureCause) => new LegalEntitySelectionUnavailableErrorValue({ failureCause })),
+        ),
+      ] as const,
+      { concurrency: 2 },
     );
-    const decisions = yield* contextAccess
-      .legalEntities({
-        legalEntityIds: candidates.map(({ legalEntityId }) => legalEntityId),
-        principalId: input.principalId,
-        tenantId: input.tenantId,
-      })
-      .pipe(observeGatewayPhase('legal-entity-spicedb'));
     const byId = new Map(candidates.map((candidate) => [candidate.legalEntityId, candidate]));
-    if (
-      byId.size !== candidates.length ||
-      decisions.length !== candidates.length ||
-      new Set(decisions.map(({ key }) => key)).size !== candidates.length ||
-      decisions.some(({ decision, key }) => decision === 'unavailable' || !byId.has(key))
-    ) {
+    if (byId.size !== candidates.length) {
       return yield* new LegalEntitySelectionUnavailableErrorValue();
     }
-    const available = decisions.flatMap(({ decision, key }) => {
-      const candidate = byId.get(key);
-      return decision === 'allowed' && candidate !== undefined ? [candidate] : [];
-    });
+    const available = candidates.filter(({ legalEntityId }) => selectable.has(legalEntityId));
     if (available.length === 0) {
       return { available: [], state: 'access_blocked' } as const;
     }
@@ -105,7 +113,7 @@ export const resolveAuthorizedLegalEntities = Effect.fn('LegalEntitySelection.re
     }
     // Sales demo: a person in several companies starts in the first one (lowest id, e.g. Obchodní firma 0020)
     // instead of an empty "select a legal entity" page; the switcher still offers the others.
-    if (available.length > 1 && input.tenantId !== '70000000-0000-4000-8000-000000000020') {
+    if (available.length > 1 && input.scope.tenantId !== '70000000-0000-4000-8000-000000000020') {
       return { available, state: 'selection_required' } as const;
     }
     const [first] = available.toSorted((left, right) => left.legalEntityId.localeCompare(right.legalEntityId));
@@ -123,16 +131,14 @@ const failUnavailableSelection = (failureCause: LegalEntityContextUnavailableErr
 export const validateAuthorizedLegalEntity = Effect.fn('LegalEntitySelection.validateAuthorizedLegalEntity')(
   function* validateAuthorizedLegalEntityEffect(input: {
     readonly legalEntityId: string;
-    readonly principalId: string;
-    readonly tenantId: string;
+    readonly scope: OperationalScope;
   }): Effect.fn.Return<
     SafeLegalEntity,
     LegalEntitySelectionForbiddenError | LegalEntitySelectionUnavailableError,
-    ContextAccess | LegalEntityContext
+    LegalEntityContext | AccessDecisionGate
   > {
     const legalEntityContext = yield* LegalEntityContext;
-    const contextAccess = yield* ContextAccess;
-    const candidate = yield* legalEntityContext.validateSelection(input.tenantId, input.legalEntityId).pipe(
+    const candidate = yield* legalEntityContext.validateSelection(input.scope.tenantId, input.legalEntityId).pipe(
       observeGatewayPhase('legal-entity-sql'),
       Effect.catchTags({
         LegalEntityContextAmbiguousError: failForbiddenSelection,
@@ -142,17 +148,10 @@ export const validateAuthorizedLegalEntity = Effect.fn('LegalEntitySelection.val
         LegalEntityContextUnavailableError: failUnavailableSelection,
       }),
     );
-    const [decision, ...unexpected] = yield* contextAccess
-      .legalEntities({
-        legalEntityIds: [candidate.legalEntityId],
-        principalId: input.principalId,
-        tenantId: input.tenantId,
-      })
-      .pipe(observeGatewayPhase('legal-entity-spicedb'));
-    if (unexpected.length > 0 || decision === undefined || decision.decision === 'unavailable') {
-      return yield* new LegalEntitySelectionUnavailableErrorValue();
-    }
-    if (decision.key !== candidate.legalEntityId || decision.decision !== 'allowed') {
+    const selectable = yield* selectableLegalEntityIds(input.scope).pipe(
+      Effect.mapError((failureCause) => new LegalEntitySelectionUnavailableErrorValue({ failureCause })),
+    );
+    if (!selectable.has(candidate.legalEntityId)) {
       return yield* new LegalEntitySelectionForbiddenErrorValue();
     }
     return candidate;

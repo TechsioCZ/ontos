@@ -82,6 +82,14 @@ const toSnapshotFailure = (cause: unknown): ActionTransactionError => {
 };
 export const renameAttributeDefinitionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.attribute-definition.rename',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'attribute-definition', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.rename-attribute-definition.access.v1',
@@ -97,7 +105,7 @@ export const renameAttributeDefinitionAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: CATALOG_MODULE_KEY,
       role: 'action',

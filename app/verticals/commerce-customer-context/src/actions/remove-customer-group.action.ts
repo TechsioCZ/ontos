@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug remove-customer-group
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 import {
   RemoveCustomerGroupPayloadSchema,
@@ -23,7 +23,6 @@ import {
   outboxProducerModuleKey as MODULE_KEY,
 } from '../../shared/outbox/commerce-customer-context-customer-group-membership-ended-v1.ts';
 import {
-  customerGroupMembershipWritePermission,
   customerGroupRecordedAt,
   requireCustomerGroupLegalEntityId,
   customerGroupScopeMatches,
@@ -147,6 +146,14 @@ const handleRemoveCustomerGroup = Effect.fn('RemoveCustomerGroupAction.handle')(
 
 export const removeCustomerGroupAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.customer-group.remove',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'customer-groups', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.remove-customer-group.access.v1',
@@ -158,7 +165,7 @@ export const removeCustomerGroupAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.remove-customer-group',
       moduleKey: 'commerce.customer-context',
       role: 'action',
@@ -168,9 +175,6 @@ export const removeCustomerGroupAction = defineAction(
     owningModuleKey: 'commerce.customer-context',
     payloadSchema: RemoveCustomerGroupPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<RemoveCustomerGroupPayload>(({ membershipRef }) =>
-      customerGroupMembershipWritePermission(membershipRef),
-    ),
     resultSchema: RemoveCustomerGroupResultSchema,
     schemaVersion: '1',
   },

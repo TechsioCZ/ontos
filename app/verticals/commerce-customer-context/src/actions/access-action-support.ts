@@ -1,8 +1,8 @@
 import type {
-  ActionBusinessPermissionTarget,
   ActionHandlerContext,
   DomainEventContractMap,
   OperationalScope,
+  OwnerAccessFacts,
   TrustedPrincipalContext,
 } from '@app/core-runtime';
 import { Effect } from 'effect';
@@ -14,31 +14,34 @@ import type {
   CounterpartyRef,
   PrincipalRef,
 } from '../../shared/domain/access-contract.ts';
-import type { AccessAuthorizationMutationEvidence } from '../../shared/domain/access-authorization-mutation.ts';
 import { CounterpartyAccessContractViolation } from '../../shared/domain/access-port.ts';
 import { permissionAllowsScope, permissionDescriptor } from '../../shared/domain/permission-catalog.ts';
 import type { CounterpartyPermissionCode } from '../../shared/domain/permission-catalog.ts';
 import type { CounterpartyAccessInvitationRef } from '../../shared/resources/counterparty-access-invitation.ts';
+import { counterpartyOwnerFacts } from './owner-access-facts.ts';
 
 export const principalRefFromContext = (context: TrustedPrincipalContext): PrincipalRef => ({
   principalId: context.principalId,
   tenantId: context.tenantId,
 });
 
-export const accessAuthorizationMutationEventPayload = <
-  const Operation extends AccessAuthorizationMutationEvidence['operation'],
->(
-  grant: CounterpartyAccessGrant,
-  reconciliation: AccessAuthorizationMutationEvidence & { readonly operation: Operation },
-  legalEntityId: string,
-) => ({
+/** The grant facts every grant, bootstrap and revoke event carries. */
+export const accessGrantEventFields = (grant: CounterpartyAccessGrant) => ({
   catalogVersion: grant.catalogVersion,
   counterpartyRef: grant.counterpartyRef,
   grantRef: grant.grantRef,
-  legalEntityId,
-  mutationId: reconciliation.mutationId,
-  operation: reconciliation.operation,
-  schemaVersion: '1' as const,
+  permission: grant.permission,
+  recipient: grant.recipient,
+  revision: grant.revision,
+  scope: grant.scope,
+});
+
+/** The grant subject of an access event, which the owner's own grant row identifies. */
+export const accessGrantEventSubject = (grant: CounterpartyAccessGrant) => ({
+  producerModuleKey: grant.grantRef.moduleId,
+  subjectModuleKey: grant.grantRef.moduleId,
+  subjectResourceId: grant.grantRef.resourceId,
+  subjectResourceType: grant.grantRef.resourceType,
 });
 
 export const requireAccessLegalEntity = (
@@ -106,39 +109,18 @@ export const requireAccessScope = (input: {
   return Effect.void;
 };
 
-export const accessManagementPermissionTarget = (
-  payload: {
-    readonly counterpartyRef: CounterpartyRef;
-    readonly scope: CounterpartyPermissionScope;
-  },
-  operationalScope: OperationalScope,
-): ActionBusinessPermissionTarget => {
-  if (payload.scope.kind === 'counterparty') {
-    return {
-      permission: 'counterparty.access.manage',
-      target: {
-        counterpartyId: payload.counterpartyRef.resourceId,
-        kind: 'counterparty',
-        legalEntityId: operationalScope.legalEntityId ?? '',
-        tenantId: operationalScope.tenantId,
-      },
-    };
-  }
-  const target: ActionBusinessPermissionTarget = {
-    permission: 'counterparty.access.manage',
-    target: {
-      counterpartyId: payload.counterpartyRef.resourceId,
-      kind: 'counterparty_storefront',
-      legalEntityId: operationalScope.legalEntityId ?? '',
-      storefrontId: payload.scope.storefrontKey,
-      tenantId: operationalScope.tenantId,
-    },
-  };
-  if (operationalScope.trustedStorefrontId === undefined) {
-    return target;
-  }
-  return { ...target, trustedStorefrontId: operationalScope.trustedStorefrontId };
-};
+/**
+ * The counterparty-access owner rule target: the counterparty whose own access-administration grant
+ * the overlay checks, storefront-scoped when the change is (O67-Q1, O70).
+ */
+export const accessManagementOwnerFacts = (payload: {
+  readonly counterpartyRef: CounterpartyRef;
+  readonly scope: CounterpartyPermissionScope;
+}): OwnerAccessFacts =>
+  counterpartyOwnerFacts(
+    payload.counterpartyRef.resourceId,
+    payload.scope.kind === 'storefront' ? payload.scope.storefrontKey : undefined,
+  );
 
 export const auditEvidence = (input: {
   readonly actor: PrincipalRef;

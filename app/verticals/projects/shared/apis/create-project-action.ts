@@ -2,11 +2,14 @@
 // @ontos-action-http-owner projects.core
 // @ontos-action-http-slug create-project
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { CreateProjectPayloadSchema, CreateProjectResultSchema } from '../actions/create-project.ts';
 
 export { CreateProjectPayloadSchema } from '../actions/create-project.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const CreateProjectActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreateProjectActionInvalidProblem',
@@ -21,6 +24,7 @@ export const CreateProjectActionForbiddenProblemSchema = makeProblemDetailsSchem
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -145,7 +149,7 @@ export const createProjectActionGroupDefinition = HttpApiGroup.make('createProje
     HttpApiEndpoint.post('execute', '/projects/actions/create-project', {
       error: actionErrors,
       payload: Schema.toEncoded(CreateProjectPayloadSchema),
-      success: CreateProjectResultSchema,
+      success: [ActionProposalAcceptedSchema, CreateProjectResultSchema],
     }),
   )
   .middleware(CreateProjectActionSchemaErrorMiddleware);

@@ -2,7 +2,9 @@
 // @ontos-action-owner commerce.assortment
 // @ontos-action-slug create-rule-revision
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionAssortmentPermissions, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { assortmentCurrentnessFacts } from '../services/assortment-currentness.ts';
+import { createRuleRevisionCurrentnessTarget } from './policy-administration-support.ts';
 import { Effect, Schema } from 'effect';
 import {
   CreateRuleRevisionPayloadSchema,
@@ -18,7 +20,7 @@ import {
 } from '../../shared/domain/policy-errors.ts';
 import type { AssortmentPolicyPersistence } from '../services/policy-administration.service.ts';
 import { assortmentPolicyServiceFactory, ruleRevisionRef } from '../services/policy-administration.service.ts';
-import { createRuleRevisionPermissionTarget } from './policy-administration-support.ts';
+
 import {
   CreateRuleRevisionCommerceAssortmentRuleRevisionCreatedV1OutboxPayloadSchema,
   createCreateRuleRevisionCommerceAssortmentRuleRevisionCreatedV1OutboxMessage,
@@ -105,21 +107,28 @@ export const handleCreateRuleRevision = Effect.fn('CreateRuleRevisionAction.hand
 
 export const createRuleRevisionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.assortment.rule-revision.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'rules', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.assortment.create-rule-revision.access.v1',
     },
+    accessOwnerFacts: (payload, scope) =>
+      assortmentCurrentnessFacts(createRuleRevisionCurrentnessTarget(payload, scope)),
     actionKey: 'commerce.assortment.create-rule-revision',
-    assortmentPermissions: defineActionAssortmentPermissions<CreateRuleRevisionPayload>((payload, scope) => [
-      createRuleRevisionPermissionTarget(payload, scope),
-    ]),
     auditEvidenceSchema: AssortmentPolicyAuditEvidenceSchema,
     auditProfile: 'sensitive',
     domainErrorSchema: ActionErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.assortment.create-rule-revision',
       moduleKey: 'commerce.assortment',
       role: 'action',

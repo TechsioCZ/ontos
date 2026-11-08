@@ -9,20 +9,13 @@ import {
   ProjectPersistenceUnavailable,
   ProjectPrefixConflict,
 } from '../../shared/domain/project.ts';
-import { defineAction, defineTenantModuleEntrypoint, humanPrincipalCandidatesForTransaction } from '@app/core-runtime';
-import type {
-  ActionHandlerContext,
-  ActionServiceFactory,
-  ActionServicePreflight,
-  ContextAccess,
-} from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import type { ActionHandlerContext } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
 import type { Project } from '../../shared/domain/project.ts';
-import {
-  prepareProjectOwnerDecision,
-  preparedProjectOwnerEligibility,
-} from '../services/project-owner-eligibility.service.ts';
-import type { PreparedProjectOwnerDecision } from '../services/project-owner-eligibility.service.ts';
+import { projectOwnerEligibilityService } from '../services/project-owner-eligibility.service.ts';
+import type { ProjectOwnerEligibility } from '../services/project-owner-eligibility.service.ts';
+import { projectDestinationParentFacts } from '../access/project-destination-facts.ts';
 import { makeProjectPersistenceService } from '../services/project-persistence.service.ts';
 import type { ProjectPersistenceError } from '../services/project-persistence.service.ts';
 import { CreateProjectPayloadSchema, CreateProjectResultSchema } from '../../shared/actions/create-project.ts';
@@ -38,8 +31,8 @@ import { createCreateProjectProjectsCoreSearchRefreshRequestedV1OutboxMessage } 
 const projectModuleKey = 'projects.core';
 
 export { ProjectOwnerNotEligible } from '../../shared/domain/project-owner-not-eligible.ts';
-
 export { ProjectOwnerEligibilityUnavailable } from '../../shared/domain/project-owner-eligibility-unavailable.ts';
+
 export const CreateProjectErrorSchema = Schema.Union([
   ProjectOwnerNotEligible,
   ProjectOwnerEligibilityUnavailable,
@@ -56,19 +49,16 @@ const ProjectCreatedEventSchema = Schema.Struct({
   projectId: uuid,
 });
 const domainEvents = { 'projects.project.created.v1': ProjectCreatedEventSchema } as const;
-export interface CreateProjectServices {
+interface Services {
   readonly create: (
     payload: CreateProjectPayload,
     createdByPrincipalId: string,
   ) => Effect.Effect<Project, ProjectPersistenceError>;
-  readonly ownerEligibility: (
-    prefix: string,
-    ownerPrincipalId: string,
-  ) => Effect.Effect<'allowed' | 'denied' | 'unavailable'>;
+  readonly ownerEligibility: (ownerPrincipalId: string) => Effect.Effect<ProjectOwnerEligibility>;
 }
-export const makeCreateProjectHandler = (services: CreateProjectServices, createdByPrincipalId: string) =>
+export const makeCreateProjectHandler = (services: Services, createdByPrincipalId: string) =>
   Effect.fn('CreateProject.handle')(function* createProject(payload: CreateProjectPayload) {
-    const decision = yield* services.ownerEligibility(payload.prefix, payload.ownerPrincipalId);
+    const decision = yield* services.ownerEligibility(payload.ownerPrincipalId);
     if (decision === 'unavailable') {
       return yield* new ProjectOwnerEligibilityUnavailable({
         code: 'project_owner_eligibility_unavailable',
@@ -85,7 +75,7 @@ export const makeCreateProjectHandler = (services: CreateProjectServices, create
   });
 export const handleCreateProject = Effect.fn('CreateProject.record')(function* createProject(
   payload: CreateProjectPayload,
-  context: ActionHandlerContext<typeof domainEvents, CreateProjectServices>,
+  context: ActionHandlerContext<typeof domainEvents, Services>,
 ) {
   const project = yield* makeCreateProjectHandler(context.services, context.scope.principalId)(payload);
   yield* context.recordDataAccess({
@@ -129,51 +119,30 @@ export const handleCreateProject = Effect.fn('CreateProject.record')(function* c
   );
   return project;
 });
-const createProjectServices =
-  (owner: Option.Option<PreparedProjectOwnerDecision>): ActionServiceFactory<CreateProjectServices> =>
-  (transaction, scope) => {
-    const persistence = makeProjectPersistenceService(transaction, {
-      operationId: scope.principalId,
-      tenantId: scope.tenantId,
-    });
-    return Effect.succeed({
-      create: (payload: CreateProjectPayload, createdByPrincipalId: string) =>
-        persistence.create({
-          createdByPrincipalId,
-          name: payload.name,
-          owner: { eligibilityChecked: true, principalId: payload.ownerPrincipalId },
-          parentProjectId: Option.getOrNull(payload.parentProjectId ?? Option.none()),
-          prefix: payload.prefix,
-          shortText: Option.getOrNull(payload.shortText ?? Option.none()),
-        }),
-      ownerEligibility: preparedProjectOwnerEligibility(humanPrincipalCandidatesForTransaction(transaction), owner),
-    });
-  };
-
-/** Owner eligibility is a SpiceDB decision, so it is made here, before the business transaction opens. */
-const prepareCreateProjectServices: ActionServicePreflight<
-  CreateProjectPayload,
-  CreateProjectServices,
-  never,
-  ContextAccess
-> = Effect.fn('CreateProject.prepareServices')(function* prepareServices(payload, context) {
-  const owner = yield* prepareProjectOwnerDecision(context, payload.prefix, payload.ownerPrincipalId);
-  return createProjectServices(Option.some(owner));
-});
-
 export const createProjectAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'projects.core.project.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'projects', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'projects.core.create-project.access.v1',
     },
+    // A parented create attaches the new Project under an existing one, which edits that parent (O11).
+    accessOwnerFacts: (payload) =>
+      projectDestinationParentFacts(Option.getOrNull(payload.parentProjectId ?? Option.none())),
     actionKey: 'projects.core.create-project',
     auditProfile: 'standard',
     domainErrorSchema: CreateProjectErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'projects.core.create-project',
       moduleKey: projectModuleKey,
       role: 'action',
@@ -187,8 +156,25 @@ export const createProjectAction = defineAction(
     schemaVersion: '1',
   },
   handleCreateProject,
-  createProjectServices(Option.none()),
-  { prepareServices: prepareCreateProjectServices },
+  Effect.fn('CreateProject.services')(function* services(transaction, scope) {
+    const ownerEligibility = yield* projectOwnerEligibilityService(transaction, scope);
+    const persistence = makeProjectPersistenceService(transaction, {
+      operationId: scope.principalId,
+      tenantId: scope.tenantId,
+    });
+    return {
+      create: (payload: CreateProjectPayload, createdByPrincipalId: string) =>
+        persistence.create({
+          createdByPrincipalId,
+          name: payload.name,
+          owner: { eligibilityChecked: true, principalId: payload.ownerPrincipalId },
+          parentProjectId: Option.getOrNull(payload.parentProjectId ?? Option.none()),
+          prefix: payload.prefix,
+          shortText: Option.getOrNull(payload.shortText ?? Option.none()),
+        }),
+      ownerEligibility: ownerEligibility.check,
+    };
+  }),
 );
 // <generated-outbox-message-exports>
 export { createCreateProjectProjectsCoreSearchRefreshRequestedV1OutboxMessage } from './create-project-projects-core-search-refresh-requested-v1.outbox-message.ts';

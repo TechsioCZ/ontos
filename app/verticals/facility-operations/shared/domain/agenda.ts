@@ -113,8 +113,8 @@ export const agendaStateForPrincipal = (state: AgendaState, actor: PrincipalRef)
 };
 
 /**
- * Operational-only principals (external partners: `read_operational` without `read_all`/`write_all`) see only
- * the calendar events assigned to them. Filtered on the server, so other people's events never leave it.
+ * Operational-only principals (external partners: the parent records read without its restricted field group)
+ * see only the calendar events assigned to them. Filtered on the server, so other people's events never leave it.
  */
 export const agendaStateForAssignee = (state: AgendaState, actor: PrincipalRef): AgendaState => ({
   ...state,

@@ -2,15 +2,13 @@ import {
   CoreSearchProjectionDocumentSchema,
   CoreSearchProjectionStore,
   CoreSearchQueryRuntime,
-  ResourceContainmentRelationshipMutation,
   coreSearchIngestionRegistryLayer,
   defineCoreSearchIngestionRegistrations,
-  ownerResourceModuleContainment,
 } from '@app/core-runtime';
 import { matchesCoreSearchValues, parseCoreSearchQuery } from '@app/core-runtime/search-contract';
 import { coreSearchRelevance } from '@app/core-runtime/search-ranking';
 import type { OperationalScope, OutboxWorkerHandlerContext } from '@app/core-runtime';
-import { Array as Arr, Context, Effect, Layer, Schema } from 'effect';
+import { Context, Effect, Layer, Schema } from 'effect';
 import type { FinanceState } from '../../shared/apis/records.ts';
 import { SearchSource } from './search-source.ts';
 import { searchUnavailable as unavailable } from '../../shared/domain/search-projection-error.ts';
@@ -108,7 +106,6 @@ export const buildSearchDocuments = Effect.fn('Finance.buildSearchDocuments')(fu
 export const createSearchProjector = Effect.gen(function* createProjector() {
   const sourcePort = yield* SearchSource;
   const store = yield* CoreSearchProjectionStore;
-  const containment = yield* ResourceContainmentRelationshipMutation;
   return {
     project: Effect.fn('Finance.projectSearch')(function* project(context: OutboxWorkerHandlerContext) {
       const source = yield* sourcePort.load(context);
@@ -116,22 +113,8 @@ export const createSearchProjector = Effect.gen(function* createProjector() {
         return yield* unavailable();
       }
       const documents = yield* buildSearchDocuments(source);
-      // All snapshot SQL has committed. Containment is a governed, idempotent module_access TOUCH, never a grant.
-      const relationships = yield* Effect.forEach(
-        documents,
-        (document) => {
-          const relationship =
-            document.selectedLegalEntityId === undefined
-              ? undefined
-              : ownerResourceModuleContainment(source.tenantId, document.selectedLegalEntityId, document.ref);
-          return relationship === undefined ? Effect.fail(unavailable()) : Effect.succeed(relationship);
-        },
-        { concurrency: 1 },
-      );
-      yield* Effect.forEach(Arr.chunksOf(relationships, 100), (batch) => containment.touch({ relationships: batch }), {
-        concurrency: 1,
-        discard: true,
-      }).pipe(Effect.mapError(unavailable));
+      // All snapshot SQL has committed. Core Search enforces the caller's access list predicate and fields;
+      // the owner writes no permission-graph containment edge.
       // Every lifecycle event reads a full owner snapshot with a Core-reserved version. Replacement prunes deletions,
       // voided invoices and withdrawn files, including empty companies, without trusting payload revisions or scope.
       yield* Effect.forEach(

@@ -12,13 +12,15 @@ export const runPinnedKnip = Effect.fn('runPinnedKnip')(function* runPinnedKnipE
   consumerPath: string,
   model: {
     readonly config: typeof KnipConfigSchema.Type;
-    readonly consumerSource: string;
+    readonly consumerFiles: readonly { readonly path: string; readonly source: string }[];
   },
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const directory = path.dirname(consumerPath);
   yield* fileSystem.makeDirectory(directory, { recursive: true });
-  yield* fileSystem.writeFileString(consumerPath, model.consumerSource);
+  for (const file of model.consumerFiles) {
+    yield* fileSystem.writeFileString(file.path, file.source);
+  }
   const configPath = path.join(directory, 'knip.json');
   const configuration = yield* Schema.encodeEffect(Schema.fromJsonString(KnipConfigSchema))(model.config);
   yield* fileSystem.writeFileString(configPath, configuration);

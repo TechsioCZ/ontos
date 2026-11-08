@@ -39,6 +39,12 @@ The strict candidate catalog rejects unsupported schema versions, deployment/man
 
 Required Core capabilities and the Shell contribution ABI are explicit versioned compatibility claims in Application Composition. External system readiness and module-owned setup remain private implementation concerns and are not generic activation gates.
 
+Owner-authored dependency declarations use the schemas in [module-dependency-contracts.ts](../../packages/core-runtime/src/modules/module-dependency-contracts.ts) and the existing manifest/private-registration validation. Intrinsic requirements alone contribute installation DAG edges. Operation requirements identify the consuming entrypoint, owner-defined branch condition, provider's concrete public operation/version and required evidence meanings; Core does not evaluate business selectors. A legitimate local branch or an accepted owner-issued proof does not acquire an extra HTTP call merely because other branches use a provider.
+
+Public operation compatibility claims reuse the actual Action or Read descriptor's version and bind it to an operation in the owner's declared API. API record identities are public metadata, not authentication credentials. The safe projection is an owner-authored compatibility claim; a schema-only API declaration cannot prove that a receiving handler dispatches the claimed registration. Required acceptance includes actual generated receiving/default-factory evidence. Owner-local registered Actions must not be advertised as public HTTP operations solely because they appear in the Core registration inventory.
+
+Keep these operation claims separate from ADR-0020's provisional module-level public-contract identity and deployment-format version. A declared requirement never falls back to format equality, artifact-digest equality or module presence when the required operation/version is unsupported. The versioned Core capability claim for this declaration/enforcement contract must be required by adopting modules and advertised only by a kernel that actually implements the supported closure paths. Declaration source alone is not executed installation, activation or entrypoint acceptance.
+
 ## Application Composition contract
 
 The provider-neutral Effect Schema and pure candidate validator are defined by [ADR-0020](../../../docs/adr/0020-governed-application-composition.md). The stage deployment adapter publishes the observed active composition for server-side consumers; live Shell loading remains a follow-up slice, so this contract does not change runtime loading yet.
@@ -66,12 +72,14 @@ All later business generators read the generated module-ID marker and patch only
 Use the category generator before authoring each supported public artifact:
 
 ```bash
-mise exec -- pnpm scaffold:microvertical-page -- --vertical property-registry --page overview --authorization context_permission --permission module.access [--url /custom/path]
-mise exec -- pnpm scaffold:public-component -- --vertical property-registry --name unit-card --authorization context_permission --permission module.access
-mise exec -- pnpm scaffold:module-api -- --vertical property-registry --name resource-api --authorization context_permission --permission module.access
-mise exec -- pnpm scaffold:search-provider -- --vertical property-registry --name unit-search --resource unit --authorization context_permission --permission resource.read
-mise exec -- pnpm scaffold:report -- --vertical property-registry --name unit-inventory --resource unit --authorization context_permission --permission resource.read
+mise exec -- pnpm scaffold:microvertical-page -- --vertical property-registry --page overview --authorization protected [--access-risk routine|sensitive|critical] [--url /custom/path]
+mise exec -- pnpm scaffold:public-component -- --vertical property-registry --name unit-card --authorization protected [--access-risk routine|sensitive|critical]
+mise exec -- pnpm scaffold:module-api -- --vertical property-registry --name resource-api --authorization protected [--access-risk routine|sensitive|critical]
+mise exec -- pnpm scaffold:search-provider -- --vertical property-registry --name unit-search --resource unit --authorization protected [--access-risk routine|sensitive|critical]
+mise exec -- pnpm scaffold:report -- --vertical property-registry --name unit-inventory --resource unit --authorization protected [--access-risk routine|sensitive|critical]
 ```
+
+An `--authorization protected` artifact carries an `accessDeclaration`; `--access-risk` (default `sensitive`) sets its risk tier and `--access-selectors` its record scopes. A search provider's manifest descriptor names the declaration key of its own governed search read in `accessKey`, so the Shell decides the provider through the same gate. The carrier contract is in [Granular Authorization](./AUTHORIZATION.md).
 
 The page name is a stable lower-kebab identity, while `--url` is an optional complete root-relative canonical-path override. When `--url` is omitted, Codesmith derives `/<microvertical>/<page>` from the validated MicroVertical slug. For example, `--vertical contacts --page customers` produces canonical `/contacts/customers`; the locale-aware Shell router exposes it as `/cs/contacts/customers` or `/en/contacts/customers`. Never include a locale prefix in `--url`. A generated page is private and non-indexable, contains only its localized title, and is loaded only after the authenticated Shell/Core gateway resolves that exact governed page entrypoint. Private metadata alone is not an authentication mechanism.
 

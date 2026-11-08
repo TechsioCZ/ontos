@@ -2,12 +2,12 @@
 // @ontos-action-http-owner payment.term-catalog
 // @ontos-action-http-slug retire-payment-term
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { RetirePaymentTermPayloadSchema, RetirePaymentTermResultSchema } from '../actions/retire-payment-term.ts';
 
 export { RetirePaymentTermPayloadSchema } from '../actions/retire-payment-term.ts';
-
 export const RetirePaymentTermActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RetirePaymentTermActionInvalidProblem',
   400,
@@ -21,6 +21,7 @@ export const RetirePaymentTermActionForbiddenProblemSchema = makeProblemDetailsS
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -141,7 +142,7 @@ export const RetirePaymentTermActionApi = HttpApi.make('RetirePaymentTermActionA
       HttpApiEndpoint.post('execute', '/payment-term-catalog/actions/retire-payment-term', {
         error: actionErrors,
         payload: Schema.toEncoded(RetirePaymentTermPayloadSchema),
-        success: RetirePaymentTermResultSchema,
+        success: [ActionProposalAcceptedSchema, RetirePaymentTermResultSchema],
       }),
     )
     .middleware(RetirePaymentTermActionSchemaErrorMiddleware),

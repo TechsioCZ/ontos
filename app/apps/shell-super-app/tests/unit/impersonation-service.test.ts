@@ -3,7 +3,6 @@ import {
   ActionAlreadyCommitted,
   ActionPermissionDenied,
   ActionTransactionError,
-  ContextAccess,
   IdentityTargetInvalidError,
   PrincipalResolver,
   SupportRecoveryPrincipalContextResolver,
@@ -14,6 +13,7 @@ import type {
   PrincipalResolverService,
   SupportRecoveryPrincipalContextResolverService,
 } from '@app/core-runtime';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { makeSignature } from 'better-auth/crypto';
 import { Context, Effect, Match, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -42,7 +42,7 @@ import {
   actionSuccess,
   makeActionRuntimeDouble,
 } from '../support/action-runtime-double.ts';
-import { makeContextAccessDouble } from '../support/context-access-double.ts';
+import { makeShellTestAccessGate } from '../support/access-decision-double.ts';
 import { makePrincipalResolverDouble } from '../support/identity-service-doubles.ts';
 import {
   makeAuthenticationServiceDouble,
@@ -80,8 +80,8 @@ const providePrincipalManagementRepository = Effect.provideService(
   PrincipalManagementRepository,
   principalManagementRepository,
 );
-const contextAccess = makeContextAccessDouble('allowed');
-const provideContextAccess = Effect.provideService(ContextAccess, contextAccess);
+const accessGate = makeShellTestAccessGate({ defaultAnswer: 'allowed' });
+const provideAccessGate = Effect.provideService(AccessDecisionGate, accessGate);
 
 const makeService = (options: {
   readonly actionRuntime: ActionRuntimeService;
@@ -105,9 +105,9 @@ const makeService = (options: {
   );
   return Object.freeze({
     start: (input: Parameters<typeof service.start>[0]) =>
-      service.start(input).pipe(providePrincipalManagementRepository, provideContextAccess),
+      service.start(input).pipe(providePrincipalManagementRepository, provideAccessGate),
     stop: (input: Parameters<typeof service.stop>[0]) =>
-      service.stop(input).pipe(providePrincipalManagementRepository, provideContextAccess),
+      service.stop(input).pipe(providePrincipalManagementRepository, provideAccessGate),
   });
 };
 const supportRecoveryPrincipal: SupportRecoveryPrincipalContextResolverService = {

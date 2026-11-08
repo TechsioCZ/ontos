@@ -16,6 +16,7 @@ import {
   pricingCommercialFeeIdentityKeysEqual,
 } from '@app/pricing-contracts/domain/commercial-fee';
 import { priceDecimalValuesEqual } from '@app/pricing-contracts/domain/price-definition';
+import type { Crypto } from 'effect';
 import { DateTime, Effect, Match, Schema } from 'effect';
 
 import {
@@ -39,7 +40,7 @@ import {
 import type { CommercialFeeCatalogTargetAssessmentPort } from '../integrations/commercial-fee-catalog-target-evidence.ts';
 import { currencySupportPersistenceForScope } from '../persistence/currency-support-persistence.ts';
 import type { CurrencySupportPersistence } from '../persistence/currency-support-persistence.ts';
-import { PricingCatalogSelectionUnavailable } from '../../shared/domain/catalog-selection-gateway-credential.ts';
+import { PricingCatalogSelectionUnavailable } from '../../shared/domain/pricing-catalog-selection-unavailable.ts';
 import { CurrencySupportPersistenceUnavailable } from './currency-support-persistence-unavailable.ts';
 
 export {
@@ -329,7 +330,7 @@ export const handleReviseCommercialFee = Effect.fn('ReviseCommercialFeeAction.ha
   },
 );
 
-const reviseCommercialFeeServicesForScope: ActionServiceFactory<ReviseCommercialFeeActionServices> = (
+const reviseCommercialFeeServicesForScope: ActionServiceFactory<ReviseCommercialFeeActionServices, Crypto.Crypto> = (
   transaction,
   scope,
   compositionRevision,
@@ -350,6 +351,7 @@ const reviseCommercialFeeServicesForScope: ActionServiceFactory<ReviseCommercial
           compositionRevision,
           legalEntityId,
           requestCorrelation: scope.correlationId,
+          scope,
         }),
         currencySupport: currencySupportPersistenceForScope(transaction, scope, compositionRevision),
         persistence: commercialFeePersistenceForScope(transaction, scope),
@@ -382,7 +384,11 @@ const prepareReviseCommercialFeeServices = Effect.fn('ReviseCommercialFeeAction.
       payload.intent === 'RETIRE_CURRENT' ? [] : [payload.catalogTargetEvidence],
       context,
     );
-    const factory: ActionServiceFactory<ReviseCommercialFeeActionServices> = (transaction, scope, revision) =>
+    const factory: ActionServiceFactory<ReviseCommercialFeeActionServices, Crypto.Crypto> = (
+      transaction,
+      scope,
+      revision,
+    ) =>
       assertPreparedPricingScope(context, scope, revision).pipe(
         Effect.andThen(reviseCommercialFeeServicesForScope(transaction, scope, revision)),
         Effect.map(
@@ -400,6 +406,17 @@ const prepareReviseCommercialFeeServices = Effect.fn('ReviseCommercialFeeAction.
 
 export const reviseCommercialFeeAction = defineAction(
   {
+    // O18: this payload is a union whose RETIRE branch states no money value, so the declaration
+    // names no governed amount. Under an amount ceiling the gate refuses `deny.amount_required`
+    // rather than trusting a caller-supplied total; a per-branch amount needs a contract change.
+    accessDeclaration: {
+      key: 'commerce.pricing.commercial-fee.revise',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'commercial-fees', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.pricing.revise-commercial-fee.access.v1',
@@ -423,7 +440,7 @@ export const reviseCommercialFeeAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.pricing.revise-commercial-fee',
       moduleKey: MODULE_KEY,
       role: 'action',

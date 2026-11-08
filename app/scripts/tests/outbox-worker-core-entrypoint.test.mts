@@ -87,7 +87,8 @@ it('exports every Core value the deployed worker hosts re-export', () => {
   );
   const layerPath = '../../verticals/commerce-customer-context/src/worker-host/layer.ts';
   const reExports = coreRuntimeValueReExports('layer.ts', readFileSync(new URL(layerPath, import.meta.url), 'utf-8'));
-  expect(reExports).toContain('ContextAccessLive');
+  // The fixture re-exports the Core values its worker handlers need; the guard keeps it non-trivial.
+  expect(reExports).toContain('CorePersistenceLive');
   for (const name of reExports) {
     expect(entrypoint.has(name), name).toBe(true);
   }

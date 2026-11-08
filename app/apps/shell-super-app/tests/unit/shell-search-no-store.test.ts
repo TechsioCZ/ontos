@@ -1,3 +1,4 @@
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 /* @rstest-environment node */
 
 // Server HTTP checks need one native fetch realm; mixed DOM Response/native Headers silently drops headers.
@@ -75,6 +76,7 @@ const searchHttpResponse = Effect.fn('test.searchNoStoreResponse')(function* sea
       AuthenticationService,
       makeAuthenticationServiceDouble({ resolveShellContext: () => Effect.succeed(authenticated) }),
     ),
+    Layer.succeed(AccessDecisionGate, makeTestAccessDecision()),
     Layer.succeed(ContextAccess, makeContextAccessDouble('allowed')),
     Layer.mock(LegalEntityContext, {}),
     Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(catalog) }),

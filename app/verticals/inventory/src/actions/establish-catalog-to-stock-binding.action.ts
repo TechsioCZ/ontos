@@ -2,12 +2,7 @@
 // @ontos-action-owner commerce.inventory
 // @ontos-action-slug establish-catalog-to-stock-binding
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 
 import {
@@ -84,27 +79,23 @@ export const handleEstablishCatalogToStockBinding = Effect.fn('EstablishCatalogT
 
 export const establishCatalogToStockBindingAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.inventory.catalog-to-stock-binding.establish',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'bindings', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: `${ACTION_KEY}.access.v1` },
     actionKey: ACTION_KEY,
     auditEvidenceSchema: EstablishCatalogToStockBindingAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission<EstablishCatalogToStockBindingPayload>((payload) => ({
-      permission: 'inventory.catalog_to_stock_binding.manage',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: payload.bindingRef.moduleId,
-          resourceId: payload.bindingRef.resourceId,
-          resourceType: payload.bindingRef.resourceType,
-        },
-        tenantId: payload.bindingRef.tenantId,
-      },
-    })),
     domainErrorSchema: EstablishCatalogToStockBindingErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: MODULE_KEY,
       role: 'action',
@@ -114,10 +105,6 @@ export const establishCatalogToStockBindingAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: EstablishCatalogToStockBindingPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<EstablishCatalogToStockBindingPayload>((payload) => ({
-      permission: 'write',
-      resource: payload.bindingRef,
-    })),
     resultSchema: EstablishCatalogToStockBindingResultSchema,
     schemaVersion: '1',
   },

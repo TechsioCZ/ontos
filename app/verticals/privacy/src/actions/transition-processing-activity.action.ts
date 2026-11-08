@@ -113,6 +113,14 @@ export const handleTransitionProcessingActivity = Effect.fn('TransitionProcessin
 
 export const transitionProcessingActivityAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.processing-activity.transition',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'processing-governance', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.transition-processing-activity.access.v1',
@@ -124,7 +132,7 @@ export const transitionProcessingActivityAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.transition-processing-activity',
       moduleKey: MODULE_KEY,
       role: 'action',

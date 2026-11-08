@@ -26,8 +26,8 @@ import {
 } from '../../src/services/policy-administration.service.ts';
 import type { AssortmentPolicyPersistence } from '../../src/services/policy-administration.service.ts';
 import {
-  createBindingPermissionTarget,
-  replaceBindingPermissionTargets,
+  createBindingCurrentnessTarget,
+  replaceBindingCurrentnessTarget,
 } from '../../src/actions/policy-administration-support.ts';
 import { handleCreateRule } from '../../src/actions/create-rule.action.ts';
 import { handleCreateApplicabilityBinding } from '../../src/actions/create-applicability-binding.action.ts';
@@ -361,12 +361,22 @@ it.effect('End Binding fails closed before the handler service when Legal Entity
   }),
 );
 
-it('resolves replacement as two exact conjunctive targets at one effective time', () => {
-  const targets = replaceBindingPermissionTargets(replacePayload, scope);
-  expect(targets).toHaveLength(2);
-  expect(targets[0]).toMatchObject({ mode: 'end', permission: 'assortment.binding.end' });
-  expect(targets[1]).toMatchObject({ mode: 'create', permission: 'assortment.binding.create' });
-  expect(targets[1].effectiveFrom).toBe('2026-09-22T12:00:00.000Z');
+it('resolves replacement as one conjunctive Current question naming both the live Binding and the Revision', () => {
+  const target = replaceBindingCurrentnessTarget(replacePayload, scope);
+  expect(target).toStrictEqual({
+    binding: {
+      moduleId: 'commerce.assortment',
+      resourceId: replacePayload.existingBindingRef.resourceId,
+      resourceType: 'commerce.assortment.applicability-binding',
+    },
+    kind: 'assortment_binding',
+    mode: 'replace',
+    ruleRevision: {
+      moduleId: 'commerce.assortment',
+      resourceId: replacePayload.proposedRuleRevisionRef.sourceRef.resourceId,
+      resourceType: 'commerce.assortment.rule-revision',
+    },
+  });
 });
 
 it('rejects a cross-tenant Binding target before authorization can use it', () => {
@@ -383,7 +393,7 @@ it('rejects a cross-tenant Binding target before authorization can use it', () =
     reason: 'Reject a cross-tenant target',
     ruleRevisionRef: revisionRef,
   });
-  expect(() => createBindingPermissionTarget(foreignPayload, scope)).toThrow(AssortmentPolicyTargetInvariant);
+  expect(() => createBindingCurrentnessTarget(foreignPayload, scope)).toThrow(AssortmentPolicyTargetInvariant);
 });
 
 it('canonicalizes nested meaning objects before fingerprinting', () => {

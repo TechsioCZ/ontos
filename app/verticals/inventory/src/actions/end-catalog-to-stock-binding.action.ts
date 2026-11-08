@@ -2,12 +2,7 @@
 // @ontos-action-owner commerce.inventory
 // @ontos-action-slug end-catalog-to-stock-binding
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 
 import {
@@ -85,27 +80,23 @@ export const handleEndCatalogToStockBinding = Effect.fn('EndCatalogToStockBindin
 
 export const endCatalogToStockBindingAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.inventory.catalog-to-stock-binding.end',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'bindings', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: `${ACTION_KEY}.access.v1` },
     actionKey: ACTION_KEY,
     auditEvidenceSchema: EndCatalogToStockBindingAuditEvidenceSchema,
     auditProfile: 'sensitive',
-    businessPermission: defineActionBusinessPermission<EndCatalogToStockBindingPayload>((payload) => ({
-      permission: 'inventory.catalog_to_stock_binding.manage',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: payload.bindingRef.moduleId,
-          resourceId: payload.bindingRef.resourceId,
-          resourceType: payload.bindingRef.resourceType,
-        },
-        tenantId: payload.bindingRef.tenantId,
-      },
-    })),
     domainErrorSchema: EndCatalogToStockBindingErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: MODULE_KEY,
       role: 'action',
@@ -115,10 +106,6 @@ export const endCatalogToStockBindingAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: EndCatalogToStockBindingPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<EndCatalogToStockBindingPayload>((payload) => ({
-      permission: 'write',
-      resource: payload.bindingRef,
-    })),
     resultSchema: EndCatalogToStockBindingResultSchema,
     schemaVersion: '1',
   },

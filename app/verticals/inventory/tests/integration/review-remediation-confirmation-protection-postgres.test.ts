@@ -1,15 +1,34 @@
+import {
+  ActionPermissionDenied,
+  ActiveApplicationCompositionService,
+  ActiveApplicationCompositionSnapshotSchema,
+  getVerticalRuntimeOutboxWorkers,
+  OutboxRuntime,
+  validateActiveApplicationCompositionSnapshot,
+} from '@app/core-runtime';
+import type {
+  AnyOutboxWorkerRegistration,
+  OutboxCycleError,
+  OutboxCycleResult,
+  OutboxRuntimeService,
+  OutboxWorkerRequirements,
+  RunOutboxCycleInput,
+} from '@app/core-runtime';
 import type { OutboxWorkerLegalEntityScope } from '@app/core-runtime/outbox/worker';
-import { OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
+import { defineOutboxWorkerEntry, OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { PgInsertValue } from 'drizzle-orm/pg-core';
-import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, DateTime, Effect, Option, Ref, Schema, Semaphore } from 'effect';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
+import { Config, Crypto, DateTime, Deferred, Effect, FileSystem, Layer, Option, Ref, Schema, Semaphore } from 'effect';
+import type { Exit } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
 import { trustVerifiedGatewayPrincipalContext } from '../../../../packages/core-runtime/src/auth/system-principal-context-provenance.ts';
 import {
+  accessScopeFences,
+  accessScopes,
   actionInvocations,
   applicationCompositionAuthority,
   auditEvents,
@@ -37,11 +56,19 @@ import {
 import { makeOutboxRepository } from '../../../../packages/core-runtime/src/outbox/repository.ts';
 import { makeOutboxRuntime } from '../../../../packages/core-runtime/src/outbox/runtime.ts';
 import type { ContextAccessService } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
-import { toBusinessPermissionAccessKey } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
-import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/permissions/owner-authorization-overlay.ts';
+import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/access/enforcement/owner-overlay.ts';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { testOperationalScopeResolver } from '../../../../packages/core-runtime/tests/fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../../../../packages/core-runtime/tests/support/action-runtime-options.ts';
+import {
+  inertAccessEnforcementPorts,
+  makeScriptedBoundAccessGate,
+} from '../../../../packages/core-runtime/src/testing/access-gate.ts';
+import type { AccessDecision } from '../../../../packages/core-runtime/src/access/decision/contract.ts';
+import type { GateInput } from '../../../../packages/core-runtime/src/access/enforcement/contract.ts';
+import { makeTestAccessDecision } from '../../../../packages/core-runtime/src/access/enforcement/testing.ts';
+import type { BoundAccessGate } from '../../../../packages/core-runtime/src/operations/access-gate.ts';
+import { bindAccessGate } from '../../../../packages/core-runtime/src/operations/access-gate.ts';
 import {
   makeTestDatabaseFromClient,
   testDatabaseClients,
@@ -49,14 +76,18 @@ import {
 import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
-import { CatalogSelectionSchema } from '../../../catalog/shared/domain/catalog-selection-evidence.ts';
+import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
 import { EstablishCommitmentProtectionPayloadSchema } from '../../shared/actions/establish-commitment-protection.ts';
 import {
   CommitmentProtectionPendingResultSchema,
   establishCommitmentProtection,
 } from '../../shared/domain/commitment-protection.ts';
 import { InventoryBackendConfigurationSchema } from '../../shared/domain/inventory-backend-configuration.ts';
-import { CreateInventoryReservationPayloadSchema } from '../../shared/domain/inventory-reservation-create.ts';
+import {
+  CreateInventoryReservationPayloadSchema,
+  InventoryReservationCreateRejected,
+  InventoryReservationCreateUnavailable,
+} from '../../shared/domain/inventory-reservation-create.ts';
 import type { InventoryReservationCreateRequest } from '../../shared/domain/inventory-reservation-create.ts';
 import { CommitmentProtectionInventoryEffectLedgerIntentSchema } from '../../shared/domain/inventory-effect-ledger.ts';
 import { advanceReservationConfirmationHealth } from '../../shared/domain/reservation-confirmation.ts';
@@ -78,6 +109,7 @@ import {
   OutboxPayloadSchema as ConfirmationIssuancePayloadSchema,
   outboxTopic as confirmationIssuanceTopic,
 } from '../../shared/outbox/commerce-inventory-reservation-confirmation-issuance-requested-v1.ts';
+import { inventoryRegistration } from '../../vertical.registration.ts';
 import { createInventoryReservationAction } from '../../src/actions/create-inventory-reservation.action.ts';
 import { establishCommitmentProtectionAction } from '../../src/actions/establish-commitment-protection.action.ts';
 import { reservationConfirmationVerificationRead } from '../../src/api/reservation-confirmation-verification.read.ts';
@@ -111,6 +143,7 @@ import {
 import { reservationCreateEffectPersistenceForWorkerScope } from '../../src/persistence/reservation-create-effect-repository.ts';
 import type { CommitmentProtectionAuthority } from '../../src/services/commitment-protection-authority.ts';
 import { makeCommitmentProtectionEstablishmentExecutionService } from '../../src/services/commitment-protection.service.ts';
+import type { InventoryReservationCommerceContextAuthority } from '../../src/services/inventory-reservation-commerce-context.ts';
 import { InventoryReservationCommerceContextAuthorityPort } from '../../src/services/inventory-reservation-commerce-context.ts';
 import {
   commitmentProtectionLedgerResolution,
@@ -137,16 +170,14 @@ import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-
 
 const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
-const compositionRevision = 'a'.repeat(64);
-const compositionSubscriptions = extractOutboxWorkerSubscriptions([
-  executeInventoryReservationCreateWorker,
-  executeReservationConfirmationIssuanceWorker,
-  executeCommitmentProtectionEstablishmentWorker,
-]);
+const inventoryWorkers = getVerticalRuntimeOutboxWorkers(inventoryRegistration);
+const compositionSubscriptions = extractOutboxWorkerSubscriptions(inventoryWorkers);
 
 const tenantId = 'd1000000-0000-4000-8000-000000000001';
 const legalEntityId = 'd2000000-0000-4000-8000-000000000001';
 const principalId = 'd3000000-0000-4000-8000-000000000001';
+const tenantScopeId = 'e7000000-0000-4000-8000-000000000001';
+const legalEntityScopeId = 'e7000000-0000-4000-8000-000000000002';
 const authBindingId = 'd4000000-0000-4000-8000-000000000001';
 const configurationId = 'd5000000-0000-4000-8000-000000000001';
 const reservationId = 'd6000000-0000-4000-8000-000000000001';
@@ -173,35 +204,36 @@ const fixtureInstant = '2026-09-28T08:00:00.000Z';
 const scenarioSemaphore = Semaphore.makeUnsafe(1);
 const currentIso = DateTime.nowAsDate.pipe(Effect.map((instant) => instant.toISOString()));
 
-const principal = trustVerifiedGatewayPrincipalContext(
-  {
-    authBindingId,
-    authContextRef: `better-auth-session:${authBindingId}`,
-    authenticationNamespaceId,
-    authMethod: 'session' as const,
-    legalEntityId,
-    principalId,
-    tenantId,
-    trustedStorefrontId: storefrontId,
-  },
-  compositionRevision,
-);
+const makePrincipal = (compositionRevision: string) =>
+  trustVerifiedGatewayPrincipalContext(
+    {
+      authBindingId,
+      authContextRef: `better-auth-session:${authBindingId}`,
+      authenticationNamespaceId,
+      authMethod: 'session' as const,
+      legalEntityId,
+      principalId,
+      tenantId,
+      trustedStorefrontId: storefrontId,
+    },
+    compositionRevision,
+  );
 
 const allowedPermission = {
   checkActionPermission: () => Effect.succeed('allowed' as const),
 };
 
 const contextAccess: ContextAccessService = {
-  businessPermissions: ({ targets }) =>
-    Effect.succeed(
-      targets.map((target) => ({
-        decision: 'allowed' as const,
-        key: toBusinessPermissionAccessKey(target),
-      })),
-    ),
   legalEntities: ({ legalEntityIds }) =>
     Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
   modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
+  ownerPermissions: ({ targets }) =>
+    Effect.succeed(
+      targets.map((target) => ({
+        decision: 'allowed' as const,
+        key: target.target.key,
+      })),
+    ),
   resources: ({ resources }) =>
     Effect.succeed(
       resources.map(({ moduleId, resourceId, resourceType }) => ({
@@ -354,28 +386,53 @@ const cleanupCore = (database: CoreDatabase) =>
       yield* transaction.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId));
       yield* transaction.delete(principalAuthBindings).where(eq(principalAuthBindings.tenantId, tenantId));
       yield* transaction.delete(principals).where(eq(principals.tenantId, tenantId));
-      yield* transaction.delete(legalEntities).where(eq(legalEntities.tenantId, tenantId));
-      yield* transaction.delete(tenants).where(eq(tenants.tenantId, tenantId));
+      // Core retains access intent (D27), so the Tenant, its company and their access scopes stay.
     }),
   );
 
 const seedCore = (database: CoreDatabase) =>
   Effect.gen(function* seedReviewRemediationCore() {
-    yield* database.insert(tenants).values({
-      defaultLocale: 'en',
-      name: 'Inventory review remediation acceptance',
-      slug: `inventory-review-remediation-${tenantId}`,
-      status: 'active',
-      tenantId,
-    });
-    yield* database.insert(legalEntities).values({
-      legalEntityId,
-      legalName: 'Inventory review remediation legal entity',
-      registrationCountry: 'CZ',
-      registrationNumber: `REVIEW-${legalEntityId}`,
-      status: 'active',
-      tenantId,
-    });
+    yield* database
+      .insert(tenants)
+      .values({
+        defaultLocale: 'en',
+        name: 'Inventory review remediation acceptance',
+        slug: `inventory-review-remediation-${tenantId}`,
+        status: 'active',
+        tenantId,
+      })
+      .onConflictDoNothing();
+    yield* database
+      .insert(legalEntities)
+      .values({
+        legalEntityId,
+        legalName: 'Inventory review remediation legal entity',
+        registrationCountry: 'CZ',
+        registrationNumber: `REVIEW-${legalEntityId}`,
+        status: 'active',
+        tenantId,
+      })
+      .onConflictDoNothing();
+    // The runner re-decides every protected Action under its access scope's shared fence. Seed the
+    // tenant context scope and the company scope with a Ready fence each, as Core bootstrap does.
+    yield* database
+      .insert(accessScopes)
+      .values([
+        { scopeId: tenantScopeId, tenantContextId: tenantId, tenantId },
+        { legalEntityId, scopeId: legalEntityScopeId, tenantId },
+      ])
+      .onConflictDoNothing();
+    yield* database
+      .insert(accessScopeFences)
+      .values(
+        [tenantScopeId, legalEntityScopeId].map((scopeId) => ({
+          revision: 1,
+          scopeId,
+          state: 'Ready' as const,
+          tenantId,
+        })),
+      )
+      .onConflictDoNothing();
     yield* database.insert(principals).values({
       displayName: 'Inventory review remediation operator',
       kind: 'human',
@@ -549,7 +606,74 @@ const latestMessagePayload = <A>(database: CoreDatabase, topic: string, schema: 
       ),
     );
 
-const makeScenario = Effect.fn('ReviewRemediationPostgres.makeScenario')(function* makeScenario() {
+class InventoryNativeCompositionFixtureError extends Schema.TaggedError<InventoryNativeCompositionFixtureError>()(
+  'InventoryNativeCompositionFixtureError',
+  { reason: Schema.String },
+) {}
+
+const makeAdmittedInventoryOutbox = (
+  outbox: OutboxRuntimeService,
+  snapshot: typeof ActiveApplicationCompositionSnapshotSchema.Type,
+  expectedDeployment: Parameters<typeof defineOutboxWorkerEntry>[0]['expectedDeployment'],
+) => ({
+  ...outbox,
+  runCycle: <Registration extends AnyOutboxWorkerRegistration>(input: RunOutboxCycleInput<Registration>) =>
+    Effect.gen(function* runAdmittedInventoryCycle() {
+      const services = yield* Effect.context<OutboxWorkerRequirements<Registration>>();
+      const completed = yield* Deferred.make<OutboxCycleResult, OutboxCycleError>();
+      const preserveCycleExit = (exit: Exit.Exit<OutboxCycleResult, OutboxCycleError>) =>
+        Deferred.done(completed, exit);
+      const entry = defineOutboxWorkerEntry({
+        claimOwnerPrefix: 'inventory-native-port',
+        expectedDeployment,
+        layer: Layer.mergeAll(
+          Layer.succeedContext(services),
+          Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+          Layer.succeed(OutboxRuntime, {
+            ...outbox,
+            // Delegate the exact original native cycle; the public entry supplies receiving admission.
+            runCycle: () =>
+              outbox.runCycle(input).pipe(Effect.provideContext(services), Effect.onExit(preserveCycleExit)),
+          }),
+        ),
+        ownerRegistration: inventoryRegistration,
+        registrations: input.registrations,
+        subscriptions: compositionSubscriptions,
+      });
+      return yield* Effect.raceFirst(
+        Deferred.await(completed),
+        entry
+          .runLoop({
+            config: {
+              claimOwner: input.claimOwner,
+              maxDeliveries: input.maxDeliveries ?? 1,
+              pollIntervalMs: 1000,
+            },
+          })
+          .pipe(Effect.andThen(Effect.never)),
+      );
+    }),
+});
+
+const makeActionScenario = Effect.fn('ReviewRemediationPostgres.makeActionScenario')(function* makeActionScenario(
+  access: ContextAccessService = contextAccess,
+  accessDecision: BoundAccessGate = makeScriptedBoundAccessGate('allowed').bound,
+) {
+  const snapshotPath = yield* Config.String('NATIVE_1290_COMPOSITION_SNAPSHOT_PATH');
+  const fs = yield* FileSystem.FileSystem;
+  const snapshot = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(
+    yield* fs.readFileString(snapshotPath),
+  ).pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
+  const owner = snapshot.composition.modules.find((module) => module.moduleId === inventoryRegistration.moduleId);
+  if (owner === undefined) {
+    return yield* Effect.fail(
+      new InventoryNativeCompositionFixtureError({
+        reason: 'The actual built Composition must contain Inventory',
+      }),
+    );
+  }
+  const compositionRevision = snapshot.composition.revision;
+  const principal = makePrincipal(compositionRevision);
   const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
   const admin = yield* makeTestDatabaseFromClient(adminClient, inventoryRelations);
   const coreAdmin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
@@ -610,10 +734,11 @@ const makeScenario = Effect.fn('ReviewRemediationPostgres.makeScenario')(functio
     testOperationalScopeResolver,
     {
       ...openActionRuntimeOptions,
-      contextAccess,
-      databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
-
+      accessDecision,
+      contextAccess: access,
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
+      ownerRegistration: inventoryRegistration,
+      resolveCompositionRevision: () => Effect.succeed(compositionRevision),
     },
   );
   const readRuntime = makeReadRuntime(
@@ -622,11 +747,17 @@ const makeScenario = Effect.fn('ReviewRemediationPostgres.makeScenario')(functio
     testOperationalScopeResolver,
     contextAccess,
     {
+      accessDecision: makeScriptedBoundAccessGate('allowed').bound,
       databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
+      ownerRegistration: inventoryRegistration,
     },
   );
-  const outbox = makeOutboxRuntime(makeOutboxRepository(runtimeDatabase, crypto));
+  const outbox = makeAdmittedInventoryOutbox(
+    makeOutboxRuntime(makeOutboxRepository(runtimeDatabase, crypto)),
+    snapshot,
+    owner.deployment,
+  );
   const baseFanout = makeOutboxWorkerLegalEntityScopeFanout(
     makePostgresOutboxWorkerLegalEntityScopeBackend({
       executor: runtimeDatabase,
@@ -647,6 +778,45 @@ const makeScenario = Effect.fn('ReviewRemediationPostgres.makeScenario')(functio
   const protectionAuthorityCalls = yield* Ref.make(0);
   const proofValidFrom = yield* currentIso;
   const proofValidUntil = '9999-12-31T23:59:59.999Z';
+  return {
+    actionRuntime,
+    admin,
+    compositionRevision,
+    confirmationAuthorityCalls,
+    coreAdmin,
+    currentOwnerScope,
+    fanout,
+    outbox,
+    principal,
+    proofValidFrom,
+    proofValidUntil,
+    protectionAuthorityCalls,
+    readRuntime,
+    reservationBackendCalls,
+    runtimeDatabase,
+  };
+});
+
+type ActionScenario = Effect.Success<ReturnType<typeof makeActionScenario>>;
+
+const makeScenario = Effect.fn('ReviewRemediationPostgres.makeScenario')(function* makeScenario() {
+  const {
+    actionRuntime,
+    admin,
+    compositionRevision,
+    confirmationAuthorityCalls,
+    coreAdmin,
+    currentOwnerScope,
+    fanout,
+    outbox,
+    principal,
+    proofValidFrom,
+    proofValidUntil,
+    protectionAuthorityCalls,
+    readRuntime,
+    reservationBackendCalls,
+    runtimeDatabase,
+  } = yield* makeActionScenario();
 
   const createResult = yield* actionRuntime
     .runAction({
@@ -778,11 +948,13 @@ const makeScenario = Effect.fn('ReviewRemediationPostgres.makeScenario')(functio
   return {
     actionRuntime,
     admin,
+    compositionRevision,
     confirmation: confirmationRead.current,
     confirmationAuthorityCalls,
     coreAdmin,
     fanout,
     outbox,
+    principal,
     proofValidFrom,
     proofValidUntil,
     protectionAuthorityCalls,
@@ -808,7 +980,7 @@ const protectionPayload = (confirmation: ReservationConfirmation) =>
 const stageProtection = (scenario: Scenario) =>
   scenario.actionRuntime.runAction({
     payload: protectionPayload(scenario.confirmation),
-    principal,
+    principal: scenario.principal,
     registration: establishCommitmentProtectionAction,
     transport: {
       correlationId: 'review-remediation-protection-action',
@@ -853,14 +1025,14 @@ it.live(
           });
           const matchNow = yield* DateTime.nowAsDate;
           yield* scenario.outbox.matchMessages({
-            compositionRevision,
+            compositionRevision: scenario.compositionRevision,
             now: matchNow,
           });
           const now = new Date(matchNow.getTime() + 1000);
           const cycle = yield* scenario.outbox
             .runCycle({
               claimOwner: 'review-remediation-protection-worker',
-              compositionRevision,
+              compositionRevision: scenario.compositionRevision,
               maxDeliveries: 1,
               now,
               registrations: [executeCommitmentProtectionEstablishmentWorker],
@@ -887,7 +1059,7 @@ it.live(
           expect(yield* Ref.get(scenario.protectionAuthorityCalls)).toBe(1);
         }),
       ),
-    ).pipe(Effect.provide(NodeCrypto.layer)),
+    ).pipe(Effect.provide(Layer.merge(NodeCrypto.layer, NodeServices.layer))),
 );
 
 it.live(
@@ -976,14 +1148,14 @@ it.live(
           });
           const matchNow = yield* DateTime.nowAsDate;
           yield* scenario.outbox.matchMessages({
-            compositionRevision,
+            compositionRevision: scenario.compositionRevision,
             now: matchNow,
           });
           const firstNow = new Date(matchNow.getTime() + 1000);
           const failedCycle = yield* scenario.outbox
             .runCycle({
               claimOwner: 'review-remediation-protection-crash',
-              compositionRevision,
+              compositionRevision: scenario.compositionRevision,
               maxDeliveries: 1,
               now: firstNow,
               registrations: [executeCommitmentProtectionEstablishmentWorker],
@@ -1034,7 +1206,7 @@ it.live(
           const retryCycle = yield* scenario.outbox
             .runCycle({
               claimOwner: 'review-remediation-protection-recovery',
-              compositionRevision,
+              compositionRevision: scenario.compositionRevision,
               maxDeliveries: 1,
               now: retryNow,
               registrations: [executeCommitmentProtectionEstablishmentWorker],
@@ -1060,5 +1232,466 @@ it.live(
           expect(yield* Ref.get(scenario.protectionAuthorityCalls)).toBe(1);
         }),
       ),
-    ).pipe(Effect.provide(NodeCrypto.layer)),
+    ).pipe(Effect.provide(Layer.merge(NodeCrypto.layer, NodeServices.layer))),
+);
+
+it.live(
+  'accepts a labeled owner-context fixture through the registered Inventory Action and actual service factory',
+  () =>
+    Semaphore.withPermits(
+      scenarioSemaphore,
+      1,
+    )(
+      Effect.scoped(
+        Effect.gen(function* ownerContextContractAcceptance() {
+          const scenario = yield* makeActionScenario();
+          const requests = yield* Ref.make<
+            Parameters<InventoryReservationCommerceContextAuthority['resolveCurrent']>[0][]
+          >([]);
+          // This is an Inventory owner-port provider fixture, not a production Commerce producer.
+          const result = yield* scenario.actionRuntime
+            .runAction({
+              payload: createPayload,
+              principal: scenario.principal,
+              registration: createInventoryReservationAction,
+              transport: {
+                correlationId: 'inventory-context-fixture-positive',
+                idempotencyKey: 'inventory-context-fixture-positive',
+              },
+            })
+            .pipe(
+              Effect.provideService(InventoryReservationCommerceContextAuthorityPort, {
+                resolveCurrent: (request) =>
+                  Ref.update(requests, (previous) => [...previous, request]).pipe(Effect.as(commerceContext)),
+              }),
+            );
+          expect(yield* Ref.get(requests)).toEqual([
+            { customerConfigurationId, effectId: reservationCreateEffectId, legalEntityId, storefrontId, tenantId },
+          ]);
+          expect(result.outcome).toBe('PENDING');
+          expect(result.effect.request).toMatchObject({
+            authority,
+            commerceContext,
+            effectId: reservationCreateEffectId,
+            legalEntityId,
+            reservation: {
+              origin: { attemptId, kind: 'ORDER_COMMITMENT_ATTEMPT' },
+              ref: createPayload.reservationRef,
+              requirements: [{ quantity: '4', unitRef }],
+            },
+          });
+          const effects = yield* scenario.admin
+            .select()
+            .from(inventoryReservationCreateEffects)
+            .where(eq(inventoryReservationCreateEffects.tenantId, tenantId));
+          expect(effects).toHaveLength(1);
+          const messages = yield* scenario.coreAdmin
+            .select()
+            .from(outboxMessages)
+            .where(eq(outboxMessages.tenantId, tenantId));
+          expect(messages).toHaveLength(1);
+          expect(yield* Ref.get(scenario.reservationBackendCalls)).toBe(0);
+        }),
+      ),
+    ).pipe(Effect.provide(Layer.merge(NodeCrypto.layer, NodeServices.layer))),
+);
+
+const runContextAction = (
+  scenario: ActionScenario,
+  key: string,
+  options: {
+    readonly actor?: ActionScenario['principal'];
+    readonly authority?: InventoryReservationCommerceContextAuthority;
+  } = {},
+) => {
+  const operation = scenario.actionRuntime.runAction({
+    payload: createPayload,
+    principal: options.actor ?? scenario.principal,
+    registration: createInventoryReservationAction,
+    transport: { correlationId: key, idempotencyKey: key },
+  });
+  return options.authority === undefined
+    ? operation
+    : operation.pipe(Effect.provideService(InventoryReservationCommerceContextAuthorityPort, options.authority));
+};
+
+const assertNoNewReservationIntent = Effect.fn('InventoryContextAcceptance.assertNoNewIntent')(
+  function* assertNoNewReservationIntent(scenario: ActionScenario) {
+    const persisted = yield* Effect.all([
+      scenario.admin
+        .select()
+        .from(inventoryReservationCreateEffects)
+        .where(eq(inventoryReservationCreateEffects.tenantId, tenantId)),
+      scenario.admin.select().from(inventoryEffectLedger).where(eq(inventoryEffectLedger.tenantId, tenantId)),
+      scenario.admin.select().from(inventoryObligations).where(eq(inventoryObligations.tenantId, tenantId)),
+      scenario.coreAdmin.select().from(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
+    ]);
+    expect(persisted).toEqual([[], [], [], []]);
+  },
+);
+
+it.live('a shape-valid CURRENT_OWNER_VERIFIED payload cannot replace the unavailable default authority', () =>
+  Semaphore.withPermits(
+    scenarioSemaphore,
+    1,
+  )(
+    Effect.scoped(
+      Effect.gen(function* rejectCallerLiteralAsAuthority() {
+        const scenario = yield* makeActionScenario();
+        expect(Schema.is(CreateInventoryReservationPayloadSchema)(createPayload)).toBe(true);
+        const failure = yield* runContextAction(scenario, 'inventory-context-unconfigured').pipe(Effect.flip);
+        expect(Schema.is(InventoryReservationCreateUnavailable)(failure)).toBe(true);
+        expect(failure).toMatchObject({
+          code: 'inventory_reservation_create_unavailable',
+          effectId: reservationCreateEffectId,
+          retryable: true,
+        });
+        yield* assertNoNewReservationIntent(scenario);
+      }),
+    ),
+  ).pipe(Effect.provide(Layer.merge(NodeCrypto.layer, NodeServices.layer))),
+);
+
+for (const reason of [
+  'OWNER_EVIDENCE_MISSING',
+  'OWNER_EVIDENCE_STALE',
+  'OWNER_EVIDENCE_UNAVAILABLE',
+  'OWNER_EVIDENCE_INDETERMINATE',
+] as const) {
+  it.live(`preserves the authority's ${reason} failure before a new Reservation or dispatch`, () =>
+    Semaphore.withPermits(
+      scenarioSemaphore,
+      1,
+    )(
+      Effect.scoped(
+        Effect.gen(function* rejectUnavailableOwnerEvidence() {
+          const scenario = yield* makeActionScenario();
+          const failure = yield* runContextAction(scenario, `inventory-context-${reason}`, {
+            authority: {
+              resolveCurrent: ({ effectId }) =>
+                Effect.fail(
+                  new InventoryReservationCreateUnavailable({
+                    code: 'inventory_reservation_create_unavailable',
+                    effectId,
+                    reason,
+                    retryable: true,
+                  }),
+                ),
+            },
+          }).pipe(Effect.flip);
+          expect(Schema.is(InventoryReservationCreateUnavailable)(failure)).toBe(true);
+          expect(failure).toMatchObject({
+            reason,
+            retryable: true,
+          });
+          yield* assertNoNewReservationIntent(scenario);
+        }),
+      ),
+    ).pipe(Effect.provide(Layer.merge(NodeCrypto.layer, NodeServices.layer))),
+  );
+}
+
+const otherTenantId = 'd1000000-0000-4000-8000-000000000002';
+const contradictoryOwnerContexts = [
+  [
+    'Tenant',
+    {
+      ...commerceContext,
+      commerceMarketRef: { ...commerceContext.commerceMarketRef, tenantId: otherTenantId },
+      sellingLegalEntityRef: { ...commerceContext.sellingLegalEntityRef, tenantId: otherTenantId },
+      storefrontRef: { ...commerceContext.storefrontRef, tenantId: otherTenantId },
+      tenantId: otherTenantId,
+    },
+  ],
+  ['Customer Configuration', { ...commerceContext, customerConfigurationId: 'another-customer-configuration' }],
+  [
+    'Selling Legal Entity',
+    {
+      ...commerceContext,
+      sellingLegalEntityRef: {
+        ...commerceContext.sellingLegalEntityRef,
+        resourceId: 'd2000000-0000-4000-8000-000000000002',
+      },
+    },
+  ],
+  ['Channel', { ...commerceContext, channel: 'B2B' }],
+  [
+    'Commerce Market',
+    {
+      ...commerceContext,
+      commerceMarketRef: {
+        ...commerceContext.commerceMarketRef,
+        resourceId: 'another-market',
+      },
+    },
+  ],
+  [
+    'Storefront',
+    { ...commerceContext, storefrontRef: { ...commerceContext.storefrontRef, appId: 'another-storefront' } },
+  ],
+  ['owner evidence', { ...commerceContext, evidenceRef: 'another-owner-evidence' }],
+  ['owner observation', { ...commerceContext, observedAt: '2026-09-28T09:00:00.000Z' }],
+] as const;
+
+for (const [dimension, fixture] of contradictoryOwnerContexts) {
+  it.live(`rejects contradictory ${dimension} returned by the authority without repairing the caller intent`, () =>
+    Semaphore.withPermits(
+      scenarioSemaphore,
+      1,
+    )(
+      Effect.scoped(
+        Effect.gen(function* rejectContradictoryOwnerContext() {
+          const scenario = yield* makeActionScenario();
+          const qualified = Schema.decodeUnknownSync(TrustedCurrentCommercePurchasingContextSchema)(fixture);
+          const failure = yield* runContextAction(scenario, `inventory-context-mismatch-${dimension}`, {
+            authority: { resolveCurrent: () => Effect.succeed(qualified) },
+          }).pipe(Effect.flip);
+          expect(Schema.is(InventoryReservationCreateRejected)(failure)).toBe(true);
+          expect(failure).toMatchObject({
+            reason: 'COMMERCE_CONTEXT_NOT_ELIGIBLE',
+          });
+          yield* assertNoNewReservationIntent(scenario);
+        }),
+      ),
+    ).pipe(Effect.provide(Layer.merge(NodeCrypto.layer, NodeServices.layer))),
+  );
+}
+
+/**
+ * The v2 access gate decides per Principal: only the allowed Principal's question is answered ALLOWED,
+ * every other Principal is DENIED on the same declaration, whatever the Stock scope context says.
+ */
+const principalScopedAccessGate = (
+  allowedPrincipalId: string,
+  checked: { readonly actor: string; readonly declaration: string }[],
+): BoundAccessGate => {
+  const scripted = makeTestAccessDecision({ defaultAnswer: { outcome: 'ALLOWED' } });
+  const decide = (input: GateInput): Effect.Effect<AccessDecision> =>
+    Effect.suspend(() => {
+      checked.push({
+        actor: input.scope.principalId,
+        declaration: input.carrier.accessDeclaration?.key ?? '',
+      });
+      return input.scope.principalId === allowedPrincipalId
+        ? scripted.decide(input)
+        : Effect.succeed<AccessDecision>({
+            evidence: [],
+            outcome: 'DENIED',
+            reasons: [{ code: 'deny.insufficient_grant' }],
+            selectors: [],
+          });
+    });
+  return bindAccessGate(
+    {
+      decide,
+      list: scripted.list,
+      selectableLegalEntities: scripted.selectableLegalEntities,
+    },
+    inertAccessEnforcementPorts(),
+  );
+};
+
+it.live('authorizes two Principals independently when their Stock Sharing Eligibility context is identical', () =>
+  Semaphore.withPermits(
+    scenarioSemaphore,
+    1,
+  )(
+    Effect.scoped(
+      Effect.gen(function* separatePrincipalPermissionFromStockScope() {
+        const checked: { readonly actor: string; readonly declaration: string }[] = [];
+        // This access gate is an explicit owner-level Core lifecycle fixture, not a live grant claim.
+        const scenario = yield* makeActionScenario(contextAccess, principalScopedAccessGate(principalId, checked));
+        const secondPrincipalId = 'd3000000-0000-4000-8000-000000000002';
+        const secondBindingId = 'd4000000-0000-4000-8000-000000000002';
+        yield* scenario.coreAdmin.insert(principals).values({
+          displayName: 'Inventory context denied actor',
+          kind: 'human',
+          principalId: secondPrincipalId,
+          status: 'active',
+          tenantId,
+        });
+        yield* scenario.coreAdmin.insert(principalAuthBindings).values({
+          authenticationNamespaceId,
+          principalAuthBindingId: secondBindingId,
+          principalId: secondPrincipalId,
+          provider: 'better_auth',
+          providerSubjectId: `inventory-context-${secondPrincipalId}`,
+          status: 'active',
+          subjectType: 'user',
+          tenantId,
+        });
+        const second = trustVerifiedGatewayPrincipalContext(
+          {
+            ...scenario.principal,
+            authBindingId: secondBindingId,
+            authContextRef: `better-auth-session:${secondBindingId}`,
+            principalId: secondPrincipalId,
+          },
+          scenario.compositionRevision,
+        );
+        const resolutions = yield* Ref.make(0);
+        const fixtureAuthority = {
+          resolveCurrent: () => Ref.update(resolutions, (count) => count + 1).pipe(Effect.as(commerceContext)),
+        };
+        const allowed = yield* runContextAction(scenario, 'inventory-context-principal-allowed', {
+          authority: fixtureAuthority,
+        });
+        const denied = yield* runContextAction(scenario, 'inventory-context-principal-denied', {
+          actor: second,
+          authority: fixtureAuthority,
+        }).pipe(Effect.flip);
+        expect(allowed.outcome).toBe('PENDING');
+        expect(Schema.is(ActionPermissionDenied)(denied)).toBe(true);
+        expect(denied).toMatchObject({ code: 'action_permission_denied' });
+        expect([...new Set(checked.map(({ actor }) => actor))]).toEqual([principalId, secondPrincipalId]);
+        expect(
+          checked.every(({ declaration }) => declaration === 'commerce.inventory.inventory-reservation.create'),
+        ).toBe(true);
+        expect(yield* Ref.get(resolutions)).toBe(1);
+        const effects = yield* scenario.admin
+          .select()
+          .from(inventoryReservationCreateEffects)
+          .where(eq(inventoryReservationCreateEffects.tenantId, tenantId));
+        expect(effects).toHaveLength(1);
+        const rejected = yield* scenario.coreAdmin
+          .select()
+          .from(actionInvocations)
+          .where(and(eq(actionInvocations.tenantId, tenantId), eq(actionInvocations.status, 'rejected')));
+        expect(rejected).toHaveLength(1);
+      }),
+    ),
+  ).pipe(Effect.provide(Layer.merge(NodeCrypto.layer, NodeServices.layer))),
+);
+
+it.live(
+  'reconciles an uncertain create through the registered Action and worker with the original Attempt and effect identity',
+  () =>
+    Semaphore.withPermits(
+      scenarioSemaphore,
+      1,
+    )(
+      Effect.scoped(
+        Effect.gen(function* recoverOriginalCreateThroughOwnerBoundary() {
+          const scenario = yield* makeActionScenario();
+          const contextResolutions = yield* Ref.make(0);
+          const observedRequests = yield* Ref.make<InventoryReservationCreateRequest[]>([]);
+          const staged = yield* runContextAction(scenario, 'inventory-context-original-create', {
+            authority: {
+              resolveCurrent: () =>
+                Ref.update(contextResolutions, (count) => count + 1).pipe(Effect.as(commerceContext)),
+            },
+          });
+          const original = staged.effect.request;
+          const selectedAuthority = reservationCreateBackend(scenario.reservationBackendCalls);
+          // Contract-conforming selected-backend fixture: uncertainty is followed by exact owner evidence.
+          const backend: InventoryReservationCreateBackend = {
+            create: (request) =>
+              Ref.updateAndGet(observedRequests, (requests) => [...requests, request]).pipe(
+                Effect.flatMap((requests) =>
+                  requests.length === 1
+                    ? Ref.update(scenario.reservationBackendCalls, (count) => count + 1).pipe(
+                        Effect.as({
+                          _tag: 'INDETERMINATE' as const,
+                          effectId: request.effectId,
+                          observedAt: request.requestedAt,
+                          reason: 'BACKEND_OUTCOME_UNKNOWN' as const,
+                        }),
+                      )
+                    : selectedAuthority.create(request),
+                ),
+              ),
+          };
+          const execution = {
+            execute: (
+              _scope: { readonly legalEntityId: string; readonly tenantId: string },
+              request: InventoryReservationCreateRequest,
+            ) =>
+              Ref.get(scenario.currentOwnerScope).pipe(
+                Effect.flatMap(
+                  Option.match({
+                    onNone: () => Effect.die('The registered create worker must receive its owner scope'),
+                    onSome: (scope) =>
+                      makeInventoryReservationCreateExecutionService({
+                        backend,
+                        effects: reservationCreateEffectPersistenceForWorkerScope(scope),
+                        ledger: makeInventoryEffectLedgerService(
+                          inventoryEffectLedgerPersistenceForWorkerScope(scope),
+                          currentIso,
+                        ),
+                      }).execute(scope, request),
+                  }),
+                ),
+              ),
+          };
+          const firstMatch = yield* DateTime.nowAsDate;
+          yield* scenario.outbox.matchMessages({ compositionRevision: scenario.compositionRevision, now: firstMatch });
+          const firstNow = new Date(firstMatch.getTime() + 1000);
+          const firstCycle = yield* scenario.outbox
+            .runCycle({
+              claimOwner: 'inventory-context-uncertain-create',
+              compositionRevision: scenario.compositionRevision,
+              maxDeliveries: 1,
+              now: firstNow,
+              registrations: [executeInventoryReservationCreateWorker],
+              subscriptions: [executeInventoryReservationCreateWorker.descriptor],
+            })
+            .pipe(
+              Effect.provideService(InventoryReservationCreateExecution, execution),
+              Effect.provideService(OutboxWorkerLegalEntityScopeFanout, scenario.fanout),
+            );
+          expect(firstCycle).toMatchObject({ failed: 0, succeeded: 1 });
+          // No Current provider is installed for a historical retry; only the original effect is recovered.
+          const pendingRecovery = yield* runContextAction(scenario, 'inventory-context-original-retry');
+          expect(pendingRecovery.outcome).toBe('INDETERMINATE');
+          expect(pendingRecovery.effect.request).toEqual(original);
+          expect(yield* Ref.get(contextResolutions)).toBe(1);
+          const beforeRecovery = yield* scenario.admin
+            .select()
+            .from(inventoryObligations)
+            .where(eq(inventoryObligations.tenantId, tenantId));
+          expect(beforeRecovery).toHaveLength(0);
+
+          const secondNow = new Date(firstNow.getTime() + 2000);
+          yield* scenario.outbox.matchMessages({ compositionRevision: scenario.compositionRevision, now: secondNow });
+          const secondCycle = yield* scenario.outbox
+            .runCycle({
+              claimOwner: 'inventory-context-reconcile-original',
+              compositionRevision: scenario.compositionRevision,
+              maxDeliveries: 1,
+              now: secondNow,
+              registrations: [executeInventoryReservationCreateWorker],
+              subscriptions: [executeInventoryReservationCreateWorker.descriptor],
+            })
+            .pipe(
+              Effect.provideService(InventoryReservationCreateExecution, execution),
+              Effect.provideService(OutboxWorkerLegalEntityScopeFanout, scenario.fanout),
+            );
+          expect(secondCycle).toMatchObject({ failed: 0, succeeded: 1 });
+          const recovered = yield* runContextAction(scenario, 'inventory-context-original-terminal-replay');
+          expect(recovered.outcome).toBe('EXACT_REPLAY');
+          expect(recovered.effect.request).toEqual(original);
+          expect(yield* Ref.get(observedRequests)).toEqual([original, original]);
+          expect(yield* Ref.get(scenario.reservationBackendCalls)).toBe(2);
+          const [effects, ledger, obligations] = yield* Effect.all([
+            scenario.admin
+              .select()
+              .from(inventoryReservationCreateEffects)
+              .where(eq(inventoryReservationCreateEffects.tenantId, tenantId)),
+            scenario.admin.select().from(inventoryEffectLedger).where(eq(inventoryEffectLedger.tenantId, tenantId)),
+            scenario.admin.select().from(inventoryObligations).where(eq(inventoryObligations.tenantId, tenantId)),
+          ]);
+          expect(effects).toHaveLength(1);
+          expect(ledger).toHaveLength(1);
+          expect(obligations).toHaveLength(1);
+          expect(recovered.effect.request).toMatchObject({
+            authority,
+            reservation: {
+              origin: { attemptId, kind: 'ORDER_COMMITMENT_ATTEMPT' },
+              ref: createPayload.reservationRef,
+              requirements: [{ quantity: '4', unitRef }],
+            },
+          });
+        }),
+      ),
+    ).pipe(Effect.provide(Layer.merge(NodeCrypto.layer, NodeServices.layer))),
 );

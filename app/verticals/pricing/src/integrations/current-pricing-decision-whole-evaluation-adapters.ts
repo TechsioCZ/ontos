@@ -123,6 +123,8 @@ import {
   currentPricingDecisionOwnerStatePerRead,
 } from './current-pricing-decision-owner-state.ts';
 import { priceGroupCompatibilityPortFromEnvironment } from './price-group-compatibility.ts';
+import { requirePricingCatalogOperation, requirePricingPriceGroupOperation } from './pricing-operation-requirements.ts';
+import type { PricingWholeEvaluationRequirements } from './pricing-operation-requirements.ts';
 
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
 
@@ -2555,6 +2557,7 @@ const adaptersFor = (
   ownerState: CurrentPricingDecisionOwnerState,
   scope: OperationalScope,
   compositionRevision: string,
+  requirements?: PricingWholeEvaluationRequirements,
 ) => {
   if (scope.legalEntityId === undefined) {
     return Effect.fail(
@@ -2568,6 +2571,7 @@ const adaptersFor = (
     compositionRevision,
     legalEntityId: scope.legalEntityId,
     requestCorrelation: scope.correlationId,
+    scope,
     tenantId: scope.tenantId,
   };
   return Effect.all(
@@ -2575,10 +2579,11 @@ const adaptersFor = (
       catalogEquivalence: catalogPricingPurposeEquivalencePortFromEnvironment(environment),
       catalogQuantity: catalogQuantityBasisCompatibilityPortFromEnvironment(environment),
       commercePriceGroup: commercePriceGroupResolutionPortFromEnvironment(environment),
-      externalOwnerEvidence: currentPricingDecisionExternalOwnerEvidencePortFromEnvironment(environment),
+      externalOwnerEvidence: currentPricingDecisionExternalOwnerEvidencePortFromEnvironment(environment, requirements),
       priceGroupCompatibility: priceGroupCompatibilityPortFromEnvironment({
         compositionRevision,
         requestCorrelation: scope.correlationId,
+        scope,
         tenantId: scope.tenantId,
       }),
     },
@@ -2586,9 +2591,35 @@ const adaptersFor = (
   ).pipe(
     Effect.map(
       ({ catalogEquivalence, catalogQuantity, commercePriceGroup, externalOwnerEvidence, priceGroupCompatibility }) => {
+        const scopedQuantity =
+          requirements === undefined
+            ? catalogQuantity
+            : {
+                assess: (input: Parameters<typeof catalogQuantity.assess>[0]) =>
+                  requirePricingCatalogOperation(requirements.quantityBasis).pipe(
+                    Effect.andThen(() => catalogQuantity.assess(input)),
+                  ),
+              };
         const interpreter = makePriceGroupInterpretationService({
-          commerce: commercePriceGroup,
-          compatibility: priceGroupCompatibility,
+          commerce:
+            requirements === undefined
+              ? commercePriceGroup
+              : {
+                  resolve: (input) =>
+                    requirePricingPriceGroupOperation(requirements.profilePriceGroup, 'COMMERCE_ASSIGNMENT').pipe(
+                      Effect.andThen(() => commercePriceGroup.resolve(input)),
+                    ),
+                },
+          compatibility:
+            requirements === undefined
+              ? priceGroupCompatibility
+              : {
+                  validate: (input) =>
+                    requirePricingPriceGroupOperation(
+                      requirements.assignedGroupCompatibility,
+                      'PRICE_GROUP_COMPATIBILITY',
+                    ).pipe(Effect.andThen(() => priceGroupCompatibility.validate(input))),
+                },
         });
         const exactPrice = makeExactPriceResolutionService({
           loadCurrencySupport: ownerState.currency.loadCurrent,
@@ -2596,7 +2627,7 @@ const adaptersFor = (
         });
         return {
           attemptSource: makeCurrentPricingDecisionAttemptSource({
-            catalogQuantity,
+            catalogQuantity: scopedQuantity,
             exactPrice,
             interpreter,
             loadCurrencySupport: ownerState.currency.loadCurrent,
@@ -2616,9 +2647,14 @@ const adaptersFor = (
   );
 };
 
-const scopedAdapters = (transaction: ScopedTransaction, scope: OperationalScope, compositionRevision: string) =>
+const scopedAdapters = (
+  transaction: ScopedTransaction,
+  scope: OperationalScope,
+  compositionRevision: string,
+  requirements?: PricingWholeEvaluationRequirements,
+) =>
   currentPricingDecisionOwnerStateInTransaction(transaction, scope, compositionRevision).pipe(
-    Effect.flatMap((ownerState) => adaptersFor(ownerState, scope, compositionRevision)),
+    Effect.flatMap((ownerState) => adaptersFor(ownerState, scope, compositionRevision, requirements)),
   );
 
 const wholeEvaluationFrom = (adapters: Effect.Success<ReturnType<typeof adaptersFor>>) =>
@@ -2650,18 +2686,21 @@ export const currentPricingDecisionWholeEvaluationAdaptersForScope = (
   transaction: ScopedTransaction,
   scope: OperationalScope,
   compositionRevision: string,
-) => scopedAdapters(transaction, scope, compositionRevision).pipe(Effect.map(adaptersLayer));
+  requirements?: PricingWholeEvaluationRequirements,
+) => scopedAdapters(transaction, scope, compositionRevision, requirements).pipe(Effect.map(adaptersLayer));
 
 /** Component consumers in a Read finish use the same adapters, with released SQL between HTTP calls. */
 export const currentPricingDecisionWholeEvaluationAdaptersPerRead = (
   ownerTransaction: ReadOwnerTransaction,
   scope: OperationalScope,
   compositionRevision: string,
+  requirements?: PricingWholeEvaluationRequirements,
 ) =>
   adaptersFor(
     currentPricingDecisionOwnerStatePerRead(ownerTransaction, scope, compositionRevision),
     scope,
     compositionRevision,
+    requirements,
   ).pipe(Effect.map(adaptersLayer));
 
 /** In an Action: every owner-state read runs in the Action's own transaction. */
@@ -2669,16 +2708,19 @@ export const currentPricingDecisionWholeEvaluationForScope = (
   transaction: ScopedTransaction,
   scope: OperationalScope,
   compositionRevision: string,
-) => scopedAdapters(transaction, scope, compositionRevision).pipe(Effect.map(wholeEvaluationFrom));
+  requirements?: PricingWholeEvaluationRequirements,
+) => scopedAdapters(transaction, scope, compositionRevision, requirements).pipe(Effect.map(wholeEvaluationFrom));
 
 /** In a Read's `finish`: every owner-state read opens its own short owner transaction, between the remote calls. */
 export const currentPricingDecisionWholeEvaluationPerRead = (
   ownerTransaction: ReadOwnerTransaction,
   scope: OperationalScope,
   compositionRevision: string,
+  requirements?: PricingWholeEvaluationRequirements,
 ) =>
   adaptersFor(
     currentPricingDecisionOwnerStatePerRead(ownerTransaction, scope, compositionRevision),
     scope,
     compositionRevision,
+    requirements,
   ).pipe(Effect.map(wholeEvaluationFrom));

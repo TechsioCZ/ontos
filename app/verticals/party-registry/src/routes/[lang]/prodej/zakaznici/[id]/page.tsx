@@ -99,7 +99,9 @@ export const customerDetailPageSubject = (record: CustomerDetailPageRecord): Cus
     counterpartyId: counterpartyRef.resourceId,
     counterpartyRef,
     createdAt: counterparty.createdAt,
-    displayName: party === undefined ? counterparty.party.displayName : Option.getOrElse(party.displayName, () => null),
+    // Without the Party identity capability the Party name is absent; the Counterparty read's own name stays.
+    displayName:
+      party?.displayName === undefined ? (counterparty.party.displayName ?? null) : Option.getOrNull(party.displayName),
     partyId: partyRef.resourceId,
     status: archived ? 'ARCHIVED' : 'ACTIVE',
   };

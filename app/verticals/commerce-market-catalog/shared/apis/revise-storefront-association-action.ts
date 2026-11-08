@@ -2,6 +2,8 @@
 // @ontos-action-http-owner commerce.market-catalog
 // @ontos-action-http-slug revise-storefront-association
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,6 +12,7 @@ import {
 } from '../actions/revise-storefront-association.ts';
 
 export { ReviseStorefrontAssociationPayloadSchema } from '../actions/revise-storefront-association.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const ReviseStorefrontAssociationActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReviseStorefrontAssociationActionInvalidProblem',
@@ -24,6 +27,7 @@ export const ReviseStorefrontAssociationActionForbiddenProblemSchema = makeProbl
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -160,7 +164,7 @@ export const reviseStorefrontAssociationActionGroupDefinition = HttpApiGroup.mak
     HttpApiEndpoint.post('execute', '/commerce-market-catalog/actions/revise-storefront-association', {
       error: actionErrors,
       payload: Schema.toEncoded(ReviseStorefrontAssociationPayloadSchema),
-      success: ReviseStorefrontAssociationResultSchema,
+      success: [ActionProposalAcceptedSchema, ReviseStorefrontAssociationResultSchema],
     }),
   )
   .middleware(ReviseStorefrontAssociationActionSchemaErrorMiddleware);

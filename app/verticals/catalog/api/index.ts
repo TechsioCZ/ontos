@@ -1,3 +1,10 @@
+import {
+  OwnerActionApprovalSchemaErrorLive,
+  makeOwnerActionApprovalApiLive,
+} from '@app/core-runtime/access/approvals/owner-http';
+import type { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
+import { catalogBackendRegistration } from '../vertical.runtime-declaration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import {
@@ -6,7 +13,7 @@ import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
-  ReadRuntimeLive,
+  makeReadRuntimeLive,
   TenantModuleStateServiceLive,
   makeActionRuntimeLive,
 } from '@app/core-runtime';
@@ -14,11 +21,14 @@ import type { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } fr
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
+  TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import type { EffectBffRuntimeAssembly } from '@modern-js/bff-effect/assembly';
@@ -33,7 +43,10 @@ import { catalogSourceActionPersistenceFactoryLive } from '../src/persistence/ca
 import { catalogExternalCorrelationResolverLive } from '../src/persistence/external-correlation-resolver.ts';
 import { cartOpenSelectionPopulationLive } from './cart-open-selection-population.ts';
 // <generated-governed-http-handler-support-imports>
-import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
+import {
+  ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive,
+  authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal,
+} from './auth/action-principal.ts';
 import {
   GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
   GatewayAssertionRedemptionDatabaseLive,
@@ -299,9 +312,17 @@ const runtimeObservabilityLayers = [
 const runtimeObservabilityLive = Layer.mergeAll(...runtimeObservabilityLayers);
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
+const accessEnforcementLive = AccessDecisionLive.pipe(
+  Layer.provideMerge(AccessEnforcementPortsLive),
+  Layer.provide(TenantIntentLoaderLive),
+  Layer.provide(CorePersistenceLive),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(nodeCryptoLayer),
+  Layer.provide(databaseIdentitiesLive),
+);
 const operationalScopeResolverLive = Layer.provide(
   OperationalScopeResolverLive,
-  Layer.mergeAll(CorePersistenceLive, ContextAccessLive),
+  Layer.mergeAll(CorePersistenceLive, ContextAccessLive, accessEnforcementLive),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
 const catalogSourceActionPersistenceLive = catalogSourceActionPersistenceFactoryLive.pipe(
@@ -320,13 +341,23 @@ const nativeCompositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(
 const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
   Layer.provide(nativeCompositionSourceLive),
 );
+const catalogReadRuntime = makeReadRuntimeLive(ultramodernDeliveryUnit, catalogBackendRegistration).pipe(
+  Layer.provide(Layer.mergeAll(catalogExternalCorrelationResolverLive, accessEnforcementLive)),
+  Layer.provide(
+    Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
+  ),
+  // Scoped owner factories execute after receiving; their Crypto requirement must stay visible in the runtime context.
+  Layer.provideMerge(nodeCryptoLayer),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(activeApplicationCompositionLive),
+  Layer.provide(databaseIdentitiesLive),
+);
+
 const catalogCartPopulationLive = cartOpenSelectionPopulationLive.pipe(
   Layer.provide(Layer.mergeAll(activeApplicationCompositionLive, nodeCryptoLayer)),
 );
-const catalogActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
-  // The source and local override Actions build their persistence from this factory while they execute, so it must
-  // stay visible in the runtime context beside the Action runtime.
-  Layer.provideMerge(catalogSourceActionPersistenceLive),
+const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(ultramodernDeliveryUnit, catalogBackendRegistration).pipe(
+  Layer.provide(Layer.mergeAll(catalogSourceActionPersistenceLive, accessEnforcementLive)),
   Layer.provide(
     Layer.mergeAll(
       CorePersistenceLive,
@@ -344,10 +375,21 @@ const catalogActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe
   Layer.provide(DatabaseConfigLive),
   Layer.provide(databaseIdentitiesLive),
 );
-const catalogReadRuntime = ReadRuntimeLive.pipe(
-  Layer.provide(catalogExternalCorrelationResolverLive),
+
+const catalogActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit, catalogBackendRegistration).pipe(
+  Layer.provideMerge(ownerActionApprovalsLive),
+  Layer.provide(Layer.mergeAll(catalogSourceActionPersistenceLive, accessEnforcementLive)),
   Layer.provide(
-    Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
+    Layer.mergeAll(
+      CorePersistenceLive,
+      activeApplicationCompositionLive,
+      ActionRepositoryLive,
+      ActionPermissionLive,
+      ContextAccessLive,
+      moduleStateGateLive,
+      moduleEntrypointGatewayLive,
+      operationalScopeResolverLive,
+    ),
   ),
   // Scoped owner factories execute after receiving; their Crypto requirement must stay visible in the runtime context.
   Layer.provideMerge(nodeCryptoLayer),
@@ -362,7 +404,7 @@ const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedempt
 
 type CatalogApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof catalogReadRuntime>>,
-  actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof catalogActionRuntime>>,
+  actionRuntime: Layer.Layer<ActionRuntime | OwnerActionApprovals, Layer.Error<typeof catalogActionRuntime>>,
   gatewayAssertionRedemption: Layer.Layer<
     GatewayAssertionRedemptionService,
     Layer.Error<typeof productionGatewayAssertionRedemptionLive>
@@ -381,6 +423,10 @@ export const makeCatalogApiRuntime = (
   );
   const apiHandlersLive = Layer.mergeAll(
     catalogReadinessLayer,
+    makeOwnerActionApprovalApiLive(catalogApi, authenticateOwnerApprovalPrincipal).pipe(
+      GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
+      GovernedReadLayer.provide(governedActionRuntimeLive),
+    ),
     // <generated-governed-http-handler-layers>
     activateLocalOverrideActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     activateLocalOverrideRecoveryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
@@ -602,7 +648,7 @@ export const makeCatalogApiRuntime = (
     CatalogApiGroups,
     CatalogHandlerRequirements
   >['handlers'] = apiHandlersLive.pipe(
-    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, databaseIdentitiesLive)),
+    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, nodeCryptoLayer)),
     Layer.orDie,
   );
   const transportLive = HttpRouter.cors({

@@ -44,7 +44,7 @@ export const recoverUpdateProduct = Effect.fn('UpdateProductRecoveryRead.recover
 
 const updateProductRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.update-product-recovery' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.update-product-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -52,6 +52,14 @@ const updateProductRecoveryEntrypoint = defineTenantModuleEntrypoint({
 
 export const updateProductRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.update-product-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: updateProductRecoveryEntrypoint,
     evidencePolicy: {
@@ -61,7 +69,6 @@ export const updateProductRecoveryRead = defineRead(
     inputSchema: UpdateProductRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.update-product-recovery',
     resultSchema: UpdateProductRecoveryResponseSchema,
@@ -72,5 +79,4 @@ export const updateProductRecoveryRead = defineRead(
       recoverUpdateProduct(input, context).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
   },
   (transaction, scope) => catalogPersistenceWithCurrentSelectionEvidenceForScope(transaction, scope),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

@@ -10,6 +10,7 @@
       "home": "Home"
     },
     "common": {
+      "approvalRequired": "The proposal is awaiting approval. The change has not been applied.",
       "loading": "Loading…",
       "errorTitle": "CRM data could not be loaded",
       "errorDescription": "Please try again.",

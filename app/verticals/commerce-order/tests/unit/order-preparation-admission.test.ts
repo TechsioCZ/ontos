@@ -7,6 +7,7 @@ import { prepareOrderCommitmentAction } from '../../src/actions/prepare-order-co
 import { ApprovalOwnerGateway } from '../../src/services/approval-owner-gateway.ts';
 import type { OrderCommitmentServices } from '../../src/services/order-commitment.service.ts';
 import { preparationProposalConflicts } from '../../src/services/order-preparation-admission.ts';
+import { commerceOrderRegistration } from '../../vertical.registration.ts';
 import type { PreparationProposalFacts } from '../../src/services/order-preparation-admission.ts';
 import { orderBuyerPrincipalId, orderPreparationInput } from '../support/order-preparation-input.ts';
 import type {
@@ -49,10 +50,9 @@ const runPreparation = (changed: Partial<OrderPreparationIdentities>, changeTaxC
       revalidate: unreachable,
     };
     const harness = yield* makeActionTestHarness({
-      actionPermission: 'allowed',
-      legalEntityPermission: 'allowed',
+      access: 'allowed',
+      ownerRegistration: commerceOrderRegistration,
       services: [bindActionTestServices(prepareOrderCommitmentAction, services)],
-      tenantPermission: 'allowed',
     });
     const result = yield* harness.runtime
       .runAction({

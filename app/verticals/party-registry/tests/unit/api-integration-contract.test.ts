@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 
 import { NodeFileSystem } from '@effect/platform-node';
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { FileSystem, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -13,6 +14,8 @@ const apiNames = [
   'counterpartiesSearch',
   'counterpartyRead',
   'counterpartyRoleHistory',
+  'createCrmClientPartyAction',
+  'crmClientIntakeReview',
   'customerList',
   'duplicateCandidateDetail',
   'duplicateCandidateList',
@@ -21,6 +24,7 @@ const apiNames = [
   'guestPartyResolution',
   'organizationEngagementMutations',
   'organizationEngagementProfile',
+  'ownerActionApprovals',
   'partiesSearch',
   'partyCommandRecovery',
   'partyCommands',
@@ -64,6 +68,10 @@ void literalTypeProof;
 
 it('aggregates every governed read and search API beside readiness', () => {
   expect(Object.keys(partyRegistryApi.groups).toSorted()).toEqual(apiNames);
+  // addHttpApi merges group annotations but retains the original endpoint objects.
+  expect(partyRegistryApi.groups.ownerActionApprovals.endpoints).toBe(
+    OwnerActionApprovalApi.groups.ownerActionApprovals.endpoints,
+  );
   expect(partyRegistryApiContract).toEqual({
     apiPrefix: '/party-registry-api',
     basePath: '/party-registry-api/party-registry',
@@ -107,6 +115,7 @@ it.layer(NodeFileSystem.layer)('api-integration-contract', (suite) => {
       for (const client of apiNames.filter(
         (name) =>
           name !== 'foundation' &&
+          name !== 'ownerActionApprovals' &&
           name !== 'organizationEngagementMutations' &&
           name !== 'partyCommands' &&
           name !== 'partyCommandRecovery' &&

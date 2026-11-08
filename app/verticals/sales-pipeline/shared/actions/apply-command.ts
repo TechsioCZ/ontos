@@ -1,4 +1,5 @@
-import { Schema } from 'effect';
+import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
+import { Schema, Struct } from 'effect';
 import {
   AiBatchIdSchema,
   AiChangeIdSchema,
@@ -29,6 +30,7 @@ import {
 } from '../model/opportunity.ts';
 
 export const OpportunityPatchSchema = Schema.Struct({
+  entrustedPrincipalRef: Schema.optionalKey(PrincipalRefSchema),
   expectedCloseDate: Schema.optionalKey(CalendarDateSchema),
   lines: Schema.optionalKey(OpportunityLinesSchema),
   note: Schema.optionalKey(OpportunityNoteSchema),
@@ -46,6 +48,7 @@ export const BulkOpportunityPatchSchema = Schema.Struct({
 export type BulkOpportunityPatch = typeof BulkOpportunityPatchSchema.Type;
 
 export const CreateOpportunityCommandSchema = Schema.TaggedStruct('CreateOpportunity', {
+  entrustedPrincipalRef: Schema.optionalKey(PrincipalRefSchema),
   expectedCloseDate: CalendarDateSchema,
   lines: OpportunityLinesSchema,
   note: Schema.optionalKey(OpportunityNoteSchema),
@@ -71,8 +74,11 @@ export const ChangeOpportunityStageCommandSchema = Schema.TaggedStruct('ChangeOp
 
 /** AI level C: the only opportunity operations an agent may PROPOSE. A person approves each one in the app. */
 export const SalesPipelineAiOperationSchema = Schema.Union([
-  CreateOpportunityCommandSchema,
-  UpdateOpportunityCommandSchema,
+  Schema.Struct(Struct.omit(CreateOpportunityCommandSchema.fields, ['entrustedPrincipalRef'])),
+  Schema.Struct({
+    ...UpdateOpportunityCommandSchema.fields,
+    patch: Schema.Struct(Struct.omit(OpportunityPatchSchema.fields, ['entrustedPrincipalRef'])),
+  }),
   AssignOpportunityCommandSchema,
   ChangeOpportunityStageCommandSchema,
 ]);

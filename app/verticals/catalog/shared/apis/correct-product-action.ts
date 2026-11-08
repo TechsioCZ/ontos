@@ -2,11 +2,13 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug correct-product
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { CorrectProductPayloadSchema, CorrectProductResultSchema } from '../actions/correct-product.ts';
 
 export { CorrectProductPayloadSchema } from '../actions/correct-product.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const CorrectProductActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CorrectProductActionInvalidProblem',
@@ -21,6 +23,7 @@ export const CorrectProductActionForbiddenProblemSchema = makeProblemDetailsSche
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -133,7 +136,7 @@ export const CorrectProductActionApi = HttpApi.make('CorrectProductActionApi').a
       HttpApiEndpoint.post('execute', '/catalog/actions/correct-product', {
         error: actionErrors,
         payload: Schema.toEncoded(CorrectProductPayloadSchema),
-        success: CorrectProductResultSchema,
+        success: [ActionProposalAcceptedSchema, CorrectProductResultSchema],
       }),
     )
     .middleware(CorrectProductActionSchemaErrorMiddleware),

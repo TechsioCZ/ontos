@@ -12,6 +12,8 @@ import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.
 import { finishWorkRecords, persistenceService, workRecordsGrants } from '../services/persistence.service.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 
+import { workRecordsReadDeclaration } from '../../shared/access-declarations.ts';
+
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
 const readFailure = (
@@ -40,7 +42,7 @@ const readFailure = (
 const moduleKey = 'work.tasks';
 const recordsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'work.tasks.api.records',
   moduleKey,
   role: 'api',
@@ -62,6 +64,7 @@ const makeRecordsServices: ReadServiceFactory<Services> = (transaction, scope) =
 
 export const recordsRead = defineRead(
   {
+    accessDeclaration: workRecordsReadDeclaration,
     accessKind: 'list',
     entrypoint: recordsEntrypoint,
     evidencePolicy: {
@@ -71,15 +74,15 @@ export const recordsRead = defineRead(
     inputSchema: RecordsRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'work.tasks.api.records',
     resultSchema: RecordsResponseSchema,
     schemaVersion: '1',
   },
   {
-    prepare: (_input, context) => workRecordsGrants(context.scope).pipe(Effect.mapError(readFailure)),
-    load: (_input, context) => context.services.loadRecords().pipe(Effect.mapError(readFailure)),
+    prepare: (_input, context) =>
+      workRecordsGrants(context.scope, context.listAccess).pipe(Effect.mapError(readFailure)),
+    load: (_input, context) => context.services.loadRecords(context.prepared).pipe(Effect.mapError(readFailure)),
     finish: (input: RecordsRequest, context) =>
       finishWorkRecords(input, context.loaded, context.prepared, context.scope).pipe(
         Effect.mapError(readFailure),
@@ -87,5 +90,4 @@ export const recordsRead = defineRead(
       ),
   },
   makeRecordsServices,
-  () => ({ kind: 'module', moduleId: moduleKey }),
 );

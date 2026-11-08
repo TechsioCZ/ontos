@@ -55,6 +55,14 @@ const handleTerminatePortalEnrollment = Effect.fn('TerminatePortalEnrollmentActi
 
 export const terminatePortalEnrollmentAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.portal-enrollment.terminate',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'portal-enrollment', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.terminate-portal-enrollment.access.v1',
@@ -65,7 +73,7 @@ export const terminatePortalEnrollmentAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.terminate-portal-enrollment',
       moduleKey,
       role: 'action',

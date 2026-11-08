@@ -36,6 +36,14 @@ const handleRequestSearchRebuild = Effect.fn('Merchandise.requestSearchRebuild')
 
 export const requestSearchRebuildAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'demo.merchandise.request-search-rebuild.write',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'merchandise', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'demo.merchandise.request-search-rebuild.access.v1',
@@ -46,7 +54,7 @@ export const requestSearchRebuildAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'demo.merchandise.request-search-rebuild',
       moduleKey: MODULE,
       role: 'action',
@@ -58,7 +66,6 @@ export const requestSearchRebuildAction = defineAction(
     policies: [],
     resultSchema: RequestSearchRebuildResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_identity',
   },
   handleRequestSearchRebuild,
 );

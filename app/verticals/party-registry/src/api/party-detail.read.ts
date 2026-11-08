@@ -9,7 +9,7 @@ import type { ReadLoadContext } from '@app/core-runtime';
 import { Effect, Match, Option } from 'effect';
 
 import { PartyDetailRequestSchema, PartyDetailResponseSchema } from '../../shared/apis/party-detail.ts';
-import type { PartyDetailRequest, PartyDetailResponse } from '../../shared/apis/party-detail.ts';
+import type { PartyDetailResponse } from '../../shared/apis/party-detail.ts';
 import { makePartyRef } from '../../shared/domain/identity-contracts.ts';
 import type { PartyPersistenceUnavailableError } from '../../shared/domain/identity-contracts.ts';
 import type { PartyAliasResolutionError } from '../../shared/domain/merge-alias-resolution.ts';
@@ -87,8 +87,8 @@ export const readPartyDetailFromServices = Effect.fn('PartyDetailRead.readPartyD
       .facts(resolved.canonicalPartyId, includeFactHistory)
       .pipe(Effect.mapError(unavailable));
 
-    return {
-      ...assertions,
+    const response: Omit<PartyDetailResponse, 'factHistory'> = {
+      currentFactAssertions: assertions.currentFactAssertions,
       party: party.value,
       resolution: {
         aliasChain: resolved.traversedAliasIds.map((partyId) => makePartyRef(tenantId, partyId)),
@@ -97,24 +97,58 @@ export const readPartyDetailFromServices = Effect.fn('PartyDetailRead.readPartyD
         requestedPartyRef,
       },
     };
+    // History is only part of the shape when the caller asked for it.
+    return Option.isSome(assertions.factHistory)
+      ? { ...response, factHistory: assertions.factHistory.value }
+      : response;
   },
 );
 
 const partyDetailEntrypoint = defineTenantModuleEntrypoint({
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   access: 'read',
   entrypointKey: 'party.registry.api.party-detail',
   moduleKey: 'party.registry',
   role: 'api',
 });
 
-export const partyDetailPermissionTarget = (input: PartyDetailRequest) => ({
-  kind: 'tenant' as const,
-  permission: input.includeFactHistory === true ? ('review_party_identity' as const) : ('read_party_identity' as const),
-});
-
 export const partyDetailRead = defineRead(
   {
+    accessActor: {
+      callers: ['commerce-customer-context', 'catalog'],
+      reason:
+        "Customer Context and Catalog read Party detail for the requester they relay, under that requester's own rights; Retail self-enrollment resolves the Party it created for the Storefront client.",
+      subject: 'rights',
+      subjectWorkloads: ['commerce.storefront-client'],
+    },
+    accessDeclaration: {
+      key: 'party.registry.party.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'party-identity', level: 'basic' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessTarget: (input) => ({ moduleKey: 'party.registry', recordKey: input.partyRef.resourceId }),
+    accessFieldGroups: [
+      {
+        fieldClass: 'personal_data',
+        fields: [
+          'party.businessName',
+          'party.displayName',
+          'party.firstName',
+          'party.lastName',
+          'currentFactAssertions.value',
+          'factHistory.value',
+        ],
+        key: 'party.registry.party-identity.read',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'sensitive-fields', level: 'extended' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
     accessKind: 'detail',
     entrypoint: partyDetailEntrypoint,
     evidencePolicy: {
@@ -124,7 +158,6 @@ export const partyDetailRead = defineRead(
     inputSchema: PartyDetailRequestSchema,
     legalEntityScope: 'optional',
     owningModuleKey: 'party.registry',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'party.registry.api.party-detail',
     resultSchema: PartyDetailResponseSchema,
@@ -146,5 +179,4 @@ export const partyDetailRead = defineRead(
       find: (partyId: string) => findPartyRecord(transaction, scope.tenantId, partyId),
       resolve: (partyId: string) => resolvePartyAlias(transaction, scope.tenantId, partyId),
     }),
-  partyDetailPermissionTarget,
 );

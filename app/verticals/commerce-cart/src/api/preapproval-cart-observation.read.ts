@@ -11,10 +11,7 @@ const MODULE_KEY = 'commerce.cart' as const;
 
 const preapprovalCartObservationEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: {
-    kind: 'context_permission',
-    permission: 'module.access',
-  },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.cart.api.preapproval-cart-observation',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -22,6 +19,19 @@ const preapprovalCartObservationEntrypoint = defineTenantModuleEntrypoint({
 
 export const preapprovalCartObservationRead = defineRead(
   {
+    accessActor: {
+      callers: ['commerce-customer-context'],
+      reason: 'The Customer Context service observes the open Cart of the buyer whose purchase proposal it prepares',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.cart.cart-draft.read-preapproval',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'cart-drafts', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: preapprovalCartObservationEntrypoint,
     evidencePolicy: {
@@ -31,7 +41,6 @@ export const preapprovalCartObservationRead = defineRead(
     inputSchema: PreapprovalCartObservationRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.cart.api.preapproval-cart-observation',
     resultSchema: PreapprovalCartObservationResponseSchema,
@@ -45,8 +54,4 @@ export const preapprovalCartObservationRead = defineRead(
       })),
     ),
   preapprovalCartObservationService,
-  () => ({
-    kind: 'module',
-    moduleId: MODULE_KEY,
-  }),
 );

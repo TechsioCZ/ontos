@@ -1,6 +1,8 @@
 // TEST support: the Shell's real Better Auth framework, OAuth server dependencies and endpoint guards.
 import { OAuthAuthenticationAuditLive, OAuthGrantRegistryLive } from '@app/core-runtime';
-import { Layer } from 'effect';
+import { Effect, Layer } from 'effect';
+
+import { makeAuthenticationService } from '../../api/auth/service.ts';
 
 import { BetterAuthFrameworkLive } from '../../api/auth/better-auth-framework.ts';
 import { BetterAuthRuntimeLive } from '../../api/auth/better-auth-runtime.ts';
@@ -26,4 +28,10 @@ export const shellAuthenticationFrameworkLive = (options: { readonly allowFixtur
   OAuthEndpointGuardsLive.pipe(
     Layer.provideMerge(BetterAuthFrameworkLive({ allowFixtureSignUp: options.allowFixtureSignUp })),
     Layer.provideMerge(oauthAuthenticationLive),
+  );
+
+/** Real fixture sign-up framework, captured with the test's own database and principal resolver. */
+export const makeShellTestAuthentication = (options: { readonly allowFixtureSignUp?: boolean } = {}) =>
+  makeAuthenticationService().pipe(
+    Effect.provide(shellAuthenticationFrameworkLive({ allowFixtureSignUp: options.allowFixtureSignUp === true })),
   );

@@ -123,9 +123,11 @@ describe('salespeople (CRM.md §8)', () => {
         registeredBy: 'p-lead',
       });
       const assigned = yield* ok(registered.state, { _tag: 'AssignClient', clientId: 'z', toSalespersonId: id }, lead);
-      const viewer = viewerFor(assigned.state, Schema.decodeUnknownSync(PrincipalIdSchema)('p-c'), (permission) =>
-        permission.endsWith('_assigned'),
-      );
+      const viewer = viewerFor(assigned.state, Schema.decodeUnknownSync(PrincipalIdSchema)('p-c'), {
+        assign: false,
+        readSelector: 'assigned',
+        write: true,
+      });
       expect(viewer.salespersonId).toBe(id);
       expect(projectCrmState(assigned.state, viewer).clients.items.map((entry) => entry.id)).toEqual(['z']);
     }),
@@ -226,12 +228,15 @@ describe('Party Registry links (CRM.md §3)', () => {
         displayName: 'Firma Z s.r.o.',
         storedPartyRef: { resourceId: 'party-1' },
       },
-    };
+    } satisfies Parameters<typeof verifiedPartyOf>[1];
     expect(verifiedPartyOf(link, answer, 'le-1', '2026-10-21')).toEqual({
       counterpartyId: 'cp-1',
       displayName: 'Firma Z s.r.o.',
       partyId: 'party-1',
     });
+    expect(
+      verifiedPartyOf(link, { ...answer, party: Struct.omit(answer.party, ['displayName']) }, 'le-1', '2026-10-21'),
+    ).toEqual({ counterpartyId: 'cp-1', partyId: 'party-1' });
     expect(verifiedPartyOf(link, answer, 'le-other', '2026-10-21')).toBe(
       'Zákazník v evidenci zákazníků patří jiné firmě',
     );
@@ -354,7 +359,7 @@ describe('customer inputs register (CRM.md §6)', () => {
 
 describe('Core-governed CRM assignment targets', () => {
   it('uses CRM native module permission, not a kind, affiliation or role name', () => {
-    expect(crmAssignmentPermission).toEqual({ moduleId: 'demo.crm', permission: 'module.access' });
+    expect(crmAssignmentPermission.accessDeclaration.key).toBe('demo.crm.api-records.read');
   });
   it('validates registration, reactivation and each deliberate new owner', () => {
     expect(

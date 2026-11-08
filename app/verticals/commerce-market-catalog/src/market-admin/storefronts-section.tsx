@@ -4,6 +4,7 @@ import type { StorefrontApplicationSummary } from '@app/storefront-registry/api/
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { SelectTemplate } from '@app/admin-ui/select-template';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { DateTime, Effect, Schema } from 'effect';
 import { useState } from 'react';
 import { AssociateStorefrontPayloadSchema } from '../../shared/actions/associate-storefront.ts';
@@ -24,6 +25,8 @@ import { useMarketText } from './market-ui.tsx';
 import { runMarketAction } from './page-data.ts';
 import type { WriteFailure, WriteOutcome } from './page-data.ts';
 
+const isProposal = Schema.is(ActionProposalAcceptedSchema);
+
 const item = (value: string, label: string) => ({ displayValue: label, label, value });
 
 interface AssociationDialogProps {
@@ -32,11 +35,21 @@ interface AssociationDialogProps {
   readonly choices: readonly StorefrontChoice[];
   readonly market: CurrentMarket;
   readonly nameOf: (appId: string) => string;
+  /** The change was parked for approval: nothing changed yet. */
+  readonly onAwaitingApproval: () => void;
   readonly onClose: () => void;
   readonly onDone: (message: string) => void;
 }
 
-const AssociationDialog = ({ association, choices, market, nameOf, onClose, onDone }: AssociationDialogProps) => {
+const AssociationDialog = ({
+  association,
+  choices,
+  market,
+  nameOf,
+  onAwaitingApproval,
+  onClose,
+  onDone,
+}: AssociationDialogProps) => {
   const { text } = useMarketText();
   const [appId, setAppId] = useState(association?.storefrontRef.appId ?? choices[0]?.appId ?? '');
   const choice = choices.find((candidate) => candidate.appId === appId);
@@ -60,8 +73,12 @@ const AssociationDialog = ({ association, choices, market, nameOf, onClose, onDo
       : period;
   };
   const provenance = { kind: 'CONFIGURATION_ACTION' as const, reference: text('detail.storefronts.provenance') };
-  const done = (outcome: WriteOutcome<unknown>) => {
+  const done = (outcome: WriteOutcome<object>) => {
     setBusy(false);
+    if (outcome.ok && isProposal(outcome.value)) {
+      onAwaitingApproval();
+      return;
+    }
     if (outcome.ok) {
       onDone(
         text(association === undefined ? 'detail.storefronts.associated' : 'detail.storefronts.revised', { name }),
@@ -184,11 +201,19 @@ interface RemoveAssociationDialogProps {
   readonly association: CurrentAssociation;
   readonly market: CurrentMarket;
   readonly name: string;
+  readonly onAwaitingApproval: () => void;
   readonly onClose: () => void;
   readonly onDone: (message: string) => void;
 }
 
-const RemoveAssociationDialog = ({ association, market, name, onClose, onDone }: RemoveAssociationDialogProps) => {
+const RemoveAssociationDialog = ({
+  association,
+  market,
+  name,
+  onAwaitingApproval,
+  onClose,
+  onDone,
+}: RemoveAssociationDialogProps) => {
   const { text } = useMarketText();
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<WriteFailure | null>(null);
@@ -211,6 +236,10 @@ const RemoveAssociationDialog = ({ association, market, name, onClose, onDone }:
       executeRemoveStorefrontAssociation,
       (outcome) => {
         setBusy(false);
+        if (outcome.ok && isProposal(outcome.value)) {
+          onAwaitingApproval();
+          return;
+        }
         if (outcome.ok) {
           onDone(text('detail.storefronts.removed', { name }));
           return;
@@ -237,6 +266,8 @@ interface StorefrontsSectionProps {
   readonly associations: readonly CurrentAssociation[];
   readonly canAdminister: boolean;
   readonly market: CurrentMarket;
+  /** A change was parked for approval: nothing changed yet. */
+  readonly onAwaitingApproval: () => void;
   readonly onDone: (message: string) => void;
   readonly storefronts: readonly StorefrontApplicationSummary[];
 }
@@ -250,6 +281,7 @@ export const StorefrontsSection = ({
   associations,
   canAdminister,
   market,
+  onAwaitingApproval,
   onDone,
   storefronts,
 }: StorefrontsSectionProps) => {
@@ -266,6 +298,10 @@ export const StorefrontsSection = ({
   const finish = (message: string) => {
     setEditing(null);
     onDone(message);
+  };
+  const awaitingApproval = () => {
+    setEditing(null);
+    onAwaitingApproval();
   };
   return (
     <SectionCard
@@ -330,6 +366,7 @@ export const StorefrontsSection = ({
           choices={choices}
           market={market}
           nameOf={nameOf}
+          onAwaitingApproval={awaitingApproval}
           onClose={() => setEditing(null)}
           onDone={finish}
         />
@@ -340,6 +377,7 @@ export const StorefrontsSection = ({
           choices={choices}
           market={market}
           nameOf={nameOf}
+          onAwaitingApproval={awaitingApproval}
           onClose={() => setEditing(null)}
           onDone={finish}
         />
@@ -349,6 +387,7 @@ export const StorefrontsSection = ({
           association={editing.association}
           market={market}
           name={nameOf(editing.association.storefrontRef.appId)}
+          onAwaitingApproval={awaitingApproval}
           onClose={() => setEditing(null)}
           onDone={finish}
         />

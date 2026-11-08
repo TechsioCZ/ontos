@@ -2,12 +2,7 @@
 // @ontos-action-owner commerce.inventory
 // @ontos-action-slug stock-issue
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { DateTime, Effect } from 'effect';
 
 import {
@@ -74,26 +69,22 @@ export const handleStockIssue = Effect.fn('StockIssueAction.handle')(function* h
 
 export const stockIssueAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.inventory.stock-position.issue',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'stock', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: `${ACTION_KEY}.access.v1` },
     actionKey: ACTION_KEY,
     auditProfile: 'standard',
-    businessPermission: defineActionBusinessPermission<StockIssuePayload>((payload) => ({
-      permission: 'inventory.stock.issue',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: payload.positionRef.moduleId,
-          resourceId: payload.positionRef.resourceId,
-          resourceType: payload.positionRef.resourceType,
-        },
-        tenantId: payload.positionRef.tenantId,
-      },
-    })),
     domainErrorSchema: StockIssueErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: MODULE_KEY,
       role: 'action',
@@ -103,10 +94,6 @@ export const stockIssueAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: StockIssuePayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<StockIssuePayload>((payload) => ({
-      permission: 'write',
-      resource: payload.positionRef,
-    })),
     resultSchema: StockIssueResultSchema,
     schemaVersion: '1',
   },

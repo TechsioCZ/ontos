@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug set-product-unit-target-divisibility
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,6 +11,7 @@ import {
 } from '../actions/set-product-unit-target-divisibility.ts';
 
 export { SetProductUnitTargetDivisibilityPayloadSchema } from '../actions/set-product-unit-target-divisibility.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const SetProductUnitTargetDivisibilityActionInvalidProblemSchema = makeProblemDetailsSchema(
   'SetProductUnitTargetDivisibilityActionInvalidProblem',
@@ -24,6 +26,7 @@ export const SetProductUnitTargetDivisibilityActionForbiddenProblemSchema = make
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -127,7 +130,7 @@ export const SetProductUnitTargetDivisibilityActionApi = HttpApi.make('SetProduc
       HttpApiEndpoint.post('execute', '/catalog/actions/set-product-unit-target-divisibility', {
         error: actionErrors,
         payload: Schema.toEncoded(SetProductUnitTargetDivisibilityPayloadSchema),
-        success: SetProductUnitTargetDivisibilityResultSchema,
+        success: [ActionProposalAcceptedSchema, SetProductUnitTargetDivisibilityResultSchema],
       }),
     )
     .middleware(SetProductUnitTargetDivisibilityActionSchemaErrorMiddleware),

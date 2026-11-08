@@ -3,6 +3,7 @@ import {
   STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY,
 } from '@app/core-runtime/install/stage-accounts-file';
 import type {
+  StageAccountRole,
   StageAccountsFile,
   StageAccountsFileContents,
   StageAccountsFileError,
@@ -36,7 +37,11 @@ export interface StageAccountResult {
   readonly authUser: 'created' | 'existing' | 'password-reset';
   readonly email: string;
   readonly legalEntityId: string;
+  /** The one account of its tenant that owns it: `bootstrapTenantAccess` creates the tenant for it. */
+  readonly owner: boolean;
   readonly principalId: string;
+  /** The roles the account holds beside its membership; today only the tenant's `full_access` role. */
+  readonly roles: readonly StageAccountRole[];
   readonly tenantId: string;
 }
 
@@ -145,12 +150,16 @@ const readAccountsFile = (reader: StageAccountsFileReader, path: string) =>
 
 const parseStageAccountsBootstrapConfigFromProvider = Effect.fn(
   'StageAccountsBootstrapContract.parseStageAccountsBootstrapConfigFromProvider',
-)(function* parseConfiguration(provider: ConfigProvider.ConfigProvider, reader: StageAccountsFileReader) {
+)(function* parseConfiguration(
+  provider: ConfigProvider.ConfigProvider,
+  reader: StageAccountsFileReader,
+  declaredWorkloadKeys: ReadonlySet<string>,
+) {
   const source = yield* stageAccountsBootstrapSource
     .parse(provider)
     .pipe(Effect.catchTag('ConfigError', (error) => Effect.fail(configurationFailureFromConfigError(error))));
   const accountsFile = yield* readAccountsFile(reader, source.accountsFilePath).pipe(
-    Effect.flatMap(parseStageAccountsFile),
+    Effect.flatMap((contents) => parseStageAccountsFile(contents, declaredWorkloadKeys)),
     Effect.catchTag('StageAccountsFileError', (error) => Effect.fail(configurationFailure(error.reason))),
   );
   return {
@@ -164,8 +173,9 @@ const parseStageAccountsBootstrapConfigFromProvider = Effect.fn(
 export const parseStageAccountsBootstrapConfig = (
   environment: StageAccountsEnvironment,
   reader: StageAccountsFileReader,
+  declaredWorkloadKeys: ReadonlySet<string>,
 ): Effect.Effect<StageAccountsBootstrapConfig, StageAccountsBootstrapError> =>
-  parseStageAccountsBootstrapConfigFromProvider(environmentProvider(environment), reader);
+  parseStageAccountsBootstrapConfigFromProvider(environmentProvider(environment), reader, declaredWorkloadKeys);
 
 export const classifyExactStageAccountsRecord = <Expected extends ExactRecord>(
   label: string,

@@ -483,7 +483,6 @@ const customerDirectoryTransport = (
                   type: point.type,
                 }
               : { displayValue: point.value, lookupValue: point.value, preferred: true, type: point.type },
-          verification: payload.verification,
         });
       });
   };
@@ -507,7 +506,7 @@ it.effect('enrolls a scoped CUSTOMER and real email/phone through three independ
       { preferred: true, type: 'EMAIL', value: 'customer@example.test' },
       { preferred: true, type: 'PHONE', value: '+420 777 123 456' },
     ]);
-    expect(contacts.every((command) => JSON.stringify(command.verification) === '{"state":"UNVERIFIED"}')).toBe(true);
+    expect(contacts.every((command) => !Object.hasOwn(command, 'verification'))).toBe(true);
     const commandRequests = transport.requests.filter((request) => request.url.includes('/actions/'));
     expect(new Set(commandRequests.map((request) => request.headers.get('idempotency-key'))).size).toBe(3);
     expect(transport.issued()).toBe(6);

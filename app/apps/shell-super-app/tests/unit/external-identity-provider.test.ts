@@ -56,7 +56,7 @@ import {
   ShellInstalledModuleCatalog,
 } from '../../api/modules/installed-module-catalog.ts';
 import type { ShellInstalledModuleCatalogService } from '../../api/modules/installed-module-catalog.ts';
-import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import { makeCompositionSnapshot, sealComposition } from '../fixtures/application-composition.ts';
 
 const PROVIDER_NAMESPACE = 'ontos.example.portal.v1';
 const PROVIDER_APP_ID = 'example-portal';
@@ -75,18 +75,25 @@ const catalogDeclaring = (
   const contract = makeModuleContractFixture({ appId: PROVIDER_APP_ID, moduleId: 'example.portal' });
   return {
     load: makeInstalledModuleCatalogLoader(
-      makeCompositionSnapshot(
-        [
-          {
-            ...contract,
-            manifest: {
-              ...contract.manifest,
-              publicSurface: { ...contract.manifest.publicSurface, externalIdentityProviders: providers },
-            },
+      makeCompositionSnapshot([
+        {
+          ...contract,
+          manifest: {
+            ...contract.manifest,
+            publicSurface: { ...contract.manifest.publicSurface, externalIdentityProviders: providers },
           },
-        ],
-        60_000,
-        PROVIDER_RELEASE_ORIGIN,
+        },
+      ]).pipe(
+        Effect.map((snapshot) => ({
+          ...snapshot,
+          composition: sealComposition({
+            ...snapshot.composition,
+            modules: snapshot.composition.modules.map((module) => ({
+              ...module,
+              backend: { baseUrl: PROVIDER_RELEASE_ORIGIN, transport: 'node-http' as const },
+            })),
+          }),
+        })),
       ),
     ),
   };
@@ -253,6 +260,7 @@ it.effect('mints a fresh provider audience assertion for every exact workload ca
         authorizationCalls.push(input);
         return Effect.succeed(principal);
       },
+      grantedNamespaces: () => Effect.succeed([]),
     };
     const issuer: GatewayIssuer['Service'] = {
       issue: ({ audience, compositionRevision: revision, principal }) => {
@@ -319,6 +327,7 @@ it.effect('admits a gateway-context assertion audienced for the provider verific
       authenticate: () => Effect.succeed(workloadPrincipal),
       authorize: () => Effect.succeed(workloadPrincipal),
       authorizePrincipal: (principal) => Effect.succeed(principal),
+      grantedNamespaces: () => Effect.succeed([]),
     };
     const issuer: GatewayIssuer['Service'] = {
       issue: ({ audience, compositionRevision: revision, principal }) => {
@@ -373,6 +382,7 @@ it.effect('refuses a provider workload assertion when its captured composition r
       authenticate: () => Effect.succeed(workloadPrincipal),
       authorize: () => Effect.succeed(workloadPrincipal),
       authorizePrincipal: (principal) => Effect.succeed(principal),
+      grantedNamespaces: () => Effect.succeed([]),
     };
     const issuer: GatewayIssuer['Service'] = {
       issue: (input) => {
@@ -519,6 +529,7 @@ it.effect('routes the production deployment client to the verification path the 
         expect(input).toEqual({ operation: 'reserve', targetAuthenticationNamespaceId: namespaceId });
         return Effect.succeed(principal);
       },
+      grantedNamespaces: () => Effect.succeed([]),
     };
     const issuer: GatewayIssuer['Service'] = {
       issue: ({ audience, compositionRevision: revision, principal }) => {

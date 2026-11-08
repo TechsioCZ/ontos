@@ -9,7 +9,6 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Effect, Option, Schema } from 'effect';
 
 import type { CustomerListItem } from '../../../../api/customers-client.ts';
-import type { Party } from '../../../../../shared/domain/identity-contracts.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { DiscardDialog } from './customer-discard-dialog.tsx';
 import { customerDetailFailureKey, saveCustomerFact } from './customers-data.ts';
@@ -24,7 +23,7 @@ import {
   emptyCustomerContactFields,
   sameContactFields,
 } from './customers-model.ts';
-import type { CustomerContactFields, CustomerContactRow } from './customers-model.ts';
+import type { CustomerContactFields, CustomerContactRow, CustomerParty } from './customers-model.ts';
 
 export const CUSTOMER_DETAIL_KEY = 'party-registry.pages.customers.detail';
 const STATUS_KEY = 'party-registry.pages.customers.status';
@@ -206,7 +205,7 @@ const CustomerFacts = ({
 }: {
   readonly basisFilled: boolean;
   readonly detail: CustomerDetailModel;
-  readonly saveFact: (build: (owner: Party) => CustomerFactChange) => Effect.Effect<AutosaveOutcome>;
+  readonly saveFact: (build: (owner: CustomerParty) => CustomerFactChange) => Effect.Effect<AutosaveOutcome>;
   readonly snapshot: CustomerDetailSnapshot;
 }) => {
   const { t } = useModernI18n();
@@ -393,7 +392,8 @@ export const CustomerDetailContent = ({
     snapshot,
     stale,
   } = detail;
-  const partyName = party === undefined ? undefined : Option.getOrElse(party.displayName, () => '');
+  // A withheld Party name (no identity capability) leaves the name of the reader's own Counterparty read.
+  const partyName = party?.displayName === undefined ? undefined : Option.getOrElse(party.displayName, () => '');
   const name = partyName ?? subject.displayName ?? '';
   const archived = party === undefined ? subject.status === 'ARCHIVED' : Option.isSome(party.archivedAt);
   const status = archived ? 'ARCHIVED' : 'ACTIVE';
@@ -409,7 +409,7 @@ export const CustomerDetailContent = ({
 
   /** Evidence and a reason are the change basis of a governed identity change: nothing is sent without them. */
   const basisFilled = reason.trim() !== '' && evidence.trim() !== '';
-  const saveFact = (build: (owner: Party) => CustomerFactChange): Effect.Effect<AutosaveOutcome> =>
+  const saveFact = (build: (owner: CustomerParty) => CustomerFactChange): Effect.Effect<AutosaveOutcome> =>
     party === undefined
       ? Effect.succeed<AutosaveOutcome>('failed')
       : saveCustomerFact(party.partyRef, build(party), reason.trim(), evidence.trim()).pipe(

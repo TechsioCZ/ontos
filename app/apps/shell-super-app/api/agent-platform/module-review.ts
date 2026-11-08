@@ -66,11 +66,12 @@ export const reviewInModule = Effect.fn('AgentPlatform.reviewInModule')(function
         module.appId,
         review.path,
         {
-          items: chunk.map(({ actionSlug, command, key, proposal, stage }) =>
-            proposal === undefined
-              ? { actionSlug, command, key, stage }
-              : { actionSlug, command, key, proposal, stage },
-          ),
+          items: chunk.map(({ actionSlug, command, key, proposal, stage }): Schema.JsonObject => {
+            if (proposal === undefined) {
+              return { actionSlug, command, key, stage };
+            }
+            return { actionSlug, command, key, proposal, stage };
+          }),
         },
         options,
       ).pipe(Effect.result),

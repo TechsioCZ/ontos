@@ -8,49 +8,57 @@ import { expect, it } from 'effect-rstest';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import {
-  orderOwnerVerifiers,
-  ownerVerifierPaths,
   validateVerifierConcurrency,
   verifyOwnerSchema,
   verifyOwnerSchemas,
 } from '../verify-application-db-schema.mts';
+import { loadApplicationMigrationInventory } from '../application-migration-inventory.mts';
 
-it('retains all 31 owner verifiers including Projects and invokes Core through the application enrollment wrapper', () => {
-  expect(ownerVerifierPaths).toHaveLength(31);
-  expect(ownerVerifierPaths).toEqual([
-    './verify-core-db-schema.mts',
-    '../apps/shell-super-app/scripts/verify-auth-db-schema.mts',
-    '../verticals/assortment/scripts/verify-db-schema.mts',
-    '../verticals/party-registry/scripts/verify-db-schema.mts',
-    '../verticals/party-registry/scripts/verify-engagement-db-schema.mts',
-    '../verticals/payment-term-catalog/scripts/verify-db-schema.mts',
-    '../verticals/price-group-catalog/scripts/verify-db-schema.mts',
-    '../verticals/commerce-cart/scripts/verify-db-schema.mts',
-    '../verticals/commerce-customer-context/scripts/verify-db-schema.mts',
-    '../verticals/commerce-market-catalog/scripts/verify-db-schema.mts',
-    '../verticals/commerce-order/scripts/verify-database.mts',
-    '../verticals/catalog/scripts/verify-db-schema.mts',
-    '../verticals/inventory/scripts/verify-db-schema.mts',
-    '../verticals/pricing/scripts/verify-db-schema.mts',
-    '../verticals/privacy/scripts/verify-db-schema.mts',
-    '../verticals/legal-agreements/scripts/verify-db-schema.mts',
-    '../verticals/finance-billing/scripts/verify-db-schema.mts',
-    '../verticals/property-leasing/scripts/verify-db-schema.mts',
-    '../verticals/property-portfolio/scripts/verify-db-schema.mts',
-    '../verticals/crm-activities/scripts/verify-db-schema.mts',
-    '../verticals/work-tasks/scripts/verify-db-schema.mts',
-    '../verticals/workforce/scripts/verify-db-schema.mts',
-    '../verticals/tagging/scripts/verify-db-schema.mts',
-    '../verticals/crm/scripts/verify-db-schema.mts',
-    '../verticals/sales-pipeline/scripts/verify-db-schema.mts',
-    '../verticals/merchandise/scripts/verify-db-schema.mts',
-    '../verticals/sales-insights/scripts/verify-db-schema.mts',
-    '../verticals/facility-operations/scripts/verify-db-schema.mts',
-    '../verticals/storefront-registry/scripts/verify-db-schema.mts',
-    '../verticals/tax/scripts/verify-db-schema.mts',
-    '../verticals/projects/scripts/verify-db-schema.mts',
-  ]);
-});
+it.effect('retains all 31 source-owned verifiers including Projects and the Core application enrollment wrapper', () =>
+  Effect.gen(function* sourceOwnedVerifiers() {
+    const inventory = yield* loadApplicationMigrationInventory();
+    const ownerVerifierPaths = inventory.filter((owner) => !owner.optional).flatMap((owner) => owner.verifierPaths);
+    expect(ownerVerifierPaths).toHaveLength(31);
+    expect(inventory.find((owner) => owner.ownerId === 'core-runtime')?.verifierPaths).toEqual([
+      'scripts/verify-core-db-schema.mts',
+    ]);
+    expect(ownerVerifierPaths.toSorted()).toEqual(
+      [
+        'scripts/verify-core-db-schema.mts',
+        'apps/shell-super-app/scripts/verify-auth-db-schema.mts',
+        'verticals/assortment/scripts/verify-db-schema.mts',
+        'verticals/party-registry/scripts/verify-db-schema.mts',
+        'verticals/party-registry/scripts/verify-engagement-db-schema.mts',
+        'verticals/payment-term-catalog/scripts/verify-db-schema.mts',
+        'verticals/price-group-catalog/scripts/verify-db-schema.mts',
+        'verticals/commerce-cart/scripts/verify-db-schema.mts',
+        'verticals/commerce-customer-context/scripts/verify-db-schema.mts',
+        'verticals/commerce-market-catalog/scripts/verify-db-schema.mts',
+        'verticals/commerce-order/scripts/verify-database.mts',
+        'verticals/catalog/scripts/verify-db-schema.mts',
+        'verticals/inventory/scripts/verify-db-schema.mts',
+        'verticals/pricing/scripts/verify-db-schema.mts',
+        'verticals/privacy/scripts/verify-db-schema.mts',
+        'verticals/legal-agreements/scripts/verify-db-schema.mts',
+        'verticals/finance-billing/scripts/verify-db-schema.mts',
+        'verticals/property-leasing/scripts/verify-db-schema.mts',
+        'verticals/property-portfolio/scripts/verify-db-schema.mts',
+        'verticals/crm-activities/scripts/verify-db-schema.mts',
+        'verticals/work-tasks/scripts/verify-db-schema.mts',
+        'verticals/workforce/scripts/verify-db-schema.mts',
+        'verticals/tagging/scripts/verify-db-schema.mts',
+        'verticals/crm/scripts/verify-db-schema.mts',
+        'verticals/sales-pipeline/scripts/verify-db-schema.mts',
+        'verticals/merchandise/scripts/verify-db-schema.mts',
+        'verticals/sales-insights/scripts/verify-db-schema.mts',
+        'verticals/facility-operations/scripts/verify-db-schema.mts',
+        'verticals/storefront-registry/scripts/verify-db-schema.mts',
+        'verticals/tax/scripts/verify-db-schema.mts',
+        'verticals/projects/scripts/verify-db-schema.mts',
+      ].toSorted(),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 const ownerFixture = (source: string) =>
   Effect.gen(function* createOwnerFixture() {
@@ -125,7 +133,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
       expect(footerOffset).toBeGreaterThan(0);
       const runnerSource = `
         import { NodeRuntime, NodeServices } from '@effect/platform-node';
-        import { Effect, Exit } from 'effect';
+        import { Effect, Exit, Layer } from 'effect';
         import { Reactivity } from 'effect/reactivity';
         import { verifyOwnerSchema } from ${encodeJson(verifierUrl.href)};
         const main = verifyOwnerSchema(${encodeJson(fixture.file)}).pipe(Effect.provide(NodeServices.layer));
@@ -181,7 +189,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   );
 }
 
-it.effect('rejects unbounded concurrency and prioritizes the broad owners', () =>
+it.effect('rejects unbounded concurrency without replacing canonical source inventory order with a ranking', () =>
   Effect.gen(function* validateConcurrency() {
     expect(yield* validateVerifierConcurrency(4)).toBe(4);
     expect(yield* validateVerifierConcurrency(2)).toBe(2);
@@ -189,7 +197,6 @@ it.effect('rejects unbounded concurrency and prioritizes the broad owners', () =
       const failure = yield* validateVerifierConcurrency(value).pipe(Effect.flip);
       expect(failure.reason).toContain('between 1 and 4');
     }
-    expect(orderOwnerVerifiers([ownerVerifierPaths[1], ownerVerifierPaths[0]])[0]).toBe(ownerVerifierPaths[0]);
   }),
 );
 

@@ -31,7 +31,6 @@ export const unusedApprovalPreparationLayer = Layer.mergeAll(
     make: () => () => Effect.die('A direct-handler unit must not resolve a production Counterparty role'),
   }),
   Layer.succeed(ContextAccess, {
-    businessPermissions: () => Effect.die(unexpectedAuthorization),
     legalEntities: () => Effect.die(unexpectedAuthorization),
     modules: () => Effect.die(unexpectedAuthorization),
     resources: () => Effect.die(unexpectedAuthorization),

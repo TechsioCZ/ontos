@@ -131,6 +131,14 @@ export const handleConfirmVariantCombination = Effect.fn('ConfirmVariantCombinat
 
 export const confirmVariantCombinationAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.variant-combination.confirm',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'variant', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.confirm-variant-combination.access.v1',
@@ -142,7 +150,7 @@ export const confirmVariantCombinationAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey,
       role: 'action',

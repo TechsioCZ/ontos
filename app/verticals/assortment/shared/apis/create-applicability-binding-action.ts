@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.assortment
 // @ontos-action-http-slug create-applicability-binding
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/create-applicability-binding.ts';
 
 export { CreateApplicabilityBindingPayloadSchema } from '../actions/create-applicability-binding.ts';
-
 const CreateApplicabilityBindingActionHeadersSchema = Schema.Struct({
   'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
 });
@@ -28,6 +28,7 @@ export const CreateApplicabilityBindingActionForbiddenProblemSchema = makeProble
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -138,7 +139,7 @@ export const CreateApplicabilityBindingActionApi = HttpApi.make('CreateApplicabi
         error: actionErrors,
         headers: CreateApplicabilityBindingActionHeadersSchema,
         payload: Schema.toEncoded(CreateApplicabilityBindingPayloadSchema),
-        success: CreateApplicabilityBindingResultSchema,
+        success: [ActionProposalAcceptedSchema, CreateApplicabilityBindingResultSchema],
       }),
     )
     .middleware(CreateApplicabilityBindingActionSchemaErrorMiddleware),

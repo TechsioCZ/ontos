@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug create-product-category
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,6 +11,7 @@ import {
 } from '../actions/create-product-category.ts';
 
 export { CreateProductCategoryPayloadSchema } from '../actions/create-product-category.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const CreateProductCategoryActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreateProductCategoryActionInvalidProblem',
@@ -24,6 +26,7 @@ export const CreateProductCategoryActionForbiddenProblemSchema = makeProblemDeta
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -137,7 +140,7 @@ export const CreateProductCategoryActionApi = HttpApi.make('CreateProductCategor
       HttpApiEndpoint.post('execute', '/catalog/actions/create-product-category', {
         error: actionErrors,
         payload: Schema.toEncoded(CreateProductCategoryPayloadSchema),
-        success: CreateProductCategoryResultSchema,
+        success: [ActionProposalAcceptedSchema, CreateProductCategoryResultSchema],
       }),
     )
     .middleware(CreateProductCategoryActionSchemaErrorMiddleware),

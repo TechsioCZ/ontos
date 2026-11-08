@@ -120,6 +120,14 @@ const promotePackageDefinitionPersistenceServiceFactory = (
 
 export const promotePackageDefinitionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.package-definition.promote',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'package-definition', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.promote-package-definition.access.v1',
@@ -131,7 +139,7 @@ export const promotePackageDefinitionAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: moduleId,
       role: 'action',

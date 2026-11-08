@@ -1,8 +1,10 @@
-import { ContextAccess } from '@app/core-runtime';
-import type { ContextAccessDecision, ContextAccessService, OperationalScope } from '@app/core-runtime';
+import type { OperationalScope } from '@app/core-runtime';
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
+import { TenantIntentLoader } from '@app/core-runtime/access/intent/tenant-intent-loader';
 import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { taskLookupAccess } from '../../src/services/task-lookup-access.ts';
+import { lookupCatalog } from '../support/lookup-catalog.ts';
 
 const scope: OperationalScope = {
   authBindingId: '20000000-0000-4000-8000-000000000003',
@@ -13,69 +15,67 @@ const scope: OperationalScope = {
   principalId: '20000000-0000-4000-8000-000000000002',
   tenantId: '20000000-0000-4000-8000-000000000001',
 };
-const fakeAccess = (
-  decision: ContextAccessDecision,
-  customerDecision: ContextAccessDecision = decision,
-): ContextAccessService => ({
-  legalEntities: ({ legalEntityIds, permission }) => {
-    expect(permission).toBe('read_counterparty');
-    return Effect.succeed(legalEntityIds.map((key) => ({ decision: customerDecision, key })));
-  },
-  modules: (input) => {
-    expect(input.legalEntityId).toBe(scope.legalEntityId);
-    expect(input.principalId).toBe(scope.principalId);
-    expect(input.tenantId).toBe(scope.tenantId);
-    return Effect.succeed(input.moduleIds.map((key) => ({ decision, key })));
-  },
-  resources: () => Effect.succeed([]),
-  tenants: () => Effect.succeed([]),
-});
+for (const [outcome, expected] of [
+  ['ALLOWED', 'allowed'],
+  ['DENIED', 'denied'],
+  ['UNAVAILABLE', 'unavailable'],
+  ['NEEDS_APPROVAL', 'denied'],
+] as const) {
+  it.effect(`lookup hints use actual published owner reads and preserve ${outcome}`, () =>
+    Effect.gen(function* test() {
+      const gate = makeTestAccessDecision({ defaultAnswer: { outcome } });
+      const result = yield* taskLookupAccess(scope).pipe(
+        Effect.provideService(AccessDecisionGate, gate),
+        Effect.provideService(TenantIntentLoader, lookupCatalog()),
+      );
+      expect(Object.values(result)).toEqual([expected, expected, expected, expected]);
+      expect(gate.askedLists.map(({ carrier }) => carrier.accessDeclaration?.key)).toEqual([
+        'legal.agreements.api-records.read',
+        'party.registry.customer.list',
+        'demo.sales-pipeline.api-records.read',
+        'property.portfolio.api-records.read',
+      ]);
+      expect(
+        gate.askedLists.every(
+          (question) => question.scope === scope && question.carrier.accessDeclaration?.risk === 'sensitive',
+        ),
+      ).toBe(true);
+    }),
+  );
+}
+it.effect('an absent published declaration never becomes guessed lookup authority', () =>
+  Effect.gen(function* test() {
+    const gate = makeTestAccessDecision({ defaultAnswer: { outcome: 'ALLOWED' } });
+    const result = yield* taskLookupAccess(scope).pipe(
+      Effect.provideService(AccessDecisionGate, gate),
+      Effect.provideService(TenantIntentLoader, lookupCatalog('customers')),
+    );
+    expect(result.customers).toBe('unavailable');
+    expect(result.properties).toBe('allowed');
+    expect(gate.askedLists).toHaveLength(3);
+  }),
+);
+it.effect('missing company scope asks no lookup or gate', () =>
+  Effect.gen(function* test() {
+    const { legalEntityId: _company, ...unscoped } = scope;
+    const result = yield* taskLookupAccess(unscoped).pipe(
+      Effect.provideService(TenantIntentLoader, lookupCatalog()),
+      Effect.provideService(AccessDecisionGate, makeTestAccessDecision({ defaultAnswer: { outcome: 'DENIED' } })),
+    );
+    expect(Object.values(result)).toEqual(['unavailable', 'unavailable', 'unavailable', 'unavailable']);
+  }),
+);
 
-it.effect('preserves scoped permitted lookups for manager and salesperson', () =>
-  Effect.gen(function* permittedLookups() {
-    const result = yield* taskLookupAccess(scope).pipe(Effect.provideService(ContextAccess, fakeAccess('allowed')));
-    expect(Object.values(result)).toEqual(['allowed', 'allowed', 'allowed', 'allowed']);
-  }),
-);
-it.effect('marks inaccessible optional directories denied rather than failed', () =>
-  Effect.gen(function* deniedLookups() {
-    const result = yield* taskLookupAccess(scope).pipe(Effect.provideService(ContextAccess, fakeAccess('denied')));
-    expect(Object.values(result)).toEqual(['denied', 'denied', 'denied', 'denied']);
-  }),
-);
-it.effect('requires customer legal-entity permission in addition to module access', () =>
-  Effect.gen(function* customerPermission() {
+it.effect('a malformed allowed list without its owner predicate does not reveal lookup fields', () =>
+  Effect.gen(function* missingPredicate() {
+    const gate = makeTestAccessDecision({ defaultAnswer: { outcome: 'ALLOWED' } });
     const result = yield* taskLookupAccess(scope).pipe(
-      Effect.provideService(ContextAccess, fakeAccess('allowed', 'denied')),
-    );
-    expect(result.customers).toBe('denied');
-  }),
-);
-it.effect('keeps real authorization unavailability distinguishable from intentional denial', () =>
-  Effect.gen(function* unavailableLookups() {
-    const result = yield* taskLookupAccess(scope).pipe(Effect.provideService(ContextAccess, fakeAccess('unavailable')));
-    expect(Object.values(result)).toEqual(['unavailable', 'unavailable', 'unavailable', 'unavailable']);
-  }),
-);
-it.effect('fails closed for absent or mismatched permission results', () =>
-  Effect.gen(function* missingResults() {
-    const result = yield* taskLookupAccess(scope).pipe(
-      Effect.provideService(ContextAccess, {
-        ...fakeAccess('allowed'),
-        modules: () => Effect.succeed([{ decision: 'allowed', key: 'another-module' }]),
+      Effect.provideService(AccessDecisionGate, {
+        ...gate,
+        list: (question) => gate.list(question).pipe(Effect.map(({ decision }) => ({ decision }))),
       }),
+      Effect.provideService(TenantIntentLoader, lookupCatalog()),
     );
     expect(Object.values(result)).toEqual(['unavailable', 'unavailable', 'unavailable', 'unavailable']);
-  }),
-);
-it.effect('uses the Core module.access alias, never an unrelated named permission', () =>
-  Effect.gen(function* coreAlias() {
-    const result = yield* taskLookupAccess(scope).pipe(
-      Effect.provideService(ContextAccess, {
-        ...fakeAccess('allowed'),
-        contextPermissions: () => Effect.die('module.access must use modules()'),
-      }),
-    );
-    expect(Object.values(result)).toEqual(['allowed', 'allowed', 'allowed', 'allowed']);
   }),
 );

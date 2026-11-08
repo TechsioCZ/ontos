@@ -23,7 +23,7 @@ const request = {
   transport: { correlationId: 'configure-demo-company-test', idempotencyKey: 'demo-companies-once' },
 };
 
-it.effect('requires both executor and tenant identity permission before company state changes', () =>
+it.effect('requires the canonical tenant administration grant before company state changes', () =>
   Effect.gen(function* deniedCompanyConfiguration() {
     const calls: string[] = [];
     const services = [
@@ -41,14 +41,14 @@ it.effect('requires both executor and tenant identity permission before company 
     ];
     yield* Effect.forEach(
       [
-        { actionPermission: 'denied', tenantPermission: 'allowed' },
-        { actionPermission: 'allowed', tenantPermission: 'denied' },
+        { access: 'denied', errorTag: 'ActionPermissionDenied' },
+        { access: 'unavailable', errorTag: 'ActionPermissionCheckError' },
       ] as const,
       (options) =>
         Effect.gen(function* rejectsWithoutMutation() {
-          const harness = yield* makeActionTestHarness({ ...options, services });
+          const harness = yield* makeActionTestHarness({ access: options.access, services });
           const error = yield* harness.runtime.runAction(request).pipe(Effect.flip);
-          expect(Predicate.isTagged(error, 'ActionPermissionDenied')).toBe(true);
+          expect(Predicate.isTagged(error, options.errorTag)).toBe(true);
           expect(harness.snapshot().committed).toHaveLength(0);
         }),
       { concurrency: 1 },
@@ -79,9 +79,8 @@ it.effect('audits fixed company and persona configuration in development and sta
       }),
     ];
     const harness = yield* makeActionTestHarness({
-      actionPermission: 'allowed',
+      access: 'allowed',
       services,
-      tenantPermission: 'allowed',
     });
     const result = yield* harness.runtime
       .runAction(request)
@@ -95,9 +94,8 @@ it.effect('audits fixed company and persona configuration in development and sta
     expect(calls).toEqual(['configure']);
     expect(harness.snapshot().committed[0]?.evidence.dataAccessEvents).toHaveLength(2);
     const stage = yield* makeActionTestHarness({
-      actionPermission: 'allowed',
+      access: 'allowed',
       services,
-      tenantPermission: 'allowed',
     });
     const stageResult = yield* stage.runtime
       .runAction(request)
@@ -110,9 +108,8 @@ it.effect('audits fixed company and persona configuration in development and sta
     expect(stageResult.companies).toEqual(result.companies);
     expect(stage.snapshot().committed[0]?.evidence.dataAccessEvents).toHaveLength(2);
     const production = yield* makeActionTestHarness({
-      actionPermission: 'allowed',
+      access: 'allowed',
       services,
-      tenantPermission: 'allowed',
     });
     const error = yield* production.runtime
       .runAction(request)

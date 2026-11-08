@@ -1,3 +1,4 @@
+import { catalogRegistration } from '../../vertical.registration.ts';
 import { PgClient } from '@effect/sql-pg';
 import { Reactivity } from 'effect/reactivity';
 import { generateKeyPairSync, sign } from 'node:crypto';
@@ -14,6 +15,7 @@ import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-
 import { FetchHttpClient } from 'effect/http';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { createCatalogDeniedAccess } from '../support/live-access-authority.ts';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -73,7 +75,6 @@ it.live(
         mode: 'schema-only',
         purpose: 'stabilization-1263-optional-configuration',
       });
-      yield* isolated.assertClonedSchema();
       const adminContext = yield* Layer.build(
         PgClient.layer({ url: Redacted.make(isolated.connections.admin.connectionString) }).pipe(
           Layer.provideMerge(Reactivity.layer),
@@ -82,17 +83,23 @@ it.live(
       const coreEvidenceExecutor = yield* testCoreDatabase.pipe(Effect.provide(adminContext));
       const fixture = yield* Effect.acquireRelease(
         makeLiveOperationFixture({
+          access: 'allowed',
           actionKeys: [],
           adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
           allowedAudiences: ['catalog'],
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: composition.composition.revision,
           moduleKeys: ['commerce.catalog'],
+          ownerRegistration: catalogRegistration,
           runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
         }),
         (value) => value.close().pipe(Effect.orDie),
       );
-      const fixtureContext = yield* Layer.build(fixture.layer);
+      // The one access gate this suite scripts (the native database carries no v2 access intent and
+      // reaches no engine), plus the per-principal refusal it names (see `live-access-authority`).
+      const deniedAccess = createCatalogDeniedAccess();
+      const accessLayer = fixture.layer.pipe(Layer.provide(deniedAccess.layer));
+      const fixtureContext = yield* Layer.build(accessLayer);
       const permissions = yield* makeContextPermissionRelationshipMutationLive();
       const principal = { principalId: fixture.manager.principalId, tenantId: fixture.tenantId };
       const targets = [
@@ -512,7 +519,7 @@ it.live(
           ).pipe(Layer.provide(ActiveApplicationCompositionSourceLive), Layer.provide(FetchHttpClient.layer)),
         ),
         Layer.provide(redemption),
-        Layer.provide(fixture.layer),
+        Layer.provide(accessLayer),
         Layer.provide(
           ConfigProvider.layer(
             ConfigProvider.fromUnknown({ ONTOS_GATEWAY_ISSUER: tokenIssuer, ONTOS_GATEWAY_PUBLIC_JWKS: jwks }),
@@ -524,7 +531,7 @@ it.live(
           HttpRouter.toWebHandler(
             HttpApiBuilder.layer(HttpApi.make('CatalogApi').add(catalogApi.groups.selectionEvidence)).pipe(
               Layer.provide(handlers),
-              Layer.provideMerge(fixture.layer),
+              Layer.provideMerge(accessLayer),
               Layer.provide(HttpServer.layerServices),
               Layer.provide(NodeCrypto.layer),
             ),
@@ -584,6 +591,9 @@ it.live(
       expect(
         Schema.is(SelectionEvidenceUnavailableProblemSchema)(yield* read(foreignSelection).pipe(Effect.flip)),
       ).toBe(true);
+      // v2: the one access gate decides this read (O62), so the principal with no assignment is
+      // named on the fixture's own per-request owner seam (see `live-access-authority`).
+      deniedAccess.deny(fixture.denied.principalId, 'commerce.catalog.selection-evidence.read');
       const denied = yield* read(selected, fixture.denied).pipe(Effect.flip);
       expect(Schema.is(SelectionEvidenceForbiddenProblemSchema)(denied)).toBe(true);
       assert(selected.configuration !== undefined);

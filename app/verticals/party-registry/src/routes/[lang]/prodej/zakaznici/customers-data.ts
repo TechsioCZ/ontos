@@ -52,7 +52,6 @@ import { ContactPointInputSchema } from '../../../../../shared/domain/contact-po
 import type { ContactPointInput, PartyContactPoint } from '../../../../../shared/domain/contact-point.ts';
 import { OfficialIdentifierInputSchema } from '../../../../../shared/domain/identifier-contracts.ts';
 import type { OfficialIdentifierAssertion } from '../../../../../shared/domain/identifier-contracts.ts';
-import type { Party } from '../../../../../shared/domain/identity-contracts.ts';
 import type { PartyRef } from '../../../../../shared/resources/party.ts';
 import type { CounterpartyRef } from '../../../../../shared/resources/counterparty.ts';
 import {
@@ -61,7 +60,7 @@ import {
   customerHistoryRows,
   discardCustomerDraftKeys,
 } from './customers-model.ts';
-import type { CreateDraft } from './customers-model.ts';
+import type { CreateDraft, CustomerParty } from './customers-model.ts';
 
 type DuplicateCandidateCaseRef = typeof DuplicateCandidateCaseRefSchema.Type;
 
@@ -313,8 +312,8 @@ export const usePrefetchCustomerDetails = (
 };
 
 export type CustomerFactChange =
-  | { readonly kind: 'name'; readonly value: string; readonly party: Party }
-  | { readonly kind: 'lifecycle'; readonly party: Party }
+  | { readonly kind: 'name'; readonly value: string; readonly party: CustomerParty }
+  | { readonly kind: 'lifecycle'; readonly party: CustomerParty }
   | { readonly kind: 'endContact'; readonly existing: PartyContactPoint }
   | { readonly kind: 'endIdentifier'; readonly existing: OfficialIdentifierAssertion }
   | { readonly kind: 'contact'; readonly existing: PartyContactPoint | undefined; readonly value: ContactPointInput }
@@ -346,7 +345,11 @@ export const saveCustomerFact = Effect.fn('CustomersData.saveFact')(function* sa
       name: (item) =>
         updateParty(
           {
-            displayName: item.value.trim(),
+            // The demo form collects one name; an organization carries it as its business name and a
+            // person as their given name, so the owner derives the same display name either way.
+            ...(item.party.partyType === 'PERSON'
+              ? { firstName: item.value.trim() }
+              : { businessName: item.value.trim() }),
             expectedRevision: item.party.revision,
             partyRef,
             provenanceMethod: 'MANUAL_ENTRY',
@@ -391,7 +394,6 @@ export const saveCustomerFact = Effect.fn('CustomersData.saveFact')(function* sa
               privacyClassification: 'BUSINESS_SENSITIVE',
               provenance,
               validFrom: now,
-              verification: { state: 'UNVERIFIED' },
             },
             options,
           );
@@ -406,7 +408,6 @@ export const saveCustomerFact = Effect.fn('CustomersData.saveFact')(function* sa
                 privacyClassification: item.existing.privacyClassification,
                 provenance,
                 validFrom: now,
-                verification: { state: 'UNVERIFIED' },
               },
               type: 'CORRECT_CONTACT_POINT',
             },
@@ -423,7 +424,6 @@ export const saveCustomerFact = Effect.fn('CustomersData.saveFact')(function* sa
         const identifier = yield* Schema.decodeEffect(OfficialIdentifierInputSchema)({
           identifierType: item.identifierType,
           value: item.value,
-          verification: 'UNVERIFIED',
         });
         if (item.existing === undefined) {
           return yield* addPartyOfficialIdentifier(

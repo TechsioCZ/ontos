@@ -44,7 +44,7 @@ import { WorkPlanning } from './work-planning.tsx';
 import { principalKey } from '../../../../shared/assignment.ts';
 import { assignmentPatch, selectedPrincipal } from './assignment-options.ts';
 import type { TaskFormSubmission } from './task-form-dialog.tsx';
-import { taskAutosaveOutcome } from './task-form-values.ts';
+import { isActionProposal, taskAutosaveOutcome, taskAutosaveResult } from './task-form-values.ts';
 import {
   TaskTabSchema,
   commonTransitionTargets,
@@ -108,7 +108,8 @@ type CommandOutcome =
         readonly reason?: BulkSkipReason;
       }[];
     }
-  | { readonly message: string; readonly ok: false };
+  // A command parked for approval changed nothing yet; `message` says so.
+  | { readonly message: string; readonly ok: false; readonly proposed: boolean };
 
 type PageReadFailure = Effect.Error<
   ReturnType<typeof executeRecords> | ReturnType<typeof listCustomers> | ReturnType<typeof listOpportunities>
@@ -643,7 +644,14 @@ const useTasksPage = (
           referenceCredentials,
         }),
       ),
-      Effect.tap((outcome) => Effect.sync(() => showCommandResult(command, outcome))),
+      // A proposal waits for approval: the rows and the revision stay as committed.
+      Effect.tap((outcome) =>
+        Effect.sync(() => {
+          if (!isActionProposal(outcome)) {
+            showCommandResult(command, outcome);
+          }
+        }),
+      ),
     );
   type CommandError = Effect.Error<ReturnType<typeof commandEffect>>;
   const failureMessage = (error: CommandError) =>
@@ -656,13 +664,20 @@ const useTasksPage = (
       Match.orElse(() => t(`${key}.invalid`)),
     );
 
-  // Runs one command against the revision the user saw. Failures become messages.
+  const approvalRequired = () => t(`${key}.approvalRequired`);
+  const announceProposal = () =>
+    toaster.create({ duration: SUCCESS_TOAST_DURATION_MS, title: approvalRequired(), type: 'info' });
+
+  // Runs one command against the revision the user saw. Failures and proposals become messages.
   const runCommand = (command: WorkCommand, revision: number, onDone: (outcome: CommandOutcome) => void) =>
     browserRuntime.runFork(
       commandEffect(command, revision).pipe(
         Effect.match({
-          onFailure: (error): CommandOutcome => ({ message: failureMessage(error), ok: false }),
-          onSuccess: (outcome): CommandOutcome => ({ ok: true, results: outcome.results ?? [] }),
+          onFailure: (error): CommandOutcome => ({ message: failureMessage(error), ok: false, proposed: false }),
+          onSuccess: (outcome): CommandOutcome =>
+            isActionProposal(outcome)
+              ? { message: approvalRequired(), ok: false, proposed: true }
+              : { ok: true, results: outcome.results ?? [] },
         }),
         Effect.map(onDone),
       ),
@@ -726,6 +741,11 @@ const useTasksPage = (
         closeEditor();
         setActionError(undefined);
         toaster.create({ duration: SUCCESS_TOAST_DURATION_MS, title: t(successKey), type: 'success' });
+      } else if (result.proposed) {
+        // The creation waits for approval; keeping the form open would only invite a duplicate proposal.
+        closeEditor();
+        setActionError(undefined);
+        announceProposal();
       } else {
         setFormError(result.message);
       }
@@ -759,6 +779,9 @@ const useTasksPage = (
           type: 'warning',
         });
       }
+    } else if (outcome.proposed) {
+      setSelection({});
+      announceProposal();
     } else {
       setActionError(outcome.message);
     }
@@ -815,7 +838,11 @@ const useTasksPage = (
         });
       } else {
         putRow(task);
-        setActionError(outcome.message);
+        if (outcome.proposed) {
+          announceProposal();
+        } else {
+          setActionError(outcome.message);
+        }
       }
     });
   };
@@ -847,7 +874,8 @@ const useTasksPage = (
 
   /**
    * Autosave of the edit panel against the revision its draft builds on. The saved task shows at once; a revision
-   * conflict goes to the panel's status line, any other failure to its message.
+   * conflict goes to the panel's status line, any other failure to its message. A draft parked for approval is not
+   * saved: the status line shows it as pending, and autosave never sends that draft again.
    */
   const handleAutosave = (submission: TaskFormSubmission, expectedRevision: number) =>
     editor?.mode === 'edit'
@@ -859,10 +887,10 @@ const useTasksPage = (
                 setFormError(outcome === 'conflict' ? undefined : failureMessage(error));
                 return outcome;
               }),
-            onSuccess: ({ revision }) =>
+            onSuccess: (result) =>
               Effect.sync((): RevisionedSaveResult => {
                 setFormError(undefined);
-                return revision;
+                return taskAutosaveResult(result);
               }),
           }),
         )
@@ -900,6 +928,8 @@ const useTasksPage = (
             title: t(archived ? `${key}.archivedToast` : `${key}.restoredToast`),
             type: 'success',
           });
+        } else if (outcome.proposed) {
+          announceProposal();
         } else {
           setFormError(outcome.message);
         }
@@ -919,7 +949,12 @@ const useTasksPage = (
       setSaving(true);
       runCommand({ _tag: 'AddTaskComment', taskRef: editor.task.ref, text }, records.revision, (outcome) => {
         setSaving(false);
-        if (!outcome.ok) {
+        if (outcome.ok) {
+          return;
+        }
+        if (outcome.proposed) {
+          announceProposal();
+        } else {
           setFormError(outcome.message);
         }
       });

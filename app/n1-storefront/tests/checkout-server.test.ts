@@ -89,6 +89,7 @@ interface BackendOptions {
   readonly portalAnonymous?: boolean;
   readonly portalGatewayStatus?: number;
   readonly portalStatus?: number;
+  readonly proposal?: boolean;
   readonly shippingPriceMinor?: number;
 }
 const readHeaders = {
@@ -162,6 +163,22 @@ const portalResponse = async (request: Request, options: BackendOptions) => {
     token: "portal-test-only-assertion",
   });
 };
+const nonCommittedActionResponse = (options: BackendOptions) => {
+  if (options.actionStatus !== undefined) {
+    return Response.json({}, { status: options.actionStatus });
+  }
+  if (options.proposal === true) {
+    return Response.json(
+      {
+        _tag: "ActionProposalAccepted",
+        expiresAt: "2026-11-08T12:00:00.000Z",
+        proposalId: "60000000-0000-4000-8000-000000000001",
+      },
+      { status: 202 },
+    );
+  }
+  return null;
+};
 const backend = (options: BackendOptions = {}) => {
   const calls: Request[] = [];
   const countryCodes = options.countryCodes ?? ["CZ"];
@@ -234,8 +251,9 @@ const backend = (options: BackendOptions = {}) => {
         token: "new-action-token",
       });
     }
-    if (options.actionStatus !== undefined) {
-      return Response.json({}, { status: options.actionStatus });
+    const stopped = nonCommittedActionResponse(options);
+    if (stopped !== null) {
+      return stopped;
     }
     placed = payload.command.dryRun === false;
     return Response.json({
@@ -294,7 +312,9 @@ describe("checkout derives customer ownership from fresh native Portal admission
       if (Result.isFailure(result)) {
         expect(result.failure.state).toBe("forbidden");
       }
-      expect(owner.calls.filter((call) => call.url.endsWith("/apply-command"))).toHaveLength(0);
+      expect(
+        owner.calls.filter((call) => call.url.endsWith("/place-storefront-order")),
+      ).toHaveLength(0);
     }),
   );
   for (const mode of ["quote", "place"] as const) {
@@ -315,7 +335,7 @@ describe("checkout derives customer ownership from fresh native Portal admission
         expect(admission).toHaveLength(1);
         expect(admission[0]?.headers.get("cookie")).toContain("commerce-portal.session");
         expect(admission[0]?.headers.get("cookie")).not.toContain("staff.session");
-        const actions = owner.calls.filter((call) => call.url.endsWith("/apply-command"));
+        const actions = owner.calls.filter((call) => call.url.endsWith("/place-storefront-order"));
         expect(actions).toHaveLength(1);
         const payload = yield* Effect.promise(() => actions[0]?.json());
         expect(payload.command).toMatchObject({
@@ -352,7 +372,9 @@ describe("checkout derives customer ownership from fresh native Portal admission
             Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
           );
           expect(Result.isFailure(outcome)).toBe(true);
-          expect(owner.calls.filter((call) => call.url.endsWith("/apply-command"))).toHaveLength(0);
+          expect(
+            owner.calls.filter((call) => call.url.endsWith("/place-storefront-order")),
+          ).toHaveLength(0);
         }),
     );
   }
@@ -372,7 +394,9 @@ describe("checkout derives customer ownership from fresh native Portal admission
         result: { orderId: order.id, receipt: { contact: order.contact } },
         state: "confirmed",
       });
-      expect(owner.calls.filter((call) => call.url.endsWith("/apply-command"))).toHaveLength(0);
+      expect(
+        owner.calls.filter((call) => call.url.endsWith("/place-storefront-order")),
+      ).toHaveLength(0);
       expect(JSON.stringify(result)).not.toContain(customerAccount.id);
     }),
   );
@@ -397,7 +421,9 @@ describe("checkout derives customer ownership from fresh native Portal admission
           );
           expect(Result.isFailure(result)).toBe(true);
           expect(JSON.stringify(result)).not.toContain(order.contact.email);
-          expect(owner.calls.filter((call) => call.url.endsWith("/apply-command"))).toHaveLength(0);
+          expect(
+            owner.calls.filter((call) => call.url.endsWith("/place-storefront-order")),
+          ).toHaveLength(0);
         }),
     );
   }
@@ -411,7 +437,9 @@ describe("checkout derives customer ownership from fresh native Portal admission
         Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
       );
       expect(result).toMatchObject({ orderId: order.id, outcome: "REPLAYED" });
-      expect(owner.calls.filter((call) => call.url.endsWith("/apply-command"))).toHaveLength(0);
+      expect(
+        owner.calls.filter((call) => call.url.endsWith("/place-storefront-order")),
+      ).toHaveLength(0);
     }),
   );
   it.effect("reauthenticates placement instead of reusing the identity from a prior quote", () =>
@@ -433,7 +461,7 @@ describe("checkout derives customer ownership from fresh native Portal admission
         Effect.provide(FetchHttpClient.layer),
         Effect.provideService(FetchHttpClient.Fetch, placedOwner.fetch),
       );
-      const action = placedOwner.calls.find((call) => call.url.endsWith("/apply-command"));
+      const action = placedOwner.calls.find((call) => call.url.endsWith("/place-storefront-order"));
       expect(action).toBeDefined();
       if (action === undefined) {
         return;
@@ -448,6 +476,28 @@ describe("checkout derives customer ownership from fresh native Portal admission
 });
 
 describe("owner-backed guest checkout", () => {
+  for (const mode of ["quote", "place"] as const) {
+    it.effect(`never treats a parked ${mode} proposal as a committed owner result`, () =>
+      Effect.gen(function* parkedCheckout() {
+        const owner = backend({ proposal: true });
+        const input = yield* decode({ ...draft, mode });
+        const result = yield* submitCheckoutWithConfiguration(config, input).pipe(
+          Effect.result,
+          Effect.provide(FetchHttpClient.layer),
+          Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
+        );
+        expect(Result.isFailure(result)).toBe(true);
+        if (Result.isFailure(result)) {
+          expect(result.failure.state).toBe("unavailable");
+        }
+        expect(
+          owner.calls.filter((call) =>
+            new URL(call.url).pathname.endsWith("/place-storefront-order"),
+          ),
+        ).toHaveLength(1);
+      }),
+    );
+  }
   it("preserves shipping-inclusive VAT and refuses shipping above the grand total", () => {
     // Native fullOrderTotals includes shipping VAT: goods2420/420VAT + shipping12900/2239VAT.
     const shippingHeavy = {
@@ -621,7 +671,9 @@ describe("owner-backed guest checkout", () => {
           expect(result.failure.state).toBe("uncertain");
         }
         expect(
-          owner.calls.filter((call) => new URL(call.url).pathname.endsWith("/apply-command")),
+          owner.calls.filter((call) =>
+            new URL(call.url).pathname.endsWith("/place-storefront-order"),
+          ),
         ).toHaveLength(1);
       }),
     );
@@ -637,7 +689,7 @@ describe("owner-backed guest checkout", () => {
       expect(result).toMatchObject({ orderId: "order-1", outcome: "PLACED", receipt: null });
       expect(owner.calls).toHaveLength(5);
       expect(new URL(owner.calls.at(-1)?.url ?? "https://unexpected.example").pathname).toMatch(
-        /\/apply-command$/u,
+        /\/place-storefront-order$/u,
       );
     }),
   );

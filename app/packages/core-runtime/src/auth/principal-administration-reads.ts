@@ -5,7 +5,8 @@ import { auditEvents, principalAuthBindings, principals } from '../db/schema.ts'
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import { defineSystemModuleEntrypoint } from '../modules/module-entrypoint.ts';
 import { OperationContextUnavailable } from '../operations/errors.ts';
-import { defineRead, defineReadConditionalPermission } from '../reads/definition.ts';
+import type { OperationalScope } from '../operations/context.ts';
+import { defineRead } from '../reads/definition.ts';
 import { validateManagedApiKeyTarget } from './managed-api-key-scope.ts';
 import { ReadHandlerUnavailable } from '../reads/errors.ts';
 import { isTrustedSystemPrincipalContext } from './system-principal-context-provenance.ts';
@@ -20,26 +21,38 @@ const paginationInput = {
   offset: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
 };
 const bindingMetadata = Schema.Struct({
-  authBindingId: AuthBindingIdSchema,
-  createdAt: Schema.DateTimeUtc,
-  revokedAt: Schema.OptionFromNullOr(Schema.DateTimeUtc),
-  status: BindingStatusSchema,
+  authBindingId: Schema.optionalKey(AuthBindingIdSchema),
+  createdAt: Schema.optionalKey(Schema.DateTimeUtc),
+  revokedAt: Schema.optionalKey(Schema.OptionFromNullOr(Schema.DateTimeUtc)),
+  status: Schema.optionalKey(BindingStatusSchema),
 });
 const PaginationInput = Schema.Struct(paginationInput);
-const ManagedInput = Schema.Union([
-  Schema.Struct({ ...paginationInput, scope: Schema.Literal('tenant-managed') }),
-  Schema.Struct({ ...paginationInput, principalId: PrincipalIdSchema, scope: Schema.Literal('company-agent') }),
-]);
+/**
+ * The tenant-managed key list names no company: it runs in the tenant context and is decided by the
+ * tenant's own identity administration (O7, O12). A company administrator has no tenant context, so
+ * this input is deliberately a separate carrier from the company-agent one below.
+ */
+const TenantManagedInput = Schema.Struct({ ...paginationInput, scope: Schema.Literal('tenant-managed') });
+/**
+ * The company-agent key list names exactly one agent inside exactly one company (O28): it runs in that
+ * company's context, where its own access administrator holds the power, and never in the tenant's.
+ */
+const CompanyAgentInput = Schema.Struct({
+  ...paginationInput,
+  principalId: PrincipalIdSchema,
+  scope: Schema.Literal('company-agent'),
+});
+const ManagedInput = Schema.Union([TenantManagedInput, CompanyAgentInput]);
 const SelfResult = Schema.Struct({
   items: Schema.Array(bindingMetadata),
   nextOffset: Schema.OptionFromNullOr(Schema.Finite),
 });
 const ManagedItem = Schema.Struct({
-  authBindingId: Schema.OptionFromNullOr(AuthBindingIdSchema),
-  bindingCreatedAt: Schema.OptionFromNullOr(Schema.DateTimeUtc),
-  bindingRevokedAt: Schema.OptionFromNullOr(Schema.DateTimeUtc),
-  bindingStatus: Schema.OptionFromNullOr(BindingStatusSchema),
-  displayName: Schema.String,
+  authBindingId: Schema.optionalKey(Schema.OptionFromNullOr(AuthBindingIdSchema)),
+  bindingCreatedAt: Schema.optionalKey(Schema.OptionFromNullOr(Schema.DateTimeUtc)),
+  bindingRevokedAt: Schema.optionalKey(Schema.OptionFromNullOr(Schema.DateTimeUtc)),
+  bindingStatus: Schema.optionalKey(Schema.OptionFromNullOr(BindingStatusSchema)),
+  displayName: Schema.optionalKey(Schema.String),
   kind: Schema.Literals(['service', 'integration', 'agent']),
   principalId: PrincipalIdSchema,
   principalStatus: Schema.Literals(['active', 'disabled', 'archived']),
@@ -236,13 +249,32 @@ export const selfApiKeyBindingsRead = defineRead<
   never
 >(
   {
+    accessDeclaration: {
+      key: 'core.identity.self-api-key.list',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+    // Credential linkage/status metadata is security-sensitive (O58): the parent admin read decides
+    // the record, and this group governs the authentication-metadata fields of its list.
+    accessFieldGroups: [
+      {
+        fieldClass: 'authentication_metadata',
+        fields: ['items.authBindingId', 'items.createdAt', 'items.revokedAt', 'items.status'],
+        key: 'core.identity.self-api-key.read-authentication-metadata',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'identity', level: 'manage' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
     accessKind: 'list',
     entrypoint: defineSystemModuleEntrypoint({
       access: 'read',
-      authorization: {
-        kind: 'context_permission',
-        permission: 'module.access',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.self-api-key-bindings',
       moduleKey: 'core.identity',
       role: 'api',
@@ -254,7 +286,6 @@ export const selfApiKeyBindingsRead = defineRead<
     inputSchema: PaginationInput,
     legalEntityScope: 'optional',
     owningModuleKey: 'core.identity',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'core.identity.self-api-key-bindings',
     resultSchema: SelfResult,
@@ -278,11 +309,68 @@ export const selfApiKeyBindingsRead = defineRead<
           }),
         )
       : Effect.succeed(services(transaction, scope.tenantId, scope.principalId, scope.authenticationNamespaceId)),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );
 
+/**
+ * The one owner-side service factory both managed-key reads share. `scope.authMethod === 'system'`
+ * runs under the trusted system identity with no authentication namespace; every other caller must
+ * carry the namespace of the session or key that authenticated it.
+ */
+const managedReadServices = (transaction: ScopedTransactionExecutor, scope: OperationalScope) => {
+  if (scope.authMethod === 'system') {
+    return isTrustedSystemPrincipalContext(scope)
+      ? Effect.succeed(services(transaction, scope.tenantId, scope.principalId, undefined, scope.legalEntityId))
+      : Effect.fail(
+          new OperationContextUnavailable({
+            code: 'operation_context_unavailable',
+            reason: 'The trusted system identity context is unavailable',
+          }),
+        );
+  }
+  if (scope.authenticationNamespaceId === undefined) {
+    return Effect.fail(
+      new OperationContextUnavailable({
+        code: 'operation_context_unavailable',
+        reason: 'The authenticated identity namespace is unavailable',
+      }),
+    );
+  }
+  return Effect.succeed(
+    services(transaction, scope.tenantId, scope.principalId, scope.authenticationNamespaceId, scope.legalEntityId),
+  );
+};
+
+/** The field groups both managed-key lists declare, with the exact keys their own declaration owns. */
+const managedAccessFieldGroups = (keyPrefix: string) =>
+  [
+    {
+      fieldClass: 'personal_data',
+      fields: ['items.displayName'],
+      key: `${keyPrefix}.read-personal-data`,
+      kind: 'field_read',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+    {
+      fieldClass: 'authentication_metadata',
+      fields: ['items.authBindingId', 'items.bindingCreatedAt', 'items.bindingRevokedAt', 'items.bindingStatus'],
+      key: `${keyPrefix}.read-authentication-metadata`,
+      kind: 'field_read',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+  ] as const;
+
+/**
+ * Tenant-managed keys: `legalEntityScope: 'optional'` means the gate decides in the tenant context
+ * (O7, O12), so only the tenant's own identity administration may read this list.
+ */
 export const managedPrincipalsRead = defineRead<
-  typeof ManagedInput,
+  typeof TenantManagedInput,
   typeof ManagedResult,
   'core.identity',
   IdentityReadServices,
@@ -290,13 +378,21 @@ export const managedPrincipalsRead = defineRead<
   never
 >(
   {
+    accessDeclaration: {
+      key: 'core.identity.principal.list-managed',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+    // Human principal names are personal data and the credential linkage/status metadata is
+    // security-sensitive (O58); each is its own group over this managed-principal list.
+    accessFieldGroups: managedAccessFieldGroups('core.identity.principal'),
     accessKind: 'list',
     entrypoint: defineSystemModuleEntrypoint({
       access: 'read',
-      authorization: {
-        kind: 'context_permission',
-        permission: 'module.access',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.managed-principals',
       moduleKey: 'core.identity',
       role: 'api',
@@ -305,10 +401,9 @@ export const managedPrincipalsRead = defineRead<
       captureMode: 'metadata_only',
       policyKey: 'core.identity.managed-principals.access.v1',
     },
-    inputSchema: ManagedInput,
+    inputSchema: TenantManagedInput,
     legalEntityScope: 'optional',
     owningModuleKey: 'core.identity',
-    permissionTarget: 'conditional',
     policies: [],
     readKey: 'core.identity.managed-principals',
     resultSchema: ManagedResult,
@@ -323,44 +418,61 @@ export const managedPrincipalsRead = defineRead<
         })),
       ),
   },
-  (transaction, scope) => {
-    if (scope.authMethod === 'system') {
-      return isTrustedSystemPrincipalContext(scope)
-        ? Effect.succeed(services(transaction, scope.tenantId, scope.principalId, undefined, scope.legalEntityId))
-        : Effect.fail(
-            new OperationContextUnavailable({
-              code: 'operation_context_unavailable',
-              reason: 'The trusted system identity context is unavailable',
-            }),
-          );
-    }
-    if (scope.authenticationNamespaceId === undefined) {
-      return Effect.fail(
-        new OperationContextUnavailable({
-          code: 'operation_context_unavailable',
-          reason: 'The authenticated identity namespace is unavailable',
-        }),
-      );
-    }
-    return Effect.succeed(
-      services(transaction, scope.tenantId, scope.principalId, scope.authenticationNamespaceId, scope.legalEntityId),
-    );
-  },
-  defineReadConditionalPermission<
-    typeof ManagedInput.Type,
-    { readonly kind: 'company-agent' } | { readonly kind: 'tenant-managed' }
-  >({
-    branches: {
-      'company-agent': {
-        requiredKinds: ['legal_entity'],
-        resolve: () => [{ kind: 'legal_entity', permission: 'manage_people' }],
-      },
-      'tenant-managed': {
-        requiredKinds: ['tenant'],
-        resolve: () => [{ kind: 'tenant', permission: 'manage_identity' }],
-      },
+  managedReadServices,
+);
+
+/**
+ * Company-agent keys: `legalEntityScope: 'required'` means the gate decides in the exact named
+ * company (O28), so that company's own access administrator may read its agent's keys while a
+ * different company's administrator and the tenant-only path may not. The owner implementation is
+ * the same one; only the declared carrier and its scope differ.
+ */
+export const companyManagedPrincipalsRead = defineRead<
+  typeof CompanyAgentInput,
+  typeof ManagedResult,
+  'core.identity',
+  IdentityReadServices,
+  ReadHandlerUnavailable,
+  never
+>(
+  {
+    accessDeclaration: {
+      key: 'core.identity.company-agent-key.list-managed',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
     },
-    permissionKey: 'module.access',
-    select: (input) => ({ kind: input.scope }),
-  }),
+    accessFieldGroups: managedAccessFieldGroups('core.identity.company-agent-key'),
+    accessKind: 'list',
+    entrypoint: defineSystemModuleEntrypoint({
+      access: 'read',
+      authorization: { kind: 'protected' },
+      entrypointKey: 'core.identity.company-managed-principals',
+      moduleKey: 'core.identity',
+      role: 'api',
+    }),
+    evidencePolicy: {
+      captureMode: 'metadata_only',
+      policyKey: 'core.identity.company-managed-principals.access.v1',
+    },
+    inputSchema: CompanyAgentInput,
+    legalEntityScope: 'required',
+    owningModuleKey: 'core.identity',
+    policies: [],
+    readKey: 'core.identity.company-managed-principals',
+    resultSchema: ManagedResult,
+    schemaVersion: '1',
+  },
+  {
+    load: (input, context) =>
+      context.services.listManaged(input).pipe(
+        Effect.map((result) => ({
+          evidence: { resultCount: result.items.length },
+          result,
+        })),
+      ),
+  },
+  managedReadServices,
 );

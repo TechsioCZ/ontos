@@ -70,17 +70,26 @@ const handleUnarchiveProject = Effect.fn('UnarchiveProject.record')(function* un
 });
 export const unarchiveProjectAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'projects.core.project.unarchive',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'projects', level: 'manage' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'projects.core.unarchive-project.access.v1',
     },
+    accessTarget: (payload) => ({ moduleKey: projectModuleKey, recordKey: payload.projectId }),
     actionKey: 'projects.core.unarchive-project',
     auditProfile: 'standard',
     domainErrorSchema: UnarchiveProjectErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'projects.core.unarchive-project',
       moduleKey: projectModuleKey,
       role: 'action',

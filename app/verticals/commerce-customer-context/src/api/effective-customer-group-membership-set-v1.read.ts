@@ -22,8 +22,6 @@ import {
 import {
   customerGroupReadServiceFactory,
   customerGroupReadUnavailable,
-  customerProfileResourceTarget,
-  groupResourceAccessTarget,
   requireCustomerGroupReadLegalEntityId,
   requireCustomerGroupTenant,
   unwrapCustomerGroupLookup,
@@ -32,7 +30,7 @@ import type { CustomerGroupReadServices } from './customer-group-read-support.ts
 
 const effectiveCustomerGroupMembershipSetV1Entrypoint = defineTenantModuleEntrypoint({
   access: 'historical_read',
-  authorization: { kind: 'context_permission', permission: 'customer.group.history.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.effective-customer-group-membership-set-v1',
   moduleKey: 'commerce.customer-context',
   role: 'api',
@@ -123,6 +121,14 @@ const handleEffectiveCustomerGroupMembershipSetV1 = Effect.fn('EffectiveCustomer
 
 export const effectiveCustomerGroupMembershipSetV1Read = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.customer-group-membership.read-set-v1',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'customer-groups', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'list',
     entrypoint: effectiveCustomerGroupMembershipSetV1Entrypoint,
     evidencePolicy: {
@@ -132,7 +138,6 @@ export const effectiveCustomerGroupMembershipSetV1Read = defineRead(
     inputSchema: EffectiveCustomerGroupMembershipSetV1RequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: 'commerce.customer-context',
-    permissionTarget: 'resource',
     policies: [],
     readKey: 'commerce.customer-context.api.effective-customer-group-membership-set-v1',
     resultSchema: EffectiveCustomerGroupMembershipSetV1ResponseSchema,
@@ -140,10 +145,4 @@ export const effectiveCustomerGroupMembershipSetV1Read = defineRead(
   },
   { load: handleEffectiveCustomerGroupMembershipSetV1 },
   customerGroupReadServiceFactory,
-  ({ profile }: EffectiveCustomerGroupMembershipSetV1Request) => ({
-    kind: 'resource' as const,
-    resource: customerProfileResourceTarget(profile),
-  }),
-  (result: EffectiveCustomerGroupMembershipSetV1Response) =>
-    result.memberships.map(({ groupRef }) => groupResourceAccessTarget(groupRef)),
 );

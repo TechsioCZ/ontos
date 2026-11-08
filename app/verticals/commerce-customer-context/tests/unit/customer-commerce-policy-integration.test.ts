@@ -1,20 +1,16 @@
-import type {
-  ContextAccessService,
-  OperationalScope,
-  ScopedRoutineDefinition,
-  ScopedRoutineInvoker,
-} from '@app/core-runtime';
 import {
+  defineDatabaseIdentityEnrollment,
   getVerticalRuntimeEntrypoints,
-  toContextPermissionAccessKey,
   ScopedRoutineInvocationError,
 } from '@app/core-runtime';
+import type { ContextAccessService, OperationalScope, ScopedRoutineInvoker } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
-import { Effect, Predicate, Result, Schema } from 'effect';
+import { Effect, Option, Predicate, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { readVerifiedGatewayCompositionRevision } from '../../../../packages/core-runtime/src/auth/system-principal-context-provenance.ts';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
+import { makeScriptedBoundAccessGate } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
+import type { TestAccessOutcome } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
 import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
 import { CommerceQuantityPolicyCurrentResponseSchema } from '../../shared/apis/commerce-quantity-policy-current.ts';
@@ -52,9 +48,6 @@ import { customerCommercePolicyAdministrationServiceFactory } from '../../src/se
 import type { CustomerCommercePolicyAdministrationService } from '../../src/services/customer-commerce-policy-administration.service.ts';
 import { commerceCustomerContextManifest } from '../../vertical.manifest.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
-import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
-
-const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -89,31 +82,19 @@ const actionPrincipal = {
 } as const;
 
 interface PolicyReadAuthorizationHarnessOptions {
-  readonly contextPermissionDecision: (permission: string) => 'allowed' | 'denied' | 'unavailable';
-  readonly modulePermissionDecision: 'allowed' | 'denied' | 'unavailable';
+  readonly access: TestAccessOutcome;
   readonly routineResults?: readonly (readonly [name: string, result: Schema.Json])[];
 }
 
 const makePolicyReadAuthorizationHarness = Effect.fn(function* makePolicyReadAuthorizationHarness(
   options: PolicyReadAuthorizationHarnessOptions,
 ) {
-  let businessPermissionCalls = 0;
   let handlerQueries = 0;
-  const contextPermissions: string[] = [];
-  const moduleIds: string[] = [];
   const routineCalls: string[] = [];
   const database = {
-    executor: yield* makeTestDatabase((text, values) => {
+    executor: yield* makeTestDatabase((text) => {
       if (text.includes('transaction_timestamp')) {
-        // The governed Read installs scope and reads trusted time in the same native statement.
-        return Effect.succeed([
-          {
-            legal_entity_id: values[1],
-            operation_at: new Date(at),
-            role: 'ontos_runtime',
-            tenant_id: values[0],
-          },
-        ]);
+        return Effect.succeed([{ operation_at: new Date(at) }]);
       }
       if (text.includes('data_access_events')) {
         return Effect.succeed([]);
@@ -131,48 +112,34 @@ const makePolicyReadAuthorizationHarness = Effect.fn(function* makePolicyReadAut
       return Effect.succeed([]);
     }),
   };
+  // Every protected read now asks exactly one Core gate (CUTOVER-PLAN §3.1). The scripted gate
+  // records what it was asked, and the retired ContextAccess seam must never be consulted again.
+  const gate = makeScriptedBoundAccessGate(options.access);
   const contextAccess: ContextAccessService = {
-    businessPermissions: () => {
-      businessPermissionCalls += 1;
-      return Effect.die('Policy Current reads must not call the business-permission adapter');
-    },
-    contextPermissions: ({ targets }) =>
-      Effect.succeed(
-        targets.map((target) => {
-          contextPermissions.push(target.permission);
-          return {
-            decision: options.contextPermissionDecision(target.permission),
-            key: toContextPermissionAccessKey(target),
-          };
-        }),
-      ),
-    legalEntities: ({ legalEntityIds }) =>
-      Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
-    modules: ({ moduleIds: requestedModuleIds }) => {
-      moduleIds.push(...requestedModuleIds);
-      return Effect.succeed(requestedModuleIds.map((key) => ({ decision: options.modulePermissionDecision, key })));
-    },
-    resources: ({ resources }) =>
-      Effect.succeed(
-        resources.map((resource) => ({
-          decision: 'denied' as const,
-          key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
-        })),
-      ),
-    tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision: 'allowed' as const, key }))),
+    contextPermissions: () => Effect.die('v2 reads must not call the context-permission adapter'),
+    legalEntities: () => Effect.die('v2 reads must not call the legal-entity adapter'),
+    modules: () => Effect.die('v2 reads must not call the module adapter'),
+    ownerPermissions: () => Effect.die('v2 reads must not call the owner-permission adapter'),
+    resources: () => Effect.die('v2 reads must not call the resource adapter'),
+    tenants: () => Effect.die('v2 reads must not call the tenant adapter'),
   };
   const runtime = makeReadRuntime(
     database,
     openModuleEntrypointGateway,
     { resolve: () => Effect.succeed(scope) },
     contextAccess,
-    { databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT },
+    {
+      accessDecision: gate.bound,
+      databaseIdentities: defineDatabaseIdentityEnrollment([]),
+      ownerRegistration: commerceCustomerContextRegistration,
+    },
   );
   return {
-    businessPermissionCalls: () => businessPermissionCalls,
-    contextPermissions,
+    askedCapabilityKeys: (): readonly string[] => [
+      ...gate.accessDecision.askedDecisions.map((question) => question.carrier.accessDeclaration?.key ?? '<none>'),
+      ...gate.accessDecision.askedLists.map((question) => question.carrier.accessDeclaration?.key ?? '<none>'),
+    ],
     handlerQueries: () => handlerQueries,
-    moduleIds,
     routineCalls,
     runtime,
   };
@@ -232,34 +199,39 @@ const statefulInvoker = (
 ): StatefulInvoker => {
   const calls: RoutineCall[] = [];
   const states = new Map<string, Schema.Json>(Object.entries({ ...emptyStates(), ...stateOverrides }));
-  const fake = {
-    invoke: (routine: ScopedRoutineDefinition, values: readonly unknown[]) =>
-      Effect.sync(() => {
-        calls.push({ name: routine.name, values });
-        if (routine.name === 'load_current_market_bootstrap_policy_candidates') {
-          return [{ result: bootstrapBatch }];
-        }
-        if (routine.name === 'inspect_commerce_quantity_assignment_profile') {
-          return [{ result: profileInspection() }];
-        }
-        if (routine.name.startsWith('load_')) {
-          return [{ result: states.get(routine.name) ?? null }];
-        }
-        const loadName = routine.name.replace(/^persist_/u, 'load_');
-        const [, payloadValue] = values;
-        const payload = Schema.decodeUnknownSync(Schema.Struct({ state: Schema.Json }))(payloadValue);
-        states.set(loadName, payload.state);
-        return [{ result: { applied: true } }];
-      }),
-  };
-  // SAFETY: the fake implements the repository's sole generic `invoke` test seam and returns routine-schema-shaped rows.
-  return { calls, invoker: fake as ScopedRoutineInvoker };
+  const invoke: ScopedRoutineInvoker['invoke'] = (routine, values) =>
+    Effect.sync(() => {
+      calls.push({ name: routine.name, values });
+      if (routine.name === 'load_current_market_bootstrap_policy_candidates') {
+        return [{ result: bootstrapBatch }];
+      }
+      if (routine.name === 'inspect_commerce_quantity_assignment_profile') {
+        return [{ result: profileInspection() }];
+      }
+      if (routine.name.startsWith('load_')) {
+        return [{ result: states.get(routine.name) ?? null }];
+      }
+      const loadName = routine.name.replace(/^persist_/u, 'load_');
+      const payloadValue = [...values].at(1);
+      const payload = Schema.decodeUnknownSync(Schema.Struct({ state: Schema.Json }))(payloadValue);
+      states.set(loadName, payload.state);
+      return [{ result: { applied: true } }];
+    }).pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(routine.resultSchema))),
+      Effect.mapError(
+        () =>
+          new ScopedRoutineInvocationError({
+            code: 'scoped_routine_result_invalid',
+            constraint: Option.none(),
+            ownerModuleKey: routine.ownerModuleKey,
+            postgresCode: Option.none(),
+            reason: 'The fixture returned an invalid owner row',
+            routineKey: routine.routineKey,
+          }),
+      ),
+    );
+  return { calls, invoker: { invoke } };
 };
-
-const asServiceTransaction = (invoker: ScopedRoutineInvoker) =>
-  // SAFETY: the service uses only the scoped-routine `invoke` seam exposed by its persistence repository.
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Scoped transaction behavior beyond `invoke` is unreachable in this owner repository test.
-  invoker as Parameters<typeof customerCommercePolicyAdministrationServiceFactory>[0];
 
 const purchaseCurrencyRevisionInput = {
   effectiveFrom: at,
@@ -601,11 +573,7 @@ describe('Customer Commerce Policy integration', () => {
   it.effect('persists a changed mutation once, replays idempotently, and maps stale generation', () => {
     const { calls, invoker } = statefulInvoker();
     return Effect.gen(function* mutationRoundTrip() {
-      const service = yield* customerCommercePolicyAdministrationServiceFactory(
-        asServiceTransaction(invoker),
-        scope,
-        'a'.repeat(64),
-      );
+      const service = yield* customerCommercePolicyAdministrationServiceFactory(invoker, scope);
       const changed = yield* service.administerPurchaseCurrencyPolicy(purchaseCurrencyCommand);
       const replay = yield* service.administerPurchaseCurrencyPolicy(purchaseCurrencyCommand);
       const stale = yield* Effect.flip(service.administerPurchaseCurrencyPolicy(stalePurchaseCurrencyCommand));
@@ -622,11 +590,7 @@ describe('Customer Commerce Policy integration', () => {
   it.effect('combines quantity owner sets and rejects an incomplete bootstrap seller exchange', () => {
     const { invoker } = statefulInvoker({ sellers: [] });
     return Effect.gen(function* currentReads() {
-      const service = yield* customerCommercePolicyAdministrationServiceFactory(
-        asServiceTransaction(invoker),
-        scope,
-        readVerifiedGatewayCompositionRevision(scope),
-      );
+      const service = yield* customerCommercePolicyAdministrationServiceFactory(invoker, scope);
       const quantity = yield* service.readCurrentCommerceQuantityPolicy(purchaseCurrencyCommand.observedAt);
       const bootstrapFailure = yield* Effect.flip(
         service.readCurrentMarketBootstrapPolicyCandidates({
@@ -646,11 +610,7 @@ describe('Customer Commerce Policy integration', () => {
   it.effect('projects resolver-facing Current sets without private administration metadata', () => {
     const { invoker } = statefulInvoker(emptyBootstrapBatch, currentProjectionStates);
     return Effect.gen(function* safeCurrentProjections() {
-      const service = yield* customerCommercePolicyAdministrationServiceFactory(
-        asServiceTransaction(invoker),
-        scope,
-        readVerifiedGatewayCompositionRevision(scope),
-      );
+      const service = yield* customerCommercePolicyAdministrationServiceFactory(invoker, scope);
       const currency = yield* service.readCurrentPurchaseCurrencyPolicy(at);
       const paymentTerm = yield* service.readCurrentPaymentTermPolicy(at);
       const quantity = yield* service.readCurrentCommerceQuantityPolicy(at);
@@ -756,7 +716,8 @@ describe('Customer Commerce Policy integration', () => {
         readCurrentPurchaseCurrencyPolicy: () => Effect.die('unused'),
       } satisfies CustomerCommercePolicyAdministrationService;
       const harness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
+        access: 'allowed',
+        ownerRegistration: commerceCustomerContextRegistration,
         services: [
           bindActionTestServices(administerMarketBootstrapPolicyAction, service),
           bindActionTestServices(administerPurchaseCurrencyPolicyAction, service),
@@ -868,7 +829,8 @@ describe('Customer Commerce Policy integration', () => {
         readCurrentPurchaseCurrencyPolicy: () => Effect.die('unused'),
       } satisfies CustomerCommercePolicyAdministrationService;
       const harness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
+        access: 'allowed',
+        ownerRegistration: commerceCustomerContextRegistration,
         services: [
           bindActionTestServices(administerMarketBootstrapPolicyAction, service),
           bindActionTestServices(administerPurchaseCurrencyPolicyAction, service),
@@ -978,7 +940,8 @@ describe('Customer Commerce Policy integration', () => {
         readCurrentPurchaseCurrencyPolicy: () => Effect.die('unused'),
       } satisfies CustomerCommercePolicyAdministrationService;
       const harness = yield* makeActionTestHarness({
-        actionPermission: 'denied',
+        access: 'denied',
+        ownerRegistration: commerceCustomerContextRegistration,
         services: [bindActionTestServices(administerPurchaseCurrencyPolicyAction, service)],
       });
       const failure = yield* harness.runtime
@@ -1000,17 +963,17 @@ describe('Customer Commerce Policy integration', () => {
     }),
   );
 
-  it.effect('runs every Current policy read only after its exact field permission and module authority', () =>
+  it.effect('runs every Current policy read only after its exact capability is allowed by the one gate', () =>
     Effect.gen(function* isolatedCurrentReadAuthority() {
       type AuthorizationHarness = Effect.Success<ReturnType<typeof makePolicyReadAuthorizationHarness>>;
       interface CurrentReadCase {
-        readonly permission: string;
+        readonly capabilityKey: string;
         readonly routineCalls: readonly string[];
         readonly run: (harness: AuthorizationHarness) => Effect.Effect<void, unknown>;
       }
       const currentReads: readonly CurrentReadCase[] = [
         {
-          permission: 'customer_commerce_policy.market_bootstrap.read',
+          capabilityKey: 'commerce.customer-context.market-bootstrap-policy.read',
           routineCalls: ['load_current_market_bootstrap_policy_candidates'],
           run: (harness) =>
             harness.runtime
@@ -1023,7 +986,7 @@ describe('Customer Commerce Policy integration', () => {
               .pipe(Effect.asVoid),
         },
         {
-          permission: 'customer_commerce_policy.purchase_currency.read',
+          capabilityKey: 'commerce.customer-context.purchase-currency-policy.read',
           routineCalls: ['load_purchase_currency_policy_state'],
           run: (harness) =>
             harness.runtime
@@ -1036,7 +999,7 @@ describe('Customer Commerce Policy integration', () => {
               .pipe(Effect.asVoid),
         },
         {
-          permission: 'customer_commerce_policy.payment_term.read',
+          capabilityKey: 'commerce.customer-context.payment-term-policy.read',
           routineCalls: ['load_payment_term_policy_state'],
           run: (harness) =>
             harness.runtime
@@ -1049,7 +1012,7 @@ describe('Customer Commerce Policy integration', () => {
               .pipe(Effect.asVoid),
         },
         {
-          permission: 'customer_commerce_policy.quantity.read',
+          capabilityKey: 'commerce.customer-context.commerce-quantity-policy.read',
           routineCalls: [
             'load_commerce_quantity_rule_assignments',
             'load_commerce_quantity_rule_state',
@@ -1068,35 +1031,29 @@ describe('Customer Commerce Policy integration', () => {
       ];
 
       for (const currentRead of currentReads) {
-        const contextDenied = yield* makePolicyReadAuthorizationHarness({
-          contextPermissionDecision: () => 'denied',
-          modulePermissionDecision: 'allowed',
-        });
-        const moduleDenied = yield* makePolicyReadAuthorizationHarness({
-          contextPermissionDecision: () => 'allowed',
-          modulePermissionDecision: 'denied',
-        });
+        const denied = yield* makePolicyReadAuthorizationHarness({ access: 'denied' });
+        const unavailable = yield* makePolicyReadAuthorizationHarness({ access: 'unavailable' });
 
-        for (const harness of [contextDenied, moduleDenied]) {
-          const failure = yield* Effect.flip(currentRead.run(harness));
-          expect(Predicate.isTagged(failure, 'ReadPermissionDenied')).toBe(true);
-          expect(harness.businessPermissionCalls()).toBe(0);
-          expect(harness.handlerQueries()).toBe(0);
-          expect(harness.contextPermissions).toEqual([currentRead.permission]);
-          expect(harness.moduleIds).toEqual(['commerce.customer-context']);
-        }
+        // A denied capability refuses before the handler runs; a dead engine is an unavailable
+        // authorization answer, which is a 503 rather than a 403 (O48).
+        const deniedFailure = yield* Effect.flip(currentRead.run(denied));
+        expect(Predicate.isTagged(deniedFailure, 'ReadPermissionDenied')).toBe(true);
+        expect(denied.handlerQueries()).toBe(0);
+        expect(denied.askedCapabilityKeys()).toEqual([currentRead.capabilityKey]);
+
+        const unavailableFailure = yield* Effect.flip(currentRead.run(unavailable));
+        expect(Predicate.isTagged(unavailableFailure, 'ReadPermissionUnavailable')).toBe(true);
+        expect(unavailable.handlerQueries()).toBe(0);
+        expect(unavailable.askedCapabilityKeys()).toEqual([currentRead.capabilityKey]);
 
         const allowed = yield* makePolicyReadAuthorizationHarness({
-          contextPermissionDecision: () => 'allowed',
-          modulePermissionDecision: 'allowed',
+          access: 'allowed',
           routineResults: currentRoutineResults,
         });
         yield* currentRead.run(allowed);
 
-        expect(allowed.businessPermissionCalls()).toBe(0);
-        expect(allowed.contextPermissions).toEqual([currentRead.permission]);
+        expect(allowed.askedCapabilityKeys()).toEqual([currentRead.capabilityKey]);
         expect(allowed.handlerQueries()).toBe(currentRead.routineCalls.length);
-        expect(allowed.moduleIds).toEqual(['commerce.customer-context']);
         expect(new Set(allowed.routineCalls)).toEqual(new Set(currentRead.routineCalls));
       }
     }),
@@ -1112,11 +1069,8 @@ describe('Customer Commerce Policy integration', () => {
     ] as const;
     for (const action of actions) {
       expect(action.descriptor.auditEvidenceSchema).toBeDefined();
-      expect(action.descriptor.entrypoint.authorization).toEqual({
-        kind: 'action_execution',
-        provisioning: 'explicit',
-      });
-      expect(action.descriptor.businessPermission).toBeUndefined();
+      expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+      expect(action.descriptor.ownerPermissions).toBeUndefined();
       expect(action.descriptor.idempotency).toBe('required');
       expect(action.descriptor.legalEntityScope).toBe('required');
       expect(Object.keys(action.descriptor.domainEvents)).toHaveLength(1);
@@ -1133,11 +1087,19 @@ describe('Customer Commerce Policy integration', () => {
         paymentTermPolicyCurrentRead,
         commerceQuantityPolicyCurrentRead,
       ].map(({ descriptor }) => descriptor.entrypoint.authorization),
+    ).toEqual([{ kind: 'protected' }, { kind: 'protected' }, { kind: 'protected' }, { kind: 'protected' }]);
+    expect(
+      [
+        marketBootstrapPolicyCurrentRead,
+        purchaseCurrencyPolicyCurrentRead,
+        paymentTermPolicyCurrentRead,
+        commerceQuantityPolicyCurrentRead,
+      ].map(({ descriptor }) => descriptor.accessDeclaration?.key),
     ).toEqual([
-      { kind: 'context_permission', permission: 'customer_commerce_policy.market_bootstrap.read' },
-      { kind: 'context_permission', permission: 'customer_commerce_policy.purchase_currency.read' },
-      { kind: 'context_permission', permission: 'customer_commerce_policy.payment_term.read' },
-      { kind: 'context_permission', permission: 'customer_commerce_policy.quantity.read' },
+      'commerce.customer-context.market-bootstrap-policy.read',
+      'commerce.customer-context.purchase-currency-policy.read',
+      'commerce.customer-context.payment-term-policy.read',
+      'commerce.customer-context.commerce-quantity-policy.read',
     ]);
     expect(
       (commerceCustomerContextManifest.publicSurface.businessPermissions ?? []).some(({ key }) =>
@@ -1197,11 +1159,7 @@ describe('quantity assignment profile admission', () => {
           }
           return { outcome };
         });
-        const service = yield* customerCommercePolicyAdministrationServiceFactory(
-          asServiceTransaction(invoker),
-          scope,
-          'a'.repeat(64),
-        );
+        const service = yield* customerCommercePolicyAdministrationServiceFactory(invoker, scope);
         for (const read of [
           service.readCurrentCommerceQuantityAssignments(at).pipe(Effect.asVoid),
           service.readCurrentCommerceQuantityPolicy(at).pipe(Effect.asVoid),
@@ -1224,11 +1182,7 @@ describe('quantity assignment profile admission', () => {
       const { calls, invoker } = statefulInvoker(emptyBootstrapBatch, currentProjectionStates, () => ({
         outcome: 'PROFILE_NOT_FOUND',
       }));
-      const service = yield* customerCommercePolicyAdministrationServiceFactory(
-        asServiceTransaction(invoker),
-        scope,
-        'a'.repeat(64),
-      );
+      const service = yield* customerCommercePolicyAdministrationServiceFactory(invoker, scope);
       const current = yield* service.readCurrentCommerceQuantityAssignments('2026-09-20T10:00:00.000Z');
       expect(current.assignments).toEqual([]);
       expect(calls.some(({ name }) => name === 'inspect_commerce_quantity_assignment_profile')).toBe(false);
@@ -1251,11 +1205,7 @@ describe('quantity assignment profile admission', () => {
         },
         () => inspection,
       );
-      const service = yield* customerCommercePolicyAdministrationServiceFactory(
-        asServiceTransaction(invoker),
-        scope,
-        'a'.repeat(64),
-      );
+      const service = yield* customerCommercePolicyAdministrationServiceFactory(invoker, scope);
       const trusted = {
         actionInvocationId: '70000000-0000-4000-8000-000000000001',
         actorPrincipalId: principalId,
@@ -1317,11 +1267,7 @@ describe('quantity assignment profile admission', () => {
         },
         () => ({ outcome: 'PROFILE_NOT_FOUND' }),
       );
-      const service = yield* customerCommercePolicyAdministrationServiceFactory(
-        asServiceTransaction(invoker),
-        scope,
-        'a'.repeat(64),
-      );
+      const service = yield* customerCommercePolicyAdministrationServiceFactory(invoker, scope);
       const command = toTrustedCommerceQuantityAssignmentCommand(
         quantityAssignmentPayload,
         {
@@ -1352,11 +1298,7 @@ describe('quantity profile verification truth', () => {
           outcome: 'PROFILE_UNVERIFIABLE',
           reason,
         }));
-        const service = yield* customerCommercePolicyAdministrationServiceFactory(
-          asServiceTransaction(invoker),
-          scope,
-          'a'.repeat(64),
-        );
+        const service = yield* customerCommercePolicyAdministrationServiceFactory(invoker, scope);
         const failure = yield* Effect.flip(service.readCurrentCommerceQuantityAssignments(at));
         expect(failure).toMatchObject({
           code: 'PERSISTENCE_UNAVAILABLE',
@@ -1381,11 +1323,7 @@ describe('quantity profile verification truth', () => {
     it.effect(`refuses malformed profile inspection ${JSON.stringify(result)}`, () =>
       Effect.gen(function* malformedOwnerProof() {
         const { invoker } = statefulInvoker(emptyBootstrapBatch, currentProjectionStates, () => result);
-        const service = yield* customerCommercePolicyAdministrationServiceFactory(
-          asServiceTransaction(invoker),
-          scope,
-          'a'.repeat(64),
-        );
+        const service = yield* customerCommercePolicyAdministrationServiceFactory(invoker, scope);
         const failure = yield* Effect.flip(service.readCurrentCommerceQuantityAssignments(at));
         expect(failure).toMatchObject({ code: 'PERSISTENCE_UNAVAILABLE', retryable: true });
         expect(failure.reason).toBe(
@@ -1410,11 +1348,7 @@ describe('quantity profile verification truth', () => {
           ],
         }),
       });
-      const service = yield* customerCommercePolicyAdministrationServiceFactory(
-        asServiceTransaction(invoker),
-        scope,
-        'a'.repeat(64),
-      );
+      const service = yield* customerCommercePolicyAdministrationServiceFactory(invoker, scope);
       const current = yield* service.readCurrentCommerceQuantityAssignments(at);
       expect(current.assignments).toHaveLength(2);
       const proofs = calls.filter(({ name }) => name === 'inspect_commerce_quantity_assignment_profile');

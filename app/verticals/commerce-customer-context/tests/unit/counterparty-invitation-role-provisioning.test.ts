@@ -1,9 +1,10 @@
 import { expect, it } from 'effect-rstest';
-import { invitationFixtureRoleRelationships } from '../support/counterparty-invitation-acceptance.ts';
+import { invitationAdministratorRoleInput } from '../support/counterparty-invitation-acceptance.ts';
 
 const realm = {
   counterpartyPurchasingProfileId: '11111111-1111-4111-8111-111111111111',
   counterpartyResourceId: 'counterparty',
+  inviterAuthBindingId: '99999999-9999-4999-8999-999999999999',
   inviterPrincipalId: '22222222-2222-4222-8222-222222222222',
   legalEntityId: '33333333-3333-4333-8333-333333333333',
   recipientAuthBindingId: '44444444-4444-4444-8444-444444444444',
@@ -13,43 +14,27 @@ const realm = {
   tenantId: '88888888-8888-4888-8888-888888888888',
 };
 
-it('provisions explicit scoped Action grants and memberships without action executor tuples', () => {
-  const company = invitationFixtureRoleRelationships(
-    realm.recipientPrincipalId,
-    ['commerce.customer-context.claim-counterparty-access-invitation'],
-    realm,
-  );
-  expect(company).toHaveLength(4);
-  expect(
-    company.filter(({ relation, resourceType }) => resourceType === 'action' && relation === 'company_scope'),
-  ).toHaveLength(1);
-  expect(
-    company.filter(
-      ({ relation, resourceType, subjectRelation }) =>
-        resourceType === 'action_grant' && relation === 'role' && subjectRelation === 'member',
-    ),
-  ).toHaveLength(1);
-  expect(
-    company.filter(
-      ({ relation, resourceType, subjectId }) =>
-        resourceType === 'scoped_role' && relation === 'member' && subjectId === realm.recipientPrincipalId,
-    ),
-  ).toHaveLength(1);
-  expect(company.some(({ relation, resourceType }) => resourceType === 'action' && relation === 'executor')).toBe(
-    false,
-  );
-  const optional = invitationFixtureRoleRelationships(
-    realm.storefrontPrincipalId,
-    ['commerce.customer-context.start-portal-enrollment'],
-    realm,
-  );
-  expect(optional).toHaveLength(8);
-  expect(
-    optional.filter(({ relation, resourceType }) => resourceType === 'action' && relation === 'tenant_scope'),
-  ).toHaveLength(1);
-  expect(
-    optional.filter(({ relation, resourceType }) => resourceType === 'action' && relation === 'company_scope'),
-  ).toHaveLength(1);
-  expect(invitationFixtureRoleRelationships(realm.recipientPrincipalId, [], realm)).toEqual([]);
-  expect(() => invitationFixtureRoleRelationships(realm.recipientPrincipalId, ['unknown.action'], realm)).toThrow();
+it('provisions only the current administrator capability keys in the selected company and tenant', () => {
+  expect(invitationAdministratorRoleInput(realm)).toEqual({
+    holders: [
+      {
+        capabilityKeys: [
+          'commerce.customer-context.counterparty-commerce-access.grant',
+          'commerce.customer-context.counterparty-commerce-access.revoke',
+        ],
+        principalId: realm.inviterPrincipalId,
+      },
+    ],
+    legalEntityIds: [realm.legalEntityId],
+    tenantId: realm.tenantId,
+  });
+  const changed = invitationAdministratorRoleInput({
+    ...realm,
+    legalEntityId: 'other-company',
+    tenantId: 'other-tenant',
+  });
+  expect(changed.legalEntityIds).toEqual(['other-company']);
+  expect(changed.tenantId).toBe('other-tenant');
+  expect(changed.holders.map(({ principalId }) => principalId)).not.toContain(realm.recipientPrincipalId);
+  expect(changed.holders.map(({ principalId }) => principalId)).not.toContain(realm.storefrontPrincipalId);
 });

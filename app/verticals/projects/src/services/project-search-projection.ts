@@ -1,13 +1,14 @@
 // Worker-safe Project search projection: the generated refresh/rebuild workers and the Outbox Worker host bundle this
-// module, so it imports only the Core worker entry, pure search subpaths and Project domain schemas.
+// module. Worker services and verified claim identity come from Core's worker entry; the public Core registry
+// helpers register the exact self-consumer identities without importing another owner's implementation.
 import {
   CoreSearchIngestion,
   CoreSearchProjectionDocumentSchema,
   CoreSearchWorkerSnapshot,
   ReadHandlerUnavailable,
-  coreSearchIngestionRegistryLayer,
-  defineCoreSearchIngestionRegistrations,
+  isVerifiedOutboxWorkerHandlerContext,
 } from '@app/core-runtime/outbox/worker';
+import { coreSearchIngestionRegistryLayer, defineCoreSearchIngestionRegistrations } from '@app/core-runtime';
 import type { CoreSearchWorkerSnapshotView, OutboxWorkerHandlerContext } from '@app/core-runtime/outbox/worker';
 import { asc, eq } from 'drizzle-orm';
 import { Effect, Schema } from 'effect';
@@ -153,6 +154,8 @@ export const refreshProjectSearchProjection = Effect.fn('Projects.refreshSearchP
   context: OutboxWorkerHandlerContext,
 ) {
   if (
+    !isVerifiedOutboxWorkerHandlerContext(context) ||
+    context.legalEntityScope !== 'forbidden' ||
     context.producerModuleKey !== moduleId ||
     context.consumerModuleKey !== moduleId ||
     !projectSearchIngestionRegistrations.some(

@@ -2,6 +2,7 @@ import {
   ApplicationCompositionBackendSchema,
   DatabaseConfig,
   parseDatabaseConfig,
+  SHARED_RUNTIME_IDENTITY,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
@@ -45,6 +46,10 @@ const makeFixture = Effect.fn('RegistryComponentTest.make')(function* makeFixtur
     scope: { ...principal, correlationId: 'registry-component' },
   });
   const harness = yield* Layer.build(Layer.merge(actions.layer, reads.layer));
+  const configuration = yield* parseDatabaseConfig({
+    DATABASE_URL: 'postgresql://ontos_runtime:fixture@localhost:1/ontos_test_party_gateway_component',
+  });
+  expect(configuration.expectedRole).toBe(SHARED_RUNTIME_IDENTITY.role);
   return yield* makeCurrentStorefrontNativeFixture({
     compositionRevision,
     compositionSourceUrl: 'http://127.0.0.1:1/composition',
@@ -52,15 +57,7 @@ const makeFixture = Effect.fn('RegistryComponentTest.make')(function* makeFixtur
     principal,
     publicJwks,
     storefrontAppId: 'shop-cz',
-  }).pipe(
-    Effect.provideContext(harness),
-    Effect.provideService(
-      DatabaseConfig,
-      yield* parseDatabaseConfig({
-        DATABASE_URL: 'postgresql://runtime:fixture@localhost:1/ontos_test_party_gateway_component',
-      }),
-    ),
-  );
+  }).pipe(Effect.provideContext(harness), Effect.provideService(DatabaseConfig, configuration));
 });
 
 it.layer(Layer.merge(NodeCrypto.layer, NodePath.layer))('scoped Registry fixture boundaries', (test) => {
@@ -132,7 +129,7 @@ it.layer(Layer.merge(NodeCrypto.layer, NodePath.layer))('scoped Registry fixture
             'postgresql://administrator:fixture@localhost/ontos_test_party_gateway_component',
           ),
           runtimeConnectionString: Redacted.make(
-            'postgresql://runtime:fixture@localhost/ontos_test_party_gateway_component',
+            'postgresql://ontos_runtime:fixture@localhost/ontos_test_party_gateway_component',
           ),
         })
         .pipe(

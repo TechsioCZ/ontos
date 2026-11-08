@@ -1,4 +1,5 @@
 import { ActionAuthorizationPreflight, ActionRuntime, makeActionRuntimeLive } from '@app/core-runtime';
+import { ActionMandateDispatcher } from '@app/core-runtime/access/approvals/owner-runtime';
 import type { ActionRuntimeService } from '@app/core-runtime';
 import { Effect, Layer } from '@modern-js/bff-effect/effect-edge';
 import { Context } from 'effect';
@@ -11,18 +12,25 @@ import {
 import { ConsentSelfServiceAuthority } from '../src/actions/consent-self-service-authority.ts';
 import { NoticeChannelDeliveryAuthority } from '../src/actions/record-notice-provision.action.ts';
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
+import { privacyRegistration } from '../vertical.registration.ts';
 
 /** Build the native runtime with fresh pre-transaction evidence for each invocation. */
 const privacyConsentAuthorityActionRuntimeLive: Layer.Layer<
   ActionRuntime,
   never,
-  ActionRuntime | CommerceConsentAuthorityLookup | Layer.Services<ReturnType<typeof makeActionRuntimeLive>>
+  | ActionRuntime
+  | ActionMandateDispatcher
+  | CommerceConsentAuthorityLookup
+  | Layer.Services<ReturnType<typeof makeActionRuntimeLive>>
 > = Layer.effect(
   ActionRuntime,
   Effect.gen(function* privacyConsentAuthorityActionRuntime() {
     const existing = yield* ActionRuntime;
     const lookup = yield* CommerceConsentAuthorityLookup;
-    const dependencies = yield* Effect.context<Layer.Services<ReturnType<typeof makeActionRuntimeLive>>>();
+    const dispatcher = yield* ActionMandateDispatcher;
+    const dependencies = yield* Effect.context<
+      Layer.Services<ReturnType<typeof makeActionRuntimeLive>> | ActionMandateDispatcher
+    >();
     const runAction: ActionRuntimeService['runAction'] = (input) =>
       Effect.scoped(
         Effect.gen(function* runConsentAwareAction() {
@@ -31,9 +39,12 @@ const privacyConsentAuthorityActionRuntimeLive: Layer.Layer<
           );
           const scope = yield* Effect.scope;
           const runtimeContext = yield* Layer.buildWithScope(
-            makeActionRuntimeLive(ultramodernDeliveryUnit),
+            makeActionRuntimeLive(ultramodernDeliveryUnit, privacyRegistration),
             scope,
-          ).pipe(Effect.provideContext(Context.add(dependencies, ActionAuthorizationPreflight, execution.preflight)));
+          ).pipe(
+            Effect.provideContext(Context.add(dependencies, ActionAuthorizationPreflight, execution.preflight)),
+            Effect.provideService(ActionMandateDispatcher, dispatcher),
+          );
           return yield* Context.get(runtimeContext, ActionRuntime)
             .runAction(input)
             .pipe(
@@ -53,8 +64,10 @@ const privacyConsentAuthorityActionRuntimeLive: Layer.Layer<
 export const privacyConsentAwareActionRuntimeLive: Layer.Layer<
   ActionRuntime,
   Layer.Error<ReturnType<typeof makeActionRuntimeLive>>,
-  Layer.Services<ReturnType<typeof makeActionRuntimeLive>> | Effect.Services<typeof commerceConsentAuthorityLookup>
+  | ActionMandateDispatcher
+  | Layer.Services<ReturnType<typeof makeActionRuntimeLive>>
+  | Effect.Services<typeof commerceConsentAuthorityLookup>
 > = privacyConsentAuthorityActionRuntimeLive.pipe(
-  Layer.provideMerge(makeActionRuntimeLive(ultramodernDeliveryUnit)),
+  Layer.provideMerge(makeActionRuntimeLive(ultramodernDeliveryUnit, privacyRegistration)),
   Layer.provide(Layer.effect(CommerceConsentAuthorityLookup, commerceConsentAuthorityLookup)),
 );

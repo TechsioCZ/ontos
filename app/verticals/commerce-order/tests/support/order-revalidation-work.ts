@@ -1,15 +1,15 @@
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
 
 import { RevalidateOrderCommitmentPayloadSchema } from '../../shared/actions/revalidate-order-commitment.ts';
 import { revalidateOrderCommitmentAction } from '../../src/actions/revalidate-order-commitment.action.ts';
 import type { OrderCommitmentServices } from '../../src/services/order-commitment.service.ts';
+import { commerceOrderRegistration } from '../../vertical.registration.ts';
 
 export const orderTenantId = '40000000-0000-4000-8000-000000000001';
 export const orderLegalEntityId = '30000000-0000-4000-8000-000000000001';
-/** The fixed composition revision the in-memory Core Action harness admits. */
-export const harnessAdmittedRevision = 'a'.repeat(64);
 export const orderProofRequestRef = {
   moduleId: 'commerce.order',
   resourceId: 'proof-request',
@@ -69,11 +69,11 @@ export const runOrderRevalidation = Effect.fn('OrderRevalidationWork.run')(funct
         validUntil: null,
       }),
   };
+  const composition = yield* makeOwnerApplicationCompositionFixture({ ownerRegistration: commerceOrderRegistration });
   const harness = yield* makeActionTestHarness({
-    actionPermission: 'allowed',
-    legalEntityPermission: 'allowed',
+    ...composition,
+    access: 'allowed',
     services: [bindActionTestServices(revalidateOrderCommitmentAction, services)],
-    tenantPermission: 'allowed',
   });
   yield* harness.runtime
     .runAction({
@@ -83,5 +83,5 @@ export const runOrderRevalidation = Effect.fn('OrderRevalidationWork.run')(funct
       transport: { correlationId: 'order-finalization-completion', idempotencyKey: 'transport:1' },
     })
     .pipe(Effect.provide(NodeCrypto.layer));
-  return harness.snapshot().committed;
+  return { admittedRevision: composition.snapshot.composition.revision, committed: harness.snapshot().committed };
 });

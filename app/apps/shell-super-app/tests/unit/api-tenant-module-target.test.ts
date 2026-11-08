@@ -1,3 +1,7 @@
+import { makeShellTestAccessGate } from '../support/access-decision-double.ts';
+import { ShellResourceServicesFactoryLive } from '../../api/modules/shell-resources.ts';
+import { ShellGovernedReadDefinitions } from '../../api/modules/shell-governed-read-definitions.ts';
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 // @rstest-environment node
 import {
   ContextAccess,
@@ -28,7 +32,11 @@ import {
   ShellInstalledModuleCatalog,
 } from '../../api/modules/installed-module-catalog.ts';
 import { ShellCompositionFactoryLive } from '../../api/modules/shell-composition.ts';
-import { createShellGovernedReadsLayer, ShellGovernedReads } from '../../api/modules/shell-governed-reads.ts';
+import {
+  createShellGovernedReadsLayer,
+  createShellGovernedReadDefinitionsLayer,
+  ShellGovernedReads,
+} from '../../api/modules/shell-governed-reads.ts';
 import type { ShellGovernedReadsService } from '../../api/modules/shell-governed-reads.ts';
 import { ResolvedModuleTargetSchema, ResolveModuleTargetPayloadSchema } from '../../shared/api.ts';
 import type { ResolveModuleTargetPayload } from '../../shared/api.ts';
@@ -80,9 +88,17 @@ const companySession: ShellContextResult = {
 };
 const request = { headers: { cookie: 'session=tenant-target', 'x-correlation-id': correlationId } };
 
+const pageAccess = (key: string) => ({
+  key,
+  kind: 'read',
+  modes: ['run'],
+  placement: { group: 'pages', level: 'basic' },
+  risk: 'routine',
+  selectors: [],
+});
 const pageEntrypoint = (pageKey: string) => ({
   access: 'read' as const,
-  authorization: { kind: 'context_permission' as const, permission: 'module.access' },
+  authorization: { kind: 'protected' as const },
   entrypointKey: pageKey,
   moduleKey: moduleId,
   role: 'page' as const,
@@ -123,6 +139,7 @@ const contract = () => ({
         // (mirroring production manifests) instead of an empty navigation that would make `{ moduleId }` a not-found.
         navigation: [
           {
+            accessDeclaration: pageAccess(`${optedInPageKey}.read`),
             contributionKey: `${moduleId}.navigation.dashboard`,
             entrypoint: pageEntrypoint(optedInPageKey),
             groupKey: 'shell.navigation.modules',
@@ -134,6 +151,7 @@ const contract = () => ({
         ],
         pages: [
           {
+            accessDeclaration: pageAccess(`${optedInPageKey}.read`),
             componentKey: `${moduleId}.dashboard`,
             contributionKey: optedInPageKey,
             entrypoint: pageEntrypoint(optedInPageKey),
@@ -142,6 +160,7 @@ const contract = () => ({
             routePath: '/property-dashboard',
           },
           {
+            accessDeclaration: pageAccess(`${requiredPageKey}.read`),
             componentKey: `${moduleId}.required`,
             contributionKey: requiredPageKey,
             entrypoint: pageEntrypoint(requiredPageKey),
@@ -202,7 +221,7 @@ const resolvedTarget = (compositionRevision: string, componentKey: string, entry
 /** Real Core Read lifecycle with scripted SQL/permissions; only SpiceDB and the owner transport are doubled. */
 const fixture = Effect.fn('TenantModuleTarget.fixture')(function* fixture(controls: Controls) {
   const catalog = yield* makeInstalledModuleCatalogLoader(makeCompositionSnapshot([contract()]));
-  const harness = yield* makeReadTestHarness({
+  let harness = yield* makeReadTestHarness({
     compositionRevision: catalog.composition.revision,
     executeOwnerQuery: neverCalled,
     operationTime: new Date('2026-11-03T15:00:00Z'),
@@ -242,7 +261,13 @@ const fixture = Effect.fn('TenantModuleTarget.fixture')(function* fixture(contro
     listActiveTenantModules: neverCalled,
     listTenantModuleStates: neverCalled,
   };
-  const layer = createShellGovernedReadsLayer(
+  const gate = makeShellTestAccessGate({
+    answers: {
+      [`${optedInPageKey}.read`]: controls.modulePermission,
+      [`${requiredPageKey}.read`]: controls.modulePermission,
+    },
+  });
+  const definitionsLayer = createShellGovernedReadDefinitionsLayer(
     { resource: { detail: neverCalled, timeline: neverCalled }, search: { search: neverCalled } },
     { issueAssertion: neverCalled },
     () => moduleStates,
@@ -250,12 +275,29 @@ const fixture = Effect.fn('TenantModuleTarget.fixture')(function* fixture(contro
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(ReadRuntime, harness.runtime),
+        Layer.succeed(AccessDecisionGate, gate),
         Layer.succeed(ContextAccess, access),
         Layer.succeed(TenantModuleStateService, moduleStates),
         Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(catalog) }),
         ShellCompositionFactoryLive,
+        ShellResourceServicesFactoryLive,
       ),
     ),
+  );
+  const registrations = yield* ShellGovernedReadDefinitions.pipe(Effect.provide(definitionsLayer));
+  harness = yield* makeReadTestHarness({
+    access: 'allowed',
+    applicationComposition: { load: makeCompositionSnapshot(catalog.contracts) },
+    compositionRevision: catalog.composition.revision,
+    executeOwnerQuery: () => Effect.die('Unexpected Shell owner SQL'),
+    expectedDeployment: catalog.composition.shell.deployment,
+    operationTime: new Date('2026-11-03T15:00:00Z'),
+    ownerAuthorizationDecision: 'allowed',
+    scope: { ...tenantPrincipal, correlationId },
+    shellSystemReads: registrations,
+  });
+  const layer = createShellGovernedReadsLayer(registrations).pipe(
+    Layer.provide(Layer.succeed(ReadRuntime, harness.runtime)),
   );
   const reads = yield* ShellGovernedReads.pipe(Effect.provide(layer));
   // The real Core scope resolver revalidates the staff namespace, exactly as the deployed runtime does.
@@ -278,7 +320,7 @@ const fixture = Effect.fn('TenantModuleTarget.fixture')(function* fixture(contro
         ...targetPayload(selector),
       })
       .pipe(Effect.provideService(CapturedShellCompositionCatalog, catalog), Effect.provide(registry));
-  return { calls, catalog, controls, harness, reads, runCompany, runTenant };
+  return { calls, catalog, controls, gate, harness, reads, runCompany, runTenant };
 });
 
 describe('tenant-only module target admission', () => {
@@ -292,7 +334,10 @@ describe('tenant-only module target admission', () => {
       expect(target?.entrypointKey).toBe(optedInPageKey);
       expect(target?.compositionRevision).toBe(f.catalog.composition.revision);
       // The target module is gated by a genuine tenant context permission, never by a company module decision.
-      expect(f.calls.contextPermissions).toEqual([{ moduleId, permission: 'module.access' }]);
+      expect(f.calls.contextPermissions).toEqual([]);
+      expect(f.gate.askedDecisions.map(({ carrier }) => carrier.accessDeclaration?.key)).toEqual([
+        `${optedInPageKey}.read`,
+      ]);
       expect(f.calls.companyModules).toEqual([]);
       expect(f.calls.legalEntities).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(ShellCryptoLive)),
@@ -306,7 +351,10 @@ describe('tenant-only module target admission', () => {
         expect(exit._tag).toBe('Failure');
         expect(f.calls.companyModules).toEqual([]);
         expect(f.calls.legalEntities).toEqual([]);
-        expect(f.calls.contextPermissions).toEqual([{ moduleId, permission: 'module.access' }]);
+        expect(f.calls.contextPermissions).toEqual([]);
+        expect(f.gate.askedDecisions.map(({ carrier }) => carrier.accessDeclaration?.key)).toEqual([
+          `${optedInPageKey}.read`,
+        ]);
       }
     }).pipe(Effect.scoped, Effect.provide(ShellCryptoLive)),
   );
@@ -316,7 +364,7 @@ describe('tenant-only module target admission', () => {
     () =>
       Effect.gen(function* membershipDenied() {
         const catalog = yield* makeInstalledModuleCatalogLoader(makeCompositionSnapshot([contract()]));
-        const harness = yield* makeReadTestHarness({
+        let harness = yield* makeReadTestHarness({
           compositionRevision: catalog.composition.revision,
           executeOwnerQuery: neverCalled,
           operationTime: new Date('2026-11-03T15:00:00Z'),
@@ -347,7 +395,7 @@ describe('tenant-only module target admission', () => {
           listActiveTenantModules: neverCalled,
           listTenantModuleStates: neverCalled,
         };
-        const layer = createShellGovernedReadsLayer(
+        const definitionsLayer = createShellGovernedReadDefinitionsLayer(
           { resource: { detail: neverCalled, timeline: neverCalled }, search: { search: neverCalled } },
           { issueAssertion: neverCalled },
           () => moduleStates,
@@ -355,12 +403,30 @@ describe('tenant-only module target admission', () => {
           Layer.provide(
             Layer.mergeAll(
               Layer.succeed(ReadRuntime, harness.runtime),
+              Layer.succeed(AccessDecisionGate, makeTestAccessDecision()),
               Layer.succeed(ContextAccess, access),
               Layer.succeed(TenantModuleStateService, moduleStates),
               Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(catalog) }),
               ShellCompositionFactoryLive,
+              ShellResourceServicesFactoryLive,
             ),
           ),
+        );
+        const registrations = yield* ShellGovernedReadDefinitions.pipe(Effect.provide(definitionsLayer));
+        harness = yield* makeReadTestHarness({
+          access: 'allowed',
+          applicationComposition: { load: makeCompositionSnapshot(catalog.contracts) },
+          compositionRevision: catalog.composition.revision,
+          executeOwnerQuery: () => Effect.die('Unexpected Shell owner SQL'),
+          expectedDeployment: catalog.composition.shell.deployment,
+          operationTime: new Date('2026-11-03T15:00:00Z'),
+          ownerAuthorizationDecision: 'allowed',
+          scope: { ...tenantPrincipal, correlationId },
+          scopeAccess: 'denied',
+          shellSystemReads: registrations,
+        });
+        const layer = createShellGovernedReadsLayer(registrations).pipe(
+          Layer.provide(Layer.succeed(ReadRuntime, harness.runtime)),
         );
         const reads = yield* ShellGovernedReads.pipe(Effect.provide(layer));
         const exit = yield* reads
@@ -425,7 +491,8 @@ describe('tenant-only module target admission', () => {
       expect(target.moduleId).toBe(moduleId);
       // The company path checks the company module permission for the target and the Shell entrypoint module
       // (`core.shell` prefetch), and never the tenant context permission. Exact, order-independent module set.
-      expect([...new Set(f.calls.companyModules)].toSorted()).toEqual([moduleId, 'core.shell'].toSorted());
+      expect(f.calls.companyModules).toEqual([]);
+      expect(f.gate.askedDecisions.at(-1)?.scope.legalEntityId).toBe(legalEntityId);
       expect(f.calls.contextPermissions).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(ShellCryptoLive)),
   );
@@ -454,6 +521,7 @@ const dispatch = Effect.fn('TenantModuleTarget.dispatch')(function* dispatch(
     Effect.provide(
       Layer.mergeAll(
         Layer.succeed(AuthenticationService, makeAuthenticationServiceDouble({ resolveShellContext })),
+        Layer.succeed(AccessDecisionGate, makeTestAccessDecision()),
         Layer.succeed(ContextAccess, makeContextAccessDouble('allowed')),
         Layer.mock(LegalEntityContext, {}),
         Layer.succeed(
@@ -524,6 +592,7 @@ describe('resolveModuleTarget dispatch', () => {
               AuthenticationService,
               makeAuthenticationServiceDouble({ resolveShellContext: () => Effect.succeed(tenantSession) }),
             ),
+            Layer.succeed(AccessDecisionGate, makeTestAccessDecision()),
             Layer.succeed(ContextAccess, makeContextAccessDouble('allowed')),
             Layer.mock(LegalEntityContext, {}),
             Layer.succeed(

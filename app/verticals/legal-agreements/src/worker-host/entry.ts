@@ -5,7 +5,6 @@ import { Layer } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import {
   ActiveApplicationCompositionConfigLive,
-  ResourceContainmentRelationshipMutationLive,
   defineOutboxWorkerEntry,
   extractOutboxWorkerSubscriptions,
 } from '@app/core-runtime/outbox/worker';
@@ -45,7 +44,6 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
     Layer.provide(SearchSourceLive),
     Layer.provide(CoreSearchWorkerSnapshotLive),
     Layer.provide(CoreSearchProjectionStoreLive),
-    Layer.provide(ResourceContainmentRelationshipMutationLive),
     Layer.provide(SearchIngestionRegistryLive),
     Layer.provide(outboxWorkerRepositoryLive),
     Layer.provide(outboxWorkerCorePersistenceLive),

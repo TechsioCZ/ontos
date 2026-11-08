@@ -5,23 +5,26 @@ import type { PlatformError } from 'effect';
 import { SqlError, UnknownError } from 'effect/sql/SqlError';
 import { expect, it } from 'effect-rstest';
 
+import { bindingSubjectRead, resolveExternalSubjectRead } from '../../src/auth/external-identity/read.ts';
+import { ExternalIdentityAdmission } from '../../src/auth/external-identity/resolve.ts';
+import { makeReadRuntime } from '../../src/reads/runtime.ts';
+import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
+import type { TrustedPrincipalContext } from '../../src/actions/principal-context.ts';
 import { trustResolvedSystemPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
 import {
   AuthBindingIdSchema,
   AuthenticationAdmissionObservationSchema,
+  AuthenticationNamespaceIdSchema,
   AuthenticationNamespaceRegistrationSchema,
   ExternalAuthenticationSubjectSchema,
   ExternalSubjectAdmissionObservationSchema,
   PrincipalIdSchema,
   TenantIdSchema,
 } from '../../src/auth/external-identity-contracts.ts';
-import type {
-  AuthBindingStatusSchema,
-  ReadPrincipalBindingPayloadSchema,
-} from '../../src/auth/external-identity-contracts.ts';
+import type { AuthBindingStatusSchema } from '../../src/auth/external-identity-contracts.ts';
 import { externalIdentityFailure } from '../../src/auth/external-identity/errors.ts';
 import type { ExternalIdentityFailure } from '../../src/auth/external-identity/errors.ts';
 import type {
@@ -40,10 +43,9 @@ import type {
   TrustedAdmissionObservationService,
 } from '../../src/auth/external-identity/verifier.ts';
 import { externalIdentityRepositoryFromTransaction } from '../../src/auth/external-identity/repository.ts';
-import { readPrincipalBinding } from '../../src/auth/external-identity/read.ts';
-import { runReadOwnerSteps } from '../../src/reads/definition.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 import { installOperationalScope } from '../../src/db/scoped-transaction.ts';
 import {
   actionInvocations,
@@ -57,17 +59,15 @@ import {
   tenants,
 } from '../../src/db/schema.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
-import type { ContextAccessService } from '../../src/permissions/context-access.ts';
-import { ContextAccess } from '../../src/permissions/context-access.ts';
-import { refuseInsideDatabaseTransaction } from '../../src/db/transaction-io-guard.ts';
+import { writeTestTenantScopes } from '../../src/testing/tenant-access.ts';
+import { bindFixedAccessGate } from '../support/fixed-access-gate.ts';
+import { makeAuthority, makeCheck } from '../unit/access-decision-support.ts';
 import { reservePrincipalBindingAction } from '../../src/modules/actions/reserve-principal-binding.action.ts';
-import { activatePrincipalBindingAction } from '../../src/modules/actions/activate-principal-binding.action.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { injectStatementFaults } from '../support/database-faults.ts';
 import { makeTestDatabaseFromClient, testDatabaseClients } from '../support/database.ts';
-import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const namespaceId = Schema.decodeSync(AuthenticationNamespaceRegistrationSchema.fields.authenticationNamespaceId)(
   'test.integration.provider',
@@ -174,25 +174,6 @@ const makeRunPrepare =
         ),
       ),
     );
-
-const allowedContextResults = (keys: readonly string[]) =>
-  Effect.succeed(keys.map((key) => ({ decision: 'allowed' as const, key })));
-const deniedContextResults = (keys: readonly string[]) =>
-  Effect.succeed(keys.map((key) => ({ decision: 'denied' as const, key })));
-
-const actionContextAccess: ContextAccessService = {
-  identityNamespaces: ({ authenticationNamespaceIds }) =>
-    refuseInsideDatabaseTransaction('spicedb', 'TEST identity namespace authorization').pipe(
-      Effect.andThen(allowedContextResults(authenticationNamespaceIds)),
-    ),
-  legalEntities: ({ legalEntityIds }) => allowedContextResults(legalEntityIds),
-  modules: ({ moduleIds }) => allowedContextResults(moduleIds),
-  resources: ({ resources }) =>
-    allowedContextResults(
-      resources.map(({ moduleId, resourceId, resourceType }) => `${moduleId}:${resourceType}:${resourceId}`),
-    ),
-  tenants: ({ tenantIds }) => allowedContextResults(tenantIds),
-};
 
 const systemActionPrincipal = (tenantId: string, principalId: string) =>
   trustResolvedSystemPrincipalContext(
@@ -364,41 +345,44 @@ const convergeNeutralReservationLifecycle = Effect.gen(function* externalIdentit
     yield* admin.select().from(principalAuthBindings).where(eq(principalAuthBindings.tenantId, tenantId)),
   ).toHaveLength(1);
 
-  // The Read authorizes namespaces outside its transaction: the owner steps run against a context that
-  // denies every namespace and identity administration.
-  const namespaceDeniedAccess: ContextAccessService = {
-    ...actionContextAccess,
-    identityNamespaces: ({ authenticationNamespaceIds }) => deniedContextResults(authenticationNamespaceIds),
-    tenants: ({ tenantIds }) => deniedContextResults(tenantIds),
-  };
-  const runDeniedRead = (input: typeof ReadPrincipalBindingPayloadSchema.Type) =>
-    database.transaction((transaction) =>
+  const deniedRead = yield* database.transaction((transaction) =>
+    installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
+      Effect.flatMap((scopedTransaction) =>
+        externalIdentityRepositoryFromTransaction(scopedTransaction, {
+          authorizeReadNamespace: () =>
+            Effect.fail(externalIdentityFailure('identity_forbidden', 'integration namespace read denied')),
+          registry,
+        }).read({
+          authBindingId: preparedA.authBindingId,
+          lookup: 'binding',
+          tenantId,
+        }),
+      ),
+    ),
+  );
+  expect(deniedRead.outcome).toBe('NOT_FOUND');
+
+  const deniedSubjectRead = yield* database
+    .transaction((transaction) =>
       installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
         Effect.flatMap((scopedTransaction) =>
-          runReadOwnerSteps(readPrincipalBinding, input, {
-            readKey: readPrincipalBinding.descriptor.readKey,
-            scope,
-            services: { loadForRead: externalIdentityRepositoryFromTransaction(scopedTransaction).loadForRead },
+          externalIdentityRepositoryFromTransaction(scopedTransaction, {
+            authorizeReadNamespace: () =>
+              Effect.fail(externalIdentityFailure('identity_forbidden', 'integration namespace read denied')),
+            registry,
+          }).read({
+            authenticationNamespaceId: namespaceId,
+            lookup: 'subject',
+            providerSubjectId: subject.providerSubjectId,
+            subjectType: subject.subjectType,
+            tenantId,
           }),
         ),
-        Effect.provideService(ContextAccess, namespaceDeniedAccess),
-        Effect.provideService(AuthenticationNamespaceRegistry, registry),
       ),
-    );
-  const deniedRead = yield* runDeniedRead({
-    authBindingId: yield* Schema.decodeEffect(AuthBindingIdSchema)(preparedA.authBindingId),
-    lookup: 'binding',
-  });
-  expect(deniedRead.result.outcome).toBe('NOT_FOUND');
-
-  const deniedSubjectRead = yield* runDeniedRead({
-    authenticationNamespaceId: namespaceId,
-    lookup: 'subject',
-    providerSubjectId: subject.providerSubjectId,
-    subjectType: subject.subjectType,
-  }).pipe(Effect.flip);
-  expect(Predicate.isTagged(deniedSubjectRead, 'ExternalIdentityError')).toBe(true);
-  if (Predicate.isTagged(deniedSubjectRead, 'ExternalIdentityError')) {
+    )
+    .pipe(Effect.flip);
+  expect(Predicate.isTagged(deniedSubjectRead, 'ExternalIdentityFailure')).toBe(true);
+  if (Predicate.isTagged(deniedSubjectRead, 'ExternalIdentityFailure')) {
     expect(deniedSubjectRead.code).toBe('identity_forbidden');
   }
 
@@ -566,6 +550,17 @@ const runGeneratedReservationThroughActionRuntime = Effect.scoped(
     const tenantId = yield* Schema.decodeEffect(TenantIdSchema)(yield* nextUuid);
     const actorPrincipalId = yield* Schema.decodeEffect(PrincipalIdSchema)(yield* nextUuid);
     const actor = systemActionPrincipal(tenantId, actorPrincipalId);
+    const humanPrincipalId = yield* Schema.decodeEffect(PrincipalIdSchema)(yield* nextUuid);
+    // A person is never admitted to a workload carrier, so this actor proves the refusal is real
+    // rather than a missing grant (O59, O67-Q4).
+    const humanAuthBindingId = yield* Schema.decodeEffect(AuthBindingIdSchema)(yield* nextUuid);
+    const humanActor = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
+      authBindingId: humanAuthBindingId,
+      authContextRef: 'better-auth-session:external-identity-negative-control',
+      authMethod: 'session',
+      principalId: humanPrincipalId,
+      tenantId,
+    });
     const successSubject = yield* makeSubject();
     const deniedSubject = yield* makeSubject();
     const namespaceDeniedSubject = yield* makeSubject();
@@ -579,10 +574,10 @@ const runGeneratedReservationThroughActionRuntime = Effect.scoped(
         actionInvocations,
         principalAuthBindings,
         principals,
-        tenants,
       ]) {
         yield* database.executor.delete(table).where(eq(table.tenantId, tenantId));
       }
+      // Core retains access intent (D27): the Tenant's scope and fence, and so the Tenant, stay.
     });
     yield* Effect.acquireRelease(cleanup, () => cleanup.pipe(Effect.orDie));
     yield* database.executor.insert(tenants).values({
@@ -592,24 +587,56 @@ const runGeneratedReservationThroughActionRuntime = Effect.scoped(
       status: 'active',
       tenantId,
     });
-    yield* database.executor.insert(principals).values({
-      displayName: 'External identity Action actor',
-      kind: 'system',
-      principalId: actorPrincipalId,
+    // The governed reservation runs under the Tenant's real access fence.
+    yield* writeTestTenantScopes(database.executor, { principalId: actorPrincipalId, tenantId });
+    yield* database.executor.insert(principals).values([
+      {
+        displayName: 'External identity Action actor',
+        kind: 'system',
+        principalId: actorPrincipalId,
+        status: 'active',
+        tenantId,
+      },
+      {
+        displayName: 'External identity refusal control',
+        kind: 'human',
+        principalId: humanPrincipalId,
+        status: 'active',
+        tenantId,
+      },
+    ]);
+    yield* database.executor.insert(principalAuthBindings).values({
+      authenticationNamespaceId: namespaceId,
+      principalAuthBindingId: humanAuthBindingId,
+      principalId: humanPrincipalId,
+      provider: 'better_auth',
+      providerSubjectId: `refusal-control-${yield* nextUuid}`,
       status: 'active',
+      subjectType: 'user',
       tenantId,
     });
 
+    // The provisioning Action carries `accessWorkload`, so the gate admits only a trusted workload
+    // and never a person (O29, O59, O67-Q4); the actor kind is read from `core.principals`. The
+    // suite grants no capability: a workload path never asks for one. The actor's registered key is
+    // the namespace this workload provisions in (O73), so the suite binds it explicitly.
+    const authority = makeAuthority({ cells: [] });
+    const accessGate = bindFixedAccessGate({
+      authorityFor: () => authority.port,
+      check: makeCheck({ authority: { cells: [] } }).port,
+      executor: database.executor,
+      workloads: { [actorPrincipalId]: ['core.identity-provider'] },
+    });
     const runReserve = (
       runtime: ReturnType<typeof makeActionRuntime>,
       subject: Schema.Schema.Type<typeof ExternalAuthenticationSubjectSchema>,
       key: string,
-      contextAccess: ContextAccessService = actionContextAccess,
+      requestActor: TrustedPrincipalContext = actor,
     ) =>
       runtime
         .runAction({
           payload: { ...subject, displayName: 'Neutral reserved principal' },
-          principal: actor,
+          principal: requestActor,
           registration: reservePrincipalBindingAction,
           transport: {
             correlationId: `external-identity-action-${key}`,
@@ -619,17 +646,14 @@ const runGeneratedReservationThroughActionRuntime = Effect.scoped(
             targetResourceType: 'principal-auth-binding',
           },
         })
-        .pipe(
-          Effect.provideService(AuthenticationNamespaceRegistry, registry),
-          Effect.provideService(ContextAccess, contextAccess),
-        );
+        .pipe(Effect.provideService(AuthenticationNamespaceRegistry, registry));
 
     const allowedRuntime = makeActionRuntime(
       database,
       makeActionRepository(crypto),
       { checkActionPermission: () => Effect.succeed('allowed' as const) },
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      { ...openActionRuntimeOptions, accessDecision: accessGate },
     );
     const reserved = yield* runReserve(allowedRuntime, successSubject, 'external-identity-action-success');
     expect(reserved.outcome).toBe('RESERVED');
@@ -658,15 +682,14 @@ const runGeneratedReservationThroughActionRuntime = Effect.scoped(
     expect(successEvent.length).toBe(1);
     expect(successOutbox.length).toBe(1);
 
-    const deniedRuntime = makeActionRuntime(
-      database,
-      makeActionRepository(crypto),
-      { checkActionPermission: () => Effect.succeed('denied' as const) },
-      testOperationalScopeResolver,
-      openActionRuntimeOptions,
-    );
-    const denied = yield* runReserve(deniedRuntime, deniedSubject, 'external-identity-action-denied').pipe(Effect.flip);
-    expect(Predicate.isTagged(denied, 'ActionPermissionDenied')).toBe(true);
+    // O59, O67-Q4: a person is refused by the workload carrier itself, before any owner rule runs.
+    const humanDenied = yield* runReserve(
+      allowedRuntime,
+      deniedSubject,
+      'external-identity-action-human-denied',
+      humanActor,
+    ).pipe(Effect.flip);
+    expect(Predicate.isTagged(humanDenied, 'ActionPermissionDenied')).toBe(true);
     expect(
       yield* database.executor
         .select()
@@ -674,17 +697,21 @@ const runGeneratedReservationThroughActionRuntime = Effect.scoped(
         .where(eq(principalAuthBindings.providerSubjectId, deniedSubject.providerSubjectId)),
     ).toHaveLength(0);
 
-    const namespaceDeniedContextAccess: ContextAccessService = {
-      ...actionContextAccess,
-      identityNamespaces: ({ authenticationNamespaceIds }) => deniedContextResults(authenticationNamespaceIds),
-    };
-    const namespaceDenied = yield* runReserve(
+    // The namespace a workload provisions in must be registered deployment data (O62: no SpiceDB grant).
+    const unregisteredNamespace = yield* Schema.decodeEffect(AuthenticationNamespaceIdSchema)(
+      'test.integration.unregistered',
+    );
+    const unregisteredSubject = yield* Schema.decodeEffect(ExternalAuthenticationSubjectSchema)({
+      authenticationNamespaceId: unregisteredNamespace,
+      providerSubjectId: `provider-user-${yield* nextUuid}`,
+      subjectType: 'user',
+    });
+    const unregistered = yield* runReserve(
       allowedRuntime,
-      namespaceDeniedSubject,
-      'external-identity-action-namespace-denied',
-      namespaceDeniedContextAccess,
+      unregisteredSubject,
+      'external-identity-action-unregistered-namespace',
     ).pipe(Effect.flip);
-    expect(Predicate.isTagged(namespaceDenied, 'ExternalIdentityError')).toBe(true);
+    expect(Predicate.isTagged(unregistered, 'ExternalIdentityError')).toBe(true);
     expect(
       yield* database.executor
         .select()
@@ -697,7 +724,7 @@ const runGeneratedReservationThroughActionRuntime = Effect.scoped(
       makeActionRepository(crypto),
       { checkActionPermission: () => Effect.succeed('allowed' as const) },
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      { ...openActionRuntimeOptions, accessDecision: accessGate },
     );
     const rollback = yield* Effect.exit(
       runReserve(rollbackRuntime, rollbackSubject, 'external-identity-action-outbox-failure'),
@@ -733,75 +760,6 @@ const runGeneratedReservationThroughActionRuntime = Effect.scoped(
         .from(auditEvents)
         .where(eq(auditEvents.actionInvocationId, rollbackInvocation?.actionInvocationId ?? '')),
     ).toHaveLength(0);
-
-    // Both lifecycle Actions must observe namespace authorization with SQL released.
-    // The ContextAccess port above refuses every call from an open transaction.
-    const activated = yield* allowedRuntime
-      .runAction({
-        payload: { authBindingId: reserved.authBindingId, expectedRevision: reserved.bindingRevision },
-        principal: actor,
-        registration: activatePrincipalBindingAction,
-        transport: {
-          correlationId: 'external-identity-action-activate',
-          idempotencyKey: 'external-identity-action-activate',
-          targetModuleKey: 'core.identity',
-          targetResourceId: reserved.authBindingId,
-          targetResourceType: 'principal-auth-binding',
-        },
-      })
-      .pipe(
-        Effect.provideService(AuthenticationNamespaceRegistry, registry),
-        Effect.provideService(ContextAccess, actionContextAccess),
-      );
-    expect(activated).toMatchObject({
-      authBindingId: reserved.authBindingId,
-      bindingStatus: 'active',
-      outcome: 'ACTIVATED',
-      principalId: reserved.principalId,
-    });
-    expect(
-      yield* database.executor.select().from(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
-    ).toHaveLength(2);
-    const [activationInvocation] = yield* database.executor
-      .select()
-      .from(actionInvocations)
-      .where(eq(actionInvocations.idempotencyKey, 'external-identity-action-activate'));
-    expect(
-      yield* database.executor
-        .select()
-        .from(dataAccessEvents)
-        .where(eq(dataAccessEvents.actionInvocationId, activationInvocation?.actionInvocationId ?? '')),
-    ).toHaveLength(2);
-
-    const expiredSubject = yield* makeSubject();
-    const timeline = makeAdmissionClock(admissionNow);
-    const expiresAt = DateTime.add(admissionNow, { seconds: 30 });
-    let expiredDuringWrite = false;
-    const expired = yield* runReserve(allowedRuntime, expiredSubject, 'external-identity-namespace-expired').pipe(
-      Effect.provideService(Clock.Clock, timeline.clock),
-      injectStatementFaults((statement) =>
-        Effect.sync(() => {
-          if (statement.startsWith('insert into "core"."principals"')) {
-            timeline.set(expiresAt);
-            expiredDuringWrite = true;
-          }
-        }),
-      ),
-      Effect.flip,
-    );
-    expect(expiredDuringWrite).toBe(true);
-    expect(Predicate.isTagged(expired, 'ExternalIdentityError')).toBe(true);
-    expect(
-      yield* database.executor
-        .select()
-        .from(principalAuthBindings)
-        .where(eq(principalAuthBindings.providerSubjectId, expiredSubject.providerSubjectId)),
-    ).toHaveLength(0);
-    // The write really ran before expiry was consumed. PostgreSQL must roll back its new Principal too.
-    expect(yield* database.executor.select().from(principals).where(eq(principals.tenantId, tenantId))).toHaveLength(2);
-    expect(
-      yield* database.executor.select().from(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
-    ).toHaveLength(2);
   }),
 );
 
@@ -1063,7 +1021,99 @@ const preventIdentifierReuseTransfer = Effect.gen(function* identifierReuseInteg
   expect(distinctPrincipalIds.size).toBe(3);
 });
 
+const runCoreIdentitySubjectReads = Effect.gen(function* governedCoreIdentitySubjectReads() {
+  const { admin, database, tenantId } = yield* makeTenantFixture('governed-subject-reads');
+  const scope = yield* makeScope(tenantId);
+  const subject = yield* makeSubject();
+  yield* admin.insert(principals).values({
+    displayName: 'Core identity subject Read actor',
+    kind: 'system',
+    principalId: scope.principalId,
+    status: 'active',
+    tenantId,
+  });
+  yield* Effect.addFinalizer(() =>
+    admin.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)).pipe(Effect.orDie),
+  );
+  const prepared = yield* makeRunPrepare(database, scope, subject, tenantId)(yield* nextUuid);
+  const invocationId = yield* nextUuid;
+  const activated = yield* database.transaction((transaction) =>
+    installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
+      Effect.flatMap((scopedTransaction) =>
+        externalIdentityRepositoryFromTransaction(scopedTransaction, { registry }).activate({
+          authBindingId: prepared.authBindingId,
+          expectedRevision: 1,
+          invocationId,
+          tenantId,
+        }),
+      ),
+    ),
+  );
+  const runtime = makeReadRuntime(
+    { executor: database },
+    openModuleEntrypointGateway,
+    testOperationalScopeResolver,
+    {
+      legalEntities: () => Effect.succeed([]),
+      modules: () => Effect.succeed([]),
+      resources: () => Effect.succeed([]),
+      tenants: () => Effect.succeed([]),
+    },
+    {
+      accessDecision: bindFixedAccessGate({
+        authorityFor: () => makeAuthority({ cells: [] }).port,
+        check: makeCheck({ authority: { cells: [] } }).port,
+        executor: database,
+        workloads: { [scope.principalId]: ['core.identity-provider'] },
+      }),
+      databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+    },
+  );
+  const principal = systemActionPrincipal(tenantId, scope.principalId);
+  const loadedSubject = yield* runtime.runRead({
+    audience,
+    input: { authBindingId: activated.authBindingId, authenticationNamespaceId: namespaceId },
+    principal,
+    registration: bindingSubjectRead,
+    transport: { correlationId: scope.correlationId },
+  });
+  expect(loadedSubject).toEqual(subject);
+  const admission = yield* makeBoundAdmission(
+    subject,
+    tenantId,
+    activated.authBindingId,
+    activated.principalId,
+    activated.bindingRevision,
+  );
+  const resolved = yield* runtime
+    .runRead({
+      audience,
+      input: subject,
+      principal,
+      registration: resolveExternalSubjectRead,
+      transport: { correlationId: scope.correlationId },
+    })
+    .pipe(
+      Effect.provideService(ExternalIdentityAdmission, admission),
+      Effect.provideService(AuthenticationNamespaceRegistry, registry),
+    );
+  expect(resolved).toEqual({
+    authBindingId: activated.authBindingId,
+    authenticationNamespaceId: namespaceId,
+    bindingRevision: activated.bindingRevision,
+    bindingStatus: 'active',
+    outcome: 'RESOLVED',
+    principalId: activated.principalId,
+    tenantId,
+  });
+  expect(yield* admin.select().from(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId))).toHaveLength(2);
+});
+
 it.layer(NodeCrypto.layer, { excludeTestServices: true })('external identity runtime', (suite) => {
+  suite.effect(
+    'runs both genuine Core identity subject Reads with trusted admission and durable evidence',
+    () => runCoreIdentitySubjectReads,
+  );
   suite.effect(
     'converges concurrent neutral reservations and protects the complete binding lifecycle',
     () => convergeNeutralReservationLifecycle,

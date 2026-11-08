@@ -105,6 +105,55 @@ describe('autosave', () => {
     }),
   );
 
+  it.effect('holds a draft parked for approval: no resend on blur, retry or unmount, and nothing counts as saved', () =>
+    Effect.gen(function* proposed() {
+      const { controller, reply, sent } = yield* setup();
+      controller.change(draft('After'));
+      controller.flush();
+      yield* reply(0, 'proposed');
+      expect(controller.status()).toBe('proposed');
+      expect(controller.confirmed()).toEqual(draft('Before'));
+      controller.flush();
+      controller.retry();
+      yield* TestClock.adjust('1 second');
+      expect(sent).toEqual(['After']);
+      // Typing away and back to the proposed draft does not propose it again.
+      controller.change(draft('Afte'));
+      controller.change(draft('After'));
+      yield* TestClock.adjust('1 second');
+      expect(sent).toEqual(['After']);
+      expect(controller.status()).toBe('proposed');
+      // What the form's unmount does.
+      controller.flush();
+      yield* Effect.yieldNow;
+      expect(sent).toEqual(['After']);
+    }),
+  );
+
+  it.effect('sends a different draft after a proposal; a committed save clears it, a real failure still retries', () =>
+    Effect.gen(function* afterProposal() {
+      const { controller, reply, sent } = yield* setup();
+      controller.change(draft('After'));
+      controller.flush();
+      yield* reply(0, 'proposed');
+      controller.change(draft('Other'));
+      controller.flush();
+      expect(controller.status()).toBe('saving');
+      yield* reply(1, 'failed');
+      expect(controller.status()).toBe('error');
+      controller.retry();
+      expect(sent).toEqual(['After', 'Other', 'Other']);
+      yield* reply(2, 'saved');
+      expect(controller.status()).toBe('saved');
+      expect(controller.confirmed()).toEqual(draft('Other'));
+      controller.change(draft('After'));
+      controller.flush();
+      expect(sent).toEqual(['After', 'Other', 'Other', 'After']);
+      yield* reply(3, 'conflict');
+      expect(controller.status()).toBe('conflict');
+    }),
+  );
+
   it.effect('stops on a conflict until the server version is loaded', () =>
     Effect.gen(function* conflict() {
       const { controller, reply, restart, sent } = yield* setup();

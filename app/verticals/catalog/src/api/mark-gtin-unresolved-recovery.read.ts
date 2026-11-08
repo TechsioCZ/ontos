@@ -63,7 +63,7 @@ const recoverMarkGtinUnresolved = Effect.fn('MarkGtinUnresolvedRecoveryRead.reco
 
 const markGtinUnresolvedRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.mark-gtin-unresolved-recovery' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.mark-gtin-unresolved-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -71,6 +71,14 @@ const markGtinUnresolvedRecoveryEntrypoint = defineTenantModuleEntrypoint({
 
 export const markGtinUnresolvedRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.mark-gtin-unresolved-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'variant', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: markGtinUnresolvedRecoveryEntrypoint,
     evidencePolicy: {
@@ -80,7 +88,6 @@ export const markGtinUnresolvedRecoveryRead = defineRead(
     inputSchema: MarkGtinUnresolvedRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.mark-gtin-unresolved-recovery',
     resultSchema: MarkGtinUnresolvedRecoveryResponseSchema,
@@ -94,5 +101,4 @@ export const markGtinUnresolvedRecoveryRead = defineRead(
   },
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

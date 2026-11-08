@@ -1,17 +1,14 @@
-import { executeProductVariantSnapshotWithAuthorization } from '@app/catalog/api/client';
-import { PricingCommercialFeeCatalogTargetEvidenceSchema } from '@app/pricing-contracts/domain/commercial-fee';
 import type { ActionServicePreparationContext, OperationalScope } from '@app/core-runtime';
 import { OperationContextUnavailable, TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { executeProductVariantSnapshotWithAuthorization } from '@app/catalog/api/client';
 import type { PricingCommercialFeeCatalogTargetEvidence } from '@app/pricing-contracts/domain/commercial-fee';
-import { DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { PricingCommercialFeeCatalogTargetEvidenceSchema } from '@app/pricing-contracts/domain/commercial-fee';
+import { Crypto, DateTime, Effect, Redacted, Schema } from 'effect';
 
-import {
-  CatalogSelectionGatewayCredentialService,
-  PricingCatalogSelectionUnavailable,
-  unavailableCatalogSelectionGatewayCredentialIssuer,
-} from '../../shared/domain/catalog-selection-gateway-credential.ts';
+import { PricingCatalogSelectionUnavailable } from '../../shared/domain/pricing-catalog-selection-unavailable.ts';
 import { CommercialFeePersistenceUnavailable } from '../services/commercial-fee-persistence.service.ts';
-import type { CatalogSelectionGatewayCredentialIssuer } from '../../shared/domain/catalog-selection-gateway-credential.ts';
+import { acquireOwnerGatewayConnection } from './owner-gateway-connection.ts';
+import type { OwnerGatewayConnectionAcquire } from './owner-gateway-connection.ts';
 
 type SnapshotRequest = Parameters<typeof executeProductVariantSnapshotWithAuthorization>[0];
 type SnapshotEffect = ReturnType<typeof executeProductVariantSnapshotWithAuthorization>;
@@ -81,22 +78,25 @@ const snapshotMatchesEvidence = (
       sameResourceRef(target.variantRef, evidence.variantRef),
   );
 
-const makePort = (dependencies: {
+export const makeCommercialFeeCatalogTargetAssessmentPort = (dependencies: {
+  readonly acquire: OwnerGatewayConnectionAcquire;
   readonly context: {
     readonly compositionRevision: string;
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
+    readonly scope: OperationalScope;
   };
   readonly execute: SnapshotExecutor;
-  readonly issuer: CatalogSelectionGatewayCredentialIssuer;
 }): CommercialFeeCatalogTargetAssessmentPort => ({
   validate: (evidence) =>
-    dependencies.issuer
-      .issue({
+    dependencies
+      .acquire({
         audience: 'catalog',
         compositionRevision: dependencies.context.compositionRevision,
-        legalEntityId: dependencies.context.legalEntityId,
+        // Catalog's Product/Variant snapshot is tenant-scoped and forbids Legal Entity context.
+        legalEntityScope: 'tenant',
         requestCorrelation: dependencies.context.requestCorrelation,
+        scope: dependencies.context.scope,
       })
       .pipe(
         Effect.flatMap(({ baseUrl, credential }) =>
@@ -116,23 +116,24 @@ const makePort = (dependencies: {
       ),
 });
 
-export const commercialFeeCatalogTargetAssessmentPortFromEnvironment = (
+export const commercialFeeCatalogTargetAssessmentPortFromEnvironment = Effect.fn(
+  'commercialFeeCatalogTargetAssessmentPortFromEnvironment',
+)(function* commercialFeeCatalogTargetAssessmentPortFromEnvironment(
   context: {
     readonly compositionRevision: string;
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
+    readonly scope: OperationalScope;
   },
   execute: SnapshotExecutor = executeSnapshot,
-): Effect.Effect<CommercialFeeCatalogTargetAssessmentPort> =>
-  Effect.serviceOption(CatalogSelectionGatewayCredentialService).pipe(
-    Effect.map((issuerOption) =>
-      makePort({
-        context,
-        execute,
-        issuer: Option.isSome(issuerOption) ? issuerOption.value : unavailableCatalogSelectionGatewayCredentialIssuer,
-      }),
-    ),
-  );
+): Effect.fn.Return<CommercialFeeCatalogTargetAssessmentPort, never, Crypto.Crypto> {
+  const crypto = yield* Crypto.Crypto;
+  return makeCommercialFeeCatalogTargetAssessmentPort({
+    acquire: (input) => acquireOwnerGatewayConnection(input, crypto),
+    context,
+    execute,
+  });
+});
 
 const observePreparedFeeTarget = Effect.fn('CommercialFeeCatalogTarget.observePrepared')(
   function* observeTarget(input: {
@@ -146,6 +147,7 @@ const observePreparedFeeTarget = Effect.fn('CommercialFeeCatalogTarget.observePr
         compositionRevision: context.compositionRevision,
         legalEntityId: context.scope.legalEntityId ?? '',
         requestCorrelation: context.scope.correlationId,
+        scope: context.scope,
       },
       (payload, credential, correlation, options) =>
         executeSnapshot(payload, credential, correlation, options).pipe(

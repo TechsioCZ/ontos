@@ -75,6 +75,10 @@ export const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(fu
           ),
         ),
       );
+    const issuerName = issuer.legalName;
+    if (issuerName === undefined || issuerName.trim().length === 0) {
+      return yield* unavailable();
+    }
     const customers = yield* executeCustomerListWithAuthorization({}, target.authorization, scope.correlationId, {
       baseUrl: target.apiBaseUrl,
       compositionRevision: target.compositionRevision,
@@ -106,9 +110,9 @@ export const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(fu
     });
     const author = actors.names.find((entry) => entry.principalId === scope.principalId);
     if (author === undefined) {
-      return { issuerName: issuer.legalName, partners };
+      return { issuerName, partners };
     }
-    return { authorName: author.displayName, issuerName: issuer.legalName, partners };
+    return { authorName: author.displayName, issuerName, partners };
   }).pipe(Effect.mapError(unavailable), Effect.withSpan('Finance.exportReferences'));
   const validateCounterparty = Effect.fn('Finance.validateCounterparty')(function* validateCounterparty(
     invoice: Invoice,

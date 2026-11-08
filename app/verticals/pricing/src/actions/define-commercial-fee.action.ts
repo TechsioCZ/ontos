@@ -8,6 +8,7 @@ import {
   PricingCommercialFeeRefSchema,
   pricingCommercialFeeIdentityKeysEqual,
 } from '@app/pricing-contracts/domain/commercial-fee';
+import type { Crypto } from 'effect';
 import { DateTime, Effect, Match, Schema } from 'effect';
 
 import {
@@ -16,6 +17,7 @@ import {
   DefineCommercialFeeResultSchema,
 } from '../../shared/actions/define-commercial-fee.ts';
 import type { DefineCommercialFeePayload } from '../../shared/actions/define-commercial-fee.ts';
+import { pricingAccessAmount } from '../services/access-amount.ts';
 import {
   CommercialFeeConflictReasonSchema,
   CommercialFeePersistenceUnavailable,
@@ -31,7 +33,7 @@ import {
 import type { CommercialFeeCatalogTargetAssessmentPort } from '../integrations/commercial-fee-catalog-target-evidence.ts';
 import { currencySupportPersistenceForScope } from '../persistence/currency-support-persistence.ts';
 import type { CurrencySupportPersistence } from '../persistence/currency-support-persistence.ts';
-import { PricingCatalogSelectionUnavailable } from '../../shared/domain/catalog-selection-gateway-credential.ts';
+import { PricingCatalogSelectionUnavailable } from '../../shared/domain/pricing-catalog-selection-unavailable.ts';
 import { CurrencySupportPersistenceUnavailable } from './currency-support-persistence-unavailable.ts';
 
 export {
@@ -224,7 +226,7 @@ export const handleDefineCommercialFee = Effect.fn('DefineCommercialFeeAction.ha
   },
 );
 
-const defineCommercialFeeServicesForScope: ActionServiceFactory<DefineCommercialFeeActionServices> = (
+const defineCommercialFeeServicesForScope: ActionServiceFactory<DefineCommercialFeeActionServices, Crypto.Crypto> = (
   transaction,
   scope,
   compositionRevision,
@@ -245,6 +247,7 @@ const defineCommercialFeeServicesForScope: ActionServiceFactory<DefineCommercial
           compositionRevision,
           legalEntityId,
           requestCorrelation: scope.correlationId,
+          scope,
         }),
         currencySupport: currencySupportPersistenceForScope(transaction, scope, compositionRevision),
         persistence: commercialFeePersistenceForScope(transaction, scope),
@@ -272,7 +275,11 @@ const preparedDefineCommercialFeeWrite = (
 const prepareDefineCommercialFeeServices = Effect.fn('DefineCommercialFeeAction.prepareServices')(
   function* prepareServices(payload: DefineCommercialFeePayload, context: ActionServicePreparationContext) {
     const catalog = yield* prepareCommercialFeeCatalogTargets([payload.catalogTargetEvidence], context);
-    const factory: ActionServiceFactory<DefineCommercialFeeActionServices> = (transaction, scope, revision) =>
+    const factory: ActionServiceFactory<DefineCommercialFeeActionServices, Crypto.Crypto> = (
+      transaction,
+      scope,
+      revision,
+    ) =>
       assertPreparedPricingScope(context, scope, revision).pipe(
         Effect.andThen(defineCommercialFeeServicesForScope(transaction, scope, revision)),
         Effect.map(
@@ -290,6 +297,18 @@ const prepareDefineCommercialFeeServices = Effect.fn('DefineCommercialFeeAction.
 
 export const defineCommercialFeeAction = defineAction(
   {
+    // O18: the governed amount is the configured fee in minor units, derived server-side from the
+    // decoded payload; a caller-supplied total never governs the ceiling.
+    accessAmount: (payload: DefineCommercialFeePayload) => pricingAccessAmount(payload.configuredAmount),
+    accessDeclaration: {
+      amountInput: 'derived.configuredAmount',
+      key: 'commerce.pricing.commercial-fee.define',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'commercial-fees', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.pricing.define-commercial-fee.access.v1',
@@ -311,7 +330,7 @@ export const defineCommercialFeeAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.pricing.define-commercial-fee',
       moduleKey: MODULE_KEY,
       role: 'action',

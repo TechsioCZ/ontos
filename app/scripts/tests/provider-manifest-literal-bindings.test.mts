@@ -8,9 +8,10 @@ import {
 
 const moduleId = 'party.registry';
 const providerName = 'counterparties';
+const protectedAuthorization = "authorization: { kind: 'protected' }";
 const manifest = `
+import { defineOntosModuleManifest } from '@app/core-runtime';
 const OWNER = 'party.registry' as const;
-const PERMISSION = 'module.access' as const;
 export const manifest = defineOntosModuleManifest({
   search: [
     // <generated-module-manifest-search>
@@ -28,7 +29,7 @@ export const manifest = defineOntosModuleManifest({
         contributionKey: 'party.registry.search.counterparties',
         entrypoint: {
           access: 'read',
-          authorization: { kind: 'context_permission', permission: PERMISSION },
+          ${protectedAuthorization},
           entrypointKey: 'party.registry.search.counterparties',
           moduleKey: OWNER,
           role: 'search',
@@ -46,31 +47,32 @@ export const manifest = defineOntosModuleManifest({
 });
 `;
 const provider = `
+import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 export const counterpartiesEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  ${protectedAuthorization},
   entrypointKey: 'party.registry.search.counterparties',
   moduleKey: 'party.registry',
   role: 'search',
 });
-`;
-const constantOwnerProvider = `
-const OWNER = 'party.registry' as const;
-${provider.replace("moduleKey: 'party.registry'", 'moduleKey: OWNER')}
 export const counterpartiesRead = defineRead({
   accessKind: 'search',
   entrypoint: counterpartiesEntrypoint,
   legalEntityScope: 'optional',
-  owningModuleKey: OWNER,
+  owningModuleKey: 'party.registry',
   readKey: 'party.registry.search.counterparties',
   schemaVersion: '1',
 });
+`;
+const constantOwnerProvider = `
+const OWNER = 'party.registry' as const;
+${provider.replace("moduleKey: 'party.registry'", 'moduleKey: OWNER').replace("owningModuleKey: 'party.registry'", 'owningModuleKey: OWNER')}
 `;
 const matchesManifest = (source: string) => hasGeneratedProviderManifest(source, moduleId, providerName, 'search');
 const matchesAuthorization = (source: string) =>
   hasMatchingGeneratedProviderAuthorization(provider, source, moduleId, providerName, 'search');
 
-it('recognizes immutable module-local identity and permission constants in decoded contributions', () => {
+it('recognizes immutable module-local identities in protected decoded contributions', () => {
   expect(matchesManifest(manifest)).toBe(true);
   expect(matchesAuthorization(manifest)).toBe(true);
   expect(matchesManifest(manifest.replaceAll(' as const', ''))).toBe(true);
@@ -88,12 +90,34 @@ it('resolves the same immutable owner in the provider read without accepting a s
   ).toBe(false);
 });
 
-it('still rejects a wrong owner or permission behind a constant', () => {
+it('resolves an immutable authorization object without accepting mutation, shadowing or unknown kinds', () => {
+  const aliased = `const AUTHORIZATION = { kind: 'protected' } as const;\n${manifest.replace(protectedAuthorization, 'authorization: AUTHORIZATION')}`;
+  expect(matchesAuthorization(aliased)).toBe(true);
+  for (const invalid of [
+    aliased.replace('const AUTHORIZATION =', 'let AUTHORIZATION ='),
+    aliased.replace("kind: 'protected'", "kind: 'public'"),
+    aliased.replace("kind: 'protected'", "kind: 'unsupported'"),
+    `${aliased}\nAUTHORIZATION.kind = 'public';`,
+    `${aliased}\nfunction shadow(AUTHORIZATION: unknown) { return AUTHORIZATION; }`,
+  ]) {
+    expect(matchesAuthorization(invalid)).toBe(false);
+  }
+});
+
+it('still rejects a wrong owner or weakened authorization', () => {
   expect(matchesManifest(manifest.replace("const OWNER = 'party.registry'", "const OWNER = 'wrong.owner'"))).toBe(
     false,
   );
+  expect(matchesAuthorization(manifest.replace(protectedAuthorization, "authorization: { kind: 'public' }"))).toBe(
+    false,
+  );
   expect(
-    matchesAuthorization(manifest.replace("const PERMISSION = 'module.access'", "const PERMISSION = 'admin.access'")),
+    matchesAuthorization(
+      manifest.replace(
+        protectedAuthorization,
+        "authorization: { kind: 'context_permission', permission: 'module.access' }",
+      ),
+    ),
   ).toBe(false);
 });
 

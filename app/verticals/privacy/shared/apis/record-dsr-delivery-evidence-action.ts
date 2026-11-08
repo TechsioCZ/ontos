@@ -2,6 +2,7 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug record-dsr-delivery-evidence
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/record-dsr-delivery-evidence.ts';
 
 export { RecordDsrDeliveryEvidencePayloadSchema } from '../actions/record-dsr-delivery-evidence.ts';
-
 export const RecordDsrDeliveryEvidenceActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RecordDsrDeliveryEvidenceActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const RecordDsrDeliveryEvidenceActionForbiddenProblemSchema = makeProblem
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -142,7 +143,7 @@ export const recordDsrDeliveryEvidenceActionGroupDefinition = HttpApiGroup.make(
     HttpApiEndpoint.post('execute', '/privacy/actions/record-dsr-delivery-evidence', {
       error: actionErrors,
       payload: Schema.toEncoded(RecordDsrDeliveryEvidencePayloadSchema),
-      success: RecordDsrDeliveryEvidenceResultSchema,
+      success: [ActionProposalAcceptedSchema, RecordDsrDeliveryEvidenceResultSchema],
     }),
   )
   .middleware(RecordDsrDeliveryEvidenceActionSchemaErrorMiddleware);

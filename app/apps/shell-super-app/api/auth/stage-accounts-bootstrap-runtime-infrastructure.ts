@@ -1,12 +1,18 @@
+import type { AccessCatalogModule, DatabaseIdentityEnrollmentContext } from '@app/core-runtime';
 import {
   reconcileStageContextBootstraps,
-  stageContextsFromAccountsFile,
+  stageTenantsFromAccountsFile,
+  stageModuleIntentRefusal,
 } from '@app/core-runtime/install/stage-context-bootstrap';
-import type { StageContextBootstrapResult } from '@app/core-runtime/install/stage-context-bootstrap';
+import type {
+  InstallationRuntime,
+  StageContextBootstrapResult,
+} from '@app/core-runtime/install/stage-context-bootstrap';
 import { betterAuth } from 'better-auth';
 import { hashPassword, verifyPassword } from 'better-auth/crypto';
 import { admin } from 'better-auth/plugins/admin';
 import { and, eq } from 'drizzle-orm';
+import type { Crypto } from 'effect';
 import { Config, DateTime, Effect, Option, Redacted } from 'effect';
 
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
@@ -208,7 +214,11 @@ const loadStageAccountsEnvironment = Effect.fn(
 });
 
 export const loadStageAccountsConfiguration = Effect.fn('StageAccountsBootstrap.loadConfiguration')(
-  function* loadConfiguration(readAccountsFile: StageAccountsFileReader, environment?: StageAccountsEnvironment) {
+  function* loadConfiguration(
+    readAccountsFile: StageAccountsFileReader,
+    declaredWorkloadKeys: ReadonlySet<string>,
+    environment?: StageAccountsEnvironment,
+  ) {
     const runtimeEnvironment =
       environment ??
       (yield* loadStageAccountsEnvironment().pipe(
@@ -220,7 +230,7 @@ export const loadStageAccountsConfiguration = Effect.fn('StageAccountsBootstrap.
             }),
         ),
       ));
-    return yield* parseStageAccountsBootstrapConfig(runtimeEnvironment, readAccountsFile);
+    return yield* parseStageAccountsBootstrapConfig(runtimeEnvironment, readAccountsFile, declaredWorkloadKeys);
   },
 );
 
@@ -262,21 +272,52 @@ const retireAuthUser = Effect.fn('StageAccountsBootstrap.retireAuthUser')(functi
 });
 
 const toAccountResult = (
-  email: string,
+  accountConfiguration: StageAccountConfig,
   authUser: { readonly status: StageAccountResult['authUser'] },
   context: StageContextBootstrapResult,
 ): StageAccountResult => ({
   authUser: authUser.status,
-  email,
+  email: accountConfiguration.email,
   legalEntityId: context.legalEntityId,
+  owner: context.owner,
   principalId: context.principalId,
+  roles: context.roles,
   tenantId: context.tenantId,
 });
 
+export interface StageAccountsBootstrapOptions {
+  /**
+   * The declarations of every module the running composition serves (O69). A stage tenant's release is
+   * compiled from them, so the operator's run is handed the catalog scan's modules, never a smaller set.
+   */
+  readonly modules: readonly AccessCatalogModule[];
+}
+
+/**
+ * Creates each stage account's Better Auth user and then the tenant's authorization v2 authority: one
+ * bootstrap per tenant (owner, memberships, release, "Plný přístup"), the same role for every further
+ * account the operator names, and one reconcile through the single Core writer. A retired account loses
+ * its Better Auth user and a retired tenant loses its intent, so nothing of them keeps answering.
+ */
 export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstrap')(function* bootstrap(
   configuration: StageAccountsBootstrapConfig,
-): Effect.fn.Return<StageAccountsBootstrapResult, StageAccountsBootstrapError, AuthDatabase> {
+  options: StageAccountsBootstrapOptions,
+): Effect.fn.Return<
+  StageAccountsBootstrapResult,
+  StageAccountsBootstrapError,
+  AuthDatabase | Crypto.Crypto | DatabaseIdentityEnrollmentContext | InstallationRuntime
+> {
   const { accountsFile } = configuration;
+  const moduleRefusal = stageModuleIntentRefusal(
+    accountsFile.tenants.map(({ moduleKey }) => moduleKey),
+    options.modules,
+  );
+  if (moduleRefusal !== undefined) {
+    return yield* new StageAccountsBootstrapError({
+      code: 'stage_accounts_configuration_invalid',
+      reason: moduleRefusal.reason,
+    });
+  }
   const accountConfigurations = accountsFile.tenants.flatMap(({ accounts }) =>
     accounts.map(({ displayName, email, password }) => ({ displayName, email, password })),
   );
@@ -285,11 +326,32 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
     (accountConfiguration) => ensureAuthUser(configuration, accountConfiguration),
     { concurrency: 1 },
   );
-  const contexts = stageContextsFromAccountsFile(accountsFile);
+  // The accounts file is flattened tenant by tenant and account by account, in the order the Better Auth
+  // users were created, so each Principal is paired with exactly the user its account signed up as.
+  const principals: string[] = [];
+  for (const { accounts } of accountsFile.tenants) {
+    for (const { principalId } of accounts) {
+      principals.push(principalId);
+    }
+  }
+  const providerUserIds = new Map(
+    principals.flatMap((principalId, index) => {
+      const authUser = authUsers[index];
+      return authUser === undefined ? [] : [[principalId, authUser.userId] as const];
+    }),
+  );
+  const tenants = yield* stageTenantsFromAccountsFile(accountsFile, providerUserIds, options.modules).pipe(
+    Effect.mapError(
+      (error) =>
+        new StageAccountsBootstrapError({
+          code: 'stage_accounts_configuration_invalid',
+          reason: error.reason,
+        }),
+    ),
+  );
   const results = yield* reconcileStageContextBootstraps(
-    contexts.map((context, index) => ({ context, providerUserId: authUsers[index]?.userId ?? '' })),
-    accountsFile.retiredTenants,
-    { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID },
+    { retiredTenants: accountsFile.retiredTenants, tenants },
+    { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID, modules: options.modules },
   ).pipe(
     Effect.mapError(
       (error) =>
@@ -307,7 +369,27 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
     const authUser = authUsers[index];
     return accountConfiguration === undefined || authUser === undefined
       ? []
-      : [toAccountResult(accountConfiguration.email, authUser, result)];
+      : [toAccountResult(accountConfiguration, authUser, result)];
   });
   return { accounts, retiredAccounts };
 });
+
+/**
+ * The operator command: reads the accounts file and runs the bootstrap. The installation runtime is the
+ * caller's — the process root (`scripts/bootstrap-stage-accounts.mts`) owns the privileged pool, the
+ * engine transport and their lifetime — so this module never assembles a layer and never opens a
+ * connection of its own; its requirement simply propagates to that root.
+ */
+export const bootstrapStageAccountsFromEnvironment = Effect.fn('StageAccountsBootstrap.bootstrapFromEnvironment')(
+  function* bootstrapFromEnvironment(
+    readAccountsFile: StageAccountsFileReader,
+    input: { readonly declaredWorkloadKeys: ReadonlySet<string>; readonly modules: readonly AccessCatalogModule[] },
+  ): Effect.fn.Return<
+    StageAccountsBootstrapResult,
+    StageAccountsBootstrapError,
+    AuthDatabase | Crypto.Crypto | DatabaseIdentityEnrollmentContext | InstallationRuntime
+  > {
+    const configuration = yield* loadStageAccountsConfiguration(readAccountsFile, input.declaredWorkloadKeys);
+    return yield* bootstrapStageAccounts(configuration, { modules: input.modules });
+  },
+);

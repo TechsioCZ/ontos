@@ -1,3 +1,4 @@
+import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import {
   MicroVerticalBuildMarkerSchema,
   MicroVerticalReadinessSchema,
@@ -39,6 +40,7 @@ export const storefrontRegistryFoundationApi = HttpApi.make('StorefrontRegistryA
 
 export const storefrontRegistryApi = HttpApi.make('StorefrontRegistryApi')
   .addHttpApi(storefrontRegistryFoundationApi)
+  .addHttpApi(OwnerActionApprovalApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(CurrentStorefrontApplicationApi)
   .addHttpApi(RegisterStorefrontApplicationActionApi)

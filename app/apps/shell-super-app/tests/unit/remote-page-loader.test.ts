@@ -7,7 +7,7 @@ import { awaitPrimaryModuleReads } from '../../src/routes/browser-request-cache.
 import { modulePageProps, prepareModulePage, RemotePagePreparation } from '../../src/routes/remote-page-loader.ts';
 import type { loadRemotePage, ReadyRemotePage } from '../../src/routes/remote-page-loader.ts';
 import type { AuthenticatedHomePageModel } from '../../src/routes/[lang]/home-page-model.ts';
-import { LegalEntityIdSchema, SafeTenantIdentitySchema } from '../../shared/api.ts';
+import { LegalEntityIdSchema, ResolvedModuleTargetSchema, SafeTenantIdentitySchema } from '../../shared/api.ts';
 
 const transport = {
   load: rs.fn<typeof loadRemotePage>(),
@@ -22,14 +22,21 @@ const readyPage = (preloadPage?: ModulePagePreload): ReadyRemotePage =>
   preloadPage === undefined ? { Component, state: 'ready' } : { Component, preloadPage, state: 'ready' };
 const prepare: typeof prepareModulePage = (page, input, pathname, budget) =>
   prepareModulePage(page, input, pathname, budget).pipe(Effect.provideService(RemotePagePreparation, transport));
-const target = (name: string): Parameters<typeof prepareModulePage>[0] => ({
-  compositionRevision: '1'.repeat(64),
-  federation: {
-    expose: './HomeSummary',
-    manifest: { sha256: '2'.repeat(64), url: `https://${name}.example.test/mf-manifest.json` },
-    remoteName: name,
-  },
-});
+const target = (name: string): Parameters<typeof prepareModulePage>[0] =>
+  Schema.decodeUnknownSync(ResolvedModuleTargetSchema)({
+    appId: 'fixture-remote-page',
+    componentKey: 'test.remote-page.home',
+    compositionRevision: '1'.repeat(64),
+    entrypointKey: 'test.remote-page.page.home',
+    federation: {
+      expose: './HomeSummary',
+      manifest: { sha256: '2'.repeat(64), url: `https://${name}.example.test/mf-manifest.json` },
+      remoteName: name,
+    },
+    moduleId: 'test.remote-page',
+    routeParameters: {},
+    writable: false,
+  });
 const props: ModulePageProps = {
   context: {
     legalEntityId: 'company-one',

@@ -1,0 +1,8 @@
+-- Every protected Action takes a shared lock on its access scope fence inside the Action transaction.
+-- Request identities stay read-only and hold no grant on core.access_scope_fences: this routine is the
+-- only way they reach it. It locks only a fence of the tenant the transaction's established scope allows:
+-- the sealed gateway scope when one is set, otherwise the transaction-local session tenant, which an
+-- identity enrolled for gateway scope grants may never use. It returns the fence state, or NULL when absent.
+CREATE FUNCTION trust.lock_access_scope_fence(p_tenant_id uuid, p_scope_id uuid) RETURNS text LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$ DECLARE v_tenant_id uuid := trust.current_tenant_id(); v_state text; BEGIN IF p_tenant_id IS NULL OR p_scope_id IS NULL THEN RAISE EXCEPTION 'access scope fence must name one tenant and scope' USING ERRCODE = '22023'; END IF; IF v_tenant_id IS NULL THEN IF EXISTS (SELECT 1 FROM trust.gateway_audience_roles AS a WHERE a.role_name = SESSION_USER) THEN RAISE EXCEPTION 'access scope fence requires an established gateway scope' USING ERRCODE = '42501'; END IF; v_tenant_id := NULLIF(pg_catalog.current_setting('ontos.tenant_id', true), '')::uuid; END IF; IF v_tenant_id IS NULL OR v_tenant_id <> p_tenant_id THEN RAISE EXCEPTION 'access scope fence is outside the established tenant scope' USING ERRCODE = '42501'; END IF; SELECT f.state INTO v_state FROM core.access_scope_fences AS f WHERE f.tenant_id = p_tenant_id AND f.scope_id = p_scope_id FOR SHARE; RETURN v_state; END $$;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION trust.lock_access_scope_fence(uuid, uuid) FROM PUBLIC;

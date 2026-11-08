@@ -24,6 +24,7 @@
       }
     },
     "demo": {
+      "approvalRequired": "The proposal is awaiting approval. The change has not been applied.",
       "feedback": {
         "ready": "Ready",
         "loading": "Loading…",

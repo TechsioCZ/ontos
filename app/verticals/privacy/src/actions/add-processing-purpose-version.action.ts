@@ -74,6 +74,14 @@ const handleAddProcessingPurposeVersion = Effect.fn('AddProcessingPurposeVersion
 
 export const addProcessingPurposeVersionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.processing-purpose.add-version',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'processing-governance', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.add-processing-purpose-version.access.v1',
@@ -85,7 +93,7 @@ export const addProcessingPurposeVersionAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.add-processing-purpose-version',
       moduleKey: 'privacy.core',
       role: 'action',

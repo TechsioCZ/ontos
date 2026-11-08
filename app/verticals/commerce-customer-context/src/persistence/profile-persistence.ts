@@ -1,19 +1,13 @@
 /* oxlint-disable effect-native/no-dependency-parameters effect-native/no-nullable-schema-field effect-native/no-string-timestamp-schema effect-native/no-unbranded-identifier-schema effect-native/no-duplicate-literal-vocabulary anti-slop/no-known-value-widening sonarjs/no-duplicate-string -- This adapter decodes nullable database wire rows and accepts optional owner-port composition inputs without exporting database capability; expires: 2027-03-31. */
-import {
-  BusinessPermissionCodeSchema,
-  ReadHandlerNotFound,
-  ReadHandlerUnavailable,
-  defineScopedRoutine,
-} from '@app/core-runtime';
+import { ReadHandlerNotFound, ReadHandlerUnavailable, defineScopedRoutine } from '@app/core-runtime';
 import type {
-  BusinessPermissionRelationshipMutationService,
-  OutboxWorkerLegalEntityScope,
   ScopedRoutineDefinition,
   ScopedRoutineInputValues,
   ScopedRoutineInvocationError,
   ScopedRoutineParameter,
 } from '@app/core-runtime';
-import { DateTime, Effect, Option, Result, Schema } from 'effect';
+import type { AccessPortalError, AccessPortalWrites } from '@app/core-runtime/access/portal';
+import { DateTime, Effect, Option, Schema } from 'effect';
 
 import { AttributeGuestRetailCustomerRejected } from '../../shared/actions/attribute-guest-retail-customer.ts';
 import type {
@@ -103,17 +97,20 @@ import {
   ReconciliationOwnerSchema,
   ReconciliationOwnerOutcomeSchema,
   RETAIL_PORTAL_SELF_SERVICE_BASELINE,
-  RetailPortalPermissionCodeSchema,
+  RetailPortalBindingAuthorizationOperationSchema,
+  RetailPortalBindingStateSchema,
 } from '../../shared/domain/profile-contracts.ts';
 import type {
   GuestPartyResolutionOutcome,
   ProfileLifecycleOperation,
   ReconciliationOwner,
   RetailPortalBindingAuthorizationOperation,
-  RetailPortalBindingAuthorizationState,
+  RetailPortalBindingState,
   RetailPortalPermissionCode,
 } from '../../shared/domain/profile-contracts.ts';
 import { decideRetailPortalAccess } from '../../shared/domain/profile-decisions.ts';
+import { RETAIL_CUSTOMER_PORTAL_ROLE } from '../portal-access/portal-roles.ts';
+import { retailPortalBindingActivationSource } from '../portal-access/portal-sources.ts';
 import type { CommerceCustomerProfile, CommerceCustomerProfileRef } from '../../shared/domain/profile-decisions.ts';
 import type {
   MarketSubjectRestrictionProfileResult,
@@ -134,12 +131,6 @@ import type {
   ReconcilePartyMergePersistenceService,
   ReconcilePartyMergeWorkerError,
 } from '../workers/reconcile-party-merge.worker.ts';
-import { RetailBindingAuthorizationMutationWorkerRejected } from '../workers/retail-binding-authorization-mutation-reconciliation.ts';
-import type {
-  RetailBindingAuthorizationMutationReconciliationResult,
-  RetailBindingAuthorizationMutationReconciliationService,
-  RetailBindingAuthorizationMutationRequest,
-} from '../workers/retail-binding-authorization-mutation-reconciliation.ts';
 
 /** Routine-only capability; this does not expose Core's database executor to owner services. */
 export interface ProfileScopedRoutineInvoker {
@@ -154,6 +145,8 @@ export interface ProfileScopedRoutineInvoker {
 
 export interface ProfilePersistenceScope {
   readonly authBindingId?: string;
+  /** The call is this module's own enrollment continuation acting for the subject that started an Attempt. */
+  readonly enrollmentContinuation?: true;
   readonly legalEntityId: string;
   readonly principalId: string;
   readonly tenantId: string;
@@ -288,7 +281,7 @@ interface RetailPermissionProjection {
   readonly freshness: {
     readonly observedAt: string;
     readonly revision?: string;
-    readonly sourceModuleId: 'core.identity';
+    readonly sourceModuleId: 'commerce.customer-context';
     readonly status: 'CURRENT' | 'UNAVAILABLE';
   };
   readonly permissions: readonly RetailPortalPermissionCode[];
@@ -328,86 +321,20 @@ const ProfilePayloadSchema = Schema.Struct({
   ]),
   updatedAt: Schema.String,
 });
-const BindingPermissionMutationPayloadSchema = Schema.Struct({
-  mutationId: Schema.String,
-  operation: Schema.Literals(['grant', 'revoke']),
-  permission: RetailPortalPermissionCodeSchema,
-  staged: Schema.Boolean,
-  state: Schema.Literals(['ACTIVE', 'REVOKED', 'PENDING_GRANT', 'PENDING_REVOKE', 'RECONCILIATION_REQUIRED']),
-});
 const BindingPayloadSchema = Schema.Struct({
   actionInvocationId: Schema.String,
   actorPrincipalId: Schema.optionalKey(Schema.String),
-  authorizationMutationId: Schema.optionalKey(Schema.String),
-  authorizationOperation: Schema.optionalKey(Schema.Literals(['grant', 'revoke'])),
-  authorizationState: Schema.optionalKey(
-    Schema.Literals(['ACTIVE', 'REVOKED', 'PENDING_GRANT', 'PENDING_REVOKE', 'RECONCILIATION_REQUIRED']),
-  ),
+  authorizationOperation: Schema.optionalKey(RetailPortalBindingAuthorizationOperationSchema),
+  authorizationState: Schema.optionalKey(RetailPortalBindingStateSchema),
   bindingId: Schema.String,
   createdAt: Schema.String,
   enrollmentEvidenceRef: Schema.String,
-  permissionMutations: Schema.optionalKey(Schema.Array(BindingPermissionMutationPayloadSchema)),
   principalId: Schema.String,
   profileId: Schema.String,
   reason: Schema.String,
   revision: IntegerSchema,
   revokedAt: Schema.NullOr(Schema.String),
-  state: Schema.Literals(['ACTIVE', 'REVOKED']),
-  updatedAt: Schema.String,
-});
-const BindingAuthorizationMutationPayloadSchema = Schema.Struct({
-  actionInvocationId: Schema.String,
-  actorPrincipalId: Schema.NullOr(Schema.String),
-  bindingId: Schema.String,
-  finalizedAt: Schema.NullOr(Schema.String),
-  mutationId: Schema.String,
-  operation: Schema.Literals(['grant', 'revoke']),
-  permission: RetailPortalPermissionCodeSchema,
-  principalId: Schema.String,
-  profileId: Schema.String,
-  reason: Schema.NullOr(Schema.String),
-  revision: IntegerSchema,
-  staged: Schema.Boolean,
-  state: Schema.Literals(['ACTIVE', 'REVOKED', 'PENDING_GRANT', 'PENDING_REVOKE', 'RECONCILIATION_REQUIRED']),
-});
-const BindingAuthorizationMutationFinalizationPayloadSchema = Schema.Struct({
-  ...BindingAuthorizationMutationPayloadSchema.fields,
-  authorizationState: Schema.Literals([
-    'ACTIVE',
-    'REVOKED',
-    'PENDING_GRANT',
-    'PENDING_REVOKE',
-    'RECONCILIATION_REQUIRED',
-  ]),
-  bindingRevision: IntegerSchema,
-});
-const BindingAuthorizationFinalizationPayloadSchema = Schema.Struct({
-  authorizationOperation: Schema.Literals(['grant', 'revoke']),
-  authorizationState: Schema.Literals(['ACTIVE', 'REVOKED']),
-  bindingId: Schema.String,
-  effectiveAt: Schema.String,
-  operation: Schema.Literals(['grant', 'revoke']),
-  principalId: Schema.String,
-  profileId: Schema.String,
-  revision: IntegerSchema,
-  updatedAt: Schema.String,
-});
-const BindingAuthorizationPayloadSchema = Schema.Struct({
-  authorizationOperation: Schema.Literals(['grant', 'revoke']),
-  authorizationState: Schema.Literals([
-    'ACTIVE',
-    'REVOKED',
-    'PENDING_GRANT',
-    'PENDING_REVOKE',
-    'RECONCILIATION_REQUIRED',
-  ]),
-  bindingId: Schema.String,
-  operation: Schema.Literals(['grant', 'revoke']),
-  pendingCount: IntegerSchema,
-  principalId: Schema.String,
-  profileId: Schema.String,
-  revision: IntegerSchema,
-  terminalCount: IntegerSchema,
+  state: RetailPortalBindingStateSchema,
   updatedAt: Schema.String,
 });
 const PrincipalPayloadSchema = Schema.Struct({
@@ -489,8 +416,6 @@ const OwnerVerificationPayloadSchema = Schema.Struct({
 type RoutineRow = typeof RoutineRowSchema.Type;
 type OwnerVerificationPayload = typeof OwnerVerificationPayloadSchema.Type;
 type BindingPayload = typeof BindingPayloadSchema.Type;
-type BindingAuthorizationPayload = typeof BindingAuthorizationPayloadSchema.Type;
-type BindingAuthorizationFinalizationPayload = typeof BindingAuthorizationFinalizationPayloadSchema.Type;
 type GuestPayload = typeof GuestPayloadSchema.Type;
 type PrincipalPayload = typeof PrincipalPayloadSchema.Type;
 
@@ -590,51 +515,6 @@ const readRetailProfileByPartyRoutine = routine('read_retail_profile_by_party', 
   ...scopeParameters,
   { source: 'input', type: 'text' },
 ] as const);
-const stageBindingAuthorizationMutationsRoutine = routine(
-  'stage_retail_portal_profile_binding_permission_mutations',
-  'profile.binding-authorization-intent-stage',
-  [
-    ...scopeParameters,
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'text' },
-  ] as const,
-);
-const readBindingAuthorizationMutationRoutine = routine(
-  'read_retail_portal_profile_binding_permission_mutation',
-  'profile.binding-authorization-intent-read',
-  [...scopeParameters, { source: 'input', type: 'uuid' }] as const,
-);
-const finalizeBindingAuthorizationMutationRoutine = routine(
-  'finalize_retail_portal_profile_binding_permission_mutation',
-  'profile.binding-authorization-intent-finalize',
-  [
-    ...scopeParameters,
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'text' },
-    { source: 'input', type: 'text' },
-  ] as const,
-);
-const readBindingAuthorizationRoutine = routine(
-  'read_retail_portal_binding_authorization',
-  'profile.binding-authorization-read',
-  [...scopeParameters, { source: 'input', type: 'uuid' }, { source: 'input', type: 'text' }] as const,
-);
-const finalizeBindingAuthorizationRoutine = routine(
-  'finalize_retail_portal_binding_authorization',
-  'profile.binding-authorization-finalize',
-  [
-    ...scopeParameters,
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'text' },
-    { source: 'input', type: 'integer' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'timestamptz' },
-    { source: 'input', type: 'text' },
-    { nullable: true, source: 'input', type: 'uuid' },
-  ] as const,
-);
 const resolvePrincipalRoutine = routine('resolve_retail_principal', 'profile.resolve-principal', [
   ...scopeParameters,
   { source: 'input', type: 'uuid' },
@@ -935,12 +815,6 @@ const availableBindingPayloadFromRow = (row: RoutineRow | undefined): BindingPay
   row?.outcome === 'BINDING_AVAILABLE' && row.payload !== null && Schema.is(BindingPayloadSchema)(row.payload)
     ? row.payload
     : undefined;
-const bindingAuthorizationPayloadFromRow = (row: RoutineRow | undefined): BindingAuthorizationPayload | undefined =>
-  row?.outcome === 'AUTHORIZATION_AVAILABLE' &&
-  row.payload !== null &&
-  Schema.is(BindingAuthorizationPayloadSchema)(row.payload)
-    ? row.payload
-    : undefined;
 const bindingAuthorizationFromPayload = (payload: BindingPayload) => {
   if (payload.authorizationOperation === undefined || payload.authorizationState === undefined) {
     // oxlint-disable-next-line unicorn/no-useless-undefined -- Explicit undefined preserves this optional payload contract.
@@ -951,10 +825,6 @@ const bindingAuthorizationFromPayload = (payload: BindingPayload) => {
     state: payload.authorizationState,
   };
 };
-const bindingAuthorizationIsCurrent = (
-  operation: RetailPortalBindingAuthorizationOperation,
-  state: RetailPortalBindingAuthorizationState,
-): boolean => (operation === 'grant' && state === 'ACTIVE') || (operation === 'revoke' && state === 'REVOKED');
 const bindingMatchesRetailAccessScope = (
   payload: BindingPayload,
   input: RetailAccessDecisionRequest,
@@ -1157,9 +1027,7 @@ export const readRetailProfileByParty = (
 /**
  * The Retail Portal Profile Binding this exact profile and Principal already hold, or none.
  *
- * The owner publishes no staged Permission mutation list after the fact, so the durable
- * authorization operation and state travel instead; they are what
- * `finalize_retail_portal_binding_authorization` settles once every staged mutation is terminal.
+ * The durable authorization operation and state travel with it; the binding transition wrote them.
  * `outcome` is read from the binding's own lifecycle rather than from a transition the row does not
  * record: an Active binding is an activated one.
  */
@@ -1224,7 +1092,6 @@ export const retailEnrollmentBindingIsCurrentForPrincipal = Effect.fn('ProfilePe
       readonly enrollmentEvidenceRef: string;
       readonly profileId: string;
     },
-    readPermissions: NonNullable<ProfilePersistenceDependencies['readRetailPermissions']>,
   ): Effect.fn.Return<boolean, ReadHandlerUnavailable> {
     const [principalRow] = yield* transaction
       .invoke(resolvePrincipalRoutine, [expected.profileId, scope.principalId])
@@ -1249,30 +1116,18 @@ export const retailEnrollmentBindingIsCurrentForPrincipal = Effect.fn('ProfilePe
     ) {
       return false;
     }
-    const { permissions } = yield* readPermissions({
-      ...scope,
-      profileId: expected.profileId,
-    }).pipe(
-      Effect.mapError((cause) =>
-        preserveFailureCause(readUnavailable('The Current Retail baseline is unavailable'), cause),
-      ),
-    );
-    const current = new Set(permissions);
-    return (
-      current.size === RETAIL_PORTAL_SELF_SERVICE_BASELINE.length &&
-      permissions.length === current.size &&
-      RETAIL_PORTAL_SELF_SERVICE_BASELINE.every((permission) => current.has(permission))
-    );
+    // The owner binding row is the whole authority (O67-Q1): its ACTIVE grant is the baseline.
+    return true;
   },
 );
 
 export type CounterpartyRoleEligibility =
   | {
       readonly managedLegalEntityId: string;
+      readonly observedAt?: string;
       readonly outcome: 'ELIGIBLE';
       readonly roleResourceId: string;
       readonly roleResourceRevision: string;
-      /** Exact Party role end; undefined is unknown and must not authorize a prepared write. */
       readonly validUntil?: string | null;
     }
   | { readonly outcome: 'INELIGIBLE' }
@@ -1291,26 +1146,21 @@ export interface ProfilePersistenceDependencies {
     },
     ProfilePersistenceDependencyFailure
   >;
-
-  readonly readRetailPermissions?: (input: {
-    readonly legalEntityId: string;
-    readonly principalId: string;
-    readonly profileId: string;
-    readonly requestedPermissions?: readonly RetailPortalPermissionCode[];
-    readonly tenantId: string;
-  }) => Effect.Effect<
-    {
-      readonly observedAt: string;
-      readonly permissions: readonly RetailPortalPermissionCode[];
-      readonly revision?: string;
-    },
-    ProfilePersistenceDependencyFailure
-  >;
+  /** Core's portal access over the binding Action's own transaction; a binding never commits without it. */
+  readonly portalAccess?: AccessPortalWrites;
   readonly reconciliationOwnerVerifier?: ProfileReconciliationOwnerVerifierService;
   readonly resolveCounterpartyRole?: (input: {
     readonly counterpartyResourceId: string;
     readonly tenantId: string;
   }) => Effect.Effect<CounterpartyRoleEligibility, ProfilePersistenceDependencyFailure>;
+  /** Invocation-bound target evidence rechecked against the native journal and Core identity in this transaction. */
+  readonly resolveEnrollmentTargetBinding?: (
+    payload: RetailPortalBindingPayload,
+    actionInvocationId: string,
+  ) => Effect.Effect<
+    { readonly authBindingId: string; readonly principalId: string },
+    RetailPortalBindingActionRejected
+  >;
   readonly resolveGuestParty?: (input: {
     readonly correlationRoot: string;
     readonly guestEvidenceRef: string;
@@ -1318,14 +1168,6 @@ export interface ProfilePersistenceDependencies {
     readonly requestedAt: string;
     readonly tenantId: string;
   }) => Effect.Effect<GuestPartyResolutionOutcome, ProfilePersistenceDependencyFailure>;
-  readonly resolveRetailEnrollmentBinding?: (
-    payload: RetailPortalBindingPayload,
-    actionInvocationId: string,
-    actorPrincipalId: string,
-  ) => Effect.Effect<
-    { readonly authBindingId: string; readonly principalId: string },
-    ProfilePersistenceDependencyFailure
-  >;
   readonly resolveRetailParty?: (input: {
     readonly actionInvocationId: string;
     readonly compositionRevision: string;
@@ -1667,77 +1509,144 @@ const lifecycleServices = (
   },
 });
 
+const bindingRejection = (
+  code: RetailPortalBindingActionRejected['code'],
+  reason: string,
+  retryable: boolean,
+): RetailPortalBindingActionRejected => new RetailPortalBindingActionRejected({ code, reason, retryable });
+
+/** Core refused or could not write the bound person's portal access, so the binding rolls back with it. */
+const portalAccessRejection = (failure: AccessPortalError): RetailPortalBindingActionRejected =>
+  bindingRejection(
+    failure.code === 'access_portal_unavailable' ? 'PERSISTENCE_UNAVAILABLE' : 'DEPENDENCY_UNAVAILABLE',
+    `Core could not write the portal access of this binding (${failure.code})`,
+    failure.code === 'access_portal_unavailable',
+  );
+
+/**
+ * Whether the BIND names the person the continuation resolved for the Attempt. The continuation journals the
+ * binding transition with a request digest over its intent — the Party the Attempt's candidate submission
+ * established, the Principal it resolved for the Attempt's account subject and the Selling Legal Entity —
+ * before it dispatches the call, so the payload names that Principal exactly when it reproduces the digest.
+ */
 function bindingServices(
   transaction: ProfileScopedRoutineInvoker,
   scope: ProfilePersistenceScope,
   operation: 'BIND',
-  dependencies?: ProfilePersistenceDependencies,
+  portalAccess: AccessPortalWrites | undefined,
+  resolveEnrollmentTargetBinding?: ProfilePersistenceDependencies['resolveEnrollmentTargetBinding'],
 ): BindRetailPortalProfileServices;
 function bindingServices(
   transaction: ProfileScopedRoutineInvoker,
   scope: ProfilePersistenceScope,
   operation: 'RECOVER',
-  dependencies?: ProfilePersistenceDependencies,
+  portalAccess: AccessPortalWrites | undefined,
+  resolveEnrollmentTargetBinding?: ProfilePersistenceDependencies['resolveEnrollmentTargetBinding'],
 ): RecoverRetailPortalProfileBindingServices;
 function bindingServices(
   transaction: ProfileScopedRoutineInvoker,
   scope: ProfilePersistenceScope,
   operation: 'REVOKE',
-  dependencies?: ProfilePersistenceDependencies,
+  portalAccess: AccessPortalWrites | undefined,
+  resolveEnrollmentTargetBinding?: ProfilePersistenceDependencies['resolveEnrollmentTargetBinding'],
 ): RevokeRetailPortalProfileBindingServices;
 function bindingServices(
   transaction: ProfileScopedRoutineInvoker,
   scope: ProfilePersistenceScope,
   operation: 'BIND' | 'RECOVER' | 'REVOKE',
-  dependencies: ProfilePersistenceDependencies = {},
+  portalAccess: AccessPortalWrites | undefined,
+  resolveEnrollmentTargetBinding?: ProfilePersistenceDependencies['resolveEnrollmentTargetBinding'],
 ):
   | BindRetailPortalProfileServices
   | RecoverRetailPortalProfileBindingServices
   | RevokeRetailPortalProfileBindingServices {
-  const mutate = Effect.fn('ProfilePersistence.mutateRetailBinding')(function* mutateBinding(
-    payload: RetailPortalBindingPayload,
-    actionInvocationId: string,
-  ): Effect.fn.Return<RetailPortalBindingResult, RetailPortalBindingActionRejected> {
-    let target = { authBindingId: scope.authBindingId, principalId: scope.principalId };
-    if (operation === 'BIND' && payload.principalRef.resourceId !== scope.principalId) {
-      if (dependencies.resolveRetailEnrollmentBinding === undefined) {
-        return yield* new RetailPortalBindingActionRejected({
-          code: 'BINDING_CONFLICT',
-          reason: 'No governed enrollment authority exists for this target',
-          retryable: false,
-        });
-      }
-      target = yield* dependencies.resolveRetailEnrollmentBinding(payload, actionInvocationId, scope.principalId).pipe(
-        Effect.mapError((cause) =>
-          preserveFailureCause(
-            new RetailPortalBindingActionRejected({
-              code: 'ENROLLMENT_EVIDENCE_INSUFFICIENT',
-              reason: 'The exact enrollment target was not authorized',
-              retryable: false,
-            }),
-            cause,
-          ),
-        ),
-      );
-    }
+  /**
+   * Who may establish this binding: the bound Principal itself through its own authentication binding,
+   * or — for a BIND only — this module's own enrollment continuation acting for the subject that started
+   * the Attempt the payload names as evidence.
+   */
+  const admitBinder = (payload: RetailPortalBindingPayload): Effect.Effect<void, RetailPortalBindingActionRejected> => {
     if (
-      target.authBindingId === undefined ||
       payload.profileRef.tenantId !== scope.tenantId ||
-      payload.principalRef.resourceId !== target.principalId ||
       payload.principalRef.tenantId !== scope.tenantId ||
       payload.sellingLegalEntityRef.resourceId !== scope.legalEntityId
     ) {
-      return yield* new RetailPortalBindingActionRejected({
-        code: target.authBindingId === undefined ? 'DEPENDENCY_UNAVAILABLE' : 'BINDING_CONFLICT',
-        reason: 'A current verified authentication binding and exact profile scope are required',
-        retryable: target.authBindingId === undefined,
-      });
+      return Effect.fail(
+        bindingRejection(
+          'BINDING_CONFLICT',
+          'A current verified authentication binding and exact profile scope are required',
+          false,
+        ),
+      );
     }
-    return yield* transaction
+    if (payload.principalRef.resourceId === scope.principalId) {
+      return Effect.void;
+    }
+    return operation === 'BIND' && scope.enrollmentContinuation === true && resolveEnrollmentTargetBinding !== undefined
+      ? Effect.void
+      : Effect.fail(bindingRejection('BINDING_CONFLICT', 'Only the bound Principal may change its own binding', false));
+  };
+  /**
+   * The bound person's portal access follows the binding it stands for, in the same transaction: an
+   * activation (BIND or RECOVER) is one source, named by the binding and the revision that activated it,
+   * and a REVOKE ends exactly the activation it revokes.
+   */
+  const followBinding = (
+    portal: AccessPortalWrites,
+    payload: RetailPortalBindingPayload,
+    result: RetailPortalBindingResult,
+  ): Effect.Effect<void, RetailPortalBindingActionRejected> => {
+    const activationRevision = operation === 'REVOKE' ? payload.expectedRevision : result.revision;
+    if (activationRevision === null) {
+      return Effect.fail(
+        bindingRejection('OUTCOME_INDETERMINATE', 'The revoked binding names no activation to end', true),
+      );
+    }
+    const input = {
+      legalEntityId: scope.legalEntityId,
+      principalId: payload.principalRef.resourceId,
+      role: RETAIL_CUSTOMER_PORTAL_ROLE,
+      source: retailPortalBindingActivationSource(result.bindingRef.resourceId, activationRevision),
+    };
+    return (operation === 'REVOKE' ? portal.revoke(input) : portal.grant(input)).pipe(
+      Effect.mapError(portalAccessRejection),
+      Effect.asVoid,
+    );
+  };
+  const mutate = Effect.fn('ProfilePersistence.mutateRetailPortalBinding')(function* mutateRetailPortalBinding(
+    payload: RetailPortalBindingPayload,
+    actionInvocationId: string,
+  ) {
+    if (portalAccess === undefined) {
+      return yield* bindingRejection(
+        'DEPENDENCY_UNAVAILABLE',
+        'Core portal access is not composed for this binding transaction',
+        true,
+      );
+    }
+    yield* admitBinder(payload);
+    let target: { readonly authBindingId?: string; readonly principalId: string } | undefined;
+    if (payload.principalRef.resourceId === scope.principalId) {
+      target =
+        scope.authBindingId === undefined
+          ? { principalId: scope.principalId }
+          : { authBindingId: scope.authBindingId, principalId: scope.principalId };
+    } else if (resolveEnrollmentTargetBinding !== undefined) {
+      target = yield* resolveEnrollmentTargetBinding(payload, actionInvocationId);
+    }
+    const authBindingId = target?.authBindingId;
+    if (authBindingId === undefined || target?.principalId !== payload.principalRef.resourceId) {
+      return yield* bindingRejection(
+        'DEPENDENCY_UNAVAILABLE',
+        'A current verified authentication binding and exact profile scope are required',
+        true,
+      );
+    }
+    const [row] = yield* transaction
       .invoke(mutateBindingRoutine, [
         payload.profileRef.resourceId,
         payload.principalRef.resourceId,
-        target.authBindingId,
+        authBindingId,
         payload.enrollmentEvidenceRef,
         payload.expectedState,
         payload.expectedRevision,
@@ -1748,31 +1657,21 @@ function bindingServices(
         scope.principalId,
       ])
       .pipe(
-        Effect.mapError(
-          (failure) =>
-            new RetailPortalBindingActionRejected({
-              code: 'PERSISTENCE_UNAVAILABLE',
-              reason: routineFailureReason(failure),
-              retryable: true,
-            }),
-        ),
-        Effect.flatMap(([row]): Effect.Effect<RetailPortalBindingResult, RetailPortalBindingActionRejected> => {
-          if (
-            row?.payload !== null &&
-            row?.payload !== undefined &&
-            Schema.is(RetailPortalBindingResultSchema)(row.payload)
-          ) {
-            return Effect.succeed(row.payload);
-          }
-          return Effect.fail(
-            new RetailPortalBindingActionRejected({
-              code: bindingRejectionCode(row?.outcome),
-              reason: 'The Retail Portal binding mutation was rejected by current scoped state',
-              retryable: row === undefined,
-            }),
-          );
-        }),
+        Effect.mapError((failure) => bindingRejection('PERSISTENCE_UNAVAILABLE', routineFailureReason(failure), true)),
       );
+    if (
+      row?.payload === null ||
+      row?.payload === undefined ||
+      !Schema.is(RetailPortalBindingResultSchema)(row.payload)
+    ) {
+      return yield* bindingRejection(
+        bindingRejectionCode(row?.outcome),
+        'The Retail Portal binding mutation was rejected by current scoped state',
+        row === undefined,
+      );
+    }
+    yield* followBinding(portalAccess, payload, row.payload);
+    return row.payload;
   });
   if (operation === 'BIND') {
     return { bind: (payload, context) => mutate(payload, context.actionInvocationId) };
@@ -2215,6 +2114,24 @@ function recordGuestResult(
     );
 }
 
+/**
+ * The Retail Portal baseline is owner-local (O67-Q1): a binding holds the whole
+ * `RETAIL_PORTAL_SELF_SERVICE_BASELINE` exactly while its grant is ACTIVE. There is no second
+ * permission store left to read (O62).
+ */
+const readRetailPermissionProjection = (input: {
+  readonly observedAt: string;
+  readonly operation: RetailPortalBindingAuthorizationOperation;
+  readonly state: RetailPortalBindingState;
+}): RetailPermissionProjection => ({
+  freshness: {
+    observedAt: input.observedAt,
+    sourceModuleId: 'commerce.customer-context' as const,
+    status: 'CURRENT' as const,
+  },
+  permissions: input.operation === 'grant' && input.state === 'ACTIVE' ? [...RETAIL_PORTAL_SELF_SERVICE_BASELINE] : [],
+});
+
 const readServices = (
   transaction: ProfileScopedRoutineInvoker,
   scope: ProfilePersistenceScope,
@@ -2280,57 +2197,6 @@ const readServices = (
         },
       ),
     );
-
-  const readRetailPermissionProjection = (
-    profileId: string,
-    principalId: string,
-    observedAt: string,
-    requestedPermissions?: readonly RetailPortalPermissionCode[],
-  ): Effect.Effect<RetailPermissionProjection> => {
-    const readPermissions = dependencies.readRetailPermissions;
-    if (readPermissions === undefined) {
-      return Effect.succeed({
-        freshness: {
-          observedAt,
-          sourceModuleId: 'core.identity' as const,
-          status: 'UNAVAILABLE' as const,
-        },
-        permissions: [],
-      });
-    }
-    const request = {
-      legalEntityId: scope.legalEntityId,
-      principalId,
-      profileId,
-      tenantId: scope.tenantId,
-    };
-    return readPermissions(requestedPermissions === undefined ? request : { ...request, requestedPermissions }).pipe(
-      Effect.map(({ observedAt: permissionObservedAt, permissions, revision }) => {
-        const freshness =
-          revision === undefined
-            ? {
-                observedAt: permissionObservedAt,
-                sourceModuleId: 'core.identity' as const,
-                status: 'CURRENT' as const,
-              }
-            : {
-                observedAt: permissionObservedAt,
-                revision,
-                sourceModuleId: 'core.identity' as const,
-                status: 'CURRENT' as const,
-              };
-        return { freshness, permissions };
-      }),
-      Effect.orElseSucceed(() => ({
-        freshness: {
-          observedAt,
-          sourceModuleId: 'core.identity' as const,
-          status: 'UNAVAILABLE' as const,
-        },
-        permissions: [],
-      })),
-    );
-  };
 
   const readRestrictionProfile = (
     input: MarketSubjectRestrictionsCurrentRequest,
@@ -2632,7 +2498,12 @@ const readServices = (
                         status: 'CURRENT',
                       },
                       partyRef: Option.some(partyRef),
-                      profileRef: Option.some(retailRef),
+                      profileRef: Option.some({
+                        moduleId: retailRef.moduleId,
+                        resourceId: retailRef.resourceId,
+                        resourceType: retailRef.resourceType,
+                        tenantId: retailRef.tenantId,
+                      }),
                       provenance: profileProvenance(profile.updatedAt, profile.revision),
                       sellingLegalEntityRef: input.sellingLegalEntityRef,
                     });
@@ -2883,74 +2754,43 @@ const readServices = (
                         ),
                       );
                     }
-                    const authorizationOperation = bindingAuthorization.operation;
-                    const authorizationStateFromBinding = bindingAuthorization.state;
-                    /* oxlint-disable sonarjs/no-nested-functions -- This callback intentionally captures binding, principal, provenance, and permission-read state from the enclosing transaction. */
-                    return transaction
-                      .invoke(readBindingAuthorizationRoutine, [raw.bindingId, authorizationOperation])
-                      .pipe(
-                        Effect.mapError(readUnavailableFromRoutineFailure),
-                        Effect.flatMap(
-                          ([authorizationRow]): Effect.Effect<
-                            RetailAccessDecisionResponse,
-                            ReadHandlerNotFound | ReadHandlerUnavailable
-                          > => {
-                            const authorization = bindingAuthorizationPayloadFromRow(authorizationRow);
-                            const authorizationState =
-                              authorization?.authorizationState ?? authorizationStateFromBinding;
-                            const authorizationFreshness = {
-                              observedAt: authorization?.updatedAt ?? raw.updatedAt,
-                              revision: raw.authorizationMutationId ?? String(raw.revision),
-                              sourceModuleId: 'commerce.customer-context' as const,
-                              status:
-                                authorization !== undefined &&
-                                bindingAuthorizationIsCurrent(
-                                  authorization.authorizationOperation,
-                                  authorization.authorizationState,
-                                )
-                                  ? ('CURRENT' as const)
-                                  : ('INDETERMINATE' as const),
-                            };
-                            return readRetailPermissionProjection(raw.profileId, principalId, raw.updatedAt, [
-                              input.requiredPermission,
-                            ]).pipe(
-                              Effect.map(({ freshness, permissions }) => {
-                                const decision = decideRetailPortalAccess({
-                                  authorizationOperation,
-                                  authorizationState,
-                                  authorizationStatus:
-                                    authorizationFreshness.status === 'CURRENT' && freshness.status === 'CURRENT'
-                                      ? 'AVAILABLE'
-                                      : 'INDETERMINATE',
-                                  bindingState: raw.state,
-                                  boundProfile: { ...input.profileRef, kind: 'RETAIL' },
-                                  grantedPermissions: permissions,
-                                  requestedPermission: input.requiredPermission,
-                                  requestedProfile: { ...input.profileRef, kind: 'RETAIL' },
-                                });
-                                return {
-                                  authorizationFreshness,
-                                  bindingRef: Option.some(resolvedBindingRef),
-                                  bindingState: Option.some(raw.state),
-                                  decision,
-                                  evaluatedAt: authorizationFreshness.observedAt,
-                                  profileRef: input.profileRef,
-                                  provenance: [
-                                    ...provenance,
-                                    {
-                                      freshness: authorizationFreshness,
-                                      projection: 'RETAIL_BINDING' as const,
-                                    },
-                                    { freshness, projection: 'OWNING_CAPABILITY' as const },
-                                  ],
-                                  requiredPermission: input.requiredPermission,
-                                } satisfies RetailAccessDecisionResponse;
-                              }),
-                            );
-                          },
-                        ),
-                      );
-                    /* oxlint-enable sonarjs/no-nested-functions */
+                    const { operation: authorizationOperation, state: authorizationState } = bindingAuthorization;
+                    // The binding row carries its final authorization, so the owner decides from it alone.
+                    const authorizationFreshness = {
+                      observedAt: raw.updatedAt,
+                      revision: String(raw.revision),
+                      sourceModuleId: 'commerce.customer-context' as const,
+                      status: 'CURRENT' as const,
+                    };
+                    const { freshness, permissions } = readRetailPermissionProjection({
+                      observedAt: raw.updatedAt,
+                      operation: authorizationOperation,
+                      state: authorizationState,
+                    });
+                    const decision = decideRetailPortalAccess({
+                      authorizationOperation,
+                      authorizationState,
+                      authorizationStatus: 'AVAILABLE',
+                      bindingState: raw.state,
+                      boundProfile: { ...input.profileRef, kind: 'RETAIL' },
+                      grantedPermissions: permissions,
+                      requestedPermission: input.requiredPermission,
+                      requestedProfile: { ...input.profileRef, kind: 'RETAIL' },
+                    });
+                    return Effect.succeed({
+                      authorizationFreshness,
+                      bindingRef: Option.some(resolvedBindingRef),
+                      bindingState: Option.some(raw.state),
+                      decision,
+                      evaluatedAt: authorizationFreshness.observedAt,
+                      profileRef: input.profileRef,
+                      provenance: [
+                        ...provenance,
+                        { freshness: authorizationFreshness, projection: 'RETAIL_BINDING' as const },
+                        { freshness, projection: 'OWNING_CAPABILITY' as const },
+                      ],
+                      requiredPermission: input.requiredPermission,
+                    } satisfies RetailAccessDecisionResponse);
                   },
                 ),
               );
@@ -3009,13 +2849,17 @@ const readServices = (
               const { operation: authorizationOperation, state: authorizationState } = bindingAuthorization;
               const authorizationFreshness = {
                 observedAt,
-                revision: raw.authorizationMutationId ?? String(raw.revision),
+                revision: String(raw.revision),
                 sourceModuleId: 'commerce.customer-context',
-                status: bindingAuthorizationIsCurrent(authorizationOperation, authorizationState)
-                  ? ('CURRENT' as const)
-                  : ('INDETERMINATE' as const),
+                status: 'CURRENT' as const,
               };
-              return readRetailPermissionProjection(raw.profileId, principalId, observedAt).pipe(
+              return Effect.succeed(
+                readRetailPermissionProjection({
+                  observedAt,
+                  operation: authorizationOperation,
+                  state: authorizationState,
+                }),
+              ).pipe(
                 Effect.map(({ freshness, permissions }): RetailPortalProfileBindingReadResponse => {
                   const binding = {
                     authorizationOperation,
@@ -3146,7 +2990,13 @@ export const profilePersistenceServicesForTransaction = (
   return {
     archiveCustomerProfile: lifecycleServices(transaction, scope, 'ARCHIVE', dependencies),
     attributeGuestRetailCustomer: guestServices(transaction, scope, dependencies),
-    bindRetailPortalProfile: bindingServices(transaction, scope, 'BIND', dependencies),
+    bindRetailPortalProfile: bindingServices(
+      transaction,
+      scope,
+      'BIND',
+      dependencies.portalAccess,
+      dependencies.resolveEnrollmentTargetBinding,
+    ),
     createCounterpartyPurchasingProfile: counterpartyServices(transaction, scope, dependencies),
     customerProfileRead: reads.customerProfileRead,
     customerProfileTradingGate: reads.customerProfileTradingGate,
@@ -3156,638 +3006,14 @@ export const profilePersistenceServicesForTransaction = (
     openProfileReconciliation: reconciliation.open,
     profileReconciliationRead: reads.profileReconciliationRead,
     reactivateCustomerProfile: lifecycleServices(transaction, scope, 'REACTIVATE', dependencies),
-    recoverRetailPortalProfileBinding: bindingServices(transaction, scope, 'RECOVER'),
+    recoverRetailPortalProfileBinding: bindingServices(transaction, scope, 'RECOVER', dependencies.portalAccess),
     resolveProfileReconciliation: reconciliation.resolve,
     retailAccessDecision: reads.retailAccessDecision,
     retailPortalProfileBindingRead: reads.retailPortalProfileBindingRead,
     retailPrincipalResolution: reads.retailPrincipalResolution,
-    revokeRetailPortalProfileBinding: bindingServices(transaction, scope, 'REVOKE'),
+    revokeRetailPortalProfileBinding: bindingServices(transaction, scope, 'REVOKE', dependencies.portalAccess),
     suspendCustomerProfile: lifecycleServices(transaction, scope, 'SUSPEND', dependencies),
   };
-};
-
-const retailBindingWorkerRejected = (
-  code: InstanceType<typeof RetailBindingAuthorizationMutationWorkerRejected>['code'],
-  reason: string,
-) => new RetailBindingAuthorizationMutationWorkerRejected({ code, reason });
-
-const retailPortalPermissionCodes: readonly RetailPortalPermissionCode[] = [...RETAIL_PORTAL_SELF_SERVICE_BASELINE];
-
-const workerBindingMatchesRequest = (
-  binding: BindingPayload,
-  request: RetailBindingAuthorizationMutationRequest,
-  expectedBindingState: BindingPayload['state'],
-  pendingAuthorizationState: RetailPortalBindingAuthorizationState,
-  terminalAuthorizationState: RetailPortalBindingAuthorizationState,
-): boolean =>
-  binding.bindingId === request.bindingRef.resourceId &&
-  binding.authorizationMutationId === request.mutationId &&
-  binding.profileId === request.profileRef.resourceId &&
-  binding.principalId === request.principalRef.resourceId &&
-  binding.state === expectedBindingState &&
-  binding.authorizationOperation === request.operation &&
-  binding.authorizationState !== undefined &&
-  [pendingAuthorizationState, terminalAuthorizationState].includes(binding.authorizationState);
-const workerBindingActorMatches = (binding: BindingPayload, actorPrincipalId: string | undefined): boolean =>
-  actorPrincipalId === undefined ||
-  binding.actorPrincipalId === undefined ||
-  binding.actorPrincipalId === actorPrincipalId;
-const authorizationPayloadHasValidState = (
-  payload: BindingAuthorizationPayload,
-  pendingAuthorizationState: RetailPortalBindingAuthorizationState,
-  terminalAuthorizationState: RetailPortalBindingAuthorizationState,
-): boolean => {
-  if (payload.authorizationState === terminalAuthorizationState) {
-    return payload.pendingCount === 0 && payload.terminalCount === retailPortalPermissionCodes.length;
-  }
-  return (
-    [pendingAuthorizationState, 'RECONCILIATION_REQUIRED'].includes(payload.authorizationState) &&
-    payload.pendingCount + payload.terminalCount <= retailPortalPermissionCodes.length
-  );
-};
-const authorizationPayloadMatchesBinding = (
-  payload: BindingAuthorizationPayload,
-  binding: BindingPayload,
-  request: RetailBindingAuthorizationMutationRequest,
-  pendingAuthorizationState: RetailPortalBindingAuthorizationState,
-  terminalAuthorizationState: RetailPortalBindingAuthorizationState,
-): boolean =>
-  payload.bindingId === binding.bindingId &&
-  payload.profileId === binding.profileId &&
-  payload.principalId === binding.principalId &&
-  payload.operation === request.operation &&
-  payload.authorizationOperation === request.operation &&
-  payload.revision === binding.revision &&
-  authorizationPayloadHasValidState(payload, pendingAuthorizationState, terminalAuthorizationState);
-const intentMatchesWorkerRequest = (
-  current: typeof BindingAuthorizationMutationPayloadSchema.Type,
-  intent: typeof BindingAuthorizationMutationPayloadSchema.Type,
-  request: RetailBindingAuthorizationMutationRequest,
-): boolean =>
-  current.actionInvocationId === request.mutationId &&
-  current.bindingId === request.bindingRef.resourceId &&
-  current.operation === request.operation &&
-  current.principalId === request.principalRef.resourceId &&
-  current.profileId === request.profileRef.resourceId &&
-  current.permission === intent.permission;
-const bindingFinalizationPayloadFromRow = (
-  row: RoutineRow | undefined,
-): BindingAuthorizationFinalizationPayload | undefined =>
-  row !== undefined &&
-  ['AUTHORIZATION_FINALIZED', 'AUTHORIZATION_ALREADY_FINAL'].includes(row.outcome) &&
-  row.payload !== null &&
-  Schema.is(BindingAuthorizationFinalizationPayloadSchema)(row.payload)
-    ? row.payload
-    : undefined;
-const bindingFinalizationMatchesRequest = (
-  payload: BindingAuthorizationFinalizationPayload,
-  binding: BindingPayload,
-  request: RetailBindingAuthorizationMutationRequest,
-  terminalAuthorizationState: RetailPortalBindingAuthorizationState,
-): boolean =>
-  payload.bindingId === request.bindingRef.resourceId &&
-  payload.profileId === request.profileRef.resourceId &&
-  payload.principalId === request.principalRef.resourceId &&
-  payload.operation === request.operation &&
-  payload.authorizationOperation === request.operation &&
-  payload.authorizationState === terminalAuthorizationState &&
-  payload.revision === binding.revision;
-
-const workerConflict = (reason: string) =>
-  Effect.fail(retailBindingWorkerRejected('RECONCILIATION_UNAVAILABLE', reason));
-
-/**
- * Worker-only owner adapter for the Retail Portal authorization request topics.
- *
- * The binding Action commits the owner row and the request outbox message together. The worker
- * therefore re-loads that exact binding before touching the authorization graph, and uses the
- * Action invocation (the request mutation id) as the completion source identity. A stale request
- * cannot grant a superseded binding because the owner row's current state and principal/profile
- * are checked before any external relationship write.
- */
-export const retailBindingAuthorizationMutationReconciliationForWorker = (
-  mutation: Pick<BusinessPermissionRelationshipMutationService, 'mutate'>,
-): RetailBindingAuthorizationMutationReconciliationService => {
-  const service: RetailBindingAuthorizationMutationReconciliationService = {
-    reconcile: (
-      scope: OutboxWorkerLegalEntityScope,
-      request: RetailBindingAuthorizationMutationRequest,
-      actorPrincipalId,
-    ) => {
-      const expectedBindingState = request.operation === 'grant' ? 'ACTIVE' : 'REVOKED';
-      const terminalAuthorizationState = request.operation === 'grant' ? 'ACTIVE' : 'REVOKED';
-      const pendingAuthorizationState = request.operation === 'grant' ? 'PENDING_GRANT' : 'PENDING_REVOKE';
-      const terminalEvidence = (
-        binding: typeof BindingPayloadSchema.Type,
-        finalized:
-          | typeof BindingAuthorizationMutationFinalizationPayloadSchema.Type
-          | typeof BindingAuthorizationFinalizationPayloadSchema.Type,
-        alreadyFinal: boolean,
-      ): RetailBindingAuthorizationMutationReconciliationResult => {
-        const effectiveAt =
-          'effectiveAt' in finalized ? finalized.effectiveAt : (finalized.finalizedAt ?? binding.updatedAt);
-        const revision = 'bindingRevision' in finalized ? finalized.bindingRevision : finalized.revision;
-        const commonPayload = {
-          bindingRef: request.bindingRef,
-          effectiveAt,
-          principalRef: request.principalRef,
-          profileRef: request.profileRef,
-          revision,
-          sellingLegalEntityRef: request.sellingLegalEntityRef,
-        };
-        const outcome = alreadyFinal ? ('ALREADY_FINAL' as const) : ('FINALIZED' as const);
-        const occurredAt = DateTime.toDateUtc(
-          DateTime.makeUnsafe('updatedAt' in finalized ? finalized.updatedAt : effectiveAt),
-        );
-        if (request.transition === 'activation') {
-          return {
-            outcome,
-            terminal: {
-              completionId: request.mutationId,
-              kind: 'ACTIVATION' as const,
-              occurredAt,
-              payload: { ...commonPayload, state: 'ACTIVE' as const },
-              sourceActionInvocationId: request.mutationId,
-            },
-          };
-        }
-        if (request.transition === 'recovery') {
-          return {
-            outcome,
-            terminal: {
-              completionId: request.mutationId,
-              kind: 'RECOVERY' as const,
-              occurredAt,
-              payload: { ...commonPayload, state: 'ACTIVE' as const },
-              sourceActionInvocationId: request.mutationId,
-            },
-          };
-        }
-        return {
-          outcome,
-          terminal: {
-            completionId: request.mutationId,
-            kind: 'REVOCATION' as const,
-            occurredAt,
-            payload: { ...commonPayload, state: 'REVOKED' as const },
-            sourceActionInvocationId: request.mutationId,
-          },
-        };
-      };
-      const requestScopeIsExact =
-        request.legalEntityId === scope.legalEntityId &&
-        request.bindingRef.tenantId === scope.tenantId &&
-        request.profileRef.tenantId === scope.tenantId &&
-        request.principalRef.tenantId === scope.tenantId &&
-        request.sellingLegalEntityRef.tenantId === scope.tenantId &&
-        request.sellingLegalEntityRef.resourceId === scope.legalEntityId;
-      const exactIntentSet = (intents: readonly (typeof BindingAuthorizationMutationPayloadSchema.Type)[]): boolean => {
-        const permissions = intents.map(({ permission }) => permission);
-        const mutations = intents.map(({ mutationId }) => mutationId);
-        const operations = new Set(intents.map(({ operation }) => operation));
-        const expected = new Set(retailPortalPermissionCodes);
-        return (
-          intents.length === retailPortalPermissionCodes.length &&
-          new Set(permissions).size === permissions.length &&
-          new Set(mutations).size === mutations.length &&
-          operations.size === 1 &&
-          operations.has(request.operation) &&
-          permissions.every((permission) => expected.has(permission)) &&
-          expected.size === permissions.length
-        );
-      };
-      const requestPermissionSetIsExact = (): boolean => {
-        const requested = request.permissionMutations;
-        if (requested === undefined) {
-          return false;
-        }
-        const permissions = requested.map(({ permission }) => permission);
-        const mutations = requested.map(({ mutationId }) => mutationId);
-        const expected = new Set(retailPortalPermissionCodes);
-        return (
-          requested.length === retailPortalPermissionCodes.length &&
-          new Set(permissions).size === permissions.length &&
-          new Set(mutations).size === mutations.length &&
-          requested.every(({ operation }) => operation === request.operation) &&
-          permissions.every((permission) => expected.has(permission)) &&
-          expected.size === permissions.length
-        );
-      };
-      const requestMatchesIntents = (
-        intents: readonly (typeof BindingAuthorizationMutationPayloadSchema.Type)[],
-      ): boolean => {
-        if (request.permissionMutations === undefined) {
-          return true;
-        }
-        if (
-          request.permissionMutations.length !== intents.length ||
-          new Set(request.permissionMutations.map(({ permission }) => permission)).size !==
-            request.permissionMutations.length ||
-          new Set(request.permissionMutations.map(({ mutationId }) => mutationId)).size !==
-            request.permissionMutations.length
-        ) {
-          return false;
-        }
-        const byPermission = new Map(intents.map((intent) => [intent.permission, intent]));
-        return request.permissionMutations.every((requested) => {
-          const intent = byPermission.get(requested.permission);
-          return (
-            intent !== undefined &&
-            intent.mutationId === requested.mutationId &&
-            requested.operation === request.operation &&
-            intent.operation === requested.operation
-          );
-        });
-      };
-      const intentMatchesBinding = (
-        intent: typeof BindingAuthorizationMutationPayloadSchema.Type,
-        binding: typeof BindingPayloadSchema.Type,
-      ): boolean =>
-        intent.actionInvocationId === request.mutationId &&
-        intent.bindingId === binding.bindingId &&
-        intent.profileId === binding.profileId &&
-        intent.principalId === binding.principalId &&
-        intent.operation === request.operation;
-      if (!requestScopeIsExact) {
-        return workerConflict('The Retail binding authorization request does not match the verified worker scope');
-      }
-      return scope.routineInvoker
-        .invoke(readBindingRoutine, [request.bindingRef.resourceId, request.principalRef.resourceId])
-        .pipe(
-          Effect.mapError((cause) =>
-            preserveFailureCause(
-              retailBindingWorkerRejected(
-                'RECONCILIATION_UNAVAILABLE',
-                'Retail binding authorization evidence is unavailable',
-              ),
-              cause,
-            ),
-          ),
-          Effect.flatMap(([row]) => {
-            const binding = availableBindingPayloadFromRow(row);
-            if (binding === undefined) {
-              return Effect.fail(
-                retailBindingWorkerRejected(
-                  'RECONCILIATION_UNAVAILABLE',
-                  'The Retail binding authorization request is not linked to an available binding',
-                ),
-              );
-            }
-            if (
-              !workerBindingMatchesRequest(
-                binding,
-                request,
-                expectedBindingState,
-                pendingAuthorizationState,
-                terminalAuthorizationState,
-              )
-            ) {
-              return workerConflict('The Retail binding authorization request does not match current owner state');
-            }
-            if (!workerBindingActorMatches(binding, actorPrincipalId)) {
-              return workerConflict('The Retail binding authorization actor does not match the owner receipt');
-            }
-            if (!requestPermissionSetIsExact()) {
-              return workerConflict('The Retail binding Permission mutation request set is not exact');
-            }
-            const target = {
-              kind: 'retail_profile' as const,
-              legalEntityId: scope.legalEntityId,
-              profileId: request.profileRef.resourceId,
-              tenantId: scope.tenantId,
-            };
-            return scope.routineInvoker
-              .invoke(readBindingAuthorizationRoutine, [request.bindingRef.resourceId, request.operation])
-              .pipe(
-                Effect.mapError((cause) =>
-                  preserveFailureCause(
-                    retailBindingWorkerRejected(
-                      'RECONCILIATION_UNAVAILABLE',
-                      'Retail Portal authorization intent evidence is unavailable',
-                    ),
-                    cause,
-                  ),
-                ),
-                Effect.flatMap(([authorization]) => {
-                  const authorizationPayload = bindingAuthorizationPayloadFromRow(authorization);
-                  if (authorizationPayload === undefined) {
-                    return Effect.fail(
-                      retailBindingWorkerRejected(
-                        'RECONCILIATION_UNAVAILABLE',
-                        'The Retail binding authorization intent set is unavailable',
-                      ),
-                    );
-                  }
-                  if (
-                    !authorizationPayloadMatchesBinding(
-                      authorizationPayload,
-                      binding,
-                      request,
-                      pendingAuthorizationState,
-                      terminalAuthorizationState,
-                    )
-                  ) {
-                    return Effect.fail(
-                      retailBindingWorkerRejected(
-                        'RECONCILIATION_UNAVAILABLE',
-                        'The Retail binding authorization intents do not match the owner receipt',
-                      ),
-                    );
-                  }
-                  // oxlint-disable-next-line sonarjs/no-nested-functions -- This helper intentionally captures the worker's scoped routine invoker for the current transaction.
-                  const readIntent = (mutationId: string) =>
-                    scope.routineInvoker.invoke(readBindingAuthorizationMutationRoutine, [mutationId]).pipe(
-                      Effect.mapError((cause) =>
-                        preserveFailureCause(
-                          retailBindingWorkerRejected(
-                            'RECONCILIATION_UNAVAILABLE',
-                            'Retail Portal Permission mutation intent is unavailable',
-                          ),
-                          cause,
-                        ),
-                      ),
-                      Effect.flatMap(([intent]) => {
-                        if (
-                          intent === undefined ||
-                          intent.outcome !== 'AUTHORIZATION_AVAILABLE' ||
-                          intent.payload === null ||
-                          !Schema.is(BindingAuthorizationMutationPayloadSchema)(intent.payload)
-                        ) {
-                          return Effect.fail(
-                            retailBindingWorkerRejected(
-                              'RECONCILIATION_UNAVAILABLE',
-                              'Retail Portal Permission mutation intent returned no durable state',
-                            ),
-                          );
-                        }
-                        return Effect.succeed(intent.payload);
-                      }),
-                    );
-                  type IntentProgress = Readonly<{
-                    readonly completed: boolean;
-                    readonly mutated: boolean;
-                  }>;
-                  /* oxlint-disable sonarjs/no-nested-functions -- Intent reconciliation intentionally captures the request, transaction scope, target, and transition states owned by this worker call. */
-                  const reconcileIntent = (
-                    intent: typeof BindingAuthorizationMutationPayloadSchema.Type,
-                  ): Effect.Effect<
-                    IntentProgress,
-                    InstanceType<typeof RetailBindingAuthorizationMutationWorkerRejected>
-                  > =>
-                    readIntent(intent.mutationId).pipe(
-                      Effect.flatMap(
-                        (
-                          current,
-                        ): Effect.Effect<
-                          IntentProgress,
-                          InstanceType<typeof RetailBindingAuthorizationMutationWorkerRejected>
-                        > => {
-                          if (!intentMatchesWorkerRequest(current, intent, request)) {
-                            return Effect.fail(
-                              retailBindingWorkerRejected(
-                                'RECONCILIATION_UNAVAILABLE',
-                                'Retail Portal Permission mutation intent scope is inconsistent',
-                              ),
-                            );
-                          }
-                          if (current.state === terminalAuthorizationState) {
-                            return Effect.succeed({ completed: true, mutated: false });
-                          }
-                          if (
-                            current.state !== pendingAuthorizationState &&
-                            current.state !== 'RECONCILIATION_REQUIRED'
-                          ) {
-                            return Effect.fail(
-                              retailBindingWorkerRejected(
-                                'RECONCILIATION_UNAVAILABLE',
-                                'Retail Portal Permission mutation intent is not retryable',
-                              ),
-                            );
-                          }
-                          const permissionResult = Schema.decodeResult(BusinessPermissionCodeSchema)(
-                            current.permission,
-                          );
-                          if (Result.isFailure(permissionResult)) {
-                            return Effect.fail(
-                              retailBindingWorkerRejected(
-                                'RECONCILIATION_UNAVAILABLE',
-                                'Retail Portal Permission mutation intent contains an invalid Permission code',
-                              ),
-                            );
-                          }
-                          return mutation
-                            .mutate({
-                              operation: request.operation,
-                              permission: permissionResult.success,
-                              principal: {
-                                principalId: request.principalRef.resourceId,
-                                tenantId: scope.tenantId,
-                              },
-                              target,
-                            })
-                            .pipe(
-                              Effect.map(() => true),
-                              Effect.orElseSucceed(() => false as const),
-                              Effect.flatMap(
-                                (
-                                  applied,
-                                ): Effect.Effect<
-                                  IntentProgress,
-                                  InstanceType<typeof RetailBindingAuthorizationMutationWorkerRejected>
-                                > => {
-                                  if (!applied) {
-                                    return Effect.succeed({ completed: false, mutated: false });
-                                  }
-                                  return scope.routineInvoker
-                                    .invoke(finalizeBindingAuthorizationMutationRoutine, [
-                                      current.mutationId,
-                                      request.operation,
-                                      terminalAuthorizationState,
-                                    ])
-                                    .pipe(
-                                      Effect.mapError((cause) =>
-                                        preserveFailureCause(
-                                          retailBindingWorkerRejected(
-                                            'RECONCILIATION_UNAVAILABLE',
-                                            'Retail Portal Permission mutation finalization is unavailable',
-                                          ),
-                                          cause,
-                                        ),
-                                      ),
-                                      Effect.flatMap(([finalized]) => {
-                                        if (
-                                          finalized === undefined ||
-                                          (finalized.outcome !== 'AUTHORIZATION_FINALIZED' &&
-                                            finalized.outcome !== 'AUTHORIZATION_ALREADY_FINAL') ||
-                                          finalized.payload === null ||
-                                          !Schema.is(BindingAuthorizationMutationFinalizationPayloadSchema)(
-                                            finalized.payload,
-                                          ) ||
-                                          finalized.payload.mutationId !== current.mutationId ||
-                                          finalized.payload.state !== terminalAuthorizationState
-                                        ) {
-                                          return Effect.fail(
-                                            retailBindingWorkerRejected(
-                                              'RECONCILIATION_UNAVAILABLE',
-                                              'Retail Portal Permission mutation finalization returned no terminal state',
-                                            ),
-                                          );
-                                        }
-                                        return Effect.succeed({
-                                          completed: true,
-                                          mutated: finalized.outcome === 'AUTHORIZATION_FINALIZED',
-                                        });
-                                      }),
-                                    );
-                                },
-                              ),
-                            );
-                        },
-                      ),
-                    );
-                  const reconcileAll = (
-                    intents: readonly (typeof BindingAuthorizationMutationPayloadSchema.Type)[],
-                  ): Effect.Effect<
-                    IntentProgress,
-                    InstanceType<typeof RetailBindingAuthorizationMutationWorkerRejected>
-                  > => {
-                    const [intent, ...remaining] = intents;
-                    if (intent === undefined) {
-                      return Effect.succeed({ completed: true, mutated: false });
-                    }
-                    return reconcileIntent(intent).pipe(
-                      Effect.filterOrElse(
-                        (progress) => !progress.completed,
-                        (progress) =>
-                          reconcileAll(remaining).pipe(
-                            Effect.map((remainingProgress) => ({
-                              completed: remainingProgress.completed,
-                              mutated: progress.mutated || remainingProgress.mutated,
-                            })),
-                          ),
-                      ),
-                    );
-                  };
-                  /* oxlint-enable sonarjs/no-nested-functions */
-                  const relationshipsApplied = scope.routineInvoker
-                    .invoke(stageBindingAuthorizationMutationsRoutine, [
-                      request.bindingRef.resourceId,
-                      request.principalRef.resourceId,
-                      request.mutationId,
-                      request.operation,
-                    ])
-                    .pipe(
-                      // oxlint-disable-next-line sonarjs/no-nested-functions -- This mapper intentionally stays in the transaction pipeline so its routine-failure type remains contextual.
-                      Effect.mapError((cause) =>
-                        preserveFailureCause(
-                          retailBindingWorkerRejected(
-                            'RECONCILIATION_UNAVAILABLE',
-                            'Retail Portal Permission mutation staging is unavailable',
-                          ),
-                          cause,
-                        ),
-                      ),
-                      // oxlint-disable-next-line sonarjs/no-nested-functions -- Staged-row validation intentionally captures the binding, request, exact-set checks, and transaction-local reconciler.
-                      Effect.flatMap((rows) => {
-                        const intents = rows.flatMap((entry) =>
-                          entry.outcome === 'AUTHORIZATION_STAGED' &&
-                          entry.payload !== null &&
-                          Schema.is(BindingAuthorizationMutationPayloadSchema)(entry.payload)
-                            ? [entry.payload]
-                            : [],
-                        );
-                        if (
-                          !exactIntentSet(intents) ||
-                          !intents.every((intent) => intentMatchesBinding(intent, binding)) ||
-                          !requestMatchesIntents(intents)
-                        ) {
-                          return Effect.fail(
-                            retailBindingWorkerRejected(
-                              'RECONCILIATION_UNAVAILABLE',
-                              'The Retail binding Permission mutation set is not exact',
-                            ),
-                          );
-                        }
-                        return reconcileAll(intents);
-                      }),
-                    );
-                  return relationshipsApplied.pipe(
-                    // oxlint-disable-next-line sonarjs/no-nested-functions -- Finalization intentionally captures the transaction scope, request, binding, actor, transition state, and accumulated progress.
-                    Effect.flatMap((progress) => {
-                      if (!progress.completed) {
-                        return Effect.succeed({ outcome: 'INDETERMINATE' as const });
-                      }
-                      return scope.routineInvoker
-                        .invoke(finalizeBindingAuthorizationRoutine, [
-                          request.bindingRef.resourceId,
-                          request.operation,
-                          binding.revision,
-                          request.mutationId,
-                          binding.updatedAt,
-                          binding.reason,
-                          binding.actorPrincipalId ?? actorPrincipalId ?? null,
-                        ])
-                        .pipe(
-                          Effect.mapError((cause) =>
-                            preserveFailureCause(
-                              retailBindingWorkerRejected(
-                                'RECONCILIATION_UNAVAILABLE',
-                                'Retail Portal authorization owner finalization is unavailable',
-                              ),
-                              cause,
-                            ),
-                          ),
-                          Effect.flatMap(([finalized]) => {
-                            if (finalized === undefined) {
-                              return Effect.fail(
-                                retailBindingWorkerRejected(
-                                  'RECONCILIATION_UNAVAILABLE',
-                                  'Retail Portal authorization owner finalization returned no terminal state',
-                                ),
-                              );
-                            }
-                            const finalPayload = bindingFinalizationPayloadFromRow(finalized);
-                            if (finalPayload === undefined) {
-                              return Effect.fail(
-                                retailBindingWorkerRejected(
-                                  'RECONCILIATION_UNAVAILABLE',
-                                  'Retail Portal authorization owner finalization returned no terminal state',
-                                ),
-                              );
-                            }
-                            if (
-                              !bindingFinalizationMatchesRequest(
-                                finalPayload,
-                                binding,
-                                request,
-                                terminalAuthorizationState,
-                              )
-                            ) {
-                              return Effect.fail(
-                                retailBindingWorkerRejected(
-                                  'RECONCILIATION_UNAVAILABLE',
-                                  'Retail Portal authorization owner finalization returned mismatched evidence',
-                                ),
-                              );
-                            }
-                            return Effect.succeed(
-                              terminalEvidence(
-                                binding,
-                                finalPayload,
-                                finalized.outcome === 'AUTHORIZATION_ALREADY_FINAL' && !progress.mutated,
-                              ),
-                            );
-                          }),
-                        );
-                    }),
-                  );
-                }),
-              );
-          }),
-        );
-    },
-  };
-  return Object.freeze(service);
 };
 
 export const reconcilePartyMergePersistenceForTransaction = (): ReconcilePartyMergePersistenceService => ({

@@ -6,7 +6,12 @@ import {
   prepareCatalogOpenSelectionPopulation,
   validatePreparedCatalogScope,
 } from '../services/catalog-open-selection-preflight.ts';
-import type { ActionHandlerContext, ActionServiceFactory, ActionServicePreflight } from '@app/core-runtime';
+import type {
+  ActionHandlerContext,
+  ActionServiceFactory,
+  ActionServicePreparationContext,
+  ActionServicePreflight,
+} from '@app/core-runtime';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 
@@ -67,20 +72,37 @@ const createSetCompositionActionServices = (
     })),
   );
 
-const prepareCreateSetCompositionActionServices: ActionServicePreflight<
+const prepareCreateSetCompositionActionServices = Effect.fn('prepareCreateSetCompositionActionServices')(
+  function* prepareServices(
+    _payload: typeof CreateSetCompositionPayloadSchema.Type,
+    context: ActionServicePreparationContext,
+  ) {
+    const population = yield* prepareCatalogOpenSelectionPopulation(context);
+    return (
+      transaction: Parameters<ActionServiceFactory<never>>[0],
+      scope: Parameters<ActionServiceFactory<never>>[1],
+      revision: Parameters<ActionServiceFactory<never>>[2],
+    ) =>
+      validatePreparedCatalogScope(context, scope, revision).pipe(
+        Effect.flatMap(() => createSetCompositionActionServices(transaction, { population, scope })),
+      );
+  },
+) satisfies ActionServicePreflight<
   typeof CreateSetCompositionPayloadSchema.Type,
   Effect.Success<ReturnType<typeof createSetCompositionActionServices>>,
-  never
-> = Effect.fn('prepareCreateSetCompositionActionServices')(function* prepareServices(_payload, context) {
-  const population = yield* prepareCatalogOpenSelectionPopulation(context);
-  return (transaction, scope, revision) =>
-    validatePreparedCatalogScope(context, scope, revision).pipe(
-      Effect.flatMap(() => createSetCompositionActionServices(transaction, { population, scope })),
-    );
-});
+  typeof SetCompositionActionError.Type
+>;
 
 export const createSetCompositionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.set-composition.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'set-composition', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.create-set-composition.access.v1',
@@ -91,7 +113,7 @@ export const createSetCompositionAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: actionKey,
       moduleKey: 'commerce.catalog',
       role: 'action',

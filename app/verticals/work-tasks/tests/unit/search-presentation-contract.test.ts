@@ -5,6 +5,7 @@ import { OntosShellContributionsSchema } from '@app/core-runtime';
 import { coreShellRouteParameterNames, interpretCoreSearchPresentationEntry } from '@app/core-runtime/search-contract';
 
 import { workTasksManifest } from '../../vertical.manifest.ts';
+import { tasksRead } from '../../src/search/tasks.provider.ts';
 
 const moduleId = 'work.tasks';
 const shell = workTasksManifest.publicSurface.shellContributions;
@@ -33,6 +34,10 @@ const resourceOf = (resourceType: string) => {
   }
   return resource;
 };
+
+it('publishes the actual provider risk and record selectors for Shell admission', () => {
+  expect(contributionOf('work.tasks.tasks').accessDeclaration).toEqual(tasksRead.descriptor.accessDeclaration);
+});
 
 it('round-trips the exact owner shell contribution wire shape', () => {
   expect(shell.search.filter(({ presentation }) => presentation !== undefined)).toHaveLength(1);

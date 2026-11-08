@@ -219,7 +219,7 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
             setTakenSku(sku.trim());
             return;
           }
-          setServerError(failure(outcome.reason, onReload));
+          setServerError(failure(outcome.reason, onReload, outcome.proposal));
           return;
         }
         clearForm();
@@ -425,7 +425,7 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
     runCommand(trimmed === '' ? receipt : { ...receipt, note: trimmed }, revision, (outcome) => {
       setBusy(false);
       if (!outcome.ok) {
-        setServerError(failure(outcome.reason, onReload));
+        setServerError(failure(outcome.reason, onReload, outcome.proposal));
         return;
       }
       clearForm();
@@ -554,7 +554,7 @@ export const PriceChangeDialog = ({
       (outcome) => {
         setBusy(false);
         if (!outcome.ok) {
-          setServerError(failure(outcome.reason, onReload));
+          setServerError(failure(outcome.reason, onReload, outcome.proposal));
           return;
         }
         setPercent(5);
@@ -656,7 +656,7 @@ export const CategoryDialog = ({
       (outcome) => {
         setBusy(false);
         if (!outcome.ok) {
-          setServerError(failure(outcome.reason, onReload));
+          setServerError(failure(outcome.reason, onReload, outcome.proposal));
           return;
         }
         setCategory('');

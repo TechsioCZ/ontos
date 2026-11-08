@@ -1,25 +1,43 @@
+import { commerceMarketCatalogRegistration } from '../../vertical.registration.ts';
+import { commerceMarketCatalogManifest } from '../../vertical.manifest.ts';
+import { HttpApi } from 'effect/http-api';
+import { createHash } from 'node:crypto';
 import {
+  ActiveApplicationCompositionUnavailableError,
+  validateActiveApplicationCompositionSnapshot,
+  OntosShellRuntimeContractSchema,
+  canonicalOntosPublicApiKey,
+  extractVerticalRuntimeSafeDescriptors,
+  OntosModuleDeploymentContractSchema,
+  DatabaseConfig,
+  GatewayAssertionRedemptionService,
+  parseDatabaseConfig,
   OwnerAuthorizationOverlay,
   ReadRuntime,
   runAction,
   findPostgresFailure,
   bindSelfApiKeyAction,
   ActiveApplicationCompositionSnapshotSchema,
-  transactionalOwnerAuthorization,
 } from '@app/core-runtime';
+import type { OwnerAuthorizationDecision, OwnerAuthorizationInput } from '@app/core-runtime';
+import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
+import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
+import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import {
-  makeModuleContractFixture,
-  makeApplicationCompositionSnapshotFixture,
-} from '@app/core-runtime/testing/module-contract';
+  grantTestTenantOwnerAccess,
+  liveFixtureSpiceDb,
+  markServicePrincipal,
+} from '@app/core-runtime/testing/tenant-access';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { eq, sql } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import {
+  Array as EffectArray,
   ConfigProvider,
   Context,
   Crypto,
@@ -47,7 +65,13 @@ import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
 import { assert, expect, it } from 'effect-rstest';
 
-import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
+import {
+  GatewayAssertionRedemptionDatabaseLive,
+  GatewayAssertionRedemptionLive,
+} from '../../api/auth/gateway-assertion-redemption.ts';
+import { StorefrontApplicationValidationUnavailable } from '../../src/integrations/current-storefront-application.ts';
+import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 
 import type { MarketDefinitionRevisionRef } from '../../shared/resources/market-definition-revision.ts';
 import type { PricingMarketSourceReceipt } from '../../shared/apis/pricing-current-market-evidence.ts';
@@ -63,6 +87,7 @@ import { marketHistoryRead } from '../../src/api/market-history.read.ts';
 import {
   COMMERCE_MARKET_CATALOG_TABLES,
   gatewayAssertionRedemptions,
+  marketRetirementAdmissions,
   commerceMarketCatalogRelations,
   marketCatalogCompletenessGenerations,
   marketDefinitionRevisions,
@@ -89,6 +114,88 @@ const actionKeys = [
   associateStorefrontAction,
   suspendMarketAction,
 ].map((registration) => registration.descriptor.actionKey);
+
+const sourceContractUnavailable = () =>
+  new ActiveApplicationCompositionUnavailableError({
+    reason: 'The source-qualified Market fixture contract is unavailable',
+  });
+
+const compareFixtureApiKeys = (left: string, right: string): -1 | 0 | 1 => {
+  const compared = left.localeCompare(right);
+  if (compared < 0) {
+    return -1;
+  }
+  if (compared > 0) {
+    return 1;
+  }
+  return 0;
+};
+const fixtureDigest = (document: string): string => createHash('sha256').update(document, 'utf-8').digest('hex');
+/** Controlled SOURCE fixture DTO from the actual owner; this is not a published receiver claim. */
+const makeMarketSourceContract = Effect.fn('MarketRevisionNative.sourceContract')(function* sourceContract() {
+  const owner = yield* Effect.try({
+    catch: sourceContractUnavailable,
+    try: () => extractVerticalRuntimeSafeDescriptors(commerceMarketCatalogRegistration),
+  });
+  const manifest = commerceMarketCatalogManifest;
+  const events = yield* Effect.all(
+    manifest.publicSurface.events.map((event) =>
+      Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))(
+        Schema.toJsonSchemaDocument(event.payloadSchema),
+      ).pipe(
+        Effect.map((document) => ({
+          key: event.key,
+          owningModuleId: event.owningModuleId,
+          payloadContract: fixtureDigest(`${document}\n`),
+          referencesResourceTypes: event.referencesResourceTypes,
+          tense: event.tense,
+          visibility: event.visibility,
+        })),
+      ),
+    ),
+  );
+  const apis = yield* Effect.forEach(Object.entries(manifest.publicSurface.api), ([key, api]) => {
+    if (!HttpApi.isHttpApi(api)) {
+      return Effect.fail(sourceContractUnavailable());
+    }
+    return Effect.succeed({
+      key: canonicalOntosPublicApiKey(owner.moduleId, key),
+      operationKeys: EffectArray.sort(
+        Object.values(api.groups).flatMap((group) =>
+          Object.values(group.endpoints).map((endpoint) =>
+            group.topLevel ? endpoint.identifier : `${group.identifier}.${endpoint.identifier}`,
+          ),
+        ),
+        compareFixtureApiKeys,
+      ),
+    });
+  });
+  const authoredManifest = {
+    activation: manifest.activation,
+    module: manifest.module,
+    publicSurface: {
+      actions: owner.actions,
+      api: apis,
+      businessPermissions: manifest.publicSurface.businessPermissions ?? [],
+      components: Object.values(manifest.publicSurface.components),
+      events,
+      operationContracts: owner.operationContracts,
+      reports: manifest.publicSurface.reports,
+      resourceTypes: manifest.publicSurface.resourceTypes,
+      search: manifest.publicSurface.search,
+      shellContributions: owner.shellContributions,
+    },
+  };
+  if (owner.requirements !== undefined) {
+    Object.assign(authoredManifest, { requirements: owner.requirements });
+  }
+  return yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema, { onExcessProperty: 'error' })({
+    deployment: { appId: ultramodernApiMarker.appId, buildMarker: ultramodernApiMarker.buildMarker },
+    manifest: authoredManifest,
+    runtime: { outboxSubscriptions: owner.outboxSubscriptions },
+    schemaVersion: '2',
+  });
+});
 
 const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* makeScenario(withRegistry: boolean) {
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
@@ -160,7 +267,9 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
   // Pre-authentication replay storage retains exactly its production SELECT/INSERT/DELETE privileges.
   yield* admin.execute(sql`grant usage on schema commerce_market_catalog to ${runtimeRole}`, 'objects');
   yield* Effect.forEach(
-    COMMERCE_MARKET_CATALOG_TABLES.filter((table) => table !== gatewayAssertionRedemptions),
+    COMMERCE_MARKET_CATALOG_TABLES.filter(
+      (table) => table !== gatewayAssertionRedemptions && table !== marketRetirementAdmissions,
+    ),
     (table) => admin.execute(sql`grant select,insert,update,delete on table ${table} to ${runtimeRole}`, 'objects'),
     { concurrency: 1 },
   );
@@ -183,25 +292,20 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
   );
   expect(replayPrivileges).toEqual({ canDelete: true, canInsert: true, canSelect: true, canUpdate: false });
   const registry = withRegistry ? yield* makeCurrentStorefrontNativeReceiver() : undefined;
-  const baseSnapshot =
-    registry === undefined
-      ? yield* makeApplicationCompositionSnapshotFixture(['commerce-market-catalog'], 'market-effective-revision')
-      : yield* makeApiKeyGatewayNativeComposition(
-          [
-            makeModuleContractFixture({
-              appId: 'commerce-market-catalog',
-              buildMarker: ultramodernApiMarker.buildMarker,
-              moduleId: moduleKey,
-            }),
-            makeModuleContractFixture({
-              appId: registry.deployment.appId,
-              buildMarker: registry.deployment.buildMarker,
-              moduleId: 'commerce.storefront-registry',
-            }),
-          ],
-          3_600_000,
-        );
-  const snapshot =
+  const marketContract = yield* makeMarketSourceContract();
+  const shellRuntimeDocument = yield* filesystem.readFileString(
+    new URL('../../../../apps/shell-super-app/dist/public/.well-known/ontos-shell-runtime.json', import.meta.url)
+      .pathname,
+  );
+  const shellRuntime = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
+    shellRuntimeDocument,
+  );
+  const baseSnapshot = yield* makeApiKeyGatewayNativeComposition(
+    registry === undefined ? [marketContract] : [marketContract, registry.contract],
+    3_600_000,
+    { document: shellRuntimeDocument, receiverDeployment: shellRuntime.deployment },
+  );
+  const snapshot = yield* validateActiveApplicationCompositionSnapshot(
     registry === undefined
       ? baseSnapshot
       : {
@@ -217,13 +321,15 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
                 : module,
             ),
           }),
-        };
+        },
+  );
   yield* isolated.publishInitialComposition(snapshot);
   const shell =
     registry === undefined
       ? undefined
       : yield* makeApiKeyGatewayNativeFixture({
           ownedDatabase: isolated,
+          relaySource: { sourceAppId: 'commerce-market-catalog' },
           snapshotJson: yield* Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(
             snapshot,
           ),
@@ -235,6 +341,7 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
     });
   }
   const baseConfiguration = {
+    access: 'allowed' as const,
     actionKeys: [
       ...actionKeys,
       bindSelfApiKeyAction.descriptor.actionKey,
@@ -242,19 +349,35 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
     ],
     adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
     allowedAudiences: ['commerce-market-catalog', 'storefront-registry'],
+    applicationComposition: { load: Effect.succeed(snapshot) },
     authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
     compositionRevision: snapshot.composition.revision,
+    expectedDeployment: ultramodernDeliveryUnit,
     moduleKeys: [moduleKey, 'commerce.storefront-registry'],
+    ownerRegistration: commerceMarketCatalogRegistration,
     runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
   };
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture(
       shell === undefined
         ? baseConfiguration
-        : { ...baseConfiguration, managerProviderSubjectId: shell.providerUserId },
+        : {
+            ...baseConfiguration,
+            managerProviderSubjectId: shell.providerUserId,
+            readerProviderSubjectId: shell.relaySourceProviderUserId,
+          },
     ),
     (value) => value.close().pipe(Effect.orDie),
   );
+  if (registry !== undefined) {
+    // The native Registry receiver runs the real v2 gate: the manager owns the Tenant, nobody else holds access.
+    yield* grantTestTenantOwnerAccess({
+      adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
+      legalEntityIds: [fixture.legalEntityId],
+      owner: fixture.manager,
+      spiceDb: yield* liveFixtureSpiceDb(fixture.permissionEnvironment),
+    });
+  }
   const crypto = yield* Crypto.Crypto;
   const [marketId, secondMarketId, associationId] = yield* Effect.all([
     crypto.randomUUIDv4(),
@@ -283,35 +406,6 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
   yield* fixture.grantResourceAccess(root, fixture.manager.principalId, 'writer');
   yield* fixture.grantResourceAccess(marketRef, fixture.manager.principalId, 'writer');
   yield* fixture.grantResourceAccess(secondMarketRef, fixture.manager.principalId, 'writer');
-  // Exact test-owned admission. Real Core scope/resource permissions and owner SQL remain active.
-  // This does not activate a production provider, default API adapter or publication authority.
-  const authorization = Layer.succeed(
-    OwnerAuthorizationOverlay,
-    transactionalOwnerAuthorization((_transaction, input) =>
-      Effect.succeed(
-        input.scope.tenantId === fixture.tenantId &&
-          input.scope.principalId === fixture.manager.principalId &&
-          (input.scope.legalEntityId === fixture.legalEntityId || input.scope.legalEntityId === undefined) &&
-          ((input.owningModuleKey === moduleKey &&
-            input.scope.legalEntityId === fixture.legalEntityId &&
-            (actionKeys.includes(input.operationKey) ||
-              [currentMarketCatalogRead, pricingCurrentMarketEvidenceRead, marketHistoryRead].some(
-                (registration) => registration.descriptor.readKey === input.operationKey,
-              ))) ||
-            (shell !== undefined &&
-              input.owningModuleKey === 'core.identity' &&
-              input.operationKey === bindSelfApiKeyAction.descriptor.actionKey) ||
-            (registry !== undefined &&
-              input.owningModuleKey === 'commerce.storefront-registry' &&
-              [
-                'commerce.storefront-registry.register-storefront-application',
-                'commerce.storefront-registry.api.current-storefront-application',
-              ].includes(input.operationKey)))
-          ? ('allowed' as const)
-          : ('unavailable' as const),
-      ),
-    ),
-  );
   if (registry !== undefined) {
     yield* fixture.grantResourceAccess(
       {
@@ -323,21 +417,109 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
       'writer',
     );
   }
+  // v2: the one access gate decides every protected read (O62), so the fixture's own scripted ALLOW
+  // admits the manager's reads. The suite's own refusals stay where v2 puts them: `denied` holds no
+  // company at all, so a read that requires one is refused while the trusted scope resolves (O28);
+  // `legalEntityOnly` selects the company but holds no capability for this read, and the owner
+  // overlay refuses exactly that capability for that principal (never a SpiceDB tuple).
+  // The reader binds only the relay-source key it was issued, tenant-wide and nothing else.
+  const relaySourceBind = (input: OwnerAuthorizationInput): boolean =>
+    input.scope.principalId === fixture.reader.principalId &&
+    input.owningModuleKey === 'core.identity' &&
+    input.operationKey === bindSelfApiKeyAction.descriptor.actionKey &&
+    input.scope.legalEntityId === undefined;
+  const managerAdmission = (input: OwnerAuthorizationInput): OwnerAuthorizationDecision => {
+    if (input.scope.principalId === fixture.legalEntityOnly.principalId && input.owningModuleKey === moduleKey) {
+      return 'denied';
+    }
+    const managerScoped =
+      input.scope.tenantId === fixture.tenantId &&
+      (input.scope.principalId === fixture.manager.principalId || relaySourceBind(input)) &&
+      (input.scope.legalEntityId === fixture.legalEntityId || input.scope.legalEntityId === undefined);
+    const admittedTarget =
+      (input.owningModuleKey === moduleKey &&
+        input.scope.legalEntityId === fixture.legalEntityId &&
+        (actionKeys.includes(input.operationKey) ||
+          [currentMarketCatalogRead, pricingCurrentMarketEvidenceRead, marketHistoryRead].some(
+            (registration) => registration.descriptor.readKey === input.operationKey,
+          ))) ||
+      (shell !== undefined &&
+        input.owningModuleKey === 'core.identity' &&
+        input.operationKey === bindSelfApiKeyAction.descriptor.actionKey) ||
+      (registry !== undefined &&
+        input.owningModuleKey === 'commerce.storefront-registry' &&
+        [
+          'commerce.storefront-registry.register-storefront-application',
+          'commerce.storefront-registry.api.current-storefront-application',
+        ].includes(input.operationKey));
+    return managerScoped && admittedTarget ? 'allowed' : 'unavailable';
+  };
+  const ownerAuthorization = Layer.succeed(OwnerAuthorizationOverlay, {
+    authorize: (_transaction, input) => Effect.succeed(managerAdmission(input)),
+  });
   // Build scoped Core clients once; retained Registry callbacks use this same live context.
-  const baseContext = yield* Layer.build(fixture.layer.pipe(Layer.provide(authorization)));
+  const baseContext = yield* Layer.build(fixture.layer.pipe(Layer.provide(ownerAuthorization)));
   const binding =
     shell === undefined ? undefined : yield* shell.issueAndBind(principal).pipe(Effect.provideContext(baseContext));
-  const context =
-    shell === undefined || binding === undefined
-      ? baseContext
-      : Context.add(
-          baseContext,
-          ConfigProvider.ConfigProvider,
-          ConfigProvider.fromEnvRecord({
-            ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY: Redacted.value(binding.secret),
-            ONTOS_SHELL_GATEWAY_BASE_URL: shell.baseUrl,
-          }),
-        );
+  const associationRuntime = yield* Effect.gen(function* verifiedAssociationContext() {
+    if (shell === undefined || binding === undefined) {
+      return {
+        context: baseContext,
+        verify: (_authorization: Redacted.Redacted) =>
+          Effect.fail(
+            new StorefrontApplicationValidationUnavailable({
+              code: 'storefront_application_validation_unavailable',
+              reason: 'This owner SQL scenario has no receiving gateway',
+            }),
+          ),
+      };
+    }
+    const relayBinding = yield* shell.issueRelaySourceAndBind(fixture.reader).pipe(Effect.provideContext(baseContext));
+    yield* admin.execute(
+      markServicePrincipal({ principalId: fixture.reader.principalId, tenantId: fixture.tenantId }),
+      'objects',
+    );
+    const provider = ConfigProvider.orElse(
+      ConfigProvider.fromEnvRecord({
+        ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: shell.compositionSourceUrl,
+        ONTOS_GATEWAY_ISSUER: shell.issuer,
+        ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(relayBinding.secret),
+        ONTOS_GATEWAY_PUBLIC_JWKS: shell.publicJwks,
+        ONTOS_SHELL_GATEWAY_BASE_URL: shell.baseUrl,
+      }),
+      yield* ConfigProvider.ConfigProvider,
+    );
+    const database = Layer.succeed(
+      DatabaseConfig,
+      yield* parseDatabaseConfig({ DATABASE_URL: isolated.connections.runtime.connectionString }),
+    );
+    const redemptionLayer = GatewayAssertionRedemptionLive.pipe(
+      Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+      Layer.provide(database),
+    );
+    const compositionSource = ActiveApplicationCompositionSourceLive.pipe(Layer.provide(FetchHttpClient.layer));
+    const receiving = yield* Layer.build(
+      Layer.mergeAll(ActionPrincipalVerifierLive, redemptionLayer).pipe(
+        Layer.provide(compositionSource),
+        Layer.provide(ConfigProvider.layer(provider)),
+      ),
+    );
+    const context = Context.add(Context.merge(baseContext, receiving), ConfigProvider.ConfigProvider, provider);
+    return {
+      context,
+      verify: (authorization: Redacted.Redacted) =>
+        GatewayAssertionRedemptionService.pipe(
+          Effect.flatMap((redemption) =>
+            bindGatewayPrincipalVerifier('commerce-market-catalog', ultramodernApiMarker).verifyAndRedeem(
+              authorization,
+              { redemption },
+            ),
+          ),
+          Effect.provideContext(context),
+        ),
+    };
+  });
+  const { context } = associationRuntime;
   const storefront =
     registry === undefined || shell === undefined
       ? undefined
@@ -492,21 +674,39 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
       )
       .pipe(Effect.provideContext(context));
   const associate = (basis: { readonly definitionRevisionRef: MarketDefinitionRevisionRef }) =>
-    runAction({
-      payload: {
-        associationId,
-        channel: 'B2C',
-        effectivePeriod: { startsAt: DateTime.formatIso(startsAt) },
-        expectedMarketDefinitionRevisionRef: basis.definitionRevisionRef,
-        marketRef,
-        provenance: { kind: 'CONFIGURATION_ACTION', reference: 'native-revision' },
-        reason: 'Native eligibility basis',
-        sellingLegalEntityRef: sellerRef,
-        storefrontRef: { appId: 'native-storefront', tenantId: fixture.tenantId },
-      },
-      principal,
-      registration: associateStorefrontAction,
-      transport: { correlationId: 'market-associate', idempotencyKey: 'associate' },
+    Effect.gen(function* verifiedNativeAssociation() {
+      if (shell === undefined || binding === undefined) {
+        return yield* new StorefrontApplicationValidationUnavailable({
+          code: 'storefront_application_validation_unavailable',
+          reason: 'This owner SQL scenario has no Storefront receiver',
+        });
+      }
+      const admitted = yield* issueApiKeyGatewayContext(
+        {
+          audience: 'commerce-market-catalog',
+          compositionRevision: snapshot.composition.revision,
+          legalEntityId: fixture.legalEntityId,
+        },
+        { apiKey: binding.secret, baseUrl: shell.baseUrl, requestCorrelation: 'market-associate' },
+      );
+      const verifiedPrincipal = yield* associationRuntime.verify(Redacted.make(`Bearer ${admitted.token}`));
+      expect(verifiedPrincipal.principalId).toBe(principal.principalId);
+      return yield* runAction({
+        payload: {
+          associationId,
+          channel: 'B2C',
+          effectivePeriod: { startsAt: DateTime.formatIso(startsAt) },
+          expectedMarketDefinitionRevisionRef: basis.definitionRevisionRef,
+          marketRef,
+          provenance: { kind: 'CONFIGURATION_ACTION', reference: 'native-revision' },
+          reason: 'Native eligibility basis',
+          sellingLegalEntityRef: sellerRef,
+          storefrontRef: { appId: 'native-storefront', tenantId: fixture.tenantId },
+        },
+        principal: verifiedPrincipal,
+        registration: associateStorefrontAction,
+        transport: { correlationId: 'market-associate', idempotencyKey: 'associate' },
+      });
     }).pipe(Effect.provideContext(context));
   // Native eligibility routine under genuine owner scope; no forged trusted Storefront context.
   // Full Storefront gateway admission is a separate boundary from this owner SQL selection proof.
@@ -812,7 +1012,9 @@ it.live('keeps exact identities, channels, completeness and unprovable time fail
         const missingScope = yield* runtime
           .runRead({
             input: request,
-            principal: { ...scenario.fixture.denied, legalEntityId: scenario.fixture.legalEntityId },
+            // The fixture's `denied` actor holds no company at all: a read that requires a selected
+            // Legal Entity is refused while the trusted scope is resolved (O28).
+            principal: scenario.fixture.denied,
             registration: pricingCurrentMarketEvidenceRead,
             transport: { correlationId: 'missing-scope' },
           })
@@ -821,6 +1023,8 @@ it.live('keeps exact identities, channels, completeness and unprovable time fail
         const missingPermission = yield* runtime
           .runRead({
             input: request,
+            // `legalEntityOnly` selects the company but holds no capability for this read: the one
+            // access gate refuses the capability while the company stays selectable (O62).
             principal: scenario.fixture.legalEntityOnly,
             registration: pricingCurrentMarketEvidenceRead,
             transport: { correlationId: 'missing-permission' },

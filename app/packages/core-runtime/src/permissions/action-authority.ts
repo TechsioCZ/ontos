@@ -1,140 +1,253 @@
-import { v1 } from '@authzed/authzed-node';
-import { Array as EffectArray, Context, Effect, Layer } from 'effect';
+import { DateTime, Effect, Layer, Result } from 'effect';
 
-import type { ActionPermissionCheckError } from '../actions/errors.ts';
+import { ActionPermissionCheckError } from '../actions/errors.ts';
 import {
-  SPICEDB_CHECK_TIMEOUT_MS,
-  acquireSpiceDbClientResource,
-  createSpiceDbPermissionClient,
-  fullyConsistent,
-} from './client.ts';
-import type { SpiceDbPermissionClient } from './client.ts';
-import { loadSpiceDbConfig } from './config.ts';
+  decodeAccessActor,
+  decodeAccessDeclaration,
+  decodeAccessWorkload,
+} from '../authorization/access-declaration.ts';
+import type { AccessDeclarationOwner } from '../authorization/access-declaration.ts';
+import type { AccessDecisionGate, GateCarrier } from '../access/enforcement/contract.ts';
+import { withOptional } from '../access/decision/optional.ts';
+import { coreActionCatalog } from '../modules/actions/catalog.ts';
 import {
-  SPICEDB_EXECUTE_PERMISSION,
-  SPICEDB_PROPOSE_PERMISSION,
-  actionReference,
-  checkFailure,
-  classifyPermissionship,
-  principalReference,
-  runCheck,
-} from './service.ts';
-import type { ActionPermissionDecision, ActionPermissionTargetInput } from './service.ts';
+  ActiveApplicationCompositionService,
+  validateActiveApplicationCompositionSnapshot,
+} from '../modules/active-application-composition.ts';
+import { buildApplicationCompositionCatalog } from '../modules/application-composition-catalog.ts';
+import type { InstalledModuleCatalog } from '../modules/catalog.ts';
+import type { OntosActionContract } from '../modules/manifest.ts';
+import type { OperationalScope } from '../operations/context.ts';
+import type { LegalEntityScope } from '../operations/legal-entity-scope.ts';
+import { bindLiveAccessGate } from '../operations/access-gate.ts';
+import type { AccessDecisionRequirements } from '../operations/access-gate.ts';
+import { ActionAuthority } from './action-authority-contract.ts';
+import type { ActionAuthorityService, ScopedActionAuthority } from './action-authority-contract.ts';
+import type { ActionPermissionDecision } from './service.ts';
 
-export interface ScopedActionAuthority extends ActionPermissionTargetInput {
-  readonly execute: ActionPermissionDecision;
-  readonly propose: ActionPermissionDecision;
+/**
+ * The canonical Action-authority seam. Its tag and types live in `./action-authority-contract.ts` so a
+ * caller that only needs the service identifier never imports the Action catalog; the live
+ * implementation below resolves each Action key against the installed catalog through the one gate.
+ */
+export { ActionAuthority } from './action-authority-contract.ts';
+export type {
+  ActionAuthorityQuery,
+  ActionAuthorityService,
+  ScopedActionAuthority,
+} from './action-authority-contract.ts';
+
+/**
+ * One Action's declared authority, resolved from the installed catalog: the exact carrier the
+ * descriptor carries and the legal-entity scope it was declared with. It is the bridge between the
+ * Action key a caller knows and the one v2 question the gate answers.
+ */
+export interface DeclaredActionAuthority {
+  readonly actionKey: string;
+  readonly carrier: GateCarrier;
+  readonly legalEntityScope: LegalEntityScope;
 }
 
-export interface ActionAuthorityService {
-  readonly checkActionAuthorities: (
-    targets: readonly ActionPermissionTargetInput[],
-  ) => Effect.Effect<readonly ScopedActionAuthority[], ActionPermissionCheckError>;
-  readonly checkActionProposalPermission: (
-    input: ActionPermissionTargetInput,
-  ) => Effect.Effect<ActionPermissionDecision, ActionPermissionCheckError>;
-}
-
-const checkBulkPair = Effect.fn('ActionAuthority.checkBulkPair')(function* checkBulkPair(
-  expected: v1.CheckBulkPermissionsRequestItem | undefined,
-  pair: v1.CheckBulkPermissionsPair,
-) {
-  if (
-    expected === undefined ||
-    pair.request === undefined ||
-    v1.CheckBulkPermissionsRequestItem.toJsonString(pair.request) !==
-      v1.CheckBulkPermissionsRequestItem.toJsonString(expected) ||
-    pair.response.oneofKind !== 'item'
-  ) {
-    return yield* checkFailure();
-  }
-  const decision = yield* classifyPermissionship(pair.response.item);
-  return decision === 'has' ? ('allowed' as const) : ('denied' as const);
-});
-
-const checkAuthorityBatch = Effect.fn('ActionAuthority.checkBatch')(function* checkAuthorityBatch(
-  client: SpiceDbPermissionClient,
-  targets: readonly ActionPermissionTargetInput[],
-) {
-  const items = targets.flatMap((target) =>
-    [SPICEDB_EXECUTE_PERMISSION, SPICEDB_PROPOSE_PERMISSION].map((permission) =>
-      v1.CheckBulkPermissionsRequestItem.create({
-        permission,
-        resource: actionReference(target),
-        subject: principalReference(target.principalId),
-      }),
+/**
+ * The decoded carrier of one descriptor, in the exact shape the gate decides with. Core's own
+ * registrations and an installed manifest both expose a carrier whose authored spellings (plain caller
+ * app IDs, a plain access key) still have to be decoded into the frozen, branded form the gate reads; an
+ * installed contract carries one already decoded and re-decoding it is a no-op. Definition time already
+ * validated every carrier against its entrypoint, so a value that no longer decodes is a Core defect: it
+ * is dropped, and the gate then refuses that Action (`deny.declaration_missing`, `deny.actor_forbidden`)
+ * instead of admitting an unproved call.
+ */
+const declaredCarrierOf = (descriptor: {
+  readonly accessActor?: unknown;
+  readonly accessDeclaration?: unknown;
+  readonly accessWorkload?: unknown;
+  readonly entrypoint: AccessDeclarationOwner;
+}): GateCarrier => {
+  const owner = descriptor.entrypoint;
+  const declaration =
+    descriptor.accessDeclaration === undefined
+      ? undefined
+      : Result.getOrUndefined(decodeAccessDeclaration(descriptor.accessDeclaration, owner));
+  const actor =
+    descriptor.accessActor === undefined
+      ? undefined
+      : Result.getOrUndefined(decodeAccessActor(descriptor.accessActor, owner));
+  const workload =
+    descriptor.accessWorkload === undefined
+      ? undefined
+      : Result.getOrUndefined(decodeAccessWorkload(descriptor.accessWorkload, owner));
+  return Object.freeze(
+    withOptional(
+      withOptional(withOptional({}, 'accessActor', actor), 'accessDeclaration', declaration),
+      'accessWorkload',
+      workload,
     ),
   );
-  const response = yield* client
-    .checkBulkPermissions(
-      v1.CheckBulkPermissionsRequest.create({
-        consistency: fullyConsistent,
-        items,
-        withTracing: false,
-      }),
-    )
-    .pipe(Effect.mapError(checkFailure));
-  if (response.pairs.length !== items.length) {
-    return yield* checkFailure();
-  }
-  const decisions = yield* Effect.forEach(response.pairs, (pair, index) => checkBulkPair(items[index], pair), {
-    concurrency: 1,
-  });
-  return targets.map((target, index): ScopedActionAuthority => ({
-    ...target,
-    execute: decisions[index * 2] ?? 'denied',
-    propose: decisions[index * 2 + 1] ?? 'denied',
-  }));
-});
+};
 
-/** Exact fully consistent metadata in bounded batches; proposal authority never grants execution. */
-export const makeActionAuthorityService = (client: SpiceDbPermissionClient): ActionAuthorityService => ({
-  checkActionAuthorities: Effect.fn('ActionAuthority.checkActionAuthorities')(function* checkActionAuthorities(
-    targets: readonly ActionPermissionTargetInput[],
-  ) {
-    const batches = yield* Effect.forEach(
-      EffectArray.chunksOf(targets, 100),
-      (batch) => checkAuthorityBatch(client, batch),
+const carrierOfContract = (contract: OntosActionContract): GateCarrier => declaredCarrierOf(contract);
+
+const carrierOfCoreDescriptor = (descriptor: (typeof coreActionCatalog)[number]): GateCarrier =>
+  declaredCarrierOf(descriptor);
+
+/** Every Action the runtime can decide, Core's own and the installed modules' alike. */
+export const declaredActionAuthorities = (
+  catalog: InstalledModuleCatalog,
+): ReadonlyMap<string, DeclaredActionAuthority> => {
+  const declared = new Map<string, DeclaredActionAuthority>();
+  for (const descriptor of coreActionCatalog) {
+    declared.set(
+      descriptor.actionKey,
+      Object.freeze({
+        actionKey: descriptor.actionKey,
+        carrier: carrierOfCoreDescriptor(descriptor),
+        legalEntityScope: descriptor.legalEntityScope,
+      }),
+    );
+  }
+  for (const { manifest } of catalog.contracts) {
+    for (const action of manifest.publicSurface.actions) {
+      declared.set(
+        action.actionKey,
+        Object.freeze({
+          actionKey: action.actionKey,
+          carrier: carrierOfContract(action),
+          legalEntityScope: action.legalEntityScope,
+        }),
+      );
+    }
+  }
+  return declared;
+};
+
+/** An Action the installed catalog does not declare is decided with no carrier: the gate denies it. */
+const UNDECLARED_CARRIER: GateCarrier = Object.freeze({});
+
+const authorityUnavailable = (cause?: unknown): ActionPermissionCheckError => {
+  const failure = new ActionPermissionCheckError({
+    code: 'action_permission_check_failed',
+    reason: 'Action authority could not be decided',
+  });
+  return cause === undefined
+    ? failure
+    : Object.defineProperty(failure, 'cause', {
+        configurable: false,
+        enumerable: false,
+        value: cause,
+        writable: false,
+      });
+};
+
+/** The gate's outcome as the two Action questions; UNAVAILABLE is a retryable failure, never a denial. */
+const actionDecisions = (
+  outcome: 'ALLOWED' | 'DENIED' | 'NEEDS_APPROVAL' | 'UNAVAILABLE',
+): Readonly<{ execute: ActionPermissionDecision; propose: ActionPermissionDecision }> | undefined => {
+  if (outcome === 'UNAVAILABLE') {
+    return undefined;
+  }
+  return Object.freeze({
+    execute: outcome === 'ALLOWED' ? ('allowed' as const) : ('denied' as const),
+    propose: outcome === 'DENIED' ? ('denied' as const) : ('allowed' as const),
+  });
+};
+
+/**
+ * The Action-authority seam over the one access gate. It resolves each Action key to its declared
+ * carrier and asks the gate the same question every other protected entrypoint asks; a decision that
+ * cannot be proven is a retryable failure, never an allow and never a second engine.
+ */
+export const makeActionAuthorityService = ({
+  declared,
+  gate,
+  now,
+}: {
+  readonly declared: ReadonlyMap<string, DeclaredActionAuthority>;
+  readonly gate: Pick<(typeof AccessDecisionGate)['Service'], 'decide'>;
+  readonly now: Date;
+}): ActionAuthorityService => {
+  const decideOne = (authority: DeclaredActionAuthority | undefined, scope: OperationalScope) =>
+    gate.decide({
+      carrier: authority?.carrier ?? UNDECLARED_CARRIER,
+      legalEntityScope: authority?.legalEntityScope ?? 'optional',
+      now,
+      scope,
+    });
+
+  const checkActionAuthorities: ActionAuthorityService['checkActionAuthorities'] = Effect.fn(
+    'ActionAuthority.checkActionAuthorities',
+  )(function* checkActionAuthorities(input) {
+    const decided = yield* Effect.forEach(
+      input.actionKeys,
+      (actionKey) =>
+        decideOne(declared.get(actionKey), input.scope).pipe(
+          Effect.map((decision) => ({ actionKey, decisions: actionDecisions(decision.outcome) })),
+        ),
       { concurrency: 1 },
     );
-    return batches.flat();
-  }),
-  checkActionProposalPermission: Effect.fn('ActionAuthority.checkProposal')(function* checkActionProposalPermission(
-    input: ActionPermissionTargetInput,
-  ) {
-    const decision = yield* runCheck(
-      client,
-      v1.CheckPermissionRequest.create({
-        consistency: fullyConsistent,
-        permission: SPICEDB_PROPOSE_PERMISSION,
-        resource: actionReference(input),
-        subject: principalReference(input.principalId),
-      }),
-    );
-    return decision === 'has' ? ('allowed' as const) : ('denied' as const);
-  }),
-});
+    const answers: ScopedActionAuthority[] = [];
+    for (const { actionKey, decisions } of decided) {
+      if (decisions === undefined) {
+        return yield* authorityUnavailable();
+      }
+      answers.push(Object.freeze({ actionKey, execute: decisions.execute, propose: decisions.propose }));
+    }
+    return Object.freeze(answers);
+  });
 
-export class ActionAuthority extends Context.Service<ActionAuthority, ActionAuthorityService>()(
-  '@app/core-runtime/permissions/action-authority/ActionAuthority',
-) {}
+  const checkActionProposalPermission: ActionAuthorityService['checkActionProposalPermission'] = Effect.fn(
+    'ActionAuthority.checkProposal',
+  )(function* checkActionProposalPermission(input) {
+    const decision = yield* decideOne(declared.get(input.actionKey), input.scope);
+    const decisions = actionDecisions(decision.outcome);
+    return decisions === undefined ? yield* authorityUnavailable() : decisions.propose;
+  });
 
-/** The request owns one client, closed by its scope on success, failure and interruption. */
-export const ActionAuthorityLive = Layer.effect(
+  return Object.freeze({ checkActionAuthorities, checkActionProposalPermission });
+};
+
+/**
+ * The gate as the Action-authority seam uses it, resolved once at wiring (CUTOVER-PLAN §3.1). The
+ * carrier index is rebuilt per call from the active composition, so an installed module's Action is
+ * decided by exactly the declaration it published and a withdrawn one denies.
+ */
+export const ActionAuthorityLive: Layer.Layer<
+  ActionAuthority,
+  never,
+  // The gate is the seam; its five enforcement ports and the active composition are what the binding
+  // reads through, so the application root provides exactly these (CUTOVER-PLAN §3.1 step 8).
+  AccessDecisionGate | AccessDecisionRequirements | ActiveApplicationCompositionService
+> = Layer.effect(
   ActionAuthority,
   Effect.gen(function* makeActionAuthorityLive() {
-    const configuration = yield* loadSpiceDbConfig().pipe(Effect.mapError(checkFailure));
-    const client = yield* acquireSpiceDbClientResource(
-      () => createSpiceDbPermissionClient(configuration, SPICEDB_CHECK_TIMEOUT_MS),
-      checkFailure,
-    );
-    return makeActionAuthorityService(client);
-  }).pipe(
-    Effect.catchTag('ActionPermissionCheckError', (failure) =>
-      Effect.succeed({
-        checkActionAuthorities: () => Effect.fail(failure),
-        checkActionProposalPermission: () => Effect.fail(failure),
-      }),
-    ),
-  ),
+    const gate = yield* bindLiveAccessGate;
+    const composition = yield* ActiveApplicationCompositionService;
+    const withDeclared = <Value, Failure, Requirements>(
+      body: (declared: ReadonlyMap<string, DeclaredActionAuthority>) => Effect.Effect<Value, Failure, Requirements>,
+    ) =>
+      composition.load.pipe(
+        Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+        Effect.flatMap((snapshot) => buildApplicationCompositionCatalog(snapshot.composition)),
+        Effect.mapError(authorityUnavailable),
+        Effect.flatMap((catalog) => body(declaredActionAuthorities(catalog))),
+      );
+    const nowDate = DateTime.nowAsDate;
+    return Object.freeze<ActionAuthorityService>({
+      checkActionAuthorities: (input) =>
+        nowDate.pipe(
+          Effect.flatMap((now) =>
+            withDeclared((declared) =>
+              makeActionAuthorityService({ declared, gate, now }).checkActionAuthorities(input),
+            ),
+          ),
+        ),
+      checkActionProposalPermission: (input) =>
+        nowDate.pipe(
+          Effect.flatMap((now) =>
+            withDeclared((declared) =>
+              makeActionAuthorityService({ declared, gate, now }).checkActionProposalPermission(input),
+            ),
+          ),
+        ),
+    });
+  }),
 );

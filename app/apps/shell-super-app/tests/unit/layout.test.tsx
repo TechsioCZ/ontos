@@ -89,6 +89,13 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
     language: 'en',
     t: (key: string) =>
       ({
+        'shell.accessAdmin.accessible.navigation': 'Access administration',
+        'shell.accessAdmin.navigation.approvals': 'Approvals',
+        'shell.accessAdmin.navigation.changes': 'Permission changes',
+        'shell.accessAdmin.navigation.label': 'Access administration',
+        'shell.accessAdmin.navigation.people': 'People',
+        'shell.accessAdmin.navigation.roles': 'Roles',
+        'shell.accessAdmin.navigation.why': 'Why?',
         'shell.auth.logout.action': 'Logout',
         'shell.auth.logout.pending': 'Logging out…',
         'shell.dashboard.account.label': 'Account menu',
@@ -205,6 +212,7 @@ const tenantProps = {
   unavailableDeployments: [],
 };
 const testingWorkspaceTitle = 'Testing workspace';
+const approvalsTitle = 'Approvals';
 
 afterEach(() => {
   cleanup();
@@ -351,6 +359,34 @@ test('supports module pages with their own heading and preserves their content',
 
   expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
   expect(screen.getByText('Module content')).toBeTruthy();
+});
+
+test('offers access administration in its own landmark and marks the current page', () => {
+  render(
+    <AuthenticatedDashboardLayout
+      {...tenantProps}
+      currentAccessPage="approvals"
+      identity={identity}
+      logoutPending={false}
+      navigation={navigation}
+      onLogout={noopLogout}
+      title={approvalsTitle}
+    >
+      <section>Page-specific content</section>
+    </AuthenticatedDashboardLayout>,
+  );
+
+  expect(screen.getByRole('region', { name: 'Access administration' })).toBeTruthy();
+  const links = [...screen.getByRole('navigation', { name: 'Access administration' }).querySelectorAll('a')];
+  expect(links.map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
+    ['Roles', '/en/access/roles'],
+    ['People', '/en/access/people'],
+    ['Permission changes', '/en/access/changes'],
+    ['Approvals', '/en/access/approvals'],
+    ['Why?', '/en/access/why'],
+  ]);
+  expect(links.map((link) => link.getAttribute('aria-current'))).toEqual([null, null, null, 'page', null]);
+  expect(screen.getAllByRole('heading', { name: approvalsTitle })).toHaveLength(1);
 });
 
 test('keeps Home as the only navigation link when no active modules are supplied', () => {

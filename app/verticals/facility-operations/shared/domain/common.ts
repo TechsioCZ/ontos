@@ -126,8 +126,9 @@ export const AgendaIdSchema = Schema.Literals(['assets', 'meters', 'security', '
 export type AgendaId = typeof AgendaIdSchema.Type;
 
 /**
- * `operational` agendas are readable with `facility.operations.read_operational` (external persona);
- * `restricted` agendas (finance values, documents, security) need `facility.operations.read_all` / `write_all`.
+ * `operational` agendas are readable through the parent records read (`facility.operations.api-records.read`,
+ * the external persona's whole facility reach); `restricted` agendas (finance values, purchasing, documents,
+ * assets, security) need its restricted field group (`facility.operations.records-restricted.read`) as well.
  */
 export const AgendaSensitivitySchema = Schema.Literals(['operational', 'restricted']);
 export type AgendaSensitivity = typeof AgendaSensitivitySchema.Type;

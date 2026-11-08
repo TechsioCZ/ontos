@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug publish-product-configuration
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,6 +11,7 @@ import {
 } from '../actions/publish-product-configuration.ts';
 
 export { PublishProductConfigurationPayloadSchema } from '../actions/publish-product-configuration.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const PublishProductConfigurationActionInvalidProblemSchema = makeProblemDetailsSchema(
   'PublishProductConfigurationActionInvalidProblem',
@@ -24,6 +26,7 @@ export const PublishProductConfigurationActionForbiddenProblemSchema = makeProbl
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -133,7 +136,7 @@ export const PublishProductConfigurationActionApi = HttpApi.make('PublishProduct
       HttpApiEndpoint.post('execute', '/catalog/actions/publish-product-configuration', {
         error: actionErrors,
         payload: Schema.toEncoded(PublishProductConfigurationPayloadSchema),
-        success: PublishProductConfigurationResultSchema,
+        success: [ActionProposalAcceptedSchema, PublishProductConfigurationResultSchema],
       }),
     )
     .middleware(PublishProductConfigurationActionSchemaErrorMiddleware),

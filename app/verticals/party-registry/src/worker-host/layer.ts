@@ -12,14 +12,10 @@ import type {
   CoreSearchProjectionStore,
   CoreSearchWorkerSnapshot,
   OutboxRuntime,
-  ResourceContainmentRelationshipMutation,
 } from '@app/core-runtime';
-import {
-  makeDatabaseConfigLive,
-  OutboxWorkerInfrastructureLive,
-  ResourceContainmentRelationshipMutationLive,
-} from '@app/core-runtime/outbox/worker';
+import { makeDatabaseConfigLive, OutboxWorkerInfrastructureLive } from '@app/core-runtime/outbox/worker';
 import { Layer } from 'effect';
+import type { Crypto } from 'effect';
 
 import {
   PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
@@ -54,14 +50,9 @@ type OutboxWorkerHandlerLayers = Readonly<{
   projector: Layer.Layer<
     PartySearchProjector,
     never,
-    | CoreSearchIngestion
-    | CoreSearchProjectionStore
-    | PartySearchProjectionSource
-    | ResourceContainmentRelationshipMutation
+    CoreSearchIngestion | CoreSearchProjectionStore | PartySearchProjectionSource
   >;
   projectionSource: Layer.Layer<PartySearchProjectionSource, never, CoreSearchWorkerSnapshot>;
-  /** SpiceDB `resource#module` TOUCH for Counterparties; runs post-commit only. */
-  resourceContainment: Layer.Layer<ResourceContainmentRelationshipMutation>;
   searchIngestion: Layer.Layer<CoreSearchIngestion, never, CoreSearchIngestionRegistry | CoreSearchProjectionStore>;
   searchIngestionRegistry: Layer.Layer<CoreSearchIngestionRegistry>;
   searchProjectionStore: Layer.Layer<
@@ -80,7 +71,6 @@ type OutboxWorkerHandlerLayers = Readonly<{
 export const outboxWorkerHandlerLayers: OutboxWorkerHandlerLayers = Object.freeze({
   projector: PartySearchProjectorLive,
   projectionSource: PartySearchProjectionSourceLive,
-  resourceContainment: ResourceContainmentRelationshipMutationLive,
   searchIngestion: CoreSearchIngestionLive,
   searchIngestionRegistry: PartySearchIngestionRegistryLive,
   searchProjectionStore: CoreSearchProjectionStoreLive,
@@ -91,10 +81,10 @@ export const outboxWorkerLayer: Layer.Layer<
   OutboxRuntime | PartySearchProjector | PrivacyMeasureOwnerGateway,
   never,
   | Layer.Services<typeof OutboxWorkerInfrastructureLive>
+  | Crypto.Crypto
   | CoreSearchIngestion
   | CoreSearchProjectionStore
   | PartySearchProjectionSource
-  | ResourceContainmentRelationshipMutation
 > = Layer.mergeAll(
   outboxWorkerInfrastructureLayer,
   outboxWorkerHandlerLayers.projector,

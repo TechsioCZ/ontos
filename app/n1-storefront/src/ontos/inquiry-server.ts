@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { executeApplyCommandWithAuthorization } from "@app/work-tasks/clients/apply-command";
 import type { ApplyCommandPayload } from "@app/work-tasks/contracts/apply-command";
 import { RecordsResponseSchema } from "@app/work-tasks/contracts/records";
-import { Effect, Match, Schema } from "effect";
+import { Effect, Match, Predicate, Schema } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import type { StorefrontConfiguration } from "./config";
 import { readConfiguration } from "./config";
@@ -79,6 +79,11 @@ const writeInquiry = (config: StorefrontConfiguration, payload: ApplyCommandPayl
         idempotencyKey: `n1-inquiry-${digest}`,
       },
     ).pipe(
+      Effect.flatMap((outcome) =>
+        Predicate.isTagged(outcome, "ActionProposalAccepted")
+          ? Effect.fail(outcome)
+          : Effect.succeed(outcome),
+      ),
       Effect.timeout("20 seconds"),
       Effect.catchTags({
         ApplyCommandActionConflictProblem: (problem) =>

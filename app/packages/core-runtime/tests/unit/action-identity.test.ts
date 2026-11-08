@@ -3,6 +3,7 @@ import { expect, it } from 'effect-rstest';
 
 import {
   bindManagedApiKeyAction,
+  getActionReducesAuthorityResolver,
   bindSelfApiKeyAction,
   changePrincipalStatusAction,
   createNonHumanPrincipalAction,
@@ -32,101 +33,64 @@ it('identity Actions are generated, sensitive, idempotent, and owned by Core ide
   }
 });
 
-it.effect('identity administration and support starts declare independent tenant permissions', () =>
+it.effect('identity administration declares its own admin capability, and only a support stop reduces authority', () =>
   Effect.gen(function* identityScenario2() {
     const principalId = '00000000-0000-4000-8000-000000000001';
-    const authBindingId = '00000000-0000-4000-8000-000000000002';
     const originalPrincipalId = '00000000-0000-4000-8000-000000000003';
-    const managedPermissions = [
-      bindManagedApiKeyAction.descriptor.tenantPermission?.(
-        yield* Schema.decodeEffect(bindManagedApiKeyAction.descriptor.payloadSchema)({
-          principalId,
-          providerSubjectId: 'provider-key-id',
-          scope: 'tenant-managed',
-        }),
-      ),
-      changePrincipalStatusAction.descriptor.tenantPermission?.(
-        yield* Schema.decodeEffect(changePrincipalStatusAction.descriptor.payloadSchema)({
-          expectedStatus: 'active',
-          newStatus: 'disabled',
-          principalId,
-          reason: 'Offboarding',
-        }),
-      ),
-      createNonHumanPrincipalAction.descriptor.tenantPermission?.(
-        yield* Schema.decodeEffect(createNonHumanPrincipalAction.descriptor.payloadSchema)({
-          displayName: 'Inventory service',
-          kind: 'service',
-        }),
-      ),
-      setManagedApiKeyBindingStatusAction.descriptor.tenantPermission?.(
-        yield* Schema.decodeEffect(setManagedApiKeyBindingStatusAction.descriptor.payloadSchema)({
-          authBindingId,
-          expectedStatus: 'active',
-          newStatus: 'disabled',
-          principalId,
-          scope: 'tenant-managed',
-        }),
-      ),
-    ];
-    for (const permission of managedPermissions) {
-      expect(permission).toBe('manage_identity');
+    const declarations = [
+      [bindManagedApiKeyAction, 'core.identity.managed-api-key.bind'],
+      [bindSelfApiKeyAction, 'core.identity.self-api-key.bind'],
+      [changePrincipalStatusAction, 'core.identity.principal.change-status'],
+      [createNonHumanPrincipalAction, 'core.identity.principal.create-non-human'],
+      [recordSupportImpersonationAction, 'core.identity.support.impersonate'],
+      [setManagedApiKeyBindingStatusAction, 'core.identity.managed-api-key.change-status'],
+      [setSelfApiKeyBindingStatusAction, 'core.identity.self-api-key.change-status'],
+    ] as const;
+    for (const [registration, key] of declarations) {
+      // The tenant-role gate is gone (O37): each identity Action carries its own admin capability and
+      // the one gate decides it, so no legacy tenant permission may remain on the descriptor.
+      expect('tenantPermission' in registration.descriptor).toBe(false);
+      expect(registration.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+      expect(registration.descriptor.accessDeclaration).toMatchObject({
+        key,
+        kind: 'admin',
+        modes: ['run'],
+        risk: 'critical',
+        selectors: [],
+      });
     }
-    expect(bindSelfApiKeyAction.descriptor.tenantPermission).toBe(undefined);
-    expect(setSelfApiKeyBindingStatusAction.descriptor.tenantPermission).toBe(undefined);
+    const reducesAuthority = getActionReducesAuthorityResolver(recordSupportImpersonationAction);
+    const decode = Schema.decodeEffect(recordSupportImpersonationAction.descriptor.payloadSchema);
     const supportPayload = {
       originalPrincipalId,
       reason: 'Investigating a support request',
       targetPrincipalId: principalId,
     };
+    // A stop only takes the impersonation away from the person, so no grant may block it (O35, O71).
     expect(
-      recordSupportImpersonationAction.descriptor.tenantPermission?.(
-        yield* Schema.decodeEffect(recordSupportImpersonationAction.descriptor.payloadSchema)({
-          ...supportPayload,
-          checkpoint: 'requested',
-        }),
-      ),
-    ).toBe('impersonate');
-    expect(
-      recordSupportImpersonationAction.descriptor.tenantPermission?.(
-        yield* Schema.decodeEffect(recordSupportImpersonationAction.descriptor.payloadSchema)({
+      reducesAuthority?.(
+        yield* decode({
           ...supportPayload,
           checkpoint: 'stopped',
           sessionRef: 'better-auth-session:safe-session-reference',
         }),
       ),
-    ).toBe(undefined);
-  }),
-);
-
-it.effect('company agent keys use explicit Action execution without a tenant permission bypass', () =>
-  Effect.gen(function* companyAgentPermissions() {
-    const principalId = '00000000-0000-4000-8000-000000000001';
-    const bind = bindManagedApiKeyAction.descriptor;
-    const status = setManagedApiKeyBindingStatusAction.descriptor;
+    ).toBe(true);
+    expect(reducesAuthority?.(yield* decode({ ...supportPayload, checkpoint: 'requested' }))).toBe(false);
     expect(
-      bind.tenantPermission?.(
-        yield* Schema.decodeEffect(bind.payloadSchema)({
-          principalId,
-          providerSubjectId: 'provider-key-id',
-          scope: 'company-agent',
+      reducesAuthority?.(
+        yield* decode({
+          ...supportPayload,
+          checkpoint: 'started',
+          sessionRef: 'better-auth-session:safe-session-reference',
         }),
       ),
-    ).toBe(undefined);
-    expect(
-      status.tenantPermission?.(
-        yield* Schema.decodeEffect(status.payloadSchema)({
-          authBindingId: '00000000-0000-4000-8000-000000000002',
-          expectedStatus: 'active',
-          newStatus: 'disabled',
-          principalId,
-          scope: 'company-agent',
-        }),
-      ),
-    ).toBe(undefined);
-    for (const descriptor of [bind, status]) {
-      expect(descriptor.legalEntityScope).toBe('optional');
-      expect(descriptor.entrypoint.authorization).toEqual({ kind: 'action_execution', provisioning: 'explicit' });
+    ).toBe(false);
+    // No other identity Action claims a reduction: an administration or a start still needs its grant.
+    for (const [registration] of declarations) {
+      if (registration !== recordSupportImpersonationAction) {
+        expect(registration.descriptor.accessReducesAuthority).toBeUndefined();
+      }
     }
   }),
 );

@@ -1,6 +1,5 @@
 /** Actual record search, not MCP capability-description search and never a records-read snapshot. */
 import {
-  ContextAccess,
   TenantModuleStateService,
   TenantModuleStateRecordSchema,
   TrustedPrincipalContextSchema,
@@ -112,20 +111,8 @@ export const searchMcpRecords = Effect.fn('Mcp.searchRecords')(function* searchR
   if (captured.composition.revision !== installed.composition.revision) {
     return yield* reloadRequired();
   }
-  const decisions = yield* (yield* ContextAccess).modules({
-    legalEntityId: principal.legalEntityId,
-    moduleIds,
-    principalId: principal.principalId,
-    tenantId: principal.tenantId,
-  });
-  const decisionByModule = new Map(decisions.map(({ decision, key }) => [key, decision]));
-  if (
-    decisions.length !== moduleIds.length ||
-    decisionByModule.size !== moduleIds.length ||
-    moduleIds.some((moduleId) => !decisionByModule.has(moduleId) || decisionByModule.get(moduleId) === 'unavailable')
-  ) {
-    return yield* unavailable();
-  }
+  // The fresh connection description already intersects its retained grant with the acting principal's
+  // canonical gate answers. Do not ask the retired module-tuple engine for a second source of rights.
   const states = yield* (yield* TenantModuleStateService)
     .getTenantModuleStates(principal.tenantId, moduleIds)
     .pipe(Effect.mapError(unavailable));
@@ -137,14 +124,7 @@ export const searchMcpRecords = Effect.fn('Mcp.searchRecords')(function* searchR
   ) {
     return yield* unavailable();
   }
-  const allowed = mcpRecordSearchResourceTypes(
-    installed,
-    {
-      ...current,
-      modules: current.modules.filter((module) => decisionByModule.get(module.moduleId) === 'allowed'),
-    },
-    states,
-  );
+  const allowed = mcpRecordSearchResourceTypes(installed, current, states);
   const allowedSet = new Set(allowed);
   const selected = input.resourceTypes === undefined ? allowed : [...new Set(input.resourceTypes)];
   if (selected.some((type) => !allowedSet.has(type))) {

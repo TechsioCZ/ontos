@@ -1,10 +1,6 @@
-import {
-  CoreSearchProjectionStore,
-  ResourceContainmentRelationshipMutation,
-  ownerResourceModuleContainment,
-} from '@app/core-runtime';
+import { CoreSearchProjectionStore } from '@app/core-runtime';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
-import { Array as Arr, Effect } from 'effect';
+import { Effect } from 'effect';
 
 import { buildSearchDocuments, invalidSearchSource } from '../search/projection.ts';
 import type { SearchSourceSnapshot } from '../search/projection.ts';
@@ -16,26 +12,13 @@ export const projectSearchSnapshot = Effect.fn('OwnerSearch.projectSnapshot')(fu
   _rebuild: boolean,
 ) {
   const store = yield* CoreSearchProjectionStore;
-  const containment = yield* ResourceContainmentRelationshipMutation;
   if (snapshot.tenantId !== context.tenantId || !/^[1-9][0-9]*$/u.test(snapshot.projectionVersion)) {
     return yield* invalidSearchSource();
   }
   const documents = yield* buildSearchDocuments(snapshot);
-  const relationships = documents.map((document) =>
-    document.selectedLegalEntityId === undefined
-      ? undefined
-      : ownerResourceModuleContainment(snapshot.tenantId, document.selectedLegalEntityId, document.ref),
-  );
-  if (relationships.some((relationship) => relationship === undefined)) {
-    return yield* invalidSearchSource();
-  }
-  const validRelationships = relationships.filter((relationship) => relationship !== undefined);
-  // Snapshot SQL is closed before SpiceDB and projection writes. Publish only after containment succeeds.
-  yield* Effect.forEach(Arr.chunksOf(validRelationships, 100), (batch) => containment.touch({ relationships: batch }), {
-    concurrency: 1,
-    discard: true,
-  });
-  // Publish each complete type once, after containment. Do not upsert individual documents first:
+  // Snapshot SQL is closed before Core index writes. Core Search enforces the caller's access list
+  // predicate and field projection; the owner writes no permission-graph containment edge.
+  // Publish each complete type once. Do not upsert individual documents first:
   // that exposes a partial generation and duplicates the subsequent atomic replacement.
   // Complete tenant snapshots also remove disappeared, archived and retired rows on ordinary refreshes.
   yield* Effect.forEach(

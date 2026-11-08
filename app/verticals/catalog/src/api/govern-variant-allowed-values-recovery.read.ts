@@ -67,10 +67,7 @@ const recoverGovernVariantAllowedValues = Effect.fn('GovernVariantAllowedValuesR
 
 const governVariantAllowedValuesRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: {
-    kind: 'context_permission',
-    permission: 'commerce.catalog.read.govern-variant-allowed-values-recovery',
-  },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.govern-variant-allowed-values-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -78,6 +75,14 @@ const governVariantAllowedValuesRecoveryEntrypoint = defineTenantModuleEntrypoin
 
 export const governVariantAllowedValuesRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.govern-variant-allowed-values-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: governVariantAllowedValuesRecoveryEntrypoint,
     evidencePolicy: {
@@ -87,7 +92,6 @@ export const governVariantAllowedValuesRecoveryRead = defineRead(
     inputSchema: GovernVariantAllowedValuesRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.govern-variant-allowed-values-recovery',
     resultSchema: GovernVariantAllowedValuesRecoveryResponseSchema,
@@ -101,5 +105,4 @@ export const governVariantAllowedValuesRecoveryRead = defineRead(
   },
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

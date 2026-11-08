@@ -2,8 +2,18 @@ import { ONTOS_MODULE_CONTRACT_SCHEMA_VERSION } from './manifest-constants.ts';
 import { Predicate, Result, Schema } from 'effect';
 import { HttpApi } from 'effect/http-api';
 
+import {
+  AccessDeclarationSchema,
+  AccessFieldGroupSchema,
+  AccessKeySyntaxSchema,
+  AccessActorSchema,
+  AccessWorkloadSchema,
+  accessCarrierIssue,
+} from '../authorization/access-declaration.ts';
 import type { AnyActionRegistration } from '../actions/definition.ts';
 import { isActionRegistration } from '../actions/definition.ts';
+import type { AnyReadRegistration } from '../reads/definition.ts';
+import { isReadRegistration } from '../reads/definition.ts';
 import { TENANT_PERMISSION_KEYS } from '../permissions/context-permissions.ts';
 import { BusinessPermissionDescriptorSchema, defineBusinessPermission } from '../permissions/business-permission.ts';
 import type { BusinessPermissionDescriptor } from '../permissions/business-permission.ts';
@@ -12,6 +22,7 @@ import type { OntosExternalIdentityProviderInput } from '../auth/external-identi
 import { OntosMcpContributionSchema } from './mcp-contribution.ts';
 import type { OntosMcpContributionInput } from './mcp-contribution.ts';
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
+import { LEGAL_ENTITY_SCOPES } from '../operations/legal-entity-scope.ts';
 import {
   OntosShellContributionsSchema,
   shellSearchPresentationBindingIssue,
@@ -19,22 +30,43 @@ import {
   validateShellContributions,
 } from './shell-contribution.ts';
 import type { OntosShellContributions } from './shell-contribution.ts';
+import {
+  OntosModuleIdSchema,
+  OntosModuleRequirementsSchema,
+  OntosOperationContractSchema,
+  OntosOperationKeySchema,
+  moduleDependencyDeclarationsIssue,
+} from './module-dependency-contracts.ts';
+import type { OntosModuleRequirements, OntosOperationContract } from './module-dependency-contracts.ts';
+
+export {
+  OntosCoreCapabilityRequirementSchema,
+  OntosIntrinsicModuleRequirementSchema,
+  OntosModuleIdSchema,
+  OntosModuleRequirementsSchema,
+  OntosOperationContractSchema,
+  OntosOperationRequirementSchema,
+  OntosRequiredOperationContractSchema,
+} from './module-dependency-contracts.ts';
+export type {
+  OntosCoreCapabilityRequirement,
+  OntosIntrinsicModuleRequirement,
+  OntosModuleRequirements,
+  OntosOperationContract,
+  OntosOperationRequirement,
+  OntosRequiredOperationContract,
+} from './module-dependency-contracts.ts';
 
 export { ONTOS_MODULE_CONTRACT_SCHEMA_VERSION } from './manifest-constants.ts';
 export const ONTOS_MODULE_CONTRACT_PATH = '/.well-known/ontos-module-manifest.json' as const;
 export const ONTOS_MODULE_CONTRACT_MAX_BYTES = 1024 * 1024;
 export const ONTOS_MODULE_CONTRACT_TIMEOUT_MS = 5000;
 
-const dottedIdentifierPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+$/u;
 const deploymentIdPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u;
 const moduleFederationBoundaryPattern = /^[A-Za-z][A-Za-z0-9]*$/u;
 const schemaVersionPattern = /^[0-9]+$/u;
 const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
 
-export const OntosModuleIdSchema = Schema.String.check(Schema.isPattern(dottedIdentifierPattern)).pipe(
-  Schema.brand('OntosModuleId'),
-  Schema.decodeTo(Schema.String),
-);
 export const OntosDeploymentAppIdSchema = Schema.String.check(Schema.isPattern(deploymentIdPattern)).pipe(
   Schema.brand('OntosDeploymentAppId'),
   Schema.decodeTo(Schema.String),
@@ -55,7 +87,6 @@ export type OntosModuleKind = typeof OntosModuleKindSchema.Type;
 export type OntosModuleActivationState = typeof OntosModuleActivationStateSchema.Type;
 
 const OntosAccessFilteringSchema = Schema.Literals(['legal_entity_scope', 'resource_permission', 'tenant_scope']);
-const OntosOperationKeySchema = nonEmptyString.pipe(Schema.brand('OntosOperationKey'), Schema.decodeTo(Schema.String));
 const OntosModuleFederationBoundaryIdSchema = Schema.String.check(
   Schema.isPattern(moduleFederationBoundaryPattern),
 ).pipe(Schema.brand('OntosModuleFederationBoundaryId'), Schema.decodeTo(Schema.String));
@@ -76,6 +107,10 @@ export const OntosModuleActivationSchema = Schema.Struct({
 });
 
 export const OntosActionContractSchema = Schema.Struct({
+  accessActor: Schema.optionalKey(AccessActorSchema),
+  accessDeclaration: Schema.optionalKey(AccessDeclarationSchema),
+  accessFieldGroups: Schema.optionalKey(Schema.Array(AccessFieldGroupSchema)),
+  accessWorkload: Schema.optionalKey(AccessWorkloadSchema),
   actionKey: OntosModuleIdSchema,
   auditProfile: Schema.Literals(['minimal', 'sensitive', 'standard']),
   entrypoint: ModuleEntrypointSchema,
@@ -83,7 +118,7 @@ export const OntosActionContractSchema = Schema.Struct({
   legalEntityScope: Schema.Literals(['forbidden', 'optional', 'required']),
   owningModuleId: OntosModuleIdSchema,
   schemaVersion: Schema.String.check(Schema.isPattern(schemaVersionPattern)),
-});
+}).check(Schema.makeFilter((descriptor) => accessCarrierIssue(descriptor)));
 
 export const OntosApiContractSchema = Schema.Struct({
   key: OntosModuleIdSchema,
@@ -120,8 +155,20 @@ export const OntosPublicEventContractSchema = Schema.Struct({
 });
 
 export const OntosSearchDescriptorSchema = Schema.Struct({
+  /**
+   * The declaration key of the governed search read that backs this provider (CUTOVER-PLAN §3.2).
+   * The Shell decides the provider with `decideMany` over these keys instead of a coarse filter.
+   */
   accessFiltering: OntosAccessFilteringSchema,
+  accessKey: Schema.optionalKey(AccessKeySyntaxSchema),
   key: OntosModuleIdSchema,
+  /**
+   * The scope this provider's decision runs in (O78): the same vocabulary as the provider read's own
+   * `legalEntityScope`, which it must equal. A `tenant_scope` provider is `'optional'`, a
+   * resource-permission provider is `'required'`. Transitional while `accessFiltering` still exists;
+   * required once C03b removes it.
+   */
+  legalEntityScope: Schema.optionalKey(Schema.Literals(LEGAL_ENTITY_SCOPES)),
   owningModuleId: OntosModuleIdSchema,
   requestFilters: Schema.optionalKey(Schema.Array(Schema.Literals(['includeArchived', 'role']))),
   resourceType: OntosModuleIdSchema,
@@ -133,6 +180,8 @@ export const OntosReportDescriptorSchema = Schema.Struct({
   dimensions: Schema.Array(nonEmptyString),
   key: OntosModuleIdSchema,
   label: nonEmptyString,
+  /** The scope this report is decided in (O78); it must equal its report read's own scope. */
+  legalEntityScope: Schema.optionalKey(Schema.Literals(LEGAL_ENTITY_SCOPES)),
   owningModuleId: OntosModuleIdSchema,
   resourceTypes: Schema.Array(OntosModuleIdSchema),
 });
@@ -218,6 +267,7 @@ export const OntosSerializedPublicSurfaceSchema = Schema.Struct({
   externalIdentityProviders: Schema.optionalKey(Schema.Array(OntosExternalIdentityProviderSchema)),
   /** MCP tools the module offers to agents (absent: none). */
   mcp: Schema.optionalKey(OntosMcpContributionSchema),
+  operationContracts: Schema.optionalKey(Schema.Array(OntosOperationContractSchema).check(Schema.isMaxLength(4096))),
   reports: Schema.Array(OntosReportDescriptorSchema),
   resourceTypes: Schema.Array(OntosResourceTypeSchema),
   search: Schema.Array(OntosSearchDescriptorSchema),
@@ -227,16 +277,28 @@ export const OntosSerializedPublicSurfaceSchema = Schema.Struct({
 export const OntosSerializedModuleManifestSchema = Schema.Struct({
   activation: OntosModuleActivationSchema,
   module: OntosModuleIdentitySchema,
+  /**
+   * The Action keys whose recorded invocations this module may act for when it delegates an Originator
+   * subject. Absent means none: the Shell refuses every Originator delegation this module makes.
+   */
+  originatorActions: Schema.optionalKey(Schema.Array(OntosModuleIdSchema)),
   publicSurface: OntosSerializedPublicSurfaceSchema,
+  requirements: Schema.optionalKey(OntosModuleRequirementsSchema),
 }).check(
-  Schema.makeFilter(({ module, publicSurface }) => {
-    const pageIssue = shellSearchPresentationPageIssue(publicSurface.shellContributions);
+  Schema.makeFilter((manifest) => {
+    const pageIssue = shellSearchPresentationPageIssue(manifest.publicSurface.shellContributions);
     return (
       pageIssue ??
-      shellSearchPresentationBindingIssue(publicSurface.shellContributions, {
-        moduleId: module.id,
-        resourceTypeKeys: new Set(publicSurface.resourceTypes.map(({ key }) => key)),
-        search: publicSurface.search,
+      shellSearchPresentationBindingIssue(manifest.publicSurface.shellContributions, {
+        moduleId: manifest.module.id,
+        resourceTypeKeys: new Set(manifest.publicSurface.resourceTypes.map(({ key }) => key)),
+        search: manifest.publicSurface.search,
+      }) ??
+      moduleDependencyDeclarationsIssue({
+        api: manifest.publicSurface.api,
+        moduleId: manifest.module.id,
+        operationContracts: manifest.publicSurface.operationContracts,
+        requirements: manifest.requirements,
       })
     );
   }),
@@ -279,6 +341,13 @@ export type OntosModuleDeploymentContract = typeof OntosModuleDeploymentContract
 
 export type OntosManifestActionValue = AnyActionRegistration;
 
+export interface OntosAuthoredOperationContract {
+  /** Local key in the owner's publicSurface.api record, normalized only by the public projection. */
+  readonly apiKey: string;
+  readonly operationKey: string;
+  readonly registration: AnyActionRegistration | AnyReadRegistration;
+}
+
 /** V0 accepts directly callable React-style component values. */
 export type OntosManifestComponentValue = (...arguments_: never[]) => void;
 
@@ -299,6 +368,7 @@ export interface OntosAuthoredPublicSurface {
   readonly externalIdentityProviders?: readonly OntosExternalIdentityProviderInput[];
   /** MCP tool contribution; the contract generator derives schemas and handler paths from the module's own values. */
   readonly mcp?: OntosMcpContributionInput;
+  readonly operationContracts?: readonly OntosAuthoredOperationContract[];
   readonly reports: readonly OntosReportDescriptor[];
   readonly resourceTypes: readonly OntosResourceType[];
   readonly search: readonly OntosSearchDescriptor[];
@@ -308,8 +378,19 @@ export interface OntosAuthoredPublicSurface {
 export interface OntosModuleManifestInput {
   readonly activation: OntosModuleActivation;
   readonly module: OntosModuleIdentity;
+  /** See `OntosSerializedModuleManifestSchema.originatorActions`. */
+  readonly originatorActions?: readonly string[];
   readonly publicSurface: OntosAuthoredPublicSurface;
+  readonly requirements?: OntosModuleRequirements;
 }
+
+/** Owner-authored backend declaration consumed by the existing runtime registration, without UI values. */
+export type OntosRuntimeManifestInput = Pick<OntosModuleManifestInput, 'module' | 'requirements'> & {
+  readonly publicSurface: Pick<
+    OntosAuthoredPublicSurface,
+    'actions' | 'api' | 'operationContracts' | 'shellContributions'
+  >;
+};
 
 export type OntosModuleManifest<Input extends OntosModuleManifestInput = OntosModuleManifestInput> = Readonly<Input>;
 
@@ -365,11 +446,95 @@ const assertOwner = (owner: string, expected: string, label: string): void => {
   }
 };
 
+/** Canonical identity shared by authored operation bindings and the deployment API projection. */
+export const canonicalOntosPublicApiKey = (moduleId: string, localKey: string): string =>
+  `${moduleId}.${localKey
+    .replaceAll(/(?<lower>[a-z0-9])(?<upper>[A-Z])/gu, '$<lower>-$<upper>')
+    .replaceAll('_', '-')
+    .toLowerCase()}`;
+
+const apiOperationKeys = (api: HttpApi.Constraint): readonly string[] => {
+  if (!HttpApi.isHttpApi(api)) {
+    throw invalidManifest('public operation contracts require a real Effect HttpApi');
+  }
+  return Object.values(api.groups).flatMap((group) =>
+    Object.values(group.endpoints).map((endpoint) =>
+      group.topLevel ? endpoint.identifier : `${group.identifier}.${endpoint.identifier}`,
+    ),
+  );
+};
+
+/** Owner-authored safe claim only; actual handler/default-factory dispatch is independently verified. */
+export const projectOntosModuleOperationContracts = (
+  manifest: OntosRuntimeManifestInput,
+): readonly OntosOperationContract[] => {
+  const actions = new Set(manifest.publicSurface.actions);
+  const contracts = (manifest.publicSurface.operationContracts ?? []).map((binding) => {
+    assertExactKeys(binding, ['apiKey', 'operationKey', 'registration'], 'public operation binding');
+    const { registration } = binding;
+    if (!isActionRegistration(registration) && !isReadRegistration(registration)) {
+      throw invalidManifest('public operation contracts must reference genuine Action or Read registrations');
+    }
+    assertOwner(registration.descriptor.owningModuleKey, manifest.module.id, 'public operation');
+    if (isActionRegistration(registration) && !actions.has(registration)) {
+      throw invalidManifest('public Action contract must reference the same registered manifest Action');
+    }
+    if (!Object.hasOwn(manifest.publicSurface.api, binding.apiKey)) {
+      throw invalidManifest('public operation contract references an undeclared local API key');
+    }
+    return exactDecode(OntosOperationContractSchema, {
+      apiKey: canonicalOntosPublicApiKey(manifest.module.id, binding.apiKey),
+      entrypoint: registration.descriptor.entrypoint,
+      operationKey: binding.operationKey,
+      schemaVersion: registration.descriptor.schemaVersion,
+    });
+  });
+  const declarations = {
+    api: Object.entries(manifest.publicSurface.api).map(([key, api]) => ({
+      key: canonicalOntosPublicApiKey(manifest.module.id, key),
+      operationKeys: apiOperationKeys(api),
+    })),
+    moduleId: manifest.module.id,
+    operationContracts: contracts,
+    requirements: manifest.requirements,
+  };
+  if (manifest.requirements !== undefined) {
+    Object.assign(declarations, { requirements: exactDecode(OntosModuleRequirementsSchema, manifest.requirements) });
+  }
+  const issue = moduleDependencyDeclarationsIssue(declarations);
+  if (issue !== undefined) {
+    throw invalidManifest(issue);
+  }
+  return Object.freeze(
+    contracts
+      .map((contract) => freezePlain({ ...contract, entrypoint: { ...contract.entrypoint } }))
+      .toSorted((left, right) => left.entrypoint.entrypointKey.localeCompare(right.entrypoint.entrypointKey)),
+  );
+};
+
+/** Private registration keeps an independent immutable metadata snapshot, including structural inputs. */
+export const copyOntosModuleRequirements = (input: OntosModuleRequirements): OntosModuleRequirements => {
+  const requirements = exactDecode(OntosModuleRequirementsSchema, input);
+  return freezePlain({
+    ...requirements,
+    coreCapabilities: requirements.coreCapabilities.map((value) => ({ ...value })),
+    intrinsic: requirements.intrinsic.map((value) => ({
+      ...value,
+      requiredOperations: value.requiredOperations.map((operation) => ({ ...operation })),
+    })),
+    operations: requirements.operations.map((value) => ({
+      ...value,
+      evidence: [...value.evidence],
+      provider: { ...value.provider },
+    })),
+  });
+};
+
 export const validateOntosModuleManifestFields = <Input extends object, PublicSurface extends object>(
   input: Input,
   publicSurface: PublicSurface,
 ): void => {
-  assertExactKeys(input, ['activation', 'module', 'publicSurface'], 'manifest');
+  assertExactKeys(input, ['activation', 'module', 'originatorActions', 'publicSurface', 'requirements'], 'manifest');
   assertExactKeys(
     publicSurface,
     [
@@ -381,6 +546,7 @@ export const validateOntosModuleManifestFields = <Input extends object, PublicSu
       'events',
       'externalIdentityProviders',
       'mcp',
+      'operationContracts',
       'reports',
       'resourceTypes',
       'search',
@@ -429,6 +595,10 @@ const validateSearchDescriptorReferences = (
   if ((descriptor.accessFiltering === 'tenant_scope') !== (descriptor.tenantPermission !== undefined)) {
     throw invalidManifest('tenant-scoped search requires exactly one explicit Tenant permission declaration');
   }
+  // O27: a search provider is decided by the declaration of a read in the same module.
+  if (descriptor.accessKey !== undefined && !descriptor.accessKey.startsWith(`${moduleId}.`)) {
+    throw invalidManifest(`search descriptor access key ${descriptor.accessKey} must belong to module ${moduleId}`);
+  }
   if (
     descriptor.requestFilters !== undefined &&
     new Set(descriptor.requestFilters).size !== descriptor.requestFilters.length
@@ -443,7 +613,7 @@ const validateSearchDescriptorReferences = (
  */
 export const defineOntosModuleManifest = <const Input extends OntosModuleManifestInput>(
   input: Input,
-): OntosModuleManifest<Input> => {
+): OntosModuleManifest<Input> & { readonly originatorActions: readonly string[] } => {
   validateOntosModuleManifestFields(input, input.publicSurface);
   exactDecode(OntosModuleIdentitySchema, input.module);
   exactDecode(OntosModuleActivationSchema, input.activation);
@@ -454,6 +624,8 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
     throw invalidManifest('activation defaultState must be included in supportedStates');
   }
   assertUnique(input.activation.supportedStates, 'activation state');
+  const originatorActions = (input.originatorActions ?? []).map((key) => exactDecode(OntosModuleIdSchema, key));
+  assertUnique(originatorActions, 'originator Action key');
 
   validateOntosModuleExecutableReferences(
     input.publicSurface.actions,
@@ -464,6 +636,7 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
   );
   const actionKeys = input.publicSurface.actions.map(({ descriptor }) => descriptor.actionKey);
   assertUnique(actionKeys, 'Action key');
+  projectOntosModuleOperationContracts(input);
 
   const businessPermissions = (input.publicSurface.businessPermissions ?? []).map(defineBusinessPermission);
   assertUnique(
@@ -570,49 +743,58 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
     throw invalidManifest(presentationIssue);
   }
 
-  const manifest = {
-    ...input,
-    activation: freezePlain({
-      ...input.activation,
-      supportedStates: [...input.activation.supportedStates],
+  const publicSurface = {
+    ...input.publicSurface,
+    actions: Object.freeze([...input.publicSurface.actions]),
+    api: Object.freeze({ ...input.publicSurface.api }),
+    businessPermissions: Object.freeze(businessPermissions),
+    components: Object.freeze({ ...input.publicSurface.components }),
+    events: Object.freeze(events),
+    reports: Object.freeze(
+      reports.map((value) =>
+        freezePlain({
+          ...value,
+          dimensions: [...value.dimensions],
+          resourceTypes: [...value.resourceTypes],
+        }),
+      ),
+    ),
+    resourceTypes: Object.freeze(
+      resources.map((value) => freezePlain({ ...value, capabilities: { ...value.capabilities } })),
+    ),
+    search: Object.freeze(search.map((value) => freezePlain({ ...value }))),
+    shellContributions: freezePlain({
+      mediaAttachments: [...shellContributions.mediaAttachments],
+      navigation: [...shellContributions.navigation],
+      pages: [...shellContributions.pages],
+      publicComponents: [...shellContributions.publicComponents],
+      reports: [...shellContributions.reports],
+      resourceDetails: [...shellContributions.resourceDetails],
+      search: [...shellContributions.search],
+      timelines: [...shellContributions.timelines],
     }),
-    module: freezePlain({ ...input.module }),
-    publicSurface: {
-      ...input.publicSurface,
-      actions: Object.freeze([...input.publicSurface.actions]),
-      api: Object.freeze({ ...input.publicSurface.api }),
-      businessPermissions: Object.freeze(businessPermissions),
-      components: Object.freeze({ ...input.publicSurface.components }),
-      events: Object.freeze(events),
-      reports: Object.freeze(
-        reports.map((value) =>
-          freezePlain({
-            ...value,
-            dimensions: [...value.dimensions],
-            resourceTypes: [...value.resourceTypes],
-          }),
-        ),
-      ),
-      resourceTypes: Object.freeze(
-        resources.map((value) => freezePlain({ ...value, capabilities: { ...value.capabilities } })),
-      ),
-      search: Object.freeze(search.map((value) => freezePlain({ ...value }))),
-      shellContributions: freezePlain({
-        mediaAttachments: [...shellContributions.mediaAttachments],
-        navigation: [...shellContributions.navigation],
-        pages: [...shellContributions.pages],
-        publicComponents: [...shellContributions.publicComponents],
-        reports: [...shellContributions.reports],
-        resourceDetails: [...shellContributions.resourceDetails],
-        search: [...shellContributions.search],
-        timelines: [...shellContributions.timelines],
-      }),
-    },
   };
+  if (input.publicSurface.operationContracts !== undefined) {
+    Object.assign(publicSurface, {
+      operationContracts: Object.freeze(
+        input.publicSurface.operationContracts.map((binding) => Object.freeze({ ...binding })),
+      ),
+    });
+  }
   if (apiCookieTransport !== undefined) {
-    Object.assign(manifest.publicSurface, {
+    Object.assign(publicSurface, {
       apiCookieTransport: Object.freeze(apiCookieTransport.map((policy) => freezePlain(policy))),
     });
+  }
+  const manifest = {
+    ...input,
+    activation: freezePlain({ ...input.activation, supportedStates: [...input.activation.supportedStates] }),
+    module: freezePlain({ ...input.module }),
+    originatorActions: Object.freeze(originatorActions),
+    publicSurface: Object.freeze(publicSurface),
+  };
+  if (input.requirements !== undefined) {
+    Object.assign(manifest, { requirements: copyOntosModuleRequirements(input.requirements) });
   }
   return Object.freeze(manifest);
 };

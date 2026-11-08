@@ -1,6 +1,6 @@
 import { ReadRuntime } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
-import { DateTime, Effect, Result, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Result, Schema } from 'effect';
 import { ManufacturerTargetSchema } from '../../shared/domain/manufacturer-relation.ts';
 import type { ManufacturerTarget } from '../../shared/domain/manufacturer-relation.ts';
 import {
@@ -14,10 +14,14 @@ const sameTarget = Schema.toEquivalence(ManufacturerTargetSchema);
 export const prepareManufacturerTarget = Effect.fn('CatalogManufacturer.prepareTarget')(function* prepareTarget(
   target: ManufacturerTarget,
   scope: OperationalScope,
+  requirementKey?:
+    | 'commerce.catalog.requirement.set-product-manufacturer-party'
+    | 'commerce.catalog.requirement.change-product-manufacturer-party',
 ) {
   const runtime = yield* ReadRuntime;
+  const crypto = yield* Crypto.Crypto;
   const preparedAt = yield* DateTime.now;
-  const resolution = yield* manufacturerTargetResolverForCoreRead(runtime, scope)
+  const resolution = yield* manufacturerTargetResolverForCoreRead(runtime, scope, crypto, requirementKey)
     .resolve(target, { requestId: scope.correlationId, tenantId: scope.tenantId })
     .pipe(Effect.result);
   return { preparedAt, resolution, scope, target };

@@ -111,6 +111,14 @@ const ACTION_KEY = 'commerce.catalog.revise-package-definition' as const;
 
 export const revisePackageDefinitionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.package-definition.revise',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'package-definition', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.revise-package-definition.access.v1',
@@ -122,7 +130,7 @@ export const revisePackageDefinitionAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.catalog.revise-package-definition',
       moduleKey: MODULE_KEY,
       role: 'action',

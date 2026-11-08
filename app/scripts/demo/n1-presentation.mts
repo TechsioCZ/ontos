@@ -5,7 +5,7 @@
  * Colour names from N1's own catalogue or the legacy source: BLK is Black (N1's public product code
  * 38SA075404-BLK2 lists "Black"), SLB is Slate Blue (the legacy BARVA of ...-SLB), CBT is Cobalt (Spyder's product names).
  */
-export const VERIFIED_COLOUR_NAMES: Readonly<Record<string, string>> = {
+export const VERIFIED_COLOUR_NAMES = {
   BLK: 'černá',
   CBT: 'kobaltová',
   SLB: 'břidlicově modrá',
@@ -17,7 +17,7 @@ export const VERIFIED_COLOUR_NAMES: Readonly<Record<string, string>> = {
  * `PHOTO_COLOUR_NAMES` applies to the colour code; `PHOTO_COLOUR_NAMES_BY_FULL_CODE` applies to a code with a digit,
  * where the photo differs from the plain code (BLK1 is red-black, BLK3 is dark navy).
  */
-export const PHOTO_COLOUR_NAMES: Readonly<Record<string, string>> = {
+export const PHOTO_COLOUR_NAMES = {
   ACI2: 'starorůžová',
   CNA: 'světle šedomodrá',
   LMB: 'tmavě šedá',
@@ -29,27 +29,31 @@ export const PHOTO_COLOUR_NAMES: Readonly<Record<string, string>> = {
   VTB: 'černá s potiskem',
   WHT: 'bílá',
 };
-export const PHOTO_COLOUR_NAMES_BY_FULL_CODE: Readonly<Record<string, string>> = {
+export const PHOTO_COLOUR_NAMES_BY_FULL_CODE = {
   BLK1: 'červeno-černá',
   BLK3: 'tmavě modrá',
 };
 
 /** The colour code of a demo SKU: `38SA075404-BLK2` → { full: 'BLK2', code: 'BLK' }; `38SD125415-ACI2` → code 'ACI'. */
-export const colourOf = (sku: string): { readonly full: string; readonly code: string } | undefined => {
+export const colourOf = (sku: string): { readonly code: string; readonly full: string } | undefined => {
   const full = sku.split('-').at(-1) ?? '';
-  const match = /^([A-Z]+)\d*$/u.exec(full);
-  return match === undefined ? undefined : { code: match[1] ?? '', full };
+  const match = /^(?<code>[A-Z]+)\d*$/u.exec(full);
+  return match === null ? undefined : { code: match.groups?.code ?? '', full };
 };
+
+const lookupColour = (names: Readonly<Record<string, string>>, code: string): string | undefined => names[code];
 
 /** Shopper-facing colour name, or undefined when the SKU carries no colour. */
 export const colourNameOf = (sku: string): string | undefined => {
   const colour = colourOf(sku);
-  if (colour === undefined) return undefined;
+  if (colour === undefined) {
+    return undefined;
+  }
   return (
-    PHOTO_COLOUR_NAMES_BY_FULL_CODE[colour.full] ??
-    VERIFIED_COLOUR_NAMES[colour.code] ??
-    PHOTO_COLOUR_NAMES[colour.full] ??
-    PHOTO_COLOUR_NAMES[colour.code]
+    lookupColour(PHOTO_COLOUR_NAMES_BY_FULL_CODE, colour.full) ??
+    lookupColour(VERIFIED_COLOUR_NAMES, colour.code) ??
+    lookupColour(PHOTO_COLOUR_NAMES, colour.full) ??
+    lookupColour(PHOTO_COLOUR_NAMES, colour.code)
   );
 };
 

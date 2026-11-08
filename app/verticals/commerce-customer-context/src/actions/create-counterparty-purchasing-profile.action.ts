@@ -123,6 +123,7 @@ const prepareProfileCreationServices = Effect.fn('CreateCounterpartyPurchasingPr
     const role = yield* roleFactory
       .make({
         legalEntityId,
+        operationalScope: scope,
         requestCorrelation: scope.correlationId,
         tenantId: scope.tenantId,
       })({
@@ -180,6 +181,7 @@ const prepareProfileCreationServices = Effect.fn('CreateCounterpartyPurchasingPr
       const services = profilePersistenceServicesForTransaction(transaction, ownerScope, {
         resolveCounterpartyRole: preparedRole.make({
           legalEntityId: ownerScope.legalEntityId,
+          operationalScope: verifiedScope,
           requestCorrelation: verifiedScope.correlationId,
           tenantId: ownerScope.tenantId,
         }),
@@ -221,6 +223,14 @@ const prepareProfileCreationServices = Effect.fn('CreateCounterpartyPurchasingPr
 );
 export const createCounterpartyPurchasingProfileAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.counterparty-purchasing-profile.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'customer-profiles', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.create-counterparty-purchasing-profile.access.v1',
@@ -234,7 +244,7 @@ export const createCounterpartyPurchasingProfileAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.create-counterparty-purchasing-profile',
       moduleKey: MODULE_KEY,
       role: 'action',

@@ -101,7 +101,9 @@ const main = (
     }
     const snapshot = yield* (yield* ActiveApplicationCompositionService).load;
     const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition);
-    const preparedCatalog = yield* (yield* InstalledModuleCatalogService).load;
+    const preparedCatalog = yield* (yield* InstalledModuleCatalogService).loadForRevision(
+      snapshot.composition.revision,
+    );
     if (!sameContracts(preparedCatalog.contracts, catalog.contracts)) {
       return yield* fail('The approved composition changed after operator preparation; restart with a fresh plan');
     }
@@ -179,8 +181,12 @@ export const StageMarketOperatorLive = Layer.effect(
     const composition = yield* ActiveApplicationCompositionService;
     // The Core handler consumes this service inside guarded SQL. Materialize the genuine
     // composition before entering the Action, never an HTTP-backed catalog loader.
-    const catalog = yield* composition.load.pipe(
-      Effect.flatMap((snapshot) => buildApplicationCompositionCatalog(snapshot.composition)),
+    const { catalog, revision } = yield* composition.load.pipe(
+      Effect.flatMap((snapshot) =>
+        buildApplicationCompositionCatalog(snapshot.composition).pipe(
+          Effect.map((prepared) => ({ catalog: prepared, revision: snapshot.composition.revision })),
+        ),
+      ),
       Effect.mapError(
         () =>
           new TenantModuleStateValidationUnavailableError({
@@ -190,7 +196,15 @@ export const StageMarketOperatorLive = Layer.effect(
       ),
     );
     return {
-      load: Effect.succeed(catalog),
+      loadForRevision: (requestedRevision: string) =>
+        requestedRevision === revision
+          ? Effect.succeed(catalog)
+          : Effect.fail(
+              new TenantModuleStateValidationUnavailableError({
+                code: 'tenant_module_state_validation_unavailable',
+                reason: 'The requested composition revision differs from the prepared installed catalog',
+              }),
+            ),
     };
   }),
 ).pipe(Layer.provideMerge(AgentProfileOperatorLive));

@@ -19,6 +19,9 @@ import type {
   Expression,
   Function as AstFunction,
   ImportDeclaration,
+  IdentifierReference,
+  TSTypeLiteral,
+  Node,
   ParamPattern,
   Program,
   Span,
@@ -26,18 +29,20 @@ import type {
   TSTypeReference,
 } from 'oxc-parser';
 
-import { actionPreparationBoundaries } from './action-preparation-boundaries.mts';
-import type { PreparationSource } from './action-preparation-boundaries.mts';
+import { actionPreparationBoundaries, PreparationSource } from './action-preparation-boundaries.mts';
 
 export interface DatabaseAccessViolation {
   readonly file: string;
   readonly line: number;
+  readonly origin?: string;
   readonly reason: string;
 }
 
 const sourceExtensions = new Set(['.ts', '.tsx', '.mts']);
 const ignoredDirectories = new Set(['dist', 'node_modules', 'repos', '.output', '.codex']);
 const coreRuntimeSourcePrefix = 'packages/core-runtime/src/';
+const coreRuntimeModule = '@app/core-runtime';
+const coreRuntimeSubpath = '@app/core-runtime/';
 
 const collect = (root: string): Effect.Effect<readonly string[], PlatformError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* collectSourceFiles() {
@@ -106,6 +111,101 @@ const globalDatabaseImplementationImport = new RegExp(
 );
 // The native Effect client is the only PostgreSQL driver; a second one opens a second pool per owner.
 const secondPostgresDriverImport = new RegExp(String.raw`${valueImportPrefix}['"](?:${postgresDriver})['"]`, 'gu');
+
+/** Keep offsets and newlines, but never interpret comments or inert strings as source authority. */
+const databaseBoundaryCode = (file: string, source: string): string => {
+  const parsed = parseSync(file, source, { astType: 'ts', lang: file.endsWith('.tsx') ? 'tsx' : 'ts' });
+  if (parsed.errors.length > 0) {
+    return source;
+  }
+  const moduleStrings = new Set<number>();
+  const ignored: Span[] = [...parsed.comments];
+  new Visitor({
+    ExportAllDeclaration: (node) => {
+      moduleStrings.add(node.source.start);
+    },
+    ExportNamedDeclaration: (node) => {
+      if (node.source !== null) {
+        moduleStrings.add(node.source.start);
+      }
+    },
+    ImportDeclaration: (node) => {
+      moduleStrings.add(node.source.start);
+    },
+    ImportExpression: (node) => {
+      moduleStrings.add(node.source.start);
+    },
+  }).visit(parsed.program);
+  new Visitor({
+    Literal: (node) => {
+      if (!moduleStrings.has(node.start)) {
+        ignored.push(node);
+      }
+    },
+    TemplateElement: (node) => {
+      ignored.push(node);
+    },
+  }).visit(parsed.program);
+  let result = '';
+  let offset = 0;
+  for (const span of EffectArray.sort(
+    ignored,
+    Order.mapInput(Order.Number, (value: Span) => value.start),
+  )) {
+    if (span.start < offset) {
+      continue;
+    }
+    result += source.slice(offset, span.start) + source.slice(span.start, span.end).replaceAll(/[^\r\n]/gu, ' ');
+    offset = span.end;
+  }
+  return result + source.slice(offset);
+};
+
+const hiddenCapabilityIndexes = (source: string, schemaOnly = false): readonly number[] => {
+  if (!(schemaOnly ? hiddenCoreSchema : hiddenCapability).test(source)) {
+    return [];
+  }
+  const parsed = parseSync('boundary.ts', source, { astType: 'ts' });
+  const capability = schemaOnly ? hiddenCoreSchema : hiddenCapability;
+  const indexes = parsed.program.body.flatMap((statement) =>
+    statement.type === 'ImportDeclaration' &&
+    (statement.source.value === coreRuntimeModule || statement.source.value.startsWith(coreRuntimeSubpath))
+      ? statement.specifiers.flatMap((specifier) =>
+          specifier.type === 'ImportSpecifier' &&
+          specifier.imported.type === 'Identifier' &&
+          capability.test(specifier.imported.name)
+            ? [specifier.start]
+            : [],
+        )
+      : [],
+  );
+  const model = new PreparationSource('boundary.ts', source);
+  const namespace = (name: string, at: Span): boolean => {
+    const imported = model.stable(model.resolve(name, at))?.imported;
+    return (
+      imported?.name === '' && (imported.source === coreRuntimeModule || imported.source.startsWith(coreRuntimeSubpath))
+    );
+  };
+  new Visitor({
+    MemberExpression: (node) => {
+      if (
+        !node.computed &&
+        node.object.type === 'Identifier' &&
+        node.property.type === 'Identifier' &&
+        capability.test(node.property.name) &&
+        namespace(node.object.name, node)
+      ) {
+        indexes.push(node.start);
+      }
+    },
+    TSQualifiedName: (node) => {
+      if (node.left.type === 'Identifier' && capability.test(node.right.name) && namespace(node.left.name, node)) {
+        indexes.push(node.start);
+      }
+    },
+  }).visit(parsed.program);
+  return indexes;
+};
 
 const candidatesFor = (path: Path.Path, unresolved: string): readonly string[] => {
   const extension = path.extname(unresolved);
@@ -219,6 +319,371 @@ const executorImport = (
 };
 
 type ImplementationFunction = ArrowFunctionExpression | AstFunction;
+type ResolvedExecutorFunction = readonly [PreparationSource, ImplementationFunction];
+
+type NamedSpan = Span & { readonly name: string };
+
+const forwardingInvocation = (model: PreparationSource, expression: Expression): CallExpression | undefined => {
+  if (expression.type !== 'CallExpression') {
+    return undefined;
+  }
+  if (
+    expression.callee.type !== 'MemberExpression' ||
+    expression.callee.property.type !== 'Identifier' ||
+    expression.callee.property.name !== 'pipe'
+  ) {
+    return expression;
+  }
+  const unchanged = expression.arguments.every(
+    (argument) =>
+      argument.type === 'CallExpression' &&
+      (model.effectCall(argument, 'provideService') || model.effectCall(argument, 'mapError')),
+  );
+  return unchanged && expression.callee.object.type === 'CallExpression' ? expression.callee.object : undefined;
+};
+
+const forwardedFactory = (
+  model: PreparationSource,
+  implementation: ImplementationFunction,
+  target: NamedSpan,
+): boolean => {
+  const [rest] = implementation.params;
+  if (implementation.params.length !== 1 || rest?.type !== 'RestElement' || rest.argument.type !== 'Identifier') {
+    return false;
+  }
+  const [returned, ...others] = model.returns(implementation);
+  const invocation = returned === undefined || others.length > 0 ? undefined : forwardingInvocation(model, returned);
+  if (invocation?.callee.type !== 'Identifier' || invocation.arguments.length !== 1) {
+    return false;
+  }
+  const [input] = invocation.arguments;
+  return (
+    input?.type === 'SpreadElement' &&
+    input.argument.type === 'Identifier' &&
+    model.resolve(input.argument.name, input.argument) === model.resolve(rest.argument.name, rest.argument) &&
+    model.resolve(invocation.callee.name, invocation.callee) === model.resolve(target.name, target)
+  );
+};
+
+const nativeServiceContract = (model: PreparationSource, service: NamedSpan): TSTypeLiteral | undefined => {
+  const binding = model.resolve(service.name, service);
+  const [declaration] = model.program.body.flatMap((statement) => {
+    const node = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+    return node?.type === 'ClassDeclaration' && node.id?.name === service.name ? [node] : [];
+  });
+  const superclass = declaration?.superClass;
+  const generic = superclass?.type === 'CallExpression' ? superclass.callee : undefined;
+  const callee = generic?.type === 'CallExpression' ? generic.callee : undefined;
+  if (
+    binding === undefined ||
+    model.writes.has(binding) ||
+    callee?.type !== 'MemberExpression' ||
+    callee.object.type !== 'Identifier' ||
+    callee.property.type !== 'Identifier' ||
+    callee.property.name !== 'Service' ||
+    !model.imported(callee.object.name, callee.object, 'Context', 'effect', true)
+  ) {
+    return undefined;
+  }
+  const contract = generic?.type === 'CallExpression' ? generic.typeArguments?.params[1] : undefined;
+  return contract?.type === 'TSTypeLiteral' ? contract : undefined;
+};
+
+const nativeMethodTarget = (
+  model: PreparationSource,
+  contract: TSTypeLiteral,
+  method: string,
+): IdentifierReference | undefined => {
+  const property = contract.members.find(
+    (member) =>
+      member.type === 'TSPropertySignature' &&
+      member.readonly &&
+      !member.computed &&
+      member.key.type === 'Identifier' &&
+      member.key.name === method,
+  );
+  const signature = property?.type === 'TSPropertySignature' ? property.typeAnnotation?.typeAnnotation : undefined;
+  const [parameter] = signature?.type === 'TSFunctionType' ? signature.params : [];
+  const annotation = parameter?.type === 'RestElement' ? parameter.typeAnnotation?.typeAnnotation : undefined;
+  const query = annotation?.type === 'TSTypeReference' ? annotation.typeArguments?.params[0] : undefined;
+  return annotation?.type === 'TSTypeReference' &&
+    annotation.typeName.type === 'Identifier' &&
+    annotation.typeName.name === 'Parameters' &&
+    model.resolve('Parameters', annotation) === undefined &&
+    query?.type === 'TSTypeQuery' &&
+    query.exprName.type === 'Identifier'
+    ? query.exprName
+    : undefined;
+};
+
+const nativeLayerMethod = (
+  model: PreparationSource,
+  layer: CallExpression,
+  method: string,
+  target: NamedSpan,
+): boolean => {
+  const [, effect] = layer.arguments;
+  if (effect?.type !== 'CallExpression' || !model.effectCall(effect, 'gen')) {
+    return false;
+  }
+  const [callback] = effect.arguments;
+  if (callback?.type !== 'FunctionExpression') {
+    return false;
+  }
+  const [result, ...others] = model.returns(callback);
+  if (
+    result?.type !== 'ObjectExpression' ||
+    others.length > 0 ||
+    result.properties.some((field) => field.type === 'SpreadElement' || field.computed)
+  ) {
+    return false;
+  }
+  const field = result.properties.find(
+    (candidate) =>
+      candidate.type === 'Property' && candidate.key.type === 'Identifier' && candidate.key.name === method,
+  );
+  const wrapper = field?.type === 'Property' ? model.implementation(field.value) : undefined;
+  return wrapper !== undefined && forwardedFactory(model, wrapper, target);
+};
+
+const nativeFactoryPort = (
+  model: PreparationSource,
+  service: NamedSpan,
+  method: string,
+): ImplementationFunction | undefined => {
+  const contract = nativeServiceContract(model, service);
+  const target = contract === undefined ? undefined : nativeMethodTarget(model, contract, method);
+  const implementation = target === undefined ? undefined : model.implementation(target);
+  if (implementation === undefined || target === undefined) {
+    return undefined;
+  }
+  const binding = model.resolve(service.name, service);
+  const layers = model.calls.filter(
+    (call) =>
+      call.callee.type === 'MemberExpression' &&
+      call.callee.object.type === 'Identifier' &&
+      call.callee.property.type === 'Identifier' &&
+      call.callee.property.name === 'effect' &&
+      model.imported(call.callee.object.name, call.callee.object, 'Layer', 'effect', true) &&
+      call.arguments[0]?.type === 'Identifier' &&
+      model.resolve(call.arguments[0].name, call.arguments[0]) === binding,
+  );
+  return layers.length > 0 && layers.every((layer) => nativeLayerMethod(model, layer, method, target))
+    ? implementation
+    : undefined;
+};
+
+const acquiredFactoryPort = (
+  model: PreparationSource,
+  expression: Expression,
+): { readonly method: string; readonly service: IdentifierReference } | undefined => {
+  if (
+    expression.type !== 'MemberExpression' ||
+    expression.computed ||
+    expression.property.type !== 'Identifier' ||
+    expression.object.type !== 'MemberExpression' ||
+    expression.object.computed ||
+    expression.object.property.type !== 'Identifier' ||
+    expression.object.property.name !== 'value' ||
+    expression.object.object.type !== 'Identifier'
+  ) {
+    return undefined;
+  }
+  const option = expression.object.object;
+  const binding = model.stable(model.resolve(option.name, option));
+  const acquisition =
+    binding?.init?.type === 'YieldExpression' && binding.init.delegate ? binding.init.argument : undefined;
+  if (
+    acquisition?.type !== 'CallExpression' ||
+    !model.effectCall(acquisition, 'serviceOption') ||
+    acquisition.arguments.length !== 1
+  ) {
+    return undefined;
+  }
+  const [service] = acquisition.arguments;
+  return service?.type === 'Identifier' ? { method: expression.property.name, service } : undefined;
+};
+
+const resolveFactoryPort = (
+  model: PreparationSource,
+  expression: Expression,
+  models: ReadonlyMap<string, PreparationSource>,
+  resolve: (file: string, specifier: string) => string | undefined,
+): ResolvedExecutorFunction | undefined => {
+  const port = acquiredFactoryPort(model, expression);
+  if (port === undefined) {
+    return undefined;
+  }
+  const imported = model.stable(model.resolve(port.service.name, port.service))?.imported;
+  const file = [...models].find(([, value]) => value === model)?.[0];
+  const dependency = file === undefined || imported === undefined ? undefined : resolve(file, imported.source);
+  const target = dependency === undefined ? model : models.get(dependency);
+  if (target === undefined || imported?.typeOnly === true) {
+    return undefined;
+  }
+  const [exported] =
+    imported === undefined
+      ? []
+      : target.program.body.flatMap((statement) =>
+          statement.type === 'ExportNamedDeclaration' &&
+          statement.declaration?.type === 'ClassDeclaration' &&
+          statement.declaration.id?.name === imported.name
+            ? [statement.declaration.id]
+            : [],
+        );
+  const original = imported === undefined ? port.service : exported;
+  const implementation = original === undefined ? undefined : nativeFactoryPort(target, original, port.method);
+  return implementation === undefined ? undefined : [target, implementation];
+};
+
+const forwardsPreparationContext = (
+  model: PreparationSource,
+  call: CallExpression,
+  owner: PreparationSource,
+  implementation: ImplementationFunction,
+): boolean =>
+  implementation.params.some((parameter, index) => {
+    if (
+      parameter.type !== 'Identifier' ||
+      !owner.coreType(parameter.typeAnnotation, 'ActionServicePreparationContext')
+    ) {
+      return false;
+    }
+    const argument = call.arguments[index];
+    return (
+      argument?.type === 'Identifier' &&
+      model.functions.some(
+        (fn) =>
+          model.preflights.has(fn.start) &&
+          fn.start <= call.start &&
+          call.end <= fn.end &&
+          model.contextInputs(fn).some((context) => model.resolve(argument.name, argument) === context),
+      )
+    );
+  });
+
+const hasOwnerFactoryInputs = (model: PreparationSource, factory: ImplementationFunction): boolean => {
+  const [transaction, scope, revision] = factory.params;
+  return (
+    transaction?.type === 'Identifier' &&
+    model.coreType(transaction.typeAnnotation, 'ScopedTransactionExecutor') &&
+    scope?.type === 'Identifier' &&
+    model.coreType(scope.typeAnnotation, 'OperationalScope') &&
+    revision?.type === 'Identifier' &&
+    revision.typeAnnotation?.typeAnnotation.type === 'TSStringKeyword'
+  );
+};
+
+const extendPreflightFactories = (model: PreparationSource): void => {
+  for (const call of model.calls) {
+    const target = model.callable(call.callee);
+    if (target !== undefined && forwardsPreparationContext(model, call, ...target)) {
+      const [owner, implementation] = target;
+      owner.preflights.add(implementation.start);
+      for (const returned of owner.returns(implementation)) {
+        const factory = owner.implementation(returned);
+        if (factory !== undefined && hasOwnerFactoryInputs(owner, factory)) {
+          owner.factories.add(factory.start);
+        }
+      }
+    }
+  }
+};
+
+const closedExecutorHelper = (
+  model: PreparationSource,
+  binding: Parameters<PreparationSource['calledOnly']>[0],
+): boolean => {
+  const ignored = new Set<number>();
+  new Visitor({
+    MemberExpression: (node) => {
+      if (!node.computed) {
+        ignored.add(node.property.start);
+      }
+    },
+    Property: (node) => {
+      if (!node.computed && !node.shorthand) {
+        ignored.add(node.key.start);
+      }
+    },
+  }).visit(model.program);
+  let called = false;
+  let escaped = false;
+  new Visitor({
+    Identifier: (node) => {
+      if (
+        ignored.has(node.start) ||
+        node.start === binding.declaration.start ||
+        model.resolve(node.name, node) !== binding
+      ) {
+        return;
+      }
+      const call = model.calls.find(
+        (candidate) => candidate.callee === node || model.isSnapshotCallback(candidate, node),
+      );
+      called ||= call !== undefined;
+      escaped ||=
+        call === undefined ||
+        !model.functions.some(
+          (fn) =>
+            (model.factories.has(fn.start) ||
+              model.preflights.has(fn.start) ||
+              model.readFinishes.has(fn.start) ||
+              model.privateConsumers.has(fn.start)) &&
+            fn.start <= node.start &&
+            node.end <= fn.end,
+        );
+    },
+  }).visit(model.program);
+  return called && !escaped;
+};
+
+const extendPrivateConsumers = (model: PreparationSource): void => {
+  for (const call of model.calls) {
+    const [callback] = call.arguments;
+    if (
+      callback?.type !== 'SpreadElement' &&
+      callback?.type !== 'Identifier' &&
+      callback !== undefined &&
+      model.isSnapshotCallback(call, callback)
+    ) {
+      const implementation = model.implementation(callback);
+      if (implementation !== undefined) {
+        model.privateConsumers.add(implementation.start);
+      }
+    }
+  }
+  for (const binding of model.bindings) {
+    const implementation = model.stable(binding) === undefined ? undefined : model.implementation(binding.init);
+    if (
+      implementation !== undefined &&
+      implementation.params.some(
+        (parameter) =>
+          parameter.type === 'Identifier' && model.coreType(parameter.typeAnnotation, 'ScopedTransactionExecutor'),
+      ) &&
+      closedExecutorHelper(model, binding)
+    ) {
+      model.privateConsumers.add(implementation.start);
+    }
+  }
+};
+
+const extendFactoryPortBoundaries = (
+  models: ReadonlyMap<string, PreparationSource>,
+  resolve: (file: string, specifier: string) => string | undefined,
+): void => {
+  for (const model of models.values()) {
+    const original = model.resolveCallable;
+    model.resolveCallable = (expression) =>
+      original?.(expression) ?? resolveFactoryPort(model, expression, models, resolve);
+  }
+  for (const model of models.values()) {
+    extendPreflightFactories(model);
+  }
+  for (const model of models.values()) {
+    extendPrivateConsumers(model);
+  }
+};
 
 // Scope is immutable metadata, whereas indexed query methods remain database capabilities.
 const isScopeProjection = (expression: Expression): boolean =>
@@ -603,9 +1068,237 @@ const containsGlobalDatabaseCapability = (
   privateImplementation: boolean,
   preparation?: PreparationSource,
 ): boolean =>
-  globalDatabaseImplementationImport.test(source) ||
-  hiddenCapability.test(source) ||
+  globalDatabaseImplementationImport.test(databaseBoundaryCode(file, source)) ||
+  hiddenCapabilityIndexes(source).length > 0 ||
   scopedTransactionExposureIndexes(file, source, privateImplementation, preparation).length > 0;
+
+interface CapabilityModule {
+  readonly definitions: ReadonlyMap<string, Span>;
+  readonly exports: ReadonlyMap<string, { readonly name: string; readonly source?: string }>;
+  readonly ignored: ReadonlySet<number>;
+  readonly model: PreparationSource;
+  readonly raw: readonly number[];
+  readonly references: readonly Extract<Node, { type: 'Identifier' }>[];
+}
+
+const capabilityDefinitions = (node: Node | null | undefined): readonly (readonly [string, Span])[] => {
+  if (node?.type === 'VariableDeclaration') {
+    return node.declarations.flatMap((binding) =>
+      binding.id.type === 'Identifier' ? [[binding.id.name, binding] as const] : [],
+    );
+  }
+  if (
+    (node?.type === 'FunctionDeclaration' ||
+      node?.type === 'ClassDeclaration' ||
+      node?.type === 'TSTypeAliasDeclaration' ||
+      node?.type === 'TSInterfaceDeclaration' ||
+      node?.type === 'TSEnumDeclaration') &&
+    node.id !== null
+  ) {
+    return [[node.id.name, node]];
+  }
+  return [];
+};
+
+const capabilityModule = (
+  file: string,
+  source: string,
+  preparation: PreparationSource | undefined,
+  privateImplementation: boolean,
+): CapabilityModule => {
+  const model = preparation ?? new PreparationSource(file, source);
+  const definitions = new Map<string, Span>();
+  const exported = new Map<string, { readonly name: string; readonly source?: string }>();
+  for (const statement of model.program.body) {
+    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+    const entries = capabilityDefinitions(declaration);
+    for (const [name, span] of entries) {
+      definitions.set(name, span);
+    }
+    if (statement.type === 'ExportNamedDeclaration') {
+      for (const [name] of entries) {
+        exported.set(name, { name });
+      }
+      for (const specifier of statement.specifiers) {
+        if (specifier.exported.type === 'Identifier' && specifier.local.type === 'Identifier') {
+          exported.set(
+            specifier.exported.name,
+            statement.source === null
+              ? { name: specifier.local.name }
+              : { name: specifier.local.name, source: statement.source.value },
+          );
+        }
+      }
+    }
+  }
+  const references: Extract<Node, { type: 'Identifier' }>[] = [];
+  const ignored = new Set<number>();
+  new Visitor({
+    Identifier: (node) => {
+      references.push(node);
+    },
+    MemberExpression: (node) => {
+      if (!node.computed) {
+        ignored.add(node.property.start);
+      }
+    },
+    Property: (node) => {
+      if (!node.computed && !node.shorthand) {
+        ignored.add(node.key.start);
+      }
+    },
+    TSPropertySignature: (node) => {
+      if (!node.computed) {
+        ignored.add(node.key.start);
+      }
+    },
+    TSQualifiedName: (node) => {
+      ignored.add(node.right.start);
+    },
+  }).visit(model.program);
+  return {
+    definitions,
+    exports: exported,
+    ignored,
+    model,
+    raw: [
+      ...hiddenCapabilityIndexes(source),
+      ...scopedTransactionExposureIndexes(file, source, privateImplementation, preparation),
+    ],
+    references,
+  };
+};
+
+interface CapabilitySymbol {
+  readonly exported: boolean;
+  readonly file: string;
+  readonly name: string;
+}
+type CapabilityEnqueue = (file: string, source: string, name: string) => boolean;
+
+const capabilityReferences = (
+  module: CapabilityModule,
+  span: Span,
+  current: CapabilitySymbol,
+  enqueue: CapabilityEnqueue,
+  pending: CapabilitySymbol[],
+): boolean =>
+  module.references.some((reference) => {
+    if (reference.start < span.start || reference.end > span.end || module.ignored.has(reference.start)) {
+      return false;
+    }
+    const resolved = module.model.resolve(reference.name, reference);
+    if (resolved === undefined || resolved.scope !== module.model.program) {
+      return false;
+    }
+    if (module.model.writes.has(resolved)) {
+      return true;
+    }
+    const { imported } = resolved;
+    if (imported === undefined) {
+      if (resolved.name !== current.name) {
+        pending.push({ exported: false, file: current.file, name: resolved.name });
+      }
+      return false;
+    }
+    return (
+      ((imported.source === coreRuntimeModule || imported.source.startsWith(coreRuntimeSubpath)) &&
+        hiddenCapability.test(imported.name)) ||
+      enqueue(current.file, imported.source, imported.name || '*')
+    );
+  });
+
+const capabilitySymbol = (
+  item: CapabilitySymbol,
+  module: CapabilityModule,
+  enqueue: CapabilityEnqueue,
+  pending: CapabilitySymbol[],
+): boolean => {
+  const binding: { readonly name: string; readonly source?: string } | undefined = item.exported
+    ? module.exports.get(item.name)
+    : { name: item.name };
+  if (binding === undefined) {
+    return true;
+  }
+  if (binding.source !== undefined) {
+    return enqueue(item.file, binding.source, binding.name);
+  }
+  const span = module.definitions.get(binding.name);
+  if (span === undefined) {
+    const imported = module.model.bindings.find(
+      (candidate) => candidate.name === binding.name && candidate.scope === module.model.program,
+    )?.imported;
+    return imported === undefined || enqueue(item.file, imported.source, imported.name || '*');
+  }
+  return (
+    module.raw.some((index) => span.start <= index && index < span.end) ||
+    capabilityReferences(module, span, { ...item, name: binding.name }, enqueue, pending)
+  );
+};
+
+/** A named import observes its original declaration closure, not every unrelated export in its module. */
+const namedDatabaseCapability = (
+  sources: ReadonlyMap<string, string>,
+  sourceFiles: ReadonlySet<string>,
+  path: Path.Path,
+  root: string,
+  packageExports: ReadonlyMap<string, string>,
+  preparations: ReadonlyMap<string, PreparationSource>,
+  coarse: ReadonlySet<string>,
+) => {
+  const modules = new Map<string, CapabilityModule>();
+  const physical = new Map<string, boolean>();
+  const resolve = (file: string, specifier: string) =>
+    resolveLocalSource(sourceFiles, path, root, file, specifier, packageExports);
+  const moduleFor = (file: string): CapabilityModule => {
+    const cached = modules.get(file);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const source = sources.get(file) ?? '';
+    const relative = path.relative(root, file).split(path.sep).join('/');
+    const module = capabilityModule(file, source, preparations.get(file), !isGovernedAdapter(relative, source));
+    physical.set(file, globalDatabaseImplementationImport.test(databaseBoundaryCode(file, source)));
+    modules.set(file, module);
+    return module;
+  };
+  const cache = new Map<string, boolean>();
+  return (file: string, name: string): boolean => {
+    const key = `${file}\0${name}`;
+    const cached = cache.get(key);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const pending: CapabilitySymbol[] = [{ exported: true, file, name }];
+    const seen = new Set<string>();
+    let unsafe = false;
+    const enqueue: CapabilityEnqueue = (importer, source, imported) => {
+      if (globalDatabaseImplementationImport.test(`import { value } from '${source}'`)) {
+        return true;
+      }
+      const target = resolve(importer, source);
+      if (target === undefined || !coarse.has(target)) {
+        return false;
+      }
+      if (imported === '*') {
+        return true;
+      }
+      pending.push({ exported: true, file: target, name: imported });
+      return false;
+    };
+    while (pending.length > 0 && !unsafe) {
+      const item = pending.pop();
+      const state = item === undefined ? '' : `${item.file}\0${item.name}\0${item.exported}`;
+      if (item !== undefined && !seen.has(state)) {
+        seen.add(state);
+        const module = moduleFor(item.file);
+        unsafe = physical.get(item.file) === true || capabilitySymbol(item, module, enqueue, pending);
+      }
+    }
+    cache.set(key, unsafe);
+    return unsafe;
+  };
+};
 
 const globalDatabaseCapabilityClosure = (
   sources: ReadonlyMap<string, string>,
@@ -632,7 +1325,7 @@ const globalDatabaseCapabilityClosure = (
         closure.add(file);
         pending.push(file);
       }
-      for (const match of source.matchAll(importedSpecifier)) {
+      for (const match of databaseBoundaryCode(file, source).matchAll(importedSpecifier)) {
         const specifier = match.groups?.specifier;
         const dependency =
           specifier === undefined
@@ -687,9 +1380,12 @@ const crossOwnerPrivateImport = (
 };
 
 interface SourceCheckContext {
+  readonly code: string;
   readonly file: string;
   readonly globalDatabaseCapabilityFiles: ReadonlySet<string>;
   readonly governedAdapter: boolean;
+  readonly hiddenLines: ReadonlySet<number>;
+  readonly namedCapability: (file: string, name: string) => boolean;
   readonly packageExports: ReadonlyMap<string, string>;
   readonly path: Path.Path;
   readonly preparation?: PreparationSource;
@@ -698,16 +1394,136 @@ interface SourceCheckContext {
   readonly root: string;
   readonly source: string;
   readonly sourceFiles: ReadonlySet<string>;
+  readonly sources: ReadonlyMap<string, string>;
   readonly testSourceFiles: ReadonlySet<string>;
 }
 
+const importExposesCapability = (context: SourceCheckContext, dependency: string, index: number): boolean => {
+  if (!context.globalDatabaseCapabilityFiles.has(dependency)) {
+    return false;
+  }
+  const program = context.preparation?.program ?? parseSync(context.file, context.source, { astType: 'ts' }).program;
+  const declaration = program.body.find((node) => node.start <= index && index < node.end);
+  if (declaration?.type !== 'ImportDeclaration' || declaration.specifiers.length === 0) {
+    return true;
+  }
+  return declaration.specifiers.some(
+    (specifier) =>
+      specifier.type !== 'ImportSpecifier' ||
+      specifier.imported.type !== 'Identifier' ||
+      context.namedCapability(dependency, specifier.imported.name),
+  );
+};
+
 const sourceLine = (source: string, index: number): number => source.slice(0, index).split('\n').length;
+
+const isDeclaredCoreDatabaseBoundary = (
+  context: SourceCheckContext,
+  specifier: string,
+  dependency: string,
+  relative: string,
+): boolean =>
+  (specifier === coreRuntimeModule || specifier.startsWith(coreRuntimeSubpath)) &&
+  context.packageExports.get(specifier) === dependency &&
+  relative.startsWith(coreRuntimeSourcePrefix);
+
+const privateDatabaseOrigin = (
+  context: SourceCheckContext,
+  importer: string,
+  specifier: string,
+  visited: Set<string>,
+): string | undefined => {
+  const dependency = resolveLocalSource(
+    context.sourceFiles,
+    context.path,
+    context.root,
+    importer,
+    specifier,
+    context.packageExports,
+  );
+  if (dependency === undefined || visited.has(dependency)) {
+    return undefined;
+  }
+  const relative = context.path.relative(context.root, dependency).split(context.path.sep).join('/');
+  // Only a genuine declared Core export is the public boundary. A lookalike
+  // package or relative route into the private routine implementation is not.
+  if (isDeclaredCoreDatabaseBoundary(context, specifier, dependency, relative)) {
+    return undefined;
+  }
+  if (relative === `${coreRuntimeSourcePrefix}db/scoped-routine.ts`) {
+    return relative;
+  }
+  const owner = /(?:^|\/)verticals\/(?<owner>[^/]+)\//u.exec(relative)?.groups?.owner;
+  const consumerOwner = /(?:^|\/)verticals\/(?<owner>[^/]+)\//u.exec(context.relative)?.groups?.owner;
+  if (owner !== undefined && owner === consumerOwner) {
+    return undefined;
+  }
+  if (owner !== undefined && /(?:^|\/)src\/(?:db|database|repositories?)\//u.test(relative)) {
+    return relative;
+  }
+  visited.add(dependency);
+  for (const match of databaseBoundaryCode(dependency, context.sources.get(dependency) ?? '').matchAll(
+    importedSpecifier,
+  )) {
+    const next = match.groups?.specifier;
+    if (next !== undefined) {
+      const origin = privateDatabaseOrigin(context, dependency, next, visited);
+      if (origin !== undefined) {
+        return origin;
+      }
+    }
+  }
+  return undefined;
+};
+
+const recordResolvedPrivateDatabaseImports = (context: SourceCheckContext): void => {
+  if (!isVerticalOwnerSource(context.relative) && !context.governedAdapter) {
+    return;
+  }
+  if (context.testSourceFiles.has(context.file) || context.relative.startsWith(coreRuntimeSourcePrefix)) {
+    return;
+  }
+  for (const match of context.code.matchAll(importedSpecifier)) {
+    const specifier = match.groups?.specifier;
+    if (
+      specifier === undefined ||
+      crossOwnerPrivateImport(context.path, context.root, context.file, context.relative, match[0])
+    ) {
+      continue;
+    }
+    const dependency = resolveLocalSource(
+      context.sourceFiles,
+      context.path,
+      context.root,
+      context.file,
+      specifier,
+      context.packageExports,
+    );
+    // Keep the existing, stronger capability diagnostic when that mechanism
+    // already rejects this exact operation edge; do not duplicate its finding.
+    const capabilityAlreadyRejected =
+      isOwnerOperationSource(context.relative, context.source) &&
+      dependency !== undefined &&
+      importExposesCapability(context, dependency, match.index);
+    if (!capabilityAlreadyRejected) {
+      const origin = privateDatabaseOrigin(context, context.file, specifier, new Set());
+      if (origin !== undefined) {
+        context.record({
+          file: context.relative,
+          line: sourceLine(context.source, match.index),
+          origin,
+          reason: `foreign/private database implementation ${origin}; use the owner's public contract or approved Core boundary`,
+        });
+      }
+    }
+  }
+};
 
 const recordProductionTestingImports = (context: SourceCheckContext): void => {
   if (context.testSourceFiles.has(context.file)) {
     return;
   }
-  for (const match of context.source.matchAll(importedSpecifier)) {
+  for (const match of context.code.matchAll(importedSpecifier)) {
     const specifier = match.groups?.specifier;
     if (specifier === undefined) {
       continue;
@@ -744,7 +1560,7 @@ const recordTransitiveDatabaseCapabilities = (context: SourceCheckContext): void
   if (!isOwnerOperationSource(context.relative, context.source)) {
     return;
   }
-  for (const match of context.source.matchAll(importedSpecifier)) {
+  for (const match of context.code.matchAll(importedSpecifier)) {
     const specifier = match.groups?.specifier;
     if (specifier === undefined) {
       continue;
@@ -757,7 +1573,7 @@ const recordTransitiveDatabaseCapabilities = (context: SourceCheckContext): void
       specifier,
       context.packageExports,
     );
-    if (dependency !== undefined && context.globalDatabaseCapabilityFiles.has(dependency)) {
+    if (dependency !== undefined && importExposesCapability(context, dependency, match.index)) {
       context.record({
         file: context.relative,
         line: sourceLine(context.source, match.index),
@@ -773,7 +1589,7 @@ const isDirectDatabaseImport = (context: SourceCheckContext, source: string): bo
   crossOwnerPrivateImport(context.path, context.root, context.file, context.relative, source);
 
 const recordMultilineDatabaseImports = (context: SourceCheckContext): void => {
-  for (const match of context.source.matchAll(multilineForbiddenImport)) {
+  for (const match of context.code.matchAll(multilineForbiddenImport)) {
     if (!match[0].includes('\n') || !isDirectDatabaseImport(context, match[0])) {
       continue;
     }
@@ -785,26 +1601,27 @@ const recordMultilineDatabaseImports = (context: SourceCheckContext): void => {
   }
 };
 
-const exposesHiddenCapability = (context: SourceCheckContext, line: string): boolean => {
-  const hasCapability = context.governedAdapter
-    ? hiddenCapability.test(line)
-    : isVerticalOwnerSource(context.relative) && hiddenCoreSchema.test(line);
-  return hasCapability && !line.trimStart().startsWith('//');
-};
-
 const recordLineDatabaseViolations = (context: SourceCheckContext): void => {
-  for (const [index, line] of context.source.split('\n').entries()) {
+  for (const [index, line] of context.code.split('\n').entries()) {
     const directImport =
       (context.governedAdapter && forbiddenImport.test(line)) ||
       (isVerticalOwnerSource(context.relative) && importsCoreDatabaseSchema.test(line)) ||
       crossOwnerPrivateImport(context.path, context.root, context.file, context.relative, line);
     if (directImport) {
-      context.record({
+      const specifier = importSpecifier.exec(line)?.groups?.specifier;
+      const origin =
+        specifier === undefined ? undefined : privateDatabaseOrigin(context, context.file, specifier, new Set());
+      const violation: DatabaseAccessViolation = {
         file: context.relative,
         line: index + 1,
         reason: 'direct database/private repository import in governed handler or transport adapter',
-      });
-    } else if (exposesHiddenCapability(context, line)) {
+      };
+      if (origin === undefined) {
+        context.record(violation);
+      } else {
+        context.record({ ...violation, origin });
+      }
+    } else if (context.hiddenLines.has(index + 1)) {
       context.record({
         file: context.relative,
         line: index + 1,
@@ -832,7 +1649,7 @@ const recordSecondPostgresDriver = (context: SourceCheckContext): void => {
   if (context.testSourceFiles.has(context.file) || context.governedAdapter) {
     return;
   }
-  for (const match of context.source.matchAll(secondPostgresDriverImport)) {
+  for (const match of context.code.matchAll(secondPostgresDriverImport)) {
     context.record({
       file: context.relative,
       line: sourceLine(context.source, match.index),
@@ -968,6 +1785,9 @@ export const checkDatabaseAccessBoundaries = (root: string) =>
     const preparations = actionPreparationBoundaries(sources, (file, specifier) =>
       resolveLocalSource(sourceFiles, path, root, file, specifier, packageExports),
     );
+    extendFactoryPortBoundaries(preparations, (file, specifier) =>
+      resolveLocalSource(sourceFiles, path, root, file, specifier, packageExports),
+    );
     const globalDatabaseCapabilityFiles = globalDatabaseCapabilityClosure(
       sources,
       sourceFiles,
@@ -975,6 +1795,15 @@ export const checkDatabaseAccessBoundaries = (root: string) =>
       root,
       packageExports,
       preparations,
+    );
+    const namedCapability = namedDatabaseCapability(
+      sources,
+      sourceFiles,
+      path,
+      root,
+      packageExports,
+      preparations,
+      globalDatabaseCapabilityFiles,
     );
     const recorded = new Set<string>();
     const record = (violation: DatabaseAccessViolation): void => {
@@ -988,9 +1817,17 @@ export const checkDatabaseAccessBoundaries = (root: string) =>
     for (const [file, source] of sourcePairs) {
       const relative = path.relative(root, file).split(path.sep).join('/');
       const context: SourceCheckContext = {
+        code: databaseBoundaryCode(file, source),
         file,
         globalDatabaseCapabilityFiles,
         governedAdapter: isGovernedAdapter(relative, source),
+        hiddenLines: new Set(
+          (isGovernedAdapter(relative, source) || isVerticalOwnerSource(relative)
+            ? hiddenCapabilityIndexes(source, !isGovernedAdapter(relative, source))
+            : []
+          ).map((index) => sourceLine(source, index)),
+        ),
+        namedCapability,
         packageExports,
         path,
         preparation: preparations.get(file),
@@ -999,9 +1836,11 @@ export const checkDatabaseAccessBoundaries = (root: string) =>
         root,
         source,
         sourceFiles,
+        sources,
         testSourceFiles,
       };
       recordProductionTestingImports(context);
+      recordResolvedPrivateDatabaseImports(context);
       recordTransitiveDatabaseCapabilities(context);
       recordMultilineDatabaseImports(context);
       recordLineDatabaseViolations(context);

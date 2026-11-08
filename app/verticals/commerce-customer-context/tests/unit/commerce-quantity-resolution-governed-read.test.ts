@@ -2,20 +2,14 @@ import { Effect, Schema } from 'effect';
 import { OperationContextUnavailable } from '@app/core-runtime';
 import { expect, it } from 'effect-rstest';
 
-import {
-  getReadConditionalPermissionPlan,
-  getReadServiceFactory,
-} from '../../../../packages/core-runtime/src/reads/definition.ts';
+import { getReadServiceFactory } from '@app/core-runtime/testing/reads';
 
 import {
   CommerceQuantityResolutionRequestSchema,
   CommerceQuantityResolutionResponseSchema,
 } from '../../shared/apis/commerce-quantity-resolution.ts';
 import {
-  commerceQuantityGuestPermissionTargets,
-  commerceQuantityProfilePermissionTargets,
   commerceQuantityResolutionProductionServices,
-  commerceQuantityResolutionPermission,
   commerceQuantityResolutionRead,
   makeCommerceQuantityResolutionServices,
   handleCommerceQuantityResolution,
@@ -111,20 +105,22 @@ it.effect('uses server observation time and retains the typed domain outcome', (
 it.effect('rejects claimed purchasing scope before invoking dependencies', () =>
   Effect.gen(function* rejectMismatchedScope() {
     let called = false;
-    const mismatchedRequest = yield* Schema.decodeEffect(CommerceQuantityResolutionRequestSchema)({
-      ...request,
-      purchasingContext: { ...request.purchasingContext, storefrontId: 'other-storefront' },
-    });
-    const failure = yield* handleCommerceQuantityResolution(mismatchedRequest, {
-      readKey: 'commerce.customer-context.api.commerce-quantity-resolution',
-      scope,
-      services: {
-        resolve: () => {
-          called = true;
-          return Effect.die('Scope mismatch must be rejected before resolution');
+    const failure = yield* handleCommerceQuantityResolution(
+      Schema.decodeUnknownSync(CommerceQuantityResolutionRequestSchema)({
+        ...request,
+        purchasingContext: { ...request.purchasingContext, storefrontId: 'other-storefront' },
+      }),
+      {
+        readKey: 'commerce.customer-context.api.commerce-quantity-resolution',
+        scope,
+        services: {
+          resolve: () => {
+            called = true;
+            return Effect.die('Scope mismatch must be rejected before resolution');
+          },
         },
       },
-    }).pipe(Effect.flip);
+    ).pipe(Effect.flip);
     expect(failure).toMatchObject({ code: 'read_permission_denied' });
     expect(called).toBe(false);
   }),
@@ -146,73 +142,14 @@ it.effect('the registered production factory fails closed without authoritative 
   }),
 );
 
-it('declares finite Guest, Retail, and Counterparty authorization targets', () => {
-  const plan = getReadConditionalPermissionPlan(commerceQuantityResolutionPermission);
-  expect(commerceQuantityResolutionPermission.branchTags).toEqual(['COUNTERPARTY', 'GUEST', 'RETAIL']);
-  expect(commerceQuantityGuestPermissionTargets()).toEqual([{ kind: 'module', moduleId: 'commerce.customer-context' }]);
-  expect(plan.resolve(request, scope)).toEqual({
-    kind: 'GUEST',
-    requiredKinds: ['module'],
-    requirements: commerceQuantityGuestPermissionTargets(),
+it('declares one scope-wide capability and keeps no per-record permission plan', () => {
+  // One declaration cannot branch per Guest/Retail/Counterparty subject, so the branch rule moved into
+  // the owner facts; here the payload names no Counterparty the overlay could check, so the read keeps
+  // its single scope-wide capability and declares no owner facts (O62.4, O67-Q1).
+  expect(commerceQuantityResolutionRead.descriptor.accessDeclaration).toMatchObject({
+    key: 'commerce.customer-context.commerce-quantity.resolve',
+    kind: 'read',
+    selectors: [],
   });
-
-  const retailSubject = {
-    kind: 'RETAIL' as const,
-    profileRef: {
-      moduleId: 'commerce.customer-context' as const,
-      resourceId: '40000000-0000-4000-8000-000000000001',
-      resourceType: 'commerce.customer-context.retail-customer-profile' as const,
-      tenantId,
-    },
-  };
-  const retailRequest = Schema.decodeUnknownSync(CommerceQuantityResolutionRequestSchema)({
-    ...request,
-    subject: retailSubject,
-  });
-  const retailTargets = commerceQuantityProfilePermissionTargets(retailRequest, retailSubject, scope);
-  expect(plan.resolve(retailRequest, scope)).toEqual({
-    kind: 'RETAIL',
-    requiredKinds: ['module', 'resource_read'],
-    requirements: retailTargets,
-  });
-  expect(retailTargets).toEqual([
-    { kind: 'module', moduleId: 'commerce.customer-context' },
-    {
-      kind: 'resource_read',
-      permission: 'read',
-      resource: {
-        moduleId: retailSubject.profileRef.moduleId,
-        resourceId: retailSubject.profileRef.resourceId,
-        resourceType: retailSubject.profileRef.resourceType,
-      },
-    },
-  ]);
-  const counterpartySubject = {
-    kind: 'COUNTERPARTY' as const,
-    profileRef: {
-      ...retailSubject.profileRef,
-      resourceId: '40000000-0000-4000-8000-000000000002',
-      resourceType: 'commerce.customer-context.counterparty-purchasing-profile' as const,
-    },
-  };
-  const counterpartyRequest = Schema.decodeUnknownSync(CommerceQuantityResolutionRequestSchema)({
-    ...request,
-    subject: counterpartySubject,
-  });
-  expect(plan.resolve(counterpartyRequest, scope)).toEqual({
-    kind: 'COUNTERPARTY',
-    requiredKinds: ['module', 'resource_read'],
-    requirements: [
-      { kind: 'module', moduleId: 'commerce.customer-context' },
-      {
-        kind: 'resource_read',
-        permission: 'read',
-        resource: {
-          moduleId: counterpartySubject.profileRef.moduleId,
-          resourceId: counterpartySubject.profileRef.resourceId,
-          resourceType: counterpartySubject.profileRef.resourceType,
-        },
-      },
-    ],
-  });
+  expect(commerceQuantityResolutionRead.descriptor.accessOwnerFacts).toBeUndefined();
 });

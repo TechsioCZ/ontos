@@ -1,11 +1,7 @@
 -----
---account-group-outline
---card-account-details-outline
 --color-page-fg
 --color-page-muted-fg
---domain
 --file-delimited-outline
---handshake-outline
 --plus
 --square-edit-outline
 --tag-multiple-outline
@@ -26,11 +22,7 @@ gap-50
 grid
 grid-cols-1
 hidden
-icon-[mdi--account-group-outline]
-icon-[mdi--card-account-details-outline]
-icon-[mdi--domain]
 icon-[mdi--file-delimited-outline]
-icon-[mdi--handshake-outline]
 icon-[mdi--plus]
 icon-[mdi--square-edit-outline]
 icon-[mdi--tag-multiple-outline]

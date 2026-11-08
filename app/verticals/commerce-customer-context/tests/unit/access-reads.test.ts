@@ -2,7 +2,6 @@ import { expect, it } from 'effect-rstest';
 import { Crypto, Effect, Layer, Predicate } from 'effect';
 import { runReadOwnerSteps } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import {
-  BusinessPermissionRelationshipMutation,
   ContextAccess,
   PrincipalEligibility,
   unavailablePrincipalEligibility,
@@ -17,7 +16,6 @@ import {
   unavailableCounterpartyInvitationProofDelivery,
   unavailableCounterpartyInvitationProofLifecycle,
 } from '../../shared/domain/access-port.ts';
-import { counterpartyAccessReadPermissionTarget } from '../../src/api/access-read-support.ts';
 import {
   counterpartyAccessInvitationReadRead,
   readCounterpartyAccessInvitationFromServices,
@@ -107,13 +105,10 @@ const testCrypto = Crypto.make({
   digest: () => Effect.succeed(new Uint8Array(32)),
   randomBytes: (size) => new Uint8Array(size),
 });
-const unusedBusinessPermissionMutationLayer = Layer.succeed(BusinessPermissionRelationshipMutation, {
-  mutate: () => Effect.void,
-});
 const unusedContextAccessLayer = Layer.succeed(ContextAccess, {
-  businessPermissions: () => Effect.succeed([]),
   legalEntities: () => Effect.succeed([]),
   modules: () => Effect.succeed([]),
+  ownerPermissions: () => Effect.succeed([]),
   resources: () => Effect.succeed([]),
   tenants: () => Effect.succeed([]),
 });
@@ -132,7 +127,6 @@ const unusedInvitationProofLifecycleLayer = Layer.succeed(
 );
 const testCryptoLayer = Layer.succeed(Crypto.Crypto, testCrypto);
 const unusedAccessDependencies = Layer.mergeAll(
-  unusedBusinessPermissionMutationLayer,
   unusedContextAccessLayer,
   unusedPrincipalEligibilityLayer,
   unusedInvitationClaimAuthorityLayer,
@@ -163,14 +157,14 @@ it.effect('returns exact allowed and denied decisions and maps unavailable check
     };
     for (const decision of ['ALLOWED', 'DENIED'] as const) {
       expect(
-        yield* checkCounterpartyCommerceAccessFromServices(input, principalId, tenantId, 'ALLOWED', {
+        yield* checkCounterpartyCommerceAccessFromServices(input, principalId, tenantId, {
           check: () => Effect.succeed(decision),
         }),
       ).toEqual({ decision });
     }
 
     const failure = yield* Effect.flip(
-      checkCounterpartyCommerceAccessFromServices(input, principalId, tenantId, 'ALLOWED', {
+      checkCounterpartyCommerceAccessFromServices(input, principalId, tenantId, {
         check: () => Effect.fail(unavailableFailure()),
       }),
     );
@@ -190,7 +184,6 @@ it.effect('rejects cross-tenant checks before consulting the access adapter', ()
         },
         principalId,
         tenantId,
-        'ALLOWED',
         {
           check: () => {
             called = true;
@@ -458,47 +451,3 @@ it.effect('fails closed when the invitation handler lacks Legal Entity context',
     expect(counterpartyCommerceAccessCheckRead.descriptor.legalEntityScope).toBe('required');
   }).pipe(provideUnusedAccessPort),
 );
-
-it('derives safe counterparty targets and only forwards gateway-verified Storefront identity', () => {
-  expect(counterpartyAccessReadPermissionTarget({ counterpartyRef, scope }, operationalScope)).toEqual({
-    businessPermission: {
-      permission: 'counterparty.access.read',
-      target: {
-        counterpartyId: counterpartyRef.resourceId,
-        kind: 'counterparty',
-        legalEntityId,
-        tenantId,
-      },
-    },
-    kind: 'business_permission',
-  });
-
-  const storefrontTarget = counterpartyAccessReadPermissionTarget(
-    { counterpartyRef, scope: storefrontScope },
-    operationalScope,
-  );
-  expect(storefrontTarget.businessPermission.target).toEqual({
-    counterpartyId: counterpartyRef.resourceId,
-    kind: 'counterparty_storefront',
-    legalEntityId,
-    storefrontId: storefrontScope.storefrontKey,
-    tenantId,
-  });
-  expect(storefrontTarget).not.toHaveProperty('trustedStorefrontId');
-
-  const trustedStorefrontTarget = counterpartyAccessReadPermissionTarget(
-    { counterpartyRef, scope: storefrontScope },
-    { ...operationalScope, trustedStorefrontId: storefrontScope.storefrontKey },
-  );
-  expect(trustedStorefrontTarget).toHaveProperty('trustedStorefrontId', storefrontScope.storefrontKey);
-
-  const mismatchedStorefrontTarget = counterpartyAccessReadPermissionTarget(
-    { counterpartyRef, scope: storefrontScope },
-    { ...operationalScope, trustedStorefrontId: 'storefront-2' },
-  );
-  expect(mismatchedStorefrontTarget).toHaveProperty('trustedStorefrontId', 'storefront-2');
-  expect(mismatchedStorefrontTarget.businessPermission.target).toHaveProperty(
-    'storefrontId',
-    storefrontScope.storefrontKey,
-  );
-});

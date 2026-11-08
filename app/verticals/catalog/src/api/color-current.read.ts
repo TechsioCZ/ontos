@@ -4,7 +4,6 @@ import {
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
   defineRead,
-  defineReadResourcePermission,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import { Effect, Option } from 'effect';
@@ -23,7 +22,7 @@ const unavailable = (cause: unknown) => {
 
 const colorCurrentEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.color-current' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.color-current',
   moduleKey,
   role: 'api',
@@ -31,6 +30,14 @@ const colorCurrentEntrypoint = defineTenantModuleEntrypoint({
 
 export const colorCurrentRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.color-current.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'controlled-attribute-value', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: colorCurrentEntrypoint,
     evidencePolicy: {
@@ -40,13 +47,8 @@ export const colorCurrentRead = defineRead(
     inputSchema: ColorCurrentRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.catalog.api.color-current',
-    resourcePermission: defineReadResourcePermission<ColorCurrentRequest>(({ valueRef }) => ({
-      permission: 'read',
-      resource: valueRef,
-    })),
     resultSchema: ColorCurrentResponseSchema,
     schemaVersion: '1',
   },
@@ -88,5 +90,4 @@ export const colorCurrentRead = defineRead(
     }),
   },
   (transaction, scope) => Effect.succeed(colorReadsForScope(transaction, scope)),
-  () => ({ kind: 'module', moduleId: moduleKey }),
 );

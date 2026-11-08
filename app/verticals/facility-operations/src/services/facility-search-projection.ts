@@ -1,12 +1,10 @@
 import {
   CoreSearchProjectionDocumentSchema,
   CoreSearchProjectionStore,
-  ResourceContainmentRelationshipMutation,
-  ownerResourceModuleContainment,
   ReadHandlerUnavailable,
 } from '@app/core-runtime';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
-import { Array as Arr, Effect, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import { cleanFacilitySearchTerm, loadFacilitySearchSnapshot } from './facility-search-source.ts';
 import type { FacilitySearchSnapshot } from './facility-search-source.ts';
 import type { ApplyCommandResult } from '../../shared/actions/apply-command.ts';
@@ -57,7 +55,7 @@ export const buildFacilitySearchDocuments = Effect.fn('FacilitySearch.documents'
   );
 });
 
-/** The snapshot transaction has closed. Containment changes precede index publication and grant no readers. */
+/** The snapshot transaction has closed. Core Search enforces the caller's access list predicate and fields. */
 export const publishFacilitySearch = Effect.fn('FacilitySearch.publish')(function* publish(
   context: OutboxWorkerHandlerContext,
   snapshot: FacilitySearchSnapshot,
@@ -67,23 +65,6 @@ export const publishFacilitySearch = Effect.fn('FacilitySearch.publish')(functio
   }
   const documents = yield* buildFacilitySearchDocuments(snapshot);
   const store = yield* CoreSearchProjectionStore;
-  const containment = yield* ResourceContainmentRelationshipMutation;
-  const relationships = yield* Effect.forEach(
-    documents,
-    (document) => {
-      const relationship = ownerResourceModuleContainment(
-        snapshot.tenantId,
-        document.selectedLegalEntityId ?? '',
-        document.ref,
-      );
-      return relationship === undefined ? Effect.fail(unavailable()) : Effect.succeed(relationship);
-    },
-    { concurrency: 1 },
-  );
-  yield* Effect.forEach(Arr.chunksOf(relationships, 100), (batch) => containment.touch({ relationships: batch }), {
-    concurrency: 1,
-    discard: true,
-  });
   yield* Effect.forEach(
     ['asset', 'device', 'document', 'meter'],
     (type) =>

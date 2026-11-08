@@ -14,7 +14,7 @@ import type { ProjectLookup } from '../services/project-persistence.service.ts';
 
 export const readProjectEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'authenticated_principal' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'projects.core.api.read-project',
   moduleKey: 'projects.core',
   role: 'api',
@@ -47,6 +47,29 @@ export const makeReadProjectHandler = (services: Services, tenantId: string) => 
   );
 export const readProjectRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'projects.core.project.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'projects', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+    // O83 (audit A1): the declaration is scope-wide in tenant context, and the owner/creator links are
+    // actor provenance rather than project text, so they are their own authority_metadata class (O19,
+    // O10). The field paths are the ones the runtime projects: the result root's own properties.
+    accessFieldGroups: [
+      {
+        fieldClass: 'authority_metadata',
+        fields: ['createdByPrincipalId', 'ownerPrincipalId'],
+        key: 'projects.core.project.authority.read',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'sensitive-fields', level: 'extended' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
     accessKind: 'detail',
     entrypoint: readProjectEntrypoint,
     evidencePolicy: {
@@ -56,7 +79,6 @@ export const readProjectRead = defineRead(
     inputSchema: ReadProjectRequestSchema,
     legalEntityScope: 'optional',
     owningModuleKey: 'projects.core',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'projects.core.api.read-project',
     resultSchema: ReadProjectResponseSchema,
@@ -76,5 +98,4 @@ export const readProjectRead = defineRead(
     });
     return Effect.succeed({ find: (projectId: string) => persistence.find(projectId) });
   },
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

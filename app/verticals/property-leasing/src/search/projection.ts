@@ -1,5 +1,5 @@
 import { CoreSearchProjectionDocumentSchema, CoreSearchProjectionInvalid } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Struct } from 'effect';
 import type { Occupancy, OccupancyState } from '../../shared/apis/records.ts';
 
 export interface SearchSourceCompany {
@@ -22,6 +22,9 @@ const dateLabel = (value: string) => {
   return `${Number(day)}. ${Number(month)}. ${year}`;
 };
 const uuidSchema = Schema.String.check(Schema.isUUID());
+const currentDocumentSchema = Schema.Struct(
+  Struct.omit(CoreSearchProjectionDocumentSchema.fields, ['projectionVersion']),
+);
 const projectionVersionPattern = /^[1-9][0-9]*$/u;
 const snapshotMatchesScope = (snapshot: SearchSourceSnapshot) =>
   Schema.is(uuidSchema)(snapshot.tenantId) &&
@@ -36,6 +39,7 @@ const stateLabels = {
   DRAFT: 'Návrh',
 } as const satisfies Record<Occupancy['state'], string>;
 const companyMatchesScope = ({ state }: SearchSourceCompany, tenantId: string) =>
+  new Set(state.occupancies.map(({ occupancyRef }) => occupancyRef.resourceId)).size === state.occupancies.length &&
   state.occupancies.every(
     (occupancy) =>
       occupancy.occupancyRef.tenantId === tenantId &&
@@ -44,7 +48,7 @@ const companyMatchesScope = ({ state }: SearchSourceCompany, tenantId: string) =
       (occupancy.guestPartyRef === null || occupancy.guestPartyRef.tenantId === tenantId) &&
       (occupancy.contractRef === null || occupancy.contractRef.tenantId === tenantId),
   );
-const companyDocuments = ({ legalEntityId, state }: SearchSourceCompany, snapshot: SearchSourceSnapshot) =>
+const companyDocuments = ({ legalEntityId, state }: SearchSourceCompany) =>
   state.occupancies.flatMap((occupancy) => {
     if (occupancy.kind !== 'LONG_TERM_LEASE' || occupancy.state === 'CANCELLED') {
       return [];
@@ -57,7 +61,6 @@ const companyDocuments = ({ legalEntityId, state }: SearchSourceCompany, snapsho
         archived: false,
         facets: [],
         metadata: [],
-        projectionVersion: snapshot.projectionVersion,
         ref: occupancy.occupancyRef,
         searchableText: [
           title,
@@ -73,6 +76,23 @@ const companyDocuments = ({ legalEntityId, state }: SearchSourceCompany, snapsho
     ];
   });
 
+/** The same current owner evidence without inventing a worker projection generation for an interactive Read. */
+export const buildCurrentSearchDocuments = Effect.fn('LeaseSearch.buildCurrentDocuments')(function* buildCurrent(
+  company: SearchSourceCompany,
+  tenantId: string,
+) {
+  if (
+    !Schema.is(uuidSchema)(tenantId) ||
+    !Schema.is(uuidSchema)(company.legalEntityId) ||
+    !companyMatchesScope(company, tenantId)
+  ) {
+    return yield* invalidSearchSource();
+  }
+  return yield* Schema.decodeEffect(Schema.Array(currentDocumentSchema))(companyDocuments(company)).pipe(
+    Effect.mapError(invalidSearchSource),
+  );
+});
+
 /**
  * Only owner-held identity, lifecycle and dates. Relation labels (tenant/customer name, unit/property
  * name, code and address) stay absent until Party and Portfolio publish approved search-label contracts;
@@ -87,11 +107,13 @@ export const buildSearchDocuments = Effect.fn('LeaseSearch.buildDocuments')(func
   const groups = yield* Effect.forEach(
     snapshot.companies,
     (company) =>
-      companyMatchesScope(company, snapshot.tenantId)
-        ? Schema.decodeEffect(Schema.Array(CoreSearchProjectionDocumentSchema))(
-            companyDocuments(company, snapshot),
-          ).pipe(Effect.mapError(invalidSearchSource))
-        : Effect.fail(invalidSearchSource()),
+      buildCurrentSearchDocuments(company, snapshot.tenantId).pipe(
+        Effect.flatMap((documents) =>
+          Schema.decodeEffect(Schema.Array(CoreSearchProjectionDocumentSchema))(
+            documents.map((document) => ({ ...document, projectionVersion: snapshot.projectionVersion })),
+          ).pipe(Effect.mapError(invalidSearchSource)),
+        ),
+      ),
     { concurrency: 1 },
   );
   const documents = groups.flat();

@@ -4,7 +4,6 @@ import {
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
   defineRead,
-  defineReadResourcePermission,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import { DateTime, Effect } from 'effect';
@@ -24,7 +23,7 @@ const moduleKey = 'commerce.catalog';
 
 const productRelationshipCurrentEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.product-relationship' },
+  authorization: { kind: 'protected' },
   entrypointKey: readKey,
   moduleKey,
   role: 'api',
@@ -68,6 +67,14 @@ export const readProductRelationshipCurrent = Effect.fn('ProductRelationshipCurr
 
 export const productRelationshipCurrentRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-relationship-current.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product-relationship', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'list',
     entrypoint: productRelationshipCurrentEntrypoint,
     evidencePolicy: {
@@ -77,13 +84,8 @@ export const productRelationshipCurrentRead = defineRead(
     inputSchema: ProductRelationshipCurrentRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.catalog.api.product-relationship-current',
-    resourcePermission: defineReadResourcePermission<ProductRelationshipCurrentRequest>(({ endpoint }) => ({
-      permission: 'read',
-      resource: endpoint,
-    })),
     resultSchema: ProductRelationshipCurrentResponseSchema,
     schemaVersion: '1',
   },
@@ -94,6 +96,4 @@ export const productRelationshipCurrentRead = defineRead(
       ),
   },
   (transaction, scope) => Effect.succeed(productRelationshipReadsForScope(transaction, scope)),
-  () => ({ kind: 'module', moduleId: moduleKey }),
-  ({ relationships }) => relationships.flatMap(({ relationship }) => [relationship.source, relationship.target]),
 );
