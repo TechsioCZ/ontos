@@ -71,6 +71,22 @@ it.live('ignores a source rename but fails closed for a new utility, icon or the
   }),
 );
 
+it.live('preserves navigation icon CSS when its owner declaration moves out of the UI manifest', () =>
+  fixture((root) => {
+    const manifest = 'verticals/alpha/vertical.manifest.ts';
+    const declaration = 'verticals/alpha/vertical.runtime-declaration.ts';
+    const source = "export const navigation = { icon: 'icon-[mdi--account-plus]' };\n";
+    write(root, manifest, source);
+    succeeds(root, ALL);
+    const before = readFileSync(path.join(root, candidates, ALPHA_PROJECTION), 'utf-8');
+    expect(before).toContain('icon-[mdi--account-plus]');
+    write(root, manifest, 'export const manifest = {};\n');
+    write(root, declaration, source);
+    succeeds(root, CHECK, ALL, GOLDEN);
+    expect(readFileSync(path.join(root, candidates, ALPHA_PROJECTION), 'utf-8')).toBe(before);
+  }),
+);
+
 it.live('checks unreleased availability and new/deleted verticals instead of trusting the release matrix', () =>
   fixture((root) => {
     write(root, AVAILABILITY_VIEW, '<div className="me-50" />');

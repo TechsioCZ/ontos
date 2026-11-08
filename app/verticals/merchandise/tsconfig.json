@@ -25,7 +25,8 @@
     "scripts/company-snapshot.ts",
     "scripts/order-presentation.ts",
     "vertical.manifest.ts",
-    "vertical.registration.ts"
+    "vertical.registration.ts",
+    "vertical.runtime-declaration.ts"
   ],
   "references": [
     {

@@ -3,23 +3,10 @@
 // @ontos-module-id demo.workforce
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { workforceManifest } from './vertical.manifest.ts';
-// <generated-module-registration-imports>
-import { applyCommandAction } from './src/actions/apply-command.action.ts';
-import { rebuildSearchWorker } from './src/workers/rebuild-search.worker.ts';
-import { recordsRead } from './src/api/records.read.ts';
-import { refreshSearchWorker } from './src/workers/refresh-search.worker.ts';
-import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
-import { updateEmployeeAction } from './src/actions/update-employee.action.ts';
-// </generated-module-registration-imports>
+import { workforceRuntimeDeclaration } from './vertical.runtime-declaration.ts';
 
 export const workforceRegistration = defineVerticalRuntimeRegistration({
-  actions: [
-    // <generated-module-registration-actions>
-    applyCommandAction,
-    requestSearchRebuildAction,
-    updateEmployeeAction,
-    // </generated-module-registration-actions>
-  ],
+  ...workforceRuntimeDeclaration,
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
@@ -47,17 +34,6 @@ export const workforceRegistration = defineVerticalRuntimeRegistration({
     },
   },
   manifest: workforceManifest,
-  outboxWorkers: [
-    // <generated-module-registration-workers>
-    rebuildSearchWorker,
-    refreshSearchWorker,
-    // </generated-module-registration-workers>
-  ],
-  reads: [
-    // <generated-module-registration-reads>
-    recordsRead,
-    // </generated-module-registration-reads>
-  ],
 });
 
 // <generated-public-component-registrations>

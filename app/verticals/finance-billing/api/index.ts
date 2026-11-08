@@ -3,7 +3,7 @@ import {
   makeOwnerActionApprovalApiLive,
 } from '@app/core-runtime/access/approvals/owner-http';
 import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
-import { financeBillingRegistration } from '../vertical.registration.ts';
+import { financeBillingBackendRegistration } from '../vertical.runtime-declaration.ts';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { Reactivity } from 'effect/reactivity';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
@@ -96,13 +96,16 @@ const governedReadRuntimeDependenciesLive = GovernedReadLayer.mergeAll(
   ),
   governedAccessEnforcementLive,
 );
-const governedReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, financeBillingRegistration).pipe(
+const governedReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, financeBillingBackendRegistration).pipe(
   GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
   GovernedReadLayer.provide(GovernedDatabaseConfigLive),
   GovernedReadLayer.provide(governedActiveApplicationCompositionLive),
 );
 
-const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(ultramodernDeliveryUnit, financeBillingRegistration).pipe(
+const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(
+  ultramodernDeliveryUnit,
+  financeBillingBackendRegistration,
+).pipe(
   GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(
       governedReadRuntimeDependenciesLive,
@@ -114,7 +117,10 @@ const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(ultramodernDeliver
   ),
 );
 
-const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, financeBillingRegistration).pipe(
+const governedActionRuntimeLive = makeActionRuntimeLive(
+  ultramodernDeliveryUnit,
+  financeBillingBackendRegistration,
+).pipe(
   GovernedReadLayer.provideMerge(ownerActionApprovalsLive),
   GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(

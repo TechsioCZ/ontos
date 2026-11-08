@@ -3,22 +3,10 @@
 // @ontos-module-id property.leasing
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { propertyLeasingManifest } from './vertical.manifest.ts';
-// <generated-module-registration-imports>
-import { applyCommandAction } from './src/actions/apply-command.action.ts';
-import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
-import { agentReviewRead } from './src/api/agent-review.read.ts';
-import { recordsRead } from './src/api/records.read.ts';
-import { rebuildSearchWorker } from './src/workers/rebuild-search.worker.ts';
-import { refreshSearchWorker } from './src/workers/refresh-search.worker.ts';
-// </generated-module-registration-imports>
+import { propertyLeasingRuntimeDeclaration } from './vertical.runtime-declaration.ts';
 
 export const propertyLeasingRegistration = defineVerticalRuntimeRegistration({
-  actions: [
-    // <generated-module-registration-actions>
-    applyCommandAction,
-    requestSearchRebuildAction,
-    // </generated-module-registration-actions>
-  ],
+  ...propertyLeasingRuntimeDeclaration,
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
@@ -47,18 +35,6 @@ export const propertyLeasingRegistration = defineVerticalRuntimeRegistration({
     },
   },
   manifest: propertyLeasingManifest,
-  outboxWorkers: [
-    // <generated-module-registration-workers>
-    rebuildSearchWorker,
-    refreshSearchWorker,
-    // </generated-module-registration-workers>
-  ],
-  reads: [
-    // <generated-module-registration-reads>
-    agentReviewRead,
-    recordsRead,
-    // </generated-module-registration-reads>
-  ],
 });
 
 // <generated-public-component-registrations>

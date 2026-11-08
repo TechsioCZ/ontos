@@ -3,23 +3,10 @@
 // @ontos-module-id demo.sales-insights
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { salesInsightsManifest } from './vertical.manifest.ts';
-// <generated-module-registration-imports>
-import { applyCommandAction } from './src/actions/apply-command.action.ts';
-import { assignMetricAction } from './src/actions/assign-metric.action.ts';
-import { changeMetricStateAction } from './src/actions/change-metric-state.action.ts';
-import { recordsRead } from './src/api/records.read.ts';
-import { updateMetricAction } from './src/actions/update-metric.action.ts';
-// </generated-module-registration-imports>
+import { salesInsightsRuntimeDeclaration } from './vertical.runtime-declaration.ts';
 
 export const salesInsightsRegistration = defineVerticalRuntimeRegistration({
-  actions: [
-    // <generated-module-registration-actions>
-    applyCommandAction,
-    assignMetricAction,
-    changeMetricStateAction,
-    updateMetricAction,
-    // </generated-module-registration-actions>
-  ],
+  ...salesInsightsRuntimeDeclaration,
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
@@ -47,15 +34,6 @@ export const salesInsightsRegistration = defineVerticalRuntimeRegistration({
     },
   },
   manifest: salesInsightsManifest,
-  outboxWorkers: [
-    // <generated-module-registration-workers>
-    // </generated-module-registration-workers>
-  ],
-  reads: [
-    // <generated-module-registration-reads>
-    recordsRead,
-    // </generated-module-registration-reads>
-  ],
 });
 
 // <generated-public-component-registrations>

@@ -20,6 +20,7 @@
     "api",
     "vertical.manifest.ts",
     "vertical.registration.ts",
+    "vertical.runtime-declaration.ts",
     "scripts",
     "tests",
     "drizzle.config.ts",

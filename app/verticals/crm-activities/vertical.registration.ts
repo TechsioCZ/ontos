@@ -3,17 +3,10 @@
 // @ontos-module-id crm.activities
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { crmActivitiesManifest } from './vertical.manifest.ts';
-// <generated-module-registration-imports>
-import { applyCommandAction } from './src/actions/apply-command.action.ts';
-import { recordsRead } from './src/api/records.read.ts';
-// </generated-module-registration-imports>
+import { crmActivitiesRuntimeDeclaration } from './vertical.runtime-declaration.ts';
 
 export const crmActivitiesRegistration = defineVerticalRuntimeRegistration({
-  actions: [
-    // <generated-module-registration-actions>
-    applyCommandAction,
-    // </generated-module-registration-actions>
-  ],
+  ...crmActivitiesRuntimeDeclaration,
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
@@ -40,15 +33,6 @@ export const crmActivitiesRegistration = defineVerticalRuntimeRegistration({
     },
   },
   manifest: crmActivitiesManifest,
-  outboxWorkers: [
-    // <generated-module-registration-workers>
-    // </generated-module-registration-workers>
-  ],
-  reads: [
-    // <generated-module-registration-reads>
-    recordsRead,
-    // </generated-module-registration-reads>
-  ],
 });
 
 // <generated-public-component-registrations>

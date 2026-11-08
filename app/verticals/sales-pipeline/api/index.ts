@@ -3,7 +3,7 @@ import {
   makeOwnerActionApprovalApiLive,
 } from '@app/core-runtime/access/approvals/owner-http';
 import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
-import { salesPipelineRegistration } from '../vertical.registration.ts';
+import { salesPipelineBackendRegistration } from '../vertical.runtime-declaration.ts';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import {
   CoreSearchQueryRuntimeLive,
@@ -93,13 +93,16 @@ const governedReadRuntimeDependenciesLive = GovernedReadLayer.mergeAll(
   ),
   governedAccessEnforcementLive,
 );
-const governedReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, salesPipelineRegistration).pipe(
+const governedReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, salesPipelineBackendRegistration).pipe(
   GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
   GovernedReadLayer.provide(GovernedDatabaseConfigLive),
   GovernedReadLayer.provide(governedActiveApplicationCompositionLive),
 );
 
-const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(ultramodernDeliveryUnit, salesPipelineRegistration).pipe(
+const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(
+  ultramodernDeliveryUnit,
+  salesPipelineBackendRegistration,
+).pipe(
   GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(
       governedReadRuntimeDependenciesLive,
@@ -111,7 +114,7 @@ const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(ultramodernDeliver
   ),
 );
 
-const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, salesPipelineRegistration).pipe(
+const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, salesPipelineBackendRegistration).pipe(
   GovernedReadLayer.provideMerge(ownerActionApprovalsLive),
   GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(

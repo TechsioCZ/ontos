@@ -3,21 +3,10 @@
 // @ontos-module-id legal.agreements
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { legalAgreementsManifest } from './vertical.manifest.ts';
-// <generated-module-registration-imports>
-import { applyCommandAction } from './src/actions/apply-command.action.ts';
-import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
-import { recordsRead } from './src/api/records.read.ts';
-import { projectSearchWorker } from './src/workers/project-search.worker.ts';
-import { rebuildSearchWorker } from './src/workers/rebuild-search.worker.ts';
-// </generated-module-registration-imports>
+import { legalAgreementsRuntimeDeclaration } from './vertical.runtime-declaration.ts';
 
 export const legalAgreementsRegistration = defineVerticalRuntimeRegistration({
-  actions: [
-    // <generated-module-registration-actions>
-    applyCommandAction,
-    requestSearchRebuildAction,
-    // </generated-module-registration-actions>
-  ],
+  ...legalAgreementsRuntimeDeclaration,
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
@@ -46,17 +35,6 @@ export const legalAgreementsRegistration = defineVerticalRuntimeRegistration({
     },
   },
   manifest: legalAgreementsManifest,
-  outboxWorkers: [
-    // <generated-module-registration-workers>
-    projectSearchWorker,
-    rebuildSearchWorker,
-    // </generated-module-registration-workers>
-  ],
-  reads: [
-    // <generated-module-registration-reads>
-    recordsRead,
-    // </generated-module-registration-reads>
-  ],
 });
 
 // <generated-public-component-registrations>

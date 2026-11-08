@@ -3,7 +3,7 @@ import {
   makeOwnerActionApprovalApiLive,
 } from '@app/core-runtime/access/approvals/owner-http';
 import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
-import { propertyPortfolioRegistration } from '../vertical.registration.ts';
+import { propertyPortfolioBackendRegistration } from '../vertical.runtime-declaration.ts';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import {
   defineDatabaseIdentityEnrollment,
@@ -114,14 +114,17 @@ const governedActionRuntimeDependenciesLive = GovernedReadLayer.mergeAll(
 );
 const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(
   ultramodernDeliveryUnit,
-  propertyPortfolioRegistration,
+  propertyPortfolioBackendRegistration,
 ).pipe(GovernedReadLayer.provide(governedActionRuntimeDependenciesLive));
 
-const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, propertyPortfolioRegistration).pipe(
+const governedActionRuntimeLive = makeActionRuntimeLive(
+  ultramodernDeliveryUnit,
+  propertyPortfolioBackendRegistration,
+).pipe(
   GovernedReadLayer.provideMerge(ownerActionApprovalsLive),
   GovernedReadLayer.provide(governedActionRuntimeDependenciesLive),
 );
-const governedReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, propertyPortfolioRegistration).pipe(
+const governedReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, propertyPortfolioBackendRegistration).pipe(
   GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
   GovernedReadLayer.provide(GovernedDatabaseConfigLive),
   GovernedReadLayer.provide(governedActiveApplicationCompositionLive),

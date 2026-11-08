@@ -3,7 +3,7 @@ import {
   makeOwnerActionApprovalApiLive,
 } from '@app/core-runtime/access/approvals/owner-http';
 import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
-import { crmRegistration } from '../vertical.registration.ts';
+import { crmBackendRegistration } from '../vertical.runtime-declaration.ts';
 import {
   CoreSearchQueryRuntimeLive,
   CoreSearchProjectionStoreLive,
@@ -104,13 +104,13 @@ const governedReadRuntimeDependenciesLive = GovernedReadLayer.mergeAll(
   ),
   governedAccessEnforcementLive,
 );
-const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(governedActionDeliveryUnit, crmRegistration).pipe(
+const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(governedActionDeliveryUnit, crmBackendRegistration).pipe(
   GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
   GovernedReadLayer.provide(GovernedDatabaseConfigLive),
   GovernedReadLayer.provide(governedActiveApplicationCompositionLive),
 );
 
-const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(governedActionDeliveryUnit, crmRegistration).pipe(
+const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(governedActionDeliveryUnit, crmBackendRegistration).pipe(
   GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(
       governedReadRuntimeDependenciesLive,
@@ -122,7 +122,7 @@ const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(governedActionDeli
   ),
 );
 
-const governedActionRuntimeLive = makeActionRuntimeLive(governedActionDeliveryUnit, crmRegistration).pipe(
+const governedActionRuntimeLive = makeActionRuntimeLive(governedActionDeliveryUnit, crmBackendRegistration).pipe(
   GovernedReadLayer.provideMerge(ownerActionApprovalsLive),
   GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(

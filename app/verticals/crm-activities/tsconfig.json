@@ -19,6 +19,7 @@
     "server",
     "api",
     "vertical.manifest.ts",
+    "vertical.runtime-declaration.ts",
     "vertical.registration.ts"
   ],
   "references": [

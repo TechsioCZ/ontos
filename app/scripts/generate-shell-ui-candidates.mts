@@ -14,9 +14,10 @@ const WORKSPACE = path.resolve(import.meta.dirname, '..');
 const SHELL = 'apps/shell-super-app';
 const STYLESHEET = 'src/routes/ui-kit.css';
 const PROJECTION_SOURCE = "@source '../../generated/ui-candidates/*.txt';";
-const VERTICAL_SOURCES = ['src/**/*', 'vertical.manifest.ts']
-  .map((source) => `@source '${['..', '..', '..', '..', 'verticals', '*', source].join('/')}';`)
-  .join('\n');
+const VERTICAL_UI_SOURCES = ['src/**/*', 'vertical.manifest.ts', 'vertical.runtime-declaration.ts'];
+const VERTICAL_SOURCES = VERTICAL_UI_SOURCES.map(
+  (source) => `@source '${['..', '..', '..', '..', 'verticals', '*', source].join('/')}';`,
+).join('\n');
 
 class CandidateProjectionError extends Schema.TaggedError<CandidateProjectionError>()('CandidateProjectionError', {
   cause: Schema.optional(Schema.Defect()),
@@ -92,7 +93,7 @@ const projectCandidates = Effect.fn('projectCandidates')(function* project(desig
     catch: compilerError,
     try: () => {
       const scanner = new Scanner({
-        sources: ['src/**/*', 'vertical.manifest.ts'].map((pattern) => ({ base: directory, negated: false, pattern })),
+        sources: VERTICAL_UI_SOURCES.map((pattern) => ({ base: directory, negated: false, pattern })),
       });
       const candidates = EffectArray.sort(new Set(scanner.scan()), Order.String);
       const accepted = design.candidatesToCss(candidates);

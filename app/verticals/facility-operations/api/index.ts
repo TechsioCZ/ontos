@@ -3,7 +3,7 @@ import {
   makeOwnerActionApprovalApiLive,
 } from '@app/core-runtime/access/approvals/owner-http';
 import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
-import { facilityOperationsRegistration } from '../vertical.registration.ts';
+import { facilityOperationsBackendRegistration } from '../vertical.runtime-declaration.ts';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import {
   CoreSearchQueryRuntimeLive,
@@ -103,7 +103,7 @@ const governedReadRuntimeDependenciesLive = GovernedReadLayer.mergeAll(
 );
 const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(
   governedActionDeliveryUnit,
-  facilityOperationsRegistration,
+  facilityOperationsBackendRegistration,
 ).pipe(
   GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
   GovernedReadLayer.provide(GovernedDatabaseConfigLive),
@@ -112,7 +112,7 @@ const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(
 
 const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(
   governedActionDeliveryUnit,
-  facilityOperationsRegistration,
+  facilityOperationsBackendRegistration,
 ).pipe(
   GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(
@@ -127,7 +127,7 @@ const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(
 
 const governedActionRuntimeLive = makeActionRuntimeLive(
   governedActionDeliveryUnit,
-  facilityOperationsRegistration,
+  facilityOperationsBackendRegistration,
 ).pipe(
   GovernedReadLayer.provideMerge(ownerActionApprovalsLive),
   GovernedReadLayer.provide(
