@@ -531,6 +531,23 @@ export const paymentEvidencePersistenceForTransaction = (
   const isObservationCorrected = Effect.fn('PaymentEvidencePersistence.isObservationCorrected')(
     function* isObservationCorrected(observationId: string) {
       const scope = yield* ownerScope;
+      // A correction disproves its target only once it is correlated to the target's Payment and issued
+      // by the target's own authority; an unresolved correction claim stays debt, never disproof.
+      const [target] = yield* transaction
+        .select({ paymentId: observations.paymentId, sourceAuthorityId: observations.sourceAuthorityId })
+        .from(observations)
+        .where(
+          and(
+            eq(observations.tenantId, scope.tenantId),
+            eq(observations.legalEntityId, scope.legalEntityId),
+            eq(observations.observationId, observationId),
+          ),
+        )
+        .limit(1)
+        .pipe(Effect.mapError(readFailure));
+      if (target === undefined || target.paymentId === null || target.sourceAuthorityId === null) {
+        return false;
+      }
       const [row] = yield* transaction
         .select({ observationId: observations.observationId })
         .from(observations)
@@ -540,6 +557,8 @@ export const paymentEvidencePersistenceForTransaction = (
             eq(observations.legalEntityId, scope.legalEntityId),
             eq(observations.correctsObservationId, observationId),
             eq(observations.factKind, 'SOURCE_CORRECTION'),
+            eq(observations.paymentId, target.paymentId),
+            eq(observations.sourceAuthorityId, target.sourceAuthorityId),
             inArray(observations.acceptanceOutcome, [...QUALIFIED_CORRECTION_OUTCOMES]),
           ),
         )
