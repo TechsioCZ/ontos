@@ -1,5 +1,5 @@
 import { NodeServices } from '@effect/platform-node';
-import { Config, Effect, FileSystem, Path } from 'effect';
+import { DateTime, Effect, FileSystem, Path } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { loadNativeHumanSessionsFactory } from '../support/native-human-sessions.ts';
@@ -9,8 +9,13 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('owned native sessio
     Effect.gen(function* ownedModuleContract() {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const owned = yield* Config.String('OWNED_TEMP_DIR');
+      const owned = yield* fs.makeTempDirectoryScoped({ prefix: 'ontos-native-session-loader-' });
       const root = yield* fs.realPath(owned);
+      const created = Math.floor((yield* DateTime.nowAsDate).getTime() / 1000);
+      yield* fs.writeFileString(
+        path.join(root, '.disk-guardian-owner'),
+        `version=1\nowner_pid=${process.pid}\ncreated_epoch=${created}\nexpires_epoch=${created + 60}\npath=${root}\n`,
+      );
       const modulePath = path.join(root, 'native-human-sessions.mjs');
       const manifestPath = path.join(root, '.native-human-sessions.json');
       const url = yield* path.toFileUrl(modulePath);
