@@ -1238,6 +1238,10 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
         return originator === undefined ? attempt : { ...attempt, originatorActionInvocationId: originator };
       }),
     );
+  const withResultOriginator = <Reply extends { readonly attempt: EnrollmentAttemptSnapshot }>(reply: Reply) =>
+    withOriginator(reply.attempt, reply.attempt.portalEnrollmentAttemptId).pipe(
+      Effect.map((attempt) => ({ ...reply, attempt })),
+    );
   const invokeAttempt = <Parameters extends readonly ScopedRoutineParameter[]>(
     routine: ScopedRoutineDefinition<typeof AttemptRoutineRowSchema, Parameters>,
     values: ScopedRoutineInputValues<Parameters>,
@@ -1278,6 +1282,7 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
               requireAttemptRow(rows, 'claim_portal_enrollment_transition', input.portalEnrollmentAttemptId),
             ),
             Effect.flatMap((row) => mapClaimRow(input, row)),
+            Effect.flatMap(withResultOriginator),
           ),
         ),
       ),
@@ -1297,6 +1302,7 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
           ]).pipe(
             Effect.flatMap((rows) => requireAttemptRow(rows, 'create_portal_enrollment_attempt')),
             Effect.flatMap(mapCreateRow),
+            Effect.flatMap(withResultOriginator),
             Effect.tap((result) => validateRestartPredecessor(transaction, result.attempt)),
             Effect.tap((result) =>
               input.retailRegistration === undefined
@@ -1394,6 +1400,7 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
               requireAttemptRow(rows, 'reconcile_portal_enrollment_outcome', input.portalEnrollmentAttemptId),
             ),
             Effect.flatMap((row) => mapReconcileRow(input, row)),
+            Effect.flatMap(withResultOriginator),
           ),
         ),
       ),
@@ -1423,6 +1430,7 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
               requireAttemptRow(rows, 'record_portal_enrollment_outcome', input.portalEnrollmentAttemptId),
             ),
             Effect.flatMap((row) => mapRecordRow(input, row)),
+            Effect.flatMap(withResultOriginator),
           ),
         ),
       ),
@@ -1453,6 +1461,7 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
               requireAttemptRow(rows, 'terminate_portal_enrollment', input.portalEnrollmentAttemptId),
             ),
             Effect.flatMap((row) => mapTerminateRow(input, row)),
+            Effect.flatMap(withResultOriginator),
           ),
         ),
       ),
