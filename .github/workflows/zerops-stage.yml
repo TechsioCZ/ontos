@@ -381,7 +381,7 @@ jobs:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: bash app/scripts/zerops/route-stage-domains.sh ontos-stage-n1.web-revolution.cz "$ZEROPS_N1_STOREFRONT_SERVICE_ID" 3071
 
-      - name: Show the app log after a failed deploy
+      - name: Show app runtime and build logs after a failed deploy
         if: failure() && needs.plan.outputs.app == 'true'
         env:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
@@ -389,6 +389,8 @@ jobs:
           npm install --global @zerops/zcli@1.1.0 >/dev/null
           zcli login "$ZEROPS_TOKEN" >/dev/null
           zcli service log --project-id "$ZEROPS_PROJECT_ID" --service-id "$ZEROPS_APP_SERVICE_ID" --limit 300 || true
+          # The CLI selects the latest appVersion; correlate it with the failed push process.
+          zcli service log --project-id "$ZEROPS_PROJECT_ID" --service-id "$ZEROPS_APP_SERVICE_ID" --show-build-logs --limit 300 || true
 
   verify:
     name: Verify stage
