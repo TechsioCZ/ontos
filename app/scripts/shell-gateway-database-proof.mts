@@ -559,18 +559,36 @@ const callableSpan = (model: Model, binding: Binding): Span | undefined => {
   }
   return model.functions.find((fn) => fn.type !== 'ArrowFunctionExpression' && fn.id?.start === binding.node.start);
 };
-const baseGroup = (proof: IssuerProof, model: Model, input: Expression, hops = 0): string | undefined => {
+const immutableConstInitializer = (symbol: SymbolValue): Expression | undefined =>
+  symbol.binding.kind === 'const' && immutable(symbol.model, symbol.binding) ? symbol.binding.init : undefined;
+const usedOnlyAt = (model: Model, reference: IdentifierReference): boolean => {
+  const binding = bindingAt(model, reference.name, reference);
+  const uses = binding === undefined ? [] : bindingReferences(model, binding);
+  return uses.length === 1 && uses[0] === reference;
+};
+
+const baseGroup = (
+  proof: IssuerProof,
+  model: Model,
+  input: Expression,
+  hops = 0,
+  append = false,
+): string | undefined => {
   if (hops >= limit) {
     return undefined;
   }
   const node = unwrap(input);
-  if (node.type === 'Identifier') {
+  if (node.type === 'Identifier' && !append) {
     const target = proof.symbol(model, node);
     return target?.binding.init === undefined
       ? undefined
       : baseGroup(proof, target.model, target.binding.init, hops + 1);
   }
-  if (node.type !== 'CallExpression' || node.optional) {
+  if (
+    node.type !== 'CallExpression' ||
+    node.optional ||
+    (append && node.arguments.some((arg) => arg.type === 'SpreadElement'))
+  ) {
     return undefined;
   }
   const callee = unwrap(node.callee);
@@ -581,10 +599,10 @@ const baseGroup = (proof: IssuerProof, model: Model, input: Expression, hops = 0
     !callee.optional &&
     !callee.computed &&
     ['add', 'annotate', 'middleware', 'prefix'].includes(propertyName(callee) ?? '')
-    ? baseGroup(proof, model, callee.object, hops + 1)
+    ? baseGroup(proof, model, callee.object, hops + 1, append)
     : undefined;
 };
-const contractHasGateway = (proof: IssuerProof, contract: SymbolValue, gateway: SymbolValue): boolean => {
+const nativeContractHasGateway = (proof: IssuerProof, contract: SymbolValue, gateway: SymbolValue): boolean => {
   let node = contract.binding.init === undefined ? undefined : unwrap(contract.binding.init);
   let hits = 0;
   for (let hop = 0; hop < limit && node !== undefined; hop += 1) {
@@ -619,6 +637,7 @@ const contractHasGateway = (proof: IssuerProof, contract: SymbolValue, gateway: 
   }
   return false;
 };
+
 const layerTransform = (proof: IssuerProof, model: Model, input: Expression): boolean => {
   const node = unwrap(input);
   if (proof.native(model, node, 'Layer', 'orDie')) {
@@ -934,51 +953,6 @@ const runtimeAssembly = (proof: IssuerProof, model: Model, factory: FunctionNode
     ? call
     : undefined;
 };
-const discoverRoot = (proof: IssuerProof): IssuerRoot | undefined => {
-  const published = publishedGateway(proof);
-  if (published === undefined) {
-    return undefined;
-  }
-  const { gateway, owner } = published;
-  const model = proof.model(proof.path.join(proof.root, 'apps', owner, 'api', 'index.ts'));
-  if (model === undefined) {
-    return undefined;
-  }
-  const factory = rootFactory(proof, model);
-  if (factory === undefined) {
-    return undefined;
-  }
-  const returned = runtimeAssembly(proof, model, factory);
-  const [options] = returned?.arguments ?? [];
-  if (returned === undefined || options?.type !== 'ObjectExpression') {
-    return undefined;
-  }
-  const api = objectField(options, 'api');
-  const handlers = objectField(options, 'handlers');
-  if (api === undefined || handlers === undefined) {
-    return undefined;
-  }
-  const contract = proof.symbol(model, api);
-  if (contract === undefined || !contractHasGateway(proof, contract, gateway)) {
-    return undefined;
-  }
-  const groups = model.bindings
-    .filter((binding) => binding.kind === 'const' && immutable(model, binding))
-    .flatMap((binding) => {
-      const call = groupCall(proof, model, binding, contract, 'gatewayContext');
-      return call !== undefined && layerContains(proof, model, handlers, { binding, model }) ? [call] : [];
-    });
-  if (groups.length !== 1) {
-    return undefined;
-  }
-  const [group] = groups;
-  if (group === undefined) {
-    return undefined;
-  }
-  const spans = endpointCallbacks(model, group);
-  return spans.length === 3 ? { assembly: returned, contract, factory, handlers, model, owner, spans } : undefined;
-};
-
 const testSource = (file: string): boolean =>
   /(?:^|\/)(?:tests?|__tests__)\//u.test(file) || /\.(?:test|spec)\.[cm]?tsx?$/u.test(file);
 const authorized = (spans: readonly RoleSpan[], model: Model, node: Span): boolean =>
@@ -1063,7 +1037,7 @@ const moduleString = (model: Model, input: Expression, seen = new Set<Binding>()
   }
   return result;
 };
-const consumersConfined = (proof: IssuerProof, model: Model, spans: readonly RoleSpan[]): boolean => {
+const moduleReferencesConfined = (proof: IssuerProof, model: Model, reexports: (name: string) => boolean): boolean => {
   for (const [consumer, source] of proof.sources) {
     if (testSource(consumer) || (!source.includes('export') && !source.includes('import'))) {
       continue;
@@ -1085,11 +1059,215 @@ const consumersConfined = (proof: IssuerProof, model: Model, spans: readonly Rol
     }
     if (
       [...other.exports.values()].some(
-        (entry) => !Schema.is(Schema.String)(entry) && proof.resolve(consumer, entry.source) === model.file,
+        (entry) =>
+          !Schema.is(Schema.String)(entry) &&
+          reexports(entry.imported) &&
+          proof.resolve(consumer, entry.source) === model.file,
       )
     ) {
       return false;
     }
+  }
+  return true;
+};
+const namedConsumersConfined = (
+  proof: IssuerProof,
+  symbol: SymbolValue,
+  allowsReference: (model: Model, reference: Identifier) => boolean,
+): boolean => {
+  const exportedNames = new Set(
+    [...symbol.model.exports].filter(([, local]) => local === symbol.binding.name).map(([name]) => name),
+  );
+  if (exportedNames.size === 0) {
+    return true;
+  }
+  const imports = sourceImports(proof, symbol.model.file);
+  return (
+    moduleReferencesConfined(proof, symbol.model, (name) => exportedNames.has(name)) &&
+    imports !== undefined &&
+    imports.every(({ binding, model: importer }) => {
+      const imported = binding.origin?.imported;
+      return (
+        imported !== '*' &&
+        (imported === undefined ||
+          !exportedNames.has(imported) ||
+          (![...importer.exports.values()].includes(binding.name) &&
+            bindingReferences(importer, binding).every((reference) => allowsReference(importer, reference))))
+      );
+    })
+  );
+};
+
+const namesOtherGroups = (proof: IssuerProof, model: Model, append: CallExpression): boolean => {
+  const names = new Set<string>();
+  for (const argument of append.arguments) {
+    if (argument.type !== 'Identifier') {
+      return false;
+    }
+    const group = proof.symbol(model, argument);
+    const isAppendArgument = (source: Model, reference: Identifier): boolean =>
+      source === model && reference === argument;
+    if (
+      group === undefined ||
+      !usedOnlyAt(model, argument) ||
+      !bindingReferences(group.model, group.binding).every((reference) => isAppendArgument(group.model, reference)) ||
+      !namedConsumersConfined(proof, group, isAppendArgument)
+    ) {
+      return false;
+    }
+    const initializer = immutableConstInitializer(group);
+    const name = initializer === undefined ? undefined : baseGroup(proof, group.model, initializer, 0, true);
+    if (name === undefined || name === 'gatewayContext' || names.has(name)) {
+      return false;
+    }
+    names.add(name);
+  }
+  return names.size > 0;
+};
+
+const isOtherGroupName = (name: string | undefined): boolean =>
+  name !== undefined && name !== 'gatewayContext' && !Object.hasOwn(Object.prototype, name);
+
+const projectsOtherGroupEndpoint = (model: Model, reference: Identifier): boolean => {
+  const memberOn = (object: Span): MemberExpression | undefined =>
+    model.members.find((member) => member.object === object && !member.optional && !member.computed);
+  const groups = memberOn(reference);
+  const group = groups !== undefined && propertyName(groups) === 'groups' ? memberOn(groups) : undefined;
+  const groupName = group === undefined ? undefined : propertyName(group);
+  const endpoints = group !== undefined && isOtherGroupName(groupName) ? memberOn(group) : undefined;
+  return endpoints !== undefined && propertyName(endpoints) === 'endpoints' && memberOn(endpoints) !== undefined;
+};
+
+const apiBorrow = (model: Model, reference: Identifier): CallExpression | undefined =>
+  model.calls.find(
+    (call) =>
+      call.arguments[0] === reference &&
+      !call.optional &&
+      call.arguments.every((argument) => argument.type !== 'SpreadElement'),
+  );
+
+const borrowedGroupName = (proof: IssuerProof, model: Model, call: CallExpression): string | undefined => {
+  const [, group] = call.arguments;
+  return call.arguments.length === 3 &&
+    group?.type === 'Literal' &&
+    proof.native(model, call.callee, 'HttpApiBuilder', 'group')
+    ? text(group)
+    : undefined;
+};
+
+const borrowsBaseApi = (proof: IssuerProof, model: Model, reference: Identifier): boolean => {
+  const call = apiBorrow(model, reference);
+  return (
+    call !== undefined &&
+    (isOtherGroupName(borrowedGroupName(proof, model, call)) ||
+      (call.arguments.length <= 2 &&
+        proof.named(model, call.callee, '@modern-js/bff-effect/effect-client', 'makeEffectHttpApiClient')))
+  );
+};
+
+const contractHasGateway = (
+  proof: IssuerProof,
+  contract: SymbolValue,
+  gateway: SymbolValue,
+  root: Model,
+  api: Expression,
+): boolean => {
+  const initializer = immutableConstInitializer(contract);
+  const append = initializer === undefined ? undefined : unwrap(initializer);
+  const member = append?.type === 'CallExpression' ? unwrap(append.callee) : undefined;
+  if (
+    append?.type !== 'CallExpression' ||
+    append.optional ||
+    member?.type !== 'MemberExpression' ||
+    member.optional ||
+    propertyName(member) !== 'add' ||
+    member.object.type !== 'Identifier'
+  ) {
+    return nativeContractHasGateway(proof, contract, gateway);
+  }
+
+  // The native add creates a new API with the original groups and the named additions.
+  // Resolve the const receiver before using that operation's preservation of gatewayContext.
+  const base = proof.symbol(contract.model, member.object);
+  const isAppendReceiver = (model: Model, reference: Identifier): boolean =>
+    model === contract.model && reference === member.object;
+  const usesAssembledApi = (model: Model, reference: Identifier): boolean => {
+    // A shorthand assembly field has separate key and value nodes at the same source token.
+    if (model === root && reference.start === api.start && reference.end === api.end) {
+      return true;
+    }
+    const call = apiBorrow(model, reference);
+    const group = call === undefined ? undefined : borrowedGroupName(proof, model, call);
+    return group === 'gatewayContext' || group === 'symmy';
+  };
+  return (
+    base !== undefined &&
+    immutableConstInitializer(base) !== undefined &&
+    usedOnlyAt(contract.model, member.object) &&
+    bindingReferences(contract.model, contract.binding).every((reference) =>
+      usesAssembledApi(contract.model, reference),
+    ) &&
+    namedConsumersConfined(proof, contract, usesAssembledApi) &&
+    bindingReferences(base.model, base.binding).every(
+      (reference) => isAppendReceiver(base.model, reference) || projectsOtherGroupEndpoint(base.model, reference),
+    ) &&
+    namedConsumersConfined(
+      proof,
+      base,
+      (model, reference) => isAppendReceiver(model, reference) || borrowsBaseApi(proof, model, reference),
+    ) &&
+    namesOtherGroups(proof, contract.model, append) &&
+    nativeContractHasGateway(proof, base, gateway)
+  );
+};
+const discoverRoot = (proof: IssuerProof): IssuerRoot | undefined => {
+  const published = publishedGateway(proof);
+  if (published === undefined) {
+    return undefined;
+  }
+  const { gateway, owner } = published;
+  const model = proof.model(proof.path.join(proof.root, 'apps', owner, 'api', 'index.ts'));
+  if (model === undefined) {
+    return undefined;
+  }
+  const factory = rootFactory(proof, model);
+  if (factory === undefined) {
+    return undefined;
+  }
+  const returned = runtimeAssembly(proof, model, factory);
+  const [options] = returned?.arguments ?? [];
+  if (returned === undefined || options?.type !== 'ObjectExpression') {
+    return undefined;
+  }
+  const api = objectField(options, 'api');
+  const handlers = objectField(options, 'handlers');
+  if (api === undefined || handlers === undefined) {
+    return undefined;
+  }
+  const contract = proof.symbol(model, api);
+  if (contract === undefined || !contractHasGateway(proof, contract, gateway, model, api)) {
+    return undefined;
+  }
+  const groups = model.bindings
+    .filter((binding) => binding.kind === 'const' && immutable(model, binding))
+    .flatMap((binding) => {
+      const call = groupCall(proof, model, binding, contract, 'gatewayContext');
+      return call !== undefined && layerContains(proof, model, handlers, { binding, model }) ? [call] : [];
+    });
+  if (groups.length !== 1) {
+    return undefined;
+  }
+  const [group] = groups;
+  if (group === undefined) {
+    return undefined;
+  }
+  const spans = endpointCallbacks(model, group);
+  return spans.length === 3 ? { assembly: returned, contract, factory, handlers, model, owner, spans } : undefined;
+};
+
+const consumersConfined = (proof: IssuerProof, model: Model, spans: readonly RoleSpan[]): boolean => {
+  if (!moduleReferencesConfined(proof, model, () => true)) {
+    return false;
   }
   const imports = sourceImports(proof, model.file);
   if (imports === undefined) {
