@@ -360,6 +360,7 @@ export type { PartyCorrectionRequest, PartyCorrectionResponse } from './apis/par
 export {
   PartyDetailRequestSchema,
   PartyFactAssertionSchema,
+  PartyHistoricalNameAssertionSchema,
   PartyDetailResolutionSchema,
   PartyDetailResponseSchema,
   PartyDetailAuthenticationProblemSchema,
@@ -375,6 +376,7 @@ export {
 export type {
   PartyDetailRequest,
   PartyFactAssertion,
+  PartyHistoricalNameAssertion,
   PartyDetailResolution,
   PartyDetailResponse,
 } from './apis/party-detail.ts';

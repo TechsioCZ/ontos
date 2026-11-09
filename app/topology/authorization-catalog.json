@@ -19356,7 +19356,8 @@
                 "party.firstName",
                 "party.lastName",
                 "currentFactAssertions.value",
-                "factHistory.value"
+                "factHistory.value",
+                "historicalNameEvidence.value"
               ],
               "key": "party.registry.party-identity.read",
               "kind": "field_read",

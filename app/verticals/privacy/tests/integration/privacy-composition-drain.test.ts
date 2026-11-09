@@ -484,6 +484,20 @@ const fixtureRuntimeInventory = [
     ],
   },
   {
+    // The stable assertion identity registry: appended by the assertion trigger beside the current store.
+    operations: 'select, insert',
+    rls: true,
+    schema: 'party',
+    tables: ['party_fact_assertion_identities'],
+  },
+  {
+    // The lossless historical-name archive: owner-written history the runtime may only read.
+    operations: 'select',
+    rls: true,
+    schema: 'party',
+    tables: ['party_historical_name_assertions'],
+  },
+  {
     operations: 'select, insert, update, delete',
     rls: true,
     schema: 'contacts',
@@ -1741,10 +1755,18 @@ it.layer(services, { excludeTestServices: true })('owned bootstrap source contra
           Order.String,
         ),
       ).toEqual(immutable);
+      // Assertion history is least privilege: the registry is append-only beside the current store and
+      // the archive is owner-written, so those two Party tables carry narrower operations than blanket DML.
+      const partyOperationsByTable = new Map([
+        ['party_fact_assertion_identities', 'select, insert'],
+        ['party_historical_name_assertions', 'select'],
+      ]);
       for (const item of fixtureRuntimeInventory) {
         if (item.schema === 'party' || (item.schema === 'contacts' && item.rls)) {
-          expect(item.operations).toBe('select, insert, update, delete');
-          expect(item.rls).toBe(true);
+          expect(item.rls, item.schema).toBe(true);
+          for (const table of item.tables) {
+            expect(item.operations, table).toBe(partyOperationsByTable.get(table) ?? 'select, insert, update, delete');
+          }
         }
       }
       expect(
