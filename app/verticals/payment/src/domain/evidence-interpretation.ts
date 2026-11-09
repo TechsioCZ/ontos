@@ -271,6 +271,34 @@ const sameSourceBinding = (left: PaymentSourceBinding, right: PaymentSourceBindi
   left.accountRef === right.accountRef &&
   left.environment === right.environment;
 
+/** One statement's economic-effect identity: its source binding and that source's own opaque key. */
+export interface PaymentEffectIdentity {
+  readonly economicEffectKey: string | undefined;
+  readonly source: PaymentSourceBinding;
+}
+
+/**
+ * Whether a confirmation is proven to restate the money its operation's standing confirmations already
+ * state. Effect keys are source-scoped: a keyed statement needs a standing statement of the same source
+ * binding with the same key, and a keyless one corroborates only keyless ones (#1151 "a matching amount
+ * or reference alone is insufficient deduplication"). With no standing confirmation there is nothing to
+ * contradict.
+ */
+export const restatesEstablishedEffect = (
+  candidate: PaymentEffectIdentity,
+  standing: readonly PaymentEffectIdentity[],
+): boolean => {
+  if (standing.length === 0) {
+    return true;
+  }
+  const { economicEffectKey } = candidate;
+  return economicEffectKey === undefined
+    ? standing.every((prior) => prior.economicEffectKey === undefined)
+    : standing.some(
+        (prior) => prior.economicEffectKey === economicEffectKey && sameSourceBinding(prior.source, candidate.source),
+      );
+};
+
 /**
  * The confirmed economic effect already established another operation of this Payment: an uncorrected
  * accepted or governed-attached statement of the same source binding, fact and effect key counted
@@ -307,26 +335,18 @@ const decideRestatement = (
   operation: PaymentEvidenceOperationView,
   observation: QualifiedPaymentObservation,
 ): PaymentEvidenceDecisionCase => {
-  const { economicEffectKey } = observation;
   const confirmedPriors =
     operation.outcome === 'EFFECT_CONFIRMED'
       ? effectIdentityStatements(aggregate, operation).filter(
           (prior) => paymentFactMeaning(prior.factKind)?.outcome === 'EFFECT_CONFIRMED',
         )
       : [];
-  // The same effect is proven only by an equal key; keyless statements corroborate only keyless ones.
-  // A keyed statement beside a keyless one (either way round) cannot be proven the same money (#1151
-  // "a matching amount or reference alone is insufficient deduplication").
-  const sameEffect =
-    economicEffectKey === undefined
-      ? confirmedPriors.every((prior) => prior.economicEffectKey === undefined)
-      : confirmedPriors.some((prior) => prior.economicEffectKey === economicEffectKey);
-  return confirmedPriors.length > 0 && !sameEffect
-    ? hold('DISTINCT_ECONOMIC_EFFECT', operation.operationId)
-    : PaymentEvidenceDecision.NO_CHANGE({
+  return restatesEstablishedEffect(observation, confirmedPriors)
+    ? PaymentEvidenceDecision.NO_CHANGE({
         operationId: operation.operationId,
         reason: 'CORROBORATES_ESTABLISHED_OUTCOME',
-      });
+      })
+    : hold('DISTINCT_ECONOMIC_EFFECT', operation.operationId);
 };
 
 /**

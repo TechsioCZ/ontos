@@ -286,6 +286,14 @@ const caseRecordOf = (row: CaseRow): PaymentReconciliationCaseRecord => ({
   status: row.status,
 });
 
+/** The immutable source binding a stored statement was issued under. */
+const effectSourceOf = (row: Pick<ObservationRow, 'accountRef' | 'environment' | 'sourceKind' | 'sourceSystem'>) => ({
+  accountRef: row.accountRef,
+  environment: row.environment,
+  sourceKind: row.sourceKind,
+  sourceSystem: row.sourceSystem,
+});
+
 const decisionRecordOf = (row: DecisionRow): PaymentReconciliationDecisionRecord => ({
   caseId: row.caseId,
   decidedAt: utc(row.decidedAt),
@@ -782,12 +790,16 @@ export const paymentEvidencePersistenceForTransaction = (
       const rows = yield* transaction
         .select({
           acceptanceOutcome: observations.acceptanceOutcome,
+          accountRef: observations.accountRef,
           correctionEffect: observations.correctionEffect,
           correctsObservationId: observations.correctsObservationId,
           economicEffectKey: observations.economicEffectKey,
+          environment: observations.environment,
           factKind: observations.factKind,
           observationId: observations.observationId,
           operationId: observations.operationId,
+          sourceKind: observations.sourceKind,
+          sourceSystem: observations.sourceSystem,
         })
         .from(observations)
         .where(
@@ -824,6 +836,7 @@ export const paymentEvidencePersistenceForTransaction = (
                 factKind: row.factKind,
                 observationId: row.observationId,
                 operationId: row.operationId,
+                source: effectSourceOf(row),
               },
             ]
           : [],
@@ -840,6 +853,7 @@ export const paymentEvidencePersistenceForTransaction = (
                 factKind: statement.factKind,
                 observationId: statement.observationId,
                 operationId: attachment.operationId,
+                source: effectSourceOf(statement),
               },
             ];
       });

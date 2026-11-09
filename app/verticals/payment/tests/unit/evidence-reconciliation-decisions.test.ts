@@ -95,6 +95,7 @@ const established = (
   factKind: 'COLLECTION_CONFIRMED',
   observationId,
   operationId: COLLECT_ID,
+  source: facts().source,
 });
 /** Attaches a held collection statement of `economicEffectKey` to the collection of the open case. */
 const attachWith = (
@@ -312,10 +313,18 @@ describe('#1151 governed reconciliation decisions', () => {
     expect(attachWith('gopay:payment:2', [established('gopay:payment:1')], 'CONFLICT')).toBe(
       'payment_reconciliation_evidence_not_qualified',
     );
-    // The same effect, an unkeyed statement, its own earlier attachment or another operation's effect still attach.
+    // A keyed statement beside a keyless one is never proven the same money, whichever came first,
+    // and the same opaque key from another source binding is another receipt.
+    expect(attachWith(absent, [established('gopay:payment:1')])).toBe('payment_reconciliation_evidence_not_qualified');
+    expect(attachWith('gopay:payment:2', [established(absent)])).toBe('payment_reconciliation_evidence_not_qualified');
+    expect(
+      attachWith('gopay:payment:1', [
+        { ...established('gopay:payment:1'), source: { ...facts().source, accountRef: 'gopay-account-2' } },
+      ]),
+    ).toBe('payment_reconciliation_evidence_not_qualified');
+    // The same effect, two keyless statements, its own earlier attachment or another operation's effect still attach.
     expect(attachWith('gopay:payment:1', [established('gopay:payment:1')])).toBe('applied');
-    expect(attachWith(absent, [established('gopay:payment:1')])).toBe('applied');
-    expect(attachWith('gopay:payment:2', [established(absent)])).toBe('applied');
+    expect(attachWith(absent, [established(absent)])).toBe('applied');
     expect(attachWith('gopay:payment:2', [established('gopay:payment:1', 'obs-1')])).toBe('applied');
     expect(attachWith('gopay:payment:2', [{ ...established('gopay:payment:1'), operationId: 'collect-2' }])).toBe(
       'applied',

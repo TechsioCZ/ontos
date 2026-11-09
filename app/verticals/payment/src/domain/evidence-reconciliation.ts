@@ -14,8 +14,12 @@ import type {
   PaymentSourceFactFamily,
   PaymentSourceKind,
 } from '../../shared/domain/payment-vocabulary.ts';
-import type { PaymentEvidenceOperationView, PaymentEvidenceOutcomeChange } from './evidence-interpretation.ts';
-import { paymentFactMeaning } from './evidence-interpretation.ts';
+import type {
+  PaymentEffectIdentity,
+  PaymentEvidenceOperationView,
+  PaymentEvidenceOutcomeChange,
+} from './evidence-interpretation.ts';
+import { paymentFactMeaning, restatesEstablishedEffect } from './evidence-interpretation.ts';
 import { sameAmount } from './money.ts';
 import { isAllowedOutcomeTransition, isDefinitiveOutcome } from './operation-lifecycle.ts';
 import { PAYMENT_SELECTED_CAPABILITY_SOURCES } from './source-qualification.ts';
@@ -49,8 +53,7 @@ export interface PaymentReconciliationEvidenceSource {
  * One uncorrected statement whose effect already counts toward an operation: its own accepted
  * interpretation, or a governed attachment that resolved the operation.
  */
-export interface PaymentReconciliationEstablishedEffect {
-  readonly economicEffectKey: string | undefined;
+export interface PaymentReconciliationEstablishedEffect extends PaymentEffectIdentity {
   readonly factKind: PaymentObservationFactKind;
   readonly observationId: string;
   readonly operationId: string;
@@ -242,21 +245,17 @@ const statesDistinctEffect = (
   facts: PaymentReconciliationEvidenceFacts,
   operation: PaymentReconciliationOperationView,
   outcome: PaymentOperationOutcome,
-): boolean => {
-  const key = facts.economicEffectKey;
-  return (
-    outcome === 'EFFECT_CONFIRMED' &&
-    key !== undefined &&
-    facts.establishedEffects.some(
+): boolean =>
+  outcome === 'EFFECT_CONFIRMED' &&
+  !restatesEstablishedEffect(
+    facts,
+    facts.establishedEffects.filter(
       (established) =>
         established.operationId === operation.operationId &&
         established.observationId !== facts.observationId &&
-        established.economicEffectKey !== undefined &&
-        established.economicEffectKey !== key &&
         paymentFactMeaning(established.factKind)?.outcome === outcome,
-    )
+    ),
   );
-};
 
 const decideAttach = (
   input: PaymentReconciliationDecisionInput,
