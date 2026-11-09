@@ -366,7 +366,7 @@ it.effect('rejects cross-company and cross-tenant revoked rows before the note r
   }),
 );
 
-it.effect('never labels a retained foreign-tenant grant with requester-tenant inspection authority', () =>
+it.effect('refuses a retained foreign-tenant grant with nothing of it read, returned or changed', () =>
   Effect.gen(function* foreignRetainedTenant() {
     const row: OAuthGrantRecord = {
       ...retainedGrant,
@@ -374,15 +374,65 @@ it.effect('never labels a retained foreign-tenant grant with requester-tenant in
       tenantId: foreignTenantId,
     };
     const test = yield* fixture({ readableModules: ['work.tasks'], rows: [row] });
-    const listed = yield* test.grants.get(row.grantId);
-    expect(Option.isSome(listed)).toBe(true);
-    if (Option.isSome(listed)) {
-      expect(listed.value.limits).toStrictEqual({ maxWritePolicy: 'read_only', modules: [] });
-      expect(listed.value.modules).toStrictEqual([]);
-      expect(listed.value.writePolicy).toBe('read_only');
-    }
+    const failure = yield* test.grants.get(row.grantId).pipe(Effect.flip);
+    expect(Predicate.isTagged(failure, 'ConnectionsUnavailable')).toBe(true);
     expect(test.authorityReads).toEqual([]);
     expect(test.noteRequests).toEqual([]);
+    expect(test.events).toEqual([]);
+  }),
+);
+
+it.effect('lists nothing from another company: a foreign-company row fails the list before any authority read', () =>
+  Effect.gen(function* foreignCompanyList() {
+    const row: OAuthGrantRecord = { ...retainedGrant, legalEntityId: foreignCompanyId };
+    const test = yield* fixture({ readableModules: ['work.tasks'], rows: [row] });
+    const failure = yield* test.grants.list(filter).pipe(Effect.flip);
+    expect(Predicate.isTagged(failure, 'ConnectionsUnavailable')).toBe(true);
+    expect(test.authorityReads).toEqual([]);
+    expect(test.noteRequests).toEqual([]);
+  }),
+);
+
+it.effect('neither updates nor revokes a foreign-company grant, and reads no authority for it', () =>
+  Effect.gen(function* foreignCompanyMutations() {
+    const row: OAuthGrantRecord = { ...retainedGrant, legalEntityId: foreignCompanyId };
+    const test = yield* fixture({ readableModules: ['work.tasks'], rows: [row] });
+    const updateFailure = yield* test.grants
+      .update({
+        actorPrincipalId: principal.principalId,
+        grantId: row.grantId,
+        modules: [{ access: 'read', moduleId: AgentModuleKeySchema.make('work.tasks') }],
+        writePolicy: 'read_only',
+      })
+      .pipe(Effect.flip);
+    const revokeFailure = yield* test.grants
+      .revoke({
+        actorPrincipalId: principal.principalId,
+        grantId: row.grantId,
+        reasonCode: 'admin',
+        reasonText: 'Removed by administrator',
+      })
+      .pipe(Effect.flip);
+    expect(Predicate.isTagged(updateFailure, 'ConnectionsUnavailable')).toBe(true);
+    expect(Predicate.isTagged(revokeFailure, 'ConnectionsUnavailable')).toBe(true);
+    expect(test.events).toEqual([]);
+    expect(test.authorityReads).toEqual([]);
+  }),
+);
+
+it.effect('neither updates nor revokes a foreign-tenant grant, and writes no audit or token change for it', () =>
+  Effect.gen(function* foreignTenantMutations() {
+    const row: OAuthGrantRecord = { ...retainedGrant, tenantId: foreignTenantId };
+    const test = yield* fixture({ readableModules: ['work.tasks'], rows: [row] });
+    const failure = yield* test.grants
+      .revoke({
+        actorPrincipalId: principal.principalId,
+        grantId: row.grantId,
+        reasonCode: 'admin',
+        reasonText: 'Removed by administrator',
+      })
+      .pipe(Effect.flip);
+    expect(Predicate.isTagged(failure, 'ConnectionsUnavailable')).toBe(true);
     expect(test.events).toEqual([]);
   }),
 );

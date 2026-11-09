@@ -50,6 +50,9 @@ const actingKey = (row: GrantRow): string =>
 /** Nothing is permitted: the most restrictive write policy and no module. */
 const NO_LIVE_LIMITS: ConnectionLimits = { maxWritePolicy: 'read_only', modules: [] };
 
+/** The refusal of a grant the administrator's tenant and company do not hold (the port's existing unavailable outcome). */
+const OUTSIDE_SCOPE = 'Connection outside the requester tenant or company';
+
 /**
  * Live limits of every distinct acting principal (per company) among the rows, in the asker's own scope. `None` when
  * the authority cannot be loaded: the row stays listed with nothing permitted, as `connectionSummariesOf` leaves it
@@ -147,6 +150,21 @@ export const GrantAdminLive = (request: GrantAdminRequest) =>
         Context.add(ShellInstalledModuleCatalog, yield* ShellInstalledModuleCatalog),
       );
 
+      /** Only a grant of the asker's own tenant and company is ever read, listed or changed through this port. */
+      const inScope = (row: GrantRow): boolean =>
+        row.tenantId === asker.tenantId && row.legalEntityId === asker.legalEntityId;
+
+      /** Refuses an update or revocation of a grant that exists outside the asker's tenant and company, before any write. */
+      const refuseForeignGrant = (grantId: string) =>
+        registry.findGrant(grantId).pipe(
+          Effect.mapError(unavailable),
+          Effect.flatMap((retained) =>
+            Option.isSome(retained) && !inScope(toGrantRow(retained.value))
+              ? Effect.fail(unavailable(OUTSIDE_SCOPE))
+              : Effect.void,
+          ),
+        );
+
       /** Core verifies exact company, retained owners and current admin rights using the original ingress carrier. */
       const revokeNotesOf = Effect.fn('GrantAdmin.revokeNotesOf')(function* revokeNotesOf(rows: readonly GrantRow[]) {
         const revoked = rows.filter((row) => row.status === 'revoked');
@@ -197,6 +215,9 @@ export const GrantAdminLive = (request: GrantAdminRequest) =>
       const list = Effect.fn('GrantAdmin.list')(
         function* list(filter: GrantListFilter) {
           const rows = (yield* registry.listGrants(filter)).map(toGrantRow);
+          if (!rows.every(inScope)) {
+            return yield* unavailable(OUTSIDE_SCOPE);
+          }
           const summaries = yield* connectionSummariesOf(filter.tenantId, rows, asker);
           const joined: readonly ConnectionSummary[] = yield* joinSummaries(rows, summaries);
           return joined;
@@ -208,10 +229,16 @@ export const GrantAdminLive = (request: GrantAdminRequest) =>
       const get = Effect.fn('GrantAdmin.get')(
         function* get(grantId: string) {
           const retained = yield* registry.findGrant(grantId);
-          if (Option.isNone(retained) || !isListed(retained.value.status)) {
+          if (Option.isNone(retained)) {
             return Option.none<ConnectionSummary>();
           }
           const row = toGrantRow(retained.value);
+          if (!inScope(row)) {
+            return yield* unavailable(OUTSIDE_SCOPE);
+          }
+          if (!isListed(row.status)) {
+            return Option.none<ConnectionSummary>();
+          }
           const summaries = yield* connectionSummariesOf(row.tenantId, [row], asker);
           const [joined] = yield* joinSummaries([row], summaries);
           return Option.fromUndefinedOr(joined);
@@ -221,20 +248,26 @@ export const GrantAdminLive = (request: GrantAdminRequest) =>
       );
 
       const update: GrantAdminPort<never>['update'] = (input) =>
-        updateConnection(asker, {
-          actorPrincipalId: input.actorPrincipalId,
-          grantId: input.grantId,
-          modules: input.modules === 'all' ? 'all' : [...input.modules],
-          writePolicy: input.writePolicy,
-        }).pipe(Effect.asVoid, Effect.mapError(unavailable), Effect.provideContext(services));
+        Effect.gen(function* updateGrant() {
+          yield* refuseForeignGrant(input.grantId);
+          yield* updateConnection(asker, {
+            actorPrincipalId: input.actorPrincipalId,
+            grantId: input.grantId,
+            modules: input.modules === 'all' ? 'all' : [...input.modules],
+            writePolicy: input.writePolicy,
+          }).pipe(Effect.asVoid, Effect.mapError(unavailable));
+        }).pipe(Effect.provideContext(services));
 
       const revoke: GrantAdminPort<never>['revoke'] = (input) =>
-        revokeConnection({
-          actorPrincipalId: input.actorPrincipalId,
-          grantId: input.grantId,
-          note: input.reasonText,
-          reason: input.reasonCode,
-        }).pipe(Effect.asVoid, Effect.mapError(unavailable), Effect.provideContext(services));
+        Effect.gen(function* revokeGrant() {
+          yield* refuseForeignGrant(input.grantId);
+          yield* revokeConnection({
+            actorPrincipalId: input.actorPrincipalId,
+            grantId: input.grantId,
+            note: input.reasonText,
+            reason: input.reasonCode,
+          }).pipe(Effect.asVoid, Effect.mapError(unavailable));
+        }).pipe(Effect.provideContext(services));
 
       return { get, list, revoke, update } satisfies GrantAdminPort<never>;
     }),

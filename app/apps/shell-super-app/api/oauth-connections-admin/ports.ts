@@ -55,7 +55,10 @@ export type RevokeReasonCode = typeof RevokeReasonCodeSchema.Type;
 
 /** Grant store + update/revoke service of lane connection-grants, as the management handlers see it. */
 export interface GrantAdminPort<R> {
-  /** One connection by grant id; None when unknown or a draft. */
+  /**
+   * One connection by grant id; None when unknown or a draft. Unavailable, with nothing read or returned about it, when
+   * the grant belongs to another tenant or company than the asker's. Every method of this port refuses the same way.
+   */
   readonly get: (grantId: string) => Effect.Effect<Option.Option<ConnectionSummary>, ConnectionsUnavailable, R>;
   /** Connections matching the filter (never drafts), newest first, with effective modules/policy and live limits. */
   readonly list: (filter: GrantListFilter) => Effect.Effect<readonly ConnectionSummary[], ConnectionsUnavailable, R>;
