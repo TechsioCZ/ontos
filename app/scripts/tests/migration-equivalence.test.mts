@@ -1,6 +1,6 @@
 import { NodeCrypto, NodeFileSystem } from '@effect/platform-node';
 import type { MigrationMeta } from 'drizzle-orm/migrator';
-import { Effect, FileSystem, Layer, Predicate, Schema } from 'effect';
+import { Cause, Effect, FileSystem, Layer, Predicate, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { SqlError, UnknownError } from 'effect/sql/SqlError';
 import { assert, expect, it } from 'effect-rstest';
@@ -168,6 +168,20 @@ it('never copies unknown database messages or non-SQLSTATE codes into migration 
   expect(failure.migration).toBeUndefined();
   expect(failure.message).not.toContain(detail);
   expect(JSON.stringify(failure)).not.toContain(detail);
+});
+
+it('unwraps the real native Drizzle Effect Cause and SQL driver error wrappers', () => {
+  const failure = describeMigrationFailure('party', [], {
+    cause: Cause.fail(
+      new SqlError({
+        reason: new UnknownError({ cause: { code: '42701', message: 'private database details' } }),
+      }),
+    ),
+  });
+  expect(failure.message).toContain('SQLSTATE 42701');
+  expect(JSON.stringify(failure)).not.toContain('private');
+  const original = new MigrationEquivalenceError({ history: 'contacts', reason: 'Journal shape is unsupported' });
+  expect(describeMigrationFailure('party', [], { cause: Cause.fail(original) })).toBe(original);
 });
 
 it('bounds cyclic native error traversal', () => {

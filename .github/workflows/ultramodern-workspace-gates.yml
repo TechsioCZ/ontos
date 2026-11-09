@@ -548,12 +548,12 @@ jobs:
         working-directory: app
         run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output
 
-      - name: Materialize the native Customer Context worker artifact
+      - name: Materialize the native combined Outbox Worker host artifact
         if: matrix.root-suite == true
         working-directory: app
         env:
           APP_ENV_PATH: /dev/null
-        run: mise exec -- pnpm zerops:materialize --app commerce-customer-context --package @app/commerce-customer-context --package-dir verticals/commerce-customer-context --worker
+        run: mise exec -- pnpm zerops:materialize --app outbox-worker-host --package app --package-dir . --worker
 
       # The Chromium build is pinned by the Playwright version in the lockfile; its system libraries are not cached.
       # Only warm-caches on main saves it, so parallel jobs never race to save.

@@ -5,7 +5,7 @@ import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
 import { readMigrationFiles } from 'drizzle-orm/migrator';
 import type { MigrationMeta } from 'drizzle-orm/migrator';
 import { migrate } from 'drizzle-orm/pg-core/effect/session';
-import { Config, Crypto, Duration, Effect, FileSystem, Layer, Option, Predicate, Schema } from 'effect';
+import { Cause, Config, Crypto, Duration, Effect, FileSystem, Layer, Option, Predicate, Schema } from 'effect';
 
 import {
   MigrationEquivalenceError,
@@ -113,6 +113,14 @@ export const NativeMigrationFailureSchema = Schema.Struct({
 });
 const SqlStateSchema = Schema.String.pipe(Schema.check(Schema.isPattern(/^[0-9A-Z]{5}$/u)));
 
+const knownMigrationName = (migrations: readonly MigrationMeta[], query: string | undefined): string | undefined => {
+  const matches =
+    query === undefined
+      ? []
+      : migrations.filter((migration) => migration.sql.some((statement) => statement.trim() === query.trim()));
+  return matches.length === 1 ? matches[0]?.name : undefined;
+};
+
 /** Identify the owner and known migration without exposing SQL, parameters, credentials or database row data. */
 export const describeMigrationFailure = (
   history: MigrationHistory,
@@ -124,26 +132,25 @@ export const describeMigrationFailure = (
   }
   const initial = Option.getOrUndefined(Schema.decodeUnknownOption(NativeMigrationFailureSchema)(error));
   let current = initial?.cause ?? initial?.reason;
-  let code: string | undefined;
-  let query: string | undefined;
+  let code = Schema.is(SqlStateSchema)(initial?.code) ? initial?.code : undefined;
+  let query = initial?.query;
   for (let depth = 0; depth < 8; depth += 1) {
-    if (Schema.is(MigrationEquivalenceError)(current)) {
-      return current;
+    if (Cause.isCause(current)) {
+      current = Option.getOrUndefined(Cause.findErrorOption(current));
+    } else {
+      if (Schema.is(MigrationEquivalenceError)(current)) {
+        return current;
+      }
+      const failure = Option.getOrUndefined(Schema.decodeUnknownOption(NativeMigrationFailureSchema)(current));
+      if (failure === undefined) {
+        break;
+      }
+      code ??= Schema.is(SqlStateSchema)(failure.code) ? failure.code : undefined;
+      query ??= failure.query;
+      current = failure.cause ?? failure.reason;
     }
-    const failure =
-      depth === 0 ? initial : Option.getOrUndefined(Schema.decodeUnknownOption(NativeMigrationFailureSchema)(current));
-    if (failure === undefined) {
-      break;
-    }
-    code ??= Schema.is(SqlStateSchema)(failure.code) ? failure.code : undefined;
-    query ??= failure.query;
-    current = failure.cause ?? failure.reason;
   }
-  const matches =
-    query === undefined
-      ? []
-      : migrations.filter((migration) => migration.sql.some((statement) => statement.trim() === query?.trim()));
-  const migration = matches.length === 1 ? matches[0]?.name : undefined;
+  const migration = knownMigrationName(migrations, query);
   const status = code === undefined ? '' : ` (SQLSTATE ${code})`;
   const details = {
     history,

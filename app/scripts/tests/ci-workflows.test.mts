@@ -863,7 +863,7 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   });
   expect(steps[unpack]?.run).toBe(UNPACK_NATIVE_ARTIFACTS_COMMAND);
   expect(steps[worker]?.run).toBe(
-    'mise exec -- pnpm zerops:materialize --app commerce-customer-context --package @app/commerce-customer-context --package-dir verticals/commerce-customer-context --worker',
+    'mise exec -- pnpm zerops:materialize --app outbox-worker-host --package app --package-dir . --worker',
   );
   expect(steps[worker]?.env).toEqual({ APP_ENV_PATH: '/dev/null' });
   for (const index of [download, unpack]) {
@@ -873,6 +873,38 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   const preproposal = integration.strategy.matrix.include.filter((shard) => shard['native-preproposal'] === true);
   expect(preproposal).toHaveLength(1);
   expect(preproposal[0]?.suite).toBe('integration');
+});
+
+it('ships a runnable fresh-database proof for the actual app artifact without overwriting existing contents', () => {
+  const scriptUrl = new URL('../prove-zerops-migrator-artifact.sh', import.meta.url);
+  const script = fileURLToPath(scriptUrl);
+  const source = readFileSync(scriptUrl, 'utf-8');
+  expect(execFileSync('/bin/sh', ['-n', script], { encoding: 'utf-8' })).toBe('');
+  expect(source).toContain("setup === 'app'");
+  expect(source).toContain(String.raw`app.build.deployFiles.join('\n')`);
+  expect(source).toContain('exec node scripts/run-zerops-migrator.mjs');
+  const packaging = Schema.decodeUnknownSync(
+    Schema.Struct({
+      zerops: Schema.Array(
+        Schema.Struct({
+          build: Schema.Struct({ deployFiles: Schema.Array(Schema.String) }),
+          setup: Schema.String,
+        }),
+      ),
+    }),
+  )(parse(readFileSync(new URL('../../zerops.yaml', import.meta.url), 'utf-8')));
+  expect(packaging.zerops.find(({ setup }) => setup === 'app')?.build.deployFiles).toEqual(['app/']);
+  const artifact = mkdtempSync(path.join(os.tmpdir(), 'ontos-existing-migrator-artifact-'));
+  const marker = path.join(artifact, 'preserved-owner-data');
+  try {
+    writeFileSync(marker, 'preserve this artifact');
+    expect(() => execFileSync('/bin/sh', [script, artifact], { encoding: 'utf-8', stdio: 'pipe' })).toThrow(
+      'must be empty',
+    );
+    expect(readFileSync(marker, 'utf-8')).toBe('preserve this artifact');
+  } finally {
+    rmSync(artifact, { force: true, recursive: true });
+  }
 });
 
 it('refuses root native integration when the same-run build archives are missing', () => {
