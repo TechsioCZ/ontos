@@ -2,6 +2,7 @@ import { selectItem } from '../../../../ui/select-item.ts';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import {
   BulkActionBar,
+  DetailViewModeToggle,
   EmptyState,
   PageHeader,
   StatCard,
@@ -11,11 +12,15 @@ import {
   Toaster,
   dataTableRowLabels,
   paginationTranslations,
+  useDetailViewMode,
 } from '@app/admin-ui';
+import type { DetailViewMode } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
+import { useToast } from '@techsio/ui-kit/molecules/toast';
+import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import type {
   CellContext,
   ColumnDef,
@@ -29,7 +34,8 @@ import { BulkTagDialog, TagCell, TagFilter } from '@app/tagging/components/tag-c
 import type { TagsStatus } from '@app/tagging/components/tag-controls';
 import { pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
-import { Predicate } from 'effect';
+import { Effect, Match, Predicate } from 'effect';
+import type { Cause } from 'effect';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 
 import '../../../index.css';
@@ -67,6 +73,14 @@ const key = 'party-registry.pages.customers';
 const pageSizeOptions = [50, 100, 200];
 /** The row-selection column stays first, ahead of the pinned name. */
 const pinning = { end: [], start: ['__select', 'displayName'] };
+
+/**
+ * The customer's full-page route, or null when the side panel is the chosen detail view.
+ * Full page is the default, so a row click navigates unless the user picked the panel.
+ */
+export const customerRowHref = (mode: DetailViewMode, language: string, counterpartyId: string): string | null =>
+  mode === 'page' ? `/${language}/prodej/zakaznici/${encodeURIComponent(counterpartyId)}` : null;
+
 /**
  * DIČ and Stav stay in the column menu; phone shows, because the list is searched by phone. Segment shows by
  * default; when its lookup fails the column is left out entirely, so the column menu never offers a column of dashes.
@@ -337,6 +351,82 @@ const CustomerTableDetailPrefetch = ({
   return null;
 };
 
+interface CustomersHeaderActionsProps {
+  readonly onCreate: () => void;
+  readonly onModeChange: (next: DetailViewMode) => void;
+  readonly onOpenReview: () => void;
+  readonly viewMode: DetailViewMode;
+  readonly writesRefused: boolean;
+}
+
+/** The detail-view choice, the identity review, and create when the owner accepts customer writes. */
+const CustomersHeaderActions = ({
+  onCreate,
+  onModeChange,
+  onOpenReview,
+  viewMode,
+  writesRefused,
+}: CustomersHeaderActionsProps) => {
+  const { t } = useModernI18n();
+  return (
+    <>
+      <DetailViewModeToggle
+        groupLabel={t(`${key}.detailView.group`)}
+        onChange={onModeChange}
+        pageLabel={t(`${key}.detailView.page`)}
+        panelLabel={t(`${key}.detailView.panel`)}
+        value={viewMode}
+      />
+      <Button onClick={onOpenReview} size="sm" theme="outlined" variant="secondary">
+        {t(`${key}.identityReview.open`)}
+      </Button>
+      {!writesRefused && (
+        <Button icon="icon-[mdi--plus]" onClick={onCreate} size="sm" variant="primary">
+          {t(`${key}.newCustomer`)}
+        </Button>
+      )}
+    </>
+  );
+};
+
+const navigationFailureKey = Match.type<Cause.TimeoutError | Cause.UnknownError>().pipe(
+  Match.tag('TimeoutError', () => 'openTimeout'),
+  Match.tag('UnknownError', () => 'openFailed'),
+  Match.exhaustive,
+);
+
+/** A row click opens the full customer page by default, or the side panel when the user chose that view. */
+const useCustomerRowOpen = (openPanel: (customer: CustomerListItem) => void) => {
+  const { language, t } = useModernI18n();
+  const navigate = useNavigate();
+  const toaster = useToast();
+  const [detailViewMode, setDetailViewMode] = useDetailViewMode();
+
+  const openCustomer = (customer: CustomerListItem) => {
+    const href = customerRowHref(detailViewMode, language ?? 'cs', customer.counterpartyId);
+    if (href === null) {
+      openPanel(customer);
+      return;
+    }
+    // Navigation has a timeout and a toast on failure, as the product list does; the earlier toasts are cleared first.
+    toaster.dismiss();
+    void browserRuntime.runPromise(
+      Effect.tryPromise(() => navigate({ to: href })).pipe(
+        Effect.timeout('10 seconds'),
+        Effect.matchEffect({
+          onFailure: (error) =>
+            Effect.sync(() => {
+              toaster.create({ title: t(`${key}.detailView.${navigationFailureKey(error)}`), type: 'error' });
+            }),
+          onSuccess: Effect.succeed,
+        }),
+      ),
+    );
+  };
+
+  return { detailViewMode, openCustomer, setDetailViewMode } as const;
+};
+
 const CustomersContent = ({ context }: CustomersContentProps) => {
   const { t } = useModernI18n();
   // Every customer, archived included, so the stat tiles describe the whole register. The Shell preloads it.
@@ -356,8 +446,8 @@ const CustomersContent = ({ context }: CustomersContentProps) => {
   const [selection, setSelection] = useState<Selection>({});
   const { closeDetail, detail, detailFailure, detailValue, openDetail, retryDetail } =
     useCustomerDetailSelection(context);
+  const { detailViewMode, openCustomer, setDetailViewMode } = useCustomerRowOpen(openDetail);
   const review = useCustomerIdentityReview(reload);
-  const reviewKey = `${key}.identityReview`;
   const [createOpen, setCreateOpen] = useState(false);
   const [columnVisibility, setColumnVisibility] = useState<ColumnVisibility>(defaultColumnVisibility);
   const [editOpen, setEditOpen] = useState(false);
@@ -523,16 +613,13 @@ const CustomersContent = ({ context }: CustomersContentProps) => {
       <div className="flex min-w-0 flex-col gap-250">
         <PageHeader
           actions={
-            <>
-              <Button onClick={() => review.openReview()} size="sm" theme="outlined" variant="secondary">
-                {t(`${reviewKey}.open`)}
-              </Button>
-              {!writesRefused && (
-                <Button icon="icon-[mdi--plus]" onClick={openCreate} size="sm" variant="primary">
-                  {t(`${key}.newCustomer`)}
-                </Button>
-              )}
-            </>
+            <CustomersHeaderActions
+              onCreate={openCreate}
+              onModeChange={setDetailViewMode}
+              onOpenReview={() => review.openReview()}
+              viewMode={detailViewMode}
+              writesRefused={writesRefused}
+            />
           }
           description={t(`${key}.description`)}
           title={t(`${key}.title`)}
@@ -585,7 +672,7 @@ const CustomersContent = ({ context }: CustomersContentProps) => {
           onColumnVisibilityChange={setColumnVisibility}
           onPaginationChange={setPagination}
           onReady={setTable}
-          onRowClick={(row) => openDetail(row.original)}
+          onRowClick={(row) => openCustomer(row.original)}
           onRowSelectionChange={setSelection}
           onSortingChange={setSorting}
           pageSizeOptions={pageSizeOptions}
@@ -596,6 +683,7 @@ const CustomersContent = ({ context }: CustomersContentProps) => {
           size="sm"
           sorting={sorting}
           stickyHeader
+          striped
           tableLayout="fixed"
           translations={translations}
         />
