@@ -19,6 +19,7 @@ import {
   CoreDatabaseLive,
   publishTestApplicationCompositionAuthority,
 } from '@app/core-runtime/testing/owner-evidence';
+import { partySourceComponentContracts } from '../fixtures/party-source-components.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { partyRegistryManifest } from '../../vertical.manifest.ts';
 import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
@@ -69,9 +70,7 @@ const sourceComposition = Effect.scoped(
           verticals: Schema.Array(
             Schema.Struct({
               id: fixtureAppId,
-              moduleFederation: Schema.optionalKey(
-                Schema.Struct({ name: Schema.NonEmptyString, exposes: Schema.Array(Schema.NonEmptyString) }),
-              ),
+              moduleFederation: Schema.optionalKey(Schema.Struct({ name: Schema.NonEmptyString })),
             }),
           ),
         }),
@@ -81,16 +80,9 @@ const sourceComposition = Effect.scoped(
     if (federation === undefined) {
       return yield* unavailable();
     }
-    const components = yield* Effect.forEach(Object.keys(manifest.publicSurface.components), (key) => {
-      const componentKey = `${owner.moduleId}.${key}`;
-      const binding = [...owner.shellContributions.pages, ...owner.shellContributions.publicComponents].find(
-        (entry) => entry.componentKey === componentKey,
-      );
-      if (binding === undefined || !federation.exposes.includes(binding.expose)) {
-        return Effect.fail(unavailable());
-      }
-      return Effect.succeed({ expose: binding.expose, key: componentKey, mfBoundaryId: federation.name });
-    });
+    // Owner page bindings plus the module federation config's declared exposures are the SOURCE
+    // component metadata; the topology placement only names the Federation boundary.
+    const components = yield* partySourceComponentContracts().pipe(Effect.mapError(() => unavailable()));
     const events = yield* Effect.all(
       manifest.publicSurface.events.map((event) =>
         Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))(
