@@ -7,7 +7,7 @@ import {
 } from '@app/core-runtime/access/enforcement';
 import type { AccessDecisionService, GateInput } from '@app/core-runtime/access/enforcement';
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
-import { inertAccessEnforcementPorts } from '@app/core-runtime/testing/access-gate';
+import { inertAccessEnforcementPorts, withScriptedRebind } from '@app/core-runtime/testing/access-gate';
 import { Effect, Layer } from 'effect';
 
 import { DecisionCheck } from '../../../../packages/core-runtime/src/access/decision/engine.ts';
@@ -29,10 +29,15 @@ const decisionOf = (outcome: AccessDecision['outcome']): AccessDecision => ({
 
 /**
  * The Party suite's own authority: the fixture's isolated database carries no v2 access intent and
- * reaches no engine, so a live gate could only answer UNAVAILABLE. This double answers ALLOWED for
- * every capability except the ones the suite has revoked, which it refuses exactly as the live gate
- * refuses a withdrawn assignment. The suite flips it over the fixture's own HTTP surface, so a
- * revocation is a real, observable state change rather than a fixed answer.
+ * reaches no engine, so the decision answers from this script. It answers ALLOWED for every capability
+ * except the ones the suite has revoked, which it refuses exactly as the live gate refuses a withdrawn
+ * assignment. The suite flips it over the fixture's own HTTP surface, so a revocation is a real,
+ * observable state change rather than a fixed answer.
+ *
+ * The gate is complete for prepared Action authority, the same path production runs: it states its
+ * rebind (it reads no ports, so it answers the same on any binding) and its intent joins a caller's
+ * transaction. Currentness is not scripted here: the shipped binding reads the persisted scope and
+ * fence rows, which the owning fixture seeds Ready through Core's production bootstrap writer.
  */
 export interface PartyTestAccessGate {
   readonly layer: Layer.Layer<
@@ -56,7 +61,7 @@ export const partyTestAccessGate = (): PartyTestAccessGate => {
     const revoked = key !== undefined && [...revokedPrefixes].some((prefix) => key.startsWith(prefix));
     return decisionOf(revoked ? 'DENIED' : 'ALLOWED');
   };
-  const service: AccessDecisionService = {
+  const service: AccessDecisionService = withScriptedRebind({
     decide: (input) => Effect.succeed(answerOf(input)),
     decideMany: (input) => Effect.succeed(input.map((one) => answerOf(one))),
     list: (input) => {
@@ -68,7 +73,7 @@ export const partyTestAccessGate = (): PartyTestAccessGate => {
     // fixture creates its companies at runtime, so the answer echoes the company the request named.
     selectableLegalEntities: ({ scope }) =>
       Effect.succeed(scope.legalEntityId === undefined ? [] : [LegalEntityIdSchema.make(scope.legalEntityId)]),
-  };
+  });
   const ports = inertAccessEnforcementPorts();
   return Object.freeze({
     layer: Layer.mergeAll(

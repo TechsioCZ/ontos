@@ -66,19 +66,24 @@ export const testAccessSpecOf = (
  */
 const inertPortAnswer = () => Effect.fail(accessDecisionUnavailable('The scripted gate reads no authority'));
 
+/** The one authority the inert source answers with; it reads nothing, so every answer is the same. */
+const inertAuthority = Object.freeze({
+  readCells: inertPortAnswer,
+  readConnection: inertPortAnswer,
+  readScope: inertPortAnswer,
+  readTeamIds: inertPortAnswer,
+});
+
 export const inertAccessEnforcementPorts = (): AccessEnforcementPorts =>
   Object.freeze({
     candidates: Object.freeze({ listCandidateIds: () => Effect.succeed([]) }),
     check: Object.freeze({ checkBulk: inertPortAnswer }),
     decisionLog: Object.freeze({ record: () => Effect.void }),
     intent: Object.freeze({
-      authorityFor: () =>
-        Object.freeze({
-          readCells: inertPortAnswer,
-          readConnection: inertPortAnswer,
-          readScope: inertPortAnswer,
-          readTeamIds: inertPortAnswer,
-        }),
+      authorityFor: () => inertAuthority,
+      // Prepared Action authority joins the caller's transaction (O75). The inert source has no rows to
+      // join, so its joined answer is the same inert authority; a binding without it fails closed.
+      joined: () => Object.freeze({ authorityFor: () => inertAuthority }),
     }),
     principalKinds: Object.freeze({ readKind: inertPortAnswer }),
     workloadBindings: Object.freeze({
@@ -86,6 +91,16 @@ export const inertAccessEnforcementPorts = (): AccessEnforcementPorts =>
       readCompanyDeclaration: inertPortAnswer,
     }),
   });
+
+/**
+ * A scripted gate reads no ports, so its answers hold whichever ports a binding rebinds it to. The
+ * binding already keeps such a gate when `rebind` is absent; a prepared Action authority requires the
+ * method to exist, so a scripted gate states that identity explicitly instead of leaving it out.
+ */
+type ScriptedGate = Omit<AccessDecisionService, 'rebind'>;
+
+export const withScriptedRebind = (gate: ScriptedGate): AccessDecisionService =>
+  Object.freeze({ ...gate, rebind: () => withScriptedRebind(gate) });
 
 /** A bound gate plus the double's own record of what it was asked, for the runner suites. */
 export interface TestBoundAccessGate {
