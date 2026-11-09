@@ -136,7 +136,6 @@ export type PaymentAuthorizationInvalidityReason = typeof PaymentAuthorizationIn
  */
 export const PAYMENT_AUTHORIZATION_VALIDATION_OUTCOMES = ['VALID', 'NOT_VALID', 'UNAVAILABLE_TO_VERIFY'] as const;
 export const PaymentAuthorizationValidationOutcomeSchema = Schema.Literals(PAYMENT_AUTHORIZATION_VALIDATION_OUTCOMES);
-export type PaymentAuthorizationValidationOutcome = typeof PaymentAuthorizationValidationOutcomeSchema.Type;
 
 /** Issuance-side refusals specific to Payment Authorization. */
 export const PAYMENT_AUTHORIZATION_REFUSAL_CODES = [

@@ -16,8 +16,6 @@ export const PaymentGatewayBindingVerificationSchema = Schema.Union([
 ]);
 export type PaymentGatewayBindingVerification = typeof PaymentGatewayBindingVerificationSchema.Type;
 
-export const PaymentEnabledGatewayBindingsSchema = Schema.Array(PaymentGatewayAccountBindingSchema);
-
 export interface PaymentGatewayBindingService {
   /** Enabled bindings offered for a new Payment intent; an outage fails, it is never an empty list. */
   readonly listEnabledBindings: (input: {

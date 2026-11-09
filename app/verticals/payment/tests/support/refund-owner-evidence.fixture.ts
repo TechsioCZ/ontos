@@ -1,15 +1,11 @@
 import { Effect, Layer } from 'effect';
 
 import type { PaymentRefundableItem } from '../../shared/domain/payment-refund-basis.ts';
-import { CommitmentOutcomePort, unavailableCommitmentOutcome } from '../../src/ports/commitment-outcome-port.ts';
+import { CommitmentOutcomePort } from '../../src/ports/commitment-outcome-port.ts';
 import type { PaymentCommitmentOutcome } from '../../src/ports/commitment-outcome-port.ts';
-import { DeliveryCapabilityPort, unavailableDeliveryCapability } from '../../src/ports/delivery-capability-port.ts';
-import { GatewayBindingPort, unavailableGatewayBinding } from '../../src/ports/gateway-binding-port.ts';
 import { ownerEvidenceUnavailable } from '../../src/ports/owner-evidence-unavailable.ts';
 import type { PaymentOwnerScope } from '../../src/ports/owner-evidence-unavailable.ts';
-import { PaymentTermEvidencePort, unavailablePaymentTermEvidence } from '../../src/ports/payment-term-evidence-port.ts';
-import { PickupCapabilityPort, unavailablePickupCapability } from '../../src/ports/pickup-capability-port.ts';
-import { RefundableItemsPort, unavailableRefundableItems } from '../../src/ports/refundable-items-port.ts';
+import { RefundableItemsPort } from '../../src/ports/refundable-items-port.ts';
 import type { PaymentRefundableItemVerification } from '../../src/ports/refundable-items-port.ts';
 
 /**
@@ -107,13 +103,3 @@ export const commitmentOutcomePublicContractFixture = (fixture: CommitmentOutcom
         ? Effect.fail(ownerEvidenceUnavailable('COMMITMENT_OUTCOME', 'The commitment owner did not answer in time'))
         : Effect.succeed(commitmentOutcomeFor(fixture, request)),
   });
-
-/** Every owner port fails closed as unavailable, exactly as the production default composition. */
-export const unavailableOwnerPortsFixture = Layer.mergeAll(
-  Layer.succeed(PaymentTermEvidencePort, unavailablePaymentTermEvidence),
-  Layer.succeed(GatewayBindingPort, unavailableGatewayBinding),
-  Layer.succeed(DeliveryCapabilityPort, unavailableDeliveryCapability),
-  Layer.succeed(PickupCapabilityPort, unavailablePickupCapability),
-  Layer.succeed(CommitmentOutcomePort, unavailableCommitmentOutcome),
-  Layer.succeed(RefundableItemsPort, unavailableRefundableItems),
-);

@@ -12,7 +12,6 @@ import {
 } from '../actions/issue-payment-authorization.ts';
 
 export { IssuePaymentAuthorizationPayloadSchema } from '../actions/issue-payment-authorization.ts';
-export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const IssuePaymentAuthorizationActionInvalidProblemSchema = makeProblemDetailsSchema(
   'IssuePaymentAuthorizationActionInvalidProblem',

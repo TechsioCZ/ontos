@@ -118,4 +118,3 @@ export const PaymentUnresolvedStateSchema = Schema.Struct({
   openReconciliationCaseCount: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
   unresolvedOperationIds: Schema.Array(PaymentOperationIdSchema),
 });
-export type PaymentUnresolvedState = typeof PaymentUnresolvedStateSchema.Type;

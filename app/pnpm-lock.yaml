@@ -2091,9 +2091,6 @@ importers:
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime
-      '@app/customer-payment-term-contracts':
-        specifier: workspace:*
-        version: link:../../packages/customer-payment-term-contracts
       '@app/gateway-principal-verifier':
         specifier: workspace:*
         version: link:../../packages/gateway-principal-verifier

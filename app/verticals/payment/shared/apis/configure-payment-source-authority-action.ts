@@ -12,7 +12,6 @@ import {
 } from '../actions/configure-payment-source-authority.ts';
 
 export { ConfigurePaymentSourceAuthorityPayloadSchema } from '../actions/configure-payment-source-authority.ts';
-export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const ConfigurePaymentSourceAuthorityActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ConfigurePaymentSourceAuthorityActionInvalidProblem',

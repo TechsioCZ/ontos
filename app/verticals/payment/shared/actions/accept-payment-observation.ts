@@ -1,7 +1,6 @@
 import { Schema } from 'effect';
 
 import {
-  PaymentSourceStatementResultSchema,
   paymentOptionalEvidenceRefField,
   paymentSourceDeliveryOfferField,
   paymentSourceOptionalPaymentIdField,
@@ -25,5 +24,4 @@ export const AcceptPaymentObservationPayloadSchema = Schema.Struct({
 export type AcceptPaymentObservationPayload = typeof AcceptPaymentObservationPayloadSchema.Type;
 
 /** The committed acceptance decision; transport success is never canonical acceptance by itself. */
-export const AcceptPaymentObservationResultSchema = PaymentSourceStatementResultSchema;
-export type AcceptPaymentObservationResult = typeof AcceptPaymentObservationResultSchema.Type;
+export { PaymentSourceStatementResultSchema as AcceptPaymentObservationResultSchema } from '../domain/source-statement.ts';

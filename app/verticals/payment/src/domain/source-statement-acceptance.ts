@@ -1,9 +1,7 @@
 import { DateTime, Effect, Option } from 'effect';
 
-import type { PaymentConflict } from '../../shared/domain/payment-conflict.ts';
 import type { PaymentMonetaryAmount } from '../../shared/domain/payment-money.ts';
 import type { PaymentExecutionProvenance } from '../../shared/domain/payment-provenance.ts';
-import type { PaymentRejected } from '../../shared/domain/payment-rejected.ts';
 import { paymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
 import type { PaymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
 import type {
@@ -12,11 +10,7 @@ import type {
   PaymentReconciliationCaseKind,
 } from '../../shared/domain/payment-vocabulary.ts';
 import { paymentSourceRejected } from '../../shared/domain/source-statement.ts';
-import type {
-  PaymentSourceEntry,
-  PaymentSourceRejected,
-  PaymentSourceStatementResult,
-} from '../../shared/domain/source-statement.ts';
+import type { PaymentSourceEntry, PaymentSourceStatementResult } from '../../shared/domain/source-statement.ts';
 import type { OutboxPayload as OperationOutcomeChangedPayload } from '../../shared/outbox/payment-core-operation-outcome-changed-v1.ts';
 import type { PaymentAggregateRecord } from '../persistence/payment-aggregate-persistence.ts';
 import type { NewPaymentObservationInput, PaymentSourceServices } from '../persistence/payment-source-persistence.ts';
@@ -68,13 +62,6 @@ export interface PaymentSourceStatementAcceptance {
   readonly outcomeChanges: readonly PaymentSourceOutcomeChange[];
   readonly result: PaymentSourceStatementResult;
 }
-
-/** Every typed refusal or failure of one statement; any of them commits nothing. */
-export type PaymentSourceAcceptanceFailure =
-  | PaymentConflict
-  | PaymentRejected
-  | PaymentSourceRejected
-  | PaymentUnavailable;
 
 /** Everything one statement execution has established before recording. */
 interface StatementRun {

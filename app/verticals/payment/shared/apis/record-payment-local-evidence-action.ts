@@ -12,7 +12,6 @@ import {
 } from '../actions/record-payment-local-evidence.ts';
 
 export { RecordPaymentLocalEvidencePayloadSchema } from '../actions/record-payment-local-evidence.ts';
-export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const RecordPaymentLocalEvidenceActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RecordPaymentLocalEvidenceActionInvalidProblem',

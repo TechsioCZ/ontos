@@ -12,7 +12,6 @@ import {
 } from '../actions/request-payment-operation-recovery.ts';
 
 export { RequestPaymentOperationRecoveryPayloadSchema } from '../actions/request-payment-operation-recovery.ts';
-export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const RequestPaymentOperationRecoveryActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RequestPaymentOperationRecoveryActionInvalidProblem',

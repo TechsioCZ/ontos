@@ -9,8 +9,6 @@ import type { PaymentRejected } from '../../shared/domain/payment-rejected.ts';
  * Exact integer minor-unit arithmetic for one currency (#1148). No floats, FX or rounding: a
  * currency mismatch or an amount outside the safe int53 range is a typed refusal, never coerced.
  */
-export const zeroAmount: PaymentMonetaryAmount = Object.freeze({ amountMinor: 0, currency: PAYMENT_LAUNCH_CURRENCY });
-
 export const sameCurrency = (left: PaymentMonetaryAmount, right: PaymentMonetaryAmount): boolean =>
   left.currency === right.currency;
 
