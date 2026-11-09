@@ -444,12 +444,13 @@ const decideCorrection = (
       (prior) =>
         sameSourceBinding(prior.source, correction.source) && prior.economicEffectKey === correction.economicEffectKey,
     );
-  if (alreadyCorrected || sameCorrectionEffect) {
+  if (sameCorrectionEffect) {
     return PaymentEvidenceDecision.NO_CHANGE({ operationId: corrected.operationId, reason: 'ALREADY_CORRECTED' });
   }
-  if (correctsAlreadyCorrectedEffect(aggregate, corrected, priorCorrections)) {
-    // Another correction of a statement of the same economic effect: a further or a re-issued
-    // disproof cannot be told apart, so no precise remaining amount is inferred (#1151).
+  if (alreadyCorrected || correctsAlreadyCorrectedEffect(aggregate, corrected, priorCorrections)) {
+    // Another correction of an already corrected statement, or of a statement of the same economic
+    // effect, that is not a proven re-issue: a further or a re-issued disproof cannot be told apart,
+    // so no precise remaining amount is inferred (#1151).
     return hold('CORRECTION_OVERLAPS_PRIOR_CORRECTION', corrected.operationId);
   }
   const operation = aggregate.operations.find((candidate) => candidate.operationId === corrected.operationId);

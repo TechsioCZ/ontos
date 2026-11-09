@@ -102,6 +102,26 @@ const attachWith = (
   outcome: PaymentOperationOutcome = 'EFFECT_CONFIRMED',
 ) => rejectionCode(decide(attach, outcome, Option.some(facts({ economicEffectKey, establishedEffects }))));
 
+const carrier = {
+  accountRef: 'dpd-merchant-12',
+  environment: 'production',
+  factFamily: 'COD_CUSTOMER_COLLECTION',
+  sourceKind: 'CARRIER',
+  sourceSystem: 'dpd',
+} as const;
+const pos = {
+  accountRef: 'pos-drawer-1',
+  environment: 'production',
+  factFamily: 'LOCAL_POS_COLLECTION',
+  sourceKind: 'LOCAL_POS_OPERATOR',
+  sourceSystem: 'store-pos',
+} as const;
+/** Attaches a collection statement of `source` recorded with `acceptanceOutcome` to the pending collection. */
+const attachHeldCapability = (
+  source: PaymentReconciliationEvidenceFacts['source'],
+  acceptanceOutcome: PaymentReconciliationEvidenceFacts['acceptanceOutcome'],
+) => rejectionCode(decide(attach, 'PENDING', Option.some(facts({ acceptanceOutcome, source }))));
+
 describe('#1151 governed reconciliation decisions', () => {
   it('#1151 attaching qualified configured evidence resolves a conflicting operation to the proven outcome', () => {
     expect(decide(attach, 'CONFLICT', Option.some(facts()))).toEqual(
@@ -118,6 +138,20 @@ describe('#1151 governed reconciliation decisions', () => {
         resultingOutcome: Option.some('EFFECT_CONFIRMED'),
       }),
     );
+  });
+
+  it('#1152 a held COD carrier or POS statement never proves the selected capability through attachment', () => {
+    expect([
+      attachHeldCapability(carrier, 'HELD_UNRESOLVED'),
+      attachHeldCapability(pos, 'HELD_UNRESOLVED'),
+      attachHeldCapability(carrier, 'CONFLICT'),
+      attachHeldCapability(pos, 'CONFLICT'),
+    ]).toEqual([
+      'payment_reconciliation_evidence_not_qualified',
+      'payment_reconciliation_evidence_not_qualified',
+      'applied',
+      'applied',
+    ]);
   });
 
   it('#1151 reconciliation never confirms an effect without qualified evidence', () => {

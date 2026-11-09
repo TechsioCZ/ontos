@@ -657,6 +657,49 @@ describe('#1152 external/offline source boundary on native PostgreSQL', () => {
       ),
   );
 
+  it.live(
+    '#1151 a later full retraction of a partially corrected receipt is held for reconciliation, never dropped',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* furtherCorrectionIsHeld() {
+          const { database, scope } = yield* nativeDatabase;
+          yield* configure(database, scope, authorityFor(erpBank, 'BANK_ACCOUNTING_RECEIPT', 'BANK_TRANSFER_ADVANCE'));
+          const payment = yield* createPayment(database, scope, 'BANK_TRANSFER_ADVANCE', bankBinding);
+          const collect = yield* startCollect(database, scope, payment);
+          const receipt = yield* accept(database, scope, bankReceipt(payment.paymentId));
+          const correctionOf = (sourceOccurrenceId: string, amountMinor: number, economicEffectKey: string) =>
+            accept(database, scope, {
+              amount: { amountMinor, currency: 'CZK' },
+              correctsObservationId: receipt.result.observationId,
+              economicEffectKey,
+              factFamily: 'BANK_ACCOUNTING_RECEIPT',
+              factKind: 'SOURCE_CORRECTION',
+              paymentId: payment.paymentId,
+              source: erpBank,
+              sourceOccurrenceId,
+              sourceRevision: 1,
+            });
+          const partial = yield* correctionOf('bank-line-17-partial', 10_000, 'bank-correction-17-1');
+          expect(partial.result.interpretation).toBe('CORRECTION');
+          const reduced = yield* aggregateOf(database, scope, payment.paymentId);
+          expect(reduced.collectionCorrections).toEqual([{ amountMinor: 10_000, currency: 'CZK' }]);
+
+          // The re-export of the same partial correction counts once.
+          const reissued = yield* correctionOf('bank-line-17-partial-reexport', 10_000, 'bank-correction-17-1');
+          expect(reissued.result.interpretation).toBe('NO_CHANGE');
+          expect(reissued.result.reconciliationCaseId).toBeUndefined();
+
+          // A new full retraction of the same receipt is a distinct disproof: held with a case, not deduplicated.
+          const retraction = yield* correctionOf('bank-line-17-storno', 100_000, 'bank-correction-17-2');
+          expect(retraction.result.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+          expect(retraction.result.reconciliationCaseId).toBeDefined();
+          const held = yield* aggregateOf(database, scope, payment.paymentId);
+          expect(held.openReconciliationCaseCount).toBe(1);
+          expect(yield* outcomeOf(database, scope, payment.paymentId, collect.operationId)).toBe('EFFECT_CONFIRMED');
+        }),
+      ),
+  );
+
   it.live('#1152 COD funds are refunded by the merchant: bank route proves the refund, duplicates count once', () =>
     Effect.scoped(
       Effect.gen(function* codMerchantRefund() {

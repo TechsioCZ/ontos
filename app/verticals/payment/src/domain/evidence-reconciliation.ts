@@ -214,6 +214,21 @@ const qualificationRefusal = (
 };
 
 /**
+ * Sources that speak for a Payment only through its exact selected capability (#1152): the COD carrier
+ * must name the selected Delivery Offer, the local POS operator the selected pickup capability.
+ */
+const SELECTED_CAPABILITY_SOURCES: ReadonlySet<PaymentSourceKind> = new Set(['CARRIER', 'LOCAL_POS_OPERATOR'] as const);
+
+/**
+ * Source qualification holds a statement of such a source that does not prove the selected capability
+ * (CAPABILITY_NOT_CORRELATED) and keeps no capability reference, so a held statement of these sources
+ * never proves that correlation: governance cannot establish its effect, only a source statement naming
+ * the capability can.
+ */
+const selectedCapabilityUnproven = (facts: PaymentReconciliationEvidenceFacts): boolean =>
+  facts.acceptanceOutcome === 'HELD_UNRESOLVED' && SELECTED_CAPABILITY_SOURCES.has(facts.source.sourceKind);
+
+/**
  * The attached statement and another uncorrected statement confirming this operation's effect carry
  * different economic effect keys: two proven monetary effects (e.g. two returns), not one
  * (#1151 "Several observations proven to describe the same economic effect count once").
@@ -266,6 +281,12 @@ const decideAttach = (
   });
   if (!resolves) {
     return evidenceOnly;
+  }
+  if (selectedCapabilityUnproven(facts)) {
+    return reject(
+      'payment_reconciliation_evidence_not_qualified',
+      'The held evidence does not prove the selected Delivery Offer or pickup capability of this Payment',
+    );
   }
   if (facts.countedToward.some((counted) => counted !== operation.operationId)) {
     // One economic effect counts once: it never confirms a second operation.
