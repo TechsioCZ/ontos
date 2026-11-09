@@ -1106,12 +1106,12 @@ it.live(
         exactPageRequest('testing.pages.page.customers', replacementSnapshot.composition.revision),
       ),
     );
-    // An explicit module selector absent from the approved catalog is a permission denial;
-    // the resolver reserves not_found for a missing page or a state-hidden installed target.
-    expect(removedTarget.status).toBe(403);
+    // The replacement removed this module from the approved catalog entirely. No real target
+    // remains to authorize; explicit selectors and missing paths both resolve as not found.
+    expect(removedTarget.status).toBe(404);
     const removedBody = yield* Effect.tryPromise(() => removedTarget.json());
-    const removedProblem = yield* Schema.decodeUnknownEffect(ShellTargetForbiddenProblemSchema)(removedBody);
-    expect(removedProblem.detail).toBe('The requested module is forbidden in the selected context.');
+    const removedProblem = yield* Schema.decodeUnknownEffect(ShellTargetNotFoundProblemSchema)(removedBody);
+    expect(removedProblem.detail).toBe('The requested module target was not found.');
     expect(removedBody).not.toHaveProperty('federation');
     expect(physicalLoads).toBe(2);
     const supersededPageResponse = yield* Effect.tryPromise(() => pageRuntime.handler(exactPageRequest()));
