@@ -138,14 +138,14 @@ export interface NodeDependencyCompletion {
 
 /** The package whose manifest declares the dependencies a module imports. */
 interface DeclaringOwner {
-  readonly declared: ReadonlySet<string>;
+  readonly declared: DeclaredSpecs;
   readonly manifest: string;
   readonly name: string;
 }
 
 /** A packaged package whose identity and carried files have been verified against its declared install. */
 interface VerifiedSource {
-  readonly declared: ReadonlySet<string>;
+  readonly declared: DeclaredSpecs;
   readonly directory: string;
   readonly name: string;
 }
@@ -176,12 +176,23 @@ const sameBytes = (left: Uint8Array, right: Uint8Array): boolean =>
 
 const moduleTypeOf = (manifest: PackageManifest): string => manifest.type ?? DEFAULT_MODULE_TYPE;
 
-const declaredNames = (manifest: PackageManifest): ReadonlySet<string> =>
-  new Set([
-    ...Object.keys(manifest.dependencies ?? {}),
-    ...Object.keys(manifest.optionalDependencies ?? {}),
-    ...Object.keys(manifest.peerDependencies ?? {}),
-  ]);
+/** The names a manifest declares, each with its version spec. An alias declares `npm:<real name>@<version>`. */
+type DeclaredSpecs = ReadonlyMap<string, string>;
+
+const declaredSpecs = (manifest: PackageManifest): DeclaredSpecs =>
+  new Map(
+    [manifest.dependencies ?? {}, manifest.optionalDependencies ?? {}, manifest.peerDependencies ?? {}].flatMap(
+      (group) => Object.entries(group).map(([name, spec]): [string, string] => [name, String(spec)]),
+    ),
+  );
+
+/** The name `declared` installs the package `name` under: its own name, or the alias whose spec points at `name`. */
+const declaredAliasOf = (declared: DeclaredSpecs, name: string): string | undefined => {
+  if (declared.has(name)) {
+    return name;
+  }
+  return [...declared].find(([, spec]) => spec.startsWith(`npm:${name}@`))?.[0];
+};
 
 /** The path of `file` with every symlink in it resolved, including for a path that does not exist yet. */
 const canonicalPath = Effect.fn('CompletePackagedNodeDependencies.canonicalPath')(function* canonicalPath(
@@ -310,7 +321,7 @@ const exportTargets = (value: Schema.Json | undefined): readonly string[] => {
  * verified only when a declaring package imports them.
  */
 const workspaceExportRoots = Effect.fn('CompletePackagedNodeDependencies.workspaceExportRoots')(
-  function* workspaceExportRoots(output: string, declared: ReadonlySet<string>) {
+  function* workspaceExportRoots(output: string, declared: DeclaredSpecs) {
     const fs = yield* FileSystem.FileSystem;
     const scope = path.join(output, NODE_MODULES, WORKSPACE_PACKAGE_SCOPE);
     if (!(yield* fs.exists(scope))) {
@@ -320,7 +331,7 @@ const workspaceExportRoots = Effect.fn('CompletePackagedNodeDependencies.workspa
     for (const name of (yield* fs.readDirectory(scope)).toSorted()) {
       const packageRoot = path.join(scope, name);
       const manifest = yield* readManifest(path.join(packageRoot, PACKAGE_MANIFEST));
-      if (!declared.has(manifest.name)) {
+      if (declaredAliasOf(declared, manifest.name) === undefined) {
         continue;
       }
       for (const target of exportTargets(manifest.exports)) {
@@ -394,12 +405,13 @@ const resolveSpecifiers = Effect.fn('CompletePackagedNodeDependencies.resolveSpe
 const resolveDeclaredSource = Effect.fn('CompletePackagedNodeDependencies.resolveDeclaredSource')(
   function* resolveDeclaredSource(owner: DeclaringOwner, name: string) {
     const fs = yield* FileSystem.FileSystem;
-    if (!owner.declared.has(name)) {
+    const alias = declaredAliasOf(owner.declared, name);
+    if (alias === undefined) {
       return yield* Effect.fail(failed(`${name}: ${owner.name} does not declare it, so its install is not copied`));
     }
     const sourceManifest = yield* Effect.try({
       catch: () => failed(`${name}: the install ${owner.name} declares cannot be resolved`),
-      try: () => findPackageJSON(name, pathToFileURL(owner.manifest)),
+      try: () => findPackageJSON(alias, pathToFileURL(owner.manifest)),
     });
     if (sourceManifest === undefined) {
       return yield* Effect.fail(failed(`${name}: the install ${owner.name} declares is missing`));
@@ -411,7 +423,7 @@ const resolveDeclaredSource = Effect.fn('CompletePackagedNodeDependencies.resolv
     if (manifest.name !== name) {
       return yield* Effect.fail(failed(`${name}: the declared install is named ${manifest.name}`));
     }
-    return { declared: declaredNames(manifest), directory, manifest };
+    return { declared: declaredSpecs(manifest), directory, manifest };
   },
 );
 
@@ -613,7 +625,7 @@ export const completePackagedNodeDependencies = Effect.fn('CompletePackagedNodeD
       sources: new Map(),
       unit,
       unitOwner: {
-        declared: declaredNames(unitManifest),
+        declared: declaredSpecs(unitManifest),
         manifest: path.join(unit, PACKAGE_MANIFEST),
         name: unitManifest.name,
       },

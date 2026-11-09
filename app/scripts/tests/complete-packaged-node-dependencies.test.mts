@@ -12,6 +12,9 @@ import { completePackagedNodeDependencies } from '../complete-packaged-node-depe
 import { PACKAGED_DIRECTORY } from '../materialize-packaged-workspace-packages.mts';
 
 const ENCODING = 'utf-8';
+const MANIFEST_FILE = 'package.json';
+const ESM_TARGET = './index.js';
+const ESM_VALUE = 'dep-lib-esm';
 const ENTRY = 'entry.mjs';
 const DEPENDENCY = 'dep-lib';
 const WORKSPACE = 'workspace';
@@ -52,7 +55,7 @@ const json = (value: Schema.Json) => `${JSON.stringify(value, null, 2)}\n`;
 
 const dependencyManifest = (version: string) =>
   json({
-    exports: { '.': { import: { default: './index.js' }, require: { default: './index.cjs' } } },
+    exports: { '.': { import: { default: ESM_TARGET }, require: { default: './index.cjs' } } },
     name: DEPENDENCY,
     type: 'module',
     version,
@@ -94,7 +97,7 @@ const writeFixture = async (root: string, options: FixtureOptions) => {
     [`${WORKSPACE}/node_modules/${DEPENDENCY}/index.cjs`, DEPENDENCY_CJS],
     [path.join(UNIT, PACKAGED_DIRECTORY, ENTRY), options.entry ?? ENTRY_SOURCE],
     [
-      path.join(PACKAGED_NODE_MODULES, DEPENDENCY, 'package.json'),
+      path.join(PACKAGED_NODE_MODULES, DEPENDENCY, MANIFEST_FILE),
       dependencyManifest(options.tracedDependencyVersion ?? '1.0.0'),
     ],
     [path.join(PACKAGED_NODE_MODULES, DEPENDENCY, 'index.cjs'), options.tracedDependencyCjs ?? DEPENDENCY_CJS],
@@ -102,7 +105,7 @@ const writeFixture = async (root: string, options: FixtureOptions) => {
   for (const app of options.apps) {
     const manifest = json({
       dependencies: { [DEPENDENCY]: '1.0.0' },
-      exports: { '.': './index.js' },
+      exports: { '.': ESM_TARGET },
       name: `@app/${app}`,
       type: 'module',
       version: '0.1.0',
@@ -110,7 +113,7 @@ const writeFixture = async (root: string, options: FixtureOptions) => {
     files.push(
       [`${WORKSPACE}/node_modules/@app/${app}/package.json`, manifest],
       [`${WORKSPACE}/node_modules/@app/${app}/index.js`, APP_SOURCE[app]],
-      [path.join(PACKAGED_NODE_MODULES, '@app', app, 'package.json'), manifest],
+      [path.join(PACKAGED_NODE_MODULES, '@app', app, MANIFEST_FILE), manifest],
       [path.join(PACKAGED_NODE_MODULES, '@app', app, 'index.js'), APP_SOURCE[app]],
     );
   }
@@ -154,7 +157,7 @@ it.effect(
       expect(probe.stderr).toBe('');
       expect(probe.status).toBe(0);
       const observed = Result.getOrThrow(Schema.decodeUnknownResult(ENTRY_OBSERVATION)(probe.stdout));
-      expect(observed).toEqual({ core: 'dep-lib-esm', legacy: 'dep-lib-cjs' });
+      expect(observed).toEqual({ core: ESM_VALUE, legacy: 'dep-lib-cjs' });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -243,7 +246,64 @@ it.effect('completes a workspace package the unit never imports, when a consumer
     );
     expect(probe.status).toBe(0);
     expect(Result.getOrThrow(Schema.decodeUnknownResult(CORE_OBSERVATION)(probe.stdout ?? ''))).toEqual({
-      core: 'dep-lib-esm',
+      core: ESM_VALUE,
+    });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('resolves a dependency the owner declares under an alias to its real install', () =>
+  Effect.gen(function* resolvesAlias() {
+    const root = yield* temporaryRoot;
+    const alias = 'dep-alias';
+    const exportsMap = { '.': { import: { default: ESM_TARGET }, require: { default: './index.cjs' } } };
+    const core = json({
+      dependencies: { [alias]: `npm:${DEPENDENCY}@1.0.0` },
+      exports: { '.': ESM_TARGET },
+      name: '@app/core',
+      type: 'module',
+      version: '0.1.0',
+    });
+    const coreSource = "import { value } from 'dep-alias';\nexport const core = value;\n";
+    yield* Effect.promise(() =>
+      writeFiles(root, [
+        [
+          `${WORKSPACE}/apps/shell/package.json`,
+          json({ dependencies: { '@app/core': 'workspace:*' }, name: '@app/shell', type: 'module', version: '0.0.0' }),
+        ],
+        [
+          `${WORKSPACE}/node_modules/${alias}/package.json`,
+          json({ exports: exportsMap, name: DEPENDENCY, type: 'module', version: '1.0.0' }),
+        ],
+        [`${WORKSPACE}/node_modules/${alias}/index.js`, DEPENDENCY_ESM],
+        [`${WORKSPACE}/node_modules/${alias}/index.cjs`, DEPENDENCY_CJS],
+        [`${WORKSPACE}/node_modules/@app/core/package.json`, core],
+        [`${WORKSPACE}/node_modules/@app/core/index.js`, coreSource],
+        [path.join(PACKAGED_NODE_MODULES, '@app', 'core', MANIFEST_FILE), core],
+        [path.join(PACKAGED_NODE_MODULES, '@app', 'core', 'index.js'), coreSource],
+        [
+          path.join(PACKAGED_NODE_MODULES, alias, MANIFEST_FILE),
+          json({ exports: exportsMap, name: DEPENDENCY, type: 'module', version: '1.0.0' }),
+        ],
+        [path.join(PACKAGED_NODE_MODULES, alias, 'index.cjs'), DEPENDENCY_CJS],
+      ]),
+    );
+    const unit = path.join(root, UNIT);
+    const completion = yield* completePackagedNodeDependencies(unit);
+    expect(completion.copied).toEqual([path.join(PACKAGED_DIRECTORY, 'node_modules', alias, 'index.js')]);
+    yield* Effect.promise(() => rm(path.join(root, WORKSPACE, 'node_modules'), { force: true, recursive: true }));
+
+    const probe = spawnSync(
+      process.execPath,
+      [
+        '--input-type=module',
+        '--eval',
+        "const { core } = await import('@app/core'); process.stdout.write(JSON.stringify({ core }));",
+      ],
+      { cwd: path.join(unit, PACKAGED_DIRECTORY), encoding: ENCODING },
+    );
+    expect(probe.status).toBe(0);
+    expect(Result.getOrThrow(Schema.decodeUnknownResult(CORE_OBSERVATION)(probe.stdout ?? ''))).toEqual({
+      core: ESM_VALUE,
     });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
