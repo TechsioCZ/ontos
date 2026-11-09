@@ -386,7 +386,8 @@ jobs:
         env:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: |
-          npm install --global @zerops/zcli@1.1.0 >/dev/null
+          # v1.1.0 ignores --show-build-logs; v1.1.3 fixes its flag lookup.
+          npm install --global @zerops/zcli@1.1.3 >/dev/null
           zcli login "$ZEROPS_TOKEN" >/dev/null
           zcli service log --project-id "$ZEROPS_PROJECT_ID" --service-id "$ZEROPS_APP_SERVICE_ID" --limit 300 || true
           # The CLI selects the latest appVersion; correlate it with the failed push process.
