@@ -74,6 +74,7 @@ export const RETIRED_STAGE_SERVICES = [
   { hostname: 'commercecart', setup: 'commerce-cart' },
   { hostname: 'commerceorder', setup: 'commerce-order' },
   { hostname: 'commercecustomercontext', setup: 'commerce-customer-context' },
+  { hostname: 'payment', setup: 'payment' },
   { hostname: 'paymenttermcatalog', setup: 'payment-term-catalog' },
   { hostname: 'commercemarketcatalog', setup: 'commerce-market-catalog' },
   { hostname: 'catalog', setup: 'catalog' },
