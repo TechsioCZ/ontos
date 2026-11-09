@@ -1898,3 +1898,38 @@ Finální N1 sada **801/801 v 76 souborech PASS**, typy, lint, formát a kontrol
 strict-effect-api-boundaries chyb ve stejných 28 souborech mimo N1; nový log
 byl porovnán s předchozím baseline. Žádná diagnostika nebyla potlačena a nejde
 o celorepozitářové zelené ověření. Shared UI kit ani backend se nemění.
+
+## 9. 11. 2026 — checkout validace a čekající akce
+
+Čerstvé Figma checkout podklady 44:1226/2285 a 323:1465/1813 byly
+porovnány s veřejným formulářem nad skutečným katalogem a checkout options.
+Před opravou nativní anglická bublina překrývala český inline StatusText.
+Po opravě zůstává nativní blokování neplatného submitu i focus prvního pole,
+ale prohlížečová bublina je potlačená. Přidružené ARIA popisy jsou platné.
+Čekající Zpět používá nativní disabled Button bez href; v idle zůstává odkaz.
+Tím se uplatní kit disabled vzhled bez vlastních stylů nebo změny protokolu.
+Stávající quote/place test nejdřív selhal na původním kódu; po opravě oba
+cílené checkout soubory prošly 14/14.
+
+Skutečný browser: CS320/390/768/1024/1440 + EN390. Ověřeny povinné chyby,
+první focus, popisy, první kliknutí na dopravu, validní vstupy, zamknutí
+formuláře při požadavku a zachování hodnot po síťové chybě; bez overflow
+a pageerror. První after CS320 skončil po reloadu bez dostupného formuláře
+a zůstává uložený jako FAIL. Samostatný recheck320/768/1024 prošel 3/3;
+společně s původními třemi úspěchy pokrývá šest unikátních kombinací.
+Příčina jednorázově nedostupného formuláře není prokázaná.
+
+Quote POST byl pro pending/recovery zachycen před lokálním FE a backendem
+a následně přerušen. Tato kontrola neposlala skutečnou objednávku, registraci
+ani e-mail a neprokazuje úspěšný quote/place. Native owner kontrakty, data
+a přístupová oprávnění zůstaly zachované. Reviewer otevřel reprezentativní
+PNG všech pěti CS šířek a EN390: omezené source/visual GO pro tyto opravy;
+nikoli všechny stavy každé šířky nebo celková pixelová shoda checkoutu.
+Známé rozdíly podporované dostupností dat, schváleně vynechaná adresní pole
+a mezery knihovního cenového souhrnu zůstávají samostatně zaznamenané.
+
+Závěrečná kontrola tohoto checkout checkpointu: N1 801/801 testů v 76
+souborech, typy, lint, formát a 447 kanonických tokenů PASS. TraceDecay
+package diagnostika bez chyb. Globální i18n nadále obsahuje stejných 28
+diagnostik ve stejných souborech mimo N1; porovnáno s předchozím logem,
+bez potlačení. Nejde o celorepozitářový zelený výsledek.

@@ -258,17 +258,22 @@ const CheckoutActions = ({
   }, [pending]);
   return (
     <div className="grid grid-cols-2 gap-2">
-      <LinkButton
-        as={NextLink}
-        block
-        disabled={pending}
-        href={`/${locale}/kosik`}
-        size="md"
-        theme="solid"
-        variant="secondary"
-      >
-        {d.checkout.back}
-      </LinkButton>
+      {pending ? (
+        <Button block disabled size="md" theme="solid" type="button" variant="secondary">
+          {d.checkout.back}
+        </Button>
+      ) : (
+        <LinkButton
+          as={NextLink}
+          block
+          href={`/${locale}/kosik`}
+          size="md"
+          theme="solid"
+          variant="secondary"
+        >
+          {d.checkout.back}
+        </LinkButton>
+      )}
       <Button
         aria-busy={pending}
         aria-label={pending ? pendingLabel : actionLabel}
@@ -361,6 +366,10 @@ const ReadyCheckout = ({
       <form
         action="/api/checkout"
         method="post"
+        onInvalidCapture={(event) => {
+          event.preventDefault();
+          event.currentTarget.querySelector<HTMLInputElement>("input:invalid")?.focus();
+        }}
         onSubmit={(event) => {
           event.preventDefault();
           checkout.submit(new FormData(event.currentTarget), method);

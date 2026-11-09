@@ -861,3 +861,15 @@ LinkButton 0.57.0 blokuje disabled kliknutí, ale jeho `disabled:*` vzhled necí
 na aria-disabled odkaz. Neaktivní CTA košíku proto skládá existující `Button disabled type="button"`, aktivní stav skutečný `LinkButton` do pokladny.
 Původní podmínka ready + verified + valid zůstává. Kratší text „Přejít k pokladně“
 vychází z 59:1074. Nejde o frontendové povolení nákupu při chybě quote.
+
+### Checkout validace a čekající návrat — 323:1813, 323:1566
+
+FormInput nadále používá veřejné `validateStatus` a popsaný StatusText pod
+polem. Neplatný submit zachovává nativní constraint validation, ale potlačí
+duplicitní prohlížečovou bublinu a zaměří první neplatný input. Žádné
+`noValidate`, obcházení schématu nebo vlastní komponentové styly.
+
+Během quote/place je Zpět nativní `Button disabled type="button"` se stejnou
+secondary/solid/md rolí jako předtím; po dokončení zůstává skutečný NextLink
+přes LinkButton. Tím se uplatní i knihovní disabled vzhled. Ověřování, zápis,
+obnova objednávky, skutečné možnosti dopravy ani dostupnost plateb se nemění.

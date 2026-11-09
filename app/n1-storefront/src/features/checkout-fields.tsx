@@ -186,6 +186,7 @@ export const CheckoutFields = ({
             onEdit();
           }}
           onInvalid={(event) => {
+            event.preventDefault();
             const message = checkoutFieldError(field, event.currentTarget.validity, d);
             setFieldState((previous) => ({
               ...previous,

@@ -190,7 +190,8 @@ describe("checkout cart state and navigation", () => {
       };
       for (const progress of ["quote", "place"] as const) {
         const html = render({ ...base, cart, progress });
-        expect(html).toMatch(/<a[^>]*aria-disabled="true"[^>]*>[^<]*Zpět/u);
+        expect(html).toMatch(/<button[^>]*disabled=""[^>]*>[^<]*Zpět/u);
+        expect(html).not.toContain('href="/cs/kosik"');
       }
       expect(render({ ...base, cart })).toContain('href="/cs/kosik"');
     }),
