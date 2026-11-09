@@ -14,7 +14,7 @@ import { SelectTemplate } from '@app/admin-ui/select-template';
 import { selectItem } from '../../../../ui/select-item.ts';
 import { AutosaveStatus, dialogCloseLabel, formatDate, formatMoney, PageHeader, useAutosave } from '@app/admin-ui';
 import type { AutosaveOutcome } from '@app/admin-ui';
-import { DateTime, Effect, Predicate, Random } from 'effect';
+import { DateTime, Effect, Predicate, Random, Schema } from 'effect';
 import { isRealVariant } from '../../../../../shared/domain/merchandise-model.ts';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { useEffect, useRef, useState } from 'react';
@@ -53,6 +53,19 @@ import { MarketsPanel } from './product-markets.tsx';
 import type { ProductMarket } from '../../../../../shared/domain/market-offers.ts';
 import type { MovementDraft } from './product-movement-draft.ts';
 
+const ProductDetailTabSchema = Schema.Literals([
+  'detail',
+  'variants',
+  'eshop',
+  'content',
+  'markets',
+  'prices',
+  'movements',
+]);
+/** The tabs of the product editor, owned by the page so the active tab survives a product reload. */
+export type ProductDetailTab = typeof ProductDetailTabSchema.Type;
+const isProductDetailTab = Schema.is(ProductDetailTabSchema);
+
 export interface ProductDetailViewProps {
   readonly canMoveStock?: boolean;
   readonly canWrite: boolean;
@@ -68,9 +81,13 @@ export interface ProductDetailViewProps {
   readonly onBack: () => void;
   readonly onCommitted: (message: string) => void;
   readonly onReload: () => void;
+  /** Called when the user picks another tab; the page keeps the active tab across product reloads. */
+  readonly onTabChange: (tab: ProductDetailTab) => void;
   readonly product: ProductRecord;
   readonly revision: number;
   readonly storefrontOrigin?: string;
+  /** The active tab, owned by the page so that it survives the remount after a product reload. */
+  readonly tab: ProductDetailTab;
   /** The opaque variant target from the URL; resolution happens against the current authorized product. */
   readonly variantId?: string | undefined;
 }
@@ -466,7 +483,9 @@ const saveDetailEffect = (
 };
 
 /**
- * Full-page product editor, keyed by product id. Refreshes retain the active tab and unsaved fields.
+ * Full-page product editor, keyed by product id. A product reload shows the loading state and remounts the editor,
+ * so the editor's own state resets: unsaved fields that were not yet saved are reset. The active tab is not part of
+ * that state; the page keeps it and passes it in, so the tab stays the same across the reload.
  */
 export const ProductDetailView = ({
   canWrite,
@@ -478,9 +497,11 @@ export const ProductDetailView = ({
   onBack,
   onCommitted,
   onReload,
+  onTabChange,
   product,
   revision,
   storefrontOrigin,
+  tab,
   variantId,
 }: ProductDetailViewProps) => {
   const k = useProductLabel();
@@ -492,14 +513,6 @@ export const ProductDetailView = ({
   const draft = { ...editableDraft, realVariants: (product.variants ?? []).filter(isRealVariant) };
   const [movementDraft, setMovementDraft] = useState(EMPTY_MOVEMENT_DRAFT);
   const variantDestination = resolveProductVariantDestination(product, variantId);
-  const [tab, setTab] = useState(() => (variantId === undefined ? 'detail' : 'variants'));
-  const [variantTabKey, setVariantTabKey] = useState(variantId);
-  if (variantTabKey !== variantId) {
-    setVariantTabKey(variantId);
-    if (variantId !== undefined) {
-      setTab('variants');
-    }
-  }
   // The revision the next save must expect: the one the page passed, then the one each save returns.
   // The page's snapshot is the authority after a reload; a save moves it to the revision the server answered with,
   // and a conflict is healed by reloading the product, so the next save never builds on a revision nobody has.
@@ -570,7 +583,15 @@ export const ProductDetailView = ({
           }
           title={product.name}
         />
-        <Tabs onValueChange={setTab} value={tab} variant="line">
+        <Tabs
+          onValueChange={(value) => {
+            if (isProductDetailTab(value)) {
+              onTabChange(value);
+            }
+          }}
+          value={tab}
+          variant="line"
+        >
           <div style={{ overflowX: 'auto' }}>
             <Tabs.List style={{ minWidth: '100%', width: 'max-content' }}>
               <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="detail">
