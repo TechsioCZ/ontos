@@ -1,15 +1,18 @@
 import {
+  ConnectionGrantIdSchema,
   ConnectionLegalEntityIdSchema,
   ConnectionModuleIdSchema,
   ConnectionPrincipalIdSchema,
 } from '@app/shared-contracts/oauth-connections';
-import { Crypto, Duration, Effect, Fiber, Layer, Logger, Option, Result } from 'effect';
+import { Crypto, DateTime, Duration, Effect, Fiber, Layer, Logger, Option, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import type {
   ConnectCompanyOption,
   ConnectDraftRequest,
   ConnectionWritePolicy,
 } from '@app/shared-contracts/oauth-connections';
+import { OAuthAuthenticationAudit, OAuthGrantModulesSchema } from '@app/core-runtime';
+import type { OAuthGrantRecord } from '@app/core-runtime';
 import { expect, it, test } from 'effect-rstest';
 
 import { OAuthGrantRegistry } from '../../../../../packages/core-runtime/src/auth/oauth-grant-registry-service.ts';
@@ -17,6 +20,7 @@ import { makeInstalledModuleCatalogLayer } from '../../../api/modules/installed-
 import { toProblem } from '../../../api/oauth-connections/connect-http.ts';
 import {
   OPTIONS_BUDGET_CAUSE,
+  approve,
   buildDenyRedirect,
   choosePreselect,
   connectOptionsWith,
@@ -24,7 +28,11 @@ import {
 } from '../../../api/oauth-connections/connect-service.ts';
 import type { ConnectOptionsPorts, ConnectSession } from '../../../api/oauth-connections/connect-service.ts';
 import { connectionScopeOf } from '../../../api/oauth-connections/connection-service.ts';
-import { ConnectionForbidden, ConnectionUnavailable } from '../../../api/oauth-connections/errors.ts';
+import {
+  ConnectionForbidden,
+  ConnectionInvalid,
+  ConnectionUnavailable,
+} from '../../../api/oauth-connections/errors.ts';
 import { OAuthFlow } from '../../../api/oauth-connections/oauth-flow.ts';
 import type { OAuthFlowService, VerifiedOAuthQuery } from '../../../api/oauth-connections/oauth-flow.ts';
 import { toGrantRow } from '../../../api/oauth-connections/grant-store.ts';
@@ -313,6 +321,131 @@ it.effect('refuses a draft for a company other than the scoped one before any au
       );
     }
     expect(inspection.requesterScopes).toStrictEqual([]);
+  }),
+);
+
+// The live authority reads validate scope identities as UUIDs, so approval uses UUID scope values throughout.
+const tenantUuid = '00000000-0000-4000-8000-0000000000a1';
+const companyUuid = '00000000-0000-4000-8000-0000000000a2';
+const otherCompanyUuid = '00000000-0000-4000-8000-0000000000b2';
+const personUuid = '00000000-0000-4000-8000-0000000000c1';
+const agentUuid = '00000000-0000-4000-8000-0000000000c2';
+const draftGrantId = '00000000-0000-4000-8000-0000000000d1';
+const approveRequest = { grantId: ConnectionGrantIdSchema.make(draftGrantId), oauthQuery: 'signed-query' };
+const approvalSession: ConnectSession = {
+  ...session,
+  activeLegalEntityId: companyUuid,
+  principalId: personUuid,
+  scope: { ...session.scope, legalEntityId: companyUuid, principalId: personUuid, tenantId: tenantUuid },
+  tenantId: tenantUuid,
+};
+
+/** A draft of this session as the registry returns it to approval; by default a person's own read of `crm`. */
+const draftRow = (createdAt: Date, overrides: Partial<OAuthGrantRecord> = {}): OAuthGrantRecord => ({
+  ...retainedGrant,
+  actingKind: 'human',
+  actingPrincipalId: personUuid,
+  clientId: signedQuery.clientId,
+  createdAt,
+  grantId: draftGrantId,
+  legalEntityId: companyUuid,
+  modules: Schema.decodeUnknownSync(OAuthGrantModulesSchema)([{ access: 'read', moduleId: 'crm' }]),
+  sessionId: 'session-1',
+  status: 'draft',
+  tenantId: tenantUuid,
+  userId: 'user-1',
+  userPrincipalId: personUuid,
+  writePolicy: 'read_only',
+  ...overrides,
+});
+
+/**
+ * The approval's dependencies: a fresh draft (`draftOverrides` on top), the authority the subjects give, and every
+ * write recorded in `writes` instead of performed. A refusal that wrote anything is visible in `writes`.
+ */
+const approvalLayers = (
+  draftOverrides: Partial<OAuthGrantRecord>,
+  writes: string[],
+  subjects: Parameters<typeof subjectInspectionFixture>[0]['subjects'] = [],
+) =>
+  Effect.gen(function* approvalDependencies() {
+    const row = draftRow(yield* DateTime.nowAsDate, draftOverrides);
+    const snapshot = yield* makeCompositionSnapshot([]);
+    const inspection = subjectInspectionFixture({ snapshot, subjects });
+    return Layer.mergeAll(
+      Layer.succeed(OAuthFlow, flow),
+      Layer.succeed(
+        OAuthGrantRegistry,
+        grantRegistryFixture({
+          approveDraftGrant: () =>
+            Effect.sync(() => {
+              writes.push('approve');
+              return Option.none();
+            }),
+          findGrant: () => Effect.succeed(Option.some(row)),
+          setGrantStatus: () =>
+            Effect.sync(() => {
+              writes.push('status');
+              return Option.none();
+            }),
+        }),
+      ),
+      inspection.layer,
+      makeInstalledModuleCatalogLayer(Effect.succeed(snapshot)),
+      Layer.succeed(OAuthAuthenticationAudit, {
+        record: () =>
+          Effect.sync(() => {
+            writes.push('audit');
+          }),
+      }),
+    );
+  });
+
+it.effect('approval refuses a draft of another company before any authority read or write', () =>
+  Effect.gen(function* otherCompanyApproval() {
+    const writes: string[] = [];
+    const layer = yield* approvalLayers({ legalEntityId: otherCompanyUuid }, writes, [
+      { legalEntityId: otherCompanyUuid, principalId: personUuid, tenantId: tenantUuid },
+    ]);
+    const refused = yield* approve(approvalSession, approveRequest).pipe(Effect.provide(layer), Effect.result);
+    expect(Result.isFailure(refused)).toBe(true);
+    if (Result.isFailure(refused)) {
+      expect(refused.failure).toStrictEqual(
+        new ConnectionUnavailable({ cause: 'Retained connection scope differs from original requester' }),
+      );
+    }
+    expect(writes).toStrictEqual([]);
+  }),
+);
+
+it.effect('approval refuses an agent-acting draft as forbidden, before any read or write', () =>
+  Effect.gen(function* agentApprovalRefused() {
+    const writes: string[] = [];
+    const layer = yield* approvalLayers({ actingKind: 'agent', actingPrincipalId: agentUuid }, writes, [
+      { kind: 'agent', legalEntityId: companyUuid, principalId: agentUuid, tenantId: tenantUuid },
+    ]);
+    const refused = yield* approve(approvalSession, approveRequest).pipe(Effect.provide(layer), Effect.result);
+    expect(Result.isFailure(refused)).toBe(true);
+    if (Result.isFailure(refused)) {
+      expect(refused.failure).toStrictEqual(
+        new ConnectionForbidden({ code: 'acting_principal_forbidden', reason: 'Za tohoto agenta nesmíte jednat.' }),
+      );
+    }
+    expect(writes).toStrictEqual([]);
+  }),
+);
+
+it.effect('approval re-checks the drafted modules against current authority and refuses a withdrawn right', () =>
+  Effect.gen(function* withdrawnRightRefused() {
+    // The person's subject is no longer offered any module, so the draft's `crm` read is not within authority now.
+    const writes: string[] = [];
+    const layer = yield* approvalLayers({}, writes, []);
+    const refused = yield* approve(approvalSession, approveRequest).pipe(Effect.provide(layer), Effect.result);
+    expect(Result.isFailure(refused)).toBe(true);
+    if (Result.isFailure(refused)) {
+      expect(refused.failure).toStrictEqual(new ConnectionInvalid({ code: 'modules_invalid' }));
+    }
+    expect(writes).toStrictEqual([]);
   }),
 );
 
