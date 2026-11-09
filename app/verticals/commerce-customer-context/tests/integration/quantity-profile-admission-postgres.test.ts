@@ -149,7 +149,7 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
         Effect.succeed(
           Schema.decodeUnknownSync(PartyDetailResponseSchema)({
             currentFactAssertions: [],
-            factHistory: null,
+            factHistory: [],
             party: {
               archivedAt:
                 partyRef.tenantId === fixture.tenantId && partyIds.has(partyRef.resourceId)

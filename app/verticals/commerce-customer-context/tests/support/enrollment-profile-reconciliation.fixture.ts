@@ -171,7 +171,7 @@ export const makeEnrollmentProfileReconciliationFixture = Effect.fn('EnrollmentP
           Effect.sync(() =>
             Schema.decodeUnknownSync(PartyDetailResponseSchema)({
               currentFactAssertions: [],
-              factHistory: null,
+              factHistory: [],
               party: {
                 archivedAt:
                   requested.tenantId === partyRef.tenantId && requested.resourceId === partyResourceId
