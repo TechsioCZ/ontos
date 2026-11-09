@@ -1726,3 +1726,28 @@ Stage run pro f1ce6770a dokončil všech sedm build shardů a nasadil N1;
 společný app stack.build selhal s provider500/InternalServerError. Verify
 a source pins byly přeskočené, ověřený release není doložený. Konkrétní
 registrační korelace a Zerops proces zůstávají pouze v privátní .local evidenci.
+
+## 9. 11. 2026 — PDP, karty a zpětná vazba vyprodaného produktu
+
+Čerstvé Figma kontexty 39:1965 / 39:2430 a 214:3250 byly porovnané se
+skutečným Fox PDP a Spyder kartami. Browser PDP 3/3 (CS desktop a mobil,
+EN mobil): výběr varianty, historie Zpět po dokončení renderu, galerie 2→1,
+přepnutí záložek, množství 2→0 zakázáno→1 a lokální add přes toast bez
+otevření minikošíku. Karty 3/3: tři velikosti +N, skutečné odkazy na šest
+variant, popup ve viewportu, Escape a návrat focusu, přechod na přesnou
+variantu. Žádný business POST, objednávka ani registrační e-mail.
+
+Figma stav Vyprodáno 57:2965 odhalil redundantní obecný popisek o nedostupném
+nákupu. Před opravou byl viditelný na skutečném vyprodaném Capita produktu;
+po opravě jej přesný owner stav unavailable potlačí. Blokování nákupu a
+validace množství zůstaly stejné, stejně jako diagnostika skutečně chybějícího
+nákupního kontextu pro IN_STOCK a UNKNOWN. Nová regrese používá skutečný
+projector a UI kit SSR: před opravou 2 FAIL / 2 PASS, po opravě cílených
+11/11 PASS. Browser po opravě CS/EN mobil + CS desktop 3/3, popisek chybí,
+CTA disabled, bez overflow. Root i nezávislý reviewer otevřeli before/after
+screenshoty a Figma stav; dílčí GO pouze pro odstranění popisku.
+
+Celá N1 sada **787/787 v 75 souborech PASS**, bez skip/todo. N1 typecheck,
+lint, formát a kontrola všech 447 kanonických tokenů PASS. Nejde o
+potvrzení úspěšného Stage checkoutu ani plošnou vizuální shodu storefrontu.
+Známé rozdíly metrik UI kitu a chybějící owner schopnosti se tím neuzavírají.

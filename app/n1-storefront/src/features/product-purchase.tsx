@@ -11,8 +11,8 @@ import type { selectProductDetail } from "./product-selection";
 import { useCart } from "./cart-provider";
 import { cartQuantityStep, validCartQuantity } from "./cart-state";
 
-const purchaseGuidance = (d: Dictionary, purchasable: boolean) =>
-  purchasable ? null : d.commerceUnavailable;
+const purchaseGuidance = (d: Dictionary, purchasable: boolean, soldOut: boolean) =>
+  purchasable || soldOut ? null : d.commerceUnavailable;
 
 const canPurchaseSelection = (
   { current, selectionRequired }: ReturnType<typeof selectProductDetail>,
@@ -51,7 +51,7 @@ export const ProductPurchase = ({
   const purchasable = canPurchaseSelection(selection, cart);
   const showQuantityError = purchasable && invalidQuantity;
   const purchaseDisabled = !purchasable || invalidQuantity;
-  const guidance = purchaseGuidance(d, purchasable);
+  const guidance = purchaseGuidance(d, purchasable, current.stock === "unavailable");
   const guidanceId = guidance === null ? undefined : "purchase-unavailable";
   const addToCart = () => {
     if (!purchasable || invalidQuantity || current.priceMinor === null || cart === null) {

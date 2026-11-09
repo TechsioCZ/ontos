@@ -768,3 +768,12 @@ CategoryView proto volí `mobileAlignment="start"`; samostatné vyhledávání
 ponechává výchozí end. Mění se jen responzivní flex zarovnání app wrapperu,
 nikoli vzhled nebo interakční kontrakt knihovní komponenty. Skutečné count,
 stránka a query zůstávají datové; návrhových 182 stránek se nekopíruje.
+
+### Vyprodaný produkt — 57:2965
+
+Figma zobrazuje AvailabilityStatus unavailable a na mobilu zakázané tlačítko
+Vyprodáno. ProductPurchase proto pro přesný owner stav `unavailable` nevypisuje
+ještě obecnou hlášku o nedostupném nákupu. Pro neznámý sklad nebo chybějící
+nákupní kontext tato diagnostika zůstává. Podmínky nákupu, validace množství,
+kit komponenty a jejich vzhled se nemění. Skutečný vyprodaný produkt byl
+zkontrolovaný v CS/EN na mobilu a v CS na desktopu; nákup zůstává zakázaný.
