@@ -11,7 +11,7 @@ import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
-import { SymmyInternalRegionsProjectionSchema } from '../../api/symmy/regions-projection-contract.ts';
+import { SymmyInternalRegionsProjectionSchema } from '../../shared/symmy/regions-projection-contract.ts';
 import {
   projectSymmyRegions,
   SymmyRegionsProjectionConfigurationSchema,

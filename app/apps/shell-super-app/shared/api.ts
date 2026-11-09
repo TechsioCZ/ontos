@@ -1,5 +1,5 @@
 import { GatewayContextApiGroup } from '@app/shared-contracts';
-import { SymmyIngressGroup } from '../api/symmy/contract.ts';
+import { SymmyIngressGroup } from './symmy/contract.ts';
 import {
   accessAdminApprovalsGroup,
   accessAdminChangesGroup,
