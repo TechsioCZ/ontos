@@ -3,13 +3,19 @@ import {
   makeDatabaseIdentityEnrollmentLive,
   ActiveApplicationCompositionSnapshotSchema,
   ActionAuthorizationPreflightDatabaseLive,
+  ActionRuntime,
+  bindAccessGate,
+  ContextAccess,
   ContextAccessLive,
+  DatabaseIdentityEnrollmentContext,
+  ModuleEntrypointGateway,
+  ModuleStateGate,
+  OperationalScopeResolver,
   CorePersistenceLive,
   DatabaseConfig,
   InstalledModuleCatalogService,
   ActiveApplicationCompositionService,
   makeReadRuntimeLive,
-  makeActionRuntimeLive,
   TenantModuleStateServiceLive,
   buildInstalledModuleCatalog,
   changeTenantModuleStateAction,
@@ -20,6 +26,7 @@ import {
   OntosModuleDeploymentContractSchema,
 } from '@app/core-runtime';
 import {
+  ActionPermission,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
@@ -28,7 +35,8 @@ import {
 } from '@app/core-runtime/actions/runtime-wiring';
 import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
-import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { CoreDatabase } from '@app/core-runtime/db/client';
+import { ActionRepository, makeActionRuntime, makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { createPrivacyDeniedAccess } from '../support/live-access-authority.ts';
 import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import {
@@ -270,9 +278,32 @@ const makeDsrNative = Effect.fn('DsrExactDeadline.makeNative')(function* makeDsr
   const ownerApprovals = makeOwnerActionApprovalsLive(owner.deployment, privacyRegistration).pipe(
     Layer.provide(ownerDependencies),
   );
+  // The fixture's scripted gate cannot prepare persisted authority. Bind its declared answers once;
+  // the native runner still owns composition locking, module admission, transactions and access fences.
+  const ownerActions = Layer.effect(
+    ActionRuntime,
+    Effect.gen(function* exactDeadlineActionRuntime() {
+      return makeActionRuntime(
+        yield* CoreDatabase,
+        yield* ActionRepository,
+        yield* ActionPermission,
+        yield* OperationalScopeResolver,
+        {
+          accessDecision: bindAccessGate(yield* AccessDecisionGate, inertAccessEnforcementPorts()),
+          applicationComposition: yield* ActiveApplicationCompositionService,
+          contextAccess: yield* ContextAccess,
+          databaseIdentities: yield* DatabaseIdentityEnrollmentContext,
+          expectedDeployment: owner.deployment,
+          moduleEntrypointGateway: yield* ModuleEntrypointGateway,
+          moduleStateGate: yield* ModuleStateGate,
+          ownerRegistration: privacyRegistration,
+        },
+      );
+    }),
+  );
   const ownerRuntimeContext = yield* Layer.build(
     Layer.merge(
-      makeActionRuntimeLive(owner.deployment, privacyRegistration).pipe(Layer.provideMerge(ownerApprovals)),
+      ownerActions.pipe(Layer.provideMerge(ownerApprovals)),
       makeReadRuntimeLive(owner.deployment, privacyRegistration),
     ).pipe(Layer.provide(ownerDependencies)),
   );

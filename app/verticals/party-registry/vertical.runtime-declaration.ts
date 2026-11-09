@@ -133,6 +133,9 @@ const partyGroup = {
   order: 20,
 } as const;
 
+// The worker acts for the invocation that dispatched a privacy measure, never for a UI route.
+export const partyRegistryOriginatorActions = ['privacy.core.dispatch-privacy-measure'] as const;
+
 export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'] = {
   module: {
     description: 'Party Registry business capability.',

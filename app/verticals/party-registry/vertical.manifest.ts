@@ -25,7 +25,7 @@ import { personEngagementProfileResourceDescriptor } from './shared/resources/pe
 // </generated-module-manifest-imports>
 import { partyRegistryMcpContribution } from './shared/mcp/contribution.ts';
 
-import { partyRegistryRuntimeManifest } from './vertical.runtime-declaration.ts';
+import { partyRegistryOriginatorActions, partyRegistryRuntimeManifest } from './vertical.runtime-declaration.ts';
 
 export const partyRegistryManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   ...partyRegistryRuntimeManifest,
@@ -35,10 +35,7 @@ export const partyRegistryManifest: OntosModuleManifestInput = defineOntosModule
     scope: 'tenant',
     supportedStates: ['inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'],
   },
-  originatorActions: [
-    // The owner's outbox delivery of a privacy measure acts for the invocation that dispatched it.
-    'privacy.core.dispatch-privacy-measure',
-  ],
+  originatorActions: partyRegistryOriginatorActions,
   publicSurface: {
     ...partyRegistryRuntimeManifest.publicSurface,
     components: {
