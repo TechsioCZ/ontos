@@ -105,6 +105,9 @@ describe("owner-backed PDP amounts and stock", () => {
         createElement(ProductView, { dictionary, locale, product: detail(leaf) }),
       );
       expect(missing).not.toContain(dictionary.manufacturer);
+      expect(missing).toContain(
+        `<dt>${dictionary.productCode}</dt><dd>${dictionary.productCodeMissing}</dd>`,
+      );
       expect(html).not.toContain("/vyrobce/");
     },
   );
@@ -122,6 +125,7 @@ describe("owner-backed PDP amounts and stock", () => {
       createElement(ProductView, { dictionary, locale, product }),
     );
     expect(selected).toContain(`>M<span class="md:hidden"> · ${dictionary.selectedOption}</span>`);
+    expect(selected).toContain(`<dt>${dictionary.productCode}</dt><dd>${variant.sku}</dd>`);
     expect(selected).not.toContain(
       `L<span class="md:hidden"> · ${dictionary.selectedOption}</span>`,
     );

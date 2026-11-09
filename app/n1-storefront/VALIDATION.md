@@ -1852,3 +1852,49 @@ Finální lint cleanup zachoval chování: controller se jednou inicializuje
 z event handleru, pomocná metoda se jmenuje validateOnBlur. N1 lint PASS bez
 suppressions; cílených 8/8 auth/recovery testů i opakovaná finální typová
 kontrola a formát PASS. Kontrola 447 kanonických tokenů PASS.
+
+## 9. 11. 2026 — katalog, PDP a mobilní košík
+
+Čerstvé Figma kontexty 31:638/639, 214:3169/3246, 39:2458 a 219:2772–2774
+byly porovnány se skutečným katalogem a Fox PDP. Průchod před i po opravě:
+6/6 kombinací CS 320/390/768/1024/1440 a EN390, bez overflow a pageerror.
+Mobilní otevření stromu předává focus. Nepodložené druhé spodní zavírací
+tlačítko odstraněno; desktopový produktový kód zachovává řádek i bez SKU.
+Skutečné SKU vybrané varianty zůstává. Chybějící SKU ověřují existující
+owner-projector SSR regrese, nikoli úspěšně dohledaný živý produkt bez SKU.
+
+Katalogová Figma neobsahuje filtry ani řazení; tyto prvky nebyly doplněny.
+Skutečné jiné kategorie, počty a obrázky se neskrývají kvůli návrhové fixture.
+
+Lokální košíkový lifecycle před opravou prošel 6/6, ale skutečné otevření PNG
+odhalilo oříznutý toast na320 a žlutý vzhled neaktivního checkout odkazu.
+Nová omezená aliasová šířka toastu zachovává canonical size role a native
+odstupy. Neaktivní checkout větev používá Button disabled, ověřená skutečný
+LinkButton; podmínky nákupu se nemění. Tři cílené regrese před opravou FAIL,
+po opravě cart-request + product-detail-projection 37/37 PASS.
+
+Košíkový průchod po opravě: 6/6 na stejných šířkách. Add toast bez automatického
+otevření popupu, zvýšení/snížení, odmítnutí nuly bez uložení, oprava množství,
+badge, Escape, přenos do košíku, persistence po reloadu a odebrání prošly.
+Toast má šířku272/342/360 na320/390/desktop a je celý ve viewportu. Neaktivní
+CTA je nativní disabled button bez href,44px a s jednořádkovým textem v CS/EN.
+Root a nezávislý reviewer otevřeli actual before/after PNG; GO jen pro tyto
+opravy. Známá typografie TotalsSummary zůstává samostatně otevřená.
+
+Všechny skutečné quote odpovědi v této kontrole byly503. Průchod proto
+nepotvrzuje platný nákup, částky ani novou objednávku. Neproběhl business POST
+ani objednávkový/registrační zápis; quote volání jsou skutečné read-only dry runy.
+
+Klávesnicové zavření skutečného toastu Enterem prošlo CS320 i EN390 se správným
+lokalizovaným názvem. Izolovaný skutečný ProductView s owner-schema QA props
+pro chybějící SKU prošel 6/6: CS/EN ×390/768/1440, včetně skrytí řádku na mobilu.
+Nejde o živý produkt nebo client-hydration test celé stránky. První izolovaný
+browser harness neměl správně načtené CSS z about:blank; jeho čtyři dílčí PASS
+nejsou vizuální evidence. Opravený harness načítá skutečné CSS ze stejného
+localhost originu a před geometrií ověřuje computed padding.
+
+Finální N1 sada **801/801 v 76 souborech PASS**, typy, lint, formát a kontrola
+447 kanonických tokenů PASS. Globální i18n:boundaries nadále hlásí 28 původních
+strict-effect-api-boundaries chyb ve stejných 28 souborech mimo N1; nový log
+byl porovnán s předchozím baseline. Žádná diagnostika nebyla potlačena a nejde
+o celorepozitářové zelené ověření. Shared UI kit ani backend se nemění.

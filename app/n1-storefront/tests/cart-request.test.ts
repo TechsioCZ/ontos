@@ -75,7 +75,8 @@ describe("automatic cart quote summary", () => {
       expect(html).not.toContain(d.retry);
       expect(html).not.toContain("Ověřit");
       expect(html).not.toContain("Neověřeno");
-      expect(html).toContain('aria-disabled="true"');
+      expect(html).toContain('disabled=""');
+      expect(html).not.toContain('href="/cs/pokladna"');
       if (state === "pending") {
         expect(html).toContain('aria-busy="true"');
       }
@@ -94,7 +95,8 @@ describe("automatic cart quote summary", () => {
       }),
     );
     expect(html).toContain(d.retry);
-    expect(html).toContain('aria-disabled="true"');
+    expect(html).toContain('disabled=""');
+    expect(html).not.toContain('href="/cs/pokladna"');
     expect(html).toContain(d.shopping.unresolved);
   });
 

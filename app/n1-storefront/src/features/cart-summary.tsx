@@ -26,6 +26,7 @@ export const CartSummary = ({
   verified: CartQuote | null;
 }) => {
   const money = (amount: number) => formatMoney(amount, locale, currency);
+  const canContinue = verified !== null && !invalid && quote.state === "ready";
   let net = d.shopping.unresolved;
   let vat = d.shopping.unresolved;
   let total = d.shopping.unresolved;
@@ -51,17 +52,28 @@ export const CartSummary = ({
                 {d.retry}
               </Button>
             )}
-            <LinkButton
-              aria-busy={quote.state === "pending"}
-              as={NextLink}
-              disabled={verified === null || invalid || quote.state !== "ready"}
-              href={`/${locale}/pokladna`}
-              size="md"
-              theme="solid"
-              variant="primary"
-            >
-              {d.shopping.checkout}
-            </LinkButton>
+            {canContinue ? (
+              <LinkButton
+                as={NextLink}
+                href={`/${locale}/pokladna`}
+                size="md"
+                theme="solid"
+                variant="primary"
+              >
+                {d.shopping.checkout}
+              </LinkButton>
+            ) : (
+              <Button
+                aria-busy={quote.state === "pending"}
+                disabled
+                size="md"
+                theme="solid"
+                type="button"
+                variant="primary"
+              >
+                {d.shopping.checkout}
+              </Button>
+            )}
           </div>
         }
         footer={d.shopping.feesNote}

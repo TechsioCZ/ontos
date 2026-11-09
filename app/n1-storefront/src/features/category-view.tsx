@@ -205,13 +205,6 @@ export const CategoryView = ({
           )}
         </div>
       </div>
-      {browseOpen && (
-        <div className="mt-4 md:hidden">
-          <Button onClick={() => setBrowseOpen(false)} theme="outlined" variant="secondary">
-            {title}
-          </Button>
-        </div>
-      )}
     </section>
   );
 };

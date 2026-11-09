@@ -834,3 +834,30 @@ chyby při blur tak neposune souhlas před dopadem prvního kliknutí. Klávesni
 validuje bez tohoto odkladu. Pomocný stav uchovává pouze název pole a výsledek
 validace, žádné hodnoty ani přístupové údaje. Názvy a popisy jsou navázané
 na jedinečné ID formuláře, i když je současně otevřené minipřihlášení.
+
+### Kategorie a produktová metadata — 31:638/639, 219:2772–2774
+
+Aktuální kategorie skládá strom, podkategorie, počet produktů, karty a stránkování.
+Návrh neobsahuje filtry ani řazení. Mobilní strom zavírá stejný horní přepínač,
+který jej otevřel; dodatečné tlačítko s názvem kategorie pod celým listingem
+nemá předlohu a bylo odstraněno. Otevření dál předá focus do skutečného TreeView.
+
+Desktopový řádek Kód produktu zůstává přítomný i při chybějícím SKU a používá
+přeloženou pomlčku podle 219:2774. Skutečné SKU vybrané varianty má přednost.
+Mobilní viditelnost metadat, galerie, sklad, ceny i nákupní logika se nemění.
+Žádné nové vzhledové třídy komponent ani tokenové override tím nevznikají.
+
+### Toast a neaktivní checkout CTA — mobilní runtime kontrola
+
+Toaster 0.57.0 nemá veřejný width prop. Jeho `w-toast-width` používá alias
+`--spacing-toast-width → --size-toast-width`; nativní store má odstup 24 px.
+App `@theme static` omezuje pouze tento alias na minimum knihovní šířky a
+viewportu zmenšeného o dvě nativní mezery. Základní N1 tokeny ani per-instance
+styly se nemění. Oprava řeší doložené oříznutí textu na 320 px; paleta zůstává
+kanonická. Skutečná poloha zahrnuje šířku scrollbarů, negarantuje přesně stejný
+okraj na obou stranách viewportu.
+
+LinkButton 0.57.0 blokuje disabled kliknutí, ale jeho `disabled:*` vzhled necílí
+na aria-disabled odkaz. Neaktivní CTA košíku proto skládá existující `Button disabled type="button"`, aktivní stav skutečný `LinkButton` do pokladny.
+Původní podmínka ready + verified + valid zůstává. Kratší text „Přejít k pokladně“
+vychází z 59:1074. Nejde o frontendové povolení nákupu při chybě quote.
