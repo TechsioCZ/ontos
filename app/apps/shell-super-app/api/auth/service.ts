@@ -726,10 +726,7 @@ export const makeAuthenticationService = Effect.fn('AuthenticationService.make')
       function* resolveContextEffect(resolved: AuthenticatedResolvedSession, requestHeaders: Headers) {
         const requestScope = yield* scopeOf(resolved.principal);
         if (resolved.selectedContextKind === 'tenant') {
-          const allowed = yield* canSelectTenantContext({
-            principalId: resolved.identity.principalId,
-            tenantId: resolved.identity.tenantId,
-          }).pipe(
+          const allowed = yield* canSelectTenantContext(resolved.principal).pipe(
             Effect.catchTag('LegalEntitySelectionUnavailableError', () =>
               Effect.fail(unavailable('legal_entity_selection_unavailable')),
             ),
@@ -1065,10 +1062,7 @@ export const makeAuthenticationService = Effect.fn('AuthenticationService.make')
       switchToTenantContext: Effect.fn('AuthenticationService.switchToTenantContext')(
         function* switchToTenantContextEffect(requestHeaders: Headers) {
           const resolved = yield* authenticatedSession(requestHeaders);
-          const allowed = yield* canSelectTenantContext({
-            principalId: resolved.identity.principalId,
-            tenantId: resolved.identity.tenantId,
-          }).pipe(
+          const allowed = yield* canSelectTenantContext(resolved.principal).pipe(
             Effect.catchTag('LegalEntitySelectionUnavailableError', () =>
               Effect.fail(unavailable('legal_entity_selection_unavailable')),
             ),

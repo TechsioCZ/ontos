@@ -1,4 +1,5 @@
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
+import type { GateInput } from '@app/core-runtime/access/enforcement';
 import {
   ContextAccess,
   LegalEntityContext,
@@ -23,6 +24,7 @@ import type { ShellGovernedReadsService } from '../../api/modules/shell-governed
 import { ShellCompositionSchema, ShellDocumentContextSchema } from '../../shared/api.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import { makeContextAccessDouble } from '../support/context-access-double.ts';
+import { makeShellTestAccessGate } from '../support/access-decision-double.ts';
 import { makeAuthenticationServiceDouble } from '../support/impersonation-service-doubles.ts';
 
 const principal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
@@ -83,10 +85,14 @@ const documentTest = Effect.fn('test.documentContext')(function* documentTest(
   const { catalog } = yield* fixture;
   const readComposition = rs.fn(composition);
   const issue = rs.fn(() => issueDocument);
+  const tenantSelection = rs.fn((input: GateInput) =>
+    hint.pipe(
+      Effect.flatMap(([decision]) =>
+        makeShellTestAccessGate({ defaultAnswer: decision?.decision ?? 'unavailable' }).decide(input),
+      ),
+    ),
+  );
   const tenantPermissions = rs.fn(({ permission }: { readonly permission: string }) => {
-    if (permission === 'select_context') {
-      return hint;
-    }
     if (permission === 'access') {
       return tenantAccess;
     }
@@ -104,7 +110,7 @@ const documentTest = Effect.fn('test.documentContext')(function* documentTest(
             },
           }),
         ),
-        Layer.succeed(AccessDecisionGate, makeTestAccessDecision()),
+        Layer.succeed(AccessDecisionGate, { ...makeTestAccessDecision(), decide: tenantSelection }),
         Layer.succeed(ContextAccess, {
           ...makeContextAccessDouble('allowed'),
           legalEntities: ({ legalEntityIds }) =>
@@ -124,7 +130,7 @@ const documentTest = Effect.fn('test.documentContext')(function* documentTest(
     ),
     Effect.flatMap(Schema.decodeUnknownEffect(ShellDocumentContextSchema)),
   );
-  return { issue, readComposition, response, tenantPermissions };
+  return { issue, readComposition, response, tenantPermissions, tenantSelection };
 });
 
 it.live('overlaps the switcher hint with composition and people reads, joining only after document assertions', () =>
@@ -198,13 +204,14 @@ it.effect(
 
 it.effect('does not start permission, composition or assertion reads for an anonymous document', () =>
   Effect.gen(function* anonymousDocument() {
-    const { issue, readComposition, response, tenantPermissions } = yield* documentTest(
+    const { issue, readComposition, response, tenantPermissions, tenantSelection } = yield* documentTest(
       { setCookieHeaders: [], state: 'anonymous' },
       Effect.die('Anonymous documents must not read permissions'),
       () => Effect.die('Anonymous documents must not load composition'),
     );
     expect(response).toEqual({ session: { state: 'anonymous' } });
     expect(tenantPermissions).not.toHaveBeenCalled();
+    expect(tenantSelection).not.toHaveBeenCalled();
     expect(readComposition).not.toHaveBeenCalled();
     expect(issue).not.toHaveBeenCalled();
   }),
@@ -261,7 +268,7 @@ for (const state of ['selection_required', 'access_blocked', 'tenant_authenticat
         state === 'tenant_authenticated'
           ? { ...base, availableLegalEntities: [legalEntity], state }
           : { ...base, availableLegalEntities: [], state };
-      const { issue, readComposition, response, tenantPermissions } = yield* documentTest(
+      const { issue, readComposition, response, tenantPermissions, tenantSelection } = yield* documentTest(
         context,
         Effect.succeed(
           state === 'tenant_authenticated' ? [{ decision: 'allowed', key: principal.tenantId }] : unavailable,
@@ -280,12 +287,13 @@ for (const state of ['selection_required', 'access_blocked', 'tenant_authenticat
       expect(response).not.toHaveProperty('gatewayAssertions');
       expect(readComposition).not.toHaveBeenCalled();
       expect(issue).not.toHaveBeenCalled();
-      expect(tenantPermissions).toHaveBeenCalledWith({
-        permission: 'select_context',
-        principalId: principal.principalId,
-        tenantIds: [principal.tenantId],
+      expect(tenantSelection).toHaveBeenCalledTimes(1);
+      expect(tenantSelection.mock.calls[0]?.[0]).toMatchObject({
+        carrier: { accessDeclaration: { admitsAdminSurface: true, key: 'shell-super-app.access-admin.people' } },
+        legalEntityScope: 'forbidden',
+        scope: { principalId: principal.principalId, tenantId: principal.tenantId },
       });
-      expect(tenantPermissions).toHaveBeenCalledTimes(state === 'tenant_authenticated' ? 2 : 1);
+      expect(tenantPermissions).toHaveBeenCalledTimes(state === 'tenant_authenticated' ? 1 : 0);
       expect(response).not.toHaveProperty('compositionRevision');
       if (state === 'tenant_authenticated') {
         expect(tenantPermissions).toHaveBeenCalledWith({
@@ -380,15 +388,12 @@ it.effect('rereads switcher permission on the next document instead of retaining
     expect(revoked.response.legalEntities?.tenantContextAvailable).toBe(false);
     expect(allowed.response.canManagePeople).toBe(false);
     expect(revoked.response.canManagePeople).toBe(false);
-    expect(allowed.tenantPermissions).toHaveBeenCalledWith({
-      permission: 'select_context',
-      principalId: principal.principalId,
-      tenantIds: [principal.tenantId],
-    });
-    expect(revoked.tenantPermissions).toHaveBeenCalledWith({
-      permission: 'select_context',
-      principalId: principal.principalId,
-      tenantIds: [principal.tenantId],
-    });
+    for (const result of [allowed, revoked]) {
+      expect(result.tenantSelection).toHaveBeenCalledTimes(1);
+      expect(result.tenantSelection.mock.calls[0]?.[0]).toMatchObject({
+        carrier: { accessDeclaration: { admitsAdminSurface: true, key: 'shell-super-app.access-admin.people' } },
+        scope: { principalId: principal.principalId, tenantId: principal.tenantId },
+      });
+    }
   }),
 );

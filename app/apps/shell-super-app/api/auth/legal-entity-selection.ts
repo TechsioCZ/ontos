@@ -1,9 +1,17 @@
-import { ContextAccess, LegalEntityContext } from '@app/core-runtime';
-import type { LegalEntityContextUnavailableError, OperationalScope, SafeLegalEntity } from '@app/core-runtime';
+import { decodeAccessDeclarationOrThrow, LegalEntityContext } from '@app/core-runtime';
+import type {
+  LegalEntityContextUnavailableError,
+  OperationalScope,
+  SafeLegalEntity,
+  TrustedPrincipalContext,
+} from '@app/core-runtime';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import { preserveSystemPrincipalContextTrust } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { DateTime, Effect, Schema } from 'effect';
 
+import { routeMeta as peopleRouteMeta } from '../../src/routes/[lang]/access/people/route.meta.ts';
 import { observeGatewayPhase } from './gateway-timing.ts';
+import { SupportImpersonationCorrelationId } from './support-impersonation-correlation-id.ts';
 
 const legalEntitySelectionUnavailableFields = {
   failureCause: Schema.optionalKey(Schema.Defect()),
@@ -34,27 +42,32 @@ export type LegalEntitySelectionResolution =
       readonly state: 'access_blocked';
     };
 
-/** Context selection is a graph capability, not a grant of any tenant Action. */
+const TENANT_CONTEXT_DECLARATION = decodeAccessDeclarationOrThrow(
+  peopleRouteMeta.accessDeclaration,
+  peopleRouteMeta.entrypoint,
+);
+
+/** Tenant context opens the declared administration surface, never an administrative operation (O88). */
 export const canSelectTenantContext = Effect.fn('ContextSelection.canSelectTenantContext')(
-  function* canSelectTenantContextEffect(input: {
-    readonly principalId: string;
-    readonly tenantId: string;
-  }): Effect.fn.Return<boolean, LegalEntitySelectionUnavailableError, ContextAccess> {
-    const access = yield* ContextAccess;
-    const [decision, ...unexpected] = yield* access.tenants({
-      permission: 'select_context',
-      principalId: input.principalId,
-      tenantIds: [input.tenantId],
+  function* canSelectTenantContextEffect(
+    principal: TrustedPrincipalContext,
+  ): Effect.fn.Return<boolean, LegalEntitySelectionUnavailableError, AccessDecisionGate> {
+    const access = yield* AccessDecisionGate;
+    const { legalEntityId: _legalEntityId, ...tenantPrincipal } = principal;
+    const scope = preserveSystemPrincipalContextTrust(principal, {
+      ...tenantPrincipal,
+      correlationId: yield* SupportImpersonationCorrelationId,
     });
-    if (
-      unexpected.length > 0 ||
-      decision === undefined ||
-      decision.key !== input.tenantId ||
-      decision.decision === 'unavailable'
-    ) {
+    const decision = yield* access.decide({
+      carrier: { accessDeclaration: TENANT_CONTEXT_DECLARATION },
+      legalEntityScope: 'forbidden',
+      now: yield* DateTime.nowAsDate,
+      scope,
+    });
+    if (decision.outcome === 'UNAVAILABLE') {
       return yield* new LegalEntitySelectionUnavailableErrorValue();
     }
-    return decision.decision === 'allowed';
+    return decision.outcome === 'ALLOWED';
   },
 );
 
