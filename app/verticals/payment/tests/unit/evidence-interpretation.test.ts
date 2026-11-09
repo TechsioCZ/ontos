@@ -437,6 +437,44 @@ describe('#1151 Payment evidence interpretation', () => {
     }
   });
 
+  it('#1151 a correction key is scoped to its source binding: another source retracting its receipt is applied', () => {
+    const bankSource = {
+      accountRef: 'erp-bank-1',
+      environment: 'production',
+      sourceKind: 'BANK_ACCOUNTING',
+      sourceSystem: 'ERP',
+    } as const;
+    const aggregate = aggregateOf(
+      [operation('EFFECT_CONFIRMED')],
+      [
+        accepted('obs-bank-receipt', { economicEffectKey: 'line:1', source: bankSource }),
+        accepted('obs-bank-correction', {
+          amount: czk(30_000),
+          correctsObservationId: 'obs-bank-receipt',
+          economicEffectKey: 'retraction:1',
+          factKind: 'SOURCE_CORRECTION',
+          source: bankSource,
+        }),
+        accepted('obs-gateway-receipt', { economicEffectKey: 'line:1' }),
+      ],
+    );
+    const gatewayRetraction = interpretPaymentObservation(
+      aggregate,
+      observed({
+        amount: czk(30_000),
+        correctsObservationId: 'obs-gateway-receipt',
+        economicEffectKey: 'retraction:1',
+        factKind: 'SOURCE_CORRECTION',
+      }),
+    );
+    expect(gatewayRetraction).not.toEqual(
+      PaymentEvidenceDecision.NO_CHANGE({ operationId: COLLECT_ID, reason: 'ALREADY_CORRECTED' }),
+    );
+    expect(gatewayRetraction).not.toEqual(
+      PaymentEvidenceDecision.HOLD({ operationId: COLLECT_ID, reason: 'CORRECTION_OVERLAPS_PRIOR_CORRECTION' }),
+    );
+  });
+
   it('#1151 corrections: already corrected, unknown target and lineage mismatch', () => {
     const correctedOnce = aggregateOf(
       [operation('CONFLICT')],

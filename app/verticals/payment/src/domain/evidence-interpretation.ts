@@ -407,6 +407,7 @@ const correctsAlreadyCorrectedEffect = (
   return aggregate.acceptedObservations.some(
     (observation) =>
       disproven.has(observation.observationId) &&
+      sameSourceBinding(observation.source, corrected.source) &&
       observation.economicEffectKey === economicEffectKey &&
       observation.factKind === corrected.factKind,
   );
@@ -436,10 +437,13 @@ const decideCorrection = (
     (observation) =>
       observation.factKind === 'SOURCE_CORRECTION' && observation.correctsObservationId === corrected.observationId,
   );
-  // The same correction effect re-issued (e.g. for a re-exported statement) counts once.
+  // The same correction effect re-issued by the same source (e.g. for a re-exported statement) counts once.
   const sameCorrectionEffect =
     correction.economicEffectKey !== undefined &&
-    priorCorrections.some((prior) => prior.economicEffectKey === correction.economicEffectKey);
+    priorCorrections.some(
+      (prior) =>
+        sameSourceBinding(prior.source, correction.source) && prior.economicEffectKey === correction.economicEffectKey,
+    );
   if (alreadyCorrected || sameCorrectionEffect) {
     return PaymentEvidenceDecision.NO_CHANGE({ operationId: corrected.operationId, reason: 'ALREADY_CORRECTED' });
   }
