@@ -157,14 +157,21 @@ const AuthForm = ({
             invalidField(field);
           }
         }}
-        onChange={() => {
+        onChange={(event) => {
           clearError(field);
           if (field === "password") {
             clearError("passwordConfirmation");
             setValidated({ password: false, passwordConfirmation: false });
           }
           if (field === "passwordConfirmation") {
-            setValidated((previous) => ({ ...previous, passwordConfirmation: false }));
+            const confirmationMatches =
+              event.currentTarget.validity.valid &&
+              form.current !== null &&
+              event.currentTarget.value === new FormData(form.current).get("password");
+            setValidated((previous) => ({
+              ...previous,
+              passwordConfirmation: confirmationMatches,
+            }));
           }
           onEdit();
         }}

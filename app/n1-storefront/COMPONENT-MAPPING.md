@@ -1,5 +1,11 @@
 # N1 — aktuální komponentové a tokenové mapování
 
+Registrace / Figma333:6888, confirmation333:7202 + feedback333:7210:
+existující FormInput validateStatus/helpText dostává platnou shodu při onChange.
+Native FormCheckbox ani vzhled se nemění; jeho řádek se při prvním kliknutí
+po platném potvrzení neposune. Fresh fullframe43:1026/333:5536 má proti valid
+fixture jiný padding; stávající full-page wrapper zůstává zachovaný.
+
 Cena / Figma39:2031 a57:2918: veřejný `PriceBlock state="known"`, explicitní
 owner částka a jen skutečný paired net caption vybrané varianty/leaf produktu.
 Počet velikostí není podklad pro `state="from"` ani lokalizovaný prefix „od“.

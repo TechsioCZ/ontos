@@ -1,5 +1,21 @@
 # Kontrola převodu N1 storefrontu
 
+## První kliknutí na registrační souhlas — 2026-11-09
+
+- Platná shoda hesel se zobrazí při dopsání potvrzení, ne až při blur. První
+  kliknutí na knihovní checkbox proto neodsunuje 34px vložený feedback. Změna
+  hesla dál ruší obě potvrzení; validace a odesílání zůstávají stejné.
+- Skutečný browser RED/GREEN: CS1440, CS390, EN390. Před opravou 3/3 přímých
+  control kliknutí selhala, po opravě 3/3 checked + FormData true + posun0.
+  Space, zneplatnění a obnova shody PASS; žádné overflow nebo obchodní POST.
+- Root a nezávislý reviewer otevřeli PNG; omezené vizuální GO pro tento problém.
+  Plná sada775/74souborů, N1lint, typy a447tokenů PASS; není to živý Portal
+  registrační PASS. Globální i18n boundary gate dál hlásí28 chyb mimoN1;
+  žádná diagnostika se nepotlačuje a celorepozitářový PASS se netvrdí.
+- Fresh Figma333:6888 má p16, ale výchozí fullframe43:1026/333:5536 má boční
+  padding0 a pt28/pb24. Wrapper se proto neměnil podle izolované fixture.
+  Neplatná potvrzení, font/CTA rozdíly a celá auth pixelová shoda nejsou uzavřené.
+
 ## C39: mobilní podkategorie po dvojicích — 2026-11-05
 
 - Fresh Figma mobile38:2149/2150 má řádky po2 s gap8/24; předchozí volný
