@@ -5,7 +5,7 @@ import type { RegisteredRouter } from '@tanstack/react-router';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Switch } from '@techsio/ui-kit/molecules/switch';
+import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { PageHeader, StatCard, StatRow, formatNumber, Toaster } from '@app/admin-ui';
@@ -555,16 +555,17 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
               />
             </div>
           )}
-          <Switch
+          <FormCheckbox
             checked={lowStockOnly}
+            className="self-center"
+            label={k('filters.lowStockOnly')}
             name="lowStockOnly"
             onCheckedChange={(checked) => {
               setLowStockOnly(checked);
               firstPage();
             }}
-          >
-            {k('filters.lowStockOnly')}
-          </Switch>
+            size="sm"
+          />
         </div>
         {tagFilter.status === 'error' && (
           <StatusText showIcon status="error">
