@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, realpathSync, statSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -284,6 +284,94 @@ it.effect('compiles the traced module graph and repoints every exports target at
     expect(existsSync(path.join(directory, ENTRY_SOURCE))).toBe(true);
     expect(existsSync(path.join(directory, 'src', 'legacy.cts'))).toBe(true);
     expect(existsSync(path.join(directory, 'src', 'nested', 'deep.mts'))).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('completes a partial trace from matching build inputs and runs with those inputs retired', () =>
+  Effect.gen(function* completesRelativeBuildInputs() {
+    const root = yield* temporaryRoot;
+    const unit = unitUnder(root);
+    const packaged = path.join(unit, PACKAGED_DIRECTORY);
+    const entry = "export { origin } from './helper.ts';\n";
+    const installed = yield* Effect.promise(() =>
+      writeWorkspacePackage(path.join(unit, 'node_modules'), manifestOf(TRACED_CONTRACTS, { '.': ENTRY_SUBPATH }), {
+        [ENTRY_SOURCE]: entry,
+        'src/deep.ts': "export const origin = 'completed-at-build';\n",
+        'src/helper.ts': "export { origin } from './deep.ts';\n",
+      }),
+    );
+    const before = yield* Effect.promise(() => snapshotTree(installed));
+    const traced = yield* Effect.promise(() =>
+      writeWorkspacePackage(packagedNodeModules(unit), manifestOf(TRACED_CONTRACTS, { '.': ENTRY_SUBPATH }), {
+        [ENTRY_SOURCE]: entry,
+      }),
+    );
+    yield* Effect.promise(() => writeProbe(packaged, originProbe(TRACED_CONTRACTS)));
+
+    const compilation = yield* compilePackagedWorkspacePackages(unit);
+
+    expect(compilation.packages[0]?.compiled).toEqual(['src/deep.js', 'src/helper.js', ENTRY_OUTPUT]);
+    expect(yield* Effect.promise(() => snapshotTree(installed))).toEqual(before);
+    expect(existsSync(path.join(traced, 'src', 'deep.js'))).toBe(true);
+    yield* Effect.promise(() => rename(installed, `${installed}-retired-build-input`));
+    const after = runProbe(packaged);
+    expect(after.status).toBe(0);
+    const observed = Result.getOrThrow(Schema.decodeUnknownResult(OriginObservation)(after.stdout));
+    expect(observed.origin).toBe('completed-at-build');
+    expect(resolvedInsidePackaged(observed.resolved, packaged)).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('completes the real Better Auth adapter trace that CI omitted transaction hooks from', () =>
+  Effect.gen(function* completesActualAdapterTrace() {
+    const root = yield* temporaryRoot;
+    const unit = unitUnder(root);
+    const name = '@app/better-auth-effect-drizzle';
+    const source = path.resolve('packages/better-auth-effect-drizzle');
+    const manifest = yield* Effect.promise(() => readFile(path.join(source, PACKAGE_MANIFEST), ENCODING));
+    const server = yield* Effect.promise(() => readFile(path.join(source, 'src', 'server.ts'), ENCODING));
+    const traced = path.join(packagedNodeModules(unit), name);
+    const installed = path.join(unit, 'node_modules', name);
+    yield* Effect.promise(async () => {
+      await mkdir(path.join(traced, 'src'), { recursive: true });
+      await writeFile(path.join(traced, PACKAGE_MANIFEST), manifest);
+      await writeFile(path.join(traced, 'src', 'server.ts'), server);
+      await mkdir(path.dirname(installed), { recursive: true });
+      await symlink(source, installed, 'dir');
+    });
+
+    const compilation = yield* compilePackagedWorkspacePackages(unit);
+
+    expect(compilation.packages[0]?.compiled).toContain('src/transaction-hooks.js');
+    expect(yield* Effect.promise(() => readFile(path.join(traced, 'src', 'server.js'), ENCODING))).toContain(
+      './transaction-hooks.js',
+    );
+    expect(yield* Effect.promise(() => readFile(path.join(traced, 'src', 'transaction-hooks.ts'), ENCODING))).toBe(
+      yield* Effect.promise(() => readFile(path.join(source, 'src', 'transaction-hooks.ts'), ENCODING)),
+    );
+    expect(existsSync(path.join(source, 'src', 'transaction-hooks.js'))).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('refuses to complete a trace from a different build input with the same package name', () =>
+  Effect.gen(function* refusesMismatchedBuildInputs() {
+    const root = yield* temporaryRoot;
+    const unit = unitUnder(root);
+    yield* Effect.promise(() =>
+      writeWorkspacePackage(path.join(unit, 'node_modules'), manifestOf(TRACED_CONTRACTS, { '.': ENTRY_SUBPATH }), {
+        [ENTRY_SOURCE]: "export { origin } from './helper.ts';\n",
+        'src/helper.ts': "export const origin = 'different-source';\n",
+      }),
+    );
+    const traced = yield* Effect.promise(() =>
+      writeWorkspacePackage(packagedNodeModules(unit), manifestOf(TRACED_CONTRACTS, { '.': ENTRY_SUBPATH }), {
+        [ENTRY_SOURCE]: "export { origin } from './helper.ts';\nexport const traced = true;\n",
+      }),
+    );
+    const exit = yield* Effect.exit(compilePackagedWorkspacePackages(unit));
+    expect(Exit.isFailure(exit)).toBe(true);
+    expect(existsSync(path.join(traced, 'src', 'helper.ts'))).toBe(false);
+    expect(existsSync(path.join(traced, ENTRY_OUTPUT))).toBe(false);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

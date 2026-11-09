@@ -13,14 +13,16 @@
  *     module graph keeps its shape;
  *   - each package's `exports` targets are repointed at the compiled modules.
  *
- * Traced TypeScript sources stay in place, and the installed workspace is never consulted: the packaged unit
- * resolves `@app/*` through its own `.output/node_modules` and nothing else. A path this step cannot compile
- * — a colliding output, a traced relative import whose source the packaged tree does not carry — fails the
- * build instead of falling back to the workspace or overwriting what is already there.
+ * Traced sources stay in place. Missing relative TypeScript inputs are completed at build time from the
+ * declared dependency only after its package identity and every carried source agree. The executable unit
+ * resolves `@app/*` through its own `.output/node_modules`, never through the build workspace at runtime.
+ * Missing build inputs and colliding outputs fail the build instead of publishing an incomplete graph.
  *
  *   node scripts/materialize-packaged-workspace-packages.mts <unit directory> [...]
  */
+import { findPackageJSON } from 'node:module';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { transform } from 'esbuild';
@@ -317,9 +319,9 @@ const collectTracedModules = (packageDirectory: string, packageIsModule: boolean
     return modules;
   });
 
-/** Compiles one traced module, refusing to overwrite an output that is not the one this step produces. */
-const compileTracedModule = (module: TracedModule, resolve: (specifier: string) => SpecifierResolution) =>
-  Effect.gen(function* compilePackagedModule() {
+/** Transforms one module without bundling it or changing its module identity. */
+const transpileTracedModule = (module: TracedModule) =>
+  Effect.gen(function* transpilePackagedModule() {
     const fs = yield* FileSystem.FileSystem;
     const source = yield* fs.readFileString(module.sourcePath);
     const transformed = yield* Effect.tryPromise({
@@ -341,19 +343,26 @@ const compileTracedModule = (module: TracedModule, resolve: (specifier: string) 
             .join('; ')}`,
         ),
       );
-    } else {
-      const compiled = yield* rewriteModuleSpecifiers(transformed.code, module.sourcePath, resolve);
-      const existing = (yield* fs.exists(module.outputPath)) ? yield* fs.readFileString(module.outputPath) : undefined;
-      if (existing !== undefined && existing !== compiled) {
-        yield* Effect.fail(
-          failed(
-            `${module.outputPath}: the packaged tree already carries a different module at this path; this step will not overwrite it`,
-          ),
-        );
-      }
-      if (existing === undefined) {
-        yield* fs.writeFileString(module.outputPath, compiled);
-      }
+    }
+    return transformed.code;
+  });
+
+/** Compiles one traced module, refusing to overwrite a different existing output. */
+const compileTracedModule = (module: TracedModule, resolve: (specifier: string) => SpecifierResolution) =>
+  Effect.gen(function* compilePackagedModule() {
+    const fs = yield* FileSystem.FileSystem;
+    const code = yield* transpileTracedModule(module);
+    const compiled = yield* rewriteModuleSpecifiers(code, module.sourcePath, resolve);
+    const existing = (yield* fs.exists(module.outputPath)) ? yield* fs.readFileString(module.outputPath) : undefined;
+    if (existing !== undefined && existing !== compiled) {
+      yield* Effect.fail(
+        failed(
+          `${module.outputPath}: the packaged tree already carries a different module at this path; this step will not overwrite it`,
+        ),
+      );
+    }
+    if (existing === undefined) {
+      yield* fs.writeFileString(module.outputPath, compiled);
     }
   });
 
@@ -390,10 +399,125 @@ const resolveCompiledSpecifier = (
     : `./${path.relative(path.dirname(importer), resolved)}`;
 };
 
+const ensurePackagedSourceParent = (packageDirectory: string, relative: string) =>
+  Effect.gen(function* ensureRegularPackagedParents() {
+    const fs = yield* FileSystem.FileSystem;
+    let parent = packageDirectory;
+    for (const segment of relative.split(path.sep).slice(0, -1)) {
+      parent = path.join(parent, segment);
+      if (yield* fs.exists(parent)) {
+        if ((yield* fs.lstat(parent)).type !== 'Directory') {
+          yield* Effect.fail(failed(`${parent}: a packaged source directory must not be a symlink`));
+        }
+      } else {
+        yield* fs.makeDirectory(parent);
+      }
+    }
+  });
+
+/** Completes missing relative TypeScript inputs from the declared build dependency, never at runtime. */
+const completeTracedModuleGraph = (
+  unitDirectory: string,
+  packageDirectory: string,
+  name: string,
+  packageIsModule: boolean,
+  packagedManifest: typeof PackagedPackageManifestSchema.Type,
+) =>
+  Effect.gen(function* completePackagedGraph() {
+    const fs = yield* FileSystem.FileSystem;
+    let modules = yield* collectTracedModules(packageDirectory, packageIsModule);
+    const examined = new Set<string>();
+    let sourceDirectory: string | undefined;
+    while (true) {
+      const carried = new Set(modules.map((module) => module.sourcePath));
+      const missing = new Set<string>();
+      for (const module of modules) {
+        if (examined.has(module.sourcePath)) {
+          continue;
+        }
+        examined.add(module.sourcePath);
+        yield* rewriteModuleSpecifiers(
+          yield* transpileTracedModule(module),
+          module.sourcePath,
+          (specifier): SpecifierResolution => {
+            if (!RELATIVE_SPECIFIER.test(specifier) || !isTypeScriptModule(path.extname(specifier))) {
+              return undefined;
+            }
+            const target = path.resolve(path.dirname(module.sourcePath), specifier);
+            if (!isInside(packageDirectory, target) || DECLARATION_FILE.test(target)) {
+              return failed(`${module.sourcePath}: ${specifier} is not a runtime module inside the packaged package`);
+            }
+            if (!carried.has(target)) {
+              missing.add(target);
+            }
+            return undefined;
+          },
+        );
+      }
+      if (missing.size === 0) {
+        return modules;
+      }
+      if (sourceDirectory === undefined) {
+        const packageName = `${WORKSPACE_PACKAGE_SCOPE}/${name}`;
+        const sourceManifestPath = yield* Effect.try({
+          catch: () => failed(`${packageName}: the declared build dependency could not be resolved`),
+          try: () => findPackageJSON(packageName, pathToFileURL(path.join(unitDirectory, PACKAGE_MANIFEST))),
+        });
+        if (sourceManifestPath === undefined) {
+          return yield* Effect.fail(failed(`${packageName}: missing the declared build dependency manifest`));
+        }
+        sourceDirectory = yield* fs.realPath(path.dirname(sourceManifestPath));
+        const packagedOutput = yield* fs.realPath(path.join(unitDirectory, PACKAGED_DIRECTORY));
+        if (sourceDirectory === packagedOutput || isInside(packagedOutput, sourceDirectory)) {
+          return yield* Effect.fail(
+            failed(`${packageName}: build inputs must not resolve through the packaged output`),
+          );
+        }
+        const sourceManifest = yield* Schema.decodeUnknownEffect(packagedPackageManifestCodec)(
+          yield* fs.readFileString(sourceManifestPath),
+        );
+        if (
+          sourceManifest.name !== packageName ||
+          packagedManifest.name !== packageName ||
+          sourceManifest.version !== packagedManifest.version ||
+          sourceManifest.type !== packagedManifest.type
+        ) {
+          return yield* Effect.fail(failed(`${packageName}: the traced and build-input package identities differ`));
+        }
+        // A matching package name alone is insufficient: every carried source must be the same build input.
+        for (const module of modules) {
+          const original = path.join(sourceDirectory, path.relative(packageDirectory, module.sourcePath));
+          if (!isInside(sourceDirectory, yield* fs.realPath(original))) {
+            return yield* Effect.fail(failed(`${original}: a traced build input leaves its package`));
+          }
+          if ((yield* fs.readFileString(original)) !== (yield* fs.readFileString(module.sourcePath))) {
+            return yield* Effect.fail(failed(`${packageName}: a traced source differs from its declared build input`));
+          }
+        }
+      }
+      for (const target of missing) {
+        const relative = path.relative(packageDirectory, target);
+        const original = path.join(sourceDirectory, relative);
+        const realOriginal = yield* fs.realPath(original);
+        if (!isInside(sourceDirectory, realOriginal) || (yield* fs.lstat(original)).type !== 'File') {
+          return yield* Effect.fail(
+            failed(`${original}: a missing runtime source must be a regular package-owned file`),
+          );
+        }
+        yield* ensurePackagedSourceParent(packageDirectory, relative);
+        if (yield* fs.exists(target)) {
+          return yield* Effect.fail(failed(`${target}: refusing to replace an existing untraced source`));
+        }
+        yield* fs.writeFileString(target, yield* fs.readFileString(original));
+      }
+      modules = yield* collectTracedModules(packageDirectory, packageIsModule);
+    }
+  });
+
 /** Compiles one traced `@app` package and repoints its `exports` targets at the compiled modules. */
 const compilePackagedWorkspacePackage = Effect.fn(
   'MaterializePackagedWorkspacePackages.compilePackagedWorkspacePackage',
-)(function* compilePackagedWorkspacePackage(packageDirectory: string, name: string) {
+)(function* compilePackagedWorkspacePackage(unitDirectory: string, packageDirectory: string, name: string) {
   const fs = yield* FileSystem.FileSystem;
   const manifestPath = path.join(packageDirectory, PACKAGE_MANIFEST);
   if (!(yield* fs.exists(manifestPath))) {
@@ -404,7 +528,7 @@ const compilePackagedWorkspacePackage = Effect.fn(
     Effect.mapError((cause) => failed(`${manifestPath}: ${String(cause)}`)),
   );
   const packageIsModule = manifest[MANIFEST_TYPE] === MODULE_MANIFEST_TYPE;
-  const modules = yield* collectTracedModules(packageDirectory, packageIsModule);
+  const modules = yield* completeTracedModuleGraph(unitDirectory, packageDirectory, name, packageIsModule, manifest);
   const compiledPaths = new Set(modules.map((module) => module.outputPath));
   if (modules.length > 0 && manifest[MANIFEST_IMPORTS] !== undefined) {
     return yield* Effect.fail(
@@ -491,7 +615,7 @@ export const compilePackagedWorkspacePackages = Effect.fn(
         ),
       );
     }
-    packages.push(yield* compilePackagedWorkspacePackage(packageDirectory, name));
+    packages.push(yield* compilePackagedWorkspacePackage(unit, packageDirectory, name));
   }
   return { packages } satisfies PackagedWorkspaceCompilation;
 });
