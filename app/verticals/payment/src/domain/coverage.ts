@@ -75,7 +75,9 @@ const classifyReturns = (snapshot: PaymentFundsSnapshot, collect: PaymentFundsOp
   let foreignTarget = false;
   for (const operation of snapshot.operations) {
     if (operation.kind === 'REFUND') {
-      foreignTarget ||= operation.targetOperationId !== collect.operationId;
+      // A refund proven not effected neither returned nor reserves funds, whichever collection it named.
+      foreignTarget ||=
+        operation.outcome !== 'NOT_EFFECTED_CONFIRMED' && operation.targetOperationId !== collect.operationId;
       if (operation.outcome === 'EFFECT_CONFIRMED') {
         totals.confirmed.push(operation.amount);
       } else if (isUnresolvedOutcome(operation.outcome)) {
