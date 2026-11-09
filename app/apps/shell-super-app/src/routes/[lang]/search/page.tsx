@@ -6,7 +6,7 @@ import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Match } from 'effect';
 
-import type { ShellSearchResult } from '../../../../shared/api.ts';
+import type { ShellSearchResult } from '../../../../shared/browser-api.ts';
 import { ShellContentLayout } from '../../shell-content-layout.tsx';
 import { useShellControls } from '../../use-shell-controls.ts';
 

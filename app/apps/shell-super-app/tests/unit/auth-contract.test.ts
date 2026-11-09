@@ -22,7 +22,8 @@ import {
   ShellRateLimitedProblemSchema,
   TenantCapabilityUnavailableProblemSchema,
   shellAuthenticationApiContract,
-} from '../../shared/api.ts';
+} from '../../shared/browser-api.ts';
+import { ShellAuthenticationApi as ShellServerApi, SymmyIngressGroup } from '../../shared/api.ts';
 import {
   AccessDecisionReasonCodeSchema,
   DecideAccessChangesPayloadSchema,
@@ -51,6 +52,15 @@ const problemTag = (schema: Schema.Top): SchemaAST.LiteralValue => {
   }
   return tag.literal;
 };
+
+it('shares each browser group with the server and mounts Symmy only on the server contract', () => {
+  expect(ShellServerApi.identifier).toBe(ShellAuthenticationApi.identifier);
+  expect(Object.keys(ShellServerApi.groups)).toEqual([...Object.keys(ShellAuthenticationApi.groups), 'symmy']);
+  for (const group of Object.values(ShellAuthenticationApi.groups)) {
+    expect(ShellServerApi.groups[group.identifier]).toBe(group);
+  }
+  expect(ShellServerApi.groups.symmy).toBe(SymmyIngressGroup);
+});
 
 it('publishes authentication, identity lifecycle, and gateway operations', () => {
   const authenticationEndpoints = Object.keys(ShellAuthenticationApi.groups.authentication.endpoints).toSorted();
@@ -94,9 +104,9 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
   ]);
   expect(
     Object.fromEntries(
-      Object.values(ShellAuthenticationApi.groups)
-        .filter((group) => group.identifier !== 'symmy')
-        .flatMap((group) => Object.entries(group.endpoints).map(([name, endpoint]) => [name, endpoint.path])),
+      Object.values(ShellAuthenticationApi.groups).flatMap((group) =>
+        Object.entries(group.endpoints).map(([name, endpoint]) => [name, endpoint.path]),
+      ),
     ),
   ).toEqual({
     activatePrincipalBinding: '/auth/identity/external/bindings/activate',

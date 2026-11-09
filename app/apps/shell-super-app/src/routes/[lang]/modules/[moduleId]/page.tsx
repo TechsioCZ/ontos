@@ -5,7 +5,7 @@ import { Duration, Effect, Predicate, Schema } from 'effect';
 import { useEffect, useState } from 'react';
 import type { ComponentType } from 'react';
 
-import type { ResolvedModuleTarget } from '../../../../../shared/api.ts';
+import type { ResolvedModuleTarget } from '../../../../../shared/browser-api.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import {
   moduleEntrypointLoadIdentity,

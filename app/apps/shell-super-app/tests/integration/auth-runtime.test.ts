@@ -102,7 +102,7 @@ import {
   ResolvedModuleTargetSchema,
   ShellTargetForbiddenProblemSchema,
   ShellTargetNotFoundProblemSchema,
-} from '../../shared/api.ts';
+} from '../../shared/browser-api.ts';
 import {
   makeModuleEntrypointLoadScheduler,
   moduleEntrypointLoadIdentity,

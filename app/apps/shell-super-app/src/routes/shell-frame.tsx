@@ -12,7 +12,7 @@ import { Schema } from 'effect';
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 
-import type { ShellUnavailableDeployment } from '../../shared/api.ts';
+import type { ShellUnavailableDeployment } from '../../shared/browser-api.ts';
 import { useHydrated } from './use-hydrated.ts';
 
 interface DashboardAccount {

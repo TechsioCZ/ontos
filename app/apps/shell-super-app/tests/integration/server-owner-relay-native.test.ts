@@ -130,7 +130,7 @@ import {
   TenantIdSchema,
   ShellAuthenticationRequiredProblemSchema,
   SignInResponseSchema,
-} from '../../shared/api.ts';
+} from '../../shared/browser-api.ts';
 import {
   allocateLoopbackPort,
   PackagedOwnerStartupError,

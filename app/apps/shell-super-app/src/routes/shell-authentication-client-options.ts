@@ -1,6 +1,6 @@
 import { Config, Effect } from 'effect';
 
-import { shellAuthenticationApiContract } from '../../shared/api.ts';
+import { shellAuthenticationApiContract } from '../../shared/browser-api.ts';
 
 export const shellAuthenticationClientOptionsFromRequest = (request: Request) =>
   Config.URL('BETTER_AUTH_URL').pipe(

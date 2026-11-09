@@ -8,7 +8,7 @@ import { Effect, Match, Option, Predicate, Schema } from 'effect';
 import type { Cause } from 'effect';
 import { useRef, useState } from 'react';
 
-import { SignInPayloadSchema } from '../../../../shared/api.ts';
+import { SignInPayloadSchema } from '../../../../shared/browser-api.ts';
 import { signIn } from '../../../api/auth-client.ts';
 import type { ShellAuthenticationClientError } from '../../../api/auth-client.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';

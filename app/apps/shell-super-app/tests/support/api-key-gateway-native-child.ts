@@ -4,7 +4,7 @@ import {
   shellAuthenticationApiContract,
   SwitchLegalEntityPayloadSchema,
   SwitchLegalEntityResponseSchema,
-} from '../../shared/api.ts';
+} from '../../shared/browser-api.ts';
 import { issueGatewayContext } from '@app/shared-contracts';
 import type { GatewayContextRequestSchema } from '@app/shared-contracts';
 import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';

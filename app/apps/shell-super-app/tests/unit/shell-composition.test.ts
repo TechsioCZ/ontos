@@ -9,7 +9,7 @@ import {
   makeInstalledModuleCatalogLoader,
 } from '../../api/modules/installed-module-catalog.ts';
 import { makeShellComposition, ShellCompositionUnavailableError } from '../../api/modules/shell-composition.ts';
-import { ShellCompositionSchema } from '../../shared/api.ts';
+import { ShellCompositionSchema } from '../../shared/browser-api.ts';
 import { makeShellTestAccessGate, shellTestAnswers, shellTestScope } from '../support/access-decision-double.ts';
 import type { ShellTestAccess } from '../support/access-decision-double.ts';
 

@@ -12,8 +12,8 @@ import { Context, DateTime, Effect, Exit, Layer, Option, Schema } from 'effect';
 import {
   ResourceRefSchema as SharedResourceRefSchema,
   ShellTimelineEntrySchema as SharedShellTimelineEntrySchema,
-} from '../../shared/api.ts';
-import type { ShellSearchResult as SharedShellSearchResult } from '../../shared/api.ts';
+} from '../../shared/browser-api.ts';
+import type { ShellSearchResult as SharedShellSearchResult } from '../../shared/browser-api.ts';
 import type { ShellAccessDecision, ShellAccessGate } from './shell-access-decisions.ts';
 import { shellAccessOutcome } from './shell-access-decisions.ts';
 import type { InstalledModuleCatalogError, ShellInstalledCatalog } from './installed-module-catalog.ts';

@@ -36,7 +36,7 @@ import {
   SymmyIngressSchemaErrorLive,
 } from '../../api/symmy/transport.ts';
 import type { SymmyIngressAdmission, SymmyIngressRequest } from '../../api/symmy/transport.ts';
-import { ShellServerApi } from '../../api/symmy/server-api.ts';
+import { ShellAuthenticationApi } from '../../shared/api.ts';
 import { encodeSymmySourceSelector } from '@app/symmy-integration/symmy-source-selector';
 import { SymmyInternalPriceListsProjectionSchema } from '../../api/symmy/read-projection-contracts.ts';
 
@@ -65,8 +65,8 @@ const forbidden = GatewayForbiddenProblemSchema.make({
   type: 'https://ontos.dev/problems/gateway-forbidden',
 });
 
-const fixtureApi = HttpApi.make(ShellServerApi.identifier)
-  .add(ShellServerApi.groups.symmy)
+const fixtureApi = HttpApi.make(ShellAuthenticationApi.identifier)
+  .add(ShellAuthenticationApi.groups.symmy)
   .add(
     HttpApiGroup.make('normalShell').add(
       HttpApiEndpoint.post('auth', '/auth/api-key/gateway-context', {
