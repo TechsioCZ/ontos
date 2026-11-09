@@ -1,5 +1,23 @@
 # Kontrola převodu N1 storefrontu
 
+## Mobilní procházení kategorií klávesnicí — 2026-11-09
+
+- Reálné otevření category tree dříve ponechalo fokus na tlačítku pod stromem,
+  takže následující Tab přeskočil celý strom. Po otevření nyní scoped asideRef
+  zaměří existující kit roving tab stop. Žádný zásah do stylů, dat, routování,
+  kolekce, selekce nebo šipkové logiky kitu. Desktop mount fokus nepřebírá.
+- Fresh Figma31:639 potvrzuje stávající Button secondary/outlined/md. Rozložení
+  se nepřestavuje; screenshoty před/po se liší nativním focus ringem.
+- Browser reprodukce3RED + desktopcontrolPASS. Oprava4/4 PASS: CS/EN390keyboard,
+  CS390pointer, CS1440desktop. Další4/4 průchodů potvrzuje šipky, Tab zpět na
+  přepínač, zavření/znovuotevření a Enter navigaci na skutečnou kategorii.
+  Skutečné owner GET, žádné business writes nebo overflow. Root+reviewer
+  otevřeli before/afterPNG, bounded source/interaction/visual review GO.
+- N1 regresní sada783/74, lint, typy, formát a447kanonických tokenů PASS.
+  Globální i18n gate dál hlásí28chyb mimoN1; nic se nepotlačuje.
+- Browser scénáře jsou uložená lokální QA evidence, nikoli nová CI browser sada.
+  Není to schválení celého katalogu ani pozitivní objednávkový či auth test.
+
 ## Chyba množství versus neuložená změna — 2026-11-09
 
 - Řízená chyba lokálního zápisu při platném množství dříve vedle správné

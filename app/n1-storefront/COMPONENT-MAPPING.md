@@ -1,5 +1,10 @@
 # N1 — aktuální komponentové a tokenové mapování
 
+Mobilní kategorie / Figma31:639: stávající Button secondary/outlined/md a kit
+TreeView zůstávají. Po otevření se zaměří jeho existující `[role=treeitem]`
+roving tab stop pouze uvnitř daného aside. Kit dále vlastní šipky a selekci;
+žádné CSS, nové ovladače, tokenové override nebo převzetí desktop fokusu.
+
 Neplatný/neuložený quantity draft: `QuantityField.error` v řádku košíku a
 `NumericInput` s navázaným feedback ID v mini košíku zůstávají konkrétním
 zdrojem chyby. `CartQuoteFeedback` pro tyto stavy nepřidává obecné shrnutí.

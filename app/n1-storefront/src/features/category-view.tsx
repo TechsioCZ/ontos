@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import NextLink from "next/link";
 import NextImage from "next/image";
@@ -32,6 +32,12 @@ export const CategoryView = ({
 }) => {
   const router = useRouter();
   const [browseOpen, setBrowseOpen] = useState(false);
+  const browseTree = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (browseOpen) {
+      browseTree.current?.querySelector<HTMLElement>('[role="treeitem"][tabindex="0"]')?.focus();
+    }
+  }, [browseOpen]);
   const trail = categoryTrail(catalog.categories, slug);
   const current = trail.at(-1);
   const title = current?.name ?? d.catalog;
@@ -83,6 +89,7 @@ export const CategoryView = ({
           <aside
             className={`${browseOpen ? "block" : "hidden"} w-full shrink-0 md:block md:w-n1-category-sidebar`}
             id="category-tree"
+            ref={browseTree}
           >
             <div className="border-t-2 border-border-primary bg-fill-hover p-2">
               <TreeView
