@@ -454,6 +454,10 @@ const decideCorrection = (
       reason: 'CORRECTION_LINEAGE_MISMATCH',
     });
   }
+  if (corrected.factKind === 'SOURCE_CORRECTION') {
+    // Retracting an applied correction would restore funds it reduced: no automatic unwinding (#1151).
+    return hold('CORRECTION_OVERLAPS_PRIOR_CORRECTION', corrected.operationId);
+  }
   const priorCorrections = aggregate.acceptedObservations.filter(
     (observation) => observation.factKind === 'SOURCE_CORRECTION' && observation.operationId === corrected.operationId,
   );
