@@ -170,25 +170,22 @@ const acquirePermissionDatabase = Effect.fn('PermissionAcceptance.acquireDatabas
       DATABASE_URL: connectionStringForDatabase(connections.runtime.connectionString, database),
     });
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    // Core's owner command converges equivalent histories before native migration; direct Drizzle replays both.
     for (const owner of ['packages/core-runtime', 'verticals/commerce-customer-context']) {
       const workingDirectory = path.join(workspaceRoot, owner);
       const migration = yield* spawner.spawn(
-        ChildProcess.make(
-          path.join(workingDirectory, 'node_modules', '.bin', 'drizzle-kit'),
-          ['migrate', '--config', 'drizzle.config.ts'],
-          {
-            cwd: workingDirectory,
-            env: {
-              APP_ENV_PATH: '/dev/null',
-              DATABASE_ADMIN_URL: isolated.admin.connectionString,
-              DATABASE_URL: isolated.runtime.connectionString,
-            },
-            extendEnv: true,
-            stderr: 'ignore',
-            stdin: 'ignore',
-            stdout: 'ignore',
+        ChildProcess.make('pnpm', ['run', 'db:migrate'], {
+          cwd: workingDirectory,
+          env: {
+            APP_ENV_PATH: '/dev/null',
+            DATABASE_ADMIN_URL: isolated.admin.connectionString,
+            DATABASE_URL: isolated.runtime.connectionString,
           },
-        ),
+          extendEnv: true,
+          stderr: 'inherit',
+          stdin: 'ignore',
+          stdout: 'ignore',
+        }),
       );
       const status = yield* migration.exitCode;
       if (Number(status) !== 0) {
