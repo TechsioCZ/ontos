@@ -7,16 +7,21 @@ import { ONTOS_SPICEDB_SCHEMA } from '../../packages/core-runtime/src/permission
 import { openSpiceDbGrpcRpc } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { ServiceGrantError, reconcileStagePermissionSchema } from '../demo/reconcile-stage-service-grants.mts';
 
-const RELATION_DECLARATION = '  relation self_service_grantee: principal\n';
+// The canonical schema's own `business_permission` grantee declaration, followed by the direct-use
+// predicate that reads it. The drifted fixture schema drops both, so it stays valid SpiceDB while
+// genuinely differing from the canonical schema the reconcile compares against.
+const GRANTEE_DECLARATION = '  relation containing_catalog: business_permission\n  relation grantee: principal\n';
+const DIRECT_USE_DECLARATION = '  permission direct_use = grantee & (tenant->access + legal_entity->access)\n';
 const LEGACY_RELATION = 'schema_sync_test_grantee';
 const PROFILE_ID = 'schema-sync-profile';
-const oldSchema = ONTOS_SPICEDB_SCHEMA.replace(RELATION_DECLARATION, '').replace(
-  'self_service_grantee + direct_use',
-  'direct_use',
-);
+const SCHEMA_SYNC_TENANT_ID = 'schema-sync-tenant';
+const oldSchema = ONTOS_SPICEDB_SCHEMA.replace(
+  GRANTEE_DECLARATION,
+  '  relation containing_catalog: business_permission\n',
+).replace(DIRECT_USE_DECLARATION, '  permission direct_use = tenant->access\n');
 const legacySchema = ONTOS_SPICEDB_SCHEMA.replace(
-  RELATION_DECLARATION,
-  `${RELATION_DECLARATION}  relation ${LEGACY_RELATION}: principal\n`,
+  GRANTEE_DECLARATION,
+  `${GRANTEE_DECLARATION}  relation ${LEGACY_RELATION}: principal\n`,
 );
 const readRequest = v1.ReadSchemaRequest.create({});
 
@@ -75,23 +80,39 @@ it.live('syncs canonical schema through pinned TLS, refuses occupied removals, a
     ).toBe(true);
     expect(writes).toBe(0);
     expect(yield* reconcileStagePermissionSchema(observed, 'apply')).toEqual({ applied: true, differs: false });
-    expect((yield* rpc.readSchema(readRequest)).schemaText).toContain('relation self_service_grantee: principal');
+    expect((yield* rpc.readSchema(readRequest)).schemaText).toContain('relation grantee: principal');
     expect(writes).toBe(1);
     expect(yield* reconcileStagePermissionSchema(observed, 'apply')).toEqual({ applied: false, differs: false });
     expect(yield* reconcileStagePermissionSchema(observed, 'verify')).toEqual({ applied: false, differs: false });
     expect(writes).toBe(1);
 
-    const selfServiceRelationship = v1.Relationship.create({ ...relationship, relation: 'self_service_grantee' });
-    const selfServiceUpdate = (operation: v1.RelationshipUpdate_Operation) =>
+    // The canonical direct-use predicate reads `grantee` gated by tenant access, so the exact-object
+    // proof carries the tenant membership as well. Every tuple here is test-owned and removed below.
+    const exactUseRelationships = [
+      v1.Relationship.create({ ...relationship, relation: 'grantee' }),
+      v1.Relationship.create({
+        relation: 'tenant',
+        resource: { objectId: PROFILE_ID, objectType: 'business_permission' },
+        subject: { object: { objectId: SCHEMA_SYNC_TENANT_ID, objectType: 'tenant' } },
+      }),
+      v1.Relationship.create({
+        relation: 'member',
+        resource: { objectId: SCHEMA_SYNC_TENANT_ID, objectType: 'tenant' },
+        subject,
+      }),
+    ];
+    const exactUseUpdate = (operation: v1.RelationshipUpdate_Operation) =>
       rpc.writeRelationships(
         v1.WriteRelationshipsRequest.create({
-          updates: [v1.RelationshipUpdate.create({ operation, relationship: selfServiceRelationship })],
+          updates: exactUseRelationships.map((entry) =>
+            v1.RelationshipUpdate.create({ operation, relationship: entry }),
+          ),
         }),
       );
     yield* Effect.acquireUseRelease(
-      selfServiceUpdate(v1.RelationshipUpdate_Operation.TOUCH),
+      exactUseUpdate(v1.RelationshipUpdate_Operation.TOUCH),
       () =>
-        Effect.gen(function* provesExactSelfServiceAccess() {
+        Effect.gen(function* provesExactObjectAccess() {
           for (const objectId of [PROFILE_ID, `${PROFILE_ID}-other`]) {
             const check = yield* rpc.checkPermission(
               v1.CheckPermissionRequest.create({
@@ -108,7 +129,7 @@ it.live('syncs canonical schema through pinned TLS, refuses occupied removals, a
             );
           }
         }),
-      () => selfServiceUpdate(v1.RelationshipUpdate_Operation.DELETE).pipe(Effect.orDie),
+      () => exactUseUpdate(v1.RelationshipUpdate_Operation.DELETE).pipe(Effect.orDie),
     );
 
     yield* rpc.writeSchema(v1.WriteSchemaRequest.create({ schema: legacySchema }));

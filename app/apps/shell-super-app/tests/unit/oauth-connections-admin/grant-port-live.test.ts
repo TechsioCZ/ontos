@@ -18,7 +18,7 @@ import {
   ConnectionSummarySchema as AdminConnectionSummarySchema,
 } from '@app/shared-contracts/agent-access';
 import type { AgentModuleGrant } from '@app/shared-contracts/agent-access';
-import { Effect, Layer, Option, Predicate, Schema } from 'effect';
+import { Deferred, Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { makeModuleContractFixture } from '../../../../../packages/core-runtime/src/testing/module-contract.ts';
@@ -61,6 +61,7 @@ interface FixtureOptions {
   readonly readableModules?: readonly string[];
   readonly request?: GrantAdminRequest;
   readonly rows?: readonly OAuthGrantRecord[];
+  readonly waitForScopeRead?: (concurrentReads: number) => Effect.Effect<void>;
 }
 
 const fixture = (options: FixtureOptions = {}) =>
@@ -73,6 +74,9 @@ const fixture = (options: FixtureOptions = {}) =>
     const authorityReads: string[] = [];
     let activeReads = 0;
     let maxReads = 0;
+    const finishScopeRead = Effect.sync(() => {
+      activeReads -= 1;
+    });
     const registry = grantRegistryFixture({
       findGrant: (grantId) => Effect.succeed(Option.fromUndefinedOr(rows.find((row) => row.grantId === grantId))),
       listGrants: (input) =>
@@ -184,8 +188,7 @@ const fixture = (options: FixtureOptions = {}) =>
           authorityReads.push(principalId);
           activeReads += 1;
           maxReads = Math.max(maxReads, activeReads);
-          yield* Effect.yieldNow;
-          activeReads -= 1;
+          yield* (options.waitForScopeRead?.(activeReads) ?? Effect.yieldNow).pipe(Effect.ensuring(finishScopeRead));
         }),
       snapshot,
       subjects: rows.flatMap((row) => [
@@ -436,7 +439,16 @@ it.effect('deduplicates authority by acting principal and company and bounds ind
       grantId: `grant-${index}`,
       status: 'superseded',
     }));
-    const test = yield* fixture({ rows });
+    const overlappingReads = yield* Deferred.make<boolean>();
+    const test = yield* fixture({
+      rows,
+      // Hold the first read until the second actually starts, independent of scheduler timing.
+      waitForScopeRead: (concurrentReads) =>
+        (concurrentReads === 2 ? Deferred.succeed(overlappingReads, true) : Effect.void).pipe(
+          Effect.andThen(Deferred.await(overlappingReads)),
+          Effect.asVoid,
+        ),
+    });
     const result = yield* test.grants.list(filter);
     expect(result).toHaveLength(4);
     expect(test.authorityReads.toSorted()).toEqual(identities);
