@@ -1,4 +1,4 @@
-import { subjectInspectionFixture } from '../oauth-connections-admin/subject-inspection.fixture.ts';
+import { pageCarrierCatalog, subjectInspectionFixture } from '../oauth-connections-admin/subject-inspection.fixture.ts';
 import { shellTestScope } from '../../support/access-decision-double.ts';
 // @rstest-environment node
 import { ContextAccess, OAuthGrantRegistry } from '@app/core-runtime';
@@ -12,7 +12,6 @@ import { createDraft } from '../../../api/oauth-connections/connect-service.ts';
 import type { ConnectSession } from '../../../api/oauth-connections/connect-service.ts';
 import { ConnectionUnavailable } from '../../../api/oauth-connections/errors.ts';
 import { OAuthFlow } from '../../../api/oauth-connections/oauth-flow.ts';
-import { makeCompositionSnapshot } from '../../fixtures/application-composition.ts';
 import { grantRegistryFixture, retainedGrant } from './grant-registry-fixture.ts';
 
 const cryptoFailure = PlatformError.systemError({
@@ -45,7 +44,8 @@ const fixture = (previousProfileId: Option.Option<string>, failCrypto = false) =
       oauthQuery: 'verified-query',
       writePolicy: 'read_only',
     });
-    const snapshot = yield* makeCompositionSnapshot([]);
+    // One readable module, so a draft for `all` is within the person's authority and reaches the profile step.
+    const { snapshot } = yield* pageCarrierCatalog(['work.tasks']);
     const inserted: string[] = [];
     let uuidCalls = 0;
     const nativeCrypto = Crypto.make({
@@ -66,6 +66,7 @@ const fixture = (previousProfileId: Option.Option<string>, failCrypto = false) =
         }
       : nativeCrypto;
     const inspection = subjectInspectionFixture({
+      capabilities: [{ key: 'work.tasks.page.open', modes: ['run'] }],
       snapshot,
       subjects: [
         {

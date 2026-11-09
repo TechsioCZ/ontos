@@ -7,6 +7,7 @@ import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ActionPermissionCheckError } from '../../../../../packages/core-runtime/src/actions/errors.ts';
+import { accessDecisionUnavailable } from '../../../../../packages/core-runtime/src/access/decision/errors.ts';
 import { makeModuleContractFixture } from '../../../../../packages/core-runtime/src/testing/module-contract.ts';
 import {
   AgentPlatformInvalid,
@@ -22,7 +23,7 @@ import {
   ShellInstalledModuleCatalog,
 } from '../../../api/modules/installed-module-catalog.ts';
 import { makeCompositionSnapshot } from '../../fixtures/application-composition.ts';
-import { subjectInspectionFixture } from '../oauth-connections-admin/subject-inspection.fixture.ts';
+import { pageCarrierCatalog, subjectInspectionFixture } from '../oauth-connections-admin/subject-inspection.fixture.ts';
 
 const moduleId = 'work.tasks';
 const appId = AgentAppIdSchema.make('work-tasks');
@@ -486,6 +487,141 @@ it.effect('caps the human write ceiling at approval while a module is proposable
     expect(authority.policyCap).toBe('approval');
     expect(authority.offered.map((module) => [module.moduleId, module.write])).toEqual([[moduleId, true]]);
   }),
+);
+
+/** The human's read rights of each carrier's capability, so every carrier is inspected. */
+const readableCarriers = (ids: readonly string[]) =>
+  ids.map((id) => ({ key: `${id}.page.open`, modes: ['run'] as const }));
+
+/** The subject-only request the connection ceiling makes: the person in their own company. */
+const humanRequest = {
+  queryScope: { legalEntityId, tenantId },
+  requesterScope: scope,
+  subject: { principalId, tenantId },
+};
+
+it.effect('inspects carriers at most two at a time and keeps carrier order whatever finishes first', () =>
+  Effect.gen(function* boundedCarriers() {
+    const ids = ['alpha.pages', 'beta.pages', 'gamma.pages'];
+    const { installed, snapshot } = yield* pageCarrierCatalog(ids);
+    // Each read yields this many times before it finishes; alpha is first in carrier order and finishes last.
+    const turns = new Map([
+      ['alpha.pages.page.open', 6],
+      ['beta.pages.page.open', 2],
+      ['gamma.pages.page.open', 0],
+    ]);
+    const finished: string[] = [];
+    const probe = { active: 0, finished, maxActive: 0 };
+    const inspection = subjectInspectionFixture({
+      capabilities: readableCarriers(ids),
+      onCapabilityRead: (key) =>
+        Effect.gen(function* holdCarrierRead() {
+          probe.active += 1;
+          probe.maxActive = Math.max(probe.maxActive, probe.active);
+          yield* Effect.forEach(Array.from({ length: turns.get(key) ?? 0 }), () => Effect.yieldNow, { discard: true });
+          probe.active -= 1;
+          probe.finished.push(key);
+        }),
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const result = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+    );
+    // Concurrency is bounded at two, and two really overlap.
+    expect(probe.maxActive).toBe(2);
+    // Access follows carrier order, not completion order: beta and gamma finished before alpha.
+    expect(probe.finished.indexOf('alpha.pages.page.open')).toBeGreaterThan(
+      probe.finished.indexOf('beta.pages.page.open'),
+    );
+    expect([...result.access]).toEqual(ids);
+  }),
+);
+
+it.effect('fails the whole carrier load when one carrier cannot be read, returning no partial access', () =>
+  Effect.gen(function* oneUnreadableCarrier() {
+    const ids = ['alpha.pages', 'beta.pages'];
+    const { installed, snapshot } = yield* pageCarrierCatalog(ids);
+    const inspection = subjectInspectionFixture({
+      capabilities: readableCarriers(ids),
+      onCapabilityRead: (key) =>
+        key === 'beta.pages.page.open'
+          ? Effect.fail(accessDecisionUnavailable('beta carrier unreadable'))
+          : Effect.void,
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    // The load is an Effect failure: nothing is returned, so the alpha carrier's access is not kept either.
+    const failure = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+      Effect.flip,
+    );
+    expect(Predicate.isTagged(failure, 'SubjectInspectionUnavailable')).toBe(true);
+  }),
+);
+
+it.effect('loads the installed-module catalog once per subject read, however many carriers it inspects', () =>
+  Effect.gen(function* catalogLoadedOnce() {
+    const ids = ['alpha.pages', 'beta.pages', 'gamma.pages'];
+    const { installed, snapshot } = yield* pageCarrierCatalog(ids);
+    let loads = 0;
+    const counted = {
+      load: Effect.suspend(() => {
+        loads += 1;
+        return Effect.succeed(installed);
+      }),
+    };
+    const inspection = subjectInspectionFixture({
+      capabilities: readableCarriers(ids),
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const result = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, counted),
+      Effect.provide(inspection.layer),
+    );
+    expect(loads).toBe(1);
+    expect([...result.access]).toEqual(ids);
+  }),
+);
+
+it.effect(
+  'gives a denied subject no access and inspects no carrier or Action, while still loading the catalog once',
+  () =>
+    Effect.gen(function* deniedSubjectInspected() {
+      const ids = ['alpha.pages', 'beta.pages'];
+      const { installed, snapshot } = yield* pageCarrierCatalog(ids);
+      let capabilityReads = 0;
+      let loads = 0;
+      const counted = {
+        load: Effect.suspend(() => {
+          loads += 1;
+          return Effect.succeed(installed);
+        }),
+      };
+      // No subject is registered, so the scope decision is denied and no capability is read.
+      const inspection = subjectInspectionFixture({
+        capabilities: readableCarriers(ids),
+        onCapabilityRead: () =>
+          Effect.sync(() => {
+            capabilityReads += 1;
+          }),
+        snapshot,
+        subjects: [],
+      });
+      const result = yield* subjectModuleAccess(humanRequest).pipe(
+        Effect.provideService(ShellInstalledModuleCatalog, counted),
+        Effect.provide(inspection.layer),
+      );
+      expect(result.access.size).toBe(0);
+      expect(result.propose.size).toBe(0);
+      expect(result.run.size).toBe(0);
+      expect(result.inspectionOnly).toBe(true);
+      expect(capabilityReads).toBe(0);
+      expect(loads).toBe(1);
+    }),
 );
 
 it.effect('denies a foreign-tenant subject without changing the requester tenant', () =>
