@@ -2,9 +2,9 @@ import {
   OwnerActionApprovalSchemaErrorLive,
   makeOwnerActionApprovalApiLive,
 } from '@app/core-runtime/access/approvals/owner-http';
+import type { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
 import {
   ActionMandateDispatcher,
-  OwnerActionApprovals,
   makeOwnerActionApprovalsLive,
 } from '@app/core-runtime/access/approvals/owner-runtime';
 import {
@@ -24,16 +24,14 @@ import {
   ContextAccessLive,
   CorePersistenceLive,
   CoreSearchQueryRuntimeLive,
-  CoreSearchQueryRuntime,
   CoreSearchProjectionStoreLive,
   DatabaseConfigLive,
-  GatewayAssertionRedemptionService,
   ReadRuntime,
   makeReadRuntimeLive,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
-import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import type {
+  AccessDecisionGate,
   AccessDecisionLog,
   AccessIntent,
   AccessPrincipalKindSource,
@@ -50,6 +48,8 @@ import type {
   ActionRuntimeService,
   ReadRuntimeService,
   OperationalScopeResolverService,
+  CoreSearchQueryRuntime,
+  GatewayAssertionRedemptionService,
 } from '@app/core-runtime';
 import { RetireMarketPayloadSchema, MarketCommandRejected } from '../shared/action-contracts.ts';
 import type { RetireMarketPayload } from '../shared/action-contracts.ts';
@@ -684,25 +684,6 @@ export const makeCommerceMarketCatalogApiRuntime = (
     transport: transportLive,
   });
 };
-
-/** Assemble this owner's unchanged HTTP runtime from caller-owned scoped services. */
-export const commerceMarketCatalogApiRuntimeFromContext = Effect.gen(
-  function* commerceMarketCatalogApiRuntimeFromContext() {
-    const readRuntime = yield* ReadRuntime;
-    const actionRuntime = yield* ActionRuntime;
-    const ownerApprovals = yield* OwnerActionApprovals;
-    const redemption = yield* GatewayAssertionRedemptionService;
-    const administrationAuthority = yield* AccessDecisionGate;
-    const searchRuntime = yield* CoreSearchQueryRuntime;
-    return makeCommerceMarketCatalogApiRuntime(
-      Layer.succeed(ReadRuntime, readRuntime),
-      Layer.merge(Layer.succeed(ActionRuntime, actionRuntime), Layer.succeed(OwnerActionApprovals, ownerApprovals)),
-      Layer.succeed(GatewayAssertionRedemptionService, redemption),
-      Layer.succeed(AccessDecisionGate, administrationAuthority),
-      Layer.succeed(CoreSearchQueryRuntime, searchRuntime),
-    );
-  },
-);
 
 const apiRuntime = makeCommerceMarketCatalogApiRuntime(
   productionReadRuntimeLive,

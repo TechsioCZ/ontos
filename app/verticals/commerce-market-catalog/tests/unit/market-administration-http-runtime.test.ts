@@ -34,7 +34,7 @@ import { HttpServer, HttpServerResponse } from 'effect/http';
 import { assert, expect, it, rstest } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
-import { commerceMarketCatalogApiRuntimeFromContext } from '../../api/index.ts';
+import { commerceMarketCatalogApiRuntimeFromContext } from '../fixtures/market-http-runtime-from-context.ts';
 import { commerceMarketCatalogApiContract } from '../../shared/api.ts';
 import { MarketAdministrationResponseSchema } from '../../shared/apis/market-administration.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';

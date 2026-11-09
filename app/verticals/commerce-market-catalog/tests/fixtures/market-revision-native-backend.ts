@@ -95,11 +95,11 @@ import { defineEffectBff, dispatchEffectBffRequest } from '@modern-js/bff-effect
 import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
 import {
   commerceMarketCatalogActionRuntimeDependenciesLive,
-  commerceMarketCatalogApiRuntimeFromContext,
   MarketRetirementActionRuntimeLive,
   MarketRetirementRuntimeBindings,
 } from '../../api/index.ts';
 import { MarketRetirementImpactAuthorityLive } from '../../src/integrations/market-retirement-impact.ts';
+import { commerceMarketCatalogApiRuntimeFromContext } from './market-http-runtime-from-context.ts';
 import {
   GatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive,

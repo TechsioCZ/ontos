@@ -5,6 +5,7 @@ import {
   isArrayBindingPattern,
   isArrayLiteralExpression,
   isAsExpression,
+  isArrowFunction,
   isBindingElement,
   isCallExpression,
   isFunctionLikeDeclaration,
@@ -16,7 +17,10 @@ import {
   isPropertyAccessExpression,
   isPropertyAssignment,
   isSatisfiesExpression,
+  isReturnStatement,
+  isYieldExpression,
   isShorthandPropertyAssignment,
+  isSpreadElement,
   isVariableDeclaration,
 } from '@typescript/native/unstable/ast/is';
 import { API, isTypeReference, isUnionType, SymbolFlags, TypeFlags } from '@typescript/native/unstable/sync';
@@ -93,6 +97,20 @@ const unwrap = (node: Node): Node =>
     : node;
 
 const isCall = (node: Node): node is CallExpression => isCallExpression(node);
+
+/** `Object.freeze(value)` returns its argument unchanged. */
+const isObjectFreeze = (node: Node): boolean => {
+  if (!isCall(node)) {
+    return false;
+  }
+  const callee = unwrap(node.expression);
+  return (
+    isPropertyAccessExpression(callee) &&
+    callee.name.text === 'freeze' &&
+    isIdentifier(callee.expression) &&
+    callee.expression.text === 'Object'
+  );
+};
 
 /** The member name of a `Namespace.member(...)` call, e.g. `provide` for `Layer.provide(live)`. */
 const calledMember = (node: Node): string | undefined => {
@@ -213,6 +231,51 @@ const analyzeApiRoot = (root: string, project: Project, file: string): readonly 
     };
   };
 
+  /** The elements of the array literal a spread names, or `undefined` when they cannot be read. */
+  const spreadElements = (node: Node, visited: ReadonlySet<Node>): readonly Node[] | undefined => {
+    const expression = unwrap(node);
+    if (visited.has(expression)) {
+      return undefined;
+    }
+    const seen = new Set(visited).add(expression);
+    if (isArrayLiteralExpression(expression)) {
+      // A nested spread changes the positions after it; only a flat literal maps elements to positions.
+      return expression.elements.some((element) => isSpreadElement(element)) ? undefined : expression.elements;
+    }
+    if (isCall(expression) && isObjectFreeze(expression)) {
+      const [frozen] = expression.arguments;
+      return frozen === undefined ? undefined : spreadElements(frozen, seen);
+    }
+    const initializer = isIdentifier(expression) ? initializerOf(expression) : undefined;
+    return initializer === undefined ? undefined : spreadElements(initializer, seen);
+  };
+
+  /**
+   * Call arguments by parameter position, with each spread tuple expanded into its elements, e.g. `...arguments`
+   * bound to `Object.freeze([...] as const)`. A spread whose elements cannot be read stands for every later
+   * position, so reading any of them reports the gap instead of skipping it.
+   */
+  const argumentAt = (args: readonly Node[], index: number, visited: ReadonlySet<Node>): Node | undefined => {
+    let position = 0;
+    for (const argument of args) {
+      if (!isSpreadElement(argument)) {
+        if (position === index) {
+          return argument;
+        }
+        position += 1;
+        continue;
+      }
+      const elements = spreadElements(argument.expression, visited);
+      if (elements === undefined) {
+        return argument.expression;
+      }
+      if (index < position + elements.length) {
+        return elements[index - position];
+      }
+      position += elements.length;
+    }
+    return undefined;
+  };
   /** The arguments the API root passes for a factory parameter: the Layers the deployment actually mounts. */
   const factoryArguments = (factory: Node, index: number): readonly Node[] => {
     const binding = factory.parent;
@@ -224,7 +287,7 @@ const analyzeApiRoot = (root: string, project: Project, file: string): readonly 
     const visit = (node: Node): void => {
       if (isCall(node)) {
         const callee = unwrap(node.expression);
-        const argument = node.arguments[index];
+        const argument = argumentAt(node.arguments, index, new Set());
         if (
           argument !== undefined &&
           isIdentifier(callee) &&
@@ -240,6 +303,72 @@ const analyzeApiRoot = (root: string, project: Project, file: string): readonly 
     return found;
   };
 
+  /**
+   * Services an Action runtime Layer supplies to the Actions it runs. The governed Action runner hands each handler's
+   * requirements to `ActionRuntime.runAction`, so a runtime built by `Layer.effect` that runs its Actions as
+   * `runtime.runAction(input).pipe(Effect.provideService(Service, value))` discharges them per invocation: the
+   * Market retirement runtime binds its request-local settlement that way.
+   */
+  /**
+   * `inner.runAction(input)` inside `runAction: (input) => ...`: the runtime hands the invocation it received, with
+   * the handler's requirements, to the runtime it wraps. Other Action runs it starts for itself discharge nothing.
+   */
+  const runsOwnInvocation = (run: CallExpression): boolean => {
+    const [input, ...rest] = run.arguments;
+    if (calledMember(run) !== 'runAction' || input === undefined || rest.length > 0 || !isIdentifier(unwrap(input))) {
+      return false;
+    }
+    const parameter = declarationOf(unwrap(input));
+    const implementation = parameter === undefined ? undefined : parameter.parent;
+    const property = implementation === undefined ? undefined : implementation.parent;
+    return (
+      parameter !== undefined &&
+      isParameterDeclaration(parameter) &&
+      property !== undefined &&
+      isPropertyAssignment(property) &&
+      isIdentifier(property.name) &&
+      property.name.text === 'runAction'
+    );
+  };
+  const returnsInvocation = (node: Node): boolean => {
+    const { parent } = node;
+    if (
+      isAsExpression(parent) ||
+      isSatisfiesExpression(parent) ||
+      isNonNullExpression(parent) ||
+      isParenthesizedExpression(parent)
+    ) {
+      return returnsInvocation(parent);
+    }
+    if (isYieldExpression(parent)) {
+      return isReturnStatement(parent.parent);
+    }
+    return isReturnStatement(parent) || (isArrowFunction(parent) && parent.body === node);
+  };
+
+  const actionRunDischarges = (layer: Node): Services => {
+    const discharged = new Map<number, string>();
+    const visit = (node: Node): void => {
+      const run = isCall(node) && calledMember(node) === 'pipe' ? unwrap(calleeObject(node)) : undefined;
+      if (run !== undefined && isCall(node) && isCall(run) && runsOwnInvocation(run) && returnsInvocation(node)) {
+        for (const step of node.arguments) {
+          const operation = unwrap(step);
+          const [tag] = isCall(operation) && calledMember(operation) === 'provideService' ? operation.arguments : [];
+          let symbol = tag === undefined ? undefined : checker.getSymbolAtLocation(unwrap(tag));
+          if (symbol !== undefined && symbol.flags === SymbolFlags.Alias) {
+            symbol = checker.getAliasedSymbol(symbol);
+          }
+          const service = symbol === undefined ? undefined : checker.getDeclaredTypeOfSymbol(symbol);
+          if (service !== undefined) {
+            discharged.set(service.id, checker.typeToString(service));
+          }
+        }
+      }
+      node.forEachChild(visit);
+    };
+    visit(layer);
+    return discharged;
+  };
   /** Plain services a Layer outputs; route middleware outputs only request markers, never the service itself. */
   const outputsOf = (node: Node, visited: ReadonlySet<Node>): Services => {
     const layer = unwrap(node);
@@ -271,11 +400,17 @@ const analyzeApiRoot = (root: string, project: Project, file: string): readonly 
         return declared;
       }
       const passed = factoryArguments(parameter.factory, parameter.index);
-      return passed.length === 0 ? declared : union(declared, intersection(passed.map((arg) => outputsOf(arg, seen))));
+      if (passed.length === 0) {
+        return declared;
+      }
+      return union(declared, intersection(passed.map((argument) => outputsOf(argument, seen))));
     }
     const member = calledMember(layer);
     if (!isCall(layer) || member === undefined) {
       return declared;
+    }
+    if (member === 'effect') {
+      return union(declared, actionRunDischarges(layer));
     }
     if (MERGING_COMBINATORS.has(member)) {
       return union(declared, ...layer.arguments.map((argument) => outputsOf(argument, seen)));
