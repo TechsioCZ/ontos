@@ -15,6 +15,9 @@
  *   - a target that resolves outside the packaged output, or that no traced package exports, fails the build. The
  *     packaged tree never falls back to an ancestor workspace or a guessed global install.
  *
+ * The walk starts from the unit's own modules and from the ES module entries every packaged workspace package the unit
+ * declares exports, because a consumer loads those by import whether or not the unit's graph reaches them.
+ *
  * Only missing `.js`, `.mjs`, `.cjs` and `.json` files are copied, each at its own path inside its package, so a
  * module reached through two entries stays one instance. CommonJS `require` edges are not walked: the trace already
  * analysed them. Dynamic `import()` edges are not walked either, because they do not link at load time.
@@ -79,6 +82,7 @@ const failed = (message: string) => new PackagedNodeDependencyError({ message })
 const PackageManifestSchema = Schema.StructWithRest(
   Schema.Struct({
     dependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+    exports: Schema.optionalKey(Schema.Json),
     name: Schema.String,
     optionalDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
     peerDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
@@ -121,7 +125,8 @@ interface ResolverResult {
 export interface NodeDependencyCompletionOptions {
   /**
    * Unit-relative modules to start the walk from. They must lie outside the traced `node_modules`, because a package
-   * file has no declaring owner until an entry reaches it. Default: every `.js`/`.mjs` the unit carries outside it.
+   * file has no declaring owner until an entry reaches it. Default: every `.js`/`.mjs` the unit carries outside it, and
+   * the ES module entries of the workspace packages it declares.
    */
   readonly roots?: readonly string[];
 }
@@ -277,6 +282,57 @@ const staticSpecifiers = Effect.fn('CompletePackagedNodeDependencies.staticSpeci
   }).visit(parsed.program);
   return specifiers;
 });
+
+/** Conditions whose `exports` targets no ES module importer of the packaged tree selects. */
+const NON_IMPORT_CONDITIONS = new Set(['require', 'types']);
+
+/** Every `./` target an `exports` value can select for an import, in its declared order. */
+const isJsonObject = Schema.is(Schema.JsonObject);
+const exportTargets = (value: Schema.Json | undefined): readonly string[] => {
+  if (Predicate.isString(value)) {
+    return value.startsWith('./') ? [value] : [];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((entry: Schema.Json) => exportTargets(entry));
+  }
+  if (isJsonObject(value)) {
+    return Object.entries(value).flatMap(([condition, nested]) =>
+      NON_IMPORT_CONDITIONS.has(condition) ? [] : exportTargets(nested),
+    );
+  }
+  return [];
+};
+
+/**
+ * The compiled ES module entries of each packaged workspace package the unit declares, as the packaged manifest's
+ * `exports` names them (materialize repoints them at the compiled modules). A consumer loads these by import, so they
+ * are walk roots even when the unit's own graph never reaches them. Undeclared packages are not roots: they are
+ * verified only when a declaring package imports them.
+ */
+const workspaceExportRoots = Effect.fn('CompletePackagedNodeDependencies.workspaceExportRoots')(
+  function* workspaceExportRoots(output: string, declared: ReadonlySet<string>) {
+    const fs = yield* FileSystem.FileSystem;
+    const scope = path.join(output, NODE_MODULES, WORKSPACE_PACKAGE_SCOPE);
+    if (!(yield* fs.exists(scope))) {
+      return [];
+    }
+    const roots: string[] = [];
+    for (const name of (yield* fs.readDirectory(scope)).toSorted()) {
+      const packageRoot = path.join(scope, name);
+      const manifest = yield* readManifest(path.join(packageRoot, PACKAGE_MANIFEST));
+      if (!declared.has(manifest.name)) {
+        continue;
+      }
+      for (const target of exportTargets(manifest.exports)) {
+        const file = yield* canonicalPath(path.join(packageRoot, target));
+        if (isInside(packageRoot, file) && SCANNED_EXTENSIONS.has(path.extname(file)) && (yield* fs.exists(file))) {
+          roots.push(file);
+        }
+      }
+    }
+    return roots;
+  },
+);
 
 /**
  * Resolves every request in one native Node process. The process first resolves a probe whose answer is known, so a
@@ -480,10 +536,9 @@ const ownerOf = Effect.fn('CompletePackagedNodeDependencies.ownerOf')(function* 
   if (packageRoot === undefined) {
     return context.unitOwner;
   }
-  const source = context.sources.get(packageRoot);
-  if (source === undefined) {
-    return yield* Effect.fail(failed(`${file}: its package has no verified declaring owner`));
-  }
+  // A package reached without an import edge is a workspace export root, which only the unit's declaration can verify.
+  const source =
+    context.sources.get(packageRoot) ?? (yield* ensureVerifiedSource(context.sources, packageRoot, context.unitOwner));
   return { declared: source.declared, manifest: path.join(source.directory, PACKAGE_MANIFEST), name: source.name };
 });
 
@@ -571,6 +626,7 @@ export const completePackagedNodeDependencies = Effect.fn('CompletePackagedNodeD
           roots.push(file);
         }
       }
+      roots.push(...(yield* workspaceExportRoots(output, context.unitOwner.declared)));
     } else {
       for (const root of options.roots) {
         const file = yield* canonicalPath(path.resolve(unit, root));

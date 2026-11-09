@@ -45,6 +45,7 @@ const SHARED_ENTRY_SOURCE = [
 
 const ENTRY_OBSERVATION = Schema.fromJsonString(Schema.Struct({ core: Schema.String, legacy: Schema.String }));
 const SHARED_OBSERVATION = Schema.fromJsonString(Schema.Struct({ shared: Schema.Boolean }));
+const CORE_OBSERVATION = Schema.fromJsonString(Schema.Struct({ core: Schema.String }));
 
 /** A package manifest as the text a `package.json` holds. */
 const json = (value: Schema.Json) => `${JSON.stringify(value, null, 2)}\n`;
@@ -218,5 +219,31 @@ it.effect('refuses an import that resolves to an ancestor install instead of the
     const error = yield* Effect.flip(completePackagedNodeDependencies(fixture.unit));
     expect(error.message).toContain('outside the packaged output');
     expect(existsSync(path.join(fixture.output, 'node_modules', 'ghost-lib'))).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('completes a workspace package the unit never imports, when a consumer loads its export by import', () =>
+  Effect.gen(function* completesExportRoot() {
+    const root = yield* temporaryRoot;
+    const fixture = yield* Effect.promise(() =>
+      writeFixture(root, { apps: ['core'], entry: "process.stdout.write(JSON.stringify({ core: 'unused' }));\n" }),
+    );
+    const completion = yield* completePackagedNodeDependencies(fixture.unit);
+    expect(completion.copied).toEqual([path.join(PACKAGED_DIRECTORY, 'node_modules', DEPENDENCY, 'index.js')]);
+    yield* Effect.promise(() => rm(fixture.sourceInstall, { force: true, recursive: true }));
+
+    const probe = spawnSync(
+      process.execPath,
+      [
+        '--input-type=module',
+        '--eval',
+        "const { core } = await import('@app/core'); process.stdout.write(JSON.stringify({ core }));",
+      ],
+      { cwd: fixture.output, encoding: ENCODING },
+    );
+    expect(probe.status).toBe(0);
+    expect(Result.getOrThrow(Schema.decodeUnknownResult(CORE_OBSERVATION)(probe.stdout ?? ''))).toEqual({
+      core: 'dep-lib-esm',
+    });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
