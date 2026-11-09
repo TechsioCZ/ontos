@@ -14,24 +14,24 @@ import { Cause, ConfigProvider, DateTime, Effect, Exit, Layer, Option, Redacted,
 import { FetchHttpClient } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
-import { commerceCustomerContextRegistration } from '../../../commerce-customer-context/vertical.registration.ts';
+import { commerceCustomerContextRegistration } from '../../verticals/commerce-customer-context/vertical.registration.ts';
 import {
   OperationalScopeTransaction,
   installOperationalScopeFromTransactionService,
-} from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
-import type { OperationalScopeTransactionService } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
-import { insideDatabaseTransaction } from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
-import { withModuleOperationExecution } from '../../../../packages/core-runtime/src/modules/module-operation-execution.ts';
-import { manageMarketRetirementAdmissionAction } from '../../src/actions/manage-market-retirement-admission.action.ts';
-import type { marketRetirementAdmissions } from '../../src/database/schema.ts';
-import { MarketRetirementImpactAuthorityLive } from '../../src/integrations/market-retirement-impact.ts';
-import { prepareMarketRetirementAdmissionServices } from '../../src/services/market-retirement-admission-preflight.ts';
-import { makeMarketRetirementAdmissionService } from '../../src/services/market-retirement-admission.service.ts';
-import { commerceMarketCatalogBackendRegistration } from '../../vertical.runtime-declaration.ts';
+} from '../../packages/core-runtime/src/db/scoped-transaction.ts';
+import type { OperationalScopeTransactionService } from '../../packages/core-runtime/src/db/scoped-transaction.ts';
+import { insideDatabaseTransaction } from '../../packages/core-runtime/src/db/transaction-io-guard.ts';
+import { withModuleOperationExecution } from '../../packages/core-runtime/src/modules/module-operation-execution.ts';
+import { manageMarketRetirementAdmissionAction } from '../../verticals/commerce-market-catalog/src/actions/manage-market-retirement-admission.action.ts';
+import type { marketRetirementAdmissions } from '../../verticals/commerce-market-catalog/src/database/schema.ts';
+import { MarketRetirementImpactAuthorityLive } from '../../verticals/commerce-market-catalog/src/integrations/market-retirement-impact.ts';
+import { prepareMarketRetirementAdmissionServices } from '../../verticals/commerce-market-catalog/src/services/market-retirement-admission-preflight.ts';
+import { makeMarketRetirementAdmissionService } from '../../verticals/commerce-market-catalog/src/services/market-retirement-admission.service.ts';
+import { commerceMarketCatalogBackendRegistration } from '../../verticals/commerce-market-catalog/vertical.runtime-declaration.ts';
 import {
   ManageMarketRetirementAdmissionPayloadSchema,
   MarketRetirementStoredBasisSchema,
-} from '../../shared/market-retirement-admission.ts';
+} from '../../verticals/commerce-market-catalog/shared/market-retirement-admission.ts';
 
 /**
  * The reported defect: the delegated gateway issuance ran inside the owner's database transaction of
@@ -53,6 +53,7 @@ const requestCorrelation = 'retirement-admission-phase-boundary';
 const effectiveAt = '2026-12-01T00:00:00.000Z';
 const observedAt = '2026-11-30T23:59:59.000Z';
 const assessmentDigest = 'd'.repeat(64);
+const customerContextRevision = 'customer-context:revision:17';
 const marketRef = {
   moduleId: 'commerce.market-catalog',
   resourceId: marketId,
@@ -91,13 +92,13 @@ const storedBasis = Schema.decodeUnknownSync(MarketRetirementStoredBasisSchema)(
       {
         completenessEvidence: {
           observedAt,
-          ownerRevision: 'customer-context:revision:17',
+          ownerRevision: customerContextRevision,
           scope: { kind: 'EXACT_PREDICATE', predicateRef: 'market:exact' },
         },
         currentness: 'CURRENT',
         digest: 'e'.repeat(64),
         generation: 'customer-context:g17',
-        ownerRevision: 'customer-context:revision:17',
+        ownerRevision: customerContextRevision,
         sourceId: 'commerce.customer-context.market-bootstrap-policy',
       },
     ],
@@ -135,13 +136,13 @@ const assessmentResponse = {
     {
       completenessEvidence: {
         observedAt,
-        ownerRevision: 'customer-context:revision:17',
+        ownerRevision: customerContextRevision,
         scope: { kind: 'EXACT_PREDICATE', predicateRef: 'market:exact' },
       },
       currentness: 'CURRENT',
       digest: 'e'.repeat(64),
       generation: 'customer-context:g17',
-      ownerRevision: 'customer-context:revision:17',
+      ownerRevision: customerContextRevision,
       sourceId: 'commerce.customer-context.market-bootstrap-policy',
     },
   ],

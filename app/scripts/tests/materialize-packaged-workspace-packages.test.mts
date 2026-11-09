@@ -1,0 +1,356 @@
+import { spawnSync } from 'node:child_process';
+import { existsSync, realpathSync, statSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+import { NodeServices } from '@effect/platform-node';
+import { Effect, Exit, Result, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+
+import { compilePackagedWorkspacePackages, PACKAGED_DIRECTORY } from '../materialize-packaged-workspace-packages.mts';
+
+const ENCODING = 'utf-8';
+const PACKAGE_MANIFEST = 'package.json';
+const PROBE = 'probe.mjs';
+/** The subpath a package publishes its root entry under, in `package.json` and in an import specifier. */
+const ROOT_EXPORT = '.';
+const ENTRY_SUBPATH = './src/index.ts';
+const ENTRY_SOURCE = 'src/index.ts';
+const ENTRY_OUTPUT = 'src/index.js';
+
+const PACKAGED_CONTRACTS = '@app/packaged-contracts';
+const TRACED_CONTRACTS = '@app/traced-contracts';
+const COLLIDING_CONTRACTS = '@app/colliding-contracts';
+const DANGLING_CONTRACTS = '@app/dangling-contracts';
+const STABLE_CONTRACTS = '@app/stable-contracts';
+const RELATIVE_CONTRACTS = '@app/relative-contracts';
+
+/** A traced workspace package manifest, as this step reads it. */
+interface WorkspacePackageManifest {
+  readonly exports: Readonly<Record<string, string>>;
+  readonly name: string;
+  readonly type: string;
+  readonly version: string;
+}
+
+const manifestOf = (name: string, exports: Readonly<Record<string, string>>): WorkspacePackageManifest => ({
+  exports,
+  name,
+  type: 'module',
+  version: '0.1.0',
+});
+
+/** Writes one `@app/*` package: its manifest, then every file below it keyed by path inside the package. */
+const writeWorkspacePackage = async (
+  nodeModulesDirectory: string,
+  manifest: WorkspacePackageManifest,
+  files: Readonly<Record<string, string>>,
+) => {
+  // The package name is its install path: `@app/contracts` installs as `node_modules/@app/contracts`.
+  const directory = path.join(nodeModulesDirectory, manifest.name);
+  await mkdir(directory, { recursive: true });
+  await writeFile(path.join(directory, PACKAGE_MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`);
+  await Promise.all(
+    Object.entries(files).map(async ([relative, text]) => {
+      const file = path.join(directory, relative);
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, text);
+    }),
+  );
+  return directory;
+};
+
+/** The traced install one unit's packaged output resolves `@app/*` through. */
+const packagedNodeModules = (unit: string) => path.join(unit, PACKAGED_DIRECTORY, 'node_modules');
+
+const unitUnder = (root: string) => path.join(root, 'apps', 'shell-super-app');
+
+const PackageManifestDocument = Schema.fromJsonString(
+  Schema.Struct({ exports: Schema.Record(Schema.String, Schema.String) }),
+);
+
+const readExports = async (directory: string) => {
+  const manifestText = await readFile(path.join(directory, PACKAGE_MANIFEST), ENCODING);
+  return Result.getOrThrow(Schema.decodeUnknownResult(PackageManifestDocument)(manifestText)).exports;
+};
+
+const OriginObservation = Schema.fromJsonString(Schema.Struct({ origin: Schema.String, resolved: Schema.String }));
+const TracedObservation = Schema.fromJsonString(
+  Schema.Struct({ deep: Schema.String, helper: Schema.Number, legacy: Schema.String, nested: Schema.String }),
+);
+
+/** Runs a probe inside the packaged tree, so `@app/*` resolves through `.output/node_modules`. */
+const runProbe = (packagedDirectory: string) => {
+  const result = spawnSync(process.execPath, [PROBE], { cwd: packagedDirectory, encoding: ENCODING });
+  return { status: result.status, stderr: result.stderr ?? '', stdout: result.stdout ?? '' };
+};
+
+/** A probe that reports which copy of a package Node loaded, and the file it resolved. */
+const originProbe = (name: string) =>
+  [
+    `const { origin } = await import('${name}');`,
+    `process.stdout.write(JSON.stringify({ origin, resolved: import.meta.resolve('${name}') }));`,
+    '',
+  ].join('\n');
+
+const writeProbe = (packagedDirectory: string, source: string) =>
+  writeFile(path.join(packagedDirectory, PROBE), source);
+
+const resolvedInsidePackaged = (resolved: string, packagedDirectory: string) =>
+  resolved.startsWith(pathToFileURL(realpathSync(packagedDirectory)).href);
+
+/** Every path below `directory`, mapped to its text, so two runs can be compared byte for byte. */
+const snapshotTree = async (directory: string) => {
+  const relativePaths = await readdir(directory, { recursive: true });
+  const entries = await Promise.all(
+    relativePaths.toSorted().map(async (relative): Promise<[string, string]> => {
+      const absolute = path.join(directory, relative);
+      return [relative, statSync(absolute).isFile() ? await readFile(absolute, ENCODING) : ''];
+    }),
+  );
+  return Object.fromEntries(entries);
+};
+
+const temporaryRoot = Effect.acquireRelease(
+  Effect.tryPromise(() => mkdtemp(path.join(tmpdir(), 'ontos-packaged-workspace-'))),
+  (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+);
+
+it.effect('loads the packaged copy from inside .output instead of the installed workspace copy', () =>
+  Effect.gen(function* loadsPackagedCopy() {
+    const root = yield* temporaryRoot;
+    const unit = unitUnder(root);
+    const packaged = path.join(unit, PACKAGED_DIRECTORY);
+    // The installed workspace carries the same package with a different value, so the probe says which won.
+    const installed = yield* Effect.promise(() =>
+      writeWorkspacePackage(path.join(unit, 'node_modules'), manifestOf(PACKAGED_CONTRACTS, { '.': ENTRY_SUBPATH }), {
+        [ENTRY_SOURCE]: "export const origin = 'installed-workspace';\n",
+      }),
+    );
+    const traced = yield* Effect.promise(() =>
+      writeWorkspacePackage(
+        packagedNodeModules(unit),
+        manifestOf(PACKAGED_CONTRACTS, { '.': ENTRY_SUBPATH, './value': './src/value.ts' }),
+        {
+          [ENTRY_SOURCE]: "export { origin } from './value.ts';\n",
+          'src/value.ts': "export const origin = 'packaged-output';\n",
+        },
+      ),
+    );
+    yield* Effect.promise(() => writeProbe(packaged, originProbe(PACKAGED_CONTRACTS)));
+
+    // Node refuses to strip types under `node_modules`, so the traced copy is unloadable before this step.
+    expect(runProbe(packaged).stderr).toContain('ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING');
+
+    const compilation = yield* compilePackagedWorkspacePackages(unit);
+    expect(compilation.packages).toHaveLength(1);
+    expect(compilation.packages[0]?.repointed).toEqual([ROOT_EXPORT, './value']);
+
+    const after = runProbe(packaged);
+    expect(after.status).toBe(0);
+    const observed = Result.getOrThrow(Schema.decodeUnknownResult(OriginObservation)(after.stdout));
+    expect(observed.origin).toBe('packaged-output');
+    expect(resolvedInsidePackaged(observed.resolved, packaged)).toBe(true);
+    // Nothing is deleted, and the installed workspace copy is neither read nor written.
+    expect(existsSync(path.join(traced, ENTRY_SOURCE))).toBe(true);
+    expect(existsSync(path.join(installed, ENTRY_OUTPUT))).toBe(false);
+    expect(existsSync(path.join(installed, ENTRY_SOURCE))).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('compiles a packaged unit that has no installed workspace beside it', () =>
+  Effect.gen(function* compilesWithoutInstalledWorkspace() {
+    const root = yield* temporaryRoot;
+    const unit = unitUnder(root);
+    const packaged = path.join(unit, PACKAGED_DIRECTORY);
+    yield* Effect.promise(() =>
+      writeWorkspacePackage(packagedNodeModules(unit), manifestOf(PACKAGED_CONTRACTS, { '.': ENTRY_SUBPATH }), {
+        [ENTRY_SOURCE]: "export const origin = 'packaged-only';\n",
+      }),
+    );
+    yield* Effect.promise(() => writeProbe(packaged, originProbe(PACKAGED_CONTRACTS)));
+    expect(existsSync(path.join(unit, 'node_modules'))).toBe(false);
+
+    yield* compilePackagedWorkspacePackages(unit);
+
+    const after = runProbe(packaged);
+    expect(after.status).toBe(0);
+    const observed = Result.getOrThrow(Schema.decodeUnknownResult(OriginObservation)(after.stdout));
+    expect(observed.origin).toBe('packaged-only');
+    expect(resolvedInsidePackaged(observed.resolved, packaged)).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('compiles a unit addressed by a path relative to the working directory', () =>
+  Effect.gen(function* compilesRelativeUnit() {
+    const root = yield* temporaryRoot;
+    const unit = unitUnder(root);
+    const packaged = path.join(unit, PACKAGED_DIRECTORY);
+    yield* Effect.promise(() =>
+      writeWorkspacePackage(packagedNodeModules(unit), manifestOf(RELATIVE_CONTRACTS, { '.': ENTRY_SUBPATH }), {
+        [ENTRY_SOURCE]: "export const origin = 'relative-unit';\n",
+      }),
+    );
+    yield* Effect.promise(() => writeProbe(packaged, originProbe(RELATIVE_CONTRACTS)));
+
+    // The shell app's build hook runs this step from the app directory as `node … .`, so the unit is relative.
+    const compilation = yield* compilePackagedWorkspacePackages(path.relative(process.cwd(), unit));
+
+    expect(compilation.packages[0]?.repointed).toEqual([ROOT_EXPORT]);
+    const after = runProbe(packaged);
+    expect(after.status).toBe(0);
+    expect(Result.getOrThrow(Schema.decodeUnknownResult(OriginObservation)(after.stdout)).origin).toBe('relative-unit');
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('compiles the traced module graph and repoints every exports target at the compiled module', () =>
+  Effect.gen(function* repointsExports() {
+    const root = yield* temporaryRoot;
+    const unit = unitUnder(root);
+    const packaged = path.join(unit, PACKAGED_DIRECTORY);
+    const directory = yield* Effect.promise(() =>
+      writeWorkspacePackage(
+        packagedNodeModules(unit),
+        manifestOf(TRACED_CONTRACTS, {
+          '.': ENTRY_SUBPATH,
+          './legacy': './src/legacy.cts',
+          './nested/deep': './src/nested/deep.mts',
+          './untraced': './src/untraced.ts',
+        }),
+        {
+          [ENTRY_SOURCE]: [
+            "export { helper } from './helper.ts';",
+            "export { legacy } from './legacy.cts';",
+            "export const deep = async () => (await import('./nested/deep.mts')).deep;",
+            '',
+          ].join('\n'),
+          'src/declaration.d.ts': 'export declare const unused: string;\n',
+          'src/helper.ts': 'export const helper = 41;\n',
+          'src/legacy-value.cts': "exports.legacy = 'legacy-commonjs';\n",
+          'src/legacy.cts': "const { legacy } = require('./legacy-value.cts'); exports.legacy = legacy;\n",
+          'src/nested/deep.mts': "export const deep = 'deep-esm';\n",
+        },
+      ),
+    );
+
+    const compilation = yield* compilePackagedWorkspacePackages(unit);
+
+    expect(yield* Effect.promise(() => readExports(directory))).toEqual({
+      '.': './src/index.js',
+      './legacy': './src/legacy.cjs',
+      './nested/deep': './src/nested/deep.mjs',
+      './untraced': './src/untraced.ts',
+    });
+    expect(compilation.packages[0]?.repointed).toEqual([ROOT_EXPORT, './legacy', './nested/deep']);
+    expect(compilation.packages[0]?.untraced).toEqual(['./untraced']);
+    // A declaration file carries no runtime module, so it is never compiled.
+    expect(existsSync(path.join(directory, 'src', 'declaration.d.js'))).toBe(false);
+    expect(yield* Effect.promise(() => readFile(path.join(directory, ENTRY_OUTPUT), ENCODING))).toBe(
+      [
+        'import { helper } from "./helper.js";',
+        'import { legacy } from "./legacy.cjs";',
+        'const deep = async () => (await import("./nested/deep.mjs")).deep;',
+        'export {',
+        '  deep,',
+        '  helper,',
+        '  legacy',
+        '};',
+        '',
+      ].join('\n'),
+    );
+
+    yield* Effect.promise(() =>
+      writeProbe(
+        packaged,
+        [
+          `const { deep, helper, legacy } = await import('${TRACED_CONTRACTS}');`,
+          `const { deep: nested } = await import('${TRACED_CONTRACTS}/nested/deep');`,
+          'process.stdout.write(JSON.stringify({ deep: await deep(), helper, legacy, nested }));',
+          '',
+        ].join('\n'),
+      ),
+    );
+    const after = runProbe(packaged);
+    expect(after.status).toBe(0);
+    expect(Result.getOrThrow(Schema.decodeUnknownResult(TracedObservation)(after.stdout))).toEqual({
+      deep: 'deep-esm',
+      helper: 41,
+      legacy: 'legacy-commonjs',
+      nested: 'deep-esm',
+    });
+    // Nothing is deleted: every traced TypeScript source stays beside the module compiled from it.
+    expect(existsSync(path.join(directory, ENTRY_SOURCE))).toBe(true);
+    expect(existsSync(path.join(directory, 'src', 'legacy.cts'))).toBe(true);
+    expect(existsSync(path.join(directory, 'src', 'nested', 'deep.mts'))).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('refuses to overwrite a different module already at a compiled path', () =>
+  Effect.gen(function* refusesCollidingOutput() {
+    const root = yield* temporaryRoot;
+    const unit = unitUnder(root);
+    const handWritten = 'module.exports = { handWritten: true };\n';
+    const directory = yield* Effect.promise(() =>
+      writeWorkspacePackage(packagedNodeModules(unit), manifestOf(COLLIDING_CONTRACTS, { '.': ENTRY_SUBPATH }), {
+        [ENTRY_OUTPUT]: handWritten,
+        [ENTRY_SOURCE]: 'export const value = 1;\n',
+      }),
+    );
+
+    const exit = yield* Effect.exit(compilePackagedWorkspacePackages(unit));
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    expect(yield* Effect.promise(() => readFile(path.join(directory, ENTRY_OUTPUT), ENCODING))).toBe(handWritten);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('refuses a traced relative import whose source the packaged tree does not carry', () =>
+  Effect.gen(function* refusesUntracedImport() {
+    const root = yield* temporaryRoot;
+    const unit = unitUnder(root);
+    const directory = yield* Effect.promise(() =>
+      writeWorkspacePackage(packagedNodeModules(unit), manifestOf(DANGLING_CONTRACTS, { '.': ENTRY_SUBPATH }), {
+        [ENTRY_SOURCE]: "export { missing } from './missing.ts';\n",
+      }),
+    );
+
+    const exit = yield* Effect.exit(compilePackagedWorkspacePackages(unit));
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    // The module is rejected before anything is written for it.
+    expect(existsSync(path.join(directory, ENTRY_OUTPUT))).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('is idempotent and leaves a packaged unit that has no workspace packages alone', () =>
+  Effect.gen(function* compilesIdempotently() {
+    const root = yield* temporaryRoot;
+    const unit = unitUnder(root);
+
+    expect(yield* compilePackagedWorkspacePackages(unit)).toEqual({ packages: [] });
+
+    const directory = yield* Effect.promise(() =>
+      writeWorkspacePackage(
+        packagedNodeModules(unit),
+        manifestOf(STABLE_CONTRACTS, { '.': ENTRY_SUBPATH, './helper': './src/helper.ts' }),
+        {
+          [ENTRY_SOURCE]: "export { helper } from './helper.ts';\n",
+          'src/helper.ts': 'export const helper = 1;\n',
+        },
+      ),
+    );
+
+    const first = yield* compilePackagedWorkspacePackages(unit);
+    expect(first.packages[0]?.repointed).toEqual([ROOT_EXPORT, './helper']);
+    const afterFirst = yield* Effect.promise(() => snapshotTree(directory));
+
+    const second = yield* compilePackagedWorkspacePackages(unit);
+    expect(second.packages[0]?.repointed).toEqual([]);
+    expect(second.packages[0]?.compiled).toEqual(first.packages[0]?.compiled);
+    expect(yield* Effect.promise(() => snapshotTree(directory))).toEqual(afterFirst);
+    expect(existsSync(path.join(directory, ENTRY_SOURCE))).toBe(true);
+    expect(existsSync(path.join(directory, 'src', 'helper.ts'))).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
