@@ -151,12 +151,9 @@ import {
   SymmyIngressSchemaErrorLive,
   SymmyIngressTransportLive,
 } from './symmy/transport.ts';
-import { symmyUnavailableProblem } from '../shared/symmy/contract.ts';
-import {
-  SymmyDefectBoundary,
-  symmyInternalProblem,
-  symmyRouteNotFoundProblem,
-} from '../shared/symmy/defect-boundary.ts';
+import { symmyUnavailableProblem } from './symmy/contract.ts';
+import { ShellServerApi } from './symmy/server-api.ts';
+import { SymmyDefectBoundary, symmyInternalProblem, symmyRouteNotFoundProblem } from './symmy/defect-boundary.ts';
 import {
   SymmyGovernedDispatch,
   SymmyGovernedDispatchLive,
@@ -2141,7 +2138,7 @@ export const SymmyIngressDefectLive = Layer.succeed(
   }),
 );
 
-const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'gatewayContext', (handlers) =>
+const gatewayContextGroupLive = HttpApiBuilder.group(ShellServerApi, 'gatewayContext', (handlers) =>
   handlers
     .handle('issueGatewayContext', ({ payload, request }) =>
       Effect.gen(function* issueGatewayContextHandler() {
@@ -2394,7 +2391,7 @@ type ShellAuthenticationApiRuntimeArguments = readonly [
 
 export const makeShellAuthenticationApiRuntime = (
   ...args: ShellAuthenticationApiRuntimeArguments
-): EffectBffDefinition<typeof ShellAuthenticationApi> & EffectBffRuntime<typeof ShellAuthenticationApi> => {
+): EffectBffDefinition<typeof ShellServerApi> & EffectBffRuntime<typeof ShellServerApi> => {
   const [
     authenticationLayer,
     issuerLayer,
@@ -2801,7 +2798,7 @@ export const makeShellAuthenticationApiRuntime = (
   );
 
   return assembleEffectBffRuntime({
-    api: ShellAuthenticationApi,
+    api: ShellServerApi,
     handlers: apiHandlersLive,
     transport: Layer.mergeAll(
       ModuleApiTransportLive.pipe(Layer.provide(activeApplicationCompositionLive)),

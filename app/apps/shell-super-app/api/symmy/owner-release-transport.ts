@@ -1,7 +1,7 @@
 import { Effect } from 'effect';
 
 import { dispatchModuleApiRequest } from '../../src/module-api/transport.ts';
-import { symmyUnavailableProblem } from '../../shared/symmy/contract.ts';
+import { symmyUnavailableProblem } from './contract.ts';
 
 const relayOrigin = 'https://symmy-owner-relay.invalid';
 const shellApiMount = '/shell-super-app-api';

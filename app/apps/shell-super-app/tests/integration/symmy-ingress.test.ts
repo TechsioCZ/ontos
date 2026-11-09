@@ -4,6 +4,7 @@ import { moduleReleaseApiBaseUrl } from '@app/core-runtime/unit-service-fetch';
 import { GatewayAuthenticationRequiredProblemSchema, GatewayForbiddenProblemSchema } from '@app/shared-contracts';
 import { decodeSymmyItemOutcome, SYMMY_REST_PREFIX, SYMMY_ROUTES } from '@app/shared-contracts/symmy';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
+import { DEFAULT_DATA_BATCH_ENDPOINT } from '@modern-js/bff-effect/data-platform';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
 import { dispatchEffectBffRequest, HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Cause, Effect, Layer, Logger, Redacted, Schema } from 'effect';
@@ -25,7 +26,7 @@ import {
   SymmyFixtureJobIdSchema,
   symmyFixtureJobNotFoundProblem,
   symmyUnavailableProblem,
-} from '../../shared/symmy/contract.ts';
+} from '../../api/symmy/contract.ts';
 import { forwardSymmyOwnerRelease, makeSymmyGovernedDispatch } from '../../api/symmy/governed-dispatch.ts';
 import {
   SymmyHostMountLive,
@@ -35,9 +36,9 @@ import {
   SymmyIngressSchemaErrorLive,
 } from '../../api/symmy/transport.ts';
 import type { SymmyIngressAdmission, SymmyIngressRequest } from '../../api/symmy/transport.ts';
-import { ShellAuthenticationApi } from '../../shared/api.ts';
+import { ShellServerApi } from '../../api/symmy/server-api.ts';
 import { encodeSymmySourceSelector } from '@app/symmy-integration/symmy-source-selector';
-import { SymmyInternalPriceListsProjectionSchema } from '../../shared/symmy/read-projection-contracts.ts';
+import { SymmyInternalPriceListsProjectionSchema } from '../../api/symmy/read-projection-contracts.ts';
 
 const host = 'https://shell.example.test';
 const shellPrefix = '/shell-super-app-api';
@@ -64,11 +65,14 @@ const forbidden = GatewayForbiddenProblemSchema.make({
   type: 'https://ontos.dev/problems/gateway-forbidden',
 });
 
-const fixtureApi = HttpApi.make(ShellAuthenticationApi.identifier)
-  .add(ShellAuthenticationApi.groups.symmy)
+const fixtureApi = HttpApi.make(ShellServerApi.identifier)
+  .add(ShellServerApi.groups.symmy)
   .add(
     HttpApiGroup.make('normalShell').add(
       HttpApiEndpoint.post('auth', '/auth/api-key/gateway-context', {
+        success: Schema.Struct({ ok: Schema.Literal(true) }),
+      }),
+      HttpApiEndpoint.get('session', '/auth/session', {
         success: Schema.Struct({ ok: Schema.Literal(true) }),
       }),
     ),
@@ -79,6 +83,7 @@ const start = ({
   acquireRouteAssertion,
   defect,
   dispatch,
+  enableBatch = false,
   observe,
   ownerFetch = globalThis.fetch,
 }: {
@@ -86,6 +91,7 @@ const start = ({
   readonly acquireRouteAssertion?: NonNullable<SymmyIngressAdmission['acquireRouteAssertion']>;
   readonly defect?: Cause.Cause<never>;
   readonly dispatch?: typeof SymmyIngress.Service.dispatch;
+  readonly enableBatch?: boolean;
   readonly observe?: (request: SymmyIngressRequest) => void;
   readonly ownerFetch?: typeof fetch;
 } = {}) => {
@@ -150,20 +156,19 @@ const start = ({
       ),
     ),
   );
+  const normalShellResponse = Effect.sync(() => {
+    shellCalls += 1;
+    return { ok: true } as const;
+  });
   const normalShell = HttpApiBuilder.group(fixtureApi, 'normalShell', (group) =>
-    group.handle('auth', () =>
-      Effect.sync(() => {
-        shellCalls += 1;
-        return { ok: true } as const;
-      }),
-    ),
+    group.handle('auth', () => normalShellResponse).handle('session', () => normalShellResponse),
   );
   const runtime = assembleEffectBffRuntime({
     api: fixtureApi,
     handlers: Layer.mergeAll(normalShell, symmy),
     transport: SymmyIngressTransportLive.pipe(Layer.provide(SymmyHostMountLive)),
   }).createHandler({
-    dataPlatform: { batch: { enabled: false }, enabled: false },
+    dataPlatform: { batch: { enabled: enableBatch }, enabled: enableBatch },
     openapi: { path: '/openapi.json' },
   });
   return {
@@ -1141,7 +1146,7 @@ it.effect('keeps job progress separate from whether completed items succeeded', 
 it.effect('does not dispatch wrong methods, unrecognized paths or cross-mounted endpoints', () =>
   Effect.gen(function* isolatesNativeMounts() {
     const server = yield* Effect.acquireRelease(
-      Effect.sync(() => start()),
+      Effect.sync(() => start({ enableBatch: true })),
       (fixture) => Effect.promise(fixture.dispose),
     );
     const wrongMethod = yield* Effect.promise(() => server.request(SYMMY_ROUTES.productsBatch.path, { method: 'GET' }));
@@ -1182,6 +1187,29 @@ it.effect('does not dispatch wrong methods, unrecognized paths or cross-mounted 
     );
     expect(normalShell.status).toBe(200);
     expect(server.shellCalls()).toBe(1);
+    const batch = yield* Effect.promise(() =>
+      server.request(
+        `${shellPrefix}${DEFAULT_DATA_BATCH_ENDPOINT}`,
+        {
+          body: JSON.stringify({
+            batchId: 'ordinary-shell',
+            items: [{ id: 'session', method: 'GET', path: '/auth/session' }],
+            protocolVersion: 2,
+            sentAt: 0,
+          }),
+          headers: { 'content-type': 'application/json' },
+          method: 'POST',
+        },
+        shellPrefix,
+      ),
+    );
+    expect(batch.status).toBe(200);
+    expect(yield* Effect.promise(() => batch.json())).toMatchObject({
+      batchId: 'ordinary-shell',
+      items: [{ id: 'session', status: 200 }],
+      protocolVersion: 2,
+    });
+    expect(server.shellCalls()).toBe(2);
     const aliasOpenApi = yield* Effect.promise(() =>
       server.request(`${SYMMY_REST_PREFIX}/openapi.json`, { method: 'GET' }),
     );

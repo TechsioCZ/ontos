@@ -28,8 +28,8 @@ import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
-import { SymmyCustomerIcoProjectionSchema } from '../../shared/symmy/read-projection-contracts.ts';
-import { SymmyInternalReadQuerySchema, SymmyUnavailableProblemSchema } from '../../shared/symmy/contract.ts';
+import { SymmyCustomerIcoProjectionSchema } from '../../api/symmy/read-projection-contracts.ts';
+import { SymmyInternalReadQuerySchema, SymmyUnavailableProblemSchema } from '../../api/symmy/contract.ts';
 import {
   acquireSymmyReadAssertion,
   projectSymmySourceCustomers,
