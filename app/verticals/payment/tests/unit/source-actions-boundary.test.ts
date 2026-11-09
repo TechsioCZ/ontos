@@ -1,5 +1,5 @@
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
-import { Effect, Predicate, Schema } from 'effect';
+import { Effect, Predicate, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { AcceptPaymentObservationPayloadSchema } from '../../shared/actions/accept-payment-observation.ts';
@@ -153,8 +153,8 @@ describe('#1152 source Actions at the Core boundary', () => {
     const decode = Schema.decodeUnknownResult(RecordPaymentLocalEvidencePayloadSchema);
     const { evidenceRef: _evidenceRef, ...withoutEvidence } = posStatement;
     const { reason: _reason, ...withoutReason } = posStatement;
-    expect(decode(withoutEvidence)._tag).toBe('Failure');
-    expect(decode(withoutReason)._tag).toBe('Failure');
-    expect(decode(posStatement)._tag).toBe('Success');
+    expect(Result.isFailure(decode(withoutEvidence))).toBe(true);
+    expect(Result.isFailure(decode(withoutReason))).toBe(true);
+    expect(Result.isSuccess(decode(posStatement))).toBe(true);
   });
 });

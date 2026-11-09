@@ -24,7 +24,8 @@ import { decideOutcomeTransition, OutcomeTransitionDecision } from './operation-
  * - A source correction disproves an earlier statement: the operation that statement established
  *   returns to CONFLICT (or its proven collection is reduced) and coverage drops. No refund is invented.
  * - Corroborating observations of the same economic effect count once; a distinct effect key on an
- *   already established operation is a separate effect and is held.
+ *   already established operation is a separate effect and is held, and an effect that already
+ *   established one operation never confirms another.
  * - Anything ambiguous or unassignable becomes HOLD (reconciliation debt), never a first-match guess.
  */
 
@@ -38,7 +39,7 @@ export interface PaymentEvidenceOperationView {
   readonly targetOperationId: string | undefined;
 }
 
-/** One previously ACCEPTED_OBSERVATION of the same Payment (immutable evidence). */
+/** One previously accepted statement of the same Payment (immutable evidence). */
 export interface PaymentAcceptedObservationView {
   readonly amount: PaymentMonetaryAmount | undefined;
   readonly correctsObservationId: string | undefined;
@@ -46,16 +47,26 @@ export interface PaymentAcceptedObservationView {
   readonly factKind: PaymentObservationFactKind;
   readonly observationId: string;
   readonly operationId: string | undefined;
+  /** The configured authority that issued the statement; economic effect keys are its own. */
+  readonly sourceAuthorityId: string | undefined;
 }
 
-/**
- * The Current aggregate the interpreter reads. `PaymentAggregateRecord` from `loadAggregate` plus the
- * accepted observations from `paymentEvidencePersistenceForTransaction(...).listAcceptedObservations`.
- * The candidate being interpreted must NOT be among `acceptedObservations`: interpret first, then
- * record the candidate with the decided acceptance outcome.
- */
-export interface PaymentEvidenceAggregate {
+/** The interpreter's lineage input, loaded with `listInterpretedEvidence` under the Payment row lock. */
+export interface PaymentInterpretedEvidence {
+  /**
+   * ACCEPTED_OBSERVATION statements of the Payment. The candidate being interpreted must NOT be among
+   * them: interpret first, then record the candidate with the decided acceptance outcome.
+   */
   readonly acceptedObservations: readonly PaymentAcceptedObservationView[];
+  /**
+   * Uncorrected held or conflicting statements a governed ATTACH_EVIDENCE decision counted toward
+   * `operationId`: their economic effect established that operation (#1151).
+   */
+  readonly attachedStatements: readonly PaymentAcceptedObservationView[];
+}
+
+/** The Current aggregate the interpreter reads: `PaymentAggregateRecord` operations plus the lineage. */
+export interface PaymentEvidenceAggregate extends PaymentInterpretedEvidence {
   readonly operations: readonly PaymentEvidenceOperationView[];
 }
 
@@ -68,6 +79,8 @@ export interface QualifiedPaymentObservation {
   readonly factKind: PaymentObservationFactKind;
   /** Exact Payment Operation correlation; absent when the source could not prove it. */
   readonly operationId: string | undefined;
+  /** The configured authority that qualified the statement. */
+  readonly sourceAuthorityId: string;
 }
 
 export const PAYMENT_EVIDENCE_NO_CHANGE_REASONS = [
@@ -88,6 +101,8 @@ export const PAYMENT_EVIDENCE_HOLD_REASONS = [
   'FACT_DOES_NOT_MATCH_OPERATION_KIND',
   'UNMATCHED_RETURN_EFFECT',
   'DISTINCT_ECONOMIC_EFFECT',
+  /** The confirmed economic effect already established another operation: one effect counts once. */
+  'ECONOMIC_EFFECT_ESTABLISHED_ANOTHER_OPERATION',
   'OPERATION_IN_CONFLICT',
   'UNRECOGNIZED_FACT',
   'CORRECTION_TARGET_UNKNOWN',
@@ -192,8 +207,8 @@ const conflictTo = (
 
 const isReturnFact = (meaning: FactMeaning) => meaning.kind === 'REFUND';
 
-/** Accepted observations of the operation that are not themselves corrected and are not corrections. */
-const standingObservations = (aggregate: PaymentEvidenceAggregate, operationId: string) => {
+/** Accepted observations that are not themselves corrected and are not corrections. */
+const uncorrectedStatements = (aggregate: PaymentEvidenceAggregate) => {
   const corrected = new Set(
     aggregate.acceptedObservations.flatMap((observation) =>
       observation.factKind === 'SOURCE_CORRECTION' && observation.correctsObservationId !== undefined
@@ -202,10 +217,37 @@ const standingObservations = (aggregate: PaymentEvidenceAggregate, operationId: 
     ),
   );
   return aggregate.acceptedObservations.filter(
-    (observation) =>
-      observation.operationId === operationId &&
-      observation.factKind !== 'SOURCE_CORRECTION' &&
-      !corrected.has(observation.observationId),
+    (observation) => observation.factKind !== 'SOURCE_CORRECTION' && !corrected.has(observation.observationId),
+  );
+};
+
+/** Uncorrected accepted statements of the operation. */
+const standingObservations = (aggregate: PaymentEvidenceAggregate, operationId: string) =>
+  uncorrectedStatements(aggregate).filter((observation) => observation.operationId === operationId);
+
+/**
+ * The confirmed economic effect already established another operation of this Payment: an uncorrected
+ * accepted or governed-attached statement of the same source, fact and effect key counted elsewhere
+ * (#1151 "Several observations proven to describe the same economic effect count once").
+ */
+const establishedAnotherOperation = (
+  aggregate: PaymentEvidenceAggregate,
+  operation: PaymentEvidenceOperationView,
+  meaning: FactMeaning,
+  observation: QualifiedPaymentObservation,
+) => {
+  const { economicEffectKey } = observation;
+  return (
+    meaning.outcome === 'EFFECT_CONFIRMED' &&
+    economicEffectKey !== undefined &&
+    [...uncorrectedStatements(aggregate), ...aggregate.attachedStatements].some(
+      (prior) =>
+        prior.operationId !== undefined &&
+        prior.operationId !== operation.operationId &&
+        prior.sourceAuthorityId === observation.sourceAuthorityId &&
+        prior.economicEffectKey === economicEffectKey &&
+        prior.factKind === observation.factKind,
+    )
   );
 };
 
@@ -244,6 +286,10 @@ const decideOutcomeFact = (
     return isReturnFact(meaning) && operation.kind === 'COLLECT'
       ? hold('UNMATCHED_RETURN_EFFECT', operation.operationId)
       : hold('FACT_DOES_NOT_MATCH_OPERATION_KIND', operation.operationId);
+  }
+  if (establishedAnotherOperation(aggregate, operation, meaning, observation)) {
+    // One economic effect counts once: it never confirms a second operation.
+    return hold('ECONOMIC_EFFECT_ESTABLISHED_ANOTHER_OPERATION', operation.operationId);
   }
   if (
     meaning.outcome === 'EFFECT_CONFIRMED' &&

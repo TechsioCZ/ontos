@@ -22,7 +22,9 @@ import type { PaymentSourceBinding, PaymentSourceRejected } from '../../shared/d
 import { observations, reconciliationCases, sourceAuthorities, sourceAuthorityRevisions } from '../database/schema.ts';
 import { paymentAggregatePersistenceForTransaction } from './payment-aggregate-persistence.ts';
 import type { PaymentAggregatePersistence } from './payment-aggregate-persistence.ts';
-import type { PaymentAcceptedObservationView } from '../domain/evidence-interpretation.ts';
+import { paymentEvidencePersistenceForTransaction } from './payment-evidence-persistence.ts';
+import type { PaymentEvidencePersistence } from './payment-evidence-persistence.ts';
+import type { PaymentInterpretedEvidence } from '../domain/evidence-interpretation.ts';
 import type { PaymentRecordedObservationView, PaymentSourceAuthorityView } from '../domain/source-qualification.ts';
 
 /**
@@ -111,9 +113,10 @@ export interface PaymentSourcePersistence {
     readonly sourceRevision: number;
   }) => Effect.Effect<Option.Option<PaymentRecordedObservationView>, PaymentUnavailable>;
   readonly insertObservation: (input: NewPaymentObservationInput) => Effect.Effect<string, PaymentSourceFailure>;
-  readonly listAcceptedObservations: (
+  /** The interpreter's lineage input for one Payment: accepted and governed-attached statements. */
+  readonly listInterpretedEvidence: (
     paymentId: string,
-  ) => Effect.Effect<readonly PaymentAcceptedObservationView[], PaymentUnavailable>;
+  ) => Effect.Effect<PaymentInterpretedEvidence, PaymentUnavailable>;
   readonly lockAuthorities: (input: {
     readonly factFamily: PaymentSourceFactFamily;
     readonly source: PaymentSourceBinding;
@@ -230,6 +233,7 @@ const observationWriteFailure = (cause: unknown) =>
 export const paymentSourcePersistenceForTransaction = (
   transaction: ScopedTransactionExecutor,
   submitter: PaymentSourceSubmitter,
+  evidence: Pick<PaymentEvidencePersistence, 'listInterpretedEvidence'>,
 ): PaymentSourcePersistence => {
   const ownerScope = Effect.suspend(() => {
     const { legalEntityId, tenantId } = transaction.scope;
@@ -464,40 +468,6 @@ export const paymentSourcePersistenceForTransaction = (
     return row === undefined ? Option.none() : Option.some(yield* recordedViewOf(row));
   });
 
-  const listAcceptedObservations = Effect.fn('PaymentSourcePersistence.listAcceptedObservations')(
-    function* listAcceptedObservations(paymentId: string) {
-      const scope = yield* ownerScope;
-      const rows = yield* transaction
-        .select()
-        .from(observations)
-        .where(
-          and(
-            eq(observations.tenantId, scope.tenantId),
-            eq(observations.legalEntityId, scope.legalEntityId),
-            eq(observations.paymentId, paymentId),
-            eq(observations.acceptanceOutcome, 'ACCEPTED_OBSERVATION'),
-          ),
-        )
-        .orderBy(asc(observations.verifiedAt), asc(observations.observationId))
-        .pipe(Effect.mapError(readFailure));
-      return yield* Effect.forEach(
-        rows,
-        (row) =>
-          recordedAmountOf(row).pipe(
-            Effect.map((amount): PaymentAcceptedObservationView => ({
-              amount: Option.getOrUndefined(amount),
-              correctsObservationId: row.correctsObservationId ?? undefined,
-              economicEffectKey: row.economicEffectKey ?? undefined,
-              factKind: row.factKind,
-              observationId: row.observationId,
-              operationId: row.operationId ?? undefined,
-            })),
-          ),
-        { concurrency: 1 },
-      );
-    },
-  );
-
   const insertObservation = Effect.fn('PaymentSourcePersistence.insertObservation')(function* insertObservation(
     input: NewPaymentObservationInput,
   ) {
@@ -574,7 +544,7 @@ export const paymentSourcePersistenceForTransaction = (
     findObservation,
     findOccurrence,
     insertObservation,
-    listAcceptedObservations,
+    listInterpretedEvidence: evidence.listInterpretedEvidence,
     lockAuthorities,
     openReconciliationCase,
   });
@@ -587,7 +557,7 @@ export interface PaymentSourceServices {
 }
 
 /**
- * Action service factory: both persistences share the one Core-owned transaction and its trusted
+ * Action service factory: the persistences share the one Core-owned transaction and its trusted
  * Tenant / Selling Legal Entity scope; a scope without a legal entity has no source authority. The
  * submitting principal is the trusted principal of this Core invocation scope.
  */
@@ -602,6 +572,10 @@ export const paymentSourceServicesForTransaction: ActionServiceFactory<PaymentSo
     : Effect.succeed(
         Object.freeze({
           aggregate: paymentAggregatePersistenceForTransaction(transaction),
-          source: paymentSourcePersistenceForTransaction(transaction, { principalId: scope.principalId }),
+          source: paymentSourcePersistenceForTransaction(
+            transaction,
+            { principalId: scope.principalId },
+            paymentEvidencePersistenceForTransaction(transaction),
+          ),
         }),
       );
