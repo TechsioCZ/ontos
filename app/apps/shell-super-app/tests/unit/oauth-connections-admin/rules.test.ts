@@ -48,6 +48,7 @@ const summary = (overrides: Partial<typeof ConnectionSummarySchema.Encoded> = {}
     legalEntityId: 'company-a',
     legalName: 'Firma A',
     limits,
+    live: true,
     modules: [],
     profileId: 'profile-1',
     revokedAt: null,
