@@ -144,7 +144,7 @@ const HeaderActions = ({
   return (
     <>
       {editable && (
-        <Button onClick={handleEdit} theme="outlined" variant="secondary">
+        <Button onClick={handleEdit} theme="solid" variant="primary">
           {text('detail.edit')}
         </Button>
       )}
@@ -154,7 +154,7 @@ const HeaderActions = ({
           <Button
             key={action}
             onClick={handleClick}
-            theme={action === 'retire' ? 'outlined' : 'solid'}
+            theme="outlined"
             variant={action === 'retire' ? 'danger' : 'secondary'}
           >
             {text(action === 'retire' ? 'detail.retire.action' : `detail.${action}`)}
