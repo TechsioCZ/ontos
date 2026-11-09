@@ -12,6 +12,7 @@ import {
   duplicateCandidateCaseParties,
   duplicateCandidateCases,
   parties,
+  partyFactAssertionIdentities,
   partyFactAssertions,
   partyMatchDecisions,
   partyOfficialIdentifiers,
@@ -57,6 +58,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             duplicateCandidateCases,
             partyOfficialIdentifiers,
             partyFactAssertions,
+            // The registry references parties with ON DELETE RESTRICT and survives the assertion it
+            // was registered for, so it drops between the assertions and their Party.
+            partyFactAssertionIdentities,
             parties,
           ].map((table) => admin.delete(table).where(eq(table.tenantId, tenantId))),
         );

@@ -9,6 +9,7 @@ import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/tes
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { and, eq, sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/effect-postgres/migrator';
+import { getTableConfig } from 'drizzle-orm/pg-core';
 import { Crypto, DateTime, Effect, FileSystem, Layer, Redacted, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 
@@ -65,7 +66,18 @@ it.layer(nativeServices, { excludeTestServices: true })('original ICO input upgr
       // Existing table CHECKs, append-only triggers and forced RLS remain installed unchanged.
       const runtimeRole = sql.identifier(isolated.connections.runtime.user);
       yield* admin.execute(sql`grant usage on schema party to ${runtimeRole}`, 'objects');
+      // This pinned prefix predates the assertion-identity registry and its archive, so grant on exactly
+      // the Party tables this historical schema has; the forward migration installs the rest for the owner.
+      const historicalTableNames = new Set(
+        (yield* admin.execute<{ readonly name: string }>(
+          sql`select tablename as name from pg_tables where schemaname='party'`,
+          'objects',
+        )).map((row) => row.name),
+      );
       for (const table of PARTY_TABLES) {
+        if (!historicalTableNames.has(getTableConfig(table).name)) {
+          continue;
+        }
         yield* admin.execute(sql`grant select,insert,update,delete on table ${table} to ${runtimeRole}`, 'objects');
       }
       const [beforeColumn] = yield* admin.execute<{ readonly count: number }>(

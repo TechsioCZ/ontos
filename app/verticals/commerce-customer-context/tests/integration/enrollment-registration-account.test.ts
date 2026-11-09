@@ -267,7 +267,8 @@ it.live('persists immutable credential-free registration and admits only exact l
             yield* execute(sql`reset role`);
             yield* execute(
               sql`update commerce_customer_context.retail_portal_profile_bindings
-                set lifecycle = 'REVOKED', authorization_operation = 'revoke', authorization_state = 'REVOKED'
+                set lifecycle = 'REVOKED', authorization_operation = 'revoke', authorization_state = 'REVOKED',
+                  revoked_at = now()
                 where retail_portal_profile_binding_id = ${bindingId}::uuid`,
             );
             yield* execute(sql`set local role ontos_runtime`);
@@ -275,7 +276,8 @@ it.live('persists immutable credential-free registration and admits only exact l
             yield* execute(sql`reset role`);
             yield* execute(
               sql`update commerce_customer_context.retail_portal_profile_bindings
-                set lifecycle = 'ACTIVE', authorization_operation = 'grant', authorization_state = 'ACTIVE'
+                set lifecycle = 'ACTIVE', authorization_operation = 'grant', authorization_state = 'ACTIVE',
+                  revoked_at = null
                 where retail_portal_profile_binding_id = ${bindingId}::uuid`,
             );
             yield* execute(

@@ -420,6 +420,8 @@ const installedPageCatalog = () =>
                     scope: 'tenant',
                   },
                   groupKey: 'shell.navigation.modules',
+                  icon: 'icon-[mdi--view-grid-outline]',
+                  label: { cs: 'Integration module', en: 'Integration module' },
                   order: 100,
                   pageKey: 'testing.pages.page.home',
                 },
@@ -1218,6 +1220,9 @@ it.live(
     expect(activeModulesResponse.status).toBe(200);
     expect(yield* Effect.tryPromise(() => activeModulesResponse.json())).toEqual({
       compositionRevision: testRevision,
+      deniedAppIds: [],
+      gatewayAudiences: ['inventory-stock'],
+      homeComponents: [],
       navigation: [],
       state: 'available',
       unavailableDeployments: [],
@@ -2074,6 +2079,9 @@ it.live(
     );
     expect(yield* Effect.tryPromise(() => firstModules.json())).toEqual({
       compositionRevision: testRevision,
+      deniedAppIds: [],
+      gatewayAudiences: ['inventory-stock', 'testing-second'],
+      homeComponents: [],
       navigation: [],
       state: 'available',
       unavailableDeployments: [],
@@ -2287,6 +2295,9 @@ it.live(
     );
     expect(yield* Effect.tryPromise(() => secondModules.json())).toEqual({
       compositionRevision: testRevision,
+      deniedAppIds: [],
+      gatewayAudiences: ['inventory-stock', 'testing-second'],
+      homeComponents: [],
       navigation: [],
       state: 'available',
       unavailableDeployments: [],

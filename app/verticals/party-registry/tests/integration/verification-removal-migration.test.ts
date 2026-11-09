@@ -41,6 +41,8 @@ const forwardFolders = [
   '20261105154254_young_magik',
   '20261105154619_left_vin_gonzales',
   '20261106083603_aberrant_gauntlet',
+  '20261106120000_party-migration-convergence',
+  '20261109093237_party-fact-assertion-identities',
 ] as const;
 
 it.layer(nativeServices, { excludeTestServices: true })('verification removal upgrade', (suite) => {

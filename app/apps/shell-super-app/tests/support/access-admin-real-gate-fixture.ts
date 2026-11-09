@@ -41,6 +41,7 @@ import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-
 import type { OperationalScope } from '@app/core-runtime/operations/context';
 import { recordObjectId, scopeObjectId } from '../../../../packages/core-runtime/src/access/compiler/object-id.ts';
 import type { AccessCatalogModule } from '../../../../packages/core-runtime/src/authorization/access-declaration.ts';
+import { CORE_MIGRATION_EQUIVALENCES } from '../../../../packages/core-runtime/src/db/migration-equivalence-data.ts';
 import type { CoreDatabaseExecutor } from '../../../../packages/core-runtime/src/db/types.ts';
 import { Cause, Context, Crypto, DateTime, Effect, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
@@ -85,6 +86,16 @@ const LOGIN_ROLES = ['ontos_runtime', 'party_registry_runtime', 'party_registry_
 const coreMigrationDirectory = new URL('../../../../packages/core-runtime/drizzle/', import.meta.url);
 const authMigrationDirectory = new URL('../../drizzle-auth/', import.meta.url);
 const catalogArtifactPath = new URL('../../../../topology/authorization-catalog.json', import.meta.url);
+
+/*
+ * The app-host migrator (`scripts/migration-convergence-cli.mts`) applies exactly one lineage of each reviewed
+ * equivalent migration pair, and a database without a journal starts on the `main` lineage. This template is
+ * built from raw committed SQL with no journal, so it must make the same choice: applying both lineages re-runs
+ * the demo history's byte-identical copies, and the second `CREATE SCHEMA trust` fails the template build.
+ */
+const retiredCoreMigrationDirectories: ReadonlySet<string> = new Set(
+  CORE_MIGRATION_EQUIVALENCES.map((pair) => pair.demo),
+);
 
 export class AccessAdminFixtureError extends Schema.TaggedError<AccessAdminFixtureError>()('AccessAdminFixtureError', {
   reason: Schema.String,
@@ -183,12 +194,12 @@ export const DECISION_AT = DateTime.toDateUtc(DateTime.makeUnsafe('2030-01-01T00
 // PostgreSQL: one template, one clone per case
 // ---------------------------------------------------------------------------------------------
 
-const migrationStatements = (directory: URL) =>
+const migrationStatements = (directory: URL, retired: ReadonlySet<string> = new Set<string>()) =>
   Effect.gen(function* readMigrations() {
     const fileSystem = yield* FileSystem.FileSystem;
     const directories = yield* fileSystem.readDirectory(directory.pathname);
     const statements: string[] = [];
-    for (const name of directories.toSorted()) {
+    for (const name of directories.filter((directoryName) => !retired.has(directoryName)).toSorted()) {
       const path = `${directory.pathname}${name}/migration.sql`;
       if (!(yield* fileSystem.exists(path))) {
         continue;
@@ -247,7 +258,7 @@ const buildTemplateDatabase = (admin: PgClient.PgClient) =>
           .pipe(Effect.orDie),
       { concurrency: 1, discard: true },
     );
-    yield* runStatements(admin, yield* migrationStatements(coreMigrationDirectory));
+    yield* runStatements(admin, yield* migrationStatements(coreMigrationDirectory, retiredCoreMigrationDirectories));
     yield* runStatements(admin, yield* migrationStatements(authMigrationDirectory));
     yield* runStatements(admin, [
       'grant usage on schema core to ontos_runtime',
