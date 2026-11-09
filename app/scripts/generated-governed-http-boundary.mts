@@ -2176,15 +2176,12 @@ const hasGateMergedReadInjection = (source: string, factory: SourceRange): boole
     return false;
   }
   const { body, gate, injected, runtime } = merge;
+  const gateType = namedSourceImport(source, 'AccessDecisionGate', true);
   return (
     hasRuntimeNamedSourceImport(source, 'Layer', 'Layer', EFFECT_EDGE_MODULE) &&
     hasRuntimeNamedSourceImport(source, 'GovernedReadLayer', 'Layer', 'effect') &&
-    hasRuntimeNamedSourceImport(
-      source,
-      'AccessDecisionGate',
-      'AccessDecisionGate',
-      `${CORE_RUNTIME_MODULE}/access/enforcement`,
-    ) &&
+    gateType?.imported === 'AccessDecisionGate' &&
+    gateType.modulePath === `${CORE_RUNTIME_MODULE}/access/enforcement` &&
     hasNativeReadRuntimeProvider(source, injected.readProvider) &&
     hasNativeReadLayerProvider(
       source,
@@ -3790,6 +3787,33 @@ const hasOwnedReadExecutorType = (owner: ReadPhaseOwner, source: string, paramet
   );
 };
 
+const hasOwnedReadTransactionType = (owner: ReadPhaseOwner, source: string, parameter: string): boolean => {
+  const type = /^[A-Za-z_$][A-Za-z0-9_$]*:\s*(?<type>[A-Za-z_$][A-Za-z0-9_$]*)$/u.exec(parameter)?.groups?.type;
+  const imported = type === undefined ? undefined : namedSourceImport(source, type, true);
+  const file =
+    imported?.modulePath.startsWith('.') === true
+      ? path.posix.normalize(path.posix.join(path.posix.dirname(owner.readFile), imported.modulePath))
+      : undefined;
+  const target = file?.startsWith(`${owner.ownerPath}/`) === true ? owner.sources.get(file) : undefined;
+  return (
+    target !== undefined &&
+    imported !== undefined &&
+    type !== undefined &&
+    new RegExp(`\\bexport\\s+type\\s+${escapeRegExp(imported.imported)}\\b`, 'u').test(maskComments(target)) &&
+    derivedReadTransactionBinding(target, `transaction: ${imported.imported}`) !== undefined &&
+    hasStableReadFactoryBindings(source, new Map([[type, 0]]), '') &&
+    hasStableReadFactoryBindings(
+      target,
+      new Map([
+        [imported.imported, 1],
+        ['ReadServiceFactory', 0],
+        ['Parameters', 0],
+      ]),
+      '',
+    )
+  );
+};
+
 const hasScopedReadFactoryTransaction = (
   owner: ReadPhaseOwner,
   target: NonNullable<ReturnType<typeof originalReadCallable>>,
@@ -3800,6 +3824,7 @@ const hasScopedReadFactoryTransaction = (
   return (
     (transaction !== undefined ||
       directTransaction ||
+      hasOwnedReadTransactionType(owner, target.source, parameter) ||
       hasOwnedReadExecutorType(owner, target.source, parameter) ||
       hasOwnedRoutineInvokerType(owner, target.source, parameter)) &&
     (transaction === undefined ||
@@ -5099,6 +5124,32 @@ const hasCurriedServiceClosureFactory = (owner: ReadPhaseOwner, source: string, 
   );
 };
 
+/** A scoped factory may publish an owner service record rather than wrap each method in another arrow. */
+const hasNestedScopedServiceFactory = (owner: ReadPhaseOwner, source: string, initializer: string): boolean => {
+  const definition = scopedReadClosureDefinition(initializer);
+  if (definition === undefined || definition.revision !== undefined) {
+    return false;
+  }
+  const { entries, methods, returned, scope, transaction } = definition;
+  return (
+    hasDirectReadCallbackExpression(initializer, returned) &&
+    hasClosedUniqueObjectKeys(methods) &&
+    hasRuntimeNamedSourceImport(source, 'Effect', 'Effect', 'effect') &&
+    hasStableReadFactoryBindings(source, new Map([['Effect', 0]]), '') &&
+    entries.every((entry) => {
+      const key = objectEntryKey(entry);
+      const value = key === undefined ? undefined : objectPropertyValue(methods, key);
+      const invocation = value === undefined ? undefined : originalReadInvocation(owner, source, value);
+      return (
+        invocation !== undefined &&
+        invocation.pipeline === undefined &&
+        hasExactSourceTokens(tokenizeGovernedClient(invocation.args.join(',')), `${transaction}, ${scope}`) &&
+        scopedReadFactories.accepts(owner, source, invocation.binding)
+      );
+    })
+  );
+};
+
 const hasOriginalServiceClosureFactory = (
   owner: ReadPhaseOwner,
   source: string,
@@ -5108,7 +5159,7 @@ const hasOriginalServiceClosureFactory = (
     return false;
   }
   if (hasBalancedArrowCallback(candidate)) {
-    return hasScopedServiceClosure(owner, source, candidate);
+    return hasScopedServiceClosure(owner, source, candidate) || hasNestedScopedServiceFactory(owner, source, candidate);
   }
   if (/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(candidate)) {
     const target = originalReadCallable(owner, source, candidate);
@@ -12065,12 +12116,19 @@ const NATIVE_READ_PROGRAM_GLOBAL_MEMBERS = new Map<string, ReadonlySet<string>>(
   ['String', new Set(['fromCharCode', 'fromCodePoint', 'raw'])],
 ]);
 
+/** Pure global constructors a program body may instantiate. */
+const NATIVE_READ_PROGRAM_GLOBAL_CONSTRUCTORS = new Set(['Set']);
+
+/** Pure global coercions a program body may call directly. */
+const NATIVE_READ_PROGRAM_GLOBAL_FUNCTIONS = new Set(['Boolean', 'Number', 'String']);
+
 /** Pure methods on derived values (Effects, arrays, strings, dates): none executes a hidden effect. */
 const NATIVE_READ_PROGRAM_VALUE_MEMBERS = new Set([
   'at',
   'charAt',
   'codePointAt',
   'concat',
+  'delete',
   'endsWith',
   'entries',
   'every',
@@ -12149,13 +12207,46 @@ const tenantQualifiedReadProjection = (argument: string, context: string): strin
   return field !== undefined && NATIVE_READ_PROGRAM_SCOPE_FIELDS.has(field) ? field : undefined;
 };
 
+/** The declared type of a parameter, or nothing when it carries no annotation. */
+const readParameterAnnotation = (parameter: string): string | undefined => {
+  const index = parameter.indexOf(':');
+  const annotation = index === -1 ? '' : maskComments(parameter.slice(index + 1)).trim();
+  return annotation.length === 0 ? undefined : annotation;
+};
+
+/** The plain names of a callable's declared parameters, or nothing when any of them is not a plain name. */
+const readDeclaredParameterNames = (parameters: readonly string[]): readonly string[] | undefined => {
+  const names = parameters.map(
+    (parameter) => /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\??(?:\s*:[\s\S]+)?$/u.exec(parameter)?.groups?.name,
+  );
+  return names.length > 0 && names.every((name) => name !== undefined) && new Set(names).size === names.length
+    ? names.filter((name) => name !== undefined)
+    : undefined;
+};
+
+/** The services type a `ReadLoadContext<T>` phase declares, whatever `T` spells. */
+const readLoadContextServicesType = (parameter: string): string | undefined => {
+  const annotation = readParameterAnnotation(parameter);
+  const services =
+    annotation === undefined
+      ? undefined
+      : /^ReadLoadContext<(?<services>[\s\S]+)>$/u.exec(annotation)?.groups?.services;
+  return services === undefined ? undefined : maskComments(services).trim();
+};
+
 const nativeReadProgramParameterType = (parameter: string): string | undefined =>
   /^(?<type>[A-Za-z_$][A-Za-z0-9_$]*)$/u.exec(parameter.slice(parameter.indexOf(':') + 1).trim())?.groups?.type;
 
-/** The scoped service the load context declares: `ReadLoadContext<T>` must name the helper's service type. */
-const nativeReadProgramLoadContextType = (parameter: string): string | undefined =>
-  /^ReadLoadContext<(?<type>[A-Za-z_$][A-Za-z0-9_$]*)>$/u.exec(parameter.slice(parameter.indexOf(':') + 1).trim())
-    ?.groups?.type;
+/**
+ * The plain names a callable's declared parameters bind, allowing a trailing optional marker (`at?: string`).
+ * A callable with no parameters declares no names.
+ */
+const nativeReadDeclaredNames = (parameters: readonly string[] | undefined): readonly string[] | undefined => {
+  if (parameters === undefined) {
+    return undefined;
+  }
+  return parameters.length === 0 ? [] : readDeclaredParameterNames(parameters);
+};
 
 /** Resolve an owner-local interface declaration (same file or an owner-local import) for a service type. */
 const ownerLocalInterfaceContract = (owner: ReadPhaseOwner, source: string, typeName: string): string | undefined => {
@@ -12172,31 +12263,124 @@ const ownerLocalInterfaceContract = (owner: ReadPhaseOwner, source: string, type
   return target === undefined ? undefined : ownerInterface(target, imported?.imported ?? typeName);
 };
 
-const hasScopedServiceMember = (contract: string | undefined, member: string): boolean =>
-  contract !== undefined && new RegExp(`\\breadonly\\s+${escapeRegExp(member)}\\s*[:(]`, 'u').test(contract);
+/** The scoped service a load declares: an owner-local interface, or the record an owner-local factory returns. */
+interface ScopedServiceContract {
+  readonly kind: 'factoryRecord' | 'interface';
+  readonly text: string;
+}
+
+/** The object literal an owner-local factory returns, with its enclosing parentheses removed. */
+const ownerLocalFactoryRecord = (owner: ReadPhaseOwner, source: string, factory: string): string | undefined => {
+  const resolved = originalReadCallable(owner, source, factory);
+  const returned = resolved === undefined ? undefined : callbackReturnedExpression(resolved.initializer);
+  const record = returned?.startsWith('(') === true ? returned.slice(1, -1).trim() : returned;
+  return record !== undefined && topLevelObjectEntries(record) !== undefined ? record : undefined;
+};
+
+/**
+ * Resolve the scoped service contract a `ReadLoadContext<T>` names. A plain type is an owner-local interface;
+ * `ReturnType<typeof xForScope>` is the exact record the owner-local factory returns, never a fabricated shape.
+ */
+const ownerLocalScopedServiceContract = (
+  owner: ReadPhaseOwner,
+  source: string,
+  servicesType: string,
+): ScopedServiceContract | undefined => {
+  const factory = /^ReturnType<typeof (?<name>[A-Za-z_$][A-Za-z0-9_$]*)>$/u.exec(servicesType.trim())?.groups?.name;
+  if (factory !== undefined) {
+    const record = ownerLocalFactoryRecord(owner, source, factory);
+    return record === undefined ? undefined : { kind: 'factoryRecord', text: record };
+  }
+  const text = ownerLocalInterfaceContract(owner, source, servicesType);
+  return text === undefined ? undefined : { kind: 'interface', text };
+};
+
+const hasScopedServiceMember = (contract: ScopedServiceContract | undefined, member: string): boolean =>
+  contract !== undefined &&
+  (contract.kind === 'interface'
+    ? new RegExp(`\\breadonly\\s+${escapeRegExp(member)}\\s*[:(]`, 'u').test(contract.text)
+    : topLevelObjectEntries(contract.text)?.some((entry) => objectEntryKey(entry) === member) === true);
 
 /** The trusted tenant is compared against a durable `tenantId` before any scoped read may run. */
 const hasTenantQualifiedReadGuard = (body: string, tenant: string): boolean =>
   new RegExp(`\\.tenantId\\s*!==\\s*${escapeRegExp(tenant)}\\b`, 'u').test(maskComments(body));
 
-/** The evidence map a program load returns: a closed `{ evidence, result }` record of the helper result. */
-const hasNativeReadEvidenceMap = (transform: string): boolean => {
-  const callback = nativeReadTransformCallback(transform, /^Effect\.map\(/u);
-  const record =
-    callback?.returned.startsWith('(') === true ? callback.returned.slice(1, -1).trim() : callback?.returned;
+/** A single callback parameter's declared pattern, with any annotation removed. */
+const nativeReadParameterPattern = (parameter: string): string | undefined => {
+  const trimmed = parameter.trim();
+  const opening = trimmed.startsWith('{') || trimmed.startsWith('[') ? trimmed[0] : undefined;
+  if (opening !== undefined) {
+    const closing = matchingDelimiterEnd(trimmed, 0, opening, opening === '{' ? '}' : ']');
+    return closing === undefined ? undefined : trimmed.slice(0, closing + 1);
+  }
+  return /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)(?:\s*:\s*[^=]+)?$/u.exec(trimmed)?.groups?.name;
+};
+
+/** Preserve the selected property, not just the local name a destructuring pattern happens to bind. */
+const nativeReadEvidenceResultBinding = (pattern: string): string | undefined => {
+  if (/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(pattern)) {
+    return pattern;
+  }
+  const entries = topLevelObjectEntries(pattern);
+  return entries?.includes('result') === true &&
+    new Set(entries).size === entries.length &&
+    entries.every((entry) => entry === 'result' || entry === 'evidence')
+    ? 'result'
+    : undefined;
+};
+
+/**
+ * The single `Effect.map` callback of an evidence projection, with the names its parameter binds. A plain
+ * parameter binds the whole helper result; a destructuring pattern binds `result` (and `evidence`) from the
+ * helper's returned record, so `({ result }) => ({ evidence, result })` is the same projection.
+ */
+const nativeReadEvidenceCallback = (
+  transform: string,
+): { readonly result: string; readonly returned: string } | undefined => {
+  const args = wholeCallArguments(transform, /^Effect\.map\(/u, true);
+  const callback = args?.length === 1 ? args[0] : undefined;
+  const parameters = callback === undefined ? undefined : readCallableParameters(callback);
+  const returned = callback === undefined ? undefined : callbackReturnedExpression(callback);
+  const pattern = parameters?.length === 1 ? nativeReadParameterPattern(parameters[0] ?? '') : undefined;
+  if (
+    callback === undefined ||
+    pattern === undefined ||
+    returned === undefined ||
+    !hasBalancedArrowCallback(callback) ||
+    !hasDirectReadCallbackExpression(callback, returned)
+  ) {
+    return undefined;
+  }
+  const result = nativeReadEvidenceResultBinding(pattern);
+  return result === undefined ? undefined : { result, returned };
+};
+
+/** A closed `{ evidence, result }` record: the projection a load or a deferred helper returns. */
+const hasNativeReadEvidenceRecord = (returned: string | undefined): boolean => {
+  const record = returned?.startsWith('(') === true ? returned.slice(1, -1).trim() : returned;
   const entries = record === undefined ? undefined : topLevelObjectEntries(record);
   const keys = entries?.map(
     (entry) => objectEntryKey(entry) ?? (/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(entry) ? entry : undefined),
   );
   return (
-    callback !== undefined &&
     record !== undefined &&
     hasClosedUniqueObjectKeys(record) &&
     entries?.length === 2 &&
     keys?.every((key) => key !== undefined) === true &&
     [...(keys ?? [])].toSorted().join(',') === 'evidence,result' &&
-    objectPropertyValue(record, 'result') === callback.name &&
     topLevelObjectEntries(objectPropertyValue(record, 'evidence') ?? '') !== undefined
+  );
+};
+
+/** The evidence map a program load returns: a closed `{ evidence, result }` record of the helper result. */
+const hasNativeReadEvidenceMap = (transform: string): boolean => {
+  const callback = nativeReadEvidenceCallback(transform);
+  const record =
+    callback?.returned.startsWith('(') === true ? callback.returned.slice(1, -1).trim() : callback?.returned;
+  return (
+    callback !== undefined &&
+    hasNativeReadEvidenceRecord(callback.returned) &&
+    objectPropertyValue(record ?? '', 'result') === callback.result
   );
 };
 
@@ -12425,7 +12609,7 @@ interface NativeReadProgramInput {
   readonly ancestors: ReadonlySet<string>;
   readonly body: string;
   readonly callArguments?: readonly string[];
-  readonly contract?: string;
+  readonly contract?: ScopedServiceContract;
   readonly depth: number;
   readonly locals: ReadonlySet<string>;
   readonly owner: ReadPhaseOwner;
@@ -12436,15 +12620,19 @@ interface NativeReadProgramInput {
 
 /** The scoped service a nested helper was forwarded, built only when the caller actually forwarded one. */
 interface NativeReadProgramForwarded {
-  contract?: string;
+  contract?: ScopedServiceContract;
   services?: string;
   servicesType?: string;
 }
 
 const hasNativeReadProgramConstructor = (input: NativeReadProgramInput, name: string): boolean => {
   const imported = namedSourceImport(input.source, name, true);
+  if (imported !== undefined) {
+    return imported.modulePath === CORE_RUNTIME_MODULE || /^\.\.?\//u.test(imported.modulePath);
+  }
   return (
-    imported !== undefined && (imported.modulePath === CORE_RUNTIME_MODULE || /^\.\.?\//u.test(imported.modulePath))
+    NATIVE_READ_PROGRAM_GLOBAL_CONSTRUCTORS.has(name) &&
+    hasStableReadFactoryBindings(input.source, new Map([[name, 0]]), '')
   );
 };
 
@@ -12452,6 +12640,30 @@ const hasNativeReadProgramConstructor = (input: NativeReadProgramInput, name: st
  * A generator program body whose only executable dependency is the scoped service it was forwarded. The
  * nested walkers stay inside this function so their mutual recursion is textually after this declaration.
  */
+const hasBalancedReadProgramOperand = (tokens: readonly ReadFactoryToken[], operand: number): boolean => {
+  let depth = 0;
+  for (let index = operand; index < tokens.length; index += 1) {
+    const current = tokens[index]?.kind;
+    if (
+      current === SyntaxKind.OpenParenToken ||
+      current === SyntaxKind.OpenBracketToken ||
+      current === SyntaxKind.OpenBraceToken
+    ) {
+      depth += 1;
+    } else if (
+      current === SyntaxKind.CloseParenToken ||
+      current === SyntaxKind.CloseBracketToken ||
+      current === SyntaxKind.CloseBraceToken
+    ) {
+      depth -= 1;
+      if (depth === 0) {
+        return true;
+      }
+    }
+  }
+  return false;
+};
+
 const hasNativeReadProgram = (input: NativeReadProgramInput): boolean => {
   if (input.depth > NATIVE_READ_PROGRAM_MAX_DEPTH) {
     return false;
@@ -12478,7 +12690,7 @@ const hasNativeReadProgram = (input: NativeReadProgramInput): boolean => {
       });
     }
     const parameters = readCallableParameters(resolved.initializer);
-    const names = readCallableParameterNames(resolved.initializer);
+    const names = nativeReadDeclaredNames(parameters);
     const body =
       readCallableBlock(resolved.initializer) ??
       nativePhaseGeneratorBody(resolved.initializer) ??
@@ -12563,11 +12775,20 @@ const hasNativeReadProgram = (input: NativeReadProgramInput): boolean => {
       const name = tokens[operand + 1];
       return name?.kind === SyntaxKind.Identifier && hasNativeReadProgramConstructor(input, name.value);
     }
+    if (first.kind === SyntaxKind.OpenParenToken) {
+      // A parenthesized operand (e.g. a conditional of two service reads) is walked token by token anyway,
+      // so the group only has to be balanced here.
+      const balanced = hasBalancedReadProgramOperand(tokens, operand);
+      if (!balanced) {
+        input.owner.diagnostics?.push('native read program: unbalanced yield operand');
+      }
+      return balanced;
+    }
     if (first.kind !== SyntaxKind.Identifier) {
       input.owner.diagnostics?.push(`native read program: unsupported yield operand ${first.value}`);
       return false;
     }
-    if (first.value === input.services || first.value === 'Effect') {
+    if ([input.services, 'Effect'].includes(first.value)) {
       return true;
     }
     if (NATIVE_READ_PROGRAM_PURE_ROOTS.has(first.value)) {
@@ -12607,6 +12828,13 @@ const hasNativeReadProgram = (input: NativeReadProgramInput): boolean => {
     if (name === input.services) {
       return false;
     }
+    if (
+      NATIVE_READ_PROGRAM_GLOBAL_FUNCTIONS.has(name) &&
+      namedSourceImport(input.source, name) === undefined &&
+      hasStableReadFactoryBindings(input.source, new Map([[name, 0]]), '')
+    ) {
+      return true;
+    }
     if (nested(name, nativeReadProgramCallArguments(tokens, paren))) {
       return true;
     }
@@ -12643,36 +12871,90 @@ const hasNativeReadProgram = (input: NativeReadProgramInput): boolean => {
   return tokens.every((_current, index) => token(tokens, index));
 };
 
-const hasTenantQualifiedReadProjection = (
-  parameters: readonly string[],
-  invocation: NonNullable<ReturnType<typeof originalReadInvocation>>,
-  source: string,
-): boolean => {
+/** The load forwards only the request input and the trusted tenant projection plus the scoped service. */
+const hasTenantQualifiedReadArguments = (parameters: readonly string[], args: readonly string[]): boolean => {
   const [input, context] = phaseParameterNames(parameters) ?? [];
-  const { args, pipeline } = invocation;
   const middle = args.slice(1, -1);
-  const transform = pipeline?.transforms.length === 1 ? pipeline.transforms[0] : undefined;
   return (
     input !== undefined &&
     context !== undefined &&
     (args.length === 2 || args.length === 3) &&
     args[0] === input &&
     args.at(-1) === `${context}.services` &&
-    middle.every((argument) => tenantQualifiedReadProjection(argument, context) !== undefined) &&
+    middle.every((argument) => tenantQualifiedReadProjection(argument, context) !== undefined)
+  );
+};
+
+const hasTenantQualifiedReadProjection = (
+  parameters: readonly string[],
+  invocation: NonNullable<ReturnType<typeof originalReadInvocation>>,
+  source: string,
+): boolean => {
+  const transform = invocation.pipeline?.transforms.length === 1 ? invocation.pipeline.transforms[0] : undefined;
+  return (
     transform !== undefined &&
+    hasTenantQualifiedReadArguments(parameters, invocation.args) &&
     hasNativeReadEvidenceMap(transform) &&
     hasNativeReadProgramImports(source)
   );
 };
 
+/** The last top-level `return` expression of a program body, whatever wraps the generator. */
+const nativeReadProgramReturnedExpression = (initializer: string): string | undefined => {
+  const body = readCallableBlock(initializer) ?? nativePhaseGeneratorBody(initializer);
+  if (body === undefined) {
+    return undefined;
+  }
+  const returns = [...maskNonCode(body).matchAll(/\breturn\s+/gu)].filter(
+    (match) => match.index !== undefined && codeDepthBeforePosition(body, match.index) === 1,
+  );
+  const finalReturn = returns.at(-1);
+  if (finalReturn?.index === undefined) {
+    return undefined;
+  }
+  const returned = body.slice(finalReturn.index + finalReturn[0].length);
+  const [statementEnd] = topLevelSeparators(maskNonCode(returned), ';');
+  return (statementEnd === undefined ? returned : returned.slice(0, statementEnd)).trim();
+};
+
+/**
+ * The deferred load shape `Effect.suspend(() => helper(input[, tenant], services))`: the load adds no
+ * projection of its own, so the helper itself has to return the closed evidence record.
+ */
+const nativeReadSuspendInvocation = (
+  owner: ReadPhaseOwner,
+  source: string,
+  expression: string,
+): NonNullable<ReturnType<typeof originalReadInvocation>> | undefined => {
+  const args = wholeCallArguments(expression, /^Effect\.suspend\(/u, true);
+  const callback = args?.length === 1 ? args[0] : undefined;
+  if (
+    callback === undefined ||
+    !hasRuntimeNamedSourceImport(source, 'Effect', 'Effect', 'effect') ||
+    !hasStableReadFactoryBindings(source, new Map([['Effect', 0]]), '')
+  ) {
+    return undefined;
+  }
+  const parameters = readCallableParameters(callback);
+  const returned = callbackReturnedExpression(callback);
+  return parameters?.length === 0 && returned !== undefined
+    ? originalReadInvocation(owner, source, returned)
+    : undefined;
+};
+
 interface TenantQualifiedReadHelper {
   readonly body: string;
-  readonly contract: string;
+  readonly contract: ScopedServiceContract;
   readonly names: readonly string[];
   readonly parameters: readonly string[];
+  readonly serviceIndex: number;
+  readonly servicesType: string;
 }
 
-/** The owner-local generator a program load forwards into, or nothing when its shape is not a helper. */
+/**
+ * The owner-local generator a program load forwards into, or nothing when its shape is not a helper. The
+ * scoped service is the parameter the load context names; any parameter after it may only be optional.
+ */
 const tenantQualifiedReadHelper = (
   owner: ReadPhaseOwner,
   source: string,
@@ -12681,22 +12963,26 @@ const tenantQualifiedReadHelper = (
   servicesType: string | undefined,
 ): TenantQualifiedReadHelper | undefined => {
   const { target } = invocation;
-  const names = readCallableParameterNames(target.initializer);
   const parameters = readCallableParameters(target.initializer);
+  const names = nativeReadDeclaredNames(parameters);
   const body = readCallableBlock(target.initializer) ?? nativePhaseGeneratorBody(target.initializer);
-  const contract = servicesType === undefined ? undefined : ownerLocalInterfaceContract(owner, source, servicesType);
-  const valid =
-    names !== undefined &&
-    names.length === invocation.args.length &&
-    names.at(-1) !== undefined &&
-    names.at(-1) !== input &&
-    parameters !== undefined &&
-    nativeReadProgramParameterType(parameters.at(-1) ?? '') === servicesType &&
-    contract !== undefined &&
-    body !== undefined &&
-    isEffectFnCallback(target.initializer);
-  return valid && names !== undefined && parameters !== undefined && contract !== undefined && body !== undefined
-    ? { body, contract, names, parameters }
+  if (names === undefined || parameters === undefined || body === undefined || servicesType === undefined) {
+    return undefined;
+  }
+  const contract = ownerLocalScopedServiceContract(owner, source, servicesType);
+  const serviceIndex = parameters.findIndex((parameter) => readParameterAnnotation(parameter) === servicesType);
+  const optionalTail = parameters
+    .slice(serviceIndex + 1)
+    .every((parameter) => /^[A-Za-z_$][A-Za-z0-9_$]*\s*\?/u.test(parameter.trim()));
+  return contract !== undefined &&
+    serviceIndex !== -1 &&
+    names.length === parameters.length &&
+    invocation.args.length === serviceIndex + 1 &&
+    optionalTail &&
+    names[serviceIndex] !== undefined &&
+    names[serviceIndex] !== input &&
+    isEffectFnCallback(target.initializer)
+    ? { body, contract, names, parameters, serviceIndex, servicesType }
     : undefined;
 };
 
@@ -12710,6 +12996,59 @@ const hasTenantQualifiedReadHelperGuard = (scoped: boolean, helper: TenantQualif
   );
 };
 
+/** `{ a } = input` / `[a] = input`: a destructuring declaration, not a whole-value alias of the request. */
+const nativeReadDestructuredSource = (tokens: readonly ReadFactoryToken[], index: number): boolean =>
+  tokens[index - 1]?.kind === SyntaxKind.EqualsToken &&
+  (tokens[index - 2]?.kind === SyntaxKind.CloseBraceToken || tokens[index - 2]?.kind === SyntaxKind.CloseBracketToken);
+
+/**
+ * The request input a deferred program body receives is read-only: it may be destructured, but it is never
+ * redeclared, reassigned, aliased wholesale, or shadowed by a nested parameter. This keeps the request
+ * identity control the shared protected-binding check applies elsewhere, without rejecting destructuring.
+ */
+const hasStableProgramInput = (body: string, input: string): boolean => {
+  if (input === '') {
+    return false;
+  }
+  const tokens = tokenizeGovernedClient(body);
+  const bindings = new Map([[input, 0]]);
+  return tokens.every((token, index) => {
+    if (token.kind === SyntaxKind.OpenParenToken && readFactoryShadowsParameters(tokens, index, bindings)) {
+      return false;
+    }
+    if (
+      (token.kind === SyntaxKind.ConstKeyword ||
+        token.kind === SyntaxKind.LetKeyword ||
+        token.kind === SyntaxKind.VarKeyword) &&
+      (tokens[index + 1]?.kind === SyntaxKind.OpenBraceToken ||
+        tokens[index + 1]?.kind === SyntaxKind.OpenBracketToken) &&
+      readFactoryDestructuredBinding(tokens, index + 1, bindings)
+    ) {
+      return false;
+    }
+    if (token.kind !== SyntaxKind.Identifier || token.value !== input) {
+      return true;
+    }
+    if (READ_FACTORY_MEMBER_SELECTORS.has(tokens[index - 1]?.kind ?? SyntaxKind.Unknown)) {
+      return true;
+    }
+    return (
+      !(
+        readFactoryDeclaredBinding(tokens, index) ||
+        readFactoryIllegalProtectedReference(tokens, index, undefined, new Set())
+      ) || nativeReadDestructuredSource(tokens, index)
+    );
+  });
+};
+
+const hasDeferredReadProgramProjection = (
+  parameters: readonly string[],
+  invocation: NonNullable<ReturnType<typeof originalReadInvocation>>,
+): boolean =>
+  invocation.pipeline === undefined &&
+  hasTenantQualifiedReadArguments(parameters, invocation.args) &&
+  hasNativeReadEvidenceRecord(nativeReadProgramReturnedExpression(invocation.target.initializer));
+
 const hasTenantQualifiedReadProgram = (
   owner: ReadPhaseOwner,
   source: string,
@@ -12717,36 +13056,39 @@ const hasTenantQualifiedReadProgram = (
   returned: string,
 ): boolean => {
   const invocation = originalReadInvocation(owner, source, returned);
-  if (invocation === undefined || !hasTenantQualifiedReadProjection(parameters, invocation, source)) {
+  const deferred = invocation === undefined;
+  const resolved = invocation ?? nativeReadSuspendInvocation(owner, source, returned);
+  if (resolved === undefined || !hasNativeReadProgramImports(source)) {
+    return false;
+  }
+  const projected = deferred
+    ? hasDeferredReadProgramProjection(parameters, resolved)
+    : hasTenantQualifiedReadProjection(parameters, resolved, source);
+  if (!projected) {
     return false;
   }
   const [input] = phaseParameterNames(parameters) ?? [];
-  const servicesType = nativeReadProgramParameterType(
-    readCallableParameters(invocation.target.initializer)?.at(-1) ?? '',
-  );
+  const servicesType = readLoadContextServicesType(parameters[1] ?? '');
   const helper =
-    input === undefined ? undefined : tenantQualifiedReadHelper(owner, source, invocation, input, servicesType);
-  const scoped = invocation.args.length === 3;
-  if (
-    helper === undefined ||
-    nativeReadProgramLoadContextType(parameters[1] ?? '') !== servicesType ||
-    !hasTenantQualifiedReadHelperGuard(scoped, helper)
-  ) {
+    input === undefined ? undefined : tenantQualifiedReadHelper(owner, source, resolved, input, servicesType);
+  const scoped = resolved.args.length === 3;
+  if (helper === undefined || !hasTenantQualifiedReadHelperGuard(scoped, helper)) {
     return false;
   }
-  const servicesName = helper.names.at(-1) ?? '';
-  const protectedNames = new Map<string, number>([
-    [input ?? '', 0],
-    [servicesName, 0],
-  ]);
+  const servicesName = helper.names[helper.serviceIndex] ?? '';
+  const protectedNames = new Map<string, number>([[servicesName, 0]]);
   if (scoped) {
     protectedNames.set(helper.names[1] ?? '', 0);
   }
+  if (!deferred) {
+    protectedNames.set(input ?? '', 0);
+  }
   return (
     hasStableReadFactoryBindings(helper.body, protectedNames, '') &&
+    (!deferred || hasStableProgramInput(helper.body, input ?? '')) &&
     hasNativeReadProgram({
       ancestors: new Set([
-        `${readCallableOwner(owner, source, invocation.target.binding).readFile}:${invocation.target.binding}`,
+        `${readCallableOwner(owner, source, resolved.target.binding).readFile}:${resolved.target.binding}`,
       ]),
       body: helper.body,
       contract: helper.contract,
@@ -12754,8 +13096,8 @@ const hasTenantQualifiedReadProgram = (
       locals: new Set([...helper.names, ...nativeReadProgramLocalNames(helper.body)]),
       owner,
       services: servicesName,
-      servicesType,
-      source: invocation.target.source,
+      servicesType: helper.servicesType,
+      source: resolved.target.source,
     })
   );
 };
@@ -13001,33 +13343,6 @@ const originalNativePhaseDependency = (
     : undefined;
 };
 
-/** The declared type of a parameter, or nothing when it carries no annotation. */
-const readParameterAnnotation = (parameter: string): string | undefined => {
-  const index = parameter.indexOf(':');
-  const annotation = index === -1 ? '' : maskComments(parameter.slice(index + 1)).trim();
-  return annotation.length === 0 ? undefined : annotation;
-};
-
-/** The plain names of a callable's declared parameters, or nothing when any of them is not a plain name. */
-const readDeclaredParameterNames = (parameters: readonly string[]): readonly string[] | undefined => {
-  const names = parameters.map(
-    (parameter) => /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\??(?:\s*:[\s\S]+)?$/u.exec(parameter)?.groups?.name,
-  );
-  return names.length > 0 && names.every((name) => name !== undefined) && new Set(names).size === names.length
-    ? names.filter((name) => name !== undefined)
-    : undefined;
-};
-
-/** The services type a `ReadLoadContext<T>` phase declares, whatever `T` spells. */
-const readLoadContextServicesType = (parameter: string): string | undefined => {
-  const annotation = readParameterAnnotation(parameter);
-  const services =
-    annotation === undefined
-      ? undefined
-      : /^ReadLoadContext<(?<services>[\s\S]+)>$/u.exec(annotation)?.groups?.services;
-  return services === undefined ? undefined : maskComments(services).trim();
-};
-
 const hasOwnerServiceEffectSignature = (source: string, definition: string | undefined, method: string): boolean => {
   const effect = namedSourceImport(source, 'Effect', true);
   const signature =
@@ -13047,13 +13362,12 @@ const hasOwnerServiceEffectSignature = (source: string, definition: string | und
   );
 };
 
-const hasOwnerServiceInterfaceMethod = (
+const originalNestedReadServiceContract = (
   owner: ReadPhaseOwner,
   source: string,
   contract: string,
   member: string,
-  method: string,
-): boolean => {
+): { readonly definition: string; readonly source: string } | undefined => {
   const type = new RegExp(
     `\\breadonly\\s+${escapeRegExp(member)}\\s*:\\s*(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\\s*;`,
     'u',
@@ -13065,13 +13379,25 @@ const hasOwnerServiceInterfaceMethod = (
       : undefined;
   const target = file?.startsWith(`${owner.ownerPath}/`) === true ? owner.sources.get(file) : undefined;
   if (target === undefined || imported === undefined) {
-    return false;
+    return undefined;
   }
   const alias = new RegExp(
     `\\bexport\\s+type\\s+${escapeRegExp(imported.imported)}\\s*=\\s*(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\\s*;`,
     'u',
   ).exec(maskComments(target))?.groups?.name;
-  return hasOwnerServiceEffectSignature(target, ownerInterface(target, alias ?? imported.imported), method);
+  const definition = ownerInterface(target, alias ?? imported.imported);
+  return definition === undefined ? undefined : { definition, source: target };
+};
+
+const hasOwnerServiceInterfaceMethod = (
+  owner: ReadPhaseOwner,
+  source: string,
+  contract: string,
+  member: string,
+  method: string,
+): boolean => {
+  const original = originalNestedReadServiceContract(owner, source, contract, member);
+  return original !== undefined && hasOwnerServiceEffectSignature(original.source, original.definition, method);
 };
 
 const hasNativeReturnedServiceMethod = (
@@ -13123,6 +13449,114 @@ const hasOriginalTypedServiceReadBase = (
   return hasNativeReturnedServiceMethod(factory, projection.method ?? '');
 };
 
+const originalScopedEffectImplementation = (
+  owner: ReadPhaseOwner,
+  source: string,
+  member: string,
+  value: string,
+): { readonly definition: string; readonly source: string } | undefined => {
+  const factory = callArgument(source, /\bdefineRead\(/u, 2);
+  const closure = factory === undefined ? undefined : scopedReadClosureDefinition(factory);
+  const provided = closure === undefined ? undefined : objectPropertyValue(closure.methods, member);
+  const invocation = provided === undefined ? undefined : originalReadInvocation(owner, source, provided);
+  if (invocation === undefined) {
+    return undefined;
+  }
+  const returned = callbackReturnedExpression(invocation.target.initializer);
+  const frozen = returned === undefined ? undefined : wholeCallArguments(returned, /^Object\.freeze\(/u, true);
+  const record = frozen?.length === 1 ? frozen[0] : returned;
+  const body = readCallableBlock(invocation.target.initializer)?.slice(1, -1);
+  if (
+    frozen !== undefined &&
+    (namedSourceImport(invocation.target.source, 'Object') !== undefined ||
+      !hasStableReadFactoryBindings(invocation.target.source, new Map([['Object', 0]]), ''))
+  ) {
+    return undefined;
+  }
+  if (record === undefined || body === undefined || !hasClosedUniqueObjectKeys(record)) {
+    return undefined;
+  }
+  const property = objectProperty(record, value);
+  const definition = /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(property ?? '')
+    ? constInitializer(body, property ?? '')
+    : (property ?? constInitializer(body, value));
+  return definition === undefined ? undefined : { definition, source: invocation.target.source };
+};
+
+const hasOriginalScopedEffectValue = (
+  owner: ReadPhaseOwner,
+  source: string,
+  parameters: readonly string[],
+  base: string,
+): boolean => {
+  const projection =
+    /^(?<context>[A-Za-z_$][A-Za-z0-9_$]*)\.services\.(?<member>[A-Za-z_$][A-Za-z0-9_$]*)\.(?<value>[A-Za-z_$][A-Za-z0-9_$]*)$/u.exec(
+      base,
+    )?.groups;
+  const context = parameters.find((parameter) => parameter.split(':')[0]?.trim() === projection?.context);
+  const services = context === undefined ? undefined : readLoadContextServicesType(context);
+  const contract = services === undefined ? undefined : localReadServiceContract(source, services);
+  const original =
+    contract === undefined || projection === undefined
+      ? undefined
+      : originalNestedReadServiceContract(owner, source, contract, projection.member ?? '');
+  if (original === undefined || projection === undefined) {
+    return false;
+  }
+  const effect = namedSourceImport(original.source, 'Effect', true);
+  const implementation = originalScopedEffectImplementation(
+    owner,
+    source,
+    projection.member ?? '',
+    projection.value ?? '',
+  );
+  return (
+    implementation?.source === original.source &&
+    isWholeCallExpression(implementation.definition, /^Effect\.(?:gen|succeed|suspend|sync)\(/u) &&
+    hasRuntimeNamedSourceImport(implementation.source, 'Effect', 'Effect', 'effect') &&
+    effect?.imported === 'Effect' &&
+    effect.modulePath === 'effect' &&
+    new RegExp(`\\breadonly\\s+${escapeRegExp(projection.value ?? '')}\\s*:\\s*Effect\\.Effect<`, 'u').test(
+      maskComments(original.definition),
+    ) &&
+    hasStableReadFactoryBindings(original.source, new Map([['Effect', 0]]), '')
+  );
+};
+
+const hasNativeEffectValueNamespaces = (source: string, expression: string): boolean => {
+  const code = maskNonCode(expression);
+  return (
+    !/\]\s*\(/u.test(code) &&
+    [...code.matchAll(/\b(?<root>[A-Za-z_$][A-Za-z0-9_$]*)\s*\.\s*[A-Za-z_$][A-Za-z0-9_$]*\s*\(/gu)].every((call) => {
+      const root = call.groups?.root ?? '';
+      return (
+        (root === 'Effect' || NATIVE_READ_PROGRAM_PURE_ROOTS.has(root)) &&
+        hasRuntimeNamedSourceImport(source, root, root, 'effect')
+      );
+    })
+  );
+};
+
+const hasScopedEffectValuePipeline = (
+  owner: ReadPhaseOwner,
+  source: string,
+  parameters: readonly string[],
+  base: string,
+  phaseSource: string | undefined,
+  scopedServiceFactory: boolean,
+): boolean => {
+  const returned = phaseSource === undefined ? undefined : callbackReturnedExpression(phaseSource);
+  const pipeline = returned === undefined ? undefined : outputPipeExpression(returned);
+  return (
+    scopedServiceFactory &&
+    returned !== undefined &&
+    pipeline?.base === base &&
+    hasStablePhaseReferences(source, returned, parameters, 'load', owner) &&
+    pipeline.transforms.every((transform) => hasNativeEffectValueNamespaces(source, transform)) &&
+    hasNativePhaseTransforms(owner, source, pipeline)
+  );
+};
+
 /**
  * A native read phase may start from a proven owner read call rather than a literal Effect value:
  * the read's own typed services projection, or an owner-local exported read dependency, invoked
@@ -13133,7 +13567,12 @@ const hasProvenOwnerReadCallBase = (
   source: string,
   parameters: readonly string[],
   base: string,
+  phaseSource?: string,
+  scopedServiceFactory = false,
 ): boolean => {
+  if (hasOriginalScopedEffectValue(owner, source, parameters, base)) {
+    return hasScopedEffectValuePipeline(owner, source, parameters, base, phaseSource, scopedServiceFactory);
+  }
   const names = readDeclaredParameterNames(parameters);
   const argumentsList = wholeCallArguments(base, /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*\(/u, true);
   const [input] = names ?? [];
@@ -13512,6 +13951,300 @@ const hasNativeSucceedReadPhase = (owner: ReadPhaseOwner, source: string, phaseS
   );
 };
 
+const guardedGuestServiceReadFactoryAt = (
+  source: string,
+  phaseTokens: ReturnType<typeof tokenizeGovernedClient>,
+  marker: string,
+  index: number,
+): string | undefined => {
+  const opening = index + marker.length - 1;
+  const closing = matchingDelimiterEnd(source, opening, '(', ')');
+  if (closing === undefined) {
+    return undefined;
+  }
+  const args = wholeCallArguments(source.slice(index, closing + 1), /^defineRead\(/u, true);
+  const handler = args?.[1];
+  const factory = args?.[2];
+  const keys =
+    handler === undefined ? undefined : topLevelObjectEntries(handler)?.map((entry) => objectEntryKey(entry));
+  const load = handler === undefined ? undefined : objectPropertyValue(handler, 'load');
+  const initializer = load === undefined ? undefined : constInitializer(source, load);
+  return args?.length === 3 &&
+    factory !== undefined &&
+    keys?.length === 1 &&
+    keys[0] === 'load' &&
+    initializer !== undefined &&
+    hasExactSourceTokens(phaseTokens, initializer)
+    ? factory
+    : undefined;
+};
+
+/** The `defineRead` factory whose `load` is this phase, when exactly one declaration matches the phase. */
+const guardedGuestServiceReadFactoryForLoad = (source: string, phase: string): string | undefined => {
+  const phaseTokens = tokenizeGovernedClient(phase);
+  const factories: string[] = [];
+  for (const match of maskNonCode(source).matchAll(/\bdefineRead\s*\(/gu)) {
+    if (match.index === undefined || !isTopLevelCodePosition(source, match.index)) {
+      continue;
+    }
+    const factory = guardedGuestServiceReadFactoryAt(source, phaseTokens, match[0], match.index);
+    if (factory !== undefined) {
+      factories.push(factory);
+    }
+  }
+  return factories.length === 1 ? factories[0] : undefined;
+};
+
+const guardedGuestServiceReadFactoryNames = (factory: string, method: string) => {
+  const parameters = readCallableParameters(factory);
+  const returned = callbackReturnedExpression(factory);
+  const methods = returned === undefined ? undefined : nativeReadSucceedExpression(returned);
+  const keys =
+    methods === undefined ? undefined : topLevelObjectEntries(methods)?.map((entry) => objectEntryKey(entry));
+  const implementation = methods === undefined ? undefined : objectProperty(methods, method);
+  const [input] = readCallableParameterNames(implementation ?? '') ?? [];
+  const invoked = implementation === undefined ? undefined : callbackReturnedExpression(implementation);
+  return { input, invoked, keys, parameters, returned, scope: parameters?.[1], transaction: parameters?.[0] };
+};
+
+const guardedGuestServiceReadFactoryArity = (transaction: string | undefined, scope: string | undefined): boolean =>
+  transaction !== undefined &&
+  scope !== undefined &&
+  /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(transaction) &&
+  /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(scope);
+
+const guardedGuestServiceReadFactoryForwarding = (
+  factory: string,
+  helper: string,
+  method: string,
+  names: ReturnType<typeof guardedGuestServiceReadFactoryNames>,
+): boolean =>
+  names.keys?.length === 1 &&
+  names.keys[0] === method &&
+  names.input !== undefined &&
+  names.invoked !== undefined &&
+  hasBalancedArrowCallback(factory) &&
+  hasDirectReadCallbackExpression(factory, names.returned ?? '') &&
+  hasExactSourceTokens(
+    tokenizeGovernedClient(factory),
+    `(${names.transaction ?? ''}, ${names.scope ?? ''}) => Effect.succeed({${method}: (${names.input ?? ''}: Parameters<typeof ${helper}>[1]) => ${helper}(${names.transaction ?? ''}, ${names.input ?? ''})})`,
+  );
+
+/** The read's scoped service factory forwards its own transaction to the declared owner helper, nothing else. */
+const hasGuardedGuestServiceReadFactory = (
+  owner: ReadPhaseOwner,
+  source: string,
+  factory: string,
+  helper: string,
+  method: string,
+): boolean => {
+  const names = guardedGuestServiceReadFactoryNames(factory, method);
+  return hasReadProofChecks(owner, 'guarded guest service read factory', {
+    arity: guardedGuestServiceReadFactoryArity(names.transaction, names.scope),
+    forwarding: guardedGuestServiceReadFactoryForwarding(factory, helper, method, names),
+    native:
+      hasExactValueImport(source, 'Effect', 'effect') &&
+      hasStableReadFactoryBindings(
+        source,
+        new Map([
+          ['Effect', 0],
+          [helper, 0],
+        ]),
+        '',
+      ),
+  });
+};
+
+/**
+ * The generated guarded service read: the exact tenant/legal-entity/evidence guard with its early NotFound,
+ * the owner call through the read's own typed services, and the read's own scoped service factory.
+ */
+interface GuardedGuestServiceReadDefinition {
+  readonly body: string;
+  readonly context: string;
+  readonly contract: string | undefined;
+  readonly factory: string | undefined;
+  readonly failure: string | undefined;
+  readonly helper: string | undefined;
+  readonly input: string;
+  readonly memberParameter: string;
+  readonly method: string | undefined;
+  readonly parameters: readonly string[];
+  readonly pipeline: ReturnType<typeof outputPipeExpression>;
+  readonly reason: string | undefined;
+  readonly responseType: string | undefined;
+  readonly servicesType: string | undefined;
+  readonly target: ReturnType<typeof originalReadCallable>;
+  readonly unavailable: string | undefined;
+  readonly unavailableSource: string | undefined;
+}
+
+// Only a block-bodied load that guards the guest-evidence projections is this read; every other load is
+// decided by the scoped-load proofs above, so this one stays silent about structures it never claims.
+const guardedGuestServiceReadPhase = (phaseSource: string) => {
+  const parameters = readCallableParameters(phaseSource);
+  const [input, context] = phaseParameterNames(parameters ?? []) ?? [];
+  const body = readCallableBlock(phaseSource);
+  return parameters?.length === 2 &&
+    input !== undefined &&
+    context !== undefined &&
+    body !== undefined &&
+    body.includes('.guestEvidenceRef') &&
+    body.includes('.correlationRoot')
+    ? { body, context, input, parameters }
+    : undefined;
+};
+
+const guardedGuestServiceReadContractMember = (contract: string | undefined) =>
+  contract === undefined
+    ? undefined
+    : /^\{\s*readonly\s+(?<method>[A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*\(\s*(?<parameter>[A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*Parameters<typeof\s+(?<helper>[A-Za-z_$][A-Za-z0-9_$]*)\s*>\[1\]\s*,?\s*\)\s*=>\s*ReturnType<typeof\s+(?<result>[A-Za-z_$][A-Za-z0-9_$]*)\s*>\s*;\s*\}$/u.exec(
+        maskComments(contract.slice(contract.indexOf('{'))),
+      )?.groups;
+
+const guardedGuestServiceReadFailureReason = (failure: string | undefined): string | undefined => {
+  const options = failure === undefined ? undefined : objectArgument(failure, /^new ReadHandlerNotFound\(/u);
+  return options === undefined ? undefined : objectPropertyValue(options, 'reason');
+};
+
+const guardedGuestServiceReadPipelineArguments = (pipeline: ReturnType<typeof outputPipeExpression>) => {
+  const unavailable = callArgument(pipeline?.transforms[0] ?? '', /^Effect\.mapError\(/u);
+  const mapper = callArgument(pipeline?.transforms[1] ?? '', /^Effect\.map\(/u);
+  const parameter = mapper === undefined ? undefined : readCallableParameters(mapper)?.[0];
+  const responseType =
+    parameter !== undefined && parameter.includes(':') ? parameter.slice(parameter.indexOf(':') + 1).trim() : undefined;
+  return { responseType, unavailable };
+};
+
+const guardedGuestServiceReadDefinition = (
+  owner: ReadPhaseOwner,
+  source: string,
+  phaseSource: string,
+): GuardedGuestServiceReadDefinition | undefined => {
+  const phase = guardedGuestServiceReadPhase(phaseSource);
+  if (phase === undefined) {
+    return undefined;
+  }
+  const returned = readPhaseReturnedExpression(phaseSource);
+  const pipeline = returned === undefined ? undefined : outputPipeExpression(returned);
+  const servicesType = readLoadContextServicesType(phase.parameters[1] ?? '');
+  const contract = servicesType === undefined ? undefined : ownerInterface(source, servicesType);
+  const member = guardedGuestServiceReadContractMember(contract);
+  const helper = member !== undefined && member.helper === member.result ? member.helper : undefined;
+  const failure = callArgument(phase.body, /Effect\.fail\(/u);
+  const { responseType, unavailable } = guardedGuestServiceReadPipelineArguments(pipeline);
+  return {
+    body: phase.body,
+    context: phase.context,
+    contract,
+    factory: guardedGuestServiceReadFactoryForLoad(source, phaseSource),
+    failure,
+    helper,
+    input: phase.input,
+    memberParameter: member?.parameter ?? '',
+    method: member?.method,
+    parameters: phase.parameters,
+    pipeline,
+    reason: guardedGuestServiceReadFailureReason(failure),
+    responseType,
+    servicesType,
+    target: helper === undefined ? undefined : originalReadCallable(owner, source, helper),
+    unavailable,
+    unavailableSource: unavailable === undefined ? undefined : constInitializer(source, unavailable),
+  };
+};
+
+const hasGuardedGuestServiceReadContract = (source: string, definition: GuardedGuestServiceReadDefinition): boolean =>
+  definition.contract !== undefined &&
+  definition.helper !== undefined &&
+  definition.method !== undefined &&
+  definition.servicesType !== undefined &&
+  hasExactSourceTokens(
+    tokenizeGovernedClient(definition.contract),
+    `export interface ${definition.servicesType} { readonly ${definition.method}: (${definition.memberParameter}: Parameters<typeof ${definition.helper}>[1]) => ReturnType<typeof ${definition.helper}>; }`,
+  ) &&
+  hasStableReadFactoryBindings(source, new Map([[definition.servicesType, 1]]), '');
+
+const hasGuardedGuestServiceReadFactoryCall = (
+  owner: ReadPhaseOwner,
+  source: string,
+  definition: GuardedGuestServiceReadDefinition,
+): boolean =>
+  definition.factory !== undefined &&
+  definition.helper !== undefined &&
+  definition.method !== undefined &&
+  hasGuardedGuestServiceReadFactory(owner, source, definition.factory, definition.helper, definition.method);
+
+const hasGuardedGuestServiceReadFailure = (source: string, definition: GuardedGuestServiceReadDefinition): boolean =>
+  definition.failure !== undefined &&
+  definition.reason !== undefined &&
+  staticReadReason(definition.reason) &&
+  hasNativeReadFailureValue(source, definition.failure, 'ReadHandlerNotFound');
+
+const hasGuardedGuestServiceReadGuard = (definition: GuardedGuestServiceReadDefinition): boolean =>
+  definition.helper !== undefined &&
+  definition.method !== undefined &&
+  definition.servicesType !== undefined &&
+  hasExactSourceTokens(
+    tokenizeGovernedClient(definition.parameters[0] ?? ''),
+    `${definition.input}: Parameters<typeof ${definition.helper}>[1]`,
+  ) &&
+  hasExactSourceTokens(
+    tokenizeGovernedClient(definition.parameters[1] ?? ''),
+    `${definition.context}: ReadLoadContext<${definition.servicesType}>`,
+  ) &&
+  hasExactSourceTokens(
+    tokenizeGovernedClient(definition.body),
+    `{
+      if (${definition.input}.legalEntityRef.tenantId !== ${definition.context}.scope.tenantId ||
+        ${definition.context}.scope.legalEntityId === undefined ||
+        ${definition.input}.legalEntityRef.resourceId !== ${definition.context}.scope.legalEntityId ||
+        ${definition.input}.guestEvidenceRef !== ${definition.input}.guestEvidenceRef.trim() ||
+        ${definition.input}.correlationRoot !== ${definition.input}.correlationRoot.trim()) {
+        return Effect.fail(new ReadHandlerNotFound({code: 'read_handler_not_found', reason: ${definition.reason ?? ''}}));
+      }
+      return ${definition.context}.services.${definition.method}(${definition.input}).pipe(
+        Effect.mapError(${definition.unavailable ?? ''}),
+        Effect.map((result: ${definition.responseType ?? ''}) => ({evidence: {resultCount: 1}, result})),
+      );
+    }`,
+  );
+
+const hasGuardedGuestServiceReadService = (definition: GuardedGuestServiceReadDefinition): boolean =>
+  definition.target !== undefined &&
+  isEffectFnCallback(definition.target.initializer) &&
+  hasRuntimeNamedSourceImport(definition.target.source, 'Effect', 'Effect', 'effect');
+
+const hasGuardedGuestServiceReadTransforms = (
+  owner: ReadPhaseOwner,
+  source: string,
+  definition: GuardedGuestServiceReadDefinition,
+): boolean =>
+  definition.pipeline?.transforms.length === 2 &&
+  definition.unavailableSource !== undefined &&
+  hasNativeReadErrorCallback(source, definition.unavailableSource) &&
+  hasStableReadFactoryBindings(source, new Map([[definition.unavailable ?? '', 1]]), '') &&
+  definition.responseType !== undefined &&
+  namedSourceImport(source, definition.responseType, true) !== undefined &&
+  hasNativePhaseTransforms(owner, source, definition.pipeline) &&
+  hasExactValueImport(source, 'Effect', 'effect');
+
+const hasGuardedGuestServiceReadLoad = (owner: ReadPhaseOwner, source: string, phaseSource: string): boolean => {
+  const definition = guardedGuestServiceReadDefinition(owner, source, phaseSource);
+  if (definition === undefined) {
+    return false;
+  }
+  return hasReadProofChecks(owner, 'guarded guest service read load', {
+    contract: hasGuardedGuestServiceReadContract(source, definition),
+    factory: hasGuardedGuestServiceReadFactoryCall(owner, source, definition),
+    failure: hasGuardedGuestServiceReadFailure(source, definition),
+    guard: hasGuardedGuestServiceReadGuard(definition),
+    references: hasStablePhaseReferences(source, definition.body, definition.parameters, 'load', owner),
+    service: hasGuardedGuestServiceReadService(definition),
+    transform: hasGuardedGuestServiceReadTransforms(owner, source, definition),
+  });
+};
+
 const hasNativeScopedReadLoad = (
   owner: ReadPhaseOwner,
   source: string,
@@ -13523,7 +14256,8 @@ const hasNativeScopedReadLoad = (
   (scopedServiceFactory && hasPreloadedAssociationReadPhase(owner, source, phaseSource)) ||
   hasPortalScopedReadPhase(owner, source, phaseSource) ||
   hasContextScopedReadPhase(owner, source, phaseSource) ||
-  hasPreparedSnapshotReadLoad(owner, source, phaseSource);
+  hasPreparedSnapshotReadLoad(owner, source, phaseSource) ||
+  hasGuardedGuestServiceReadLoad(owner, source, phaseSource);
 
 const hasOwnerNativeReadProtocolPhase = (
   owner: ReadPhaseOwner,
@@ -13548,7 +14282,14 @@ const hasIdentifierNativeReadPhase = (
   if (
     nativeEffect &&
     hasLocalNativeReadPhase(source, phaseSource, phase, (callback, base) =>
-      hasProvenOwnerReadCallBase(owner, source, readCallableParameters(callback) ?? [], base),
+      hasProvenOwnerReadCallBase(
+        owner,
+        source,
+        readCallableParameters(callback) ?? [],
+        base,
+        callback,
+        scopedServiceFactory,
+      ),
     )
   ) {
     return true;
@@ -13578,7 +14319,14 @@ const hasIdentifierNativeReadPhase = (
     callback !== undefined &&
     hasStableReadFactoryBindings(source, new Map([[phaseSource, 1]]), '') &&
     hasForwardedNativeReadPhase(source, callback, phase, scopedServiceFactory, owner, (expression, base) =>
-      hasProvenOwnerReadCallBase(owner, source, readCallableParameters(expression) ?? [], base),
+      hasProvenOwnerReadCallBase(
+        owner,
+        source,
+        readCallableParameters(expression) ?? [],
+        base,
+        expression,
+        scopedServiceFactory,
+      ),
     )
   );
 };
@@ -13634,7 +14382,14 @@ const hasNativeReadPhase = (
     (isEffectFnCallback(phaseSource) && isReadHandlerCallback(phaseSource, source)) ||
     hasNativeSucceedReadPhase(owner, source, phaseSource) ||
     hasForwardedNativeReadPhase(source, phaseSource, phase, scopedServiceFactory, owner, (expression, base) =>
-      hasProvenOwnerReadCallBase(owner, source, readCallableParameters(expression) ?? [], base),
+      hasProvenOwnerReadCallBase(
+        owner,
+        source,
+        readCallableParameters(expression) ?? [],
+        base,
+        expression,
+        scopedServiceFactory,
+      ),
     ) ||
     hasNativeReadPhaseFactory(owner, source, phaseSource, phase)
   );
@@ -14479,6 +15234,29 @@ const publishesSharedApiContribution = (sharedApi: string, apiValue: string, con
   );
 };
 
+const hasNativeSearchQueryInjection = (
+  source: string,
+  injected: NativeReadLayerInjection | undefined,
+  binding: string,
+): boolean => {
+  if (injected === undefined) {
+    return true;
+  }
+  const queryType = namedSourceImport(source, 'CoreSearchQueryRuntime', true);
+  return (
+    queryType?.imported === 'CoreSearchQueryRuntime' &&
+    queryType.modulePath === CORE_RUNTIME_MODULE &&
+    hasStableReadFactoryBindings(
+      injected.factorySource.slice(injected.tuple.signature[0].length).replace(injected.injection[0], ''),
+      new Map([
+        [binding, 0],
+        [injected.tuple.args, 0],
+      ]),
+      '',
+    )
+  );
+};
+
 /** The additional search service is the actual public Core query layer with its explicit database enrollment. */
 const hasNamedNativeSearchQueryProvision = (source: string, expression: string): boolean => {
   const match = /^(?<layer>[A-Za-z_$][A-Za-z0-9_$]*)\.provide\((?<binding>[A-Za-z_$][A-Za-z0-9_$]*)\)$/u.exec(
@@ -14530,16 +15308,7 @@ const hasNamedNativeSearchQueryProvision = (source: string, expression: string):
       ]),
       '',
     ) &&
-    (injected === undefined ||
-      (hasRuntimeNamedSourceImport(source, 'CoreSearchQueryRuntime', 'CoreSearchQueryRuntime', CORE_RUNTIME_MODULE) &&
-        hasStableReadFactoryBindings(
-          injected.factorySource.slice(injected.tuple.signature[0].length).replace(injected.injection[0], ''),
-          new Map([
-            [binding, 0],
-            [injected.tuple.args, 0],
-          ]),
-          '',
-        )))
+    hasNativeSearchQueryInjection(source, injected, binding)
   );
 };
 

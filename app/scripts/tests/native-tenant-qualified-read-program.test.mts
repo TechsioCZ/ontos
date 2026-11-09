@@ -65,15 +65,18 @@ const priceGroup = (name: string): ReadTarget => ({
   name,
   vertical: 'price-group-catalog',
 });
+const catalog = (name: string): ReadTarget => ({ moduleId: 'commerce.catalog', name, vertical: 'catalog' });
 
 const PAYMENT_TERM_HISTORY = 'payment-term-history';
+const PRICE_GROUP_DEFINITION = 'price-group-definition';
+const LIST_RECORDED_VARIANTS = 'list-recorded-variants';
 
 const tenantQualifiedReads: readonly ReadTarget[] = [
   paymentTerm('current-payment-terms'),
   paymentTerm(PAYMENT_TERM_HISTORY),
   paymentTerm('payment-term-source-record-history'),
   paymentTerm('payment-term-source-statement'),
-  priceGroup('price-group-definition'),
+  priceGroup(PRICE_GROUP_DEFINITION),
   priceGroup('validate-price-group-compatibility'),
 ];
 
@@ -87,6 +90,24 @@ it('accepts the actual tenant-qualified read programs for Payment Term Catalog a
   // The Catalog product-detail read shares this top-level shape and must not regress.
   const productDetail: ReadTarget = { moduleId: 'commerce.catalog', name: 'product-detail', vertical: 'catalog' };
   expect(accepts(productDetail, readSource(productDetail))).toBe(true);
+});
+
+// The Catalog reads that defer into an owner-local helper (`Effect.suspend`), destructure the evidence map
+// (`({ result }) => ...`), keep a trailing optional parameter, or carry a richer generator body. Their scoped
+// service contracts come from the real owner-local factory records, never from a fabricated interface.
+const catalogTenantQualifiedReads: readonly ReadTarget[] = [
+  catalog(LIST_RECORDED_VARIANTS),
+  catalog('package-definition-history'),
+  catalog('package-option-history'),
+  catalog('product-category-classification'),
+  catalog('product-relationship-current'),
+  catalog('variant-history'),
+];
+
+it('accepts the Catalog tenant-qualified read programs with deferred evidence and richer bodies', () => {
+  for (const target of catalogTenantQualifiedReads) {
+    expect(accepts(target, readSource(target)), readFile(target)).toBe(true);
+  }
 });
 
 it('rejects executable service factories that do not produce an Effect', () => {
@@ -109,7 +130,7 @@ it('rejects hostile tenant, service, helper, Effect, factory, eager-effect and r
   const statementSource = readSource(statement);
   const current = paymentTerm('current-payment-terms');
   const currentSource = readSource(current);
-  const definition = priceGroup('price-group-definition');
+  const definition = priceGroup(PRICE_GROUP_DEFINITION);
   const definitionSource = readSource(definition);
 
   const historyMutations: readonly (readonly [string, ReadTarget, string])[] = [
@@ -242,6 +263,100 @@ it('rejects hostile tenant, service, helper, Effect, factory, eager-effect and r
   ];
 
   for (const [label, target, mutated] of historyMutations) {
+    expect(mutated, `${label}: mutation must change the source`).not.toBe(readSource(target));
+    expect(accepts(target, mutated), label).toBe(false);
+  }
+});
+
+it('preserves a plain evidence callback with an owner-chosen local result name', () => {
+  const target = priceGroup(PRICE_GROUP_DEFINITION);
+  const original = readSource(target);
+  const renamed = original.replace(
+    'Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))',
+    'Effect.map((definition) => ({ evidence: { resultCount: 1 }, result: definition }))',
+  );
+  expect(renamed).not.toBe(original);
+  expect(accepts(target, renamed)).toBe(true);
+});
+
+it('keeps the evidence result bound to the actual helper result property', () => {
+  const target = catalog(LIST_RECORDED_VARIANTS);
+  const original = readSource(target);
+  for (const parameter of ['{ unrelated: result }', '[result]', '{ ...result }', '{ result = {} }']) {
+    const invalid = original.replace('Effect.map(({ result }) =>', `Effect.map((${parameter}) =>`);
+    expect(invalid, `${parameter}: mutation must change the source`).not.toBe(original);
+    expect(accepts(target, invalid), parameter).toBe(false);
+  }
+});
+
+it('rejects hostile deferred, richer-body and optional-tail Catalog shapes', () => {
+  const variantHistory = catalog('variant-history');
+  const variantHistorySource = readSource(variantHistory);
+  const definitionHistory = catalog('package-definition-history');
+  const definitionHistorySource = readSource(definitionHistory);
+  const listRecorded = catalog(LIST_RECORDED_VARIANTS);
+  const listRecordedSource = readSource(listRecorded);
+  const classification = catalog('product-category-classification');
+  const classificationSource = readSource(classification);
+  const relationship = catalog('product-relationship-current');
+  const relationshipSource = readSource(relationship);
+
+  const catalogMutations: readonly (readonly [string, ReadTarget, string])[] = [
+    [
+      'deferred helper tenant guard flipped',
+      variantHistory,
+      variantHistorySource.replace(
+        'reference.resourceRef.tenantId !== trustedTenantId',
+        'reference.resourceRef.tenantId === trustedTenantId',
+      ),
+    ],
+    [
+      'deferred helper returns the result without an evidence record',
+      variantHistory,
+      variantHistorySource.replace(
+        'return { evidence: { resultCount: 1 }, result: { ...result, reason: revision.reason } };',
+        'return result;',
+      ),
+    ],
+    [
+      'deferred load forwards the scope record instead of the service',
+      variantHistory,
+      variantHistorySource.replace(
+        'Effect.suspend(() => readVariantHistory(input, context.scope.tenantId, context.services))',
+        'Effect.suspend(() => readVariantHistory(input, context.scope.tenantId, context.scope))',
+      ),
+    ],
+    [
+      'deferred helper reads a service member the factory record does not return',
+      definitionHistory,
+      definitionHistorySource.replace('services\n      .getContentRevision(', 'services\n      .evilRead('),
+    ],
+    [
+      'evidence projection is not a closed record',
+      listRecorded,
+      listRecordedSource.replace(
+        '({ evidence: { resultCount: result.variants.length }, result })',
+        "({ evidence: 'none', result })",
+      ),
+    ],
+    [
+      'richer body instantiates a foreign constructor',
+      classification,
+      classificationSource.replace('const expected = new Set(', 'const expected = new ForeignSet('),
+    ],
+    [
+      'richer body calls an unknown Set member',
+      classification,
+      classificationSource.replace('!expected.delete(ref.resourceId)', '!expected.frobnicate(ref.resourceId)'),
+    ],
+    [
+      'trailing optional parameter becomes required',
+      relationship,
+      relationshipSource.replace('    at?: string,', '    at: string,'),
+    ],
+  ];
+
+  for (const [label, target, mutated] of catalogMutations) {
     expect(mutated, `${label}: mutation must change the source`).not.toBe(readSource(target));
     expect(accepts(target, mutated), label).toBe(false);
   }

@@ -736,6 +736,8 @@ it.effect('requires native layer imports and keeps the governed runtime first in
       ['administrationAuthority: Layer.Layer<AccessDecisionGate,', 'administrationAuthority: Layer.Layer<ReadRuntime,'],
       ['AccessDecisionLive.pipe(', 'ForeignDecisionLive.pipe('],
       ["from '@app/core-runtime/access/enforcement'", "from './foreign-enforcement.ts'"],
+      ['  AccessDecisionGate,', '  ForeignDecisionGate as AccessDecisionGate,'],
+      ['  CoreSearchQueryRuntime,', '  ForeignQueryRuntime as CoreSearchQueryRuntime,'],
     ]) {
       expect(
         acceptsOwner(
