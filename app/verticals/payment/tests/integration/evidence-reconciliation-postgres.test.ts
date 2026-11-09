@@ -1696,3 +1696,50 @@ it.live('#1151 an attachment to an already confirmed operation keeps its target 
     }),
   ),
 );
+
+it.live(
+  '#1151 a receipt fully retracted while its collection is already in conflict no longer blocks the replacement',
+  () =>
+    native(
+      Effect.gen(function* retractionDuringConflict() {
+        const evidence = yield* scenario();
+        const payment = yield* evidence.createPayment();
+        const collect = yield* evidence.startOperation({
+          amountMinor: 100_000,
+          operationKey: 'collect-1',
+          paymentId: payment.paymentId,
+        });
+        yield* configureGopay(evidence);
+        const charge = gopayChargeOf(evidence, payment.paymentId, collect.operationId);
+        const first = yield* charge('gopay:charge:1');
+        expect(first.acceptanceOutcome).toBe('ACCEPTED_OBSERVATION');
+        // A distinct second charge is held, and governance classifies the collection as conflicting.
+        const second = yield* charge('gopay:charge:2');
+        expect(second.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+        const classified = yield* evidence.decide({
+          caseId: second.reconciliationCaseId ?? '',
+          decision: { _tag: 'CLASSIFY_CONFLICT' },
+          reason: 'Two different charges are reported for one collection',
+        });
+        expect(Option.getOrUndefined(classified.outcomeChange)).toMatchObject({ toOutcome: 'CONFLICT' });
+        // Only now the source fully retracts charge 1: recorded, with no outcome left to reopen.
+        const retraction = yield* evidence.accept(
+          gopayStatement({
+            correctsObservationId: first.observationId,
+            economicEffectKey: 'gopay:charge:1:retraction',
+            factKind: 'SOURCE_CORRECTION',
+            operationId: collect.operationId,
+            paymentId: payment.paymentId,
+          }),
+        );
+        expect(retraction.acceptanceOutcome).toBe('ACCEPTED_OBSERVATION');
+        // The legitimate charge 2 now reconciles the collection.
+        const attached = yield* evidence.decide({
+          caseId: second.reconciliationCaseId ?? '',
+          decision: { _tag: 'ATTACH_EVIDENCE', observationId: second.observationId },
+          reason: 'Charge 2 is the collection; charge 1 was retracted',
+        });
+        expect(Option.getOrUndefined(attached.outcomeChange)).toMatchObject({ toOutcome: 'EFFECT_CONFIRMED' });
+      }),
+    ),
+);

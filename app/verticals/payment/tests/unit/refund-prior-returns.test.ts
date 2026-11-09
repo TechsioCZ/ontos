@@ -1,9 +1,10 @@
+import { Option } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import type { PaymentOperationKind, PaymentOperationOutcome } from '../../shared/domain/payment-vocabulary.ts';
 import { computePaymentFunds, PaymentFundsLedger } from '../../src/domain/coverage.ts';
 import type { PaymentFundsOperation, PaymentFundsSnapshot } from '../../src/domain/coverage.ts';
-import { fundsSnapshotWithPriorReturns } from '../../src/domain/refund-prior-returns.ts';
+import { correctionReachOf, fundsSnapshotWithPriorReturns } from '../../src/domain/refund-prior-returns.ts';
 import type { PaymentReturnEvidence } from '../../src/domain/refund-prior-returns.ts';
 
 /** #1150 "Prior return evidence reduces the remaining budget": the pure prior-return rule. */
@@ -103,5 +104,25 @@ describe('#1150 Prior return evidence reduces the remaining budget', () => {
   it('no evidence leaves the funds snapshot unchanged', () => {
     const snapshot = snapshotOf([collect]);
     expect(fundsSnapshotWithPriorReturns(snapshot, [])).toEqual(snapshot);
+  });
+});
+
+const czkOf = (amountMinor: number) => ({ amountMinor, currency: 'CZK' as const });
+/** A correction that states no money. */
+const noAmount = Option.getOrUndefined(Option.none<ReturnType<typeof czkOf>>());
+
+describe('#1150 What corrections do to a prior return statement', () => {
+  it('an amountless correction retracts the whole statement, as the interpreter reads it', () => {
+    expect(correctionReachOf(czkOf(40_000), [noAmount])).toEqual({ covered: true });
+    expect(correctionReachOf(czkOf(40_000), [czkOf(10_000), noAmount])).toEqual({ covered: true });
+  });
+
+  it('measured corrections reduce the statement and remove it only when they cover it', () => {
+    expect(correctionReachOf(czkOf(40_000), [czkOf(10_000)])).toEqual({
+      correctedAmount: czkOf(10_000),
+      covered: false,
+    });
+    expect(correctionReachOf(czkOf(40_000), [czkOf(10_000), czkOf(30_000)])).toEqual({ covered: true });
+    expect(correctionReachOf(czkOf(40_000), [])).toEqual({ covered: false });
   });
 });

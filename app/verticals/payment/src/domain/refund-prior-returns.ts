@@ -38,16 +38,24 @@ const NOT_REDUCED: CorrectionReach = { covered: false };
 const COVERED: CorrectionReach = { covered: true };
 
 /**
- * What the accepted corrections of one return statement do to it (#1150). Only corrections stating
- * money in the statement's currency reduce it, and only all of them together: a correction that
- * cannot be measured reduces nothing, so the statement keeps counting. The statement is removed only
- * when the corrections cover all of its stated money; a partial correction keeps the remainder.
+ * What the accepted corrections of one return statement do to it (#1150). A correction that states no
+ * amount retracts the whole statement. Otherwise only corrections stating money in the statement's
+ * currency reduce it, and only all of them together: one in another currency cannot be measured and
+ * reduces nothing. The statement is removed when the corrections cover all of its stated money; a
+ * partial correction keeps the remainder.
  */
 export const correctionReachOf = (
   stated: PaymentMonetaryAmount | undefined,
   corrections: readonly (PaymentMonetaryAmount | undefined)[],
 ): CorrectionReach => {
-  if (stated === undefined || corrections.length === 0) {
+  if (corrections.length === 0) {
+    return NOT_REDUCED;
+  }
+  // A correction that states no amount retracts the whole statement, as the interpreter reads it.
+  if (corrections.some((correction) => correction === undefined)) {
+    return COVERED;
+  }
+  if (stated === undefined) {
     return NOT_REDUCED;
   }
   const measured = corrections.flatMap((correction) =>
