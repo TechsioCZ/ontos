@@ -23,6 +23,7 @@ import {
   collectionMatchesPayment,
   coverageSummaryOf,
   decidePredecessorRelease,
+  decidePurchaseRelease,
   isSameIntentMaterial,
   selectionMatchesBinding,
 } from '../../src/domain/lifecycle-intent.ts';
@@ -90,6 +91,11 @@ const payloadWith = (payableAmount: { readonly amountMinor: number; readonly cur
 const blocked = (reason: PredecessorBlockReason, blockingOperationId = Option.none<string>()) =>
   PredecessorReleaseDecision.Blocked({ blockingOperationId, reason });
 const released = PredecessorReleaseDecision.Released({ predecessorPaymentId: 'payment-1' });
+const sibling = (paymentId: string, operations: readonly PaymentFundsOperation[]) => ({
+  funds: snapshot(operations),
+  operations,
+  paymentId,
+});
 const predecessor = (operations: readonly PaymentFundsOperation[], successor = Option.none<string>()) =>
   decidePredecessorRelease({
     funds: snapshot(operations),
@@ -174,6 +180,22 @@ describe('#1148 lifecycle rules', () => {
         successorPaymentId: Option.none(),
       }),
     ).toStrictEqual(blocked('HELD_EVIDENCE'));
+  });
+
+  it('#1145 every other intent of the purchase is an implicit predecessor; only superseding needs a name', () => {
+    expect(decidePurchaseRelease([])).toStrictEqual(Option.none());
+    expect(
+      decidePurchaseRelease([sibling('payment-1', []), sibling('payment-2', [collect('NOT_EFFECTED_CONFIRMED')])]),
+    ).toStrictEqual(Option.none());
+    expect(
+      decidePurchaseRelease([sibling('payment-1', []), sibling('payment-2', [collect('INDETERMINATE')])]),
+    ).toStrictEqual(Option.some({ paymentId: 'payment-2', reason: 'UNRESOLVED_OPERATION' }));
+    expect(decidePurchaseRelease([sibling('payment-1', [collect('EFFECT_CONFIRMED')])])).toStrictEqual(
+      Option.some({ paymentId: 'payment-1', reason: 'UNRETURNED_COLLECTION' }),
+    );
+    expect(
+      decidePurchaseRelease([sibling('payment-1', [collect('EFFECT_CONFIRMED'), refund('EFFECT_CONFIRMED')])]),
+    ).toStrictEqual(Option.none());
   });
 
   it('#1148 partial or over-payment never matches the exact collection meaning', () => {

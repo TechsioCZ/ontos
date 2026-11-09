@@ -24,6 +24,7 @@ import { PaymentRejected } from '../../shared/domain/payment-rejected.ts';
 import { PaymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
 import { OutboxPayloadSchema as OperationRequestedPayloadSchema } from '../../shared/outbox/payment-core-operation-requested-v1.ts';
 import { collectionMaterialRequest, collectionMatchesPayment } from '../domain/lifecycle-intent.ts';
+import { requireReleasedPurchase } from '../domain/lifecycle-purchase-guard.ts';
 import { paymentOperationViewOf } from '../domain/lifecycle-views.ts';
 import { isZeroAmount } from '../domain/money.ts';
 import { decideOperationAdmission, OperationAdmissionDecision } from '../domain/operation-lifecycle.ts';
@@ -98,7 +99,13 @@ export const handleStartPaymentCollection = Effect.fn('StartPaymentCollectionAct
       actorPrincipalId: context.scope.principalId,
       compositionRevision: context.compositionRevision,
     };
-    // 1. Current aggregate under the Payment row lock: lineage, replay and binding are decided here.
+    // 1. Every intent of the purchase is locked first (Payment id order, as create-payment does), so
+    //    COLLECTs of competing intents serialize; then the Current aggregate under its row lock decides
+    //    lineage, replay and binding.
+    const purchaseCorrelationId = yield* lifecycle.findPurchaseCorrelationId(payload.paymentId);
+    const purchasePaymentIds = Option.isSome(purchaseCorrelationId)
+      ? yield* lifecycle.lockPurchasePaymentIds(purchaseCorrelationId.value)
+      : [];
     const aggregate = yield* persistence.loadAggregate(payload.paymentId, { lock: true });
     const { payment } = aggregate;
     const materialRequest = collectionMaterialRequest(payment.paymentId, payload, payment.executionBinding);
@@ -149,6 +156,8 @@ export const handleStartPaymentCollection = Effect.fn('StartPaymentCollectionAct
         'This Payment intent was replaced by a successor; it cannot start a new collection',
       );
     }
+    // A competing intent of the same purchase must not hold a live or proven collection lineage (#1145).
+    yield* requireReleasedPurchase(purchasePaymentIds, persistence, payment.paymentId);
     // 4. Operation-specific owner evidence (H1094-01=A): only the gateway branch needs C17 here.
     yield* requireCurrentBinding(payment);
     // 5. Insert under the same lock; the partial unique index is the database backstop.

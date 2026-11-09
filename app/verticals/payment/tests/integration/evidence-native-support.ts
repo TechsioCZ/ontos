@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
 import { and, asc, eq } from 'drizzle-orm';
 import type { PgClient } from '@effect/sql-pg';
-import { DateTime, Effect } from 'effect';
+import { DateTime, Effect, Match } from 'effect';
 import type { Schema } from 'effect';
 
 import {
@@ -19,6 +19,7 @@ import type { coreRelations } from '../../../../packages/core-runtime/src/db/sch
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import type { ContextAccessService } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
+import type { PaymentCoverageSummary } from '../../shared/domain/lifecycle-views.ts';
 import type { PaymentExecutionBinding } from '../../shared/domain/payment-execution-binding.ts';
 import type { PaymentRefundBasis } from '../../shared/domain/payment-refund-basis.ts';
 import type {
@@ -31,31 +32,40 @@ import type {
   PaymentReconciliationCaseKind,
   PaymentSourceAuthorityStatus,
 } from '../../shared/domain/payment-vocabulary.ts';
+import type { AcceptPaymentObservationPayloadSchema } from '../../shared/actions/accept-payment-observation.ts';
+import type { ConfigurePaymentSourceAuthorityPayloadSchema } from '../../shared/actions/configure-payment-source-authority.ts';
 import type { RecordPaymentReconciliationDecisionPayloadSchema } from '../../shared/actions/record-payment-reconciliation-decision.ts';
 import type { RequestPaymentOperationRecoveryPayloadSchema } from '../../shared/actions/request-payment-operation-recovery.ts';
 import type { PaymentReconciliationDebtRequestSchema } from '../../shared/apis/payment-reconciliation-debt.ts';
+import { acceptPaymentObservationAction } from '../../src/actions/accept-payment-observation.action.ts';
+import { configurePaymentSourceAuthorityAction } from '../../src/actions/configure-payment-source-authority.action.ts';
 import { recordPaymentReconciliationDecisionAction } from '../../src/actions/record-payment-reconciliation-decision.action.ts';
 import { requestPaymentOperationRecoveryAction } from '../../src/actions/request-payment-operation-recovery.action.ts';
+import { currentPaymentRead } from '../../src/api/current-payment.read.ts';
 import { paymentHistoryRead } from '../../src/api/payment-history.read.ts';
 import { paymentReconciliationDebtRead } from '../../src/api/payment-reconciliation-debt.read.ts';
 import {
   observations,
   operationOutcomeTransitions,
-  paymentAuthorizations,
   paymentOperations,
   reconciliationCases,
   reconciliationDecisions,
   recoveryRequests,
   sourceAuthorities,
 } from '../../src/database/schema.ts';
+import { termSemanticOf } from '../../src/domain/authorization-currentness.ts';
 import { paymentAggregatePersistenceForTransaction } from '../../src/persistence/payment-aggregate-persistence.ts';
 import type { PaymentAggregatePersistence } from '../../src/persistence/payment-aggregate-persistence.ts';
+import { paymentAuthorizationPersistenceForTransaction } from '../../src/persistence/payment-authorization-persistence.ts';
 import { paymentEvidencePersistenceForTransaction } from '../../src/persistence/payment-evidence-persistence.ts';
 import type { PaymentEvidencePersistence } from '../../src/persistence/payment-evidence-persistence.ts';
 import { newPaymentInput, operationalScopeOf } from './database-fixture.ts';
 import type { PaymentTestScope } from './database-fixture.ts';
 
 /** Approved runtime Composition revisions: R1 admitted the original work, R2 is the later compatible one. */
+
+const isCollect = (operation: { readonly kind: PaymentOperationKind }) => operation.kind === 'COLLECT';
+
 export const COMPOSITION_R1 = '1'.repeat(64);
 export const COMPOSITION_R2 = '2'.repeat(64);
 const AUTHENTICATION_NAMESPACE = 'test.payment-evidence.v1';
@@ -184,6 +194,18 @@ export const GATEWAY_BINDING: PaymentExecutionBinding = Object.freeze({
 export const BANK_BINDING: PaymentExecutionBinding = Object.freeze({ _tag: 'BANK_ACCOUNTING_RECEIPT' });
 
 export const OUTCOME_CHANGED = 'payment.core.operation-outcome-changed.v1';
+
+/** A readable `current-payment` coverage: its tag plus the money it states. */
+export const coverageSummaryOf = (coverage: PaymentCoverageSummary): string =>
+  Match.valueTags(coverage, {
+    ESTABLISHED: ({ collected, confirmedReturned, remaining }) =>
+      `Established collected=${collected.amountMinor} returned=${confirmedReturned.amountMinor} remaining=${remaining.amountMinor}`,
+    HELD: ({ reason }) => `Held ${reason}`,
+    NOT_COLLECTED: () => 'NotCollected',
+    ZERO_PAYABLE: () => 'ZeroPayable',
+  });
+const currentCoverageSummary = (current: { readonly coverage: PaymentCoverageSummary }) =>
+  coverageSummaryOf(current.coverage);
 export const RECOVERY_REQUESTED = 'payment.core.operation-recovery-requested.v1';
 
 export interface OperationSpec {
@@ -366,36 +388,42 @@ export const evidenceScenarioOf = ({ native, r1, r2, scope }: EvidenceScenarioIn
       }),
     );
 
-  /** An issued prepaid proof bound to the Payment's coverage revision at issuance (#1149 ledger row). */
+  /**
+   * An issued prepaid proof bound to the given coverage revision (#1149 ledger row), written through
+   * the real proof ledger so it carries the complete immutable proof the history read recovers.
+   */
   const issuePrepaidProof = (paymentId: string, coverageRevision: number, amountMinor = 100_000) =>
-    inTransaction((_aggregate, _evidence, transaction) =>
+    inTransaction((aggregate, _evidence, transaction) =>
       Effect.gen(function* insertProofRow() {
-        const audit = provenance();
+        const { operations, payment } = yield* aggregate.loadAggregate(paymentId);
+        const collect = operations.find(isCollect);
         const issuedAt = yield* DateTime.now;
-        const [row] = yield* transaction
-          .insert(paymentAuthorizations)
-          .values({
-            actionInvocationId: audit.actionInvocationId,
-            actorPrincipalId: audit.actorPrincipalId,
-            amountMinor,
-            compositionRevision: audit.compositionRevision,
-            coverageRevision,
-            currency: 'CZK',
-            expiresAt: DateTime.toDateUtc(DateTime.add(issuedAt, { hours: 1 })),
-            issuanceKey: `issuance-${randomUUID()}`,
-            issuedAt: DateTime.toDateUtc(issuedAt),
-            legalEntityId: scope.legalEntityId,
-            method: 'ONLINE_GATEWAY',
-            methodConditionEvidence: null,
+        const covered = { amountMinor, currency: 'CZK' as const };
+        const proof = yield* paymentAuthorizationPersistenceForTransaction(transaction).insert({
+          binding: {
+            amount: covered,
+            executionBinding: payment.executionBinding,
+            method: payment.method,
             orderCommitmentAttemptId: `attempt-${randomUUID()}`,
+            orderCommitmentTime: issuedAt,
             paymentId,
-            paymentTermRef: { resourceId: paymentId },
-            proofKind: 'PREPAID_COVERAGE',
-            purchaseCorrelationId: `purchase-${paymentId}`,
-            tenantId: scope.tenantId,
-          })
-          .returning({ authorizationId: paymentAuthorizations.authorizationId });
-        return row?.authorizationId ?? '';
+            paymentTermRef: payment.paymentTermRef,
+            purchaseCorrelationId: payment.purchaseCorrelationId,
+          },
+          condition: {
+            _tag: 'PREPAID_COLLECTION',
+            collectOperationId: collect?.operationId ?? randomUUID(),
+            covered,
+          },
+          coverageRevision,
+          expiresAt: DateTime.add(issuedAt, { hours: 1 }),
+          issuanceKey: `issuance-${randomUUID()}`,
+          issuedAt,
+          proofKind: 'PREPAID_COVERAGE',
+          provenance: provenance(),
+          termSemantic: termSemanticOf(payment.termSemanticEvidence),
+        });
+        return proof.authorizationId;
       }),
     );
 
@@ -440,6 +468,65 @@ export const evidenceScenarioOf = ({ native, r1, r2, scope }: EvidenceScenarioIn
       registration: recordPaymentReconciliationDecisionAction,
       transport: { correlationId: 'payment-evidence-decision', idempotencyKey: options.idempotencyKey ?? randomUUID() },
     });
+
+  /** Configures one source authority through the registered Action. */
+  const configureSource = (payload: typeof ConfigurePaymentSourceAuthorityPayloadSchema.Encoded) =>
+    r1.actions.runAction({
+      payload,
+      principal,
+      registration: configurePaymentSourceAuthorityAction,
+      transport: { correlationId: 'payment-evidence-configure-source', idempotencyKey: randomUUID() },
+    });
+
+  /** Accepts one integration statement through the registered Action (qualification + interpretation). */
+  const accept = (payload: typeof AcceptPaymentObservationPayloadSchema.Encoded) =>
+    r1.actions.runAction({
+      payload,
+      principal,
+      registration: acceptPaymentObservationAction,
+      transport: { correlationId: 'payment-evidence-accept', idempotencyKey: randomUUID() },
+    });
+
+  /** The Current coverage of the governed `current-payment` Read, summarized. */
+  const coverage = (paymentId: string) =>
+    r1.reads
+      .runRead({
+        input: { paymentId },
+        principal,
+        registration: currentPaymentRead,
+        transport: { correlationId: 'payment-evidence-current' },
+      })
+      .pipe(Effect.map(currentCoverageSummary));
+
+  /** One configured REFUND_EXECUTION bank route for BANK_TRANSFER_ADVANCE refunds (#1150/#1152). */
+  const configureRefundRoute = (sourceSystem: string, accountRef: string) =>
+    inTransaction((_aggregate, _evidence, transaction) =>
+      Effect.gen(function* insertRefundRouteRow() {
+        const audit = provenance();
+        const [row] = yield* transaction
+          .insert(sourceAuthorities)
+          .values({
+            accountRef,
+            actionInvocationId: audit.actionInvocationId,
+            actorPrincipalId: audit.actorPrincipalId,
+            compositionRevision: audit.compositionRevision,
+            configuredAt: DateTime.toDateUtc(yield* DateTime.now),
+            environment: 'production',
+            factFamily: 'REFUND_EXECUTION',
+            legalEntityId: scope.legalEntityId,
+            method: 'BANK_TRANSFER_ADVANCE',
+            reason: 'Configured bank refund route',
+            refundRoute: true,
+            revision: 1,
+            sourceKind: 'BANK_ACCOUNTING',
+            sourceSystem,
+            status: 'ACTIVE',
+            tenantId: scope.tenantId,
+          })
+          .returning({ sourceAuthorityId: sourceAuthorities.sourceAuthorityId });
+        return row?.sourceAuthorityId ?? '';
+      }),
+    );
 
   const debt = (input: typeof PaymentReconciliationDebtRequestSchema.Encoded = {}) =>
     r1.reads.runRead({
@@ -490,7 +577,11 @@ export const evidenceScenarioOf = ({ native, r1, r2, scope }: EvidenceScenarioIn
   const outbox = (topic: string) => outboxPayloads(native, scope.tenantId, topic);
 
   return {
+    accept,
     configureAuthority,
+    configureRefundRoute,
+    configureSource,
+    coverage,
     createPayment,
     debt,
     decide,

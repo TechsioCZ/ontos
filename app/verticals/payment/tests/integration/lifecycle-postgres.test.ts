@@ -630,6 +630,207 @@ it.live('#1148 a proven unreturned predecessor collection blocks a successor; a 
   ),
 );
 
+/**
+ * Races two Actions behind an external holder of the given Payment row locks: both queue behind it
+ * (observed in pg_stat_activity), then the holder releases and both outcomes are returned. The holder is
+ * always released, so a failed observation can never leave locks behind.
+ */
+const raceBehindPaymentLocks = Effect.fn('LifecycleConcurrencyTest.raceBehindPaymentLocks')(function* race<A, E>(
+  scenario: Scenario,
+  paymentIds: readonly string[],
+  racers: readonly [Effect.Effect<A, E>, Effect.Effect<A, E>],
+) {
+  const { adminClient } = scenario.native;
+  const locked = yield* Deferred.make<number>();
+  const release = yield* Deferred.make<boolean>();
+  const holder = yield* adminClient
+    .withTransaction(
+      Effect.gen(function* holdPaymentRows() {
+        const [backend] = yield* adminClient.unsafe<{ readonly pid: number }>('select pg_backend_pid() as pid');
+        yield* adminClient.unsafe(
+          'select payment_id from payment.payments where payment_id = any($1::uuid[]) order by payment_id for update',
+          [paymentIds],
+        );
+        yield* Deferred.succeed(locked, backend?.pid ?? 0);
+        yield* Deferred.await(release);
+      }),
+    )
+    .pipe(Effect.forkChild);
+  const holderPid = yield* Deferred.await(locked);
+  const first = yield* Effect.result(racers[0]).pipe(Effect.forkChild);
+  const second = yield* Effect.result(racers[1]).pipe(Effect.forkChild);
+  // Both Actions are transitively blocked behind the holder (the second one queues behind the first).
+  const waiters = adminClient
+    .unsafe<{ readonly waiting: number }>(
+      `with recursive blocked(pid) as (
+         select activity.pid from pg_catalog.pg_stat_activity activity
+         where $1 = any(pg_catalog.pg_blocking_pids(activity.pid))
+         union
+         select activity.pid from pg_catalog.pg_stat_activity activity
+         join blocked on blocked.pid = any(pg_catalog.pg_blocking_pids(activity.pid))
+       )
+       select count(*)::integer as waiting from blocked`,
+      [holderPid],
+    )
+    .pipe(Effect.map((rows) => rows[0]?.waiting ?? 0));
+  const awaitBothBlocked = (remaining: number): Effect.Effect<number, Effect.Error<typeof waiters>> =>
+    waiters.pipe(
+      Effect.flatMap((waiting) =>
+        waiting >= 2 || remaining === 0
+          ? Effect.succeed(waiting)
+          : Effect.suspend(() => awaitBothBlocked(remaining - 1)),
+      ),
+    );
+  const blockedCount = yield* awaitBothBlocked(2000).pipe(Effect.ensuring(Deferred.succeed(release, true)));
+  yield* Fiber.join(holder);
+  return { blockedCount, outcomes: [yield* Fiber.join(first), yield* Fiber.join(second)] };
+});
+
+/** The exact collection request of a 1000 CZK ONLINE_GATEWAY Payment under one operation key. */
+const exactCollectRequest = (paymentId: string, operationKey: string) => ({
+  amount: { amountMinor: 100_000, currency: 'CZK' },
+  method: 'ONLINE_GATEWAY',
+  operationKey,
+  paymentId,
+});
+
+/** COLLECT operations of every Payment that carries one purchase correlation, in this scope. */
+const purchaseCollects = (scenario: Scenario, purchaseCorrelationId: string) =>
+  scenario.native.coreAdmin
+    .select({ outcome: paymentOperations.outcome, paymentId: paymentOperations.paymentId })
+    .from(paymentOperations)
+    .innerJoin(
+      payments,
+      and(eq(payments.paymentId, paymentOperations.paymentId), eq(payments.tenantId, paymentOperations.tenantId)),
+    )
+    .where(
+      and(
+        eq(payments.tenantId, scenario.scope.tenantId),
+        eq(payments.purchaseCorrelationId, purchaseCorrelationId),
+        eq(paymentOperations.kind, 'COLLECT'),
+      ),
+    );
+
+it.live(
+  '#1148 reconcile first: a new intent or method for the same purchase cannot bypass a live or INDETERMINATE COLLECT by omitting its predecessor',
+  () =>
+    runNative(
+      Effect.gen(function* samePurchaseUnresolved() {
+        const scenario = yield* lifecycleScenario();
+        yield* enableMethod(scenario.native, scenario.scope, CUSTOMER_CONFIGURATION, 'BANK_TRANSFER_ADVANCE');
+        const purchaseCorrelationId = `purchase-${randomUUID()}`;
+        const original = yield* scenario.create(scenario.intent({ purchaseCorrelationId }));
+        const collection = yield* scenario.collect({
+          amount: { amountMinor: 100_000, currency: 'CZK' },
+          method: 'ONLINE_GATEWAY',
+          operationKey: 'collect-1000',
+          paymentId: original.payment.paymentId,
+        });
+        const changedAmount = scenario.intent({
+          payableAmount: { amountMinor: 120_000, currency: 'CZK' },
+          purchaseCorrelationId,
+        });
+        const otherMethod = scenario.intent({ purchaseCorrelationId, selection: { method: 'BANK_TRANSFER_ADVANCE' } });
+
+        // Live (PENDING) and then INDETERMINATE: neither a changed amount nor another method opens a new intent.
+        expect(yield* failureCodeOf(scenario.create(changedAmount))).toBe('payment_predecessor_unresolved_conflict');
+        expect(yield* failureCodeOf(scenario.create(otherMethod))).toBe('payment_predecessor_unresolved_conflict');
+        yield* scenario.settle(original.payment.paymentId, collection.operation.operationId, 1, 'INDETERMINATE');
+        expect(yield* failureCodeOf(scenario.create(changedAmount))).toBe('payment_predecessor_unresolved_conflict');
+        expect(yield* failureCodeOf(scenario.create(otherMethod))).toBe('payment_predecessor_unresolved_conflict');
+        expect(yield* purchaseCollects(scenario, purchaseCorrelationId)).toStrictEqual([
+          { outcome: 'INDETERMINATE', paymentId: original.payment.paymentId },
+        ]);
+
+        // Definitive non-execution releases the purchase: a new intent may now be created for it.
+        yield* scenario.settle(
+          original.payment.paymentId,
+          collection.operation.operationId,
+          2,
+          'NOT_EFFECTED_CONFIRMED',
+        );
+        const replacement = yield* scenario.create(changedAmount);
+        expect(replacement.payment.purchaseCorrelationId).toBe(purchaseCorrelationId);
+        expect(replacement.payment.predecessorPaymentId).toStrictEqual(Option.none());
+      }),
+    ),
+);
+
+it.live('#1148 a proven unreturned collection blocks any new intent for the same purchase, named or not', () =>
+  runNative(
+    Effect.gen(function* samePurchaseProven() {
+      const scenario = yield* lifecycleScenario();
+      const purchaseCorrelationId = `purchase-${randomUUID()}`;
+      const original = yield* scenario.create(scenario.intent({ purchaseCorrelationId }));
+      const collection = yield* scenario.collect({
+        amount: { amountMinor: 100_000, currency: 'CZK' },
+        method: 'ONLINE_GATEWAY',
+        operationKey: 'collect-proven',
+        paymentId: original.payment.paymentId,
+      });
+      yield* scenario.settle(original.payment.paymentId, collection.operation.operationId, 1, 'EFFECT_CONFIRMED');
+
+      expect(yield* failureCodeOf(scenario.create(scenario.intent({ purchaseCorrelationId })))).toBe(
+        'payment_predecessor_unresolved_conflict',
+      );
+      expect(yield* purchaseCollects(scenario, purchaseCorrelationId)).toHaveLength(1);
+    }),
+  ),
+);
+
+it.live('#1145 one purchase never has two collection lineages: a sibling intent cannot start a second COLLECT', () =>
+  runNative(
+    Effect.gen(function* siblingCollect() {
+      const scenario = yield* lifecycleScenario();
+      const purchaseCorrelationId = `purchase-${randomUUID()}`;
+      // Two intents for one purchase exist before any money moves (neither has an effect yet).
+      const first = yield* scenario.create(scenario.intent({ purchaseCorrelationId }));
+      const second = yield* scenario.create(scenario.intent({ purchaseCorrelationId }));
+      const collection = yield* scenario.collect(exactCollectRequest(first.payment.paymentId, 'collect-first'));
+
+      expect(
+        yield* failureCodeOf(scenario.collect(exactCollectRequest(second.payment.paymentId, 'collect-second'))),
+      ).toBe('payment_predecessor_unresolved_conflict');
+      yield* scenario.settle(first.payment.paymentId, collection.operation.operationId, 1, 'EFFECT_CONFIRMED');
+      expect(
+        yield* failureCodeOf(scenario.collect(exactCollectRequest(second.payment.paymentId, 'collect-second'))),
+      ).toBe('payment_predecessor_unresolved_conflict');
+      expect(yield* purchaseCollects(scenario, purchaseCorrelationId)).toStrictEqual([
+        { outcome: 'EFFECT_CONFIRMED', paymentId: first.payment.paymentId },
+      ]);
+      // The replay of the admitted COLLECT is still recovered unchanged.
+      const replay = yield* scenario.collect(exactCollectRequest(first.payment.paymentId, 'collect-first'));
+      expect(replay.replayed).toBe(true);
+    }),
+  ),
+);
+
+it.live('#1145 concurrent COLLECTs on two intents of one purchase race on PostgreSQL: one wins, one conflicts', () =>
+  runNative(
+    Effect.gen(function* concurrentSiblingCollects() {
+      const scenario = yield* lifecycleScenario();
+      const purchaseCorrelationId = `purchase-${randomUUID()}`;
+      const first = yield* scenario.create(scenario.intent({ purchaseCorrelationId }));
+      const second = yield* scenario.create(scenario.intent({ purchaseCorrelationId }));
+      const { blockedCount, outcomes } = yield* raceBehindPaymentLocks(
+        scenario,
+        [first.payment.paymentId, second.payment.paymentId],
+        [
+          scenario.collect(exactCollectRequest(first.payment.paymentId, 'collect-first')),
+          scenario.collect(exactCollectRequest(second.payment.paymentId, 'collect-second')),
+        ],
+      );
+      expect(blockedCount).toBeGreaterThanOrEqual(2);
+
+      const losers = outcomes.flatMap((outcome) => (Result.isFailure(outcome) ? [outcome.failure] : []));
+      expect(outcomes.filter(Result.isSuccess)).toHaveLength(1);
+      expect(losers).toHaveLength(1);
+      expect(losers[0]).toMatchObject({ code: 'payment_predecessor_unresolved_conflict' });
+      expect(yield* purchaseCollects(scenario, purchaseCorrelationId)).toHaveLength(1);
+    }),
+  ),
+);
+
 it.live('#1148 Failed commitment compensation has no refundable items: its sole basis is visible, no items exist', () =>
   runNative(
     Effect.gen(function* compensationWithoutItems() {
@@ -885,52 +1086,12 @@ it.live('#1148 two concurrent distinct COLLECT identities race on PostgreSQL: on
     Effect.gen(function* concurrentCollects() {
       const scenario = yield* lifecycleScenario();
       const { paymentId, request } = yield* paymentWithCollection(scenario);
-      const { adminClient } = scenario.native;
-      const locked = yield* Deferred.make<number>();
-      const release = yield* Deferred.make<boolean>();
-      // An external holder takes the Payment row lock so both Actions queue behind it and then race.
-      const holder = yield* adminClient
-        .withTransaction(
-          Effect.gen(function* holdPaymentRow() {
-            const [backend] = yield* adminClient.unsafe<{ readonly pid: number }>('select pg_backend_pid() as pid');
-            yield* adminClient.unsafe('select payment_id from payment.payments where payment_id = $1 for update', [
-              paymentId,
-            ]);
-            yield* Deferred.succeed(locked, backend?.pid ?? 0);
-            yield* Deferred.await(release);
-          }),
-        )
-        .pipe(Effect.forkChild);
-      const holderPid = yield* Deferred.await(locked);
-      const first = yield* Effect.result(scenario.collect(request('collect-a'))).pipe(Effect.forkChild);
-      const second = yield* Effect.result(scenario.collect(request('collect-b'))).pipe(Effect.forkChild);
-      // Both Actions are transitively blocked behind the holder (the second one queues behind the first).
-      const waiters = adminClient
-        .unsafe<{ readonly waiting: number }>(
-          `with recursive blocked(pid) as (
-             select activity.pid from pg_catalog.pg_stat_activity activity
-             where $1 = any(pg_catalog.pg_blocking_pids(activity.pid))
-             union
-             select activity.pid from pg_catalog.pg_stat_activity activity
-             join blocked on blocked.pid = any(pg_catalog.pg_blocking_pids(activity.pid))
-           )
-           select count(*)::integer as waiting from blocked`,
-          [holderPid],
-        )
-        .pipe(Effect.map((rows) => rows[0]?.waiting ?? 0));
-      const awaitBothBlocked = (remaining: number): Effect.Effect<number, Effect.Error<typeof waiters>> =>
-        waiters.pipe(
-          Effect.flatMap((waiting) =>
-            waiting >= 2 || remaining === 0
-              ? Effect.succeed(waiting)
-              : Effect.suspend(() => awaitBothBlocked(remaining - 1)),
-          ),
-        );
-      // The holder is always released, so a failed observation can never leave locks behind.
-      const blockedCount = yield* awaitBothBlocked(2000).pipe(Effect.ensuring(Deferred.succeed(release, true)));
+      const { blockedCount, outcomes } = yield* raceBehindPaymentLocks(
+        scenario,
+        [paymentId],
+        [scenario.collect(request('collect-a')), scenario.collect(request('collect-b'))],
+      );
       expect(blockedCount).toBeGreaterThanOrEqual(2);
-      yield* Fiber.join(holder);
-      const outcomes = [yield* Fiber.join(first), yield* Fiber.join(second)];
 
       const winners = outcomes.filter(Result.isSuccess);
       const losers = outcomes.flatMap((outcome) => (Result.isFailure(outcome) ? [outcome.failure] : []));

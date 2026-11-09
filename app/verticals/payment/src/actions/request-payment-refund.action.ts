@@ -35,6 +35,8 @@ import {
   verifyCompensationEvidence,
 } from '../domain/refund-admission.ts';
 import { decideRefundExecutionRoute, RefundRouteDecision } from '../domain/refund-execution-route.ts';
+import type { PaymentRefundRouteCandidate } from '../domain/refund-execution-route.ts';
+import { fundsSnapshotWithPriorReturns } from '../domain/refund-prior-returns.ts';
 import {
   computePaymentMaterialHash,
   paymentAggregatePersistenceForTransaction,
@@ -129,14 +131,8 @@ const verifyCompensationBasis = Effect.fn('RequestPaymentRefund.verifyCompensati
   },
 );
 
-const resolveExecutionRoute = Effect.fn('RequestPaymentRefund.resolveExecutionRoute')(function* resolveExecutionRoute(
-  context: Context,
-  aggregate: PaymentAggregateRecord,
-) {
-  const candidates = yield* context.services.refunds
-    .selectRefundRouteCandidates()
-    .pipe(Effect.mapError(refundFailureOf));
-  return yield* RefundRouteDecision.$match(
+const resolveExecutionRoute = (aggregate: PaymentAggregateRecord, candidates: readonly PaymentRefundRouteCandidate[]) =>
+  RefundRouteDecision.$match(
     decideRefundExecutionRoute({
       binding: aggregate.payment.executionBinding,
       candidates,
@@ -160,12 +156,13 @@ const resolveExecutionRoute = Effect.fn('RequestPaymentRefund.resolveExecutionRo
         ),
     },
   );
-});
 
 /**
- * #1150 REFUND request. Under the Payment row lock: replay or material conflict of the same logical
- * operation, then the shared funds guard, the exact owner evidence of the one basis and the governed
- * execution route of the original method. Creating the operation reserves its items and exact funds
+ * #1150 REFUND request. Lock order is the one of source statement acceptance: the configured refund
+ * execution authorities (FOR SHARE), then the Payment row, so a concurrent refund confirmation never
+ * deadlocks with a refund request. Under the Payment row lock: replay or material conflict of the same
+ * logical operation, then the shared funds guard over the operations and every prior return evidence,
+ * the exact owner evidence of the one basis and the governed execution route of the original method. Creating the operation reserves its items and exact funds
  * and advances the coverage revision atomically; the execution request becomes durable in the same
  * transaction. A replay counts once and requests nothing again.
  */
@@ -180,9 +177,14 @@ const handleRequestPaymentRefund = Effect.fn('RequestPaymentRefund.handle')(func
     compositionRevision: context.compositionRevision,
   };
   const persistence = context.services.aggregate;
-  const aggregate = yield* persistence
-    .loadAggregate(payload.paymentId, { lock: true })
-    .pipe(Effect.mapError(refundFailureOf));
+  // In lock order on the one transaction connection: authority rows (FOR SHARE), then the Payment row.
+  const [routeCandidates, aggregate] = yield* Effect.all(
+    [
+      context.services.refunds.selectRefundRouteCandidates(),
+      persistence.loadAggregate(payload.paymentId, { lock: true }),
+    ],
+    { concurrency: 1 },
+  ).pipe(Effect.mapError(refundFailureOf));
   const basis = canonicalRefundBasis(payload.basis);
   const materialRequest = refundMaterialRequest({ amount: payload.amount, basis, reason: payload.reason });
   const materialHash = yield* computePaymentMaterialHash(materialRequest).pipe(Effect.mapError(refundFailureOf));
@@ -211,7 +213,11 @@ const handleRequestPaymentRefund = Effect.fn('RequestPaymentRefund.handle')(func
       'The operation key already identifies a materially different operation',
     );
   }
-  const permitted = yield* requireRefundReservation(paymentFundsSnapshotOf(aggregate), {
+  const returnEvidence = yield* context.services.refunds
+    .selectReturnEvidence(aggregate.payment.paymentId)
+    .pipe(Effect.mapError(refundFailureOf));
+  const funds = fundsSnapshotWithPriorReturns(paymentFundsSnapshotOf(aggregate), returnEvidence);
+  const permitted = yield* requireRefundReservation(funds, {
     amount: payload.amount,
     basisKind: basis._tag,
   }).pipe(Effect.mapError(refundFailureOf));
@@ -219,7 +225,7 @@ const handleRequestPaymentRefund = Effect.fn('RequestPaymentRefund.handle')(func
     FAILED_COMMITMENT_COMPENSATION: (compensation) => verifyCompensationBasis(aggregate, compensation, scope),
     REFUNDABLE_ITEMS: (items) => verifyItemsBasis(aggregate, items, payload.amount, scope),
   });
-  const route = yield* resolveExecutionRoute(context, aggregate);
+  const route = yield* resolveExecutionRoute(aggregate, routeCandidates);
   const collect = aggregate.operations.find((operation) => operation.operationId === permitted.collectOperationId);
   const created = yield* persistence
     .insertOperation({

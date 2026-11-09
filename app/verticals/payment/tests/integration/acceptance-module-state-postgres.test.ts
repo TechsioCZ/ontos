@@ -370,6 +370,13 @@ const invocations = (scenario: StateScenario): readonly Invocation[] => {
     branches: [{ method: 'BANK_TRANSFER_ADVANCE' }],
     customerConfigurationId: 'customer-configuration-1',
     paymentTermRef: payment.paymentTermRef,
+    purchasingContext: {
+      channelId: 'channel-b2b',
+      contextRef: 'purchasing-context-1',
+      contextRevision: 'revision-1',
+      marketId: 'market-cz',
+      subject: { guestEvidenceRef: 'guest-evidence-1', guestSessionRef: 'guest-session-1', kind: 'GUEST' },
+    },
   } satisfies typeof PaymentMethodApplicabilityRequestSchema.Encoded;
   return [
     writeInvocation('payment.core.configure-payment-method-enablement', () =>

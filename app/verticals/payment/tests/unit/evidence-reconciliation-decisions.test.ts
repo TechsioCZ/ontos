@@ -6,8 +6,10 @@ import type { PaymentOperationOutcome } from '../../shared/domain/payment-vocabu
 import type { PaymentEvidenceOperationView } from '../../src/domain/evidence-interpretation.ts';
 import { decidePaymentReconciliation, PaymentReconciliationStep } from '../../src/domain/evidence-reconciliation.ts';
 import type {
+  PaymentReconciliationCaseEvidence,
   PaymentReconciliationCaseSubject,
   PaymentReconciliationEvidenceFacts,
+  PaymentReconciliationOperationView,
 } from '../../src/domain/evidence-reconciliation.ts';
 
 const PAYMENT_ID = 'payment-1';
@@ -30,13 +32,34 @@ const facts = (overrides: Partial<PaymentReconciliationEvidenceFacts> = {}): Pay
   acceptanceOutcome: 'HELD_UNRESOLVED',
   amount: czk(100_000),
   corrected: false,
+  countedToward: [],
   factKind: 'COLLECTION_CONFIRMED',
   observationId: 'obs-1',
   operationId: COLLECT_ID,
   paymentId: PAYMENT_ID,
+  source: {
+    accountRef: 'gopay-account-1',
+    environment: 'production',
+    factFamily: 'GATEWAY_OUTCOME',
+    sourceKind: 'PAYMENT_GATEWAY',
+    sourceSystem: 'GOPAY',
+  },
   sourceAuthorityActive: true,
   ...overrides,
 });
+
+const caseEvidence = (
+  overrides: Partial<PaymentReconciliationCaseEvidence> = {},
+): Option.Option<PaymentReconciliationCaseEvidence> =>
+  Option.some({
+    acceptanceOutcome: 'HELD_UNRESOLVED',
+    attachedOutcomes: [],
+    conflictClassified: false,
+    corrected: false,
+    correctionTargetEstablished: false,
+    factKind: 'COLLECTION_CONFIRMED',
+    ...overrides,
+  });
 
 const attach: PaymentReconciliationDecisionBody = { _tag: 'ATTACH_EVIDENCE', observationId: 'obs-1' };
 const classify: PaymentReconciliationDecisionBody = { _tag: 'CLASSIFY_CONFLICT' };
@@ -47,10 +70,17 @@ const decide = (
   outcome: PaymentOperationOutcome,
   evidence: Option.Option<PaymentReconciliationEvidenceFacts> = Option.none(),
   subject: PaymentReconciliationCaseSubject = openCase,
-) => decidePaymentReconciliation({ body, evidence, operations: [collect(outcome)], subject });
+  held: Option.Option<PaymentReconciliationCaseEvidence> = Option.none(),
+) => decidePaymentReconciliation({ body, caseEvidence: held, evidence, operations: [collect(outcome)], subject });
 
 const rejectionCode = (step: ReturnType<typeof decide>) =>
   PaymentReconciliationStep.$match(step, { Apply: () => 'applied', Reject: ({ code }) => code });
+
+/** Closes a case of a definitive operation that holds the given observation. */
+const closeHeld = (held: Option.Option<PaymentReconciliationCaseEvidence>) =>
+  rejectionCode(decide(close, 'EFFECT_CONFIRMED', Option.none(), openCase, held));
+const closeHeldCorrection = (overrides: Partial<PaymentReconciliationCaseEvidence>) =>
+  closeHeld(caseEvidence({ factKind: 'SOURCE_CORRECTION', ...overrides }));
 
 describe('#1151 governed reconciliation decisions', () => {
   it('#1151 attaching qualified configured evidence resolves a conflicting operation to the proven outcome', () => {
@@ -156,5 +186,100 @@ describe('#1151 governed reconciliation decisions', () => {
     expect(rejectionCode(decide(classify, 'PENDING', Option.none(), heldCase))).toBe(
       'payment_reconciliation_decision_not_applicable',
     );
+  });
+
+  it('#1151 closing a case never discards a held monetary statement that no operation accounts for', () => {
+    // A qualified return reported against the collection, an orphan receipt, an unassigned settlement.
+    expect(closeHeld(caseEvidence({ factKind: 'REFUND_CONFIRMED' }))).toBe(
+      'payment_reconciliation_obligation_unresolved',
+    );
+    expect(closeHeld(caseEvidence())).toBe('payment_reconciliation_obligation_unresolved');
+    expect(closeHeld(caseEvidence({ factKind: 'SETTLEMENT_OBSERVED' }))).toBe(
+      'payment_reconciliation_obligation_unresolved',
+    );
+    const orphanCase: PaymentReconciliationCaseSubject = { operationId: absent, paymentId: absent, status: 'OPEN' };
+    expect(rejectionCode(decide(close, 'PENDING', Option.none(), orphanCase, caseEvidence()))).toBe(
+      'payment_reconciliation_obligation_unresolved',
+    );
+    // Accounted for: resolved by a governed attachment, applied by acceptance, or disproven by its source.
+    expect(closeHeld(caseEvidence({ attachedOutcomes: ['EFFECT_CONFIRMED'] }))).toBe('applied');
+    expect(closeHeld(caseEvidence({ attachedOutcomes: [undefined], factKind: 'SETTLEMENT_OBSERVED' }))).toBe('applied');
+    expect(closeHeld(caseEvidence({ acceptanceOutcome: 'ACCEPTED_OBSERVATION' }))).toBe('applied');
+    expect(closeHeld(caseEvidence({ corrected: true, factKind: 'REFUND_CONFIRMED' }))).toBe('applied');
+    // An evidence-only attachment or a different resulting outcome does not account for the money.
+    expect(closeHeld(caseEvidence({ attachedOutcomes: [undefined, 'CONFLICT'] }))).toBe(
+      'payment_reconciliation_obligation_unresolved',
+    );
+    // Statements that claim no money keep the administrative close.
+    for (const factKind of ['COLLECTION_PENDING', 'REFUND_NOT_EFFECTED', 'UNRECOGNIZED'] as const) {
+      expect(closeHeld(caseEvidence({ factKind }))).toBe('applied');
+    }
+  });
+
+  it('#1151 a held correction of evidence Current relies on closes only after governance applied it', () => {
+    expect(closeHeldCorrection({ correctionTargetEstablished: true })).toBe(
+      'payment_reconciliation_obligation_unresolved',
+    );
+    expect(closeHeldCorrection({ conflictClassified: true, correctionTargetEstablished: true })).toBe('applied');
+    expect(closeHeldCorrection({ correctionTargetEstablished: false })).toBe('applied');
+  });
+
+  it('#1151 one economic effect confirms at most one operation through governed attachment', () => {
+    const heldCase: PaymentReconciliationCaseSubject = { operationId: absent, paymentId: PAYMENT_ID, status: 'OPEN' };
+    const assigned: PaymentReconciliationDecisionBody = {
+      _tag: 'ATTACH_EVIDENCE',
+      observationId: 'obs-1',
+      operationId: COLLECT_ID,
+    };
+    const attachCounted = (countedToward: readonly (string | undefined)[]) =>
+      rejectionCode(decide(assigned, 'PENDING', Option.some(facts({ countedToward, operationId: absent })), heldCase));
+    expect(attachCounted(['collect-2'])).toBe('payment_reconciliation_evidence_not_qualified');
+    expect(attachCounted([undefined])).toBe('payment_reconciliation_evidence_not_qualified');
+    expect(attachCounted([COLLECT_ID])).toBe('applied');
+    expect(attachCounted([])).toBe('applied');
+  });
+
+  it('#1150/#1152 refund evidence attaches only from the refund route the REFUND was requested through', () => {
+    const refund: PaymentReconciliationOperationView = {
+      amount: czk(50_000),
+      kind: 'REFUND',
+      operationId: 'refund-1',
+      outcome: 'PENDING',
+      outcomeRevision: 1,
+      refundExecutionRoute: {
+        accountRef: 'refund-account-a',
+        environment: 'production',
+        sourceKind: 'BANK_ACCOUNTING',
+        sourceSystem: 'erp-primary',
+      },
+      targetOperationId: COLLECT_ID,
+    };
+    const heldCase: PaymentReconciliationCaseSubject = { operationId: absent, paymentId: PAYMENT_ID, status: 'OPEN' };
+    const attachFrom = (sourceSystem: string, accountRef: string) =>
+      rejectionCode(
+        decidePaymentReconciliation({
+          body: { _tag: 'ATTACH_EVIDENCE', observationId: 'obs-1', operationId: 'refund-1' },
+          caseEvidence: Option.none(),
+          evidence: Option.some(
+            facts({
+              amount: czk(50_000),
+              factKind: 'REFUND_CONFIRMED',
+              operationId: absent,
+              source: {
+                accountRef,
+                environment: 'production',
+                factFamily: 'REFUND_EXECUTION',
+                sourceKind: 'BANK_ACCOUNTING',
+                sourceSystem,
+              },
+            }),
+          ),
+          operations: [collect('EFFECT_CONFIRMED'), refund],
+          subject: heldCase,
+        }),
+      );
+    expect(attachFrom('erp-secondary', 'refund-account-b')).toBe('payment_reconciliation_evidence_not_qualified');
+    expect(attachFrom('erp-primary', 'refund-account-b')).toBe('payment_reconciliation_evidence_not_qualified');
+    expect(attachFrom('erp-primary', 'refund-account-a')).toBe('applied');
   });
 });

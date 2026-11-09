@@ -470,6 +470,44 @@ describe('#1152 external/offline source boundary on native PostgreSQL', () => {
       ),
   );
 
+  it.live(
+    '#1152 a collection statement without the exact amount and currency never confirms, through either Action',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* collectionWithoutAmount() {
+          const { countRows, database, scope } = yield* nativeDatabase;
+          yield* configure(database, scope, authorityFor(erpBank, 'BANK_ACCOUNTING_RECEIPT', 'BANK_TRANSFER_ADVANCE'));
+          yield* configure(database, scope, authorityFor(storePos, 'LOCAL_POS_COLLECTION', 'PAY_ON_PICKUP_OR_ON_SITE'));
+          const bankPayment = yield* createPayment(database, scope, 'BANK_TRANSFER_ADVANCE', bankBinding);
+          const bankCollect = yield* startCollect(database, scope, bankPayment);
+          const { amount: _bankAmount, ...bankWithoutAmount } = bankReceipt(bankPayment.paymentId);
+          expect(yield* failureCodeOf(accept(database, scope, bankWithoutAmount))).toBe(
+            'payment_source_fact_unsupported',
+          );
+          expect(yield* outcomeOf(database, scope, bankPayment.paymentId, bankCollect.operationId)).toBe('PENDING');
+
+          const pickupPayment = yield* createPayment(database, scope, 'PAY_ON_PICKUP_OR_ON_SITE', pickupBinding);
+          const pickupCollect = yield* startCollect(database, scope, pickupPayment);
+          const operatorMarksPaid = {
+            evidenceRef: 'pos-receipt-without-amount',
+            factFamily: 'LOCAL_POS_COLLECTION',
+            factKind: 'COLLECTION_CONFIRMED',
+            paymentId: pickupPayment.paymentId,
+            pickupCapabilityRef: 'pickup-prague-1',
+            reason: 'Operator marks the pickup paid',
+            source: storePos,
+            sourceOccurrenceId: 'pos-receipt-without-amount',
+            sourceRevision: 1,
+          } as const;
+          expect(yield* failureCodeOf(recordLocal(database, scope, operatorMarksPaid))).toBe(
+            'payment_source_fact_unsupported',
+          );
+          expect(yield* outcomeOf(database, scope, pickupPayment.paymentId, pickupCollect.operationId)).toBe('PENDING');
+          expect(yield* countRows('observations')).toBe(0);
+        }),
+      ),
+  );
+
   it.live('#1152 Delivery does not prove collection: a DELIVERED signal is never promoted', () =>
     Effect.scoped(
       Effect.gen(function* deliveredIsNotCollected() {
@@ -489,6 +527,8 @@ describe('#1152 external/offline source boundary on native PostgreSQL', () => {
         } as const;
         expect(yield* failureCodeOf(accept(database, scope, delivered))).toBe('payment_source_authority_forbidden');
         yield* configure(database, scope, authorityFor(pplCarrier, 'COD_CUSTOMER_COLLECTION', 'CASH_ON_DELIVERY'));
+        // Even from the collection authority, a delivery notice without the collected amount is no collection.
+        expect(yield* failureCodeOf(accept(database, scope, delivered))).toBe('payment_source_fact_unsupported');
         expect(yield* failureCodeOf(accept(database, scope, { ...delivered, factKind: 'UNRECOGNIZED' }))).toBe(
           'payment_source_fact_unsupported',
         );

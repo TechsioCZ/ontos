@@ -236,6 +236,40 @@ describe('#1151 Payment evidence interpretation', () => {
     );
   });
 
+  it('#1151 a re-issued correction of a re-exported statement counts once; an overlapping one is held', () => {
+    const correctedReceipt = aggregateOf(
+      [operation('EFFECT_CONFIRMED')],
+      [
+        accepted('obs-receipt-a', { economicEffectKey: 'bank:line:1' }),
+        accepted('obs-correction-a', {
+          amount: czk(30_000),
+          correctsObservationId: 'obs-receipt-a',
+          economicEffectKey: 'bank:line:1:correction',
+          factKind: 'SOURCE_CORRECTION',
+        }),
+        accepted('obs-receipt-b', { economicEffectKey: 'bank:line:1' }),
+      ],
+    );
+    const correctionOfReExport = (economicEffectKey: string | undefined) =>
+      interpretPaymentObservation(
+        correctedReceipt,
+        observed({
+          amount: czk(30_000),
+          correctsObservationId: 'obs-receipt-b',
+          economicEffectKey,
+          factKind: 'SOURCE_CORRECTION',
+        }),
+      );
+    expect(correctionOfReExport('bank:line:1:correction')).toEqual(
+      PaymentEvidenceDecision.NO_CHANGE({ operationId: COLLECT_ID, reason: 'ALREADY_CORRECTED' }),
+    );
+    for (const key of ['bank:line:1:correction-2', undefined]) {
+      expect(correctionOfReExport(key)).toEqual(
+        PaymentEvidenceDecision.HOLD({ operationId: COLLECT_ID, reason: 'CORRECTION_OVERLAPS_PRIOR_CORRECTION' }),
+      );
+    }
+  });
+
   it('#1151 corrections: already corrected, unknown target and lineage mismatch', () => {
     const correctedOnce = aggregateOf(
       [operation('CONFLICT')],

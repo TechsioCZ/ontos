@@ -152,6 +152,35 @@ export const decidePredecessorRelease = (input: {
   });
 };
 
+/** The Current monetary state of another Payment intent of the same purchase correlation. */
+export interface PurchaseSiblingState {
+  readonly funds: PaymentFundsSnapshot;
+  readonly operations: readonly { readonly operationId: string; readonly outcome: PaymentOperationOutcome }[];
+  readonly paymentId: string;
+}
+
+/**
+ * #1145 "A new key, invocation, method, provider or successor intent cannot bypass an unresolved or
+ * already-proven predecessor effect": every other intent of the same purchase is an implicit
+ * predecessor, whether or not the caller names it. The first one still carrying a live,
+ * indeterminate, conflicting, held or unreturned effect blocks; superseding is judged only for the
+ * explicitly named predecessor.
+ */
+export const decidePurchaseRelease = (
+  siblings: readonly PurchaseSiblingState[],
+): Option.Option<{ readonly paymentId: string; readonly reason: PredecessorBlockReason }> =>
+  EffectArray.findFirst(siblings, (sibling) => {
+    const decision = decidePredecessorRelease({
+      funds: sibling.funds,
+      operations: sibling.operations,
+      predecessorPaymentId: sibling.paymentId,
+      successorPaymentId: Option.none(),
+    });
+    return PredecessorReleaseDecision.$is('Blocked')(decision)
+      ? Option.some({ paymentId: sibling.paymentId, reason: decision.reason })
+      : Option.none();
+  });
+
 /** The caller's restated collection meaning (#1149 COLLECT start). */
 export interface CollectionRequest {
   readonly amount: PaymentMonetaryAmount;

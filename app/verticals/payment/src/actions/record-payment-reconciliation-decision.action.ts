@@ -18,18 +18,24 @@ import type { PaymentReconciliationDecisionBody } from '../../shared/domain/evid
 import { PaymentConflict } from '../../shared/domain/payment-conflict.ts';
 import type { PaymentExecutionProvenance } from '../../shared/domain/payment-provenance.ts';
 import { PaymentRejected } from '../../shared/domain/payment-rejected.ts';
-import { PaymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
+import { PaymentUnavailable, paymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
 import { OutboxPayloadSchema as OperationOutcomeChangedSchema } from '../../shared/outbox/payment-core-operation-outcome-changed-v1.ts';
-import type { PaymentEvidenceOperationView } from '../domain/evidence-interpretation.ts';
+import { paymentFactMeaning } from '../domain/evidence-interpretation.ts';
 import { decidePaymentReconciliation, PaymentReconciliationStep } from '../domain/evidence-reconciliation.ts';
 import type {
+  PaymentReconciliationCaseEvidence,
   PaymentReconciliationEvidenceFacts,
+  PaymentReconciliationOperationView,
   PaymentReconciliationStepCase,
 } from '../domain/evidence-reconciliation.ts';
 import type { PaymentAggregateRecord, PaymentOperationRecord } from '../persistence/payment-aggregate-persistence.ts';
 import { paymentAggregatePersistenceForTransaction } from '../persistence/payment-aggregate-persistence.ts';
 import { paymentEvidencePersistenceForTransaction } from '../persistence/payment-evidence-persistence.ts';
-import type { PaymentEvidenceActionServices } from '../persistence/payment-evidence-persistence.ts';
+import type {
+  PaymentEvidenceActionServices,
+  PaymentObservationRecord,
+  PaymentReconciliationCaseRecord,
+} from '../persistence/payment-evidence-persistence.ts';
 import { createRecordPaymentReconciliationDecisionPaymentCoreOperationOutcomeChangedV1OutboxMessage } from './record-payment-reconciliation-decision-payment-core-operation-outcome-changed-v1.outbox-message.ts';
 
 const MODULE_KEY = 'payment.core' as const;
@@ -83,6 +89,59 @@ const attachedObservationId = (body: PaymentReconciliationDecisionBody) =>
     CLOSE_CASE: () => Option.none<string>(),
   });
 
+/** CLOSE_CASE only: the observation the closing case holds, if any. */
+const closingCaseObservationId = (body: PaymentReconciliationDecisionBody, locked: PaymentReconciliationCaseRecord) =>
+  Match.valueTags(body, {
+    ATTACH_EVIDENCE: () => Option.none<string>(),
+    CLASSIFY_CONFLICT: () => Option.none<string>(),
+    CLOSE_CASE: () => Option.fromUndefinedOr(locked.observationId),
+  });
+
+/** Observations of the same source, Payment and economic effect as `observation` (itself included). */
+const sameEffectObservations = Effect.fn('RecordPaymentReconciliationDecisionAction.sameEffectObservations')(
+  function* sameEffectObservations(context: DecisionContext, observation: PaymentObservationRecord) {
+    const { economicEffectKey, paymentId, sourceAuthorityId } = observation;
+    if (economicEffectKey === undefined || paymentId === undefined || sourceAuthorityId === undefined) {
+      return [observation];
+    }
+    const siblings = yield* context.services.evidence.listSameEffectObservations({
+      economicEffectKey,
+      factKind: observation.factKind,
+      paymentId,
+      sourceAuthorityId,
+    });
+    return siblings.some((sibling) => sibling.observationId === observation.observationId)
+      ? siblings
+      : [observation, ...siblings];
+  },
+);
+
+/**
+ * Operations the observation's economic effect already counts toward (#1151 "Several observations
+ * proven to describe the same economic effect count once"): accepted interpretations naming an
+ * operation and governed attachments that resolved one, of the observation and its same-effect siblings.
+ */
+const countedTowardOf = Effect.fn('RecordPaymentReconciliationDecisionAction.countedToward')(function* countedToward(
+  context: DecisionContext,
+  observation: PaymentObservationRecord,
+) {
+  const effect = yield* sameEffectObservations(context, observation);
+  const attachments = yield* context.services.evidence.listObservationAttachments(
+    effect.map((member) => member.observationId),
+  );
+  const accepted = effect.flatMap((member) =>
+    member.acceptanceOutcome === 'ACCEPTED_OBSERVATION' &&
+    member.operationId !== undefined &&
+    paymentFactMeaning(member.factKind) !== undefined
+      ? [member.operationId]
+      : [],
+  );
+  const attached = attachments.flatMap((attachment) =>
+    attachment.resultingOutcome === undefined ? [] : [attachment.operationId],
+  );
+  return [...accepted, ...attached];
+});
+
 /** Qualification facts of the attached observation: scope, ACTIVE configured authority, correction lineage. */
 const evidenceFactsFor = Effect.fn('RecordPaymentReconciliationDecisionAction.evidenceFacts')(function* evidenceFacts(
   context: DecisionContext,
@@ -102,20 +161,71 @@ const evidenceFactsFor = Effect.fn('RecordPaymentReconciliationDecisionAction.ev
     observation.sourceAuthorityId === undefined
       ? Option.none()
       : yield* evidence.findSourceAuthorityStatus(observation.sourceAuthorityId);
-  const accepted =
-    observation.paymentId === undefined ? [] : yield* evidence.listAcceptedObservations(observation.paymentId);
   return Option.some<PaymentReconciliationEvidenceFacts>({
     acceptanceOutcome: observation.acceptanceOutcome,
     amount: observation.amount,
-    corrected: accepted.some(
-      (candidate) =>
-        candidate.factKind === 'SOURCE_CORRECTION' && candidate.correctsObservationId === observation.observationId,
-    ),
+    corrected: yield* evidence.isObservationCorrected(observation.observationId),
+    countedToward: yield* countedTowardOf(context, observation),
     factKind: observation.factKind,
     observationId: observation.observationId,
     operationId: observation.operationId,
     paymentId: observation.paymentId,
+    source: {
+      accountRef: observation.accountRef,
+      environment: observation.environment,
+      factFamily: observation.factFamily,
+      sourceKind: observation.sourceKind,
+      sourceSystem: observation.sourceSystem,
+    },
     sourceAuthorityActive: Option.contains(authorityStatus, 'ACTIVE'),
+  });
+});
+
+/** Whether a statement established Current state: accepted, or resolved an operation by attachment. */
+const establishedCurrentState = Effect.fn('RecordPaymentReconciliationDecisionAction.establishedCurrentState')(
+  function* establishedCurrentState(context: DecisionContext, observationId: string | undefined) {
+    if (observationId === undefined) {
+      return false;
+    }
+    const { evidence } = context.services;
+    const found = yield* evidence.findObservation(observationId);
+    if (Option.isNone(found)) {
+      return false;
+    }
+    if (found.value.acceptanceOutcome === 'ACCEPTED_OBSERVATION') {
+      return true;
+    }
+    const attachments = yield* evidence.listObservationAttachments([observationId]);
+    return attachments.some((attachment) => attachment.resultingOutcome !== undefined);
+  },
+);
+
+/** CLOSE_CASE only: what Current state says about the observation the case holds. */
+const caseEvidenceFor = Effect.fn('RecordPaymentReconciliationDecisionAction.caseEvidence')(function* caseEvidence(
+  context: DecisionContext,
+  body: PaymentReconciliationDecisionBody,
+  locked: PaymentReconciliationCaseRecord,
+) {
+  const observationId = closingCaseObservationId(body, locked);
+  if (Option.isNone(observationId)) {
+    return Option.none<PaymentReconciliationCaseEvidence>();
+  }
+  const { evidence } = context.services;
+  const found = yield* evidence.findObservation(observationId.value);
+  if (Option.isNone(found)) {
+    return yield* paymentUnavailable('The observation of the reconciliation case is unreadable');
+  }
+  const observation = found.value;
+  const attachments = yield* evidence.listObservationAttachments([observation.observationId]);
+  return Option.some<PaymentReconciliationCaseEvidence>({
+    acceptanceOutcome: observation.acceptanceOutcome,
+    attachedOutcomes: attachments.map((attachment) => attachment.resultingOutcome),
+    conflictClassified: yield* evidence.hasCaseDecision(locked.caseId, 'CLASSIFY_CONFLICT'),
+    corrected: yield* evidence.isObservationCorrected(observation.observationId),
+    correctionTargetEstablished:
+      observation.factKind === 'SOURCE_CORRECTION' &&
+      (yield* establishedCurrentState(context, observation.correctsObservationId)),
+    factKind: observation.factKind,
   });
 });
 
@@ -141,7 +251,9 @@ const lockSubject = Effect.fn('RecordPaymentReconciliationDecisionAction.lockSub
   return { current, locked };
 });
 
-const operationViews = (current: Option.Option<PaymentAggregateRecord>): readonly PaymentEvidenceOperationView[] =>
+const operationViews = (
+  current: Option.Option<PaymentAggregateRecord>,
+): readonly PaymentReconciliationOperationView[] =>
   Option.match(current, { onNone: () => [], onSome: (loaded) => loaded.operations });
 
 const findOperation = (current: Option.Option<PaymentAggregateRecord>, operationId: string) =>
@@ -245,10 +357,15 @@ export const handleRecordPaymentReconciliationDecision = Effect.fn('RecordPaymen
     const { aggregate, evidence } = context.services;
     const provenance = provenanceOf(context);
     const { current, locked } = yield* lockSubject(context, payload.caseId);
-    const facts = yield* evidenceFactsFor(context, payload.decision);
+    // One transaction connection: the evidence reads run in order.
+    const [facts, caseEvidence] = yield* Effect.all(
+      [evidenceFactsFor(context, payload.decision), caseEvidenceFor(context, payload.decision, locked)],
+      { concurrency: 1 },
+    );
     const step = yield* requireApplied(
       decidePaymentReconciliation({
         body: payload.decision,
+        caseEvidence,
         evidence: facts,
         operations: operationViews(current),
         subject: { operationId: locked.operationId, paymentId: locked.paymentId, status: locked.status },

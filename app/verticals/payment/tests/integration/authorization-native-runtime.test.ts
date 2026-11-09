@@ -2,7 +2,7 @@ import type { PaymentTermDefinitionSnapshot } from '@app/payment-term-catalog-co
 import { NodeCrypto } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, DateTime, Deferred, Duration, Effect, Fiber, Predicate, Result, Schema } from 'effect';
+import { Crypto, DateTime, Deferred, Duration, Effect, Fiber, Option, Predicate, Result, Schema } from 'effect';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -19,6 +19,7 @@ import {
   tenantModuleStates,
   tenants,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
+import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import { makeModuleEntrypointGateway } from '../../../../packages/core-runtime/src/modules/module-entrypoint-gateway.ts';
 import { makeModuleStateGate } from '../../../../packages/core-runtime/src/modules/module-state-gate.ts';
 import {
@@ -53,8 +54,11 @@ import type { PaymentExecutionBinding } from '../../shared/domain/payment-execut
 import type { PaymentMethod, PaymentOperationOutcome } from '../../shared/domain/payment-vocabulary.ts';
 import { issuePaymentAuthorizationAction } from '../../src/actions/issue-payment-authorization.action.ts';
 import { paymentAuthorizationValidationRead } from '../../src/api/payment-authorization-validation.read.ts';
+import { paymentHistoryRead } from '../../src/api/payment-history.read.ts';
 import { paymentAuthorizations } from '../../src/database/schema.ts';
+import { proofKindForMethod } from '../../src/domain/authorization-currentness.ts';
 import type { PaymentRecord } from '../../src/persistence/payment-aggregate-persistence.ts';
+import { paymentApplicabilityPersistenceForTransaction } from '../../src/persistence/payment-applicability-persistence.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
 import {
   authorizationNetDaysSnapshot,
@@ -66,6 +70,7 @@ import {
   inScope,
   makeTestScope,
   newPaymentInput,
+  operationalScopeOf,
   paymentTestRelations,
   provenanceFor,
   randomUuid,
@@ -249,7 +254,15 @@ const makeHarness = Effect.fn('AuthorizationNativeTests.makeHarness')(function* 
       Effect.provide(evidence.layer),
     );
 
-  return { admin, adminClient, database, evidence, issue, runtimeClient, scope, validate };
+  const history = (paymentId: string) =>
+    readRuntime.runRead({
+      input: { paymentId },
+      principal,
+      registration: paymentHistoryRead,
+      transport: { correlationId: 'payment-history' },
+    });
+
+  return { admin, adminClient, database, evidence, history, issue, runtimeClient, scope, validate };
 });
 type Harness = Effect.Success<ReturnType<typeof makeHarness>>;
 
@@ -261,18 +274,60 @@ interface PaymentMeaningOverrides {
   readonly termSnapshot?: PaymentTermDefinitionSnapshot;
 }
 
+/**
+ * The real #1147 merchant enablement write (Current row + revision history) of one method for one
+ * Customer Configuration; `expectedRevision` is absent only for its first configuration.
+ */
+const configureEnablement = (
+  harness: Harness,
+  input: {
+    readonly customerConfigurationId: string;
+    readonly enabled: boolean;
+    readonly expectedRevision?: number;
+    readonly method: PaymentMethod;
+  },
+) =>
+  provenanceFor(harness.scope).pipe(
+    Effect.flatMap((provenance) =>
+      harness.database.transaction((transaction) =>
+        installOperationalScope(transaction, operationalScopeOf(harness.scope)).pipe(
+          Effect.flatMap((scoped) =>
+            paymentApplicabilityPersistenceForTransaction(scoped).configureEnablement({
+              customerConfigurationId: input.customerConfigurationId,
+              enabled: input.enabled,
+              expectedRevision: Option.fromNullishOr(input.expectedRevision),
+              method: input.method,
+              provenance,
+              reason: input.enabled ? 'The merchant offers this method' : 'The merchant withdraws this method',
+            }),
+          ),
+        ),
+      ),
+    ),
+    Effect.map(({ record }) => record),
+  );
+
+/**
+ * Inserts the Payment with the foundation primitive. A pre-collection method-condition Payment exists
+ * only for a method the merchant enabled (#1147), so its enablement is configured first.
+ */
 const createPayment = Effect.fn('AuthorizationNativeTests.createPayment')(function* createPayment(
   harness: Harness,
   overrides: PaymentMeaningOverrides = {},
 ) {
   const base = yield* newPaymentInput(harness.scope, overrides.amountMinor ?? 100_000);
   const termSemanticEvidence = overrides.termSnapshot ?? base.termSemanticEvidence;
+  const customerConfigurationId = overrides.customerConfigurationId ?? base.customerConfigurationId;
+  const method = overrides.method ?? base.method;
+  if (proofKindForMethod(method) === 'METHOD_CONDITION') {
+    yield* configureEnablement(harness, { customerConfigurationId, enabled: true, method });
+  }
   const created = yield* withPersistence(harness.database, harness.scope, (persistence) =>
     persistence.insertPayment({
       ...base,
-      customerConfigurationId: overrides.customerConfigurationId ?? base.customerConfigurationId,
+      customerConfigurationId,
       executionBinding: overrides.executionBinding ?? base.executionBinding,
-      method: overrides.method ?? base.method,
+      method,
       paymentTermRef: termSemanticEvidence.paymentTermRef,
       termSemanticEvidence,
     }),
@@ -540,6 +595,63 @@ it.live('#1149 bank receipt versus QR: the QR instruction never yields a proof, 
   ),
 );
 
+it.live('#1149 one collection never backs Current prepaid proofs for two different Order Commitment Attempts', () =>
+  nativeRun(
+    Effect.gen(function* twoAttemptsOneCollection() {
+      const harness = yield* makeHarness();
+      const payment = yield* createPayment(harness);
+      yield* confirmCollect(harness, payment);
+      const T = yield* frozenT(harness, 1);
+      const bindingA = bindingFor(payment, 'attempt-A', T);
+      const bindingB = bindingFor(payment, 'attempt-B', T);
+      const proofA = yield* harness.issue(issuePayload(bindingA, 'key-A'));
+      // Attempt A holds the Current coverage: the same funds cannot also commit Attempt B.
+      expect(yield* failureCode(harness.issue(issuePayload(bindingB, 'key-B')))).toBe(
+        'payment_authorization_issuance_conflict',
+      );
+      // The same Attempt may still be served again under the same coverage.
+      expect((yield* harness.issue(issuePayload(bindingA, 'key-A2'))).issuance).toBe('ISSUED');
+      const validA = yield* harness.validate({ authorizationId: proofA.proof.authorizationId, binding: bindingA });
+      expect(validA.outcome).toBe('VALID');
+      expect(yield* outboxCount(harness)).toBe(2);
+    }),
+  ),
+);
+
+it.live('#1149 a different Attempt may be authorized only after every proof of the previous Attempt expired', () =>
+  nativeRun(
+    Effect.gen(function* afterPreviousAttemptExpired() {
+      const harness = yield* makeHarness();
+      const payment = yield* createPayment(harness);
+      yield* confirmCollect(harness, payment);
+      const T = yield* frozenT(harness, 1);
+      const bindingA = bindingFor(payment, 'attempt-A', T);
+      const bindingB = bindingFor(payment, 'attempt-B', T);
+      const proofA = yield* harness.issue(issuePayload(bindingA, 'key-A', 1));
+      expect(yield* failureCode(harness.issue(issuePayload(bindingB, 'key-B')))).toBe(
+        'payment_authorization_issuance_conflict',
+      );
+      // Wait inside PostgreSQL until the actual time is past A's expiry.
+      yield* harness.adminClient.unsafe(
+        'select pg_sleep(greatest(0, extract(epoch from ($1::timestamptz - clock_timestamp()))))',
+        [DateTime.formatIso(DateTime.addDuration(proofA.proof.expiresAt, Duration.millis(100)))],
+      );
+      expect(
+        (yield* harness.validate({ authorizationId: proofA.proof.authorizationId, binding: bindingA })).reasons,
+      ).toEqual(['EXPIRED']);
+      const proofB = yield* harness.issue(issuePayload(bindingB, 'key-B'));
+      const validations = yield* Effect.all(
+        [
+          harness.validate({ authorizationId: proofA.proof.authorizationId, binding: bindingA }),
+          harness.validate({ authorizationId: proofB.proof.authorizationId, binding: bindingB }),
+        ],
+        { concurrency: 1 },
+      );
+      expect(validations.map(({ outcome }) => outcome)).toEqual(['NOT_VALID', 'VALID']);
+    }),
+  ),
+);
+
 it.live('#1149 zero payable purchase issues an explicit ZERO_PAYABLE proof without any collection', () =>
   nativeRun(
     Effect.gen(function* zeroPayable() {
@@ -704,6 +816,81 @@ it.live('#1149 Deferred term is supported without a concrete invoice', () =>
       expect((yield* harness.validate({ authorizationId: issued.proof.authorizationId, binding })).outcome).toBe(
         'VALID',
       );
+    }),
+  ),
+);
+
+it.live(
+  '#1149 Deferred B2B invoice: once DEFERRED_INVOICE is withdrawn it no longer remains applicable for issuance or validation',
+  () =>
+    nativeRun(
+      Effect.gen(function* deferredWithdrawn() {
+        const harness = yield* makeHarness();
+        const termRef = authorizationTermRefFor(harness.scope.tenantId, yield* randomUuid);
+        const snapshot = authorizationNetDaysSnapshot(termRef, 14);
+        const payment = yield* createPayment(harness, {
+          customerConfigurationId: 'ccc-withdrawn',
+          executionBinding: { _tag: 'BANK_ACCOUNTING_RECEIPT' },
+          method: 'DEFERRED_INVOICE',
+          termSnapshot: snapshot,
+        });
+        yield* harness.evidence.putEntitlementPeriod({
+          customerConfigurationId: 'ccc-withdrawn',
+          entitlementEvidenceRef: 'entitlement-withdrawn',
+          semanticSnapshot: snapshot,
+          status: 'CURRENT',
+        });
+        const binding = bindingFor(payment, 'attempt-withdrawn', yield* frozenT(harness, 1));
+        const issued = yield* harness.issue(issuePayload(binding, 'before-withdrawal'));
+        expect(issued.issuance).toBe('ISSUED');
+        const validate = harness.validate({ authorizationId: issued.proof.authorizationId, binding });
+        expect((yield* validate).outcome).toBe('VALID');
+        // The merchant withdraws DEFERRED_INVOICE for this Customer Configuration (revision 2).
+        const withdrawn = yield* configureEnablement(harness, {
+          customerConfigurationId: 'ccc-withdrawn',
+          enabled: false,
+          expectedRevision: 1,
+          method: 'DEFERRED_INVOICE',
+        });
+        expect(withdrawn).toMatchObject({ enabled: false, revision: 2 });
+        // The CCC entitlement is still Current, but the method itself is no longer applicable.
+        expect(yield* failureCode(harness.issue(issuePayload(binding, 'after-withdrawal')))).toBe(
+          'payment_authorization_method_condition_not_met',
+        );
+        expect(yield* validate).toMatchObject({ outcome: 'NOT_VALID', reasons: ['METHOD_CONDITION_NOT_MET'] });
+        expect(yield* outboxCount(harness)).toBe(1);
+      }),
+    ),
+);
+
+it.live('#1149 COD method withdrawn by the merchant: the COD proof is no longer Current and none is issued', () =>
+  nativeRun(
+    Effect.gen(function* codWithdrawn() {
+      const harness = yield* makeHarness();
+      const payment = yield* createPayment(harness, {
+        executionBinding: {
+          _tag: 'COD_DELIVERY_OFFER',
+          capabilityEvidenceRef: 'offer-evidence-withdrawn',
+          deliveryOfferRef: 'offer-withdrawn',
+        },
+        method: 'CASH_ON_DELIVERY',
+      });
+      yield* harness.evidence.setCod('offer-withdrawn', 'SUPPORTED');
+      const binding = bindingFor(payment, 'attempt-cod-withdrawn', yield* frozenT(harness, 1));
+      const issued = yield* harness.issue(issuePayload(binding, 'cod-before-withdrawal'));
+      yield* configureEnablement(harness, {
+        customerConfigurationId: payment.customerConfigurationId,
+        enabled: false,
+        expectedRevision: 1,
+        method: 'CASH_ON_DELIVERY',
+      });
+      expect(yield* failureCode(harness.issue(issuePayload(binding, 'cod-after-withdrawal')))).toBe(
+        'payment_authorization_method_condition_not_met',
+      );
+      expect(yield* harness.validate({ authorizationId: issued.proof.authorizationId, binding })).toMatchObject({
+        outcome: 'NOT_VALID',
+        reasons: ['METHOD_CONDITION_NOT_MET'],
+      });
     }),
   ),
 );
@@ -1204,6 +1391,50 @@ it.live('#1149 all supported Core states: issuance needs active, Current validat
 );
 
 it.live(
+  '#1149 Historical proof is recovered while Payment is archived: payment-history returns the original proof and times',
+  () =>
+    nativeRun(
+      Effect.gen(function* historicalRecoveryWhileArchived() {
+        const harness = yield* makeHarness({ moduleState: 'active' });
+        const termRef = authorizationTermRefFor(harness.scope.tenantId, yield* randomUuid);
+        const snapshot = authorizationNetDaysSnapshot(termRef, 14);
+        const payment = yield* createPayment(harness, {
+          customerConfigurationId: 'ccc-history',
+          executionBinding: { _tag: 'BANK_ACCOUNTING_RECEIPT' },
+          method: 'DEFERRED_INVOICE',
+          termSnapshot: snapshot,
+        });
+        yield* harness.evidence.putEntitlementPeriod({
+          customerConfigurationId: 'ccc-history',
+          entitlementEvidenceRef: 'entitlement-history',
+          semanticSnapshot: snapshot,
+          status: 'CURRENT',
+        });
+        const binding = bindingFor(payment, 'attempt-history', yield* frozenT(harness, 1));
+        const issued = yield* harness.issue(issuePayload(binding, 'history'));
+        yield* harness.admin
+          .update(tenantModuleStates)
+          .set({ state: 'archived' })
+          .where(
+            and(
+              eq(tenantModuleStates.tenantId, harness.scope.tenantId),
+              eq(tenantModuleStates.moduleKey, 'payment.core'),
+            ),
+          );
+        // Current validation is denied while archived; the declared historical capability is not.
+        expect(yield* failureCode(harness.validate({ authorizationId: issued.proof.authorizationId, binding }))).toBe(
+          'module_state_denied',
+        );
+        const history = yield* harness.history(payment.paymentId);
+        expect(history.currentValidityClaimed).toBe(false);
+        // The original immutable proof P: exact Attempt binding with frozen T, the satisfied condition
+        // and its source evidence, the term semantic reference, the issuance key and original times.
+        expect(history.authorizations).toEqual([issued.proof]);
+      }),
+    ),
+);
+
+it.live(
   '#1149 Historical proof while Payment is archived or quarantined: Current validation and new issuance are denied',
   () =>
     nativeRun(
@@ -1230,7 +1461,7 @@ it.live(
             'module_state_denied',
           );
         }
-        // The retained proof itself is untouched (its historical read belongs to payment-history, #1151).
+        // The retained proof itself is untouched; its historical recovery is covered by payment-history above.
         const stored = yield* storedProof(harness, issued.proof.authorizationId);
         expect(stored?.issuedAt.getTime()).toBe(DateTime.toEpochMillis(issued.proof.issuedAt));
       }),

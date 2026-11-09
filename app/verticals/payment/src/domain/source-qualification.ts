@@ -363,6 +363,16 @@ const correlateOperation = (statement: PaymentSourceStatement, target: PaymentSo
   return lineage.length === 1 ? lineage[0]?.operationId : undefined;
 };
 
+/**
+ * Facts that claim money was collected or returned. Such a statement must provide the exact amount and
+ * currency (#1152 "Qualified source statement contract", "Manual/local collection evidence"); without
+ * them it proves no effect and could otherwise confirm a full COLLECT for an unknown or partial sum.
+ */
+const claimsMonetaryEffect = (factKind: PaymentObservationFactKind): boolean => {
+  const meaning = paymentFactMeaning(factKind);
+  return meaning?.outcome === 'EFFECT_CONFIRMED' && meaning.kind !== 'CANCEL_OR_VOID';
+};
+
 const exactAmount = (claimed: PaymentSourceClaimedAmount | undefined): PaymentMonetaryAmount | undefined =>
   claimed === undefined ? undefined : { amountMinor: claimed.amountMinor, currency: PAYMENT_LAUNCH_CURRENCY };
 
@@ -478,6 +488,11 @@ export const qualifyPaymentSourceStatement = (
   if (rule === undefined || !rule.facts.includes(statement.factKind)) {
     return PaymentSourceQualification.Unsupported({
       reason: `${statement.factKind} is not a fact ${statement.factFamily} from ${statement.source.sourceKind} establishes`,
+    });
+  }
+  if (statement.amount === undefined && claimsMonetaryEffect(statement.factKind)) {
+    return PaymentSourceQualification.Unsupported({
+      reason: `${statement.factKind} establishes money movement only with its exact amount and currency`,
     });
   }
   const requiredCurrency = input.target?.payment.amount.currency ?? PAYMENT_LAUNCH_CURRENCY;

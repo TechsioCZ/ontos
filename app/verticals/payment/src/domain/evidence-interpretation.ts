@@ -77,7 +77,7 @@ export const PAYMENT_EVIDENCE_NO_CHANGE_REASONS = [
   'STALE_WEAKER_EVIDENCE',
   /** Settlement/remittance is evidence about money movement, never a Payment Operation outcome. */
   'SETTLEMENT_EVIDENCE_ONLY',
-  /** The corrected observation was already corrected by another accepted correction. */
+  /** The corrected observation, or this correction's economic effect, was already accepted as a correction. */
   'ALREADY_CORRECTED',
 ] as const;
 export type PaymentEvidenceNoChangeReason = (typeof PAYMENT_EVIDENCE_NO_CHANGE_REASONS)[number];
@@ -92,6 +92,8 @@ export const PAYMENT_EVIDENCE_HOLD_REASONS = [
   'UNRECOGNIZED_FACT',
   'CORRECTION_TARGET_UNKNOWN',
   'CORRECTION_CONTRADICTS_CORROBORATING_EVIDENCE',
+  /** A statement of an already corrected economic effect is corrected again under another correction key. */
+  'CORRECTION_OVERLAPS_PRIOR_CORRECTION',
 ] as const;
 export type PaymentEvidenceHoldReason = (typeof PAYMENT_EVIDENCE_HOLD_REASONS)[number];
 
@@ -320,6 +322,25 @@ const correctionEffectFor = (
   });
 };
 
+/** The corrected statement shares its economic effect with a statement an earlier correction disproved. */
+const correctsAlreadyCorrectedEffect = (
+  aggregate: PaymentEvidenceAggregate,
+  corrected: PaymentAcceptedObservationView,
+  priorCorrections: readonly PaymentAcceptedObservationView[],
+) => {
+  const { economicEffectKey } = corrected;
+  if (economicEffectKey === undefined) {
+    return false;
+  }
+  const disproven = new Set(priorCorrections.flatMap((prior) => prior.correctsObservationId ?? []));
+  return aggregate.acceptedObservations.some(
+    (observation) =>
+      disproven.has(observation.observationId) &&
+      observation.economicEffectKey === economicEffectKey &&
+      observation.factKind === corrected.factKind,
+  );
+};
+
 const decideCorrection = (
   aggregate: PaymentEvidenceAggregate,
   correction: QualifiedPaymentObservation,
@@ -337,12 +358,24 @@ const decideCorrection = (
       reason: 'CORRECTION_LINEAGE_MISMATCH',
     });
   }
+  const priorCorrections = aggregate.acceptedObservations.filter(
+    (observation) => observation.factKind === 'SOURCE_CORRECTION' && observation.operationId === corrected.operationId,
+  );
   const alreadyCorrected = aggregate.acceptedObservations.some(
     (observation) =>
       observation.factKind === 'SOURCE_CORRECTION' && observation.correctsObservationId === corrected.observationId,
   );
-  if (alreadyCorrected) {
+  // The same correction effect re-issued (e.g. for a re-exported statement) counts once.
+  const sameCorrectionEffect =
+    correction.economicEffectKey !== undefined &&
+    priorCorrections.some((prior) => prior.economicEffectKey === correction.economicEffectKey);
+  if (alreadyCorrected || sameCorrectionEffect) {
     return PaymentEvidenceDecision.NO_CHANGE({ operationId: corrected.operationId, reason: 'ALREADY_CORRECTED' });
+  }
+  if (correctsAlreadyCorrectedEffect(aggregate, corrected, priorCorrections)) {
+    // Another correction of a statement of the same economic effect: a further or a re-issued
+    // disproof cannot be told apart, so no precise remaining amount is inferred (#1151).
+    return hold('CORRECTION_OVERLAPS_PRIOR_CORRECTION', corrected.operationId);
   }
   const operation = aggregate.operations.find((candidate) => candidate.operationId === corrected.operationId);
   if (operation === undefined) {

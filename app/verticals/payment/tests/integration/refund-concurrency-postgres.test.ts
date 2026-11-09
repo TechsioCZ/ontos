@@ -16,7 +16,13 @@ import { paymentRegistration } from '../../vertical.registration.ts';
 import { paymentTestRelations } from './database-fixture.ts';
 
 import type { RequestPaymentRefundPayload } from '../../shared/actions/request-payment-refund.ts';
-import { itemsRefund, refundCaseFor, refundItem, requestRefund } from '../support/refund-action-driver.ts';
+import {
+  acceptObservation,
+  itemsRefund,
+  refundCaseFor,
+  refundItem,
+  requestRefund,
+} from '../support/refund-action-driver.ts';
 import type { RefundCase, RefundCaseOptions, RefundOwnerFixtures } from '../support/refund-action-driver.ts';
 import {
   awaitBlockedLockWaiters,
@@ -176,4 +182,65 @@ it.live('#1150 Same-operation replay under concurrency counts the REFUND, its it
       expect(messages).toHaveLength(1);
     }),
   ),
+);
+
+it.live(
+  '#1150 A refund request and the confirmation of an earlier refund serialize on the owner boundary without deadlock',
+  () =>
+    native(
+      Effect.gen(function* refundRequestVersusConfirmation() {
+        const refundCase = yield* newRefundCase({ amountMinor: 100_000, collected: true });
+        const A = refundItem('A', 30_000);
+        const B = refundItem('B', 30_000);
+        const owners = { items: [A, B] };
+        // An earlier refund through the original gateway route, still PENDING at the provider.
+        const earlier = yield* requestRefund(refundCase, itemsRefund(refundCase, 'refund-a', [A]), owners);
+        const locked = yield* Deferred.make<number>();
+        const release = yield* Deferred.make<boolean>();
+        const holder = yield* holdPaymentRowLock(
+          refundCase.native.database,
+          refundCase.scope,
+          refundCase.payment.paymentId,
+          { locked, release },
+        ).pipe(Effect.forkChild);
+        const holderPid = yield* Deferred.await(locked);
+        // A new refund request and the provider's confirmation of the earlier refund queue together.
+        const newRefund = yield* Effect.exit(
+          requestRefund(refundCase, itemsRefund(refundCase, 'refund-b', [B]), owners),
+        ).pipe(Effect.forkChild);
+        yield* awaitBlockedLockWaiters(refundCase.native, holderPid, 1);
+        const confirmation = yield* Effect.exit(
+          acceptObservation(refundCase, {
+            amount: { amountMinor: 30_000, currency: 'CZK' },
+            factFamily: 'REFUND_EXECUTION',
+            factKind: 'REFUND_CONFIRMED',
+            operationId: earlier.operation.operationId,
+            paymentId: refundCase.payment.paymentId,
+            source: {
+              accountRef: 'gopay-account-1',
+              environment: 'production',
+              sourceKind: 'PAYMENT_GATEWAY',
+              sourceSystem: 'GOPAY',
+            },
+            sourceOccurrenceId: 'gopay-refund-a-confirmed',
+            sourceRevision: 1,
+          }),
+        ).pipe(Effect.forkChild);
+        const waiting = yield* awaitBlockedLockWaiters(refundCase.native, holderPid, 2);
+        yield* Deferred.succeed(release, true);
+        yield* Fiber.join(holder);
+        const codes = [codeOf(yield* Fiber.join(newRefund)), codeOf(yield* Fiber.join(confirmation))];
+        expect(waiting).toBeGreaterThanOrEqual(2);
+        expect(codes).toEqual(['committed', 'committed']);
+        const aggregate = yield* loadPaymentAggregate(
+          refundCase.native.database,
+          refundCase.scope,
+          refundCase.payment.paymentId,
+        );
+        const outcomes = aggregate.operations
+          .filter((operation) => operation.kind === 'REFUND')
+          .map((operation) => operation.outcome);
+        expect(Arr.sort(outcomes, Order.String)).toEqual(['EFFECT_CONFIRMED', 'PENDING']);
+      }),
+    ),
 );

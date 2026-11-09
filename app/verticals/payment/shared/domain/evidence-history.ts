@@ -1,5 +1,6 @@
 import { Schema } from 'effect';
 
+import { PaymentAuthorizationProofSchema } from './authorization-proof.ts';
 import {
   PaymentOpenOperationViewSchema,
   PaymentReconciliationCaseViewSchema,
@@ -7,7 +8,6 @@ import {
 } from './evidence-contract.ts';
 import { PaymentExecutionBindingSchema } from './payment-execution-binding.ts';
 import {
-  PaymentAuthorizationIdSchema,
   PaymentEconomicEffectKeySchema,
   PaymentEvidenceRefSchema,
   PaymentIdSchema,
@@ -15,7 +15,6 @@ import {
   PaymentObservationIdSchema,
   PaymentOperationIdSchema,
   PaymentOperationKeySchema,
-  PaymentOrderCommitmentAttemptIdSchema,
   PaymentPurchaseCorrelationIdSchema,
   PaymentReasonSchema,
   PaymentRecoveryIdSchema,
@@ -26,7 +25,6 @@ import {
 import { PaymentMonetaryAmountSchema } from './payment-money.ts';
 import { PaymentExecutionProvenanceSchema } from './payment-provenance.ts';
 import {
-  PaymentAuthorizationProofKindSchema,
   PaymentMethodSchema,
   PaymentObservationAcceptanceOutcomeSchema,
   PaymentObservationFactKindSchema,
@@ -118,18 +116,13 @@ export const PaymentHistoryObservationViewSchema = Schema.Struct({
   verifiedAt: Schema.DateTimeUtcFromString,
 });
 
-/** A proof as it was issued; validity at use time belongs to the Current validation Read only. */
-export const PaymentHistoryAuthorizationViewSchema = Schema.Struct({
-  amount: PaymentMonetaryAmountSchema,
-  authorizationId: PaymentAuthorizationIdSchema,
-  coverageRevision: Schema.OptionFromNullOr(PaymentRevisionSchema),
-  expiresAt: Schema.DateTimeUtcFromString,
-  issuedAt: Schema.DateTimeUtcFromString,
-  method: PaymentMethodSchema,
-  orderCommitmentAttemptId: PaymentOrderCommitmentAttemptIdSchema,
-  proofKind: PaymentAuthorizationProofKindSchema,
-  provenance: PaymentExecutionProvenanceSchema,
-});
+/**
+ * The original immutable proof exactly as issued (#1149 historical recovery): its exact Attempt
+ * binding with frozen T, the satisfied method-specific condition and source evidence, the term
+ * semantic reference and the original times. Validity at use time belongs to the Current validation
+ * Read only.
+ */
+export const PaymentHistoryAuthorizationViewSchema = PaymentAuthorizationProofSchema;
 
 export const PaymentHistoryRecoveryViewSchema = Schema.Struct({
   binding: PaymentExecutionBindingSchema,

@@ -154,10 +154,13 @@ const withScopedTransaction = <Value, Failure>(
     installOperationalScope(transaction, operationalScopeOf(scope)).pipe(Effect.flatMap(operation)),
   );
 
+/** The original gateway Provider Account of the seeded online Payments. */
+export const GATEWAY_ACCOUNT_REF = 'gopay-account-1';
+
 export const GATEWAY_BINDING: PaymentExecutionBinding = {
   _tag: 'GATEWAY_ACCOUNT',
   environment: 'production',
-  providerAccountRef: 'gopay-account-1',
+  providerAccountRef: GATEWAY_ACCOUNT_REF,
   providerFamily: 'GOPAY',
 };
 
@@ -287,7 +290,7 @@ export const seedSourceAuthority = Effect.fn('RefundNativeRuntime.seedSourceAuth
 /** The exact original gateway account configured as its refund execution authority. */
 export const seedGatewayRefundRoute = (database: PaymentTestDatabase, scope: PaymentTestScope) =>
   seedSourceAuthority(database, scope, {
-    accountRef: 'gopay-account-1',
+    accountRef: GATEWAY_ACCOUNT_REF,
     method: 'ONLINE_GATEWAY',
     sourceKind: 'PAYMENT_GATEWAY',
     sourceSystem: 'GOPAY',
@@ -364,6 +367,55 @@ export const acceptCollectionCorrection = Effect.fn('RefundNativeRuntime.acceptC
         sourceOccurrenceId: `correction-${input.paymentId}`,
         sourceRevision: 1,
         sourceSystem: 'erp-primary',
+        tenantId: scope.tenantId,
+        verifiedAt: now,
+      }),
+    );
+  },
+);
+
+export interface ReturnEvidenceInput {
+  readonly amountMinor: number;
+  readonly economicEffectKey: string;
+  /** The operation the source correlated the return to; absent when the source could not assign it. */
+  readonly operationId?: string;
+  readonly paymentId: string;
+  /** The configured GATEWAY_OUTCOME authority that qualified the statement. */
+  readonly sourceAuthorityId: string;
+  readonly sourceOccurrenceId: string;
+}
+
+/**
+ * An accepted qualified gateway REFUND_CONFIRMED statement that money of this Payment already went
+ * back to the customer outside any Payment REFUND operation (#1150 "Prior return evidence").
+ */
+export const acceptReturnEvidence = Effect.fn('RefundNativeRuntime.acceptReturnEvidence')(
+  function* acceptReturnEvidence(database: PaymentTestDatabase, scope: PaymentTestScope, input: ReturnEvidenceInput) {
+    const provenance = yield* provenanceFor(scope);
+    const now = DateTime.toDateUtc(yield* DateTime.now);
+    yield* withScopedTransaction(database, scope, (transaction) =>
+      transaction.insert(observations).values({
+        acceptanceOutcome: 'ACCEPTED_OBSERVATION',
+        accountRef: GATEWAY_ACCOUNT_REF,
+        actionInvocationId: provenance.actionInvocationId,
+        actorPrincipalId: provenance.actorPrincipalId,
+        amountMinor: input.amountMinor,
+        compositionRevision: provenance.compositionRevision,
+        currency: 'CZK',
+        economicEffectKey: input.economicEffectKey,
+        environment: 'production',
+        factFamily: 'GATEWAY_OUTCOME',
+        factKind: 'REFUND_CONFIRMED',
+        legalEntityId: scope.legalEntityId,
+        operationId: input.operationId ?? null,
+        paymentId: input.paymentId,
+        receivedAt: now,
+        sourceAuthorityId: input.sourceAuthorityId,
+        sourceAuthorityRevision: 1,
+        sourceKind: 'PAYMENT_GATEWAY',
+        sourceOccurrenceId: input.sourceOccurrenceId,
+        sourceRevision: 1,
+        sourceSystem: 'GOPAY',
         tenantId: scope.tenantId,
         verifiedAt: now,
       }),

@@ -8,13 +8,16 @@ import {
   PaymentMethodBranchApplicabilitySchema,
   PaymentMethodBranchSelectionsSchema,
 } from '../domain/applicability-contract.ts';
+import { PaymentPurchasingContextSchema } from '../domain/applicability-purchasing-context.ts';
 import { PaymentCustomerConfigurationIdSchema } from '../domain/payment-identifiers.ts';
 import { PaymentMonetaryAmountSchema } from '../domain/payment-money.ts';
 
 /**
- * Pure Current applicability evaluation (#1147) of the exact trusted purchase context: Tenant and
- * Selling Legal Entity come from the verified Core scope, never from this payload. Creates no durable
- * business result, so it is a `read`; recording a Payment intent is the `create-payment` Action.
+ * Pure Current applicability evaluation (#1147) of the exact trusted Commerce Purchasing Context:
+ * Tenant and Selling Legal Entity come from the verified Core scope, never from this payload; the
+ * buyer, Channel and Commerce Market come from `purchasingContext`. `customerConfigurationId` is the
+ * merchant configuration that scopes method enablement, never the buyer. Creates no durable business
+ * result, so it is a `read`; recording a Payment intent is the `create-payment` Action.
  */
 export const PaymentMethodApplicabilityRequestSchema = Schema.Struct({
   /** Exact authoritative Purchase Payable Amount; Payment adds no VAT, Shipping or rounding. */
@@ -24,6 +27,8 @@ export const PaymentMethodApplicabilityRequestSchema = Schema.Struct({
   customerConfigurationId: PaymentCustomerConfigurationIdSchema,
   /** The resolved term; returned unchanged and never replaced by a method choice. */
   paymentTermRef: PaymentTermRefSchema,
+  /** The buyer, Channel and Commerce Market whose Current entitlement/policy the term owner decides. */
+  purchasingContext: PaymentPurchasingContextSchema,
 });
 export type PaymentMethodApplicabilityRequest = typeof PaymentMethodApplicabilityRequestSchema.Type;
 
@@ -35,6 +40,7 @@ export const PaymentMethodApplicabilityResponseSchema = Schema.Struct({
   /** Actual evaluation time; prior results are invalid once any material input changes. */
   evaluatedAt: Schema.DateTimeUtcFromString,
   paymentTermRef: PaymentTermRefSchema,
+  purchasingContext: PaymentPurchasingContextSchema,
 });
 export type PaymentMethodApplicabilityResponse = typeof PaymentMethodApplicabilityResponseSchema.Type;
 
