@@ -3230,7 +3230,12 @@ const hasNativeReadPhaseReturn = (phaseSource: string): boolean => {
     isWholeCallExpression(transform, effectCall) || NATIVE_READ_PHASE_EFFECT_TRANSFORMS.has(transform);
   const isNativeEffectPipeline = (expression: string): boolean => {
     const pipeline = outputPipeExpression(expression);
-    return pipeline !== undefined && pipeline.transforms.length > 0 && pipeline.transforms.every(isEffectTransform);
+    return (
+      pipeline !== undefined &&
+      (isWholeCallExpression(pipeline.base, effectCall) || NATIVE_READ_PHASE_EFFECT_VALUES.has(pipeline.base)) &&
+      pipeline.transforms.length > 0 &&
+      pipeline.transforms.every(isEffectTransform)
+    );
   };
   if (isWholeCallExpression(returned, effectCall)) {
     return true;
@@ -13419,21 +13424,6 @@ const hasNativeReadPhase = (
   );
 };
 
-/**
- * `{ load: handler }`: Core's `defineRead` runs a callable handler as exactly this load-only pipeline, so its load
- * step is the owner handler and carries the same proof. Prepare and finish steps keep the native phase proofs.
- */
-const loadOnlyReadPipelineHandler = (handler: string | undefined): string | undefined => {
-  const pipeline = handler?.trim();
-  const [entry, ...rest] = (pipeline === undefined ? undefined : topLevelObjectEntries(pipeline)) ?? [];
-  return pipeline !== undefined &&
-    entry !== undefined &&
-    rest.length === 0 &&
-    (objectEntryKey(entry) ?? entry) === 'load'
-    ? objectPropertyValue(pipeline, 'load')
-    : undefined;
-};
-
 /** Only Core's closed prepare/load/finish pipeline is an alternative to its callable handler. */
 const hasNativeReadPipeline = (
   source: string,
@@ -13603,7 +13593,6 @@ const hasReadCallbacks = (
     diagnostics === undefined ? { ownerPath, readFile, sources } : { diagnostics, ownerPath, readFile, sources };
   return (
     (isReadHandlerCallback(handler, source) ||
-      isReadHandlerCallback(loadOnlyReadPipelineHandler(handler), source) ||
       hasNativeReadPipeline(
         source,
         handler,
