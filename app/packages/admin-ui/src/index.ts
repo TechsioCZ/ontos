@@ -19,6 +19,13 @@ export {
 export { AutosaveStatus, type AutosaveStatusProps } from './autosave-status.tsx';
 export { BulkActionBar, type BulkActionBarProps } from './bulk-action-bar.tsx';
 export { DetailList, type DetailListItem } from './detail-list.tsx';
+export {
+  DETAIL_VIEW_MODE_KEY,
+  DetailViewModeSchema,
+  type DetailViewMode,
+  useDetailViewMode,
+} from './detail-view-mode.ts';
+export { DetailViewModeToggle, type DetailViewModeToggleProps } from './detail-view-mode-toggle.tsx';
 export { EmptyState, type EmptyStateProps } from './empty-state.tsx';
 export { formatDate, formatDateTime, formatMoney, formatNumber, formatPercent } from './format.ts';
 export { PageHeader, type PageHeaderProps } from './page-header.tsx';
@@ -41,6 +48,7 @@ export {
   datePickerSegmentsClassName,
   dividedListClassName,
   dividerColorClassName,
+  sidePanelPeekClassName,
   sidePanelSurfaceClassName,
   surfaceCardClassName,
   surfaceTileClassName,

@@ -32,3 +32,9 @@ export const dividerColorClassName = 'border-border-primary/60';
 
 /** Side panel content: the panel edge is the outline, so cards inside it drop theirs. */
 export const sidePanelSurfaceClassName = '[&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0';
+
+/**
+ * Marker on the content of a non-blocking side panel (`SidePanel` with `peek`). The shell stylesheet selects the
+ * backdrop of that panel through it, so the list behind keeps receiving clicks. Has no CSS of its own.
+ */
+export const sidePanelPeekClassName = 'ontos-side-peek';
