@@ -1364,7 +1364,10 @@ const readFactoryProtectedValueAlias = (
     bindings.has(reference.value) &&
     !READ_FACTORY_MEMBER_SELECTORS.has(next ?? SyntaxKind.Unknown) &&
     next !== SyntaxKind.OpenBracketToken &&
-    next !== SyntaxKind.OpenParenToken
+    next !== SyntaxKind.OpenParenToken &&
+    // A protected value used as a conditional's own condition is only tested, never copied into the
+    // local binding; every other shape still reads as an alias of the protected value.
+    next !== SyntaxKind.QuestionToken
   );
 };
 
@@ -7950,17 +7953,60 @@ const hasOptionalCauseReadMapper = (owner: ReadPhaseOwner, source: string, bindi
 const aliasDetailResponseBindings = (body: string) => {
   const party = /\bconst (?<value>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*Match\.value\(/u.exec(body)?.groups?.value;
   const response =
-    /\bconst (?<value>[A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*Omit<(?<type>[A-Za-z_$][A-Za-z0-9_$]*),\s*'factHistory'>\s*=/u.exec(
+    /\bconst (?<value>[A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*Omit<(?<type>[A-Za-z_$][A-Za-z0-9_$]*),\s*(?<omitted>'[A-Za-z0-9_$]+'(?:\s*\|\s*'[A-Za-z0-9_$]+')*)>\s*=/u.exec(
       body,
     )?.groups;
+  const omitted =
+    response?.omitted === undefined
+      ? undefined
+      : [...response.omitted.matchAll(/'(?<property>[A-Za-z0-9_$]+)'/gu)].map((match) => match.groups?.property ?? '');
   const notFound = /\breturn yield\*\s*(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\(\)/u.exec(body)?.groups?.name;
   const unavailable = /Effect\.mapError\((?<name>[A-Za-z_$][A-Za-z0-9_$]*)\)/u.exec(body)?.groups?.name;
   return party !== undefined &&
     response?.value !== undefined &&
     response.type !== undefined &&
+    omitted !== undefined &&
+    omitted.length > 0 &&
     notFound !== undefined &&
     unavailable !== undefined
-    ? { notFound, party, response: response.value, responseType: response.type, unavailable }
+    ? { notFound, omitted, party, response: response.value, responseType: response.type, unavailable }
+    : undefined;
+};
+
+/**
+ * The one history-only archive-evidence declaration an alias-aware detail read may add beside its facts:
+ * `const <value> = <condition> ? yield* <services>.<member>(<argument>).pipe(Effect.map(Option.some),
+ * Effect.mapError(<unavailable>)) : Option.none<readonly <element>[]>();`. It is captured only so the
+ * exact body pin and the owner-local provenance proof below can name it; anything else is not this read.
+ */
+interface AliasDetailArchiveEvidence {
+  readonly element: string;
+  readonly history: string;
+  readonly member: string;
+  readonly value: string;
+}
+
+const aliasDetailArchiveEvidence = (body: string, unavailable: string): AliasDetailArchiveEvidence | undefined => {
+  const declarations = [
+    ...body.matchAll(
+      new RegExp(
+        `\\bconst (?<value>[A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*[A-Za-z_$][A-Za-z0-9_$]*\\s*\\?\\s*yield\\*\\s*[A-Za-z_$][A-Za-z0-9_$]*\\s*\\.\\s*(?<member>[A-Za-z_$][A-Za-z0-9_$]*)\\s*\\(\\s*[A-Za-z_$][A-Za-z0-9_$]*\\.[A-Za-z_$][A-Za-z0-9_$]*\\s*\\)\\s*\\.\\s*pipe\\(Effect\\.map\\(Option\\.some\\), Effect\\.mapError\\(${escapeRegExp(unavailable)}\\)\\)\\s*:\\s*Option\\.none<(?<element>[^<>]+)>\\(\\)`,
+        'gu',
+      ),
+    ),
+  ];
+  const declaration = declarations.length === 1 ? declarations[0]?.groups : undefined;
+  const history = /\bconst (?<history>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*Option\.isSome\(/u.exec(body)?.groups?.history;
+  return declaration?.value !== undefined &&
+    declaration.member !== undefined &&
+    declaration.element !== undefined &&
+    history !== undefined
+    ? {
+        element: declaration.element.trim(),
+        history,
+        member: declaration.member,
+        value: declaration.value,
+      }
     : undefined;
 };
 
@@ -7968,23 +8014,34 @@ const aliasDetailDefinition = (
   initializer: string,
 ):
   | ({
+      readonly archive: AliasDetailArchiveEvidence | undefined;
       readonly body: string;
       readonly calls: readonly RegExpExecArray[];
       readonly names: readonly string[];
     } & NonNullable<ReturnType<typeof aliasDetailResponseBindings>>)
   | undefined => {
   const body = nativeGeneratorBody(initializer);
+  const parameters = readCallableParameters(initializer);
   const names = readCallableParameterNames(initializer);
-  if (body === undefined || names?.length !== 4) {
+  if (body === undefined || names?.length !== 4 || parameters?.length !== 4) {
     return undefined;
   }
   const bindings = aliasDetailResponseBindings(body);
+  if (bindings === undefined) {
+    return undefined;
+  }
+  const archive = aliasDetailArchiveEvidence(body, bindings.unavailable);
+  // The response type omits exactly the current history and, when present, the archive evidence itself.
+  const expectedOmitted = archive === undefined ? ['factHistory'] : ['factHistory', archive.value];
+  const omittedMatches =
+    bindings.omitted.length === expectedOmitted.length &&
+    bindings.omitted.every((property, index) => property === expectedOmitted[index]);
   const calls = [
     ...body.matchAll(
       /const (?<value>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*yield\*\s*(?<services>[A-Za-z_$][A-Za-z0-9_$]*)\s*\.\s*(?<method>[A-Za-z_$][A-Za-z0-9_$]*)\s*\(/gu,
     ),
   ];
-  return bindings !== undefined && calls.length === 3 ? { body, calls, names, ...bindings } : undefined;
+  return calls.length === 3 && omittedMatches ? { archive, body, calls, names, ...bindings } : undefined;
 };
 
 const hasAliasReadErrorTransform = (transform: string, ref: string, notFound: string, unavailable: string): boolean => {
@@ -8071,9 +8128,20 @@ const hasAliasDetailBody = (
   if (load === undefined) {
     return false;
   }
-  const { body, calls, names, notFound, party, response, unavailable } = definition;
+  const { archive, body, calls, names, notFound, omitted, party, response, unavailable } = definition;
   const [ref = '', tenant = '', services = '', history = ''] = names;
   const { assertions, builder, facts, find, found, pipeline, resolution, resolve } = load;
+  const omittedUnion = omitted.map((property) => `'${property}'`).join(' | ');
+  // The history-only archive evidence is one extra declaration and one extra projection; both are pinned
+  // exactly, and its owner-local provenance is proved separately.
+  const archiveSegment =
+    archive === undefined
+      ? ''
+      : `const ${archive.value} = ${history} ? yield* ${services}.${archive.member}(${resolution}.canonicalPartyId).pipe(Effect.map(Option.some), Effect.mapError(${unavailable})) : Option.none<${archive.element}>();`;
+  const historyReturn =
+    archive === undefined
+      ? `return Option.isSome(${assertions}.factHistory) ? {...${response}, factHistory: ${assertions}.factHistory.value} : ${response};`
+      : `const ${archive.history} = Option.isSome(${assertions}.factHistory) ? {...${response}, factHistory: ${assertions}.factHistory.value} : ${response}; return Option.isSome(${archive.value}) ? {...${archive.history}, ${archive.value}: ${archive.value}.value} : ${archive.history};`;
   return (
     hasAliasReadErrorTransform(pipeline.transforms[0] ?? '', ref, notFound, unavailable) &&
     hasOriginalTenantRefBuilder(owner, source, builder) &&
@@ -8089,7 +8157,8 @@ const hasAliasDetailBody = (
         Match.tag('not_found', () => Option.none()), Match.exhaustive);
       if (Option.isNone(${party})) { return yield* ${notFound}(); }
       const ${assertions} = yield* ${services}.${facts}(${resolution}.canonicalPartyId, ${history}).pipe(Effect.mapError(${unavailable}));
-      const ${response}: Omit<${definition.responseType}, 'factHistory'> = {
+      ${archiveSegment}
+      const ${response}: Omit<${definition.responseType}, ${omittedUnion}> = {
         currentFactAssertions: ${assertions}.currentFactAssertions, party: ${party}.value,
         resolution: {
           aliasChain: ${resolution}.traversedAliasIds.map((partyId) => ${builder}(${tenant}, partyId)),
@@ -8097,12 +8166,496 @@ const hasAliasDetailBody = (
           kind: ${resolution}.wasAlias ? 'ALIAS' : 'DIRECT', ${ref}
         }
       };
-      return Option.isSome(${assertions}.factHistory) ? {...${response}, factHistory: ${assertions}.factHistory.value} : ${response};
+      ${historyReturn}
     }`,
     ) &&
     hasZeroArgumentReadFailure(owner, source, notFound) &&
     hasOptionalCauseReadMapper(owner, source, unavailable)
   );
+};
+
+/** The read's own `Services` contract block, exported or not: only this read declares it. */
+const aliasDetailServicesContract = (source: string, name: string): string | undefined => {
+  const declaration = new RegExp(`\\binterface\\s+${escapeRegExp(name)}\\b[^\\{]*\\{`, 'u').exec(maskComments(source));
+  const opening = declaration?.index === undefined ? undefined : declaration.index + declaration[0].length - 1;
+  const closing = opening === undefined ? undefined : matchingDelimiterEnd(source, opening, '{', '}');
+  return declaration?.index === undefined || closing === undefined
+    ? undefined
+    : source.slice(declaration.index, closing + 1);
+};
+
+/** The `ReadLoadContext<T>` services type the read's own load phase declares. */
+const aliasDetailServicesType = (parameter: string): string | undefined =>
+  /^ReadLoadContext<(?<services>[A-Za-z_$][A-Za-z0-9_$]*)>$/u.exec(
+    maskComments(parameter.slice(parameter.indexOf(':') + 1).trim()),
+  )?.groups?.services;
+
+/** The published carrier type the archive evidence publishes, taken from its own `readonly <T>[]`. */
+const aliasDetailArchiveElement = (archive: AliasDetailArchiveEvidence): string | undefined =>
+  /^readonly (?<element>[A-Za-z_$][A-Za-z0-9_$]*)\[\]$/u.exec(archive.element)?.groups?.element;
+
+/** The read's own `Services` member: one archive-evidence method returning the published carrier array. */
+const hasAliasDetailArchiveContract = (
+  source: string,
+  definition: NonNullable<ReturnType<typeof aliasDetailDefinition>>,
+  parameters: readonly string[],
+): boolean => {
+  const { archive } = definition;
+  const servicesType = aliasDetailServicesType(parameters[1] ?? '');
+  const contract = servicesType === undefined ? undefined : aliasDetailServicesContract(source, servicesType);
+  const element = archive === undefined ? undefined : aliasDetailArchiveElement(archive);
+  if (archive === undefined || servicesType === undefined || contract === undefined || element === undefined) {
+    return false;
+  }
+  const declarations = [
+    ...maskComments(contract).matchAll(
+      new RegExp(
+        `\\breadonly\\s+${escapeRegExp(archive.member)}\\s*:\\s*\\(\\s*(?<parameter>[A-Za-z_$][A-Za-z0-9_$]*)\\s*:\\s*string\\s*,?\\s*\\)\\s*=>\\s*(?<signature>[^;]+);`,
+        'gu',
+      ),
+    ),
+  ];
+  const signature = declarations.length === 1 ? declarations[0]?.groups?.signature : undefined;
+  return (
+    signature !== undefined &&
+    hasExactSourceTokens(
+      tokenizeGovernedClient(signature),
+      `Effect.Effect<readonly ${element}[], PartyPersistenceUnavailableError, never>`,
+    ) &&
+    hasStableReadFactoryBindings(source, new Map([[servicesType, 1]]), '')
+  );
+};
+
+interface AliasDetailArchiveCall {
+  readonly binding: string;
+  readonly imported: NonNullable<ReturnType<typeof namedSourceImport>>;
+  readonly member: string;
+  readonly returned: string;
+}
+
+/** The read's own `defineRead` factory record, its trusted pair, and the named evidence member. */
+const aliasDetailArchiveMember = (source: string, name: string) => {
+  const factory = callArgument(source, /\bdefineRead\(/u, 2);
+  const returned = factory === undefined ? undefined : callbackReturnedExpression(factory);
+  const methods = returned === undefined ? undefined : nativeReadSucceedExpression(returned);
+  const member = methods === undefined ? undefined : objectProperty(methods, name);
+  const memberReturned = member === undefined ? undefined : callbackReturnedExpression(member);
+  const [transaction, scope] = (factory === undefined ? undefined : readCallableParameterNames(factory)) ?? [];
+  const input = member === undefined ? undefined : readCallableParameterNames(member)?.[0];
+  return transaction === undefined || scope === undefined || member === undefined || memberReturned === undefined
+    ? undefined
+    : { input, member, memberReturned, scope, transaction };
+};
+
+/** The read's own factory member, resolved to the single owner-local helper call it forwards to. */
+const aliasDetailArchiveCall = (source: string, name: string): AliasDetailArchiveCall | undefined => {
+  const parts = aliasDetailArchiveMember(source, name);
+  if (parts === undefined || parts.input === undefined) {
+    return undefined;
+  }
+  const { input, member, memberReturned, scope, transaction } = parts;
+  const binding = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*\(/u.exec(memberReturned)?.groups?.name;
+  const imported = binding === undefined ? undefined : namedSourceImport(source, binding);
+  if (
+    binding === undefined ||
+    imported === undefined ||
+    !hasExactSourceTokens(
+      tokenizeGovernedClient(member),
+      `(${input}: string) => ${binding}(${transaction}, ${scope}.tenantId, ${input})`,
+    ) ||
+    !hasDirectReadCallbackExpression(member, memberReturned)
+  ) {
+    return undefined;
+  }
+  return { binding, imported, member, returned: memberReturned };
+};
+
+/** The owner-local archive helper the read's own factory member must call with the trusted pair. */
+const aliasDetailArchiveHelper = (
+  owner: ReadPhaseOwner,
+  source: string,
+  definition: NonNullable<ReturnType<typeof aliasDetailDefinition>>,
+):
+  | {
+      readonly file: string;
+      readonly initializer: string;
+      readonly owner: ReadPhaseOwner;
+      readonly source: string;
+    }
+  | undefined => {
+  const { archive } = definition;
+  if (archive === undefined) {
+    return undefined;
+  }
+  const call = aliasDetailArchiveCall(source, archive.member);
+  if (call === undefined) {
+    return undefined;
+  }
+  const file = path.posix.normalize(path.posix.join(path.posix.dirname(owner.readFile), call.imported.modulePath));
+  if (!file.startsWith(`${owner.ownerPath}/src/services/`) || !file.endsWith('.service.ts')) {
+    return undefined;
+  }
+  const helperSource = owner.sources.get(file);
+  if (helperSource === undefined) {
+    return undefined;
+  }
+  const initializer = constInitializer(helperSource, call.imported.imported);
+  return initializer === undefined
+    ? undefined
+    : { file, initializer, owner: { ...owner, readFile: file }, source: helperSource };
+};
+
+interface AliasDetailArchiveStatement {
+  readonly decoder: string;
+  readonly party: string;
+  readonly query: string;
+  readonly rows: string;
+  readonly table: string;
+  readonly tail: string;
+  readonly tenant: string;
+  readonly transaction: string;
+}
+
+interface AliasDetailArchiveSelect {
+  readonly decoder: string;
+  readonly names: readonly string[];
+  readonly query: string;
+  readonly rows: string;
+  readonly table: string;
+  readonly tail: string;
+}
+
+/** The native helper's own SELECT statement, its schema table, and its decode tail statement. */
+const aliasDetailArchiveSelect = (initializer: string): AliasDetailArchiveSelect | undefined => {
+  const names = readCallableParameterNames(initializer);
+  const block = readCallableBlock(initializer);
+  const statements = block === undefined ? undefined : scopedReadBlockStatements(block);
+  if (!isEffectFnCallback(initializer) || names?.length !== 3 || statements?.length !== 2) {
+    return undefined;
+  }
+  const select = /^const (?<rows>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*yield\*\s*(?<query>[\s\S]+)$/u.exec(
+    statements[0] ?? '',
+  )?.groups;
+  const decoder = /^return yield\*\s*(?<decoder>[A-Za-z_$][A-Za-z0-9_$]*)\s*\(/u.exec(statements[1] ?? '')?.groups
+    ?.decoder;
+  if (select?.query === undefined || select.rows === undefined || decoder === undefined) {
+    return undefined;
+  }
+  const table = /\.from\(\s*(?<table>[A-Za-z_$][A-Za-z0-9_$]*)\s*\)/u.exec(select.query)?.groups?.table;
+  return table === undefined
+    ? undefined
+    : { decoder, names, query: select.query, rows: select.rows, table, tail: statements[1] ?? '' };
+};
+
+/** The helper's own two statements: its tenant-scoped SELECT and its decode tail. */
+const aliasDetailArchiveStatement = (initializer: string): AliasDetailArchiveStatement | undefined => {
+  const select = aliasDetailArchiveSelect(initializer);
+  if (select?.names === undefined) {
+    return undefined;
+  }
+  const [transaction = '', tenant = '', party = ''] = select.names;
+  return {
+    decoder: select.decoder,
+    party,
+    query: select.query,
+    rows: select.rows,
+    table: select.table,
+    tail: select.tail,
+    tenant,
+    transaction,
+  };
+};
+
+interface AliasDetailArchiveRows {
+  readonly decoder: string;
+  readonly party: string;
+  readonly rows: string;
+  readonly source: string;
+  readonly table: string;
+  readonly tenant: string;
+}
+
+/** The archive helper's own tenant-scoped SELECT and decode tail, over the owner's real schema table. */
+const aliasDetailArchiveRows = (
+  helper: NonNullable<ReturnType<typeof aliasDetailArchiveHelper>>,
+): AliasDetailArchiveRows | undefined => {
+  const { initializer, owner, source } = helper;
+  const statement = aliasDetailArchiveStatement(initializer);
+  if (statement === undefined || !hasRuntimeNamedSourceImport(source, 'Effect', 'Effect', 'effect')) {
+    return undefined;
+  }
+  const { decoder, party, query, rows, table, tail, tenant, transaction } = statement;
+  if (!hasOriginalQueryTable(owner, source, table)) {
+    return undefined;
+  }
+  const queryBindings = ['and', 'asc', 'eq', 'sql'];
+  if (
+    !queryBindings.every((binding) => hasRuntimeNamedSourceImport(source, binding, binding, 'drizzle-orm')) ||
+    !hasStableReadFactoryBindings(source, new Map(queryBindings.map((binding): [string, number] => [binding, 0])), '')
+  ) {
+    return undefined;
+  }
+  const queryIsExact = hasExactSourceTokens(
+    tokenizeGovernedClient(query),
+    `${transaction}.select({assertionId: ${table}.assertionId, originalAssertion: ${table}.originalAssertion}).from(${table}).where(and(eq(${table}.tenantId, ${tenant}), eq(${table}.partyId, ${party}))).orderBy(sql\`(\${${table}.originalAssertion} ->> 'recorded_at')::timestamptz\`, asc(${table}.assertionId))`,
+  );
+  const decodeIsExact = hasExactSourceTokens(
+    tokenizeGovernedClient(tail),
+    `return yield* ${decoder}(${tenant}, ${party}, ${rows})`,
+  );
+  return queryIsExact && decodeIsExact ? { decoder, party, rows, source, table, tenant } : undefined;
+};
+
+/** The published carrier's own struct keys, resolved from the owner's shared API module. */
+const publishedReadCarrierKeys = (
+  owner: ReadPhaseOwner,
+  readFile: string,
+  readSource: string,
+  element: string,
+): readonly string[] | undefined => {
+  const imported = namedSourceImport(readSource, element, true);
+  const file =
+    imported === undefined
+      ? undefined
+      : path.posix.normalize(path.posix.join(path.posix.dirname(readFile), imported.modulePath));
+  const target = file !== undefined && file.startsWith(`${owner.ownerPath}/`) ? owner.sources.get(file) : undefined;
+  const schema =
+    target === undefined || imported === undefined
+      ? undefined
+      : new RegExp(
+          `\\bexport type ${escapeRegExp(imported.imported)} = typeof (?<schema>[A-Za-z_$][A-Za-z0-9_$]*)\\.Type;`,
+          'u',
+        ).exec(maskComments(target))?.groups?.schema;
+  const struct =
+    target === undefined || schema === undefined
+      ? undefined
+      : objectArgument(
+          assignedExpression(target, new RegExp(`\\bexport const ${escapeRegExp(schema)}\\s*=\\s*`, 'u')) ?? '',
+          /^Schema\.Struct\(/u,
+        );
+  const keys =
+    struct === undefined
+      ? undefined
+      : topLevelObjectEntries(struct)?.map(
+          (entry) => objectEntryKey(entry) ?? (/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(entry) ? entry : undefined),
+        );
+  return keys !== undefined && keys.length > 0 && keys.every((key) => key !== undefined)
+    ? keys.filter((key) => key !== undefined)
+    : undefined;
+};
+
+interface AliasDetailArchiveDecodeHead {
+  readonly names: readonly string[];
+  readonly statements: readonly string[];
+}
+
+/** A native decode helper's own declared names and its two statements. */
+const aliasDetailArchiveDecodeHead = (initializer: string | undefined): AliasDetailArchiveDecodeHead | undefined => {
+  const names = initializer === undefined ? undefined : readCallableParameterNames(initializer);
+  const block = initializer === undefined ? undefined : readCallableBlock(initializer);
+  const statements = block === undefined ? undefined : scopedReadBlockStatements(block);
+  return initializer !== undefined && isEffectFnCallback(initializer) && names?.length === 3 && statements?.length === 2
+    ? { names, statements }
+    : undefined;
+};
+
+interface AliasDetailArchiveDecode {
+  readonly carrier: string;
+  readonly mapped: string;
+  readonly original: string;
+  readonly party: string;
+  readonly partyRef: string;
+  readonly row: string;
+  readonly rowList: string;
+  readonly rowType: string;
+  readonly schema: string;
+  readonly statements: readonly string[];
+  readonly tenant: string;
+}
+
+interface AliasDetailArchiveDecodeInputs {
+  readonly parameters: readonly string[];
+  readonly party: string;
+  readonly rowList: string;
+  readonly statements: readonly string[];
+  readonly tail: string;
+  readonly tenant: string;
+}
+
+/** The decode helper's own declared names, its two statements, and its tail statement text. */
+const aliasDetailArchiveDecodeInputs = (
+  source: string,
+  decoder: string,
+): AliasDetailArchiveDecodeInputs | undefined => {
+  const initializer = constInitializer(source, decoder);
+  const head = aliasDetailArchiveDecodeHead(initializer);
+  const parameters = initializer === undefined ? undefined : readCallableParameters(initializer);
+  if (head === undefined || parameters === undefined) {
+    return undefined;
+  }
+  const [tenant = '', party = '', rowList = ''] = head.names;
+  return { parameters, party, rowList, statements: head.statements, tail: head.statements[1] ?? '', tenant };
+};
+
+interface AliasDetailArchiveDecodeFields {
+  readonly carrier?: string;
+  readonly original?: string;
+  readonly row?: string;
+  readonly schema?: string;
+}
+
+interface AliasDetailArchiveProjection {
+  readonly decode: AliasDetailArchiveDecodeFields;
+  readonly returned: string;
+}
+
+/** The preserved-row decode call and the carrier projection the decode helper's tail declares. */
+const aliasDetailArchiveDecodeProjection = (
+  tail: string,
+  rowList: string,
+): AliasDetailArchiveProjection | undefined => {
+  const decode = new RegExp(
+    `^return yield\\* Effect\\.forEach\\(\\s*${escapeRegExp(rowList)}\\s*,\\s*\\((?<row>[A-Za-z_$][A-Za-z0-9_$]*)\\)\\s*=>\\s*Schema\\.decodeUnknownEffect\\((?<schema>[A-Za-z_$][A-Za-z0-9_$]*)\\)\\(\\{\\s*assertionId:\\s*[A-Za-z_$][A-Za-z0-9_$]*\\.[A-Za-z_$][A-Za-z0-9_$]*,\\s*originalAssertion:\\s*[A-Za-z_$][A-Za-z0-9_$]*\\.[A-Za-z_$][A-Za-z0-9_$]*\\s*,?\\s*\\}\\)\\.pipe\\(\\s*Effect\\.map\\(\\(\\{\\s*assertionId,\\s*originalAssertion:\\s*(?<original>[A-Za-z_$][A-Za-z0-9_$]*)\\s*\\}\\s*\\)\\s*:\\s*(?<carrier>[A-Za-z_$][A-Za-z0-9_$]*)\\s*=>`,
+    'u',
+  ).exec(tail)?.groups;
+  const mapper = callArgument(tail, /Effect\.map\(/u);
+  const returned = mapper === undefined ? undefined : callbackReturnedExpression(mapper);
+  if (
+    decode?.row === undefined ||
+    decode.schema === undefined ||
+    decode.original === undefined ||
+    returned === undefined
+  ) {
+    return undefined;
+  }
+  return { decode, returned };
+};
+
+/** The preserved identity statement and the row type the decode helper's own parameters declare. */
+const aliasDetailArchiveDecodeReference = (statement: string) =>
+  /^const (?<partyRef>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*PartyRefSchema\.make\((?<options>\{[\s\S]*\})\)$/u.exec(statement)
+    ?.groups;
+
+const aliasDetailArchiveDecodeRowType = (parameter: string, rowList: string) =>
+  new RegExp(`^${escapeRegExp(rowList)}\\s*:\\s*readonly\\s+(?<row>[A-Za-z_$][A-Za-z0-9_$]*)\\[\\]$`, 'u').exec(
+    parameter,
+  )?.groups?.row;
+
+/** The decode helper's own parameters, preserved-row decode call, and published carrier projection. */
+const aliasDetailArchiveDecode = (source: string, decoder: string): AliasDetailArchiveDecode | undefined => {
+  const inputs = aliasDetailArchiveDecodeInputs(source, decoder);
+  const reference = inputs === undefined ? undefined : aliasDetailArchiveDecodeReference(inputs.statements[0] ?? '');
+  const rowType =
+    inputs === undefined ? undefined : aliasDetailArchiveDecodeRowType(inputs.parameters[2] ?? '', inputs.rowList);
+  const projection = inputs === undefined ? undefined : aliasDetailArchiveDecodeProjection(inputs.tail, inputs.rowList);
+  if (
+    inputs === undefined ||
+    reference?.partyRef === undefined ||
+    reference.options === undefined ||
+    rowType === undefined ||
+    projection === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    carrier: projection.decode.carrier ?? '',
+    mapped: projection.returned,
+    original: projection.decode.original ?? '',
+    party: inputs.party,
+    partyRef: reference.partyRef,
+    row: projection.decode.row ?? '',
+    rowList: inputs.rowList,
+    rowType,
+    schema: projection.decode.schema ?? '',
+    statements: inputs.statements,
+    tenant: inputs.tenant,
+  };
+};
+
+/** The mapped result keys a decoded carrier projection publishes, or nothing when it is not a closed record. */
+const aliasDetailArchiveResultKeys = (returned: string): readonly (string | undefined)[] | undefined => {
+  const record = returned.startsWith('(') ? returned.slice(1, -1).trim() : returned;
+  return topLevelObjectEntries(record)?.map(
+    (entry) => objectEntryKey(entry) ?? (/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(entry) ? entry : undefined),
+  );
+};
+
+/** The archive helper's own typed decode of the preserved original rows into the published carrier. */
+const hasAliasDetailArchiveDecoder = (
+  rows: AliasDetailArchiveRows,
+  element: string,
+  keys: readonly string[],
+): boolean => {
+  const { decoder, source } = rows;
+  const definition = aliasDetailArchiveDecode(source, decoder);
+  if (
+    definition === undefined ||
+    keys.length === 0 ||
+    !hasRuntimeNamedSourceImport(source, 'Effect', 'Effect', 'effect') ||
+    !hasRuntimeNamedSourceImport(source, 'Schema', 'Schema', 'effect')
+  ) {
+    return false;
+  }
+  const { carrier, mapped, original, party, partyRef, row, rowList, rowType, schema, statements, tenant } = definition;
+  const mappedKeys = aliasDetailArchiveResultKeys(mapped);
+  if (mappedKeys === undefined || mappedKeys.length !== keys.length || new Set(mappedKeys).size !== mappedKeys.length) {
+    return false;
+  }
+  if (!keys.every((key) => mappedKeys.includes(key))) {
+    return false;
+  }
+  if (
+    carrier !== element ||
+    ownerInterface(source, rowType) === undefined ||
+    namedSourceImport(source, 'PartyRefSchema')?.modulePath.startsWith('.') !== true ||
+    namedSourceImport(source, schema) !== undefined ||
+    constInitializer(source, schema) === undefined
+  ) {
+    return false;
+  }
+  return (
+    hasExactSourceTokens(
+      tokenizeGovernedClient(statements[0] ?? ''),
+      `const ${partyRef} = PartyRefSchema.make({moduleId: 'party.registry', resourceId: ${party}, resourceType: 'party.registry.party', ${tenant}})`,
+    ) &&
+    hasExactSourceTokens(
+      tokenizeGovernedClient(statements[1] ?? ''),
+      `return yield* Effect.forEach(${rowList}, (${row}) => Schema.decodeUnknownEffect(${schema})({assertionId: ${row}.assertionId, originalAssertion: ${row}.originalAssertion}).pipe(Effect.map(({assertionId, originalAssertion: ${original}}): ${element} => ({assertionId, externalEvidence: ${original}.external_evidence, factKind: ${original}.fact_kind, isCurrent: ${original}.is_current, ${partyRef}, recordedAt: ${original}.recorded_at, retractsAssertionId: ${original}.retracts_assertion_id, state: ${original}.state, supersedesAssertionId: ${original}.supersedes_assertion_id, validFrom: ${original}.valid_from, validTo: ${original}.valid_to, value: ${original}.normalized_value}))), {concurrency: 1})`,
+    )
+  );
+};
+
+/**
+ * The bounded provenance of the history-only archive evidence an alias-aware detail read publishes: the
+ * read's own contract member, the read factory's owner-local helper bound to the trusted pair, that
+ * helper's tenant-scoped SELECT over the owner's real schema table, its typed decode, and the decoded
+ * result properties the owner's own published carrier declares. No other source satisfies it.
+ */
+const hasAliasDetailArchiveEvidence = (
+  owner: ReadPhaseOwner,
+  source: string,
+  definition: NonNullable<ReturnType<typeof aliasDetailDefinition>>,
+  parameters: readonly string[],
+): boolean => {
+  const { archive } = definition;
+  if (archive === undefined) {
+    return true;
+  }
+  const element = aliasDetailArchiveElement(archive);
+  const helper = aliasDetailArchiveHelper(owner, source, definition);
+  const rows = helper === undefined ? undefined : aliasDetailArchiveRows(helper);
+  const keys = element === undefined ? undefined : publishedReadCarrierKeys(owner, owner.readFile, source, element);
+  return hasReadProofChecks(owner, 'alias detail archive evidence', {
+    contract: hasAliasDetailArchiveContract(source, definition, parameters),
+    decode:
+      rows !== undefined &&
+      element !== undefined &&
+      keys !== undefined &&
+      hasAliasDetailArchiveDecoder(rows, element, keys),
+    helper: helper !== undefined,
+    query: rows !== undefined,
+    result: keys !== undefined,
+  });
 };
 
 const hasAliasDetailArguments = (args: readonly string[], input: string, context: string): boolean =>
@@ -8131,6 +8684,7 @@ const hasAliasAwareDetailPhase = (
     isEffectFnCallback(target.initializer) &&
     hasOriginalReadResultType(targetOwner, target.source, definition.responseType) &&
     hasAliasDetailBody(targetOwner, target.source, definition) &&
+    hasAliasDetailArchiveEvidence(targetOwner, target.source, definition, parameters) &&
     definition.calls.every((call) => hasFactoryLookupMethod(owner, source, call.groups?.method ?? '')) &&
     ['Effect', 'Match', 'Option'].every((name) => hasRuntimeNamedSourceImport(target.source, name, name, 'effect')) &&
     hasStableReadFactoryBindings(
