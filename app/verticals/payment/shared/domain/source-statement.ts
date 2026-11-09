@@ -67,6 +67,10 @@ const correlationFields = {
 /** Statement fields shared by integration ingress and operator/POS local evidence. */
 export const paymentSourceStatementFields = {
   ...correlationFields,
+  /**
+   * Exact claimed money. Optional for non-monetary facts, but a confirmed collection or refund without
+   * it is refused as `payment_source_fact_unsupported`.
+   */
   amount: Schema.optionalKey(PaymentSourceClaimedAmountSchema),
   /** Set only for SOURCE_CORRECTION: the accepted observation whose statement is disproven. */
   correctsObservationId: Schema.optionalKey(PaymentObservationIdSchema),

@@ -38,17 +38,7 @@ export const paymentHistoryView = (
   record: PaymentHistoryRecord,
   observedAt: PaymentHistoryView['observedAt'],
 ): PaymentHistoryView => ({
-  authorizations: record.authorizations.map((authorization) => ({
-    amount: authorization.amount,
-    authorizationId: authorization.authorizationId,
-    coverageRevision: Option.fromNullishOr(authorization.coverageRevision),
-    expiresAt: authorization.expiresAt,
-    issuedAt: authorization.issuedAt,
-    method: authorization.method,
-    orderCommitmentAttemptId: authorization.orderCommitmentAttemptId,
-    proofKind: authorization.proofKind,
-    provenance: authorization.provenance,
-  })),
+  authorizations: record.authorizations,
   currentValidityClaimed: false,
   observations: record.observations.map((observation) => ({
     acceptanceOutcome: observation.acceptanceOutcome,

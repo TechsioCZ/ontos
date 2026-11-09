@@ -1,4 +1,6 @@
-import { Effect, Schema } from 'effect';
+import { PaymentTermDefinitionSnapshotSchema } from '@app/payment-term-catalog-contracts/payment-term';
+import { DateTime, Effect, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
 import { PaymentMethodApplicabilityRequestSchema } from '../../shared/apis/payment-method-applicability.ts';
@@ -22,6 +24,7 @@ import {
   notUsableTerm,
   OWNER_EVIDENCE_UNAVAILABLE,
   pickupSupported,
+  purchasingContextFor,
   STRIPE_PRODUCTION,
   termRefFor,
   usableTerm,
@@ -32,6 +35,7 @@ const tenantId = '11111111-1111-4111-8111-111111111111';
 const scope = { legalEntityId: '22222222-2222-4222-8222-222222222222', tenantId };
 const termRef = termRefFor(tenantId, '33333333-3333-4333-8333-333333333333');
 const net14 = netDaysSnapshot(termRef, 14);
+const purchasingContext = purchasingContextFor(tenantId, 'buyer-a');
 const immediate = immediateSnapshot(termRef);
 
 const allEnabled: readonly PaymentMethodEnablementState[] = PAYMENT_METHODS.map((method) => ({
@@ -60,6 +64,7 @@ const evaluate = (
     customerConfigurationId: 'customer-configuration-1',
     enablements,
     paymentTermRef,
+    purchase: { _tag: 'PURCHASING_CONTEXT', purchasingContext },
     scope,
     selections,
   }).pipe(
@@ -446,6 +451,66 @@ describe('#1147 Payment method applicability — branch rules', () => {
   );
 });
 
+const retiredOn = (effectiveTo: string) =>
+  Schema.decodeUnknownSync(PaymentTermDefinitionSnapshotSchema)({
+    ...net14,
+    lifecycle: { effectiveFrom: '2026-01-01T00:00:00.000Z', effectiveTo, state: 'RETIRED' },
+  });
+
+describe('#1147 applicability term currentness and purchase scope', () => {
+  const atNovember = TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-11-09T00:00:00.000Z')));
+
+  it.effect('#1147 a USABLE answer carrying an already retired C15 snapshot is not a usable Current term', () =>
+    Effect.gen(function* retiredSnapshot() {
+      yield* atNovember;
+      const { branches } = yield* evaluate(
+        [{ method: 'DEFERRED_INVOICE' }],
+        script({ termUse: () => usableTerm(retiredOn('2026-02-01T00:00:00.000Z'), 'entitlement-A') }),
+      );
+      const branch = only(branches);
+      expect(branch.outcome).toBe('CONFLICTING_CONFIGURATION');
+      expect(findingsOf(branch)).toEqual(['PAYMENT_TERM:TERM_RETIRED']);
+    }),
+  );
+
+  it.effect('#1147 a scheduled future retirement does not end a Current term early', () =>
+    Effect.gen(function* scheduledRetirement() {
+      yield* atNovember;
+      const { branches } = yield* evaluate(
+        [{ method: 'DEFERRED_INVOICE' }],
+        script({ termUse: () => usableTerm(retiredOn('2027-01-01T00:00:00.000Z'), 'entitlement-A') }),
+      );
+      expect(only(branches).outcome).toBe('AVAILABLE');
+    }),
+  );
+
+  it.effect('#1147 the term owner is asked about the exact purchase, and a foreign-Tenant buyer is a conflict', () =>
+    Effect.gen(function* purchaseScopedQuestion() {
+      const { branches, calls } = yield* evaluate([{ method: 'DEFERRED_INVOICE' }]);
+      expect(only(branches).outcome).toBe('AVAILABLE');
+      expect(calls.termPurchases).toEqual([{ _tag: 'PURCHASING_CONTEXT', purchasingContext }]);
+
+      const fixture = applicabilityOwnerEvidenceFixture(script());
+      const foreign = yield* evaluatePaymentMethodApplicability({
+        amount: { amountMinor: 125_000, currency: 'CZK' },
+        customerConfigurationId: 'customer-configuration-1',
+        enablements: allEnabled,
+        paymentTermRef: termRef,
+        purchase: {
+          _tag: 'PURCHASING_CONTEXT',
+          purchasingContext: purchasingContextFor('99999999-9999-4999-8999-999999999999', 'buyer-a'),
+        },
+        scope,
+        selections: [{ method: 'DEFERRED_INVOICE' }],
+      }).pipe(Effect.provide(fixture.layer));
+      const foreignBranch = only(foreign);
+      expect(foreignBranch.outcome).toBe('CONFLICTING_CONFIGURATION');
+      expect(findingsOf(foreignBranch)).toEqual(['PAYMENT_TERM:EVIDENCE_SUBJECT_MISMATCH']);
+      expect(fixture.calls.termPurchases).toEqual([]);
+    }),
+  );
+});
+
 describe('#1147 applicability request contract', () => {
   const decode = Schema.decodeUnknownSync(PaymentMethodApplicabilityRequestSchema);
   const valid = {
@@ -453,6 +518,7 @@ describe('#1147 applicability request contract', () => {
     branches: [{ method: 'BANK_TRANSFER_ADVANCE' }],
     customerConfigurationId: 'customer-configuration-1',
     paymentTermRef: termRef,
+    purchasingContext,
   };
 
   it('#1147 accepts an exact CZK purchase context and rejects duplicate, empty or foreign-currency requests', () => {
@@ -464,5 +530,7 @@ describe('#1147 applicability request contract', () => {
     expect(() => decode({ ...valid, amount: { amountMinor: 125_000, currency: 'EUR' } })).toThrow();
     expect(() => decode({ ...valid, amount: { amountMinor: 1250.5, currency: 'CZK' } })).toThrow();
     expect(() => decode({ ...valid, branches: [{ method: 'GOPAY' }] })).toThrow();
+    const { purchasingContext: _withoutContext, ...withoutPurchasingContext } = valid;
+    expect(() => decode(withoutPurchasingContext)).toThrow();
   });
 });

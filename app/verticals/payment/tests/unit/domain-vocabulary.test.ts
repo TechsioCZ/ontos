@@ -128,6 +128,7 @@ describe('H1094-01=A owner ports fail closed by default', () => {
                 resourceType: 'payment.term-catalog.payment-term',
                 tenantId: scope.tenantId,
               },
+              purchase: { _tag: 'PURCHASE_CORRELATION', purchaseCorrelationId: 'purchase-1' },
               scope,
             })
             .pipe(Effect.flip),

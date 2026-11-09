@@ -24,6 +24,7 @@ import {
   isSameIntentMaterial,
   PredecessorReleaseDecision,
 } from '../domain/lifecycle-intent.ts';
+import { requireReleasedPurchase } from '../domain/lifecycle-purchase-guard.ts';
 import { paymentIntentViewOf } from '../domain/lifecycle-views.ts';
 import {
   paymentAggregatePersistenceForTransaction,
@@ -119,10 +120,14 @@ export const handleCreatePayment = Effect.fn('CreatePaymentAction.handle')(funct
   if (Option.isSome(existing)) {
     return yield* recoverExistingIntent(payload, existing.value, services);
   }
+  // Every intent of this purchase is locked first (Payment id order), so competing intents serialize.
+  const purchasePaymentIds = yield* services.lifecycle.lockPurchasePaymentIds(payload.purchaseCorrelationId);
   const predecessorPaymentId = Option.fromNullishOr(payload.predecessorPaymentId);
   if (Option.isSome(predecessorPaymentId)) {
     yield* requireReleasedPredecessor(predecessorPaymentId.value, services);
   }
+  // Omitting the predecessor never bypasses it: every other intent of the purchase must be released.
+  yield* requireReleasedPurchase(purchasePaymentIds, services.aggregate);
   // #1147 applicability of exactly the selected branch at this execution; nothing else is selected.
   const enablements = yield* services.applicability.loadCurrentEnablements(payload.customerConfigurationId);
   const [branch] = yield* evaluatePaymentMethodApplicability({
@@ -130,6 +135,7 @@ export const handleCreatePayment = Effect.fn('CreatePaymentAction.handle')(funct
     customerConfigurationId: payload.customerConfigurationId,
     enablements,
     paymentTermRef: payload.paymentTermRef,
+    purchase: { _tag: 'PURCHASE_CORRELATION', purchaseCorrelationId: payload.purchaseCorrelationId },
     scope: { legalEntityId, tenantId },
     selections: [payload.selection],
   });

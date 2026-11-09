@@ -11,6 +11,8 @@ import type {
   PaymentOperationOutcome,
   PaymentReconciliationCaseStatus,
   PaymentReconciliationDecisionKind,
+  PaymentSourceFactFamily,
+  PaymentSourceKind,
 } from '../../shared/domain/payment-vocabulary.ts';
 import type { PaymentEvidenceOperationView, PaymentEvidenceOutcomeChange } from './evidence-interpretation.ts';
 import { paymentFactMeaning } from './evidence-interpretation.ts';
@@ -21,8 +23,10 @@ import { isAllowedOutcomeTransition, isDefinitiveOutcome } from './operation-lif
  * Governed reconciliation decisions (#1151 "Operator reconciliation cannot fabricate money"). Pure:
  * the Action supplies the locked case, the locked Payment's operations and the qualification facts of
  * the attached observation. No branch creates an operation, an amount or a refund; an effect is
- * confirmed only by a qualified observation that states exactly that effect; a case closes only when
- * its operation is definitive.
+ * confirmed only by a qualified observation that states exactly that effect, from the executor the
+ * operation was requested through, and one economic effect counts toward one operation only. A case
+ * closes only when its operation is definitive and the monetary statement it holds is accounted for
+ * by Current state: an operator note is audit, never authoritative evidence by itself.
  */
 
 export interface PaymentReconciliationCaseSubject {
@@ -31,24 +35,72 @@ export interface PaymentReconciliationCaseSubject {
   readonly status: PaymentReconciliationCaseStatus;
 }
 
+/** The exact source binding an observation was recorded under. */
+export interface PaymentReconciliationEvidenceSource {
+  readonly accountRef: string;
+  readonly environment: string;
+  readonly factFamily: PaymentSourceFactFamily;
+  readonly sourceKind: PaymentSourceKind;
+  readonly sourceSystem: string;
+}
+
 /** What the Action established about the observation an ATTACH_EVIDENCE decision names. */
 export interface PaymentReconciliationEvidenceFacts {
   readonly acceptanceOutcome: PaymentObservationAcceptanceOutcome;
   readonly amount: PaymentMonetaryAmount | undefined;
-  /** A later accepted SOURCE_CORRECTION disproved this statement. */
+  /** A qualified SOURCE_CORRECTION (accepted, held or conflicting) disproved this statement. */
   readonly corrected: boolean;
+  /**
+   * Operations this observation's economic effect already counts toward: its own accepted
+   * interpretation, governed attachments of it, and those of other observations of the same source
+   * and economic effect. `undefined` stands for an attachment whose operation is not identifiable.
+   */
+  readonly countedToward: readonly (string | undefined)[];
   readonly factKind: PaymentObservationFactKind;
   readonly observationId: string;
   readonly operationId: string | undefined;
   readonly paymentId: string | undefined;
+  readonly source: PaymentReconciliationEvidenceSource;
   /** The observation came from a configured source authority that is ACTIVE now. */
   readonly sourceAuthorityActive: boolean;
 }
 
+/**
+ * What the Action established about the observation a case holds, for CLOSE_CASE (#1151 "Closing an
+ * administrative case must not falsely confirm an effect or discard an unresolved monetary obligation").
+ */
+export interface PaymentReconciliationCaseEvidence {
+  readonly acceptanceOutcome: PaymentObservationAcceptanceOutcome;
+  /** Resulting outcomes of the governed ATTACH_EVIDENCE decisions of this observation; `undefined` = evidence only. */
+  readonly attachedOutcomes: readonly (PaymentOperationOutcome | undefined)[];
+  /** A CLASSIFY_CONFLICT decision of this case applied the held evidence through governance. */
+  readonly conflictClassified: boolean;
+  /** A qualified SOURCE_CORRECTION (accepted, held or conflicting) disproved this statement. */
+  readonly corrected: boolean;
+  /** SOURCE_CORRECTION only: the disproven statement was accepted or resolved an operation by attachment. */
+  readonly correctionTargetEstablished: boolean;
+  readonly factKind: PaymentObservationFactKind;
+}
+
+/** The refund executor binding a REFUND was requested through (#1150), as stored on the operation. */
+export interface PaymentReconciliationRefundRoute {
+  readonly accountRef: string;
+  readonly environment: string;
+  readonly sourceKind: PaymentSourceKind;
+  readonly sourceSystem: string;
+}
+
+/** One operation as reconciliation needs it (structurally satisfied by `PaymentOperationRecord`). */
+export interface PaymentReconciliationOperationView extends PaymentEvidenceOperationView {
+  readonly refundExecutionRoute?: PaymentReconciliationRefundRoute | undefined;
+}
+
 export interface PaymentReconciliationDecisionInput {
   readonly body: PaymentReconciliationDecisionBody;
+  /** CLOSE_CASE only: the observation the case holds; none when the case holds no observation. */
+  readonly caseEvidence: Option.Option<PaymentReconciliationCaseEvidence>;
   readonly evidence: Option.Option<PaymentReconciliationEvidenceFacts>;
-  readonly operations: readonly PaymentEvidenceOperationView[];
+  readonly operations: readonly PaymentReconciliationOperationView[];
   readonly subject: PaymentReconciliationCaseSubject;
 }
 
@@ -89,7 +141,7 @@ const changeTo = (
 const targetOperation = (
   input: PaymentReconciliationDecisionInput,
   requestedOperationId: string | undefined,
-): Result.Result<PaymentEvidenceOperationView, PaymentReconciliationStepCase> => {
+): Result.Result<PaymentReconciliationOperationView, PaymentReconciliationStepCase> => {
   const { operationId } = input.subject;
   if (operationId !== undefined && requestedOperationId !== undefined && operationId !== requestedOperationId) {
     return Result.fail(
@@ -103,10 +155,28 @@ const targetOperation = (
     : Result.succeed(operation);
 };
 
+/**
+ * A REFUND keeps the executor it was requested through: another system or account of the same
+ * executor kind never evidences it, whichever entry path the evidence took (#1150/#1152).
+ */
+const bypassesRefundRoute = (
+  source: PaymentReconciliationEvidenceSource,
+  operation: PaymentReconciliationOperationView,
+): boolean => {
+  const route = operation.refundExecutionRoute;
+  return (
+    route !== undefined &&
+    route.sourceKind === source.sourceKind &&
+    (route.sourceSystem !== source.sourceSystem ||
+      route.accountRef !== source.accountRef ||
+      route.environment !== source.environment)
+  );
+};
+
 const qualificationRefusal = (
   facts: PaymentReconciliationEvidenceFacts,
   subject: PaymentReconciliationCaseSubject,
-  operation: PaymentEvidenceOperationView,
+  operation: PaymentReconciliationOperationView,
 ): string | undefined => {
   if (facts.paymentId === undefined || facts.paymentId !== subject.paymentId) {
     return 'The evidence does not belong to the Payment of this case';
@@ -122,6 +192,9 @@ const qualificationRefusal = (
   }
   if (facts.operationId !== undefined && facts.operationId !== operation.operationId) {
     return 'The evidence is correlated to another operation';
+  }
+  if (bypassesRefundRoute(facts.source, operation)) {
+    return 'The evidence does not come from the refund execution route the REFUND was requested through';
   }
   return undefined;
 };
@@ -154,6 +227,13 @@ const decideAttach = (
   });
   if (!resolves) {
     return evidenceOnly;
+  }
+  if (facts.countedToward.some((counted) => counted !== operation.operationId)) {
+    // One economic effect counts once: it never confirms a second operation.
+    return reject(
+      'payment_reconciliation_evidence_not_qualified',
+      'The evidence already counts toward another operation of this Payment',
+    );
   }
   if (facts.amount !== undefined && !sameAmount(facts.amount, operation.amount)) {
     return reject('payment_reconciliation_evidence_not_qualified', 'The evidence amount differs from the operation');
@@ -190,6 +270,31 @@ const decideClassify = (input: PaymentReconciliationDecisionInput): PaymentRecon
   });
 };
 
+/**
+ * Why the observation a case holds is still an unresolved monetary obligation, or `undefined` when
+ * Current state accounts for it. Pending, not-effected and unrecognized statements claim no money.
+ */
+const unresolvedObligation = (evidence: PaymentReconciliationCaseEvidence): string | undefined => {
+  if (evidence.acceptanceOutcome === 'ACCEPTED_OBSERVATION' || evidence.corrected) {
+    // Applied to Current by its own interpretation, or disproven by its qualified source.
+    return undefined;
+  }
+  if (evidence.factKind === 'SOURCE_CORRECTION') {
+    return evidence.correctionTargetEstablished && !evidence.conflictClassified
+      ? 'The held correction disproves evidence the Current interpretation still relies on; classify the conflict first'
+      : undefined;
+  }
+  if (evidence.factKind === 'SETTLEMENT_OBSERVED') {
+    return evidence.attachedOutcomes.length === 0
+      ? 'The held settlement is not assigned to an operation of a Payment'
+      : undefined;
+  }
+  const meaning = paymentFactMeaning(evidence.factKind);
+  return meaning?.outcome === 'EFFECT_CONFIRMED' && !evidence.attachedOutcomes.includes(meaning.outcome)
+    ? 'The held evidence states a monetary effect that no operation accounts for'
+    : undefined;
+};
+
 const decideClose = (input: PaymentReconciliationDecisionInput, evidenceRef: string): PaymentReconciliationStepCase => {
   const { operationId } = input.subject;
   if (operationId !== undefined) {
@@ -200,6 +305,12 @@ const decideClose = (input: PaymentReconciliationDecisionInput, evidenceRef: str
         'The operation of this case is still unresolved; closing would discard a monetary obligation',
       );
     }
+  }
+  const obligation = input.caseEvidence.pipe(
+    Option.flatMap((evidence) => Option.fromUndefinedOr(unresolvedObligation(evidence))),
+  );
+  if (Option.isSome(obligation)) {
+    return reject('payment_reconciliation_obligation_unresolved', obligation.value);
   }
   return PaymentReconciliationStep.Apply({
     change: Option.none(),

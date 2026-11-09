@@ -1,8 +1,12 @@
 import { Effect, Layer, Option } from 'effect';
 
+import type { AcceptPaymentObservationPayloadSchema } from '../../shared/actions/accept-payment-observation.ts';
+import type { RecordPaymentReconciliationDecisionPayloadSchema } from '../../shared/actions/record-payment-reconciliation-decision.ts';
 import type { RequestPaymentCancellationPayload } from '../../shared/actions/request-payment-cancellation.ts';
 import type { RequestPaymentRefundPayload } from '../../shared/actions/request-payment-refund.ts';
 import type { PaymentRefundableItem } from '../../shared/domain/payment-refund-basis.ts';
+import { acceptPaymentObservationAction } from '../../src/actions/accept-payment-observation.action.ts';
+import { recordPaymentReconciliationDecisionAction } from '../../src/actions/record-payment-reconciliation-decision.action.ts';
 import { requestPaymentCancellationAction } from '../../src/actions/request-payment-cancellation.action.ts';
 import { requestPaymentRefundAction } from '../../src/actions/request-payment-refund.action.ts';
 import { CommitmentOutcomePort, unavailableCommitmentOutcome } from '../../src/ports/commitment-outcome-port.ts';
@@ -152,3 +156,31 @@ export const closedCommitment = {
   attemptRef: 'attempt-1',
   terminalNonCommitEvidenceRef: 'commitment-closure-1',
 } as const;
+
+/** A provider/source statement about this Payment through the registered acceptance Action (#1151/#1152). */
+export const acceptObservation = Effect.fn('RefundActionDriver.acceptObservation')(function* acceptObservation(
+  refundCase: RefundCase,
+  payload: typeof AcceptPaymentObservationPayloadSchema.Encoded,
+) {
+  const key = yield* randomUuid;
+  return yield* refundCase.native.actionRuntime.runAction({
+    payload,
+    principal: refundCase.principal,
+    registration: acceptPaymentObservationAction,
+    transport: { correlationId: 'payment-refund-observation', idempotencyKey: key },
+  });
+});
+
+/** A governed reconciliation decision through the registered Action (#1151). */
+export const decideReconciliation = Effect.fn('RefundActionDriver.decideReconciliation')(function* decideReconciliation(
+  refundCase: RefundCase,
+  payload: typeof RecordPaymentReconciliationDecisionPayloadSchema.Encoded,
+) {
+  const key = yield* randomUuid;
+  return yield* refundCase.native.actionRuntime.runAction({
+    payload,
+    principal: refundCase.principal,
+    registration: recordPaymentReconciliationDecisionAction,
+    transport: { correlationId: 'payment-refund-reconciliation', idempotencyKey: key },
+  });
+});

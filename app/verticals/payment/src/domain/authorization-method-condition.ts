@@ -1,7 +1,9 @@
 import { PaymentTermRefSchema } from '@app/payment-term-catalog-contracts/resources/payment-term';
-import { Effect, Match, Schema } from 'effect';
+import { Effect, Match, Option, Schema } from 'effect';
 
+import type { PaymentMethodEnablementState } from '../../shared/domain/applicability-contract.ts';
 import type { PaymentAuthorizationCondition } from '../../shared/domain/authorization-proof.ts';
+import type { PaymentMethod } from '../../shared/domain/payment-vocabulary.ts';
 import type { PaymentRecord } from '../persistence/payment-aggregate-persistence.ts';
 import { DeliveryCapabilityPort } from '../ports/delivery-capability-port.ts';
 import type { PaymentCodCapability } from '../ports/delivery-capability-port.ts';
@@ -103,6 +105,7 @@ const verifyDeferredTerm = Effect.fn('PaymentAuthorization.verifyDeferredTerm')(
     customerConfigurationId: payment.customerConfigurationId,
     method: payment.method,
     paymentTermRef: payment.paymentTermRef,
+    purchase: { _tag: 'PURCHASE_CORRELATION', purchaseCorrelationId: payment.purchaseCorrelationId },
     scope,
   });
   return deferredTermCondition(payment, evidence);
@@ -129,8 +132,28 @@ const verifyPickupCollection = Effect.fn('PaymentAuthorization.verifyPickupColle
 const unmatchedBinding = (payment: PaymentRecord): MethodConditionVerification =>
   Effect.succeed(notMet(`The ${payment.method} Payment has no method condition matching its execution binding`));
 
-/** Verifies the Current method condition of one non-prepaid Payment through its exact owner port. */
-export const verifyMethodCondition = (payment: PaymentRecord, scope: PaymentOwnerScope): MethodConditionVerification =>
+/**
+ * #1147 merchant applicability of the Payment's own method: a pre-collection method condition holds
+ * only while the method is Currently enabled for the Payment's Customer Configuration. A withdrawn,
+ * never configured or ambiguous enablement leaves the method not applicable, whatever the owner
+ * evidence says, so it neither issues nor keeps a proof Current.
+ */
+export const methodEnablementCondition = (
+  enablements: readonly PaymentMethodEnablementState[],
+  method: PaymentMethod,
+): Option.Option<MethodConditionCheckCase> => {
+  const rows = enablements.filter((row) => row.method === method);
+  const [row] = rows;
+  if (row === undefined) {
+    return Option.some(notMet(`${method} is not enabled for the Customer Configuration`));
+  }
+  if (rows.length > 1) {
+    return Option.some(notMet(`${method} has conflicting enablement configuration`));
+  }
+  return row.enabled ? Option.none() : Option.some(notMet(`${method} was withdrawn for the Customer Configuration`));
+};
+
+const verifyOwnerCondition = (payment: PaymentRecord, scope: PaymentOwnerScope): MethodConditionVerification =>
   payment.method === 'DEFERRED_INVOICE'
     ? verifyDeferredTerm(payment, scope)
     : Match.value(payment.executionBinding).pipe(
@@ -147,3 +170,17 @@ export const verifyMethodCondition = (payment: PaymentRecord, scope: PaymentOwne
               : unmatchedBinding(payment),
         }),
       );
+
+/**
+ * Verifies the Current method condition of one non-prepaid Payment: the method must still be
+ * applicable (merchant enablement, checked locally first), then its exact owner port must confirm it.
+ */
+export const verifyMethodCondition = (
+  payment: PaymentRecord,
+  enablements: readonly PaymentMethodEnablementState[],
+  scope: PaymentOwnerScope,
+): MethodConditionVerification =>
+  Option.match(methodEnablementCondition(enablements, payment.method), {
+    onNone: () => verifyOwnerCondition(payment, scope),
+    onSome: Effect.succeed,
+  });

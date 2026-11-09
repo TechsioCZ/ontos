@@ -24,6 +24,8 @@ import {
   paymentFundsSnapshotOf,
 } from '../persistence/payment-aggregate-persistence.ts';
 import type { PaymentAggregatePersistence } from '../persistence/payment-aggregate-persistence.ts';
+import { paymentApplicabilityPersistenceForTransaction } from '../persistence/payment-applicability-persistence.ts';
+import type { PaymentApplicabilityPersistence } from '../persistence/payment-applicability-persistence.ts';
 import { paymentAuthorizationPersistenceForTransaction } from '../persistence/payment-authorization-persistence.ts';
 import type { PaymentAuthorizationPersistence } from '../persistence/payment-authorization-persistence.ts';
 
@@ -37,6 +39,7 @@ const paymentAuthorizationValidationEntrypoint = defineTenantModuleEntrypoint({
 
 interface PaymentAuthorizationValidationServices {
   readonly aggregate: PaymentAggregatePersistence;
+  readonly applicability: PaymentApplicabilityPersistence;
   readonly authorizations: PaymentAuthorizationPersistence;
 }
 
@@ -101,7 +104,9 @@ export const validatePaymentAuthorization = Effect.fn('PaymentAuthorizationValid
         validatedAt,
       } satisfies PaymentAuthorizationValidationResponse;
     }
-    const check = yield* verifyMethodCondition(payment, scope).pipe(Effect.option);
+    // The method must still be applicable: a withdrawn merchant enablement makes the proof not Current.
+    const enablements = yield* services.applicability.loadCurrentEnablements(payment.customerConfigurationId);
+    const check = yield* verifyMethodCondition(payment, enablements, scope).pipe(Effect.option);
     if (Option.isNone(check)) {
       return {
         ...coverage,
@@ -166,6 +171,7 @@ export const paymentAuthorizationValidationRead = defineRead(
   (transaction: ScopedTransactionExecutor) =>
     Effect.succeed<PaymentAuthorizationValidationServices>({
       aggregate: paymentAggregatePersistenceForTransaction(transaction),
+      applicability: paymentApplicabilityPersistenceForTransaction(transaction),
       authorizations: paymentAuthorizationPersistenceForTransaction(transaction),
     }),
 );

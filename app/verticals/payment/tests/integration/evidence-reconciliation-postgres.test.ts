@@ -37,9 +37,12 @@ import type {
   PaymentEvidenceDecisionCase,
   QualifiedPaymentObservation,
 } from '../../src/domain/evidence-interpretation.ts';
+import { PaymentRefundBasisSchema } from '../../shared/domain/payment-refund-basis.ts';
+import { PaymentRefundExecutionRouteSchema } from '../../shared/domain/refund-contract.ts';
 import { paymentFundsSnapshotOf } from '../../src/persistence/payment-aggregate-persistence.ts';
 import { expectSqlFailure, failureCodeOf, makeTestScope } from './database-fixture.ts';
 import {
+  BANK_BINDING,
   COMPOSITION_R1,
   COMPOSITION_R2,
   evidenceAllowedPermission,
@@ -604,6 +607,440 @@ it.live('#1151 Same business identity changes meaning: the reused operation key 
         ),
       ).toBe('payment_operation_material_conflict');
       expect(yield* evidence.rows.operations(payment.paymentId)).toHaveLength(1);
+    }),
+  ),
+);
+
+const GOPAY_SOURCE = {
+  accountRef: 'gopay-account-1',
+  environment: 'production',
+  sourceKind: 'PAYMENT_GATEWAY',
+  sourceSystem: 'GOPAY',
+} as const;
+
+/** The original gateway account as the configured GATEWAY_OUTCOME authority, configured through its Action. */
+const configureGopay = (evidence: EvidenceScenario) =>
+  evidence.configureSource({
+    factFamily: 'GATEWAY_OUTCOME',
+    reason: 'GoPay callbacks are the gateway outcome authority',
+    refundRoute: false,
+    source: GOPAY_SOURCE,
+    status: 'ACTIVE',
+  });
+
+/** One GoPay callback; `fields` carries exactly the statement members the scenario names. */
+const gopayStatement = <
+  Fields extends {
+    readonly amount?: { readonly amountMinor: number; readonly currency: 'CZK' };
+    readonly correctsObservationId?: string;
+    readonly economicEffectKey?: string;
+    readonly factKind: 'COLLECTION_CONFIRMED' | 'REFUND_CONFIRMED' | 'SOURCE_CORRECTION';
+    readonly operationId?: string;
+    readonly paymentId?: string;
+  },
+>(
+  fields: Fields,
+) => ({
+  factFamily: 'GATEWAY_OUTCOME' as const,
+  source: GOPAY_SOURCE,
+  sourceOccurrenceId: `gopay-callback-${randomUUID()}`,
+  sourceRevision: 0,
+  ...fields,
+});
+
+const itemsBasis = (itemRef: string, amountMinor: number) =>
+  Schema.decodeUnknownSync(PaymentRefundBasisSchema)({
+    _tag: 'REFUNDABLE_ITEMS',
+    items: [{ amountMinor, currency: 'CZK', itemRef, sourceEvidenceRef: `aftercare-${itemRef}` }],
+  });
+
+it.live('#1151 Closing a held return case never discards a qualified refund or restores full coverage', () =>
+  native(
+    Effect.gen(function* closeKeepsQualifiedReturn() {
+      const evidence = yield* scenario();
+      const payment = yield* evidence.createPayment();
+      const collect = yield* evidence.startOperation({
+        amountMinor: 100_000,
+        operationKey: 'collect-1',
+        paymentId: payment.paymentId,
+      });
+      yield* configureGopay(evidence);
+      const confirmed = yield* evidence.accept(
+        gopayStatement({
+          amount: czk(100_000),
+          economicEffectKey: 'gopay:payment:1',
+          factKind: 'COLLECTION_CONFIRMED',
+          operationId: collect.operationId,
+          paymentId: payment.paymentId,
+        }),
+      );
+      expect(confirmed).toMatchObject({ acceptanceOutcome: 'ACCEPTED_OBSERVATION', interpretation: 'TRANSITION' });
+      // A qualified provider callback proves 400 CZK went back to the customer outside OntOS.
+      const returned = yield* evidence.accept(
+        gopayStatement({
+          amount: czk(40_000),
+          economicEffectKey: 'gopay:refund:1',
+          factKind: 'REFUND_CONFIRMED',
+          operationId: collect.operationId,
+          paymentId: payment.paymentId,
+        }),
+      );
+      expect(returned).toMatchObject({ acceptanceOutcome: 'HELD_UNRESOLVED', interpretation: 'HOLD' });
+      expect(yield* evidence.coverage(payment.paymentId)).toBe('Held UNRESOLVED_EVIDENCE');
+
+      // A free-text note is no authoritative evidence: the returned money stays held debt.
+      expect(
+        yield* failureCodeOf(
+          evidence.decide({
+            caseId: returned.reconciliationCaseId ?? '',
+            decision: { _tag: 'CLOSE_CASE', evidenceRef: 'operator-note-ignore' },
+            reason: 'Closing the held refund callback',
+          }),
+        ),
+      ).toBe('payment_reconciliation_obligation_unresolved');
+      expect(yield* evidence.coverage(payment.paymentId)).toBe('Held UNRESOLVED_EVIDENCE');
+      const debt = yield* evidence.debt({ paymentId: payment.paymentId });
+      expect(debt.openCases.map((open) => open.caseId)).toContain(returned.reconciliationCaseId);
+    }),
+  ),
+);
+
+it.live(
+  '#1151 A source corrects governed-attached collection evidence: the debt stays held until governance applies it',
+  () =>
+    native(
+      Effect.gen(function* correctionOfAttachedEvidence() {
+        const evidence = yield* scenario();
+        const payment = yield* evidence.createPayment();
+        const collect = yield* evidence.startOperation({
+          amountMinor: 100_000,
+          operationKey: 'collect-1',
+          paymentId: payment.paymentId,
+        });
+        yield* configureGopay(evidence);
+        const recover = (trigger: 'EXECUTION_OUTCOME_UNKNOWN' | 'LOOKUP_AUTHORITY_UNAVAILABLE') =>
+          evidence.recover({
+            operationId: collect.operationId,
+            paymentId: payment.paymentId,
+            reason: 'Lost response',
+            trigger,
+          });
+        yield* recover('EXECUTION_OUTCOME_UNKNOWN');
+        yield* recover('LOOKUP_AUTHORITY_UNAVAILABLE');
+        const [operationCase] = yield* evidence.rows.cases(payment.paymentId);
+        const operationCaseId = operationCase?.caseId ?? '';
+        yield* evidence.decide({
+          caseId: operationCaseId,
+          decision: { _tag: 'CLASSIFY_CONFLICT' },
+          reason: 'Contradictory signals',
+        });
+        // The only collection statement arrives while the collection is in CONFLICT: held, then attached.
+        const statement = yield* evidence.accept(
+          gopayStatement({
+            amount: czk(100_000),
+            factKind: 'COLLECTION_CONFIRMED',
+            operationId: collect.operationId,
+            paymentId: payment.paymentId,
+          }),
+        );
+        expect(statement.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+        const attached = yield* evidence.decide({
+          caseId: operationCaseId,
+          decision: { _tag: 'ATTACH_EVIDENCE', observationId: statement.observationId },
+          reason: 'The callback proves the collection',
+        });
+        expect(Option.getOrUndefined(attached.outcomeChange)).toMatchObject({ toOutcome: 'EFFECT_CONFIRMED' });
+        for (const caseId of [operationCaseId, statement.reconciliationCaseId ?? '']) {
+          const closed = yield* evidence.decide({
+            caseId,
+            decision: { _tag: 'CLOSE_CASE', evidenceRef: 'attached-callback' },
+            reason: 'Resolved by attaching the callback',
+          });
+          expect(closed.caseStatus).toBe('CLOSED');
+        }
+        expect(yield* evidence.coverage(payment.paymentId)).toBe(
+          'Established collected=100000 returned=0 remaining=100000',
+        );
+
+        // The authorized source now disproves that only statement.
+        const correction = yield* evidence.accept(
+          gopayStatement({
+            correctsObservationId: statement.observationId,
+            factKind: 'SOURCE_CORRECTION',
+            operationId: collect.operationId,
+            paymentId: payment.paymentId,
+          }),
+        );
+        expect(correction.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+        const correctionCaseId = correction.reconciliationCaseId ?? '';
+        expect(yield* evidence.coverage(payment.paymentId)).toBe('Held UNRESOLVED_EVIDENCE');
+        // A free-text close cannot hand full coverage back to the disproven statement.
+        const closeCorrection = () =>
+          failureCodeOf(
+            evidence.decide({
+              caseId: correctionCaseId,
+              decision: { _tag: 'CLOSE_CASE', evidenceRef: 'operator-note' },
+              reason: 'Close the held correction',
+            }),
+          );
+        expect(yield* closeCorrection()).toBe('payment_reconciliation_obligation_unresolved');
+        expect(yield* evidence.coverage(payment.paymentId)).toBe('Held UNRESOLVED_EVIDENCE');
+
+        // Governance applies the disproof: the collection returns to CONFLICT and the disproven
+        // statement can never be attached again.
+        const classified = yield* evidence.decide({
+          caseId: correctionCaseId,
+          decision: { _tag: 'CLASSIFY_CONFLICT' },
+          reason: 'The source disproved the only collection statement',
+        });
+        expect(Option.getOrUndefined(classified.outcomeChange)).toMatchObject({
+          fromOutcome: 'EFFECT_CONFIRMED',
+          toOutcome: 'CONFLICT',
+        });
+        expect(
+          yield* failureCodeOf(
+            evidence.decide({
+              caseId: correctionCaseId,
+              decision: { _tag: 'ATTACH_EVIDENCE', observationId: statement.observationId },
+              reason: 'Re-attach the disproven callback',
+            }),
+          ),
+        ).toBe('payment_reconciliation_evidence_not_qualified');
+        expect(yield* closeCorrection()).toBe('payment_reconciliation_obligation_unresolved');
+        expect(yield* evidence.coverage(payment.paymentId)).not.toMatch(/^Established/u);
+      }),
+    ),
+);
+
+it.live('#1151 Unassigned received money stays held reconciliation debt; a free-text close is refused', () =>
+  native(
+    Effect.gen(function* unassignedMoneyStaysDebt() {
+      const evidence = yield* scenario();
+      yield* configureGopay(evidence);
+      // 1000 CZK arrived, but the provider callback names no Payment this scope can prove.
+      const unassigned = yield* evidence.accept(
+        gopayStatement({ amount: czk(100_000), factKind: 'COLLECTION_CONFIRMED' }),
+      );
+      expect(unassigned).toMatchObject({ acceptanceOutcome: 'HELD_UNRESOLVED', interpretation: 'NOT_INTERPRETED' });
+      const caseId = unassigned.reconciliationCaseId ?? '';
+      expect(
+        yield* failureCodeOf(
+          evidence.decide({
+            caseId,
+            decision: { _tag: 'CLOSE_CASE', evidenceRef: 'nothing-to-see' },
+            reason: 'Close the orphan callback',
+          }),
+        ),
+      ).toBe('payment_reconciliation_obligation_unresolved');
+      expect((yield* evidence.debt()).openCases.map((open) => open.caseId)).toContain(caseId);
+    }),
+  ),
+);
+
+it.live('#1151 One refund observation confirms at most one REFUND through governed attachment', () =>
+  native(
+    Effect.gen(function* oneObservationOneRefund() {
+      const evidence = yield* scenario();
+      const payment = yield* evidence.createPayment();
+      const collect = yield* evidence.startOperation({
+        amountMinor: 100_000,
+        operationKey: 'collect-1',
+        paymentId: payment.paymentId,
+      });
+      yield* evidence.settle(payment.paymentId, collect.operationId, 1, 'EFFECT_CONFIRMED');
+      const refund = (key: string) =>
+        evidence.startOperation({
+          amountMinor: 50_000,
+          kind: 'REFUND',
+          operationKey: key,
+          paymentId: payment.paymentId,
+          refundBasis: itemsBasis(key, 50_000),
+          targetOperationId: collect.operationId,
+        });
+      const refundA = yield* refund('refund-a');
+      const refundB = yield* refund('refund-b');
+      yield* configureGopay(evidence);
+      // ONE provider statement (500 CZK returned) that names no operation: held debt.
+      const singleReturn = () =>
+        evidence.accept(
+          gopayStatement({
+            amount: czk(50_000),
+            economicEffectKey: 'gopay:refund:single',
+            factKind: 'REFUND_CONFIRMED',
+            paymentId: payment.paymentId,
+          }),
+        );
+      const held = yield* singleReturn();
+      expect(held.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+      const attachTo = (observationId: string, operationId: string) =>
+        evidence.decide({
+          caseId: held.reconciliationCaseId ?? '',
+          decision: { _tag: 'ATTACH_EVIDENCE', observationId, operationId },
+          reason: 'Operator attaches the provider refund statement',
+        });
+      const first = yield* attachTo(held.observationId, refundA.operationId);
+      expect(Option.getOrUndefined(first.outcomeChange)).toMatchObject({ toOutcome: 'EFFECT_CONFIRMED' });
+      expect(yield* failureCodeOf(attachTo(held.observationId, refundB.operationId))).toBe(
+        'payment_reconciliation_evidence_not_qualified',
+      );
+      // A re-export of the same economic effect is not a second return either.
+      const reExported = yield* singleReturn();
+      expect(yield* failureCodeOf(attachTo(reExported.observationId, refundB.operationId))).toBe(
+        'payment_reconciliation_evidence_not_qualified',
+      );
+      const loaded = yield* evidence.inTransaction((aggregate) => aggregate.loadAggregate(payment.paymentId));
+      const outcomes = Object.fromEntries(
+        loaded.operations.map((operation) => [operation.operationKey, operation.outcome]),
+      );
+      expect(outcomes).toEqual({
+        'collect-1': 'EFFECT_CONFIRMED',
+        'refund-a': 'EFFECT_CONFIRMED',
+        'refund-b': 'PENDING',
+      });
+      const funds = computePaymentFunds({ ...paymentFundsSnapshotOf(loaded), unresolvedEvidence: false });
+      expect(ledgerSummary(funds)).toBe('Established collected=100000 returned=50000 remaining=0');
+    }),
+  ),
+);
+
+it.live('#1150/#1152 Refund evidence from another refund route never confirms the REFUND through attachment', () =>
+  native(
+    Effect.gen(function* foreignRouteAttach() {
+      const evidence = yield* scenario();
+      const payment = yield* evidence.createPayment(100_000, BANK_BINDING, 'BANK_TRANSFER_ADVANCE');
+      const collect = yield* evidence.startOperation({
+        amountMinor: 100_000,
+        binding: BANK_BINDING,
+        operationKey: 'collect-1',
+        paymentId: payment.paymentId,
+      });
+      yield* evidence.settle(payment.paymentId, collect.operationId, 1, 'EFFECT_CONFIRMED');
+      const routeA = yield* evidence.configureRefundRoute('erp-primary', 'refund-account-a');
+      yield* evidence.configureRefundRoute('erp-secondary', 'refund-account-b');
+      // The REFUND was requested through route A (stored immutably on the operation).
+      const refund = yield* evidence.inTransaction((aggregate) =>
+        aggregate.insertOperation({
+          amount: czk(100_000),
+          binding: BANK_BINDING,
+          initialOutcome: 'PENDING',
+          kind: 'REFUND',
+          materialRequest: { amountMinor: 100_000, currency: 'CZK', kind: 'REFUND' },
+          operationKey: 'refund-1',
+          paymentId: payment.paymentId,
+          provenance: evidence.provenance(),
+          refundBasis: itemsBasis('item-1', 100_000),
+          refundExecutionRoute: Schema.decodeUnknownSync(PaymentRefundExecutionRouteSchema)({
+            accountRef: 'refund-account-a',
+            environment: 'production',
+            routeKind: 'BANK_ACCOUNTING',
+            sourceAuthorityId: routeA,
+            sourceAuthorityRevision: 1,
+            sourceKind: 'BANK_ACCOUNTING',
+            sourceSystem: 'erp-primary',
+          }),
+          targetOperationId: collect.operationId,
+        }),
+      );
+      const statement = (sourceSystem: string, accountRef: string) => ({
+        amount: czk(100_000),
+        factFamily: 'REFUND_EXECUTION' as const,
+        factKind: 'REFUND_CONFIRMED' as const,
+        paymentId: payment.paymentId,
+        source: { accountRef, environment: 'production', sourceKind: 'BANK_ACCOUNTING' as const, sourceSystem },
+        sourceOccurrenceId: `bank-line-${randomUUID()}`,
+        sourceRevision: 1,
+      });
+      // Route B's statement line names no operation: held, and attaching it is refused.
+      const foreign = yield* evidence.accept(statement('erp-secondary', 'refund-account-b'));
+      expect(foreign.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+      const attach = (observationId: string, caseId: string) =>
+        evidence.decide({
+          caseId,
+          decision: { _tag: 'ATTACH_EVIDENCE', observationId, operationId: refund.record.operationId },
+          reason: 'Operator attaches the bank statement line',
+        });
+      expect(yield* failureCodeOf(attach(foreign.observationId, foreign.reconciliationCaseId ?? ''))).toBe(
+        'payment_reconciliation_evidence_not_qualified',
+      );
+      const pending = yield* evidence.inTransaction((aggregate) => aggregate.loadAggregate(payment.paymentId));
+      expect(pending.operations.find((operation) => operation.operationKey === 'refund-1')?.outcome).toBe('PENDING');
+      // The same line from the original route A resolves it.
+      const original = yield* evidence.accept(statement('erp-primary', 'refund-account-a'));
+      const resolved = yield* attach(original.observationId, original.reconciliationCaseId ?? '');
+      expect(Option.getOrUndefined(resolved.outcomeChange)).toMatchObject({ toOutcome: 'EFFECT_CONFIRMED' });
+    }),
+  ),
+);
+
+it.live('#1151 A re-issued correction of a re-exported receipt reduces the established collection once', () =>
+  native(
+    Effect.gen(function* correctionCountsOnce() {
+      const evidence = yield* scenario();
+      const payment = yield* evidence.createPayment(100_000, BANK_BINDING, 'BANK_TRANSFER_ADVANCE');
+      yield* evidence.startOperation({
+        amountMinor: 100_000,
+        binding: BANK_BINDING,
+        operationKey: 'collect-1',
+        paymentId: payment.paymentId,
+      });
+      const source = {
+        accountRef: 'receipt-account-1',
+        environment: 'production',
+        sourceKind: 'BANK_ACCOUNTING',
+        sourceSystem: 'erp-primary',
+      } as const;
+      yield* evidence.configureSource({
+        factFamily: 'BANK_ACCOUNTING_RECEIPT',
+        method: 'BANK_TRANSFER_ADVANCE',
+        reason: 'The ERP receipt export is the bank receipt authority',
+        refundRoute: false,
+        source,
+        status: 'ACTIVE',
+      });
+      const statement = <
+        Fields extends {
+          readonly amount: { readonly amountMinor: number; readonly currency: 'CZK' };
+          readonly correctsObservationId?: string;
+          readonly economicEffectKey: string;
+          readonly factKind: 'COLLECTION_CONFIRMED' | 'SOURCE_CORRECTION';
+        },
+      >(
+        fields: Fields,
+      ) => ({
+        factFamily: 'BANK_ACCOUNTING_RECEIPT' as const,
+        paymentId: payment.paymentId,
+        source,
+        sourceOccurrenceId: `erp-export-${randomUUID()}`,
+        sourceRevision: 1,
+        ...fields,
+      });
+      const collected = () =>
+        evidence.inTransaction((aggregate) =>
+          aggregate
+            .loadAggregate(payment.paymentId)
+            .pipe(Effect.map((loaded) => ledgerSummary(computePaymentFunds(paymentFundsSnapshotOf(loaded))))),
+        );
+      const receipt = {
+        amount: czk(100_000),
+        economicEffectKey: 'bank:line:1',
+        factKind: 'COLLECTION_CONFIRMED',
+      } as const;
+      const correctionOf = (correctsObservationId: string) => ({
+        amount: czk(30_000),
+        correctsObservationId,
+        economicEffectKey: 'bank:line:1:correction',
+        factKind: 'SOURCE_CORRECTION' as const,
+      });
+      const receiptA = yield* evidence.accept(statement(receipt));
+      const correctionA = yield* evidence.accept(statement(correctionOf(receiptA.observationId)));
+      expect(correctionA.interpretation).toBe('CORRECTION');
+      expect(yield* collected()).toBe('Established collected=70000 returned=0 remaining=70000');
+      // The ERP re-exports the receipt line and re-issues the same correction for the re-export.
+      const receiptB = yield* evidence.accept(statement(receipt));
+      expect(receiptB.interpretation).toBe('NO_CHANGE');
+      const correctionB = yield* evidence.accept(statement(correctionOf(receiptB.observationId)));
+      expect(correctionB).toMatchObject({ acceptanceOutcome: 'ACCEPTED_OBSERVATION', interpretation: 'NO_CHANGE' });
+      expect(yield* collected()).toBe('Established collected=70000 returned=0 remaining=70000');
     }),
   ),
 );

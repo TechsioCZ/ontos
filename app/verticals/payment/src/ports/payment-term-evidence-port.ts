@@ -3,7 +3,11 @@ import { PaymentTermRefSchema } from '@app/payment-term-catalog-contracts/resour
 import type { PaymentTermRef } from '@app/payment-term-catalog-contracts/resources/payment-term';
 import { Context, Effect, Schema } from 'effect';
 
-import { PaymentEvidenceRefSchema } from '../../shared/domain/payment-identifiers.ts';
+import { PaymentPurchasingContextSchema } from '../../shared/domain/applicability-purchasing-context.ts';
+import {
+  PaymentEvidenceRefSchema,
+  PaymentPurchaseCorrelationIdSchema,
+} from '../../shared/domain/payment-identifiers.ts';
 import type { PaymentMethod } from '../../shared/domain/payment-vocabulary.ts';
 import { ownerEvidenceUnavailable } from './owner-evidence-unavailable.ts';
 import type { PaymentOwnerEvidenceUnavailable, PaymentOwnerScope } from './owner-evidence-unavailable.ts';
@@ -35,11 +39,24 @@ export const PaymentTermUseEvidenceSchema = Schema.Union([
 ]);
 export type PaymentTermUseEvidence = typeof PaymentTermUseEvidenceSchema.Type;
 
+/**
+ * The exact purchase whose Current Customer Context entitlement/policy the owner decides; the merchant
+ * `customerConfigurationId` never identifies the buyer. Before a Payment intent exists (#1147) it is
+ * the trusted Commerce Purchasing Context (buyer, Channel, Commerce Market); a recorded intent is
+ * scoped by the stable purchase correlation it bound from the purchasing flow (#1148, #1149).
+ */
+export const PaymentTermPurchaseSchema = Schema.Union([
+  Schema.TaggedStruct('PURCHASING_CONTEXT', { purchasingContext: PaymentPurchasingContextSchema }),
+  Schema.TaggedStruct('PURCHASE_CORRELATION', { purchaseCorrelationId: PaymentPurchaseCorrelationIdSchema }),
+]);
+export type PaymentTermPurchase = typeof PaymentTermPurchaseSchema.Type;
+
 export interface PaymentTermEvidenceService {
   readonly verifyTermUse: (input: {
     readonly customerConfigurationId: string;
     readonly method: PaymentMethod;
     readonly paymentTermRef: PaymentTermRef;
+    readonly purchase: PaymentTermPurchase;
     readonly scope: PaymentOwnerScope;
   }) => Effect.Effect<PaymentTermUseEvidence, PaymentOwnerEvidenceUnavailable>;
 }

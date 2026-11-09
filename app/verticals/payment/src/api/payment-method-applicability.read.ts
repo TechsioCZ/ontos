@@ -53,6 +53,7 @@ export const readPaymentMethodApplicability = Effect.fn('PaymentMethodApplicabil
       customerConfigurationId: input.customerConfigurationId,
       enablements,
       paymentTermRef: input.paymentTermRef,
+      purchase: { _tag: 'PURCHASING_CONTEXT', purchasingContext: input.purchasingContext },
       scope,
       selections: input.branches,
     });
@@ -63,6 +64,7 @@ export const readPaymentMethodApplicability = Effect.fn('PaymentMethodApplicabil
       customerConfigurationId: input.customerConfigurationId,
       evaluatedAt,
       paymentTermRef: input.paymentTermRef,
+      purchasingContext: input.purchasingContext,
     } satisfies PaymentMethodApplicabilityResponse;
   },
 );

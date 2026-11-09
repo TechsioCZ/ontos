@@ -180,6 +180,41 @@ describe('#1152 exact source qualification', () => {
     expect(tagOf(qualify({ statement: statement({ factKind: 'UNRECOGNIZED' }) }))).toBe('Unsupported');
   });
 
+  it('#1152 a confirmed collection or refund without the exact amount and currency is refused', () => {
+    expect(tagOf(qualify({ statement: statement({ amount: absent() }) }))).toBe('Unsupported');
+    const refundTarget = target('BANK_TRANSFER_ADVANCE', { _tag: 'BANK_ACCOUNTING_RECEIPT' }, [
+      {
+        binding: { _tag: 'BANK_ACCOUNTING_RECEIPT' },
+        kind: 'COLLECT',
+        operationId: COLLECT_ID,
+        outcome: 'EFFECT_CONFIRMED',
+      },
+      { binding: { _tag: 'BANK_ACCOUNTING_RECEIPT' }, kind: 'REFUND', operationId: REFUND_ID, outcome: 'PENDING' },
+    ]);
+    const refundInput = {
+      authorities: [authority({ factFamily: 'REFUND_EXECUTION', refundRoute: true })],
+      target: refundTarget,
+    };
+    const refundStatement = (amount: PaymentSourceStatement['amount']) =>
+      statement({ amount, factFamily: 'REFUND_EXECUTION', factKind: 'REFUND_CONFIRMED', operationId: REFUND_ID });
+    expect(tagOf(qualify({ ...refundInput, statement: refundStatement(absent()) }))).toBe('Unsupported');
+    expect(
+      tagOf(qualify({ ...refundInput, statement: refundStatement({ amountMinor: 100_000, currency: 'CZK' }) })),
+    ).toBe('Qualified');
+    // A non-monetary outcome (the receipt did not happen) needs no amount.
+    const notEffected = qualify({
+      authorities: [authority({ factFamily: 'REFUND_EXECUTION', refundRoute: true })],
+      statement: statement({
+        amount: absent(),
+        factFamily: 'REFUND_EXECUTION',
+        factKind: 'REFUND_NOT_EFFECTED',
+        operationId: REFUND_ID,
+      }),
+      target: refundTarget,
+    });
+    expect(tagOf(notEffected)).toBe('Qualified');
+  });
+
   it('#1152 exact currency mismatch is refused, never converted', () => {
     const decision = qualify({ statement: statement({ amount: { amountMinor: 4000, currency: 'EUR' } }) });
     expect(tagOf(decision)).toBe('CurrencyMismatch');

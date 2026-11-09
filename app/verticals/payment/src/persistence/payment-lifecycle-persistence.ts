@@ -15,8 +15,17 @@ import type { PaymentApplicabilityPersistence } from './payment-applicability-pe
 export interface PaymentLifecyclePersistence {
   /** The Payment an intent key already identifies, locked so a concurrent replay serializes on it. */
   readonly findPaymentIdByIntentKey: (intentKey: string) => Effect.Effect<Option.Option<string>, PaymentUnavailable>;
+  /** The purchase correlation an existing Payment belongs to (immutable, so read without a lock). */
+  readonly findPurchaseCorrelationId: (paymentId: string) => Effect.Effect<Option.Option<string>, PaymentUnavailable>;
   /** The successor intent that replaced this Payment, if any (oldest first; at most one is admitted). */
   readonly findSuccessorPaymentId: (paymentId: string) => Effect.Effect<Option.Option<string>, PaymentUnavailable>;
+  /**
+   * Every Payment of one purchase correlation, row-locked in Payment id order. Creating an intent and
+   * starting a COLLECT both take these locks first, so competing intents of one purchase serialize.
+   */
+  readonly lockPurchasePaymentIds: (
+    purchaseCorrelationId: string,
+  ) => Effect.Effect<readonly string[], PaymentUnavailable>;
 }
 
 /** Services of the lifecycle Actions and the Current Payment Read, built by their private factories. */
@@ -78,5 +87,48 @@ export const paymentLifecyclePersistenceForTransaction = (
     },
   );
 
-  return Object.freeze({ findPaymentIdByIntentKey, findSuccessorPaymentId });
+  const findPurchaseCorrelationId = Effect.fn('PaymentLifecyclePersistence.findPurchaseCorrelationId')(
+    function* findPurchaseCorrelationId(paymentId: string) {
+      const scope = yield* ownerScope;
+      const [row] = yield* transaction
+        .select({ purchaseCorrelationId: payments.purchaseCorrelationId })
+        .from(payments)
+        .where(
+          and(
+            eq(payments.tenantId, scope.tenantId),
+            eq(payments.legalEntityId, scope.legalEntityId),
+            eq(payments.paymentId, paymentId),
+          ),
+        )
+        .pipe(Effect.mapError(readFailure));
+      return Option.fromNullishOr(row?.purchaseCorrelationId);
+    },
+  );
+
+  const lockPurchasePaymentIds = Effect.fn('PaymentLifecyclePersistence.lockPurchasePaymentIds')(
+    function* lockPurchasePaymentIds(purchaseCorrelationId: string) {
+      const scope = yield* ownerScope;
+      const rows = yield* transaction
+        .select({ paymentId: payments.paymentId })
+        .from(payments)
+        .where(
+          and(
+            eq(payments.tenantId, scope.tenantId),
+            eq(payments.legalEntityId, scope.legalEntityId),
+            eq(payments.purchaseCorrelationId, purchaseCorrelationId),
+          ),
+        )
+        .orderBy(asc(payments.paymentId))
+        .for('update')
+        .pipe(Effect.mapError(readFailure));
+      return rows.map((row) => row.paymentId);
+    },
+  );
+
+  return Object.freeze({
+    findPaymentIdByIntentKey,
+    findPurchaseCorrelationId,
+    findSuccessorPaymentId,
+    lockPurchasePaymentIds,
+  });
 };

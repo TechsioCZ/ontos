@@ -2,6 +2,7 @@ import type { ScopedTransactionExecutor } from '@app/core-runtime';
 import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 import { DateTime, Effect, Option, Schema } from 'effect';
 
+import type { PaymentAuthorizationProof } from '../../shared/domain/authorization-proof.ts';
 import { paymentEvidenceRejected } from '../../shared/domain/evidence-contract.ts';
 import type { PaymentEvidenceRejected } from '../../shared/domain/evidence-contract.ts';
 import { PaymentExecutionBindingSchema } from '../../shared/domain/payment-execution-binding.ts';
@@ -12,7 +13,6 @@ import { paymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
 import type { PaymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
 import { UNRESOLVED_PAYMENT_OPERATION_OUTCOMES } from '../../shared/domain/payment-vocabulary.ts';
 import type {
-  PaymentAuthorizationProofKind,
   PaymentMethod,
   PaymentObservationAcceptanceOutcome,
   PaymentObservationFactKind,
@@ -41,6 +41,7 @@ import {
   sourceAuthorities,
 } from '../database/schema.ts';
 import type { PaymentAggregatePersistence } from './payment-aggregate-persistence.ts';
+import { paymentAuthorizationProofOfRow } from './payment-authorization-persistence.ts';
 
 /**
  * Owner-local persistence of the #1151 evidence lane: accepted-observation lineage for the
@@ -53,6 +54,8 @@ import type { PaymentAggregatePersistence } from './payment-aggregate-persistenc
 export const PAYMENT_EVIDENCE_PROJECTION_LIMIT = 500;
 
 const readFailure = (cause: unknown) => paymentUnavailable('Payment evidence could not be read', cause);
+/** Corrections recorded from a configured authority; refused (unauthorized/unsupported) statements disprove nothing. */
+const QUALIFIED_CORRECTION_OUTCOMES = ['ACCEPTED_OBSERVATION', 'HELD_UNRESOLVED', 'CONFLICT'] as const;
 /** Evidence ledgers carry no business uniqueness of their own: a refused write is an outage, never success. */
 const writeFailure = (cause: unknown) => paymentUnavailable('Payment evidence could not be written', cause);
 const MoneySchema = Schema.Struct({ amountMinor: Schema.Finite, currency: Schema.Literal('CZK') });
@@ -100,6 +103,15 @@ export interface PaymentReconciliationDecisionRecord {
   readonly evidenceRef: string | undefined;
   readonly provenance: PaymentExecutionProvenance;
   readonly reason: string;
+  readonly resultingOutcome: PaymentOperationOutcome | undefined;
+}
+
+/** One governed ATTACH_EVIDENCE decision of an observation and the operation it concerned. */
+export interface PaymentObservationAttachmentRecord {
+  readonly decisionId: string;
+  readonly observationId: string;
+  /** The operation whose outcome the decision changed, else the case's operation; undefined when neither. */
+  readonly operationId: string | undefined;
   readonly resultingOutcome: PaymentOperationOutcome | undefined;
 }
 
@@ -174,19 +186,6 @@ export interface PaymentHistoryTransitionRecord {
   readonly toOutcome: PaymentOperationOutcome;
 }
 
-export interface PaymentHistoryAuthorizationRecord {
-  readonly amount: PaymentMonetaryAmount;
-  readonly authorizationId: string;
-  readonly coverageRevision: number | undefined;
-  readonly expiresAt: DateTime.Utc;
-  readonly issuanceKey: string;
-  readonly issuedAt: DateTime.Utc;
-  readonly method: PaymentMethod;
-  readonly orderCommitmentAttemptId: string;
-  readonly proofKind: PaymentAuthorizationProofKind;
-  readonly provenance: PaymentExecutionProvenance;
-}
-
 export interface PaymentHistoryPaymentRecord {
   readonly amount: PaymentMonetaryAmount;
   readonly createdAt: DateTime.Utc;
@@ -199,7 +198,8 @@ export interface PaymentHistoryPaymentRecord {
 }
 
 export interface PaymentHistoryRecord {
-  readonly authorizations: readonly PaymentHistoryAuthorizationRecord[];
+  /** The original immutable proofs exactly as issued (#1149 historical recovery). */
+  readonly authorizations: readonly PaymentAuthorizationProof[];
   readonly cases: readonly PaymentReconciliationCaseRecord[];
   readonly decisions: readonly PaymentReconciliationDecisionRecord[];
   readonly observations: readonly PaymentObservationRecord[];
@@ -348,16 +348,27 @@ export interface PaymentEvidencePersistence {
   readonly findSourceAuthorityStatus: (
     sourceAuthorityId: string,
   ) => Effect.Effect<Option.Option<PaymentSourceAuthorityStatus>, PaymentUnavailable>;
+  /** Whether the case already records a decision of this kind. */
+  readonly hasCaseDecision: (
+    caseId: string,
+    decisionKind: PaymentReconciliationDecisionKind,
+  ) => Effect.Effect<boolean, PaymentUnavailable>;
   readonly insertDecision: (
     input: NewReconciliationDecisionInput,
   ) => Effect.Effect<PaymentReconciliationDecisionRecord, PaymentUnavailable>;
   readonly insertRecoveryRequest: (
     input: NewRecoveryRequestInput,
   ) => Effect.Effect<PaymentRecoveryRequestRecord, PaymentUnavailable>;
+  /** Whether a qualified SOURCE_CORRECTION (accepted, held or conflicting) names this observation. */
+  readonly isObservationCorrected: (observationId: string) => Effect.Effect<boolean, PaymentUnavailable>;
   /** Accepted observations of one Payment, the interpreter's lineage input. */
   readonly listAcceptedObservations: (
     paymentId: string,
   ) => Effect.Effect<readonly PaymentAcceptedObservationView[], PaymentUnavailable>;
+  /** Governed ATTACH_EVIDENCE decisions of these observations, in any case of this scope. */
+  readonly listObservationAttachments: (
+    observationIds: readonly string[],
+  ) => Effect.Effect<readonly PaymentObservationAttachmentRecord[], PaymentUnavailable>;
   readonly listOpenCases: (
     paymentId: string | undefined,
   ) => Effect.Effect<
@@ -370,6 +381,13 @@ export interface PaymentEvidencePersistence {
     { readonly rows: readonly PaymentOpenOperationRecord[]; readonly truncated: boolean },
     PaymentUnavailable
   >;
+  /** Observations of one Payment from the same source authority stating the same economic effect. */
+  readonly listSameEffectObservations: (input: {
+    readonly economicEffectKey: string;
+    readonly factKind: PaymentObservationFactKind;
+    readonly paymentId: string;
+    readonly sourceAuthorityId: string;
+  }) => Effect.Effect<readonly PaymentObservationRecord[], PaymentUnavailable>;
   readonly loadHistory: (paymentId: string) => Effect.Effect<Option.Option<PaymentHistoryRecord>, PaymentUnavailable>;
   /** Locks one case of this scope; a foreign or unknown case is not found. */
   readonly lockCase: (
@@ -462,6 +480,156 @@ export const paymentEvidencePersistenceForTransaction = (
         )
         .pipe(Effect.mapError(readFailure));
       return Option.fromNullishOr(row?.status);
+    },
+  );
+
+  const hasCaseDecision = Effect.fn('PaymentEvidencePersistence.hasCaseDecision')(function* hasCaseDecision(
+    caseId: string,
+    decisionKind: PaymentReconciliationDecisionKind,
+  ) {
+    const scope = yield* ownerScope;
+    const [row] = yield* transaction
+      .select({ decisionId: reconciliationDecisions.decisionId })
+      .from(reconciliationDecisions)
+      .where(
+        and(
+          eq(reconciliationDecisions.tenantId, scope.tenantId),
+          eq(reconciliationDecisions.legalEntityId, scope.legalEntityId),
+          eq(reconciliationDecisions.caseId, caseId),
+          eq(reconciliationDecisions.decisionKind, decisionKind),
+        ),
+      )
+      .limit(1)
+      .pipe(Effect.mapError(readFailure));
+    return row !== undefined;
+  });
+
+  const isObservationCorrected = Effect.fn('PaymentEvidencePersistence.isObservationCorrected')(
+    function* isObservationCorrected(observationId: string) {
+      const scope = yield* ownerScope;
+      const [row] = yield* transaction
+        .select({ observationId: observations.observationId })
+        .from(observations)
+        .where(
+          and(
+            eq(observations.tenantId, scope.tenantId),
+            eq(observations.legalEntityId, scope.legalEntityId),
+            eq(observations.correctsObservationId, observationId),
+            eq(observations.factKind, 'SOURCE_CORRECTION'),
+            inArray(observations.acceptanceOutcome, [...QUALIFIED_CORRECTION_OUTCOMES]),
+          ),
+        )
+        .limit(1)
+        .pipe(Effect.mapError(readFailure));
+      return row !== undefined;
+    },
+  );
+
+  const listObservationAttachments = Effect.fn('PaymentEvidencePersistence.listObservationAttachments')(
+    function* listObservationAttachments(observationIds: readonly string[]) {
+      if (observationIds.length === 0) {
+        return [];
+      }
+      const scope = yield* ownerScope;
+      const decisionRows = yield* transaction
+        .select({
+          caseId: reconciliationDecisions.caseId,
+          decisionId: reconciliationDecisions.decisionId,
+          evidenceRef: reconciliationDecisions.evidenceRef,
+          resultingOutcome: reconciliationDecisions.resultingOutcome,
+        })
+        .from(reconciliationDecisions)
+        .where(
+          and(
+            eq(reconciliationDecisions.tenantId, scope.tenantId),
+            eq(reconciliationDecisions.legalEntityId, scope.legalEntityId),
+            eq(reconciliationDecisions.decisionKind, 'ATTACH_EVIDENCE'),
+            inArray(reconciliationDecisions.evidenceRef, [...observationIds]),
+          ),
+        )
+        .orderBy(asc(reconciliationDecisions.decidedAt), asc(reconciliationDecisions.decisionId))
+        .pipe(Effect.mapError(readFailure));
+      if (decisionRows.length === 0) {
+        return [];
+      }
+      const [caseRows, transitionRows] = yield* Effect.all(
+        [
+          transaction
+            .select({ caseId: reconciliationCases.caseId, operationId: reconciliationCases.operationId })
+            .from(reconciliationCases)
+            .where(
+              and(
+                eq(reconciliationCases.tenantId, scope.tenantId),
+                eq(reconciliationCases.legalEntityId, scope.legalEntityId),
+                inArray(
+                  reconciliationCases.caseId,
+                  decisionRows.map((row) => row.caseId),
+                ),
+              ),
+            )
+            .pipe(Effect.mapError(readFailure)),
+          transaction
+            .select({
+              causeId: operationOutcomeTransitions.causeId,
+              operationId: operationOutcomeTransitions.operationId,
+            })
+            .from(operationOutcomeTransitions)
+            .where(
+              and(
+                eq(operationOutcomeTransitions.tenantId, scope.tenantId),
+                eq(operationOutcomeTransitions.legalEntityId, scope.legalEntityId),
+                eq(operationOutcomeTransitions.causeKind, 'RECONCILIATION'),
+                inArray(
+                  operationOutcomeTransitions.causeId,
+                  decisionRows.map((row) => row.decisionId),
+                ),
+              ),
+            )
+            .pipe(Effect.mapError(readFailure)),
+        ],
+        { concurrency: 1 },
+      );
+      const caseOperation = new Map(caseRows.map((row) => [row.caseId, row.operationId ?? undefined]));
+      const changedOperation = new Map(transitionRows.map((row) => [row.causeId, row.operationId]));
+      return decisionRows.flatMap((row): PaymentObservationAttachmentRecord[] =>
+        row.evidenceRef === null
+          ? []
+          : [
+              {
+                decisionId: row.decisionId,
+                observationId: row.evidenceRef,
+                operationId: changedOperation.get(row.decisionId) ?? caseOperation.get(row.caseId),
+                resultingOutcome: row.resultingOutcome ?? undefined,
+              },
+            ],
+      );
+    },
+  );
+
+  const listSameEffectObservations = Effect.fn('PaymentEvidencePersistence.listSameEffectObservations')(
+    function* listSameEffectObservations(input: {
+      readonly economicEffectKey: string;
+      readonly factKind: PaymentObservationFactKind;
+      readonly paymentId: string;
+      readonly sourceAuthorityId: string;
+    }) {
+      const scope = yield* ownerScope;
+      const rows = yield* transaction
+        .select()
+        .from(observations)
+        .where(
+          and(
+            eq(observations.tenantId, scope.tenantId),
+            eq(observations.legalEntityId, scope.legalEntityId),
+            eq(observations.paymentId, input.paymentId),
+            eq(observations.sourceAuthorityId, input.sourceAuthorityId),
+            eq(observations.economicEffectKey, input.economicEffectKey),
+            eq(observations.factKind, input.factKind),
+          ),
+        )
+        .orderBy(asc(observations.verifiedAt), asc(observations.observationId))
+        .pipe(Effect.mapError(readFailure));
+      return yield* Effect.forEach(rows, observationRecordOf, { concurrency: 1 });
     },
   );
 
@@ -809,25 +977,7 @@ export const paymentEvidencePersistenceForTransaction = (
         .limit(PAYMENT_EVIDENCE_PROJECTION_LIMIT + 1)
         .pipe(Effect.mapError(readFailure));
       const bounded = truncate(rows);
-      const records = yield* Effect.forEach(
-        bounded.rows,
-        (row) =>
-          money(row.amountMinor, row.currency).pipe(
-            Effect.map((amount): PaymentHistoryAuthorizationRecord => ({
-              amount,
-              authorizationId: row.authorizationId,
-              coverageRevision: row.coverageRevision ?? undefined,
-              expiresAt: utc(row.expiresAt),
-              issuanceKey: row.issuanceKey,
-              issuedAt: utc(row.issuedAt),
-              method: row.method,
-              orderCommitmentAttemptId: row.orderCommitmentAttemptId,
-              proofKind: row.proofKind,
-              provenance: provenanceOf(row),
-            })),
-          ),
-        { concurrency: 1 },
-      );
+      const records = yield* Effect.forEach(bounded.rows, paymentAuthorizationProofOfRow, { concurrency: 1 });
       return { rows: records, truncated: bounded.truncated };
     },
   );
@@ -968,11 +1118,15 @@ export const paymentEvidencePersistenceForTransaction = (
     findCase,
     findObservation,
     findSourceAuthorityStatus,
+    hasCaseDecision,
     insertDecision,
     insertRecoveryRequest,
+    isObservationCorrected,
     listAcceptedObservations,
+    listObservationAttachments,
     listOpenCases,
     listOpenOperations,
+    listSameEffectObservations,
     loadHistory,
     lockCase,
     openCase,

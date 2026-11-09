@@ -3,6 +3,7 @@ import type { PaymentTermDefinitionSnapshot } from '@app/payment-term-catalog-co
 import type { PaymentTermRef } from '@app/payment-term-catalog-contracts/resources/payment-term';
 import { Effect, Layer, Schema } from 'effect';
 
+import type { PaymentPurchasingContext } from '../../shared/domain/applicability-purchasing-context.ts';
 import type { PaymentGatewayAccountBinding } from '../../shared/domain/payment-execution-binding.ts';
 import type { PaymentMethod } from '../../shared/domain/payment-vocabulary.ts';
 import { DeliveryCapabilityPort } from '../../src/ports/delivery-capability-port.ts';
@@ -14,7 +15,11 @@ import { GatewayBindingPort } from '../../src/ports/gateway-binding-port.ts';
 import type { PaymentGatewayBindingService } from '../../src/ports/gateway-binding-port.ts';
 import { ownerEvidenceUnavailable } from '../../src/ports/owner-evidence-unavailable.ts';
 import { PaymentTermEvidencePort } from '../../src/ports/payment-term-evidence-port.ts';
-import type { PaymentTermEvidenceService, PaymentTermUseEvidence } from '../../src/ports/payment-term-evidence-port.ts';
+import type {
+  PaymentTermEvidenceService,
+  PaymentTermPurchase,
+  PaymentTermUseEvidence,
+} from '../../src/ports/payment-term-evidence-port.ts';
 import { PickupCapabilityPort } from '../../src/ports/pickup-capability-port.ts';
 import type {
   PaymentPickupCapabilityService,
@@ -91,6 +96,28 @@ export const immediateSnapshot = (paymentTermRef: PaymentTermRef): PaymentTermDe
     semantics: { calculationRuleVersion: 2, calendarRule: 'NOT_APPLICABLE', kind: 'IMMEDIATE' },
   });
 
+/** A trusted Commerce Purchasing Context of one Customer Context profile buyer in a Channel and Market. */
+export const purchasingContextFor = (
+  tenantId: string,
+  buyerProfileId: string,
+  overrides: Partial<Omit<PaymentPurchasingContext, 'subject'>> = {},
+): PaymentPurchasingContext => ({
+  channelId: 'channel-b2b',
+  contextRef: `purchasing-context:${buyerProfileId}`,
+  contextRevision: 'revision-1',
+  marketId: 'market-cz',
+  subject: {
+    kind: 'PROFILE',
+    profileRef: {
+      moduleId: 'commerce.customer-context',
+      resourceId: buyerProfileId,
+      resourceType: 'commerce.customer-context.counterparty-purchasing-profile',
+      tenantId,
+    },
+  },
+  ...overrides,
+});
+
 export const usableTerm = (snapshot: PaymentTermDefinitionSnapshot, entitlementEvidenceRef: string) =>
   ({
     _tag: 'USABLE',
@@ -110,6 +137,8 @@ export interface OwnerEvidenceCalls {
   readonly gatewayListings: number[];
   readonly pickupCapabilities: string[];
   readonly termMethods: PaymentMethod[];
+  /** The exact purchase each term-use question was scoped to, in call order. */
+  readonly termPurchases: PaymentTermPurchase[];
 }
 
 export interface ApplicabilityOwnerEvidenceScript {
@@ -119,8 +148,8 @@ export interface ApplicabilityOwnerEvidenceScript {
   readonly enabledGatewayBindings: readonly PaymentGatewayAccountBinding[] | Unavailable;
   /** Pickup owner: collection capability per exact capability ref, or an outage. */
   readonly pickupCapability: (pickupCapabilityRef: string) => PaymentPickupCollectionCapability | Unavailable;
-  /** C15 + CCC: the exact term-use decision for the method being evaluated, or an outage. */
-  readonly termUse: (method: PaymentMethod) => PaymentTermUseEvidence | Unavailable;
+  /** C15 + CCC: the exact term-use decision for the method and purchase being evaluated, or an outage. */
+  readonly termUse: (method: PaymentMethod, purchase: PaymentTermPurchase) => PaymentTermUseEvidence | Unavailable;
 }
 
 const sameBinding = (left: PaymentGatewayAccountBinding, right: PaymentGatewayAccountBinding) =>
@@ -136,11 +165,13 @@ export const applicabilityOwnerEvidenceFixture = (script: ApplicabilityOwnerEvid
     gatewayListings: [],
     pickupCapabilities: [],
     termMethods: [],
+    termPurchases: [],
   };
   const termEvidence: PaymentTermEvidenceService = {
-    verifyTermUse: ({ method }) => {
+    verifyTermUse: ({ method, purchase }) => {
       calls.termMethods.push(method);
-      const answer = script.termUse(method);
+      calls.termPurchases.push(purchase);
+      const answer = script.termUse(method, purchase);
       return answer === OWNER_EVIDENCE_UNAVAILABLE
         ? Effect.fail(ownerEvidenceUnavailable('PAYMENT_TERM_EVIDENCE', 'Fixture: term owner unavailable'))
         : Effect.succeed(answer);

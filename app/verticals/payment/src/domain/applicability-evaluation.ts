@@ -1,5 +1,6 @@
+import type { PaymentTermDefinitionSnapshot } from '@app/payment-term-catalog-contracts/payment-term';
 import type { PaymentTermRef } from '@app/payment-term-catalog-contracts/resources/payment-term';
-import { Effect, Match, Option, Result } from 'effect';
+import { DateTime, Effect, Match, Option, Result } from 'effect';
 
 import type {
   PaymentApplicabilityCheck,
@@ -23,7 +24,7 @@ import { GatewayBindingPort } from '../ports/gateway-binding-port.ts';
 import type { PaymentGatewayBindingVerification } from '../ports/gateway-binding-port.ts';
 import type { PaymentOwnerScope } from '../ports/owner-evidence-unavailable.ts';
 import { PaymentTermEvidencePort } from '../ports/payment-term-evidence-port.ts';
-import type { PaymentTermUseEvidence } from '../ports/payment-term-evidence-port.ts';
+import type { PaymentTermPurchase, PaymentTermUseEvidence } from '../ports/payment-term-evidence-port.ts';
 import { PickupCapabilityPort } from '../ports/pickup-capability-port.ts';
 import type { PaymentPickupCollectionCapability } from '../ports/pickup-capability-port.ts';
 
@@ -46,6 +47,8 @@ export interface PaymentMethodApplicabilityInput {
   readonly enablements: readonly PaymentMethodEnablementState[];
   /** The resolved term; it is returned unchanged on AVAILABLE and never replaced by method choice. */
   readonly paymentTermRef: PaymentTermRef;
+  /** The exact purchase whose Current entitlement/policy the term owner decides (never the merchant configuration). */
+  readonly purchase: PaymentTermPurchase;
   /** Trusted Core scope; never taken from the payload. */
   readonly scope: PaymentOwnerScope;
   /** The exact branches to evaluate; results come back in the same order. */
@@ -171,6 +174,27 @@ const checkTermScope = (paymentTermRef: PaymentTermRef, scope: PaymentOwnerScope
     ? Result.succeed(paymentTermRef)
     : failed('PAYMENT_TERM', 'CONFLICTING_CONFIGURATION', 'FOREIGN_TERM_REFERENCE');
 
+/** A buyer profile of another Tenant can never carry this Tenant's entitlement; the owner is not asked. */
+const checkPurchaseScope = (purchase: PaymentTermPurchase, scope: PaymentOwnerScope): CheckResult<true> =>
+  Match.value(purchase).pipe(
+    Match.tagsExhaustive({
+      PURCHASE_CORRELATION: (): CheckResult<true> => Result.succeed(true),
+      PURCHASING_CONTEXT: ({ purchasingContext: { subject } }): CheckResult<true> =>
+        subject.kind === 'PROFILE' && subject.profileRef.tenantId !== scope.tenantId
+          ? subjectMismatch('PAYMENT_TERM')
+          : Result.succeed(true),
+    }),
+  );
+
+/**
+ * The C15 snapshot must itself be Current at evaluation time: an owner answer that calls a term
+ * usable while its own snapshot says the term was retired is contradictory evidence, never AVAILABLE.
+ * A scheduled retirement (`effectiveTo` still in the future) keeps the term Current until it is reached.
+ */
+const isRetiredAt = (snapshot: PaymentTermDefinitionSnapshot, at: DateTime.Utc) =>
+  snapshot.lifecycle.effectiveTo !== null &&
+  DateTime.toEpochMillis(DateTime.makeUnsafe(snapshot.lifecycle.effectiveTo)) <= DateTime.toEpochMillis(at);
+
 /**
  * Interprets the exact C15 semantic snapshot + CCC Current entitlement/policy decision. Only
  * `DEFERRED_INVOICE` needs `NET_DAYS`; any other method keeps a `NET_DAYS` term unchanged (early payment).
@@ -180,6 +204,7 @@ export const interpretTermEvidence = (
   method: PaymentMethod,
   requested: PaymentTermRef,
   evidence: PaymentTermUseEvidence,
+  at: DateTime.Utc,
 ): CheckResult<PaymentApplicabilityTermEvidence> => {
   if (!sameTermRef(evidence.paymentTermRef, requested)) {
     return subjectMismatch('PAYMENT_TERM');
@@ -190,6 +215,9 @@ export const interpretTermEvidence = (
       USABLE: (usable): CheckResult<PaymentApplicabilityTermEvidence> => {
         if (!sameTermRef(usable.semanticSnapshot.paymentTermRef, requested)) {
           return subjectMismatch('PAYMENT_TERM');
+        }
+        if (isRetiredAt(usable.semanticSnapshot, at)) {
+          return failed('PAYMENT_TERM', 'CONFLICTING_CONFIGURATION', 'TERM_RETIRED');
         }
         if (method === 'DEFERRED_INVOICE' && usable.semanticSnapshot.semantics.kind !== 'NET_DAYS') {
           return failed('PAYMENT_TERM', 'INCOMPATIBLE_TERM', 'TERM_NOT_DEFERRABLE');
@@ -214,10 +242,13 @@ const checkTerm = Effect.fn('PaymentApplicability.checkTerm')(function* checkTer
       customerConfigurationId: input.customerConfigurationId,
       method,
       paymentTermRef: input.paymentTermRef,
+      purchase: input.purchase,
       scope: input.scope,
     })
     .pipe(
-      Effect.map((evidence) => interpretTermEvidence(method, input.paymentTermRef, evidence)),
+      Effect.flatMap((evidence) =>
+        DateTime.now.pipe(Effect.map((at) => interpretTermEvidence(method, input.paymentTermRef, evidence, at))),
+      ),
       Effect.catchTag('PaymentOwnerEvidenceUnavailable', () => Effect.succeed(unavailableToVerify('PAYMENT_TERM'))),
     );
 });
@@ -367,7 +398,7 @@ export const evaluatePaymentMethodBranch = Effect.fn('PaymentApplicability.evalu
   // Local Current facts first: a method that is not offered or not fully selected needs no owner call.
   const local = zip(
     zip(hasSelection(selection), checkEnablement(input.enablements, method)),
-    checkTermScope(input.paymentTermRef, input.scope),
+    zip(checkTermScope(input.paymentTermRef, input.scope), checkPurchaseScope(input.purchase, input.scope)),
   );
   if (Result.isFailure(local)) {
     return notAvailable(method, local.failure);

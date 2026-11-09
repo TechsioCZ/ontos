@@ -106,6 +106,23 @@ export const validityWindowReasons = (
   return DateTime.isGreaterThanOrEqualTo(actualUse, proof.expiresAt) ? ['EXPIRED'] : [];
 };
 
+/**
+ * Prepaid proofs of OTHER Attempts that are still Current at the actual owner time against the same
+ * coverage revision. Prepaid coverage is bound to one exact downstream Attempt: while one of these
+ * exists, the same collected funds are already committed to that Attempt and cannot back another.
+ * An expired proof, or one issued against an earlier revision, no longer holds the coverage.
+ */
+export const competingAttemptProofs = (
+  proofs: readonly PaymentAuthorizationProof[],
+  orderCommitmentAttemptId: string,
+  actualTime: DateTime.Utc,
+): readonly PaymentAuthorizationProof[] =>
+  proofs.filter(
+    (proof) =>
+      proof.binding.orderCommitmentAttemptId !== orderCommitmentAttemptId &&
+      validityWindowReasons(proof, actualTime).length === 0,
+  );
+
 /** The proof's validity window: it starts at the actual issuance instant, never at T. */
 export const proofValidity = (issuedAt: DateTime.Utc, validity: Duration.Duration) => ({
   expiresAt: DateTime.addDuration(issuedAt, validity),

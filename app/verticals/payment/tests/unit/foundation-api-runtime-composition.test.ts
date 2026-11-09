@@ -50,6 +50,13 @@ const readBody: typeof PaymentMethodApplicabilityRequestSchema.Encoded = {
     resourceType: 'payment.term-catalog.payment-term',
     tenantId: '11111111-1111-4111-8111-111111111111',
   },
+  purchasingContext: {
+    channelId: 'channel-b2b',
+    contextRef: 'purchasing-context-1',
+    contextRevision: 'revision-1',
+    marketId: 'market-cz',
+    subject: { guestEvidenceRef: 'guest-evidence-1', guestSessionRef: 'guest-session-1', kind: 'GUEST' },
+  },
 };
 
 const tenantId = '11111111-1111-4111-8111-111111111111';

@@ -67,6 +67,11 @@ export interface PaymentAuthorizationPersistence {
   readonly insert: (
     input: NewPaymentAuthorizationInput,
   ) => Effect.Effect<PaymentAuthorizationProof, PaymentAuthorizationRefused | PaymentUnavailable>;
+  /** Prepaid proofs of the Payment issued against this exact coverage revision, any Attempt. */
+  readonly listPrepaidAtCoverageRevision: (
+    paymentId: string,
+    coverageRevision: number,
+  ) => Effect.Effect<readonly PaymentAuthorizationProof[], PaymentUnavailable>;
 }
 
 const readFailure = (cause: unknown) => paymentUnavailable('Payment Authorization state could not be read', cause);
@@ -86,7 +91,11 @@ const writeFailure = (cause: unknown): PaymentAuthorizationRefused | PaymentUnav
 
 type AuthorizationRow = typeof paymentAuthorizations.$inferSelect;
 
-const decodeProof = Effect.fn('PaymentAuthorizationPersistence.decodeProof')(
+/**
+ * The original immutable proof of one stored row: binding with frozen T, satisfied condition, term
+ * semantic reference, issuance key, original times and provenance. Shared with the historical read.
+ */
+export const paymentAuthorizationProofOfRow = Effect.fn('PaymentAuthorizationPersistence.decodeProof')(
   function* decodeProof(row: AuthorizationRow) {
     const evidence = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(StoredProofEvidenceSchema))(
       row.methodConditionEvidence,
@@ -126,7 +135,7 @@ const decodeProof = Effect.fn('PaymentAuthorizationPersistence.decodeProof')(
 
 const firstProof = (rows: readonly AuthorizationRow[]) => {
   const [row] = rows;
-  return row === undefined ? Effect.succeedNone : decodeProof(row).pipe(Effect.map(Option.some));
+  return row === undefined ? Effect.succeedNone : paymentAuthorizationProofOfRow(row).pipe(Effect.map(Option.some));
 };
 
 /** Construction is private to a Core-owned transaction scoped to one Selling Legal Entity. */
@@ -223,8 +232,28 @@ export const paymentAuthorizationPersistenceForTransaction = (
     if (row === undefined) {
       return yield* paymentUnavailable('The Payment Authorization was not persisted');
     }
-    return yield* decodeProof(row);
+    return yield* paymentAuthorizationProofOfRow(row);
   });
 
-  return Object.freeze({ findById, findByIssuanceKey, insert });
+  const listPrepaidAtCoverageRevision = Effect.fn('PaymentAuthorizationPersistence.listPrepaidAtCoverageRevision')(
+    function* listPrepaidAtCoverageRevision(paymentId: string, coverageRevision: number) {
+      const scope = yield* ownerScope;
+      const rows = yield* transaction
+        .select()
+        .from(paymentAuthorizations)
+        .where(
+          and(
+            eq(paymentAuthorizations.tenantId, scope.tenantId),
+            eq(paymentAuthorizations.legalEntityId, scope.legalEntityId),
+            eq(paymentAuthorizations.paymentId, paymentId),
+            eq(paymentAuthorizations.proofKind, 'PREPAID_COVERAGE'),
+            eq(paymentAuthorizations.coverageRevision, coverageRevision),
+          ),
+        )
+        .pipe(Effect.mapError(readFailure));
+      return yield* Effect.forEach(rows, paymentAuthorizationProofOfRow, { concurrency: 1 });
+    },
+  );
+
+  return Object.freeze({ findById, findByIssuanceKey, insert, listPrepaidAtCoverageRevision });
 };

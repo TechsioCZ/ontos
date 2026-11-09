@@ -20,6 +20,8 @@ import { paymentFundsSnapshotOf } from '../../src/persistence/payment-aggregate-
 import type { PaymentAggregateRecord } from '../../src/persistence/payment-aggregate-persistence.ts';
 import { failureCodeOf, paymentTestRelations } from './database-fixture.ts';
 import {
+  acceptObservation,
+  decideReconciliation,
   itemsRefund,
   refundCaseFor,
   refundItem,
@@ -29,6 +31,7 @@ import {
 import type { RefundCaseOptions } from '../support/refund-action-driver.ts';
 import {
   acceptCollectionCorrection,
+  acceptReturnEvidence,
   loadPaymentAggregate,
   operationRequestedMessages,
   seedSourceAuthority,
@@ -342,6 +345,131 @@ it.live('#1150 source correction versus real reversal: each reduces Current refu
       expect(remaining.operation.amount.amountMinor).toBe(50_000);
     }),
   ),
+);
+
+const gopayGateway = {
+  accountRef: 'gopay-account-1',
+  environment: 'production',
+  sourceKind: 'PAYMENT_GATEWAY',
+  sourceSystem: 'GOPAY',
+} as const;
+const seedGatewayOutcomeAuthority = (refundCase: Effect.Success<ReturnType<typeof newRefundCase>>) =>
+  seedSourceAuthority(refundCase.native.database, refundCase.scope, {
+    accountRef: gopayGateway.accountRef,
+    factFamily: 'GATEWAY_OUTCOME',
+    method: 'ONLINE_GATEWAY',
+    refundRoute: false,
+    sourceKind: gopayGateway.sourceKind,
+    sourceSystem: gopayGateway.sourceSystem,
+  });
+
+it.live(
+  '#1150 Prior return evidence reduces the remaining budget: closing its held case never frees the returned 400 CZK',
+  () =>
+    native(
+      Effect.gen(function* closedReturnCase() {
+        const refundCase = yield* newRefundCase({ amountMinor: 100_000, collected: true });
+        yield* seedGatewayOutcomeAuthority(refundCase);
+        const owners = { items: [refundItem('A', 40_000), refundItem('B', 60_000)] };
+        // A qualified gateway statement: 400 CZK of the same collection already went back to the customer.
+        const returned = yield* acceptObservation(refundCase, {
+          amount: { amountMinor: 40_000, currency: 'CZK' },
+          economicEffectKey: 'gopay:refund:1',
+          factFamily: 'GATEWAY_OUTCOME',
+          factKind: 'REFUND_CONFIRMED',
+          operationId: refundCase.payment.collectOperationId,
+          paymentId: refundCase.payment.paymentId,
+          source: gopayGateway,
+          sourceOccurrenceId: 'gopay-callback-refund-1',
+          sourceRevision: 0,
+        });
+        expect(returned.reconciliationCaseId).toBeDefined();
+        yield* Effect.exit(
+          decideReconciliation(refundCase, {
+            caseId: returned.reconciliationCaseId ?? '',
+            decision: { _tag: 'CLOSE_CASE', evidenceRef: 'operator-note-1' },
+            reason: 'Customer service confirmed the gateway refund',
+          }),
+        );
+        // Whether or not the case closes, the historical 1000 CZK can never be reserved again.
+        expect(['payment_held_for_reconciliation', 'payment_refundable_funds_exceeded']).toContain(
+          yield* failureCodeOf(
+            requestRefund(
+              refundCase,
+              itemsRefund(refundCase, 'historical', [refundItem('A', 40_000), refundItem('B', 60_000)]),
+              owners,
+            ),
+          ),
+        );
+        const aggregate = yield* loadPaymentAggregate(
+          refundCase.native.database,
+          refundCase.scope,
+          refundCase.payment.paymentId,
+        );
+        expect(refundsOf(aggregate)).toHaveLength(0);
+      }),
+    ),
+);
+
+it.live('#1150 Prior return evidence reduces the remaining budget: accepted gateway return evidence counts once', () =>
+  native(
+    Effect.gen(function* acceptedReturnEvidence() {
+      const refundCase = yield* newRefundCase({ amountMinor: 100_000, collected: true });
+      const sourceAuthorityId = yield* seedGatewayOutcomeAuthority(refundCase);
+      const owners = { items: [refundItem('A', 40_000), refundItem('B', 60_000)] };
+      // Two source occurrences proven to describe the same 400 CZK return count once.
+      for (const sourceOccurrenceId of ['gopay-callback-1', 'gopay-lookup-1']) {
+        yield* acceptReturnEvidence(refundCase.native.database, refundCase.scope, {
+          amountMinor: 40_000,
+          economicEffectKey: 'gopay:refund:1',
+          operationId: refundCase.payment.collectOperationId,
+          paymentId: refundCase.payment.paymentId,
+          sourceAuthorityId,
+          sourceOccurrenceId,
+        });
+      }
+      expect(
+        yield* failureCodeOf(
+          requestRefund(
+            refundCase,
+            itemsRefund(refundCase, 'historical', [refundItem('A', 40_000), refundItem('B', 60_000)]),
+            owners,
+          ),
+        ),
+      ).toBe('payment_refundable_funds_exceeded');
+      const remaining = yield* requestRefund(
+        refundCase,
+        itemsRefund(refundCase, 'remaining', [refundItem('B', 60_000)]),
+        owners,
+      );
+      expect(remaining.operation.amount.amountMinor).toBe(60_000);
+    }),
+  ),
+);
+
+it.live(
+  '#1150 Prior return evidence reduces the remaining budget: unassignable return evidence holds new returns',
+  () =>
+    native(
+      Effect.gen(function* unassignableReturnEvidence() {
+        const refundCase = yield* newRefundCase({ amountMinor: 100_000, collected: true });
+        const sourceAuthorityId = yield* seedGatewayOutcomeAuthority(refundCase);
+        yield* acceptReturnEvidence(refundCase.native.database, refundCase.scope, {
+          amountMinor: 40_000,
+          economicEffectKey: 'gopay:refund:unassigned',
+          paymentId: refundCase.payment.paymentId,
+          sourceAuthorityId,
+          sourceOccurrenceId: 'gopay-callback-unassigned',
+        });
+        expect(
+          yield* failureCodeOf(
+            requestRefund(refundCase, itemsRefund(refundCase, 'b', [refundItem('B', 60_000)]), {
+              items: [refundItem('B', 60_000)],
+            }),
+          ),
+        ).toBe('payment_held_for_reconciliation');
+      }),
+    ),
 );
 
 it.live('#1150 no refund before collection: a live or definitively failed collection has nothing to return', () =>

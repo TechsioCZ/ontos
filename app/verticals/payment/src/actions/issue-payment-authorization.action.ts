@@ -25,6 +25,7 @@ import { PaymentRejected } from '../../shared/domain/payment-rejected.ts';
 import { PaymentUnavailable, paymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
 import { OutboxPayloadSchema } from '../../shared/outbox/payment-core-authorization-issued-v1.ts';
 import {
+  competingAttemptProofs,
   MethodConditionCheck,
   proofKindForMethod,
   proofValidity,
@@ -38,7 +39,9 @@ import {
   paymentAggregatePersistenceForTransaction,
   paymentFundsSnapshotOf,
 } from '../persistence/payment-aggregate-persistence.ts';
-import type { PaymentAggregatePersistence } from '../persistence/payment-aggregate-persistence.ts';
+import type { PaymentAggregatePersistence, PaymentRecord } from '../persistence/payment-aggregate-persistence.ts';
+import { paymentApplicabilityPersistenceForTransaction } from '../persistence/payment-applicability-persistence.ts';
+import type { PaymentApplicabilityPersistence } from '../persistence/payment-applicability-persistence.ts';
 import { paymentAuthorizationPersistenceForTransaction } from '../persistence/payment-authorization-persistence.ts';
 import type { PaymentAuthorizationPersistence } from '../persistence/payment-authorization-persistence.ts';
 import { PaymentOwnerEvidenceUnavailable } from '../ports/owner-evidence-unavailable.ts';
@@ -59,6 +62,7 @@ const domainEvents = { [AUTHORIZATION_ISSUED]: OutboxPayloadSchema } as const;
 
 interface IssuePaymentAuthorizationServices {
   readonly aggregate: PaymentAggregatePersistence;
+  readonly applicability: PaymentApplicabilityPersistence;
   readonly authorizations: PaymentAuthorizationPersistence;
 }
 
@@ -70,12 +74,39 @@ const isSameIssuance = (proof: PaymentAuthorizationProof, payload: IssuePaymentA
   Duration.equals(proofValidityDuration(proof), Duration.seconds(payload.validitySeconds));
 
 /**
+ * The same collected funds never back Current prepaid proofs of two different Attempts: while another
+ * Attempt holds a Current proof at this coverage revision, a new Attempt is refused (it may retry
+ * once that proof expired or the coverage changed). Decided under the Payment row lock.
+ */
+const requireUnheldCoverage = (
+  authorizations: PaymentAuthorizationPersistence,
+  payment: PaymentRecord,
+  orderCommitmentAttemptId: string,
+) =>
+  Effect.all(
+    [authorizations.listPrepaidAtCoverageRevision(payment.paymentId, payment.coverageRevision), DateTime.now],
+    { concurrency: 1 },
+  ).pipe(
+    Effect.flatMap(([issued, actualTime]) =>
+      competingAttemptProofs(issued, orderCommitmentAttemptId, actualTime).length === 0
+        ? Effect.void
+        : Effect.fail(
+            paymentAuthorizationRefused(
+              'payment_authorization_issuance_conflict',
+              'Another Order Commitment Attempt Currently holds the prepaid coverage of this Payment',
+            ),
+          ),
+    ),
+  );
+
+/**
  * Issues one immutable Payment Authorization for one exact Order Commitment Attempt (#1149):
  * 1. lock the Payment row (the owner boundary shared with refund start and Current validation);
  * 2. an existing proof under the issuance key is replayed exactly (original times, never refreshed);
  * 3. the Attempt binding must equal the Payment's immutable meaning;
- * 4. prepaid methods need proven Current coverage at the current coverage revision; other methods
- *    need their exact Current owner condition and never claim collection;
+ * 4. prepaid methods need proven Current coverage at the current coverage revision that no other
+ *    Attempt Currently holds; other methods must remain applicable (merchant enablement) and need
+ *    their exact Current owner condition, and never claim collection;
  * 5. the actual issuance time is read after the lock wait and checks, never backdated to T.
  */
 export const handleIssuePaymentAuthorization = Effect.fn('IssuePaymentAuthorizationAction.handle')(
@@ -83,7 +114,7 @@ export const handleIssuePaymentAuthorization = Effect.fn('IssuePaymentAuthorizat
     payload: IssuePaymentAuthorizationPayload,
     context: ActionHandlerContext<typeof domainEvents, IssuePaymentAuthorizationServices>,
   ) {
-    const { aggregate, authorizations } = context.services;
+    const { aggregate, applicability, authorizations } = context.services;
     const { binding } = payload;
     const { legalEntityId, principalId, tenantId } = context.scope;
     if (legalEntityId === undefined) {
@@ -111,8 +142,11 @@ export const handleIssuePaymentAuthorization = Effect.fn('IssuePaymentAuthorizat
     const proofKind = proofKindForMethod(payment.method);
     const condition =
       proofKind === 'PREPAID_COVERAGE'
-        ? yield* requirePrepaidCoverage(paymentFundsSnapshotOf(loaded))
-        : yield* verifyMethodCondition(payment, { legalEntityId, tenantId }).pipe(
+        ? yield* requirePrepaidCoverage(paymentFundsSnapshotOf(loaded)).pipe(
+            Effect.tap(() => requireUnheldCoverage(authorizations, payment, binding.orderCommitmentAttemptId)),
+          )
+        : yield* applicability.loadCurrentEnablements(payment.customerConfigurationId).pipe(
+            Effect.flatMap((enablements) => verifyMethodCondition(payment, enablements, { legalEntityId, tenantId })),
             Effect.flatMap((check) =>
               MethodConditionCheck.$match(check, {
                 Met: ({ condition: met }) => Effect.succeed(met),
@@ -169,6 +203,7 @@ const issuePaymentAuthorizationServices = (transaction: ScopedTransactionExecuto
       )
     : Effect.succeed<IssuePaymentAuthorizationServices>({
         aggregate: paymentAggregatePersistenceForTransaction(transaction),
+        applicability: paymentApplicabilityPersistenceForTransaction(transaction),
         authorizations: paymentAuthorizationPersistenceForTransaction(transaction),
       });
 

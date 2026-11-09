@@ -2,7 +2,8 @@ import { NodeCrypto } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
-import { DateTime, Deferred, Effect, Fiber, Option, Predicate, Schema } from 'effect';
+import { PaymentTermDefinitionSnapshotSchema } from '@app/payment-term-catalog-contracts/payment-term';
+import { DateTime, Deferred, Effect, Fiber, Match, Option, Predicate, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
@@ -28,8 +29,10 @@ import {
   codSupported,
   GOPAY_PRODUCTION,
   netDaysSnapshot,
+  notUsableTerm,
   OWNER_EVIDENCE_UNAVAILABLE,
   pickupSupported,
+  purchasingContextFor,
   termRefFor,
   usableTerm,
 } from '../support/applicability-owner-evidence.fixture.ts';
@@ -534,6 +537,7 @@ describe('#1147 R1 payment-method-applicability through the Core Read runtime', 
                   branches,
                   customerConfigurationId: 'cc-read',
                   paymentTermRef: termRef,
+                  purchasingContext: purchasingContextFor(scope.tenantId, 'buyer-read'),
                 },
                 principal: principalOf(scope),
                 registration: paymentMethodApplicabilityRead,
@@ -612,6 +616,7 @@ describe('#1147 R1 payment-method-applicability through the Core Read runtime', 
               branches: [{ method: 'BANK_TRANSFER_ADVANCE' }],
               customerConfigurationId: 'cc-isolated',
               paymentTermRef: termRef,
+              purchasingContext: purchasingContextFor(foreign.tenantId, 'buyer-isolated'),
             },
             principal: principalOf(foreign),
             registration: paymentMethodApplicabilityRead,
@@ -620,6 +625,130 @@ describe('#1147 R1 payment-method-applicability through the Core Read runtime', 
           .pipe(Effect.provide(owners.layer));
         expect(result.branches.map(({ outcome }) => outcome)).toEqual(['NOT_ENABLED']);
         expect(owners.calls.termMethods).toEqual([]);
+      }),
+    ),
+  );
+
+  it.live(
+    '#1147 R1 asks the term owner about the exact buyer, Channel and Commerce Market, so two buyers of one configuration get their own Current entitlement',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* buyerScopedEntitlement() {
+          const { runtime, runtimeClient } = yield* nativeDatabase;
+          const scope = yield* makeTestScope;
+          const termRef = termRefFor(scope.tenantId, yield* randomUuid);
+          const enable = yield* configureInput(scope, {
+            customerConfigurationId: 'cc-buyers',
+            enabled: true,
+            expectedRevision: Option.none(),
+            method: 'DEFERRED_INVOICE',
+            reason: 'Enable deferred invoice',
+          });
+          yield* withApplicability(runtime, scope, (p) => p.configureEnablement(enable));
+          // Customer Context: buyer A holds a Current NET_DAYS entitlement, buyer B's entitlement is not Current.
+          const owners = applicabilityOwnerEvidenceFixture({
+            codCapability: codSupported,
+            enabledGatewayBindings: [],
+            pickupCapability: pickupSupported,
+            termUse: (_method, purchase) =>
+              Match.value(purchase).pipe(
+                Match.tag('PURCHASING_CONTEXT', ({ purchasingContext: { subject } }) =>
+                  subject.kind === 'PROFILE' && subject.profileRef.resourceId === 'buyer-a'
+                    ? usableTerm(netDaysSnapshot(termRef, 14), 'entitlement-buyer-a')
+                    : notUsableTerm(termRef, 'ENTITLEMENT_NOT_CURRENT'),
+                ),
+                Match.orElse(() => notUsableTerm(termRef, 'ENTITLEMENT_NOT_CURRENT')),
+              ),
+          });
+          const harness = yield* readHarness(runtimeClient, scope);
+          const read = (buyerProfileId: string) =>
+            harness.runtime
+              .runRead({
+                input: {
+                  amount: { amountMinor: 250_000, currency: 'CZK' },
+                  branches: [{ method: 'DEFERRED_INVOICE' }],
+                  customerConfigurationId: 'cc-buyers',
+                  paymentTermRef: termRef,
+                  purchasingContext: purchasingContextFor(scope.tenantId, buyerProfileId, {
+                    channelId: 'channel-b2b',
+                    marketId: 'market-cz',
+                  }),
+                },
+                principal: principalOf(scope),
+                registration: paymentMethodApplicabilityRead,
+                transport: { correlationId: `payment-applicability-r1-${buyerProfileId}` },
+              })
+              .pipe(Effect.provide(owners.layer));
+
+          const buyerA = yield* read('buyer-a');
+          const buyerB = yield* read('buyer-b');
+          expect(buyerA.branches.map(({ outcome }) => outcome)).toEqual(['AVAILABLE']);
+          expect(buyerB.branches).toEqual([
+            {
+              findings: [{ check: 'PAYMENT_TERM', outcome: 'INCOMPATIBLE_TERM', reason: 'ENTITLEMENT_NOT_CURRENT' }],
+              method: 'DEFERRED_INVOICE',
+              outcome: 'INCOMPATIBLE_TERM',
+            },
+          ]);
+          expect(buyerA.purchasingContext).toEqual(purchasingContextFor(scope.tenantId, 'buyer-a'));
+          expect(owners.calls.termPurchases).toEqual([
+            { _tag: 'PURCHASING_CONTEXT', purchasingContext: purchasingContextFor(scope.tenantId, 'buyer-a') },
+            { _tag: 'PURCHASING_CONTEXT', purchasingContext: purchasingContextFor(scope.tenantId, 'buyer-b') },
+          ]);
+        }),
+      ),
+  );
+
+  it.live('#1147 R1 a USABLE term answer whose C15 snapshot is already retired is not AVAILABLE', () =>
+    Effect.scoped(
+      Effect.gen(function* retiredSnapshotIsNotCurrent() {
+        const { runtime, runtimeClient } = yield* nativeDatabase;
+        const scope = yield* makeTestScope;
+        const termRef = termRefFor(scope.tenantId, yield* randomUuid);
+        const enable = yield* configureInput(scope, {
+          customerConfigurationId: 'cc-retired',
+          enabled: true,
+          expectedRevision: Option.none(),
+          method: 'DEFERRED_INVOICE',
+          reason: 'Enable deferred invoice',
+        });
+        yield* withApplicability(runtime, scope, (p) => p.configureEnablement(enable));
+        const retired = Schema.decodeUnknownSync(PaymentTermDefinitionSnapshotSchema)({
+          ...netDaysSnapshot(termRef, 14),
+          lifecycle: {
+            effectiveFrom: '2026-01-01T00:00:00.000Z',
+            effectiveTo: '2026-02-01T00:00:00.000Z',
+            state: 'RETIRED',
+          },
+        });
+        const owners = applicabilityOwnerEvidenceFixture({
+          codCapability: codSupported,
+          enabledGatewayBindings: [],
+          pickupCapability: pickupSupported,
+          termUse: () => usableTerm(retired, 'entitlement-A'),
+        });
+        const harness = yield* readHarness(runtimeClient, scope);
+        const result = yield* harness.runtime
+          .runRead({
+            input: {
+              amount: { amountMinor: 250_000, currency: 'CZK' },
+              branches: [{ method: 'DEFERRED_INVOICE' }],
+              customerConfigurationId: 'cc-retired',
+              paymentTermRef: termRef,
+              purchasingContext: purchasingContextFor(scope.tenantId, 'buyer-a'),
+            },
+            principal: principalOf(scope),
+            registration: paymentMethodApplicabilityRead,
+            transport: { correlationId: 'payment-applicability-r1-retired' },
+          })
+          .pipe(Effect.provide(owners.layer));
+        expect(result.branches).toEqual([
+          {
+            findings: [{ check: 'PAYMENT_TERM', outcome: 'CONFLICTING_CONFIGURATION', reason: 'TERM_RETIRED' }],
+            method: 'DEFERRED_INVOICE',
+            outcome: 'CONFLICTING_CONFIGURATION',
+          },
+        ]);
       }),
     ),
   );
