@@ -63,6 +63,27 @@ const sameIdentity = Schema.toEquivalence(IdentitySchema);
 const ReadyOriginSchema = Schema.String.check(Schema.isPattern(/^http:\/\/(?:127\.0\.0\.1|\[::1\]):[1-9][0-9]*$/u));
 
 const PACKAGED_STARTUP_PHASE = 'Packaged native startup phase';
+const startupFailureCodes = [
+  'AuthConfigError',
+  'ConfigError',
+  'SchemaError',
+  'SyntaxError',
+  'TypeError',
+  'ReferenceError',
+  'NoSuchElementException',
+  'ERR_MODULE_NOT_FOUND',
+  'ERR_PACKAGE_PATH_NOT_EXPORTED',
+  'ERR_UNKNOWN_FILE_EXTENSION',
+  'ERR_UNSUPPORTED_DIR_IMPORT',
+  'ERR_REQUIRE_ESM',
+  'ERR_DLOPEN_FAILED',
+] as const;
+
+/** Report only fixed public error codes; child output can contain credentials and stays redacted. */
+export const packagedStartupFailureReason = (exitCode: number, diagnostics: readonly Redacted.Redacted[]): string => {
+  const codes = startupFailureCodes.filter((code) => diagnostics.some((line) => Redacted.value(line).includes(code)));
+  return `Packaged application exited before readiness (exit=${String(exitCode)}; diagnostic codes=${codes.join(', ') || 'not reported'})`;
+};
 
 interface PackagedApplicationInput {
   readonly appId:
@@ -258,8 +279,8 @@ export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startP
     const origin = yield* Effect.raceFirst(
       Deferred.await(ready),
       child.exitCode.pipe(
-        Effect.flatMap(() =>
-          Effect.fail(new PackagedOwnerStartupError({ reason: 'Packaged application exited before readiness' })),
+        Effect.flatMap((exitCode) =>
+          Effect.fail(new PackagedOwnerStartupError({ reason: packagedStartupFailureReason(exitCode, diagnostics) })),
         ),
       ),
     );
