@@ -1,10 +1,12 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { Context, Effect, Layer, Option, Schema } from 'effect';
 import type { Array as Arr } from 'effect';
 
 import { recoverSqlTransactionError } from '../../actions/repository.ts';
+import { readVerifiedGatewayScopeAssertion } from '../../auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../../db/client.ts';
 import { installOperationalScope } from '../../db/scoped-transaction.ts';
+import type { ScopedTransactionExecutor } from '../../db/scoped-transaction.ts';
 import { principals } from '../../db/schema.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../../db/types.ts';
 import type { OperationalScope } from '../../operations/context.ts';
@@ -70,16 +72,42 @@ export interface AccessPrincipalKindDatabase {
  * One row, inside the request's own tenant scope. Row-level security decides which tenant the read
  * can see, so a principal id from another tenant answers nothing rather than someone else's kind.
  */
+const selectKind = (
+  transaction: Pick<CoreTransaction, 'select'>,
+  query: Pick<PrincipalKindQuery, 'principalId' | 'tenantId'>,
+) =>
+  transaction
+    .select({ kind: principals.kind })
+    .from(principals)
+    .where(and(eq(principals.tenantId, query.tenantId), eq(principals.principalId, query.principalId)))
+    .limit(1);
+
 const kindsIn = (transaction: CoreTransaction, query: PrincipalKindQuery) =>
-  installOperationalScope(transaction, query.scope).pipe(
-    Effect.andThen(() =>
-      transaction
-        .select({ kind: principals.kind })
-        .from(principals)
-        .where(eq(principals.principalId, query.principalId))
-        .limit(1),
-    ),
-  );
+  installOperationalScope(transaction, query.scope).pipe(Effect.andThen((scoped) => selectKind(scoped, query)));
+
+const principalKindUnavailable = (cause?: unknown) =>
+  accessDecisionUnavailable('The acting principal could not be read from Core identity', cause);
+
+/**
+ * An owner may restrict a gateway carrier to an exact Core principal kind. Only its verified
+ * gateway actor is observable here, through the already scoped owner transaction.
+ */
+export const readScopedGatewayPrincipalKind = Effect.fn('AccessPrincipalKinds.readScopedGatewayKind')(
+  function* readScopedGatewayPrincipalKind(transaction: ScopedTransactionExecutor, scope: OperationalScope) {
+    if (
+      transaction.scope.tenantId !== scope.tenantId ||
+      transaction.scope.legalEntityId !== scope.legalEntityId ||
+      readVerifiedGatewayScopeAssertion(scope) === undefined
+    ) {
+      return yield* principalKindUnavailable();
+    }
+    const [row] = yield* selectKind(transaction, {
+      principalId: PrincipalIdSchema.make(scope.principalId),
+      tenantId: TenantIdSchema.make(scope.tenantId),
+    }).pipe(Effect.mapError(principalKindUnavailable));
+    return row === undefined ? Option.none<AccessPrincipalKind>() : decodePrincipalKind(row.kind);
+  },
+);
 
 /** The same query, in the caller's own transaction when it has one and in a fresh one otherwise. */
 const readKindEffect = Effect.fn('AccessPrincipalKinds.readKind')(function* readKind(
@@ -98,9 +126,7 @@ export const makeDrizzleAccessPrincipalKinds = (database: AccessPrincipalKindDat
   readKind: (query, transaction) =>
     readKindEffect(database, query, transaction).pipe(
       recoverSqlTransactionError,
-      Effect.mapError((cause) =>
-        accessDecisionUnavailable('The acting principal could not be read from Core identity', cause),
-      ),
+      Effect.mapError(principalKindUnavailable),
     ),
 });
 

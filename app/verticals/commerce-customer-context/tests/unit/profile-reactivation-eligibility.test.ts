@@ -108,6 +108,36 @@ const counterpartyProfileRow = (outcome = 'PROFILE_AVAILABLE') => ({
   },
 });
 
+it.effect('calls functional policy dependencies without exposing the transaction-bearing receiver', () =>
+  Effect.gen(function* unboundPolicyDependencies() {
+    const receivers: unknown[] = [];
+    const evaluate = makeProfileReactivationEligibilityEvaluator({
+      evaluateReconfirmation: function evaluateReconfirmation(this: undefined, facts) {
+        receivers.push(this);
+        expect(facts.profileId).toBe(profileId);
+        return Effect.succeed(true);
+      },
+      resolveCounterpartyRole: function resolveCounterpartyRole(this: undefined, input) {
+        receivers.push(this);
+        expect(input).toEqual({ counterpartyResourceId: 'counterparty-1', tenantId });
+        return Effect.succeed<CounterpartyRoleEligibility>({
+          managedLegalEntityId: legalEntityId,
+          outcome: 'ELIGIBLE',
+          roleResourceId: 'current-customer-role',
+          roleResourceRevision: 'current-customer-role-revision',
+        });
+      },
+      scope,
+      transaction: transactionReturning([counterpartyProfileRow()]),
+    });
+    expect(yield* evaluate({ ...lifecyclePayload, profileRef: counterpartyProfileRef })).toEqual({
+      dependenciesSatisfied: true,
+      reconfirmationSatisfied: true,
+    });
+    expect(receivers).toEqual([undefined, undefined]);
+  }),
+);
+
 const roleResolver = (eligibility: CounterpartyRoleEligibility) => () => Effect.succeed(eligibility);
 const noReconfirmationRequired = () => Effect.succeed(true);
 

@@ -1,36 +1,67 @@
-import { OperationalScopeResolver } from '@app/core-runtime/operations/context';
+import { admitAssertionSubject } from './gateway-assertion-evidence.ts';
+import { admitRegisteredGatewayRecovery } from './gateway-recovery-evidence.ts';
 import {
+  RegisteredGatewayWorkloadSchema,
+  RegisteredGatewayPrivacyDispatchSchema,
+  privacyDispatchOperationContract,
+  RegisteredGatewayOrganizationGovernanceReadSchema,
+  organizationGovernanceReadOperationContract,
   preserveSystemPrincipalContextTrust,
   readVerifiedGatewayCompositionRevision,
   readVerifiedGatewayScopeAssertion,
   trustVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
+import { admitRegisteredAssertionWorkload } from './gateway-registered-assertion.ts';
+import { admitRegisteredGatewayWorkload } from './gateway-workload-evidence.ts';
+import { OperationalScopeResolver } from '@app/core-runtime/operations/context';
 import { PrincipalResolver, TenantModuleStateService, tenantStatesAllowingAccess } from '@app/core-runtime';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import type { GatewayActorClaim, GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
 import {
   GATEWAY_ASSERTION_TTL_SECONDS,
   GatewayActorClaimSchema,
+  GatewayRegisteredAssertionSubjectSchema,
+  GatewayRegisteredAdmissionSubjectSchema,
+  GatewayRegisteredWorkloadSubjectSchema,
+  GatewayRegisteredRecoverySubjectSchema,
+  GatewayPrivacyDispatchSubjectSchema,
+  GatewayOrganizationGovernanceReadSubjectSchema,
   GatewayTrustedPrincipalContextSchema,
-  decodeGatewayContextProtectedHeader,
-  decodeSupportedGatewayContextClaims,
 } from '@app/shared-contracts';
-import { DateTime, Effect, Match, Predicate, Redacted, Schema } from 'effect';
-import { jwtVerify } from 'jose';
+import { DateTime, Effect, Match, Predicate, Schema } from 'effect';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 
+import type { ShellInstalledCatalog } from '../modules/installed-module-catalog.ts';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
-import { GatewayIssuer } from './gateway-issuer.ts';
+import {
+  GatewayIssuer,
+  issuePrivacyDispatchGatewayContextAssertion,
+  issueOrganizationGovernanceReadGatewayContextAssertion,
+  issueOrganizationProcessingReadGatewayContextAssertion,
+} from './gateway-issuer.ts';
+import {
+  admitOrganizationGovernanceRead,
+  readAdmittedOrganizationGovernanceRead,
+} from './gateway-organization-governance-evidence.ts';
+import { admitPrivacyDispatch, readAdmittedPrivacyDispatch } from './gateway-privacy-dispatch-evidence.ts';
 import { GatewayDelegationExchangeLedger } from './gateway-delegation-exchanges.service.ts';
-import { validateDelegationAuthentication } from './gateway-delegation-authentication.service.ts';
-import { GatewayDelegationVerification } from './gateway-delegation-verification.ts';
-import { bindingAttestsSource, loadGatewayModuleBindings } from './gateway-delegation-policy.ts';
+import { gatewayPublishedOperationAccess, loadGatewayModuleBindings } from './gateway-delegation-policy.ts';
 import type { GatewayModuleBinding } from './gateway-delegation-policy.ts';
 import { GatewayOriginatorEvidence } from './gateway-originator-evidence.ts';
 import { GatewayDelegationError, delegationForbidden, delegationUnavailable } from './gateway-delegation-errors.ts';
 
 export type GatewayDelegationRequestPayload = Schema.Schema.Type<typeof GatewayDelegatedContextRequestSchema>;
+
+const RegisteredSubjectSchema = Schema.Union([
+  GatewayRegisteredAssertionSubjectSchema,
+  GatewayRegisteredAdmissionSubjectSchema,
+  GatewayRegisteredWorkloadSubjectSchema,
+  GatewayRegisteredRecoverySubjectSchema,
+]);
+type RegisteredPayload = Omit<GatewayDelegationRequestPayload, 'subject'> & {
+  readonly subject: typeof RegisteredSubjectSchema.Type;
+};
 
 /** The subject a delegated context is issued for, with the replay identity and lifetime its admission fixes. */
 interface AdmittedSubject {
@@ -77,50 +108,6 @@ const scopeFailure = (cause: unknown) =>
     cause,
     code: Predicate.isTagged(cause, 'OperationContextUnavailable') ? 'unavailable' : 'forbidden',
   });
-
-/** Verifies a live request's subject assertion exactly as its source module issued it, then rechecks its authentication. */
-const admitAssertionSubject = Effect.fn('GatewayDelegation.admitAssertion')(function* admitAssertionSubject(input: {
-  readonly assertion: Redacted.Redacted;
-  readonly binding: GatewayModuleBinding;
-  readonly currentDate: Date;
-  readonly now: number;
-  readonly requestedCompositionRevision: string;
-}) {
-  const verification = yield* GatewayDelegationVerification;
-  const configuration = yield* verification.load;
-  const verified = yield* Effect.tryPromise({
-    catch: (cause) => new GatewayDelegationError({ cause, code: 'authentication_required' }),
-    try: jwtVerify.bind(undefined, Redacted.value(input.assertion), configuration.keys, {
-      algorithms: ['EdDSA'],
-      audience: input.binding.sourceAppId,
-      clockTolerance: 0,
-      currentDate: input.currentDate,
-      issuer: configuration.issuer,
-    }),
-  }).pipe(Effect.timeoutOrElse({ duration: '5 seconds', orElse: () => Effect.fail(delegationUnavailable()) }));
-  yield* decodeGatewayContextProtectedHeader(verified.protectedHeader).pipe(Effect.mapError(delegationForbidden));
-  const source = yield* decodeSupportedGatewayContextClaims(verified.payload).pipe(
-    Effect.mapError(delegationForbidden),
-  );
-  if (
-    source.iat > input.now ||
-    source.exp <= input.now ||
-    !bindingAttestsSource(input.binding, source, input.requestedCompositionRevision)
-  ) {
-    return yield* delegationForbidden();
-  }
-  yield* validateDelegationAuthentication(source.principal, input.now);
-  return {
-    expiresAtEpochSeconds: source.exp,
-    principal: source.principal,
-    scopePrincipal: trustVerifiedGatewayPrincipalContext(source.principal, source.compositionRevision, {
-      assertion: input.assertion,
-      audience: input.binding.sourceAppId,
-    }),
-    sourceKey: source.jti,
-    sourceValidity: { expiresAt: source.exp, issuedAt: source.iat },
-  };
-});
 
 /**
  * Admits the requester recorded on a succeeded invocation of one of the Actions the calling module declares it may
@@ -183,11 +170,328 @@ const exchangeFingerprint = (input: {
     ),
   )(input).pipe(Effect.map((json) => bytesToHex(sha256(utf8ToBytes(json)))));
 
+const issueRegisteredGatewayAssertion = Effect.fn('GatewayDelegation.issueRegistered')(
+  function* issueRegistered(input: {
+    readonly binding: GatewayModuleBinding;
+    readonly currentDate: Date;
+    readonly installed: ShellInstalledCatalog;
+    readonly now: number;
+    readonly payload: RegisteredPayload;
+  }) {
+    const { binding, currentDate, installed, now, payload } = input;
+    const sourceContract = installed.contracts.find((contract) => contract.deployment.appId === binding.sourceAppId);
+    if (installed.composition.revision !== payload.compositionRevision) {
+      return yield* delegationForbidden();
+    }
+    const admitted = yield* Match.value(payload.subject).pipe(
+      Match.tag('RegisteredRecovery', (subject) =>
+        admitRegisteredGatewayRecovery({ audience: payload.audience, binding, installed, subject }).pipe(
+          Effect.map((evidence) => ({
+            ...evidence,
+            organizationProcessingWitness: null,
+            sourceAccess: 'read' as const,
+          })),
+        ),
+      ),
+      Match.tag('RegisteredWorkload', (subject) =>
+        admitRegisteredGatewayWorkload({ audience: payload.audience, binding, installed, subject }).pipe(
+          Effect.map((evidence) => ({
+            ...evidence,
+            organizationProcessingWitness: null,
+            sourceAccess: 'background' as const,
+          })),
+        ),
+      ),
+      Match.tag('RegisteredAdmission', (subject) =>
+        admitRegisteredGatewayWorkload({ audience: payload.audience, binding, installed, subject }).pipe(
+          Effect.map((evidence) => ({
+            ...evidence,
+            organizationProcessingWitness: null,
+            sourceAccess: 'write' as const,
+          })),
+        ),
+      ),
+      Match.tag('RegisteredAssertion', (subject) =>
+        admitAssertionSubject({
+          assertion: subject.sourceAssertion,
+          binding,
+          currentDate,
+          now,
+          registeredWorkload: true,
+          requestedCompositionRevision: payload.compositionRevision,
+        }).pipe(
+          Effect.flatMap((source) =>
+            source.workload === undefined
+              ? Effect.fail(delegationForbidden())
+              : admitRegisteredAssertionWorkload({
+                  audience: payload.audience,
+                  binding,
+                  installed,
+                  source: source.verifiedAssertion,
+                  subject,
+                }),
+          ),
+        ),
+      ),
+      Match.exhaustive,
+    );
+    if (payload.legalEntityScope === 'tenant' && admitted.workload.legalEntityId !== undefined) {
+      return yield* delegationForbidden();
+    }
+    const destination = installed.contracts.find((contract) => contract.deployment.appId === payload.audience);
+    if (sourceContract === undefined || destination === undefined) {
+      return yield* delegationForbidden();
+    }
+    const states = yield* (yield* TenantModuleStateService)
+      .getTenantModuleStates(admitted.principal.tenantId, [
+        sourceContract.manifest.module.id,
+        destination.manifest.module.id,
+      ])
+      .pipe(Effect.mapError(delegationUnavailable));
+    const destinationAccess = gatewayPublishedOperationAccess(
+      destination,
+      admitted.workload.entrypointKey,
+      admitted.workload.schemaVersion,
+    );
+    if (destinationAccess === undefined) {
+      return yield* delegationForbidden();
+    }
+    const sourceStates = new Set(tenantStatesAllowingAccess(admitted.sourceAccess));
+    const destinationStates = new Set(tenantStatesAllowingAccess(destinationAccess));
+    const sourceEligible = states.some(
+      (state) => state.moduleKey === sourceContract.manifest.module.id && sourceStates.has(state.state),
+    );
+    const destinationEligible = states.some(
+      (state) => state.moduleKey === destination.manifest.module.id && destinationStates.has(state.state),
+    );
+    if (!sourceEligible || !destinationEligible) {
+      return yield* delegationForbidden();
+    }
+    const fingerprintJson = yield* Schema.encodeUnknownEffect(
+      Schema.fromJsonString(
+        Schema.Struct({
+          audience: Schema.String,
+          compositionRevision: Schema.String,
+          principal: GatewayTrustedPrincipalContextSchema,
+          workload: RegisteredGatewayWorkloadSchema,
+        }),
+      ),
+    )({
+      audience: payload.audience,
+      compositionRevision: payload.compositionRevision,
+      principal: admitted.principal,
+      workload: admitted.workload,
+    }).pipe(Effect.mapError(delegationUnavailable));
+    const fingerprint = bytesToHex(sha256(utf8ToBytes(fingerprintJson)));
+    yield* (yield* GatewayDelegationExchangeLedger)
+      .reserve({
+        exchangeId: payload.exchangeId,
+        expiresAtEpochSeconds: now + GATEWAY_ASSERTION_TTL_SECONDS,
+        requestFingerprint: fingerprint,
+        sourceJti: admitted.sourceKey,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          Predicate.isTagged(cause, 'GatewayDelegationExchangeReplay')
+            ? delegationForbidden(cause)
+            : delegationUnavailable(cause),
+        ),
+      );
+    if (admitted.organizationProcessingWitness !== null) {
+      return yield* issueOrganizationProcessingReadGatewayContextAssertion(admitted.organizationProcessingWitness);
+    }
+    return yield* (yield* GatewayIssuer).issue({
+      audience: payload.audience,
+      compositionRevision: payload.compositionRevision,
+      principal: admitted.principal,
+      workload: admitted.workload,
+    });
+  },
+);
+
+const issueFinitePrivacyDispatch = Effect.fn('GatewayDelegation.issueFinitePrivacyDispatch')(
+  function* issueFinitePrivacyDispatch(input: {
+    readonly actor: GatewayActorClaim;
+    readonly binding: GatewayModuleBinding;
+    readonly installed: ShellInstalledCatalog;
+    readonly now: number;
+    readonly payload: GatewayDelegationRequestPayload & {
+      readonly subject: typeof GatewayPrivacyDispatchSubjectSchema.Type;
+    };
+  }) {
+    const { actor, binding, installed, now, payload } = input;
+    const source = installed.contracts.find((contract) => contract.deployment.appId === binding.sourceAppId);
+    const target = privacyDispatchOperationContract(payload.subject.operation._tag);
+    const destination = installed.contracts.find((contract) => contract.deployment.appId === payload.audience);
+    if (
+      payload.legalEntityScope !== 'subject' ||
+      payload.audience !== target.appId ||
+      installed.composition.revision !== payload.compositionRevision ||
+      binding.compositionRevision !== installed.composition.revision ||
+      source?.deployment.buildMarker !== binding.sourceBuildMarker ||
+      destination?.manifest.module.id !== target.moduleId
+    ) {
+      return yield* delegationForbidden();
+    }
+    const witness = yield* admitPrivacyDispatch({
+      audience: payload.audience,
+      binding,
+      installed,
+      subject: payload.subject,
+    });
+    const admitted = readAdmittedPrivacyDispatch(witness);
+    if (
+      admitted === undefined ||
+      gatewayPublishedOperationAccess(destination, target.entrypointKey, target.schemaVersion) !== target.access
+    ) {
+      return yield* delegationForbidden();
+    }
+    const moduleKeys = [source.manifest.module.id, destination.manifest.module.id];
+    const states = yield* (yield* TenantModuleStateService)
+      .getTenantModuleStates(admitted.principal.tenantId, moduleKeys)
+      .pipe(Effect.mapError(delegationUnavailable));
+    const sourceStates = new Set(tenantStatesAllowingAccess(admitted.sourceAccess));
+    const targetStates = new Set(tenantStatesAllowingAccess(target.access));
+    if (
+      !states.some((state) => state.moduleKey === source.manifest.module.id && sourceStates.has(state.state)) ||
+      !states.some((state) => state.moduleKey === destination.manifest.module.id && targetStates.has(state.state))
+    ) {
+      return yield* delegationForbidden();
+    }
+    const fingerprint = yield* Schema.encodeUnknownEffect(
+      Schema.fromJsonString(
+        Schema.Struct({
+          actor: GatewayActorClaimSchema,
+          audience: Schema.String,
+          compositionRevision: Schema.String,
+          principal: GatewayTrustedPrincipalContextSchema,
+          privacyDispatch: RegisteredGatewayPrivacyDispatchSchema,
+        }),
+      ),
+    )({
+      actor,
+      audience: payload.audience,
+      compositionRevision: payload.compositionRevision,
+      principal: admitted.principal,
+      privacyDispatch: admitted.privacyDispatch,
+    }).pipe(
+      Effect.map((json) => bytesToHex(sha256(utf8ToBytes(json)))),
+      Effect.mapError(delegationUnavailable),
+    );
+    yield* (yield* GatewayDelegationExchangeLedger)
+      .reserve({
+        exchangeId: payload.exchangeId,
+        expiresAtEpochSeconds: now + GATEWAY_ASSERTION_TTL_SECONDS,
+        requestFingerprint: fingerprint,
+        sourceJti: admitted.sourceKey,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          Predicate.isTagged(cause, 'GatewayDelegationExchangeReplay')
+            ? delegationForbidden(cause)
+            : delegationUnavailable(cause),
+        ),
+      );
+    return yield* issuePrivacyDispatchGatewayContextAssertion(witness, {
+      actor,
+      audience: payload.audience,
+      compositionRevision: payload.compositionRevision,
+    });
+  },
+);
+
 /**
  * Module-to-module capability issuance. The calling module is the actor: its module credential's bound
  * service principal goes in `act`, and only this binding can set the app and build of `act`. The subject
  * is the requester of a live request (`Assertion`) or of the invocation asynchronous work runs for (`Originator`).
  */
+const issueFiniteOrganizationGovernanceRead = Effect.fn('GatewayDelegation.issueOrganizationGovernanceRead')(
+  function* issueFiniteOrganizationGovernanceRead(input: {
+    readonly actor: GatewayActorClaim;
+    readonly binding: GatewayModuleBinding;
+    readonly installed: ShellInstalledCatalog;
+    readonly payload: GatewayDelegationRequestPayload & {
+      readonly subject: typeof GatewayOrganizationGovernanceReadSubjectSchema.Type;
+    };
+  }) {
+    const { actor, binding, installed, payload } = input;
+    const target = organizationGovernanceReadOperationContract();
+    const source = installed.contracts.find((contract) => contract.deployment.appId === binding.sourceAppId);
+    const destination = installed.contracts.find((contract) => contract.deployment.appId === payload.audience);
+    if (
+      payload.legalEntityScope !== 'subject' ||
+      actor.appId !== 'privacy' ||
+      payload.audience !== target.appId ||
+      installed.composition.revision !== payload.compositionRevision ||
+      binding.compositionRevision !== installed.composition.revision ||
+      source?.deployment.buildMarker !== binding.sourceBuildMarker ||
+      destination?.manifest.module.id !== target.moduleId
+    ) {
+      return yield* delegationForbidden();
+    }
+    const witness = yield* admitOrganizationGovernanceRead({
+      audience: payload.audience,
+      binding,
+      installed,
+      subject: payload.subject,
+    });
+    const admitted = readAdmittedOrganizationGovernanceRead(witness);
+    if (admitted === undefined) {
+      return yield* delegationForbidden();
+    }
+    const states = yield* (yield* TenantModuleStateService)
+      .getTenantModuleStates(admitted.principal.tenantId, [source.manifest.module.id, destination.manifest.module.id])
+      .pipe(Effect.mapError(delegationUnavailable));
+    const readable = new Set(tenantStatesAllowingAccess('read'));
+    if (
+      ![source.manifest.module.id, destination.manifest.module.id].every((moduleKey) =>
+        states.some((state) => state.moduleKey === moduleKey && readable.has(state.state)),
+      )
+    ) {
+      return yield* delegationForbidden();
+    }
+    const fingerprint = yield* Schema.encodeUnknownEffect(
+      Schema.fromJsonString(
+        Schema.Struct({
+          actor: GatewayActorClaimSchema,
+          audience: Schema.String,
+          compositionRevision: Schema.String,
+          organizationGovernanceRead: RegisteredGatewayOrganizationGovernanceReadSchema,
+          principal: GatewayTrustedPrincipalContextSchema,
+        }),
+      ),
+    )({
+      actor,
+      audience: payload.audience,
+      compositionRevision: payload.compositionRevision,
+      organizationGovernanceRead: admitted.organizationGovernanceRead,
+      principal: admitted.principal,
+    }).pipe(
+      Effect.map((json) => bytesToHex(sha256(utf8ToBytes(json)))),
+      Effect.mapError(delegationUnavailable),
+    );
+    yield* (yield* GatewayDelegationExchangeLedger)
+      .reserve({
+        exchangeId: payload.exchangeId,
+        expiresAtEpochSeconds: admitted.sourceValidity.expiresAt,
+        requestFingerprint: fingerprint,
+        sourceJti: admitted.sourceKey,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          Predicate.isTagged(cause, 'GatewayDelegationExchangeReplay')
+            ? delegationForbidden(cause)
+            : delegationUnavailable(cause),
+        ),
+      );
+    return yield* issueOrganizationGovernanceReadGatewayContextAssertion(witness, {
+      actor,
+      audience: payload.audience,
+      compositionRevision: payload.compositionRevision,
+    });
+  },
+);
+
 export const issueDelegatedGatewayContextAssertion = Effect.fn('GatewayDelegation.issue')(
   function* issueDelegatedGatewayContext(input: {
     readonly payload: GatewayDelegationRequestPayload;
@@ -218,6 +522,32 @@ export const issueDelegatedGatewayContextAssertion = Effect.fn('GatewayDelegatio
     const catalog = yield* ShellInstalledModuleCatalog;
     const installed = yield* catalog.load.pipe(Effect.mapError(delegationUnavailable));
     const sourceContract = installed.contracts.find((contract) => contract.deployment.appId === binding.sourceAppId);
+    if (Schema.is(GatewayOrganizationGovernanceReadSubjectSchema)(payload.subject)) {
+      return yield* issueFiniteOrganizationGovernanceRead({
+        actor,
+        binding,
+        installed,
+        payload: { ...payload, subject: payload.subject },
+      });
+    }
+    if (Schema.is(GatewayPrivacyDispatchSubjectSchema)(payload.subject)) {
+      return yield* issueFinitePrivacyDispatch({
+        actor,
+        binding,
+        installed,
+        now,
+        payload: { ...payload, subject: payload.subject },
+      });
+    }
+    if (Schema.is(RegisteredSubjectSchema)(payload.subject)) {
+      return yield* issueRegisteredGatewayAssertion({
+        binding,
+        currentDate,
+        installed,
+        now,
+        payload: { ...payload, subject: payload.subject },
+      });
+    }
     const subject: AdmittedSubject = yield* Match.value(payload.subject).pipe(
       Match.tag('Assertion', (assertion) =>
         admitAssertionSubject({

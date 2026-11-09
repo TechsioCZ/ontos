@@ -2,7 +2,7 @@
 // @ontos-action-owner privacy.core
 // @ontos-action-slug create-privacy-subject
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint, requireModuleOperation } from '@app/core-runtime';
 import { Effect, DateTime } from 'effect';
 
 import {
@@ -12,6 +12,7 @@ import {
 import type { CreatePrivacySubjectPayload } from '../../shared/actions/create-privacy-subject.ts';
 
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
+import { PrivacyOperationPersistenceError } from '../persistence/privacy-operation-persistence-error.ts';
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
 import {
   PrivacyActionAuditEvidenceSchema,
@@ -32,6 +33,24 @@ const handleCreatePrivacySubject = Effect.fn('CreatePrivacySubjectAction.handle'
       code: 'privacy_action_rejected',
       reason: 'Privacy Subject must belong to the trusted Tenant',
     });
+  }
+  if (payload.subject.kind === 'DATA_SUBJECT') {
+    yield* requireModuleOperation(
+      payload.subject.sourceAdmission === undefined
+        ? 'privacy.core.requirement.create-subject-party-detail'
+        : 'privacy.core.requirement.create-subject-source-person',
+    ).pipe(
+      Effect.mapError((cause) =>
+        Object.defineProperty(
+          new PrivacyOperationPersistenceError({
+            code: 'privacy_operation_persistence_unavailable',
+            reason: 'Current Party admission operation is unavailable',
+          }),
+          'cause',
+          { configurable: true, value: cause },
+        ),
+      ),
+    );
   }
   const now = DateTime.formatIso(yield* DateTime.now);
   const record = { createdAt: now, subject: payload.subject, subjectRef: payload.subjectRef, updatedAt: now };

@@ -78,6 +78,11 @@ import {
   makePriceGroupTemporalComposition,
 } from '../support/price-group-temporal-protocol.ts';
 
+type PartyActorAttestation = Extract<
+  NonNullable<Parameters<typeof createPartyWithAuthorization>[0]['candidate']['subjectEvidence']>[number],
+  { readonly kind: 'ACTOR_ATTESTATION' }
+>;
+
 const appRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 const GUEST_PARTY_RESOLVE_CAPABILITY = 'party.registry.guest-party.resolve';
 const services = NodeChildProcessSpawner.layer.pipe(
@@ -592,14 +597,8 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
       binding: 'BOUND' | 'UNBOUND' = 'BOUND',
       actor = principal,
     ) {
-      const subjectKey = Brand.nominal<
-        NonNullable<
-          Parameters<typeof createPartyWithAuthorization>[0]['candidate']['subjectEvidence']
-        >[number]['subjectKey']
-      >()(yield* nextId);
-      const observation: NonNullable<
-        Parameters<typeof createPartyWithAuthorization>[0]['candidate']['subjectEvidence']
-      >[number] = {
+      const subjectKey = Brand.nominal<PartyActorAttestation['subjectKey']>()(yield* nextId);
+      const observation: PartyActorAttestation = {
         basis: 'REVIEWED_DOCUMENT',
         evidenceRef: evidence,
         kind: 'ACTOR_ATTESTATION',
@@ -720,11 +719,7 @@ const publicGuestAttributionAuthority = Effect.fn('GuestEvidenceTest.publicGuest
     } = test;
     const evidenceRef = `guest-${yield* nextId}`;
     const correlationRoot = `purchase-${yield* nextId}`;
-    const subjectKey = Brand.nominal<
-      NonNullable<
-        Parameters<typeof createPartyWithAuthorization>[0]['candidate']['subjectEvidence']
-      >[number]['subjectKey']
-    >()(yield* nextId);
+    const subjectKey = Brand.nominal<PartyActorAttestation['subjectKey']>()(yield* nextId);
     const candidate = {
       businessName: 'Evidence-bound external organization',
       evidenceRefs: ['original-owner-proof'],
@@ -836,11 +831,7 @@ const publicGuestAttributionAuthority = Effect.fn('GuestEvidenceTest.publicGuest
     expect(yield* partyControl('grant-party-read', GUEST_PARTY_RESOLVE_CAPABILITY)).toBe(204);
     expect(Predicate.isTagged(denied, 'GuestPartyResolutionForbiddenProblem')).toBe(true);
     expect(yield* profiles()).toHaveLength(initialProfiles.length + 1);
-    const secondKey = Brand.nominal<
-      NonNullable<
-        Parameters<typeof createPartyWithAuthorization>[0]['candidate']['subjectEvidence']
-      >[number]['subjectKey']
-    >()(yield* nextId);
+    const secondKey = Brand.nominal<PartyActorAttestation['subjectKey']>()(yield* nextId);
     const competing = yield* createPartyWithAuthorization(
       {
         candidate: {
@@ -966,11 +957,7 @@ const publicReviewedGuest = Effect.fn('GuestEvidenceTest.publicReviewedGuest')(f
   const test = yield* GuestAuthorityFixture;
   const root = `review-${yield* nextId}`;
   const evidence = `review-${yield* nextId}`;
-  const subjectKey = Brand.nominal<
-    NonNullable<
-      Parameters<typeof createPartyWithAuthorization>[0]['candidate']['subjectEvidence']
-    >[number]['subjectKey']
-  >()(yield* nextId);
+  const subjectKey = Brand.nominal<PartyActorAttestation['subjectKey']>()(yield* nextId);
   const originalEvidence = `original-person-${yield* nextId}`;
   const candidate = {
     evidenceRefs: [originalEvidence],
@@ -1108,11 +1095,7 @@ const publicScopeAndArchive = Effect.fn('GuestEvidenceTest.publicScopeAndArchive
   expect(yield* test.profiles(other.actor)).toEqual([]);
   const caseEvidence = `foreign-case-${yield* nextId}`;
   const caseRoot = `foreign-case-root-${yield* nextId}`;
-  const caseSubject = Brand.nominal<
-    NonNullable<
-      Parameters<typeof createPartyWithAuthorization>[0]['candidate']['subjectEvidence']
-    >[number]['subjectKey']
-  >()(yield* nextId);
+  const caseSubject = Brand.nominal<PartyActorAttestation['subjectKey']>()(yield* nextId);
   const foreignCase = yield* createPartyWithAuthorization(
     {
       candidate: {

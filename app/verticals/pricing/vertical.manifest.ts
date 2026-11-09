@@ -4,6 +4,9 @@
 import { defineOntosModuleManifest, ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '@app/core-runtime';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 // <generated-module-manifest-imports>
+import { priceDefinitionRead } from './src/api/price-definition.read.ts';
+import { DefinePriceActionApi } from './shared/apis/define-price-action.ts';
+import { RevisePriceActionApi } from './shared/apis/revise-price-action.ts';
 import { CommercialFeeDefinitionApi } from './shared/apis/commercial-fee-definition.ts';
 import { commercialFeeResourceDescriptor } from './shared/resources/commercial-fee.ts';
 import { CommercialFeeResultLookupApi } from './shared/apis/commercial-fee-result-lookup.ts';
@@ -13,7 +16,9 @@ import { compensateCurrencySupportRecoveryAction } from './src/actions/compensat
 import { ContractualDiscountResultLookupApi } from './shared/apis/contractual-discount-result-lookup.ts';
 import { CurrencySupportResultLookupApi } from './shared/apis/currency-support-result-lookup.ts';
 import { CurrentPricingDecisionApi } from './shared/apis/current-pricing-decision.ts';
+import { currentPricingDecisionRead } from './src/api/current-pricing-decision.read.ts';
 import { CurrentSupportedCurrenciesApi } from './shared/apis/current-supported-currencies.ts';
+import { currentSupportedCurrenciesRead } from './src/api/current-supported-currencies.read.ts';
 import { defineCommercialFeeAction } from './src/actions/define-commercial-fee.action.ts';
 import { definePriceAction } from './src/actions/define-price.action.ts';
 import { ExactPriceResolutionApi } from './shared/apis/exact-price-resolution.ts';
@@ -25,24 +30,27 @@ import { manageQuantityTierAction } from './src/actions/manage-quantity-tier.act
 import { manageQuotationAction } from './src/actions/manage-quotation.action.ts';
 import { manageZeroFloorAuthorizationAction } from './src/actions/manage-zero-floor-authorization.action.ts';
 import { PriceDefinitionApi } from './shared/apis/price-definition.ts';
+import { PriceGroupSourcePricesApi } from './shared/apis/price-group-source-prices.ts';
+import { priceGroupSourcePricesRead } from './src/api/price-group-source-prices.read.ts';
 import { priceResourceDescriptor } from './shared/resources/price.ts';
 import { PriceResultLookupApi } from './shared/apis/price-result-lookup.ts';
 import { PriceScheduleApi } from './shared/apis/price-schedule.ts';
-import { pricingCommercialFeeReadPermission } from './shared/permissions/pricing-commercial-fee-read.ts';
-import { pricingCurrencySupportReadPermission } from './shared/permissions/pricing-currency-support-read.ts';
-import { pricingExactPriceResolutionReadPermission } from './shared/permissions/pricing-exact-price-resolution-read.ts';
-import { pricingPriceReadPermission } from './shared/permissions/pricing-price-read.ts';
+import { PriceSourceResultLookupApi } from './shared/apis/price-source-result-lookup.ts';
+import { priceSourceResultLookupRead } from './src/api/price-source-result-lookup.read.ts';
 import { QuantityTierResultLookupApi } from './shared/apis/quantity-tier-result-lookup.ts';
 import { QuotationResultLookupApi } from './shared/apis/quotation-result-lookup.ts';
 import { QuotationVerificationApi } from './shared/apis/quotation-verification.ts';
+import { quotationVerificationRead } from './src/api/quotation-verification.read.ts';
 import { reviseCommercialFeeAction } from './src/actions/revise-commercial-fee.action.ts';
 import { revisePriceAction } from './src/actions/revise-price.action.ts';
 import { setSupportedCurrenciesAction } from './src/actions/set-supported-currencies.action.ts';
 import { ZeroFloorAuthorizationResultLookupApi } from './shared/apis/zero-floor-authorization-result-lookup.ts';
-import { currentSupportedCurrenciesRead } from './src/api/current-supported-currencies.read.ts';
-import { currentPricingDecisionRead } from './src/api/current-pricing-decision.read.ts';
-import { quotationVerificationRead } from './src/api/quotation-verification.read.ts';
 // </generated-module-manifest-imports>
+import { pricingCommercialFeeReadPermission } from './shared/permissions/pricing-commercial-fee-read.ts';
+import { pricingCurrencySupportReadPermission } from './shared/permissions/pricing-currency-support-read.ts';
+import { pricingExactPriceResolutionReadPermission } from './shared/permissions/pricing-exact-price-resolution-read.ts';
+import { pricingPriceReadPermission } from './shared/permissions/pricing-price-read.ts';
+
 const catalogModuleId = 'commerce.catalog';
 const marketCatalogModuleId = 'commerce.market-catalog';
 const productVariantSnapshotProviderEntrypoint = 'commerce.catalog.api.product-variant-snapshot';
@@ -97,13 +105,17 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
       'currency-support-result-lookup': CurrencySupportResultLookupApi,
       'current-pricing-decision': CurrentPricingDecisionApi,
       'current-supported-currencies': CurrentSupportedCurrenciesApi,
+      'define-price-action': DefinePriceActionApi,
       'exact-price-resolution': ExactPriceResolutionApi,
       'price-definition': PriceDefinitionApi,
+      'price-group-source-prices': PriceGroupSourcePricesApi,
       'price-result-lookup': PriceResultLookupApi,
       'price-schedule': PriceScheduleApi,
+      'price-source-result-lookup': PriceSourceResultLookupApi,
       'quantity-tier-result-lookup': QuantityTierResultLookupApi,
       'quotation-result-lookup': QuotationResultLookupApi,
       'quotation-verification': QuotationVerificationApi,
+      'revise-price-action': RevisePriceActionApi,
       'zero-floor-authorization-result-lookup': ZeroFloorAuthorizationResultLookupApi,
       // </generated-module-manifest-apis>
     },
@@ -122,10 +134,23 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
     events: [],
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
+      { apiKey: 'price-definition', operationKey: 'priceDefinition.execute', registration: priceDefinitionRead },
+      { apiKey: 'define-price-action', operationKey: 'definePriceAction.execute', registration: definePriceAction },
+      { apiKey: 'revise-price-action', operationKey: 'revisePriceAction.execute', registration: revisePriceAction },
       {
         apiKey: 'current-supported-currencies',
         operationKey: 'currentSupportedCurrencies.execute',
         registration: currentSupportedCurrenciesRead,
+      },
+      {
+        apiKey: 'price-group-source-prices',
+        operationKey: 'priceGroupSourcePrices.execute',
+        registration: priceGroupSourcePricesRead,
+      },
+      {
+        apiKey: 'price-source-result-lookup',
+        operationKey: 'priceSourceResultLookup.execute',
+        registration: priceSourceResultLookupRead,
       },
       // </generated-module-manifest-operation-contracts>
     ],

@@ -76,7 +76,11 @@ import {
   withExactDependencies,
 } from '../shared.mts';
 import { renderLegacyReadPermissionResolver, renderLegacyReadPermissionTarget } from '../read-permission-compat.mts';
-import { governedApiBinding, hasValidGovernedHttpCompositionRoot } from '../../generated-governed-http-boundary.mts';
+import {
+  governedApiBinding,
+  governedRedemptionRuntimeTarget,
+  hasValidGovernedHttpCompositionRoot,
+} from '../../generated-governed-http-boundary.mts';
 import { planActionBoundaryScaffold, renderActionGatewayClient } from '../microvertical-action-boundary/scaffold.mts';
 import {
   hasGeneratedOperationGatewayContract,
@@ -913,7 +917,40 @@ const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.pat
           ),
         ),
     ]);
-    if (!hasValidGovernedHttpCompositionRoot(sharedApi, handlerRoot)) {
+    const redemptionSources = new Map<string, string>();
+    const redemptionFacade = yield* tryScaffold('failed to resolve owner Auth facade', () =>
+      resolveContainedPath(vertical.directory, 'api', 'auth', 'gateway-assertion-redemption.ts'),
+    );
+    if (
+      yield* fileSystem
+        .exists(redemptionFacade)
+        .pipe(Effect.mapError((cause) => scaffoldFailure('failed to inspect owner Auth facade', cause)))
+    ) {
+      const facade = yield* fileSystem
+        .readFileString(redemptionFacade)
+        .pipe(Effect.mapError((cause) => scaffoldFailure('failed to read owner Auth facade', cause)));
+      redemptionSources.set(redemptionFacade, facade);
+      const target = governedRedemptionRuntimeTarget(facade, vertical.directory);
+      if (
+        target !== undefined &&
+        (yield* fileSystem
+          .exists(target)
+          .pipe(Effect.mapError((cause) => scaffoldFailure('failed to inspect owner Auth runtime', cause))))
+      ) {
+        redemptionSources.set(
+          target,
+          yield* fileSystem
+            .readFileString(target)
+            .pipe(Effect.mapError((cause) => scaffoldFailure('failed to read owner Auth runtime', cause))),
+        );
+      }
+    }
+    if (
+      !hasValidGovernedHttpCompositionRoot(sharedApi, handlerRoot, {
+        ownerPath: vertical.directory,
+        sources: redemptionSources,
+      })
+    ) {
       return raiseScaffoldFailure('governed HTTP composition slots are not bound to the exported runtime root');
     }
     const nextSharedApi = yield* tryScaffold('failed to patch governed HTTP API root', () =>

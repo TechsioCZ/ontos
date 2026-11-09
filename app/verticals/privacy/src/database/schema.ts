@@ -35,6 +35,7 @@ export const PRIVACY_TABLE_INVENTORY = [
   'dsr_verifications',
   'eligibility_evidence',
   'external_obligations',
+  'gateway_assertion_redemptions',
   'legal_basis_assignments',
   'legal_holds',
   'notice_acknowledgements',
@@ -58,6 +59,23 @@ export const PRIVACY_TABLE_INVENTORY = [
 ] as const;
 
 export const privacySchema = pgSchema(PRIVACY_SCHEMA_NAME);
+/** Pre-tenant ingress replay evidence. This stores no token, identity or business payload. */
+export const PRIVACY_INGRESS_TABLE_INVENTORY = ['gateway_assertion_redemptions'] as const;
+export const gatewayAssertionRedemptions = privacySchema.table(
+  'gateway_assertion_redemptions',
+  {
+    audience: text('audience').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    issuer: text('issuer').notNull(),
+    jti: uuid('jti').notNull(),
+    redeemedAt: timestamp('redeemed_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique('privacy_gateway_redemptions_identity_uk').on(table.issuer, table.audience, table.jti),
+    index('privacy_gateway_redemptions_expiry_idx').on(table.expiresAt),
+    check('privacy_gateway_redemptions_audience_ck', sql`${table.audience} = 'privacy'`),
+  ],
+);
 
 const recordedAt = () => timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull();
 const scopeColumns = () => ({
@@ -71,6 +89,7 @@ export const privacySubjects = privacySchema.table.withRLS(
     privacySubjectId: uuid('privacy_subject_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
     createdAt: recordedAt(),
+    sourceIdentityKey: text('source_identity_key'),
     subjectKind: text('subject_kind').notNull(),
     subjectRecord: jsonb('subject_record').notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
@@ -78,7 +97,12 @@ export const privacySubjects = privacySchema.table.withRLS(
   (table) => [
     unique('privacy_subjects_scope_id_uk').on(table.tenantId, table.legalEntityId, table.privacySubjectId),
     index('privacy_subjects_scope_kind_idx').on(table.tenantId, table.legalEntityId, table.subjectKind),
-    check('privacy_subjects_kind_ck', sql`${table.subjectKind} in ('DATA_SUBJECT', 'ANONYMOUS')`),
+    unique('privacy_subjects_source_identity_uk').on(table.tenantId, table.legalEntityId, table.sourceIdentityKey),
+    check('privacy_subjects_kind_ck', sql`${table.subjectKind} in ('DATA_SUBJECT', 'ANONYMOUS', 'SOURCE_ASSERTED')`),
+    check(
+      'privacy_subjects_source_identity_ck',
+      sql`(${table.subjectKind} = 'SOURCE_ASSERTED') = (${table.sourceIdentityKey} is not null)`,
+    ),
     ...tenantLegalEntityRlsPolicies('privacy_subjects_scope', table.tenantId, table.legalEntityId),
   ],
 );
@@ -924,6 +948,8 @@ export const privacyMeasureDispatches = privacySchema.table.withRLS(
     measureId: text('measure_id').primaryKey(),
     ...scopeColumns(),
     createdAt: recordedAt(),
+    dispatchActionInvocationId: uuid('dispatch_action_invocation_id'),
+    dispatchCompositionRevision: text('dispatch_composition_revision'),
     handoffRecord: jsonb('handoff_record').notNull(),
     idempotencyKey: text('idempotency_key').notNull(),
     status: text('status').notNull(),
@@ -932,6 +958,10 @@ export const privacyMeasureDispatches = privacySchema.table.withRLS(
   (table) => [
     unique('privacy_measure_dispatches_scope_id_uk').on(table.tenantId, table.legalEntityId, table.measureId),
     unique('privacy_measure_dispatches_idempotency_uk').on(table.tenantId, table.legalEntityId, table.idempotencyKey),
+    check(
+      'privacy_measure_dispatch_originator_ck',
+      sql`(${table.dispatchActionInvocationId} is null and ${table.dispatchCompositionRevision} is null) or (${table.dispatchActionInvocationId} is not null and ${table.dispatchCompositionRevision} is not null and ${table.dispatchCompositionRevision} ~ '^[0-9a-f]{64}$')`,
+    ),
     ...tenantLegalEntityRlsPolicies('privacy_measure_dispatches_scope', table.tenantId, table.legalEntityId),
   ],
 );
@@ -1368,6 +1398,7 @@ export const PRIVACY_TABLES = [
   dsrVerifications,
   eligibilityEvidence,
   externalObligations,
+  gatewayAssertionRedemptions,
   legalBasisAssignments,
   legalHolds,
   noticeAcknowledgements,
@@ -1389,6 +1420,8 @@ export const PRIVACY_TABLES = [
   retentionRules,
   temporaryDsrExports,
 ] as const;
+
+export const PRIVACY_GOVERNED_TABLES = PRIVACY_TABLES.filter((table) => table !== gatewayAssertionRedemptions);
 
 const privacyDatabaseSchema = {
   antiResurrectionProtections,

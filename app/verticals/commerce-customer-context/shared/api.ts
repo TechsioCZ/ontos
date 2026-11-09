@@ -14,6 +14,8 @@ import { CommercePortalAuthStepUpApi } from './portal-auth/step-up-api.ts';
 
 // <generated-governed-http-api-imports>
 import { AddSavedAddressActionApi } from './apis/add-saved-address-action.ts';
+import { AdmitCustomerGroupMembershipSnapshotActionApi } from './apis/admit-customer-group-membership-snapshot-action.ts';
+import { ApplyCustomerGroupMembershipSourceActionApi } from './apis/apply-customer-group-membership-source-action.ts';
 import { ArchiveCustomerGroupActionApi } from './apis/archive-customer-group-action.ts';
 import { ArchiveCustomerProfileActionApi } from './apis/archive-customer-profile-action.ts';
 import { AssignCounterpartyPriceGroupActionApi } from './apis/assign-counterparty-price-group-action.ts';
@@ -24,6 +26,8 @@ import { BindRetailPortalProfileActionApi } from './apis/bind-retail-portal-prof
 import { BootstrapCounterpartyAccessAdministratorActionApi } from './apis/bootstrap-counterparty-access-administrator-action.ts';
 import { ChangeCounterpartyPurchaseLimitActionApi } from './apis/change-counterparty-purchase-limit-action.ts';
 import { ChangeCustomerPaymentTermsActionApi } from './apis/change-customer-payment-terms-action.ts';
+import { ChangeCustomerProfileIcoActionApi } from './apis/change-customer-profile-ico-action.ts';
+import { ChangeOrganizationCustomerProfileIcoActionApi } from './apis/change-organization-customer-profile-ico-action.ts';
 import { ChangePrincipalPurchaseLimitOverrideActionApi } from './apis/change-principal-purchase-limit-override-action.ts';
 import { ChangeRetailPaymentTermPreferenceActionApi } from './apis/change-retail-payment-term-preference-action.ts';
 import { ClaimCounterpartyAccessInvitationActionApi } from './apis/claim-counterparty-access-invitation-action.ts';
@@ -50,13 +54,20 @@ import { CreateCounterpartyPurchasingProfileActionApi } from './apis/create-coun
 import { CreateCustomerGroupActionApi } from './apis/create-customer-group-action.ts';
 import { CreatePurchaseProposalRevisionActionApi } from './apis/create-purchase-proposal-revision-action.ts';
 import { CustomerArchiveApi } from './apis/customer-archive.ts';
+import { CustomerGroupDefinitionSourceApi } from './apis/customer-group-definition-source.ts';
 import { CustomerGroupDetailApi } from './apis/customer-group-detail.ts';
 import { CustomerGroupHistoryApi } from './apis/customer-group-history.ts';
 import { CustomerGroupMembersApi } from './apis/customer-group-members.ts';
+import { CustomerGroupMembershipSourceReceiptApi } from './apis/customer-group-membership-source-receipt.ts';
 import { CustomerPaymentTermEntitlementReadApi } from './apis/customer-payment-term-entitlement-read.ts';
 import { CustomerPriceGroupAssignmentReadApi } from './apis/customer-price-group-assignment-read.ts';
+import { CustomerPriceGroupAssignmentReceiptApi } from './apis/customer-price-group-assignment-receipt.ts';
 import { CustomerPriceGroupResolutionApi } from './apis/customer-price-group-resolution.ts';
+import { CustomerProfileIcoApi } from './apis/customer-profile-ico.ts';
+import { CustomerProfileIcoMigrationApi } from './apis/customer-profile-ico-migration.ts';
+import { CustomerProfileOrganizationIcoFactsApi } from './apis/customer-profile-organization-ico-facts.ts';
 import { CustomerProfileReadApi } from './apis/customer-profile-read.ts';
+import { CustomerProfileSourceApi } from './apis/customer-profile-source.ts';
 import { CustomerProfileTradingGateApi } from './apis/customer-profile-trading-gate.ts';
 import { CustomerRecordVisibilityApi } from './apis/customer-record-visibility.ts';
 import { DecidePurchaseApprovalRequestActionApi } from './apis/decide-purchase-approval-request-action.ts';
@@ -76,9 +87,13 @@ import { MarketRetirementReservationRecoveryApi } from './apis/market-retirement
 import { MarketSubjectRestrictionsCurrentApi } from './apis/market-subject-restrictions-current.ts';
 import { MigrateCounterpartyPriceGroupActionApi } from './apis/migrate-counterparty-price-group-action.ts';
 import { MigrateCustomerPriceGroupActionApi } from './apis/migrate-customer-price-group-action.ts';
+import { MigrateCustomerProfileIcoActionApi } from './apis/migrate-customer-profile-ico-action.ts';
+import { MigrateOrganizationCustomerProfileIcoActionApi } from './apis/migrate-organization-customer-profile-ico-action.ts';
 import { OpenProfileReconciliationActionApi } from './apis/open-profile-reconciliation-action.ts';
 import { OrderCommitmentApprovalEvidenceApi } from './apis/order-commitment-approval-evidence.ts';
 import { OrderServiceApprovalEvidenceApi } from './apis/order-service-approval-evidence.ts';
+import { OrganizationCustomerProfileIcoApi } from './apis/organization-customer-profile-ico.ts';
+import { OrganizationCustomerProfileIcoMigrationApi } from './apis/organization-customer-profile-ico-migration.ts';
 import { PaymentTermAffectedUseAssessmentApi } from './apis/payment-term-affected-use-assessment.ts';
 import { PaymentTermPolicyCurrentApi } from './apis/payment-term-policy-current.ts';
 import { PaymentTermsResolutionApi } from './apis/payment-terms-resolution.ts';
@@ -122,6 +137,7 @@ import { RevokeRetailPortalProfileBindingActionApi } from './apis/revoke-retail-
 import { SavedAddressDefaultsApi } from './apis/saved-address-defaults.ts';
 import { SavedAddressDetailApi } from './apis/saved-address-detail.ts';
 import { SavedAddressListApi } from './apis/saved-address-list.ts';
+import { SavedAddressSourceReceiptApi } from './apis/saved-address-source-receipt.ts';
 import { SetDefaultBillingAddressActionApi } from './apis/set-default-billing-address-action.ts';
 import { SetDefaultDeliveryDestinationActionApi } from './apis/set-default-delivery-destination-action.ts';
 import { StartPortalEnrollmentActionApi } from './apis/start-portal-enrollment-action.ts';
@@ -167,7 +183,155 @@ export * from './apis/market-subject-restrictions-current.ts';
 export * from './apis/payment-terms-resolution.ts';
 export * from './apis/purchase-currency-resolution.ts';
 
-export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextApi')
+type GroupsOf<Api> = Api extends HttpApi.HttpApi<string, infer Groups> ? Groups : never;
+
+type CommerceCustomerContextApiGroups = GroupsOf<
+  | typeof OrganizationCustomerProfileIcoApi
+  | typeof OrganizationCustomerProfileIcoMigrationApi
+  | typeof CustomerProfileOrganizationIcoFactsApi
+  | typeof commerceCustomerContextFoundationApi
+  | typeof CommercePortalAuthSessionApi
+  | typeof CommercePortalAuthMfaApi
+  | typeof CommercePortalAuthRecoveryApi
+  | typeof CommercePortalAuthStepUpApi
+  | typeof CommercePortalAuthEnrollmentApi
+  | typeof AddSavedAddressActionApi
+  | typeof AdmitCustomerGroupMembershipSnapshotActionApi
+  | typeof ApplyCustomerGroupMembershipSourceActionApi
+  | typeof ArchiveCustomerGroupActionApi
+  | typeof ArchiveCustomerProfileActionApi
+  | typeof AssignCounterpartyPriceGroupActionApi
+  | typeof AssignCustomerGroupActionApi
+  | typeof AssignCustomerPriceGroupActionApi
+  | typeof AttributeGuestRetailCustomerActionApi
+  | typeof BindRetailPortalProfileActionApi
+  | typeof BootstrapCounterpartyAccessAdministratorActionApi
+  | typeof ChangeCounterpartyPurchaseLimitActionApi
+  | typeof ChangeCustomerPaymentTermsActionApi
+  | typeof ChangeOrganizationCustomerProfileIcoActionApi
+  | typeof ChangeCustomerProfileIcoActionApi
+  | typeof ChangePrincipalPurchaseLimitOverrideActionApi
+  | typeof ChangeRetailPaymentTermPreferenceActionApi
+  | typeof ClaimCounterpartyAccessInvitationActionApi
+  | typeof ClaimPortalEnrollmentTransitionActionApi
+  | typeof ClearDefaultBillingAddressActionApi
+  | typeof ClearDefaultDeliveryDestinationActionApi
+  | typeof CommerceQuantityPolicyCurrentApi
+  | typeof CommerceQuantityResolutionApi
+  | typeof CompletePurchaseProposalBasisActionApi
+  | typeof ConsumeOrderPurchaseApprovalActionApi
+  | typeof ConsumePurchaseApprovalActionApi
+  | typeof CounterpartyAccessInvitationReadApi
+  | typeof CounterpartyAllCustomerArchiveApi
+  | typeof CounterpartyAllOrderHistoryApi
+  | typeof CounterpartyAllOrderHistoryDetailApi
+  | typeof CounterpartyCommerceAccessCheckApi
+  | typeof CounterpartyCommerceAccessDetailApi
+  | typeof CounterpartyCommerceAccessListApi
+  | typeof CounterpartyOrderHistoryApi
+  | typeof CounterpartyOrderHistoryDetailApi
+  | typeof CreateApprovalHierarchyActionApi
+  | typeof CreateCounterpartyAccessInvitationActionApi
+  | typeof CreateCounterpartyPurchasingProfileActionApi
+  | typeof CreateCustomerGroupActionApi
+  | typeof CreatePurchaseProposalRevisionActionApi
+  | typeof CustomerArchiveApi
+  | typeof CustomerGroupDefinitionSourceApi
+  | typeof CustomerGroupDetailApi
+  | typeof CustomerGroupHistoryApi
+  | typeof CustomerGroupMembersApi
+  | typeof CustomerGroupMembershipSourceReceiptApi
+  | typeof CustomerPaymentTermEntitlementReadApi
+  | typeof CustomerPriceGroupAssignmentReadApi
+  | typeof CustomerPriceGroupAssignmentReceiptApi
+  | typeof CustomerPriceGroupResolutionApi
+  | typeof CustomerProfileIcoApi
+  | typeof CustomerProfileIcoMigrationApi
+  | typeof CustomerProfileReadApi
+  | typeof CustomerProfileSourceApi
+  | typeof CustomerProfileTradingGateApi
+  | typeof CustomerRecordVisibilityApi
+  | typeof DecidePurchaseApprovalRequestActionApi
+  | typeof DeliveryDestinationResolutionApi
+  | typeof EffectiveCustomerGroupMembershipsApi
+  | typeof EffectiveCustomerGroupMembershipSetV1Api
+  | typeof EnsureRetailCustomerProfileActionApi
+  | typeof ExecutePrivacyMeasureActionApi
+  | typeof GrantCounterpartyCommerceAccessActionApi
+  | typeof GuestAttributionStatusApi
+  | typeof GuestPaymentTermsResolutionApi
+  | typeof InvoiceRecipientResolutionApi
+  | typeof MarketAffectedUseAssessmentApi
+  | typeof MarketBootstrapPolicyCurrentApi
+  | typeof MarketBootstrapResolutionApi
+  | typeof MarketRetirementReservationRecoveryApi
+  | typeof MarketSubjectRestrictionsCurrentApi
+  | typeof MigrateCounterpartyPriceGroupActionApi
+  | typeof MigrateCustomerPriceGroupActionApi
+  | typeof MigrateOrganizationCustomerProfileIcoActionApi
+  | typeof MigrateCustomerProfileIcoActionApi
+  | typeof OpenProfileReconciliationActionApi
+  | typeof OrderCommitmentApprovalEvidenceApi
+  | typeof OrderServiceApprovalEvidenceApi
+  | typeof PaymentTermAffectedUseAssessmentApi
+  | typeof PaymentTermPolicyCurrentApi
+  | typeof PaymentTermsResolutionApi
+  | typeof PreparePurchaseProposalBasisActionApi
+  | typeof PricingPurchaseContextVerificationApi
+  | typeof PrivacyMeasureExecutionApi
+  | typeof ProfileReconciliationReadApi
+  | typeof PurchaseCurrencyPolicyCurrentApi
+  | typeof PurchaseCurrencyResolutionApi
+  | typeof PurchaseLimitEvaluationApi
+  | typeof PurchaseLimitPolicyReadApi
+  | typeof PurchaseProposalBasisApi
+  | typeof ReactivateCustomerGroupActionApi
+  | typeof ReactivateCustomerProfileActionApi
+  | typeof RecordPortalEnrollmentOutcomeActionApi
+  | typeof RecoverRetailPortalProfileBindingActionApi
+  | typeof RemoveCounterpartyPriceGroupActionApi
+  | typeof RemoveCustomerGroupActionApi
+  | typeof RemoveCustomerPaymentTermActionApi
+  | typeof RemoveCustomerPriceGroupActionApi
+  | typeof RemoveSavedAddressActionApi
+  | typeof RepeatCounterpartyOrderActionApi
+  | typeof RepeatOrderPreparationApi
+  | typeof RepeatRetailOrderActionApi
+  | typeof ReroutePurchaseApprovalRequestActionApi
+  | typeof ResendCounterpartyAccessInvitationActionApi
+  | typeof ReserveMarketRetirementActionApi
+  | typeof ReservePaymentTermRetirementActionApi
+  | typeof ResolveProfileReconciliationActionApi
+  | typeof RetailAccessDecisionApi
+  | typeof RetailOrderHistoryApi
+  | typeof RetailOrderHistoryDetailApi
+  | typeof RetailPortalProfileBindingReadApi
+  | typeof RetailPrincipalResolutionApi
+  | typeof RetailPurchasingSubjectCurrentV1Api
+  | typeof RevalidateOrderPurchaseApprovalActionApi
+  | typeof RevalidatePurchaseApprovalActionApi
+  | typeof RevokeCounterpartyAccessInvitationActionApi
+  | typeof RevokeCounterpartyCommerceAccessActionApi
+  | typeof RevokeRetailPortalProfileBindingActionApi
+  | typeof SavedAddressDefaultsApi
+  | typeof SavedAddressDetailApi
+  | typeof SavedAddressListApi
+  | typeof SavedAddressSourceReceiptApi
+  | typeof SetDefaultBillingAddressActionApi
+  | typeof SetDefaultDeliveryDestinationActionApi
+  | typeof StartPortalEnrollmentActionApi
+  | typeof SubmitPurchaseApprovalRequestActionApi
+  | typeof SuspendCustomerProfileActionApi
+  | typeof TerminatePortalEnrollmentActionApi
+  | typeof TriggerPurchaseApprovalActionApi
+  | typeof UpdateCustomerGroupActionApi
+  | typeof UpdateSavedAddressActionApi
+  | typeof VerifyEffectiveCustomerGroupMembershipSetV1Api
+  | typeof VerifyRetailPurchasingSubjectCurrentV1Api
+>;
+type CommerceCustomerContextHttpApi = HttpApi.HttpApi<'CommerceCustomerContextApi', CommerceCustomerContextApiGroups>;
+
+export const commerceCustomerContextApi: CommerceCustomerContextHttpApi = HttpApi.make('CommerceCustomerContextApi')
   .addHttpApi(commerceCustomerContextFoundationApi)
   .addHttpApi(CommercePortalAuthSessionApi)
   .addHttpApi(CommercePortalAuthMfaApi)
@@ -176,6 +340,8 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(CommercePortalAuthEnrollmentApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(AddSavedAddressActionApi)
+  .addHttpApi(AdmitCustomerGroupMembershipSnapshotActionApi)
+  .addHttpApi(ApplyCustomerGroupMembershipSourceActionApi)
   .addHttpApi(ArchiveCustomerGroupActionApi)
   .addHttpApi(ArchiveCustomerProfileActionApi)
   .addHttpApi(AssignCounterpartyPriceGroupActionApi)
@@ -186,6 +352,8 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(BootstrapCounterpartyAccessAdministratorActionApi)
   .addHttpApi(ChangeCounterpartyPurchaseLimitActionApi)
   .addHttpApi(ChangeCustomerPaymentTermsActionApi)
+  .addHttpApi(ChangeCustomerProfileIcoActionApi)
+  .addHttpApi(ChangeOrganizationCustomerProfileIcoActionApi)
   .addHttpApi(ChangePrincipalPurchaseLimitOverrideActionApi)
   .addHttpApi(ChangeRetailPaymentTermPreferenceActionApi)
   .addHttpApi(ClaimCounterpartyAccessInvitationActionApi)
@@ -212,13 +380,20 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(CreateCustomerGroupActionApi)
   .addHttpApi(CreatePurchaseProposalRevisionActionApi)
   .addHttpApi(CustomerArchiveApi)
+  .addHttpApi(CustomerGroupDefinitionSourceApi)
   .addHttpApi(CustomerGroupDetailApi)
   .addHttpApi(CustomerGroupHistoryApi)
   .addHttpApi(CustomerGroupMembersApi)
+  .addHttpApi(CustomerGroupMembershipSourceReceiptApi)
   .addHttpApi(CustomerPaymentTermEntitlementReadApi)
   .addHttpApi(CustomerPriceGroupAssignmentReadApi)
+  .addHttpApi(CustomerPriceGroupAssignmentReceiptApi)
   .addHttpApi(CustomerPriceGroupResolutionApi)
+  .addHttpApi(CustomerProfileIcoApi)
+  .addHttpApi(CustomerProfileIcoMigrationApi)
+  .addHttpApi(CustomerProfileOrganizationIcoFactsApi)
   .addHttpApi(CustomerProfileReadApi)
+  .addHttpApi(CustomerProfileSourceApi)
   .addHttpApi(CustomerProfileTradingGateApi)
   .addHttpApi(CustomerRecordVisibilityApi)
   .addHttpApi(DecidePurchaseApprovalRequestActionApi)
@@ -238,9 +413,13 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(MarketSubjectRestrictionsCurrentApi)
   .addHttpApi(MigrateCounterpartyPriceGroupActionApi)
   .addHttpApi(MigrateCustomerPriceGroupActionApi)
+  .addHttpApi(MigrateCustomerProfileIcoActionApi)
+  .addHttpApi(MigrateOrganizationCustomerProfileIcoActionApi)
   .addHttpApi(OpenProfileReconciliationActionApi)
   .addHttpApi(OrderCommitmentApprovalEvidenceApi)
   .addHttpApi(OrderServiceApprovalEvidenceApi)
+  .addHttpApi(OrganizationCustomerProfileIcoApi)
+  .addHttpApi(OrganizationCustomerProfileIcoMigrationApi)
   .addHttpApi(PaymentTermAffectedUseAssessmentApi)
   .addHttpApi(PaymentTermPolicyCurrentApi)
   .addHttpApi(PaymentTermsResolutionApi)
@@ -284,6 +463,7 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(SavedAddressDefaultsApi)
   .addHttpApi(SavedAddressDetailApi)
   .addHttpApi(SavedAddressListApi)
+  .addHttpApi(SavedAddressSourceReceiptApi)
   .addHttpApi(SetDefaultBillingAddressActionApi)
   .addHttpApi(SetDefaultDeliveryDestinationActionApi)
   .addHttpApi(StartPortalEnrollmentActionApi)

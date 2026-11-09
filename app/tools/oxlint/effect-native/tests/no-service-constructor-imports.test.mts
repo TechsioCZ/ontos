@@ -21,6 +21,8 @@ const bootstrapFilename = 'bootstrap.ts';
 const privacyCompletionProcess = 'verticals/privacy/tests/support/privacy-completion-http.ts';
 const processImports = "import { NodeRuntime } from '@effect/platform-node'; import { Effect } from 'effect';";
 const loaderAcquisition = 'const load = require; void load;';
+const bffEmptyGroup = 'const group = Layer.mergeAll();';
+const nativeLayerConstructor = 'Layer.succeed(Service, {})';
 const bffAssemblyReturn = 'return assembleEffectBffRuntime({ api: Api, handlers });';
 const statusComparison = 'if (status === 403)';
 const factoryFilename = 'factory.ts';
@@ -30,6 +32,8 @@ const consumerFilename = 'consumer.ts';
 const factorySource = './factory.ts';
 const schemaImport = "import { Schema } from 'effect';";
 const dataFactoryConsumer = "import { makeData } from './factory.ts'; void makeData;";
+const foreignEffectConstructorSource =
+  "import { Effect } from 'foreign-effect'; export const makeService = Effect.fn('service')(function* (dependency: unknown) { return dependency; });";
 const serviceRuleTitle = 'anti-slop-effect/no-service-constructor-imports';
 const serviceRule = antiSlopEffectRule('no-service-constructor-imports');
 const serviceConstructorMessage =
@@ -1494,6 +1498,77 @@ describe('keeps direct pinned Effect try and catch operations inside the canonic
   ]);
 });
 
+describe('keeps direct native orElseSucceed fallback in the closed process root', () => {
+  inspectProcessCapabilityCases([
+    {
+      before:
+        'const observed = Effect.fail("unknown").pipe(Effect.orElseSucceed(() => "unclassified")); void observed;',
+      expected: 0,
+      name: 'or-else-succeed-direct',
+    },
+    {
+      before:
+        "import { Effect as E } from 'effect'; const observed = E.fail('unknown').pipe(E.orElseSucceed(() => 'unclassified')); void observed;",
+      expected: 0,
+      name: 'or-else-succeed-genuine-renamed-import',
+    },
+    {
+      before: 'const fallback = Effect.orElseSucceed; void fallback;',
+      expected: 1,
+      name: 'or-else-succeed-extraction',
+    },
+    { before: "Effect['orElseSucceed'](() => 'unclassified');", expected: 1, name: 'or-else-succeed-computed' },
+    { before: 'Effect.orElseSucceed?.(() => "unclassified");', expected: 1, name: 'or-else-succeed-optional-call' },
+    { before: 'Effect.orElseSucceed = replacement;', expected: 1, name: 'or-else-succeed-mutation' },
+    {
+      before: "import { Effect as E } from 'foreign-effect'; E.orElseSucceed(() => 'unclassified');",
+      declaration: foreignEffectConstructorSource,
+      expected: 1,
+      name: 'or-else-succeed-foreign-effect',
+    },
+  ]);
+});
+
+describe('keeps direct native tapDefect observation in the closed process root', () => {
+  inspectProcessCapabilityCases([
+    {
+      before: 'const observed = Effect.void.pipe(Effect.tapDefect(() => Effect.void)); void observed;',
+      expected: 0,
+      name: 'tap-defect-direct',
+    },
+    {
+      before:
+        "import { Effect as E } from 'effect'; const observed = E.void.pipe(E.tapDefect(() => E.void)); void observed;",
+      expected: 0,
+      name: 'tap-defect-genuine-renamed-import',
+    },
+    { before: 'const observe = Effect.tapDefect; void observe;', expected: 1, name: 'tap-defect-extraction' },
+    { before: "Effect['tapDefect'](() => Effect.void);", expected: 1, name: 'tap-defect-computed' },
+    { before: 'Effect.tapDefect?.(() => Effect.void);', expected: 1, name: 'tap-defect-optional-call' },
+    { before: 'Effect?.tapDefect(() => Effect.void);', expected: 1, name: 'tap-defect-optional-member' },
+    { before: 'Effect.tapDefect.call(null, () => Effect.void);', expected: 1, name: 'tap-defect-indirect-call' },
+    { before: 'Effect.tapDefect = replacement;', expected: 1, name: 'tap-defect-mutation-before-main' },
+    { after: 'delete Effect.tapDefect;', expected: 1, name: 'tap-defect-deletion-after-main' },
+    {
+      before: "import { Effect as E } from 'foreign-effect'; E.tapDefect(() => Effect.void);",
+      declaration: foreignEffectConstructorSource,
+      expected: 1,
+      name: 'tap-defect-foreign-effect',
+    },
+    { before: 'NodeRuntime.runMain = foreignRunner;', expected: 1, name: 'tap-defect-mutated-runner' },
+    {
+      before: 'const write = process.stderr.write; write(rawDiagnostic);',
+      expected: 1,
+      name: 'startup-escaped-stderr-writer',
+    },
+    {
+      before: 'const detachedProcess = process; detachedProcess.stderr.write(rawDiagnostic);',
+      expected: 1,
+      name: 'startup-detached-process',
+    },
+  ]);
+});
+
 describe('keeps direct canonical tapError and tapCause observation inside the closed process grammar', () => {
   const observe = 'const program = Effect.fail("typed").pipe(Effect.tapError(() => Effect.void)); void program;';
   const cases: readonly ProcessCapabilityCase[] = [
@@ -1534,8 +1609,7 @@ describe('keeps direct canonical tapError and tapCause observation inside the cl
     { before: 'Effect.unknownOperation();', expected: 1, name: 'tap-error-unknown-operation' },
     {
       before: observe,
-      declaration:
-        "import { Effect } from 'foreign-effect'; export const makeService = Effect.fn('service')(function* (dependency: unknown) { return dependency; });",
+      declaration: foreignEffectConstructorSource,
       expected: 1,
       name: 'tap-error-foreign-effect-constructor',
     },
@@ -1615,6 +1689,7 @@ interface BffCase {
   readonly consumer?: string;
   readonly expected: number;
   readonly extra?: string;
+  readonly files?: Readonly<Record<string, string>>;
   readonly name: string;
   readonly replace?: readonly [string, string];
   readonly source?: string;
@@ -1625,7 +1700,7 @@ const bffFactorySource = [
   "import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';",
   "import { Api } from '../shared/api.ts';",
   "const header = (headers: unknown, key: string) => headers[key]; header({}, 'x-correlation-id'); header({}, 'idempotency-key');",
-  'const group = Layer.mergeAll();',
+  bffEmptyGroup,
   'export const makeRuntime = (): EffectBffDefinition<typeof Api> & EffectBffRuntime<typeof Api> => {',
   'const handlers = Layer.mergeAll(group).pipe(Layer.provide(group), Layer.orDie);',
   bffAssemblyReturn,
@@ -1647,6 +1722,7 @@ const inspectBffCases = (cases: readonly BffCase[]): void => {
       return [
         { path: `${owner}/shared/api.ts`, source: 'export const Api = {};' },
         { path: `${owner}/api/index.ts`, source: `${original}\n${scenario.extra ?? ''}` },
+        ...Object.entries(scenario.files ?? {}).map(([path, source]) => ({ path: `${owner}/${path}`, source })),
         { path: consumerPath(scenario), source: consumerSource(scenario) },
       ];
     }),
@@ -1665,6 +1741,138 @@ const inspectBffCases = (cases: readonly BffCase[]): void => {
     },
   );
 };
+
+describe('proves closed native local Layer pipelines and same-owner transport trees', () => {
+  const secondTransportPipeline = 'TransportB.pipe(Layer.provide(group))';
+  const companions = {
+    'api/transport-a.ts': 'export const TransportA = {};',
+    'api/transport-b.ts': 'export const TransportB = {};',
+  };
+  const mergedTransportSource = bffFactorySource
+    .replace(
+      'import { Api }',
+      "import { TransportA } from './transport-a.ts'; import { TransportB } from './transport-b.ts';\nimport { Api }",
+    )
+    .replace(
+      bffAssemblyReturn,
+      'return assembleEffectBffRuntime({ api: Api, handlers, transport: Layer.mergeAll(TransportA.pipe(Layer.provide(group)), TransportB.pipe(Layer.provide(group))) });',
+    );
+  const localPipelineSource = bffFactorySource
+    .replace(bffEmptyGroup, 'const group = Layer.mergeAll(); const local = Layer.succeed(Service, {});')
+    .replace('Layer.mergeAll(group).pipe', 'Layer.mergeAll(local.pipe(Layer.provide(group))).pipe');
+  inspectBffCases([
+    { expected: 0, name: 'bff-native-local-layer-pipe', source: localPipelineSource },
+    {
+      expected: 0,
+      extra: "import { Effect } from 'effect'; const span = Effect.option(Effect.currentSpan); void span;",
+      name: 'bff-native-current-span-observation',
+    },
+    {
+      expected: 1,
+      extra: "import { Effect } from 'effect'; const span = Effect.currentSpan; void span;",
+      name: 'bff-current-span-alias-escape',
+    },
+    {
+      expected: 1,
+      extra:
+        "import { Effect } from 'effect'; const fake = { option: (value) => value }; fake.option(Effect.currentSpan);",
+      name: 'bff-current-span-fake-observer',
+    },
+    {
+      expected: 1,
+      extra: "import { Effect } from 'effect'; Effect.currentSpan = replacement; Effect.option(Effect.currentSpan);",
+      name: 'bff-current-span-mutation',
+    },
+    { expected: 0, files: companions, name: 'bff-merged-native-transports', source: mergedTransportSource },
+    {
+      expected: 0,
+      files: companions,
+      name: 'bff-immutable-local-transport-tree',
+      source: mergedTransportSource
+        .replace(
+          'return assembleEffectBffRuntime({ api: Api, handlers, transport: Layer.mergeAll',
+          'const transport = Layer.mergeAll',
+        )
+        .replace(
+          'TransportB.pipe(Layer.provide(group))) });',
+          'TransportB.pipe(Layer.provide(group))); return assembleEffectBffRuntime({ api: Api, handlers, transport });',
+        ),
+    },
+    {
+      expected: 1,
+      name: 'bff-local-pipe-service-constructor',
+      source: localPipelineSource.replace(nativeLayerConstructor, 'makeService()'),
+    },
+    {
+      expected: 1,
+      name: 'bff-local-pipe-partial-layer',
+      source: localPipelineSource.replace(nativeLayerConstructor, 'Layer.succeed(Service)'),
+    },
+    { expected: 1, extra: 'consume(local);', name: 'bff-local-pipe-layer-escape', source: localPipelineSource },
+    {
+      expected: 1,
+      name: 'bff-exported-local-pipe-layer',
+      source: localPipelineSource.replace('const local =', 'export const local ='),
+    },
+    {
+      expected: 1,
+      files: companions,
+      name: 'bff-merged-unknown-transport',
+      source: mergedTransportSource.replace(secondTransportPipeline, 'unknownTransport'),
+    },
+    {
+      expected: 1,
+      files: companions,
+      name: 'bff-merged-transport-constructor',
+      source: mergedTransportSource.replace(secondTransportPipeline, 'makeTransport()'),
+    },
+    {
+      expected: 1,
+      files: companions,
+      name: 'bff-merged-partially-open-transport',
+      source: mergedTransportSource.replace(secondTransportPipeline, 'Layer.provide(TransportB)'),
+    },
+    {
+      expected: 1,
+      files: companions,
+      name: 'bff-merged-spread-transport',
+      source: mergedTransportSource.replace(secondTransportPipeline, '...TransportB'),
+    },
+    {
+      expected: 1,
+      extra: 'consume(TransportA);',
+      files: companions,
+      name: 'bff-merged-transport-escape',
+      source: mergedTransportSource,
+    },
+    {
+      expected: 1,
+      extra: 'TransportA.changed = replacement;',
+      files: companions,
+      name: 'bff-merged-transport-mutation',
+      source: mergedTransportSource,
+    },
+    {
+      expected: 1,
+      files: companions,
+      name: 'bff-merged-fake-layer-origin',
+      source: mergedTransportSource.replace("from '@modern-js/bff-effect/effect-edge';", "from 'foreign-layer';"),
+    },
+    {
+      expected: 1,
+      files: { ...companions, '../foreign-transport/transport.ts': 'export const TransportB = {};' },
+      name: 'bff-merged-foreign-owner-transport',
+      source: mergedTransportSource.replace("'./transport-b.ts'", "'../../foreign-transport/transport.ts'"),
+    },
+    {
+      expected: 1,
+      extra: "import { TransportA as Other } from './transport-a.ts'; consume(Other);",
+      files: companions,
+      name: 'bff-merged-transport-alias-escape',
+      source: mergedTransportSource,
+    },
+  ]);
+});
 
 describe('classifies only genuine immutable same-owner canonical BFF assembly factories', () => {
   inspectBffCases([
@@ -1692,7 +1900,7 @@ describe('classifies only genuine immutable same-owner canonical BFF assembly fa
       expected: 0,
       name: 'bff-empty-layer-value',
       replace: [
-        'const group = Layer.mergeAll();',
+        bffEmptyGroup,
         'const group = Layer.mergeAll(); const optionalLayer = enabled ? group : Layer.empty; Layer.provide(optionalLayer);',
       ],
     },
@@ -1919,7 +2127,7 @@ describe('closes strict scalar observations and rejects computed evaluator capab
 describe('proves the actual Shell API composition factory from current owner source without executing it', () => {
   const { accept, directory, register, write } = recordScenario(serviceRuleTitle);
   const owner = nodePath.join(directory, 'app/apps/shell-super-app');
-  for (const file of ['api/index.ts', 'shared/api.ts', 'src/module-api/transport.ts']) {
+  for (const file of ['api/index.ts', 'api/symmy/transport.ts', 'shared/api.ts', 'src/module-api/transport.ts']) {
     const target = nodePath.join(owner, file);
     write(target, readFileSync(nodePath.join(appRoot, 'apps/shell-super-app', file), 'utf-8'));
   }
@@ -2315,9 +2523,55 @@ const injectedBffFactorySource = bffFactorySource
   )
   .replace('const runtime = makeRuntime();', 'const runtime = makeRuntime(group);');
 
+const repeatedNativeLayerBffSource = injectedBffFactorySource
+  .replace(
+    'const group = Layer.mergeAll();',
+    'const group = Layer.mergeAll(); const sharedNativeLayer = Layer.succeed(Service, {});',
+  )
+  .replace(
+    'HandlerLive.pipe(GovernedReadLayer.provide(read))',
+    'HandlerLive.pipe(GovernedReadLayer.provide(sharedNativeLayer.pipe(Layer.provide(group))))',
+  )
+  .replace(
+    'Layer.provide(Layer.mergeAll(group, read))',
+    'Layer.provide(Layer.mergeAll(group, sharedNativeLayer.pipe(Layer.provide(read))))',
+  )
+  .replace(
+    'const runtime = makeRuntime(group);',
+    'export const productionArguments = Object.freeze([group] as const); const runtime = makeRuntime(...productionArguments);',
+  );
+
 describe('proves actual parameterized owner BFF composition without admitting constructors or foreign Layers', () => {
   const cases: readonly BffCase[] = [
     { expected: 0, name: 'bff-injected-nested-layers', source: injectedBffFactorySource },
+    { expected: 0, name: 'bff-repeated-native-layer-with-frozen-tuple', source: repeatedNativeLayerBffSource },
+    {
+      expected: 1,
+      name: 'bff-repeated-native-layer-escape',
+      source: `${repeatedNativeLayerBffSource} consume(sharedNativeLayer);`,
+    },
+    {
+      expected: 1,
+      name: 'bff-repeated-native-layer-mutation',
+      source: `${repeatedNativeLayerBffSource} sharedNativeLayer.pipe = fake;`,
+    },
+    {
+      expected: 1,
+      name: 'bff-repeated-native-layer-forged-constructor',
+      source: repeatedNativeLayerBffSource.replace(nativeLayerConstructor, 'makeContextualService()'),
+    },
+    {
+      expected: 1,
+      name: 'bff-repeated-native-layer-foreign-provider',
+      source: repeatedNativeLayerBffSource.replace("from 'effect';", "from 'foreign-effect';"),
+    },
+    {
+      consumer: `${processImports} import { makeRuntime } from '../../api/index.ts'; void makeRuntime; if (false) { ${directRunMain} }`,
+      expected: 1,
+      name: 'bff-repeated-native-layer-dead-run-main',
+      source: repeatedNativeLayerBffSource,
+    },
+
     {
       consumer: `${processImports} import { makeRuntime } from '../../api/index.ts'; void makeRuntime; const directory = process.cwd(); void directory; ${directRunMain}`,
       expected: 0,
@@ -2399,4 +2653,89 @@ describe('proves actual parameterized owner BFF composition without admitting co
       });
     },
   );
+});
+
+const resourceRefFactoryContainer = (builder: string) => `import { Effect, Schema } from 'effect';
+      const resource = (slug: string) => {
+        const refSchema = Schema.Struct({ resourceType: Schema.Literal(slug), resourceId: Schema.String });
+        const makeRef = ${builder};
+        return { makeRef, refSchema };
+      };
+      export const { makeRef: makeData, refSchema } = resource('fixture');`;
+
+it('proves a destructured ResourceRef builder while rejecting executable factory members', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+
+    writeFileSync(
+      factory,
+      resourceRefFactoryContainer('(resourceId: string) => ({ resourceType: "fixture", resourceId })'),
+    );
+    expect(provesDataFactoryImport(consumer, factorySource, 'makeData')).toBe(true);
+    for (const builder of [
+      '(dependency: { read: () => string }) => ({ read: dependency.read })',
+      '(resourceId: string) => ({ read: () => resourceId })',
+      '(resourceId: string) => Effect.succeed({ resourceId })',
+    ]) {
+      writeFileSync(factory, resourceRefFactoryContainer(builder));
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), builder).toBe(false);
+    }
+    writeFileSync(
+      factory,
+      `${resourceRefFactoryContainer('(resourceId: string) => ({ resourceId })')} fetch('side-effect');`,
+    );
+    expect(provesDataFactoryImport(consumer, factorySource, 'makeData')).toBe(false);
+  });
+});
+
+it('proves the actual Party Match Decision ResourceRef builder', () => {
+  const consumer = nodePath.join(appRoot, 'verticals/party-registry/src/services/source-person-admission.service.ts');
+  expect(
+    provesDataFactoryImport(consumer, '../../shared/resources/party-match-decision.ts', 'makePartyMatchDecisionRef'),
+  ).toBe(true);
+});
+
+ruleTester.run('accepts the actual Shell native child composition root', serviceRule, {
+  invalid: [],
+  valid: [repositoryCase('apps/shell-super-app/tests/support/api-key-gateway-native-child.ts')],
+});
+
+const pricingRouteInputs = repositoryCase('scripts/integration/support/symmy-c14-pricing-routes-inputs.mts');
+const pricingFixtureTypeImport =
+  "import type { makeInternalC14PricingRouteFixture } from './symmy-c14-pricing-routes-runtime.mts';";
+const pricingFixtureRuntimeImport = pricingFixtureTypeImport.replace('import type', 'import');
+
+ruleTester.run('keeps type-only constructor imports erased', serviceRule, {
+  invalid: [
+    {
+      ...pricingRouteInputs,
+      code: `${pricingRouteInputs.code.replace(pricingFixtureTypeImport, pricingFixtureRuntimeImport)}\nvoid makeInternalC14PricingRouteFixture();`,
+      errors: [{ data: { name: 'makeInternalC14PricingRouteFixture' }, messageId: 'serviceConstructorImport' }],
+      name: 'actual Pricing fixture retains rejection when the constructor becomes executable',
+    },
+    {
+      code: "import { makeService } from './factory.ts'; void makeService();",
+      errors: [{ data: { name: 'makeService' }, messageId: 'serviceConstructorImport' }],
+      filename: consumerFilename,
+    },
+    {
+      code: "import { type makeErasedService, makeService } from './factory.ts'; type Erased = ReturnType<typeof makeErasedService>; void makeService();",
+      errors: [{ data: { name: 'makeService' }, messageId: 'serviceConstructorImport' }],
+      filename: consumerFilename,
+      name: 'mixed import keeps the actual runtime constructor blocking',
+    },
+  ],
+  valid: [
+    pricingRouteInputs,
+    {
+      code: "import type { makeService } from './factory.ts'; type Service = ReturnType<typeof makeService>;",
+      filename: consumerFilename,
+    },
+    {
+      code: "import { type makeService } from './factory.ts'; type Service = ReturnType<typeof makeService>;",
+      filename: consumerFilename,
+    },
+  ],
 });

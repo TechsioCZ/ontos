@@ -22,6 +22,7 @@ export {
   WORKLOAD_PRINCIPAL_KINDS,
   isWorkloadPrincipalKind,
   makeDrizzleAccessPrincipalKinds,
+  readScopedGatewayPrincipalKind,
   resolveGateActor,
 } from './actor.ts';
 export type { GateScope } from './capability.ts';
@@ -66,3 +67,24 @@ export { AccessWorkloadBindingSourceLive, makeDrizzleAccessWorkloadBindings } fr
 export { AccessWorkloadBindingStoreLive, makeAccessWorkloadBindingDrizzleStore } from '../workloads/binding-store.ts';
 export type { TestAccessDecision, TestAccessDecisionSpec, TestGateAnswer } from './testing.ts';
 export { makeTestAccessDecision } from './testing.ts';
+
+export { readScopedSystemWorkloadEnrollment } from '../workloads/system-enrollment.ts';
+
+export { computeActionRequestHash, computeCanonicalValueHash } from '../../actions/repository.ts';
+export { readScopedOriginalActionInvocation } from '../workloads/original-action-invocation.ts';
+export type { OriginalActionInvocationQuery } from '../workloads/original-action-invocation.ts';
+
+export { readScopedAdmittedWorkload } from './workload-admission.ts';
+
+export {
+  openScopedSourceExecutionFence,
+  cancelScopedSourceExecutionFence,
+} from '../workloads/source-execution-fence.ts';
+
+export { requireScopedSourceExecutionFenceOpen } from '../workloads/source-execution-fence.ts';
+export { readScopedSourceExecutionFence } from '../workloads/source-execution-fence.ts';
+export type { SourceExecutionFenceFact } from '../workloads/source-execution-fence.ts';
+export { readScopedSourceAdmissionEnrollment } from '../workloads/source-admission-enrollment.ts';
+export type { SourceAdmissionEnrollmentFact } from '../workloads/source-admission-enrollment.ts';
+
+export { readVerifiedGatewayRecovery } from '../../auth/system-principal-context-provenance.ts';

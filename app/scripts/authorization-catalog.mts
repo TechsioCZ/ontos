@@ -1,4 +1,3 @@
-import nodePath from 'node:path';
 import { LanguageVariant, SyntaxKind, createScanner } from '@typescript/native/unstable/ast';
 import { Array as EffectArray, Order, Predicate, Redacted, Result, Schema } from 'effect';
 
@@ -21,6 +20,10 @@ import type {
   AccessFieldGroup,
 } from '../packages/core-runtime/src/authorization/access-declaration.ts';
 import { ModuleEntrypointSchema } from '../packages/core-runtime/src/modules/module-entrypoint.ts';
+import {
+  closedAccessDeclarationLiteralSources,
+  ownerLocalTarget,
+} from './authorization-declaration-literal-custody.mts';
 
 /**
  * Report-only derivation of the Authorization v2 access catalog from the `accessDeclaration`
@@ -77,6 +80,7 @@ const CLOSE_DELIMITERS: ReadonlySet<SyntaxKind> = new Set([
 
 const SKIPPED_PATH_SEGMENTS = ['/fixtures/', '/node_modules/', '/tests/', '/.output/', '/dist'];
 const SOURCE_FILE_PATTERN = /\.(?:mts|ts|tsx)$/u;
+const CONTEXT_SOURCE_FILE_PATTERN = /\.(?:[cm]?[jt]s|[jt]sx)$/u;
 const MISSING_ENTRYPOINT = 'entrypoint is neither an object literal nor a same-file entrypoint constant';
 const STATIC_DECLARATION_REQUIRED = 'accessDeclaration must be a static object literal';
 const STATIC_FIELD_GROUPS_REQUIRED = 'accessFieldGroups must be a static array of group object literals';
@@ -165,6 +169,7 @@ interface PropertyRead {
 
 interface ScanContext {
   readonly constants: ReadonlyMap<string, string>;
+  readonly declarationSources: ReadonlyMap<string, string>;
   readonly delimiters: ReadonlyMap<number, number>;
   readonly file: string;
   readonly sites: ReadonlyMap<string, EntrypointLiteral>;
@@ -451,20 +456,6 @@ const exportedStringConstants = (tokens: readonly CatalogToken[]): ReadonlyMap<s
     }
   }
   return new Map(found.filter(([name]) => found.filter(([other]) => other === name).length === 1));
-};
-
-/** The module directory a source belongs to, so an import may only reach inside its own module. */
-const moduleDirectoryOf = (file: string): string | null =>
-  /^(?:apps|verticals|packages)\/[^/]+\//u.exec(file)?.[0] ?? null;
-
-/** A relative `.ts` specifier resolved to the repository-relative file it names, inside the same module only. */
-const ownerLocalTarget = (file: string, specifier: string): string | null => {
-  const owner = moduleDirectoryOf(file);
-  if (owner === null || !/^\.\.?\//u.test(specifier) || !specifier.endsWith('.ts')) {
-    return null;
-  }
-  const target = nodePath.posix.normalize(nodePath.posix.join(nodePath.posix.dirname(file), specifier));
-  return target.startsWith(owner) ? target : null;
 };
 
 interface NamedImport {
@@ -762,11 +753,19 @@ const declaredValue = (
   tokens: readonly CatalogToken[],
   delimiters: ReadonlyMap<number, number>,
   constants: ReadonlyMap<string, string>,
+  declarationSources?: ReadonlyMap<string, string>,
 ): DeclaredValue => {
   if (span === undefined) {
     return { kind: 'absent' };
   }
   if (tokens[span.start]?.kind !== SyntaxKind.OpenBraceToken) {
+    const token = tokens[span.start];
+    const literal = token?.kind === SyntaxKind.Identifier ? declarationSources?.get(token.value) : undefined;
+    if (literal !== undefined) {
+      const literalTokens = tokenize(literal);
+      const value = new LiteralParser(literalTokens, matchDelimiters(literalTokens), new Map()).object(0);
+      return value === undefined ? { kind: 'problem' } : { kind: 'object', value };
+    }
     return { kind: 'problem' };
   }
   const parsed = new LiteralParser(tokens, delimiters, constants).object(span.start);
@@ -813,8 +812,15 @@ const declaredCarriers = (
   tokens: readonly CatalogToken[],
   delimiters: ReadonlyMap<number, number>,
   constants: ReadonlyMap<string, string>,
+  declarationSources: ReadonlyMap<string, string>,
 ): DeclaredCarrierParse => {
-  const declaration = declaredValue(properties.get('accessDeclaration'), tokens, delimiters, constants);
+  const declaration = declaredValue(
+    properties.get('accessDeclaration'),
+    tokens,
+    delimiters,
+    constants,
+    declarationSources,
+  );
   const groups = declaredGroupsValue(properties.get('accessFieldGroups'), tokens, delimiters, constants);
   const workload = declaredValue(properties.get('accessWorkload'), tokens, delimiters, constants);
   const actor = declaredValue(properties.get('accessActor'), tokens, delimiters, constants);
@@ -930,7 +936,7 @@ const descriptorProblem = (
 };
 
 const scanObjectLiteral = (context: ScanContext, index: number): CarrierScan | null => {
-  const { constants, delimiters, file, sites, tokens } = context;
+  const { constants, declarationSources, delimiters, file, sites, tokens } = context;
   const properties = objectEntries(tokens, delimiters, index);
   const factory = enclosingFactory(tokens, index);
   if (!descriptorCandidate(properties, factory)) {
@@ -939,7 +945,7 @@ const scanObjectLiteral = (context: ScanContext, index: number): CarrierScan | n
   const carrier = carrierForDescriptor(properties, factory);
   if (!properties.has('entrypoint')) {
     const shared = sharedRegistrationEntrypoint(tokens, delimiters, index);
-    const declared = declaredCarriers(properties, tokens, delimiters, constants);
+    const declared = declaredCarriers(properties, tokens, delimiters, constants, declarationSources);
     if (shared === null || declared.problems.length > 0) {
       return { kind: 'problem', value: { entrypointKey: null, file, moduleId: null, reason: CARRIER_ABSENT } };
     }
@@ -955,19 +961,26 @@ const scanObjectLiteral = (context: ScanContext, index: number): CarrierScan | n
   ) {
     return 'value' in entrypoint ? { kind: 'entrypoint', value: entrypoint.value } : null;
   }
-  const declared = declaredCarriers(properties, tokens, delimiters, constants);
+  const declared = declaredCarriers(properties, tokens, delimiters, constants, declarationSources);
   return 'problem' in entrypoint || declared.problems.length > 0
     ? { kind: 'problem', value: descriptorProblem(file, entrypoint, declared.problems) }
     : { kind: 'carrier', value: { ...declared.carriers, carrier, entrypoint: entrypoint.value, file } };
 };
 
-const scanAccessCatalogSourceWith = ({ constants, delimiters, file, sites, tokens }: ScanContext): ScannedSource => {
+const scanAccessCatalogSourceWith = ({
+  constants,
+  declarationSources,
+  delimiters,
+  file,
+  sites,
+  tokens,
+}: ScanContext): ScannedSource => {
   const carriers: ScannedCarrier[] = [];
   const entrypoints: ScannedEntrypoint[] = [];
   const problems: ScannedProblem[] = [];
   for (const [index, token] of tokens.entries()) {
     if (token.kind === SyntaxKind.OpenBraceToken) {
-      const scan = scanObjectLiteral({ constants, delimiters, file, sites, tokens }, index);
+      const scan = scanObjectLiteral({ constants, declarationSources, delimiters, file, sites, tokens }, index);
       if (scan?.kind === 'carrier') {
         carriers.push(scan.value);
       } else if (scan?.kind === 'entrypoint') {
@@ -991,9 +1004,14 @@ export const scanAccessCatalogSource = (
   file: string,
   moduleSources: ReadonlyMap<string, string> = new Map<string, string>(),
 ): ScannedSource => {
+  // Runtime JS/CJS files are custody context, not newly supported business declaration carriers.
+  if (!SOURCE_FILE_PATTERN.test(file)) {
+    return { carriers: [], entrypoints: [], problems: [] };
+  }
   const tokens = tokenize(source);
   return scanAccessCatalogSourceWith({
     constants: new Map([...importedStringConstants(tokens, file, moduleSources), ...stringConstants(tokens)]),
+    declarationSources: closedAccessDeclarationLiteralSources(source, file, moduleSources),
     delimiters: matchDelimiters(tokens),
     file,
     sites: entrypointLiteralSites(tokens),
@@ -1990,9 +2008,15 @@ export const renderAccessCatalogDiffText = (diff: AccessCatalogDiff): string => 
   return `${lines.join('\n')}\n`;
 };
 
-/** A source file counts when it can declare an entrypoint at all; the scan does the rest. */
-export const isAccessCatalogSourcePath = (file: string): boolean => {
+const catalogSourcePath = (file: string, pattern: RegExp): boolean => {
   const normalized = `/${file.replaceAll('\\', '/')}`;
   const skipped = SKIPPED_PATH_SEGMENTS.some((segment) => normalized.includes(segment));
-  return !skipped && SOURCE_FILE_PATTERN.test(normalized);
+  return !skipped && pattern.test(normalized);
 };
+
+/** A source file counts when it can declare an entrypoint at all; the scan does the rest. */
+export const isAccessCatalogSourcePath = (file: string): boolean => catalogSourcePath(file, SOURCE_FILE_PATTERN);
+
+/** Executable owner sources can import and mutate a contract without declaring an entrypoint. */
+export const isAccessCatalogContextSourcePath = (file: string): boolean =>
+  catalogSourcePath(file, CONTEXT_SOURCE_FILE_PATTERN);

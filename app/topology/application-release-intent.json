@@ -38,6 +38,9 @@
     },
     {
       "appId": "projects"
+    },
+    {
+      "appId": "symmy-integration"
     }
   ]
 }

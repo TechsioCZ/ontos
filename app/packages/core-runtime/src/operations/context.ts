@@ -16,6 +16,8 @@ import {
   isTrustedSystemPrincipalContext,
   preserveSystemPrincipalContextTrust,
   readVerifiedGatewayScopeAssertion,
+  readVerifiedGatewayWorkload,
+  readVerifiedGatewayRouteScope,
 } from '../auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../db/client.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
@@ -387,6 +389,21 @@ const validateLegalEntity = Effect.fn('OperationalScopeResolver.validateLegalEnt
       });
     }
 
+    // Registered workload scope was bound by Shell to this original admission; its exact owner capability
+    // and current binding incarnation are checked by the owner gate, never a person's company selector.
+    if (readVerifiedGatewayWorkload(principal)?.legalEntityId === legalEntityId) {
+      return yield* Effect.void;
+    }
+    const routeScope = readVerifiedGatewayRouteScope(principal);
+    if (
+      routeScope?.legalEntityId === legalEntityId &&
+      routeScope.tenantId === principal.tenantId &&
+      routeScope.principalId === principal.principalId
+    ) {
+      // The exact signed route operations remain mandatory at the receiving gate. A direct
+      // integration credential still cannot select a company through the human selector.
+      return yield* Effect.void;
+    }
     const now = yield* DateTime.nowAsDate;
     // Selectable = access + administer in one scope (O28); the engine answers for the whole company
     // list, so a company this person may not select is refused exactly like a revoked one. The scope
@@ -517,7 +534,14 @@ export const makeOperationalScopeResolver = Effect.fnUntraced(function* makeOper
   const resolveOperationalScope = Effect.fn('OperationalScopeResolver.resolve')(function* resolveOperationalScopeEffect(
     input: ResolveOperationalScopeInput,
   ) {
-    const { principal } = input;
+    const workload = readVerifiedGatewayWorkload(input.principal);
+    const principal =
+      workload?.legalEntityId === undefined
+        ? input.principal
+        : preserveSystemPrincipalContextTrust(input.principal, {
+            ...input.principal,
+            legalEntityId: workload.legalEntityId,
+          });
     const requestFailure = validateRequestedScope(input, input.legalEntityScope, principal);
     if (requestFailure !== undefined) {
       return yield* requestFailure;

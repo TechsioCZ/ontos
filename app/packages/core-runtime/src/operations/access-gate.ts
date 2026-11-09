@@ -1,3 +1,5 @@
+import { PrivacyDispatchLivenessSource } from '../access/enforcement/privacy-dispatch-liveness.ts';
+import type { PrivacyDispatchLiveness } from '../access/enforcement/privacy-dispatch-liveness.ts';
 import { Context, Effect, Option } from 'effect';
 
 import { AccessPrincipalKindSource } from '../access/enforcement/actor.ts';
@@ -91,6 +93,7 @@ export interface AccessEnforcementPorts {
    */
   readonly intent: AccessIntentSource;
   readonly principalKinds: AccessPrincipalKinds;
+  readonly privacyDispatchLiveness?: PrivacyDispatchLiveness;
   /**
    * The registered workload identities of the acting principal (O73). Optional so a composition that
    * only ever decides human or agent requests stays valid; the seam then admits no workload.
@@ -106,9 +109,14 @@ export const AccessEnforcementPortsLive = Effect.gen(function* resolveAccessEnfo
   );
   // The registry is optional: a composition that binds none admits no workload and fails closed (O73).
   const workloadBindings = yield* Effect.serviceOption(AccessWorkloadBindingSource);
+  const privacyDispatchLiveness = Option.getOrUndefined(yield* Effect.serviceOption(PrivacyDispatchLivenessSource));
   return Object.freeze(
     withOptional(
-      { candidates, check, decisionLog, intent, principalKinds },
+      withOptional(
+        { candidates, check, decisionLog, intent, principalKinds },
+        'privacyDispatchLiveness',
+        privacyDispatchLiveness,
+      ),
       'workloadBindings',
       Option.getOrUndefined(workloadBindings),
     ),
@@ -131,7 +139,7 @@ export const joinAccessEnforcementPorts = (
   ports: AccessEnforcementPorts,
   transaction: CoreTransaction,
 ): AccessEnforcementPorts => {
-  const { workloadBindings } = ports;
+  const { privacyDispatchLiveness, workloadBindings } = ports;
   const joined = {
     candidates: Object.freeze({
       listCandidateIds: (scope: OperationalScope) => ports.candidates.listCandidateIds(scope, transaction),
@@ -147,11 +155,21 @@ export const joinAccessEnforcementPorts = (
       readKind: (query: PrincipalKindQuery) => ports.principalKinds.readKind(query, transaction),
     }),
   };
+  const withLiveness = withOptional(
+    joined,
+    'privacyDispatchLiveness',
+    privacyDispatchLiveness === undefined
+      ? undefined
+      : Object.freeze({
+          read: (scope: OperationalScope, dispatch: Parameters<PrivacyDispatchLiveness['read']>[1]) =>
+            privacyDispatchLiveness.read(scope, dispatch, transaction),
+        }),
+  );
   return Object.freeze(
     workloadBindings === undefined
-      ? joined
+      ? withLiveness
       : {
-          ...joined,
+          ...withLiveness,
           workloadBindings: Object.freeze({
             readActiveWorkloadKeys: (query: WorkloadBindingQuery) =>
               workloadBindings.readActiveWorkloadKeys(query, transaction),
@@ -177,13 +195,17 @@ const contextOf = (ports: AccessEnforcementPorts) => {
 /** The ports the seam's own service takes, from the ports this binding holds. */
 const decisionPortsOf = (ports: AccessEnforcementPorts): AccessDecisionPorts =>
   withOptional(
-    {
-      authorityFor: ports.intent.authorityFor,
-      check: ports.check,
-      decisionLog: ports.decisionLog,
-      legalEntities: ports.candidates,
-      principalKinds: ports.principalKinds,
-    },
+    withOptional(
+      {
+        authorityFor: ports.intent.authorityFor,
+        check: ports.check,
+        decisionLog: ports.decisionLog,
+        legalEntities: ports.candidates,
+        principalKinds: ports.principalKinds,
+      },
+      'privacyDispatchLiveness',
+      ports.privacyDispatchLiveness,
+    ),
     'workloadBindings',
     ports.workloadBindings,
   );

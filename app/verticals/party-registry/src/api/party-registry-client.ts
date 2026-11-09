@@ -76,6 +76,7 @@ export * from './privacy-measure-execution-client.ts';
 export * from './party-command-client.ts';
 // <generated-action-http-client-exports>
 export * from './execute-privacy-measure-action-client.ts';
+export * from './fence-legacy-ico-authority-action-client.ts';
 // </generated-action-http-client-exports>
 export {
   AresApplySelectionInvalid,
@@ -152,3 +153,22 @@ export const partyRegistryClient = {
 } satisfies PartyRegistryClient;
 
 export { recoverPartyCreate, recoverPartyCreateWithAuthorization } from './party-command-client.ts';
+
+export * from './legacy-ico-inventory-client.ts';
+
+export * from './party-source-effect-receipt-client.ts';
+
+export * from './counterparty-migration-correlation-client.ts';
+
+export * from './source-person-admission-client.ts';
+
+export * from './source-profile-export-client.ts';
+
+export * from './source-counterparty-admission-client.ts';
+
+export * from './organization-ico-facts-client.ts';
+
+export * from './counterparty-organization-ico-facts-client.ts';
+
+export * from './organization-record-facts-client.ts';
+export * from './organization-business-name-export-client.ts';

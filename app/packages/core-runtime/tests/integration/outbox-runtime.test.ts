@@ -1,5 +1,6 @@
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
+import type { Context } from 'effect';
 import { Clock, Crypto, DateTime, Deferred, Effect, Exit, Fiber, Layer, Option, Schema, Tracer, pipe } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
@@ -22,10 +23,13 @@ import {
   lockApplicationCompositionPublication,
 } from '../../src/modules/application-composition-authority.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
-import { requireModuleOperation } from '../../src/modules/module-operation-requirement.ts';
+import {
+  readWorkerModuleOperationRequirement,
+  requireModuleOperation,
+} from '../../src/modules/module-operation-requirement.ts';
 import { OntosOperationContractSchema } from '../../src/modules/manifest.ts';
 import { defineOutboxWorker, extractOutboxWorkerSubscriptions } from '../../src/outbox/definition.ts';
-import type { AnyOutboxWorkerRegistration } from '../../src/outbox/definition.ts';
+import type { AnyOutboxWorkerRegistration, OutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
 import type { OutboxClaim, OutboxRepositoryService } from '../../src/outbox/repository.ts';
 import { OutboxClaimLostError } from '../../src/outbox/errors.ts';
 import { makeOutboxRepository as makeNativeOutboxRepository } from '../../src/outbox/repository.ts';
@@ -267,6 +271,63 @@ const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeCrypto.layer),
 );
 
+const prepareWorkerFact = Effect.fn(function* prepareWorkerFact(
+  worker: AnyOutboxWorkerRegistration,
+  requirementKey: string,
+  messages = 1,
+) {
+  const { adminDatabase, database, tenantId } = yield* tenantFixture;
+  const operation = yield* Schema.decodeUnknownEffect(OntosOperationContractSchema)({
+    apiKey: 'provider.leaf.proof-api',
+    entrypoint: defineTenantModuleEntrypoint({
+      access: 'read',
+      authorization: { kind: 'authenticated_principal' },
+      entrypointKey: 'provider.leaf.current-proof',
+      moduleKey: 'provider.leaf',
+      role: 'api',
+    }),
+    operationKey: 'current-proof',
+    schemaVersion: '1',
+  });
+  const claimFixture = makeNativeOutboxWorkerFixture([worker], {
+    additionalModules: [{ moduleId: 'provider.leaf', operationContracts: [operation] }],
+    requirements: {
+      'consumer.fixture': {
+        coreCapabilities: [],
+        intrinsic: [],
+        operations: [
+          {
+            condition: 'consumer.fixture.current-worker-proof',
+            entrypointKey: worker.descriptor.entrypoint.entrypointKey,
+            evidence: ['provider.leaf.current-proof'],
+            key: requirementKey,
+            provider: {
+              entrypointKey: operation.entrypoint.entrypointKey,
+              moduleId: 'provider.leaf',
+              schemaVersion: '1',
+            },
+          },
+        ],
+        schemaVersion: '1',
+      },
+    },
+  });
+  yield* activateConsumer(database, tenantId);
+  yield* database.insert(tenantModuleStates).values({ moduleKey: 'provider.leaf', state: 'active', tenantId });
+  yield* Effect.forEach(Array.from({ length: messages }), () => insertMessage(database, tenantId));
+  const now = advanceDate(yield* DateTime.nowAsDate, 1000);
+  yield* adminDatabase.insert(applicationCompositionAuthority).values({
+    authorityKey: 'active',
+    phase: 'active',
+    revision: claimFixture.revision,
+    subscriptionsJson: extractOutboxWorkerSubscriptions([worker]),
+    validUntil: advanceDate(now, 3_600_000),
+  });
+  const repository = makeNativeOutboxRepository(database, yield* Crypto.Crypto);
+  yield* repository.matchUnmatched(claimFixture.revision, now);
+  return { claimFixture, now, repository };
+});
+
 it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite) => {
   suite.effect(
     'keeps transitive intrinsic delivery pending in one native claim query and admits the exact live worker revision',
@@ -275,11 +336,34 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
         const { adminDatabase, database, tenantId } = yield* tenantFixture;
         const requirementKey = 'consumer.fixture.require-current-proof';
         const observed: string[] = [];
+        const retainedHandler = yield* Deferred.make<{
+          readonly context: OutboxWorkerHandlerContext;
+          readonly services: Context.Context<never>;
+        }>();
         const worker = defineOutboxWorker(
           makeWorker('consumer.fixture.intrinsic-proof').descriptor,
           (_payload, context) =>
             Effect.gen(function* observeNativeProof() {
               yield* requireModuleOperation(requirementKey);
+              const fact = yield* readWorkerModuleOperationRequirement(requirementKey, context);
+              expect(Object.isFrozen(fact)).toBe(true);
+              expect(fact).toEqual({
+                compositionRevision: context.compositionRevision,
+                consumerEntrypointKey: 'consumer.fixture.intrinsic-proof',
+                kind: 'worker',
+                providerAppId: 'provider-leaf',
+                providerEntrypointKey: 'provider.leaf.current-proof',
+                providerModuleId: 'provider.leaf',
+                providerSchemaVersion: '1',
+                requirementKey,
+                tenantId,
+                workerKey: context.workerKey,
+              });
+              expect(Object.hasOwn(fact, 'consumerSchemaVersion')).toBe(false);
+              expect(
+                (yield* Effect.flip(readWorkerModuleOperationRequirement(requirementKey, { ...context }))).code,
+              ).toBe('module_operation_requirement_unavailable');
+              yield* Deferred.succeed(retainedHandler, { context, services: yield* Effect.context() });
               observed.push(context.compositionRevision);
               expect(context.actorPrincipalId).toBeUndefined();
             }),
@@ -398,13 +482,24 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
         expect(Exit.isFailure(wrongRevision)).toBe(true);
         const result = yield* claimFixture.bind(
           [worker],
-          makeOutboxRuntime(repository).runCycle({
-            claimOwner: 'genuine-intrinsic-worker',
-            compositionRevision,
-            maxDeliveries: 1,
-            now,
-            registrations: [worker],
-            subscriptions: extractOutboxWorkerSubscriptions([worker]),
+          Effect.gen(function* nativeHandlerLeaseLifetime() {
+            const completed = yield* makeOutboxRuntime(repository).runCycle({
+              claimOwner: 'genuine-intrinsic-worker',
+              compositionRevision,
+              maxDeliveries: 1,
+              now,
+              registrations: [worker],
+              subscriptions: extractOutboxWorkerSubscriptions([worker]),
+            });
+            expect(completed.succeeded).toBe(1);
+            const retained = yield* Deferred.await(retainedHandler);
+            const closed = yield* Effect.flip(
+              readWorkerModuleOperationRequirement(requirementKey, retained.context).pipe(
+                Effect.provide(retained.services),
+              ),
+            );
+            expect(closed.code).toBe('module_operation_requirement_unavailable');
+            return completed;
           }),
         );
         expect(result.claimed).toBe(1);
@@ -417,6 +512,95 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
         expect(done?.status).toBe('done');
         expect(done?.attemptsCount).toBe(1);
       }),
+  );
+  suite.effect('separates worker facts for concurrent actual native handler contexts', () =>
+    Effect.gen(function* concurrentNativeWorkerFacts() {
+      const requirementKey = 'consumer.fixture.require-current-worker';
+      const contexts: OutboxWorkerHandlerContext[] = [];
+      const bothEntered = yield* Deferred.make<null>();
+      const completedContexts = new Set<string>();
+      const worker = defineOutboxWorker(
+        { ...makeWorker('consumer.fixture.concurrent-facts').descriptor, leaseDurationMs: 30_000 },
+        (_payload, context) =>
+          Effect.gen(function* concurrentWorkerFactHandler() {
+            contexts.push(context);
+            if (contexts.length === 2) {
+              yield* Deferred.succeed(bothEntered, null);
+            }
+            yield* Deferred.await(bothEntered);
+            const peer = Option.getOrThrow(Option.fromNullishOr(contexts[0] === context ? contexts[1] : contexts[0]));
+            const fact = yield* readWorkerModuleOperationRequirement(requirementKey, context);
+            expect(fact.kind).toBe('worker');
+            expect(fact.workerKey).toBe(context.workerKey);
+            expect(fact.tenantId).toBe(context.tenantId);
+            expect(Object.isFrozen(fact)).toBe(true);
+            expect(Object.hasOwn(fact, 'consumerSchemaVersion')).toBe(false);
+            expect((yield* Effect.flip(readWorkerModuleOperationRequirement(requirementKey, peer))).code).toBe(
+              'module_operation_requirement_unavailable',
+            );
+            completedContexts.add(context.deliveryId);
+          }),
+      );
+      const { claimFixture, now, repository } = yield* prepareWorkerFact(worker, requirementKey, 2);
+      const results = yield* claimFixture.bind(
+        [worker],
+        Effect.all(
+          ['native-concurrent-first', 'native-concurrent-second'].map((claimOwner) =>
+            makeOutboxRuntime(repository).runCycle({
+              claimOwner,
+              compositionRevision: claimFixture.revision,
+              maxDeliveries: 1,
+              now,
+              registrations: [worker],
+              subscriptions: extractOutboxWorkerSubscriptions([worker]),
+            }),
+          ),
+          { concurrency: 2 },
+        ),
+      );
+      expect(results.map((result) => result.succeeded)).toEqual([1, 1]);
+      expect(completedContexts.size).toBe(2);
+      expect(new Set(contexts.map((context) => context.claimId)).size).toBe(2);
+    }),
+  );
+  suite.effect('closes worker facts when the native process binding exits during a genuine handler lease', () =>
+    Effect.gen(function* nativeProcessBindingClosesWorkerFact() {
+      const requirementKey = 'consumer.fixture.require-process-proof';
+      const entered = yield* Deferred.make<null>();
+      const release = yield* Deferred.make<null>();
+      const rejected: string[] = [];
+      const worker = defineOutboxWorker(
+        { ...makeWorker('consumer.fixture.process-facts').descriptor, leaseDurationMs: 30_000 },
+        (_payload, context) =>
+          Effect.gen(function* suspendedNativeWorkerFactHandler() {
+            expect((yield* readWorkerModuleOperationRequirement(requirementKey, context)).kind).toBe('worker');
+            yield* Deferred.succeed(entered, null);
+            yield* Deferred.await(release);
+            rejected.push((yield* Effect.flip(readWorkerModuleOperationRequirement(requirementKey, context))).code);
+          }),
+      );
+      const { claimFixture, now, repository } = yield* prepareWorkerFact(worker, requirementKey);
+      const running = yield* claimFixture.bind(
+        [worker],
+        Effect.gen(function* startActualNativeHandler() {
+          const fiber = yield* makeOutboxRuntime(repository)
+            .runCycle({
+              claimOwner: 'native-closed-process',
+              compositionRevision: claimFixture.revision,
+              maxDeliveries: 1,
+              now,
+              registrations: [worker],
+              subscriptions: extractOutboxWorkerSubscriptions([worker]),
+            })
+            .pipe(Effect.forkScoped);
+          yield* Deferred.await(entered);
+          return fiber;
+        }),
+      );
+      yield* Deferred.succeed(release, null);
+      expect((yield* Fiber.join(running)).succeeded).toBe(1);
+      expect(rejected).toEqual(['module_operation_requirement_unavailable']);
+    }),
   );
   suite.effect('does not accept a copied native claim as operation authority', () =>
     Effect.gen(function* copiedClaimCannotBorrowExecution() {

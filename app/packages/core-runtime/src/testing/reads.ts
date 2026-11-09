@@ -89,6 +89,9 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
       if (/^(?:begin|commit|rollback|savepoint|release savepoint)(?:\s|$)/u.test(text)) {
         return [];
       }
+      if (text === 'select current_user::text as role') {
+        return [{ role: connection.role }];
+      }
       if (text === "select current_setting('transaction_isolation') as isolation") {
         return [{ isolation: 'read committed' }];
       }

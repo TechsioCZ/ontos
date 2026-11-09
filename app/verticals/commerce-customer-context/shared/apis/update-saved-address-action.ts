@@ -3,11 +3,14 @@
 // @ontos-action-http-slug update-saved-address
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { UpdateSavedAddressPayloadSchema, UpdateSavedAddressResultSchema } from '../actions/update-saved-address.ts';
 
 export { UpdateSavedAddressPayloadSchema } from '../actions/update-saved-address.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 export const UpdateSavedAddressActionInvalidProblemSchema = makeProblemDetailsSchema(
   'UpdateSavedAddressActionInvalidProblem',
   400,
@@ -42,6 +45,9 @@ export const UpdateSavedAddressActionConflictProblemSchema = makeProblemDetailsS
       'action_request_hash_conflict',
       'action_invocation_state_invalid',
       'saved_address_conflict',
+      'saved_address_source_conflict',
+      'saved_address_source_stale',
+      'saved_address_source_target_already_bound',
     ]),
   },
 );
@@ -53,6 +59,9 @@ export const UpdateSavedAddressActionIneligibleProblemSchema = makeProblemDetail
       'action_policy_denied',
       'saved_address_invalid',
       'saved_address_reconciliation_required',
+      'saved_address_source_authority_denied',
+      'saved_address_source_privacy_denied',
+      'saved_address_source_recovery_required',
       'saved_address_source_transition_required',
     ]),
   },

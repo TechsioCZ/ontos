@@ -1,3 +1,5 @@
+import { createRequire, isBuiltin } from 'node:module';
+
 import { NodeServices } from '@effect/platform-node';
 import {
   Array as EffectArray,
@@ -8,13 +10,20 @@ import {
   ManagedRuntime,
   Match,
   Order,
+  Option,
   Path,
+  Predicate,
   Schema,
 } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
 import { parseSync, Visitor } from 'oxc-parser';
+import { parse as parseYaml } from 'yaml';
 import type {
   ArrowFunctionExpression,
+  CallExpression,
+  Class as AstClass,
+  TSType,
+  Declaration,
   Expression,
   Function as AstFunction,
   ImportDeclaration,
@@ -23,7 +32,26 @@ import type {
   Span,
   TSTypeAnnotation,
   TSTypeReference,
+  TSSignature,
+  PropertyKey,
 } from 'oxc-parser';
+
+import {
+  bindingContains,
+  bindingShadows as bindingShadowed,
+  hasClosedClassConstructor,
+  hasClosedNativeObjectNamespace as nativeObjectClosed,
+} from './scoped-proof-custody.mts';
+import { makeScopedContextFactoryResolver } from './scoped-context-factory-proof.mts';
+import type {
+  NativeSqlRuntimeProofEnvironment,
+  ScopedContextFactoryCandidate,
+  ScopedCapturedValueRequest,
+  ScopedCapturedValue,
+} from './scoped-context-factory-proof.mts';
+import type { PgDecoderImportEdge } from './pg-decoder-custody-proof.mts';
+import { provesScopedCoreBooleanFact } from './scoped-core-fact-proof.mts';
+import { provedShellGatewayDatabaseSources } from './shell-gateway-database-proof.mts';
 
 export interface DatabaseAccessViolation {
   readonly file: string;
@@ -32,7 +60,9 @@ export interface DatabaseAccessViolation {
   readonly reason: string;
 }
 
-const sourceExtensions = new Set(['.ts', '.tsx', '.mts']);
+const sourceExtensions = new Set(['.ts', '.tsx', '.mts', '.cts', '.cjs', '.mjs']);
+const packageManifestName = 'package.json';
+const nativeRegistryOtherEdge = Object.freeze({ kind: 'other-native' } as const);
 const ignoredDirectories = new Set(['dist', 'node_modules', 'repos', '.output', '.codex']);
 const coreRuntimeSourcePrefix = 'packages/core-runtime/src/';
 
@@ -120,14 +150,17 @@ const candidatesFor = (path: Path.Path, unresolved: string): readonly string[] =
       `${unresolved}.ts`,
       `${unresolved}.tsx`,
       `${unresolved}.mts`,
+      `${unresolved}.cts`,
+      `${unresolved}.cjs`,
+      `${unresolved}.mjs`,
       path.join(unresolved, 'index.ts'),
     ];
   }
-  if (extension !== '.js' && extension !== '.mjs') {
+  if (extension !== '.js' && extension !== '.mjs' && extension !== '.cjs') {
     return [unresolved];
   }
   const stem = unresolved.slice(0, -extension.length);
-  return [unresolved, `${stem}.ts`, `${stem}.mts`];
+  return [unresolved, `${stem}.ts`, `${stem}.mts`, `${stem}.cts`];
 };
 
 const resolveLocalSource = (
@@ -225,14 +258,1218 @@ const executorImport = (
 
 type ImplementationFunction = ArrowFunctionExpression | AstFunction;
 
-// Scope is immutable metadata, whereas indexed query methods remain database capabilities.
-const isScopeProjection = (expression: Expression): boolean =>
+const staticProperty = (key: PropertyKey): string | undefined => {
+  if (key.type === 'Identifier') {
+    return key.name;
+  }
+  return key.type === 'Literal' && Schema.is(Schema.String)(key.value) && /^[A-Za-z_$][\w$]*$/u.test(key.value)
+    ? key.value
+    : undefined;
+};
+
+const bindingNames = (pattern: ParamPattern): readonly string[] => {
+  if (pattern.type === 'TSParameterProperty') {
+    return bindingNames(pattern.parameter);
+  }
+  if (pattern.type === 'Identifier') {
+    return [pattern.name];
+  }
+  if (pattern.type === 'AssignmentPattern') {
+    return bindingNames(pattern.left);
+  }
+  if (pattern.type === 'RestElement') {
+    return bindingNames(pattern.argument);
+  }
+  if (pattern.type === 'ArrayPattern') {
+    return pattern.elements.flatMap((element) => (element === null ? [] : bindingNames(element)));
+  }
+  return pattern.properties.flatMap((property) =>
+    bindingNames(property.type === 'RestElement' ? property.argument : property.value),
+  );
+};
+
+const expressionPath = (expression: Expression): string | undefined => {
+  if (expression.type === 'Identifier') {
+    return expression.name;
+  }
+  if (expression.type === 'MemberExpression' && !expression.computed && expression.property.type === 'Identifier') {
+    const parent = expressionPath(expression.object);
+    return parent === undefined ? undefined : `${parent}.${expression.property.name}`;
+  }
+  return undefined;
+};
+
+// Only the genuine installed executor has a metadata-only scope projection. Unknown consumers
+// may return an arbitrary object whose `scope` property is itself the original executor.
+const nativeScopeMetadata = (expression: Expression, receivers: ReadonlySet<string>): boolean => {
+  const path = expressionPath(expression);
+  if (
+    path !== undefined &&
+    [...receivers].some((receiver) => path === `${receiver}.scope` || path.startsWith(`${receiver}.scope.`))
+  ) {
+    return true;
+  }
+  if (expression.type !== 'MemberExpression') {
+    return false;
+  }
+  if (expression.computed && expression.property.type === 'Literal' && expression.property.value === 'scope') {
+    const object = expressionPath(expression.object);
+    if (object !== undefined && receivers.has(object)) {
+      return true;
+    }
+  }
+  return nativeScopeMetadata(expression.object, receivers);
+};
+
+interface ScopedProofModule {
+  readonly aliases: ReadonlyMap<string, string>;
+  readonly declaredMemberReceivers: ReadonlySet<string>;
+  readonly file: string;
+  readonly functions: ReadonlyMap<string, ImplementationFunction>;
+  readonly privateFields: ReadonlyMap<ImplementationFunction, ReadonlySet<string>>;
+  readonly program: Program;
+  readonly shadowed: ReadonlySet<string>;
+}
+
+interface ScopedResolvedFunction {
+  readonly captures?: ScopedContextFactoryCandidate;
+  readonly implementation: ImplementationFunction;
+  readonly module: ScopedProofModule;
+  readonly strictConsumers?: boolean;
+}
+
+interface ScopedProofGraph {
+  readonly captureValue: (request: ScopedCapturedValueRequest) => ScopedCapturedValue | undefined;
+  readonly module: (file: string) => ScopedProofModule | undefined;
+  readonly provesBooleanFact: (resolved: ScopedResolvedFunction) => boolean;
+  readonly resolve: (module: ScopedProofModule, name: string) => ScopedResolvedFunction | undefined;
+  readonly resolveCall: (
+    module: ScopedProofModule,
+    call: CallExpression,
+    inspectOwnDataMethod?: boolean,
+  ) => readonly ScopedResolvedFunction[] | undefined;
+  readonly resolveDeclaredValue: (
+    module: ScopedProofModule,
+    expression: Expression,
+  ) => ScopedResolvedFunction | undefined;
+}
+
+interface ScopedProof {
+  readonly graph: ScopedProofGraph;
+  readonly module: ScopedProofModule;
+}
+interface ScopedProofIndex {
+  readonly graph: ScopedProofGraph;
+  readonly modules: ReadonlyMap<string, ScopedProofModule>;
+}
+
+const nativeNamespaceClosed = (program: Program, name: string): boolean => {
+  if (bindingShadowed(program, name)) {
+    return false;
+  }
+  let escaped = false;
+  new Visitor({
+    AssignmentExpression: (node) => {
+      if (node.left.type === 'MemberExpression') {
+        const path = expressionPath(node.left.object);
+        escaped ||= path === name || path?.startsWith(`${name}.`) === true;
+      }
+    },
+    CallExpression: (node) => {
+      escaped ||= node.arguments.some((argument) => argument.type === 'Identifier' && argument.name === name);
+    },
+    VariableDeclarator: (node) => {
+      escaped ||= node.init?.type === 'Identifier' && node.init.name === name;
+    },
+  }).visit(program);
+  return !escaped;
+};
+
+const nativeEffectMembers = new Set(Object.keys(Effect));
+const nativePredicateMembers = new Set(Object.keys(Predicate));
+const nativeMemberNames = (imported: string): ReadonlySet<string> => {
+  if (imported === 'Effect') {
+    return nativeEffectMembers;
+  }
+  if (imported === 'Predicate') {
+    return nativePredicateMembers;
+  }
+  return new Set();
+};
+
+const nativeNamespaceReferencesClosed = (program: Program, name: string, members: ReadonlySet<string>): boolean => {
+  if (!nativeNamespaceClosed(program, name)) {
+    return false;
+  }
+  const uses: Span[] = [];
+  new Visitor({
+    ImportDeclaration: (node) => {
+      for (const specifier of node.specifiers) {
+        uses.push(specifier.local);
+        if (specifier.type === 'ImportSpecifier') {
+          uses.push(specifier.imported);
+        }
+      }
+    },
+    MemberExpression: (node) => {
+      if (
+        node.object.type === 'Identifier' &&
+        node.object.name === name &&
+        members.has(staticProperty(node.property) ?? '')
+      ) {
+        uses.push(node.object);
+      }
+    },
+    TSTypeQuery: (node) => {
+      uses.push(node.exprName);
+    },
+    TSTypeReference: (node) => {
+      uses.push(node.typeName);
+    },
+  }).visit(program);
+  let escaped = false;
+  new Visitor({
+    Identifier: (node) => {
+      if (node.name === name && !uses.some((use) => use.start <= node.start && node.end <= use.end)) {
+        escaped = true;
+      }
+    },
+  }).visit(program);
+  return !escaped;
+};
+
+const nativeImportCohortClosed = (program: Program, imported: string, source: string): boolean => {
+  const members = nativeMemberNames(imported);
+  return program.body.every((statement) => {
+    if (statement.type !== 'ImportDeclaration' || statement.importKind === 'type') {
+      return true;
+    }
+    return statement.specifiers.every((specifier) => {
+      if (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type') {
+        return true;
+      }
+      if (
+        statement.source.value === source &&
+        specifier.type === 'ImportSpecifier' &&
+        specifier.imported.type === 'Identifier' &&
+        specifier.imported.name === imported
+      ) {
+        return nativeNamespaceReferencesClosed(program, specifier.local.name, members);
+      }
+      if (statement.source.value === `${source}/${imported}` && specifier.type === 'ImportNamespaceSpecifier') {
+        return nativeNamespaceReferencesClosed(program, specifier.local.name, members);
+      }
+      if (statement.source.value === source && specifier.type === 'ImportNamespaceSpecifier') {
+        return false;
+      }
+      return true;
+    });
+  });
+};
+
+const declaresNamedValueImport = (program: Program, local: string, imported: string, source: string): boolean =>
+  program.body.some(
+    (statement) =>
+      statement.type === 'ImportDeclaration' &&
+      statement.source.value === source &&
+      statement.importKind !== 'type' &&
+      statement.specifiers.some(
+        (specifier) =>
+          specifier.type === 'ImportSpecifier' &&
+          specifier.importKind !== 'type' &&
+          specifier.local.name === local &&
+          specifier.imported.type === 'Identifier' &&
+          specifier.imported.name === imported,
+      ),
+  );
+
+const nativeImportNamed = (program: Program, local: string, imported: string, source: string): boolean =>
+  nativeImportCohortClosed(program, imported, source) && declaresNamedValueImport(program, local, imported, source);
+
+const implementationOf = (
+  expression: Expression | null | undefined,
+  program: Program,
+): ImplementationFunction | undefined => {
+  if (expression?.type === 'ArrowFunctionExpression' || expression?.type === 'FunctionExpression') {
+    return expression;
+  }
+  // Effect.fn returns the exact implementation's Effect; arbitrary decorator calls are unknown.
+  if (
+    expression?.type !== 'CallExpression' ||
+    expression.arguments.length !== 1 ||
+    expression.callee.type !== 'CallExpression'
+  ) {
+    return undefined;
+  }
+  const { callee } = expression.callee;
+  const [implementation] = expression.arguments;
+  return callee.type === 'MemberExpression' &&
+    !callee.computed &&
+    callee.object.type === 'Identifier' &&
+    callee.property.type === 'Identifier' &&
+    callee.property.name === 'fn' &&
+    nativeImportNamed(program, callee.object.name, 'Effect', 'effect') &&
+    (implementation?.type === 'ArrowFunctionExpression' || implementation?.type === 'FunctionExpression')
+    ? implementation
+    : undefined;
+};
+
+const unstableScopedBindings = (program: Program): ReadonlySet<string> => {
+  const shadowed = new Set<string>();
+  const counts = new Map<string, number>();
+  const declare = (name: string): void => {
+    const count = (counts.get(name) ?? 0) + 1;
+    counts.set(name, count);
+    if (count > 1) {
+      shadowed.add(name);
+    }
+  };
+  const parameters = (node: ImplementationFunction): void => {
+    for (const parameter of node.params) {
+      for (const name of bindingNames(parameter)) {
+        shadowed.add(name);
+      }
+    }
+  };
+  new Visitor({
+    ArrowFunctionExpression: parameters,
+    AssignmentExpression: (node) => {
+      if (node.left.type === 'Identifier') {
+        shadowed.add(node.left.name);
+      }
+    },
+    CatchClause: (node) => {
+      if (node.param !== null && node.param !== undefined) {
+        for (const name of bindingNames(node.param)) {
+          shadowed.add(name);
+        }
+      }
+    },
+    FunctionDeclaration: (node) => {
+      parameters(node);
+      if (node.id !== null) {
+        declare(node.id.name);
+      }
+    },
+    FunctionExpression: parameters,
+    ImportDeclaration: (node) => {
+      for (const specifier of node.specifiers) {
+        declare(specifier.local.name);
+      }
+    },
+    UpdateExpression: (node) => {
+      if (node.argument.type === 'Identifier') {
+        shadowed.add(node.argument.name);
+      }
+    },
+    VariableDeclarator: (node) => {
+      for (const name of bindingNames(node.id)) {
+        declare(name);
+      }
+    },
+  }).visit(program);
+  return shadowed;
+};
+
+const scalarAnnotation = (type: TSType | null | undefined): boolean => {
+  if (type?.type === 'TSUnionType') {
+    return type.types.every(scalarAnnotation);
+  }
+  return (
+    type !== null &&
+    type !== undefined &&
+    ['TSStringKeyword', 'TSBooleanKeyword', 'TSNumberKeyword', 'TSUndefinedKeyword', 'TSNullKeyword'].includes(
+      type.type,
+    )
+  );
+};
+
+const scalarProperty = (type: TSType | null | undefined, name: string): boolean => {
+  if (type?.type === 'TSIntersectionType') {
+    return type.types.some((part) => scalarProperty(part, name));
+  }
+  return (
+    type?.type === 'TSTypeLiteral' &&
+    type.members.some(
+      (member) =>
+        member.type === 'TSPropertySignature' &&
+        !member.computed &&
+        staticProperty(member.key) === name &&
+        scalarAnnotation(member.typeAnnotation?.typeAnnotation),
+    )
+  );
+};
+
+const scalarParameterClosed = (
+  implementation: ImplementationFunction,
+  name: string,
+  program: Program,
+  allowedBinding?: Span,
+): boolean => {
+  let changed = false;
+  const within = (node: Span): boolean => implementation.start <= node.start && node.end <= implementation.end;
+  const parameters = (node: ImplementationFunction): void => {
+    if (node !== implementation && within(node) && node.params.some((parameter) => bindingContains(parameter, name))) {
+      changed = true;
+    }
+  };
+  new Visitor({
+    ArrowFunctionExpression: parameters,
+    AssignmentExpression: (node) => {
+      if (!within(node)) {
+        return;
+      }
+      const target = node.left;
+      if (target.type === 'Identifier') {
+        changed ||= target.name === name;
+      } else if (target.type === 'MemberExpression') {
+        const path = expressionPath(target);
+        changed ||= path === name || path?.startsWith(`${name}.`) === true;
+      } else {
+        changed = true;
+      }
+    },
+    CatchClause: (node) => {
+      changed ||= within(node) && node.param !== null && node.param !== undefined && bindingContains(node.param, name);
+    },
+    ClassDeclaration: (node) => {
+      changed ||= within(node) && node.id?.name === name;
+    },
+    ClassExpression: (node) => {
+      changed ||= within(node) && node.id?.name === name;
+    },
+    FunctionDeclaration: (node) => {
+      parameters(node);
+      changed ||= within(node) && node.id?.name === name;
+    },
+    FunctionExpression: (node) => {
+      parameters(node);
+      changed ||= within(node) && node.id?.name === name;
+    },
+    UpdateExpression: (node) => {
+      changed ||= within(node) && node.argument.type === 'Identifier' && node.argument.name === name;
+    },
+    VariableDeclarator: (node) => {
+      changed ||=
+        within(node) &&
+        bindingContains(node.id, name) &&
+        (allowedBinding === undefined || node.id.start !== allowedBinding.start || node.id.end !== allowedBinding.end);
+    },
+  }).visit(program);
+  return !changed;
+};
+
+const scalarProjectionClosed = (
+  implementation: ImplementationFunction,
+  parameter: ParamPattern,
+  name: string,
+  program: Program,
+): boolean => {
+  const reads: Span[] = [parameter];
+  new Visitor({
+    MemberExpression: (node) => {
+      if (
+        implementation.start <= node.start &&
+        node.end <= implementation.end &&
+        !node.computed &&
+        node.object.type === 'Identifier' &&
+        node.object.name === name
+      ) {
+        reads.push(node.object);
+      }
+    },
+  }).visit(program);
+  let escaped = false;
+  new Visitor({
+    Identifier: (node) => {
+      if (
+        implementation.start <= node.start &&
+        node.end <= implementation.end &&
+        node.name === name &&
+        !reads.some((read) => read.start <= node.start && node.end <= read.end)
+      ) {
+        escaped = true;
+      }
+    },
+  }).visit(program);
+  return !escaped;
+};
+
+const scalarConstructorArgument = (expression: Expression, position: number, program: Program): boolean => {
+  if (expression.type === 'Literal') {
+    return Schema.is(Schema.Union([Schema.String, Schema.Number, Schema.Boolean, Schema.Null]))(expression.value);
+  }
+  if (expression.type === 'Identifier' && expression.name === 'undefined' && !bindingShadowed(program, 'undefined')) {
+    return true;
+  }
+  const reference =
+    expression.type === 'MemberExpression' &&
+    !expression.computed &&
+    expression.object.type === 'Identifier' &&
+    expression.property.type === 'Identifier'
+      ? { name: expression.object.name, property: expression.property.name }
+      : undefined;
+  const name = reference?.name ?? (expression.type === 'Identifier' ? expression.name : undefined);
+  if (name === undefined) {
+    return false;
+  }
+  const candidates: { readonly node: ImplementationFunction; readonly parameter: ParamPattern }[] = [];
+  const inspect = (node: ImplementationFunction): void => {
+    if (node.start <= position && position <= node.end) {
+      for (const parameter of node.params) {
+        if (bindingContains(parameter, name)) {
+          candidates.push({ node, parameter });
+        }
+      }
+    }
+  };
+  new Visitor({ ArrowFunctionExpression: inspect, FunctionDeclaration: inspect, FunctionExpression: inspect }).visit(
+    program,
+  );
+  const [candidate] = EffectArray.sort(
+    candidates,
+    Order.mapInput(Order.Number, (item: { readonly node: ImplementationFunction }) => item.node.end - item.node.start),
+  );
+  if (candidate?.parameter.type !== 'Identifier' || !scalarParameterClosed(candidate.node, name, program)) {
+    return false;
+  }
+  return reference === undefined
+    ? scalarAnnotation(candidate.parameter.typeAnnotation?.typeAnnotation)
+    : scalarProjectionClosed(candidate.node, candidate.parameter, name, program) &&
+        scalarProperty(candidate.parameter.typeAnnotation?.typeAnnotation, reference.property);
+};
+
+const classScalarFields = (declaration: AstClass, program: Program): ReadonlySet<string> => {
+  const fields = new Set(
+    declaration.body.body.flatMap((member) =>
+      member.type === 'PropertyDefinition' &&
+      member.readonly === true &&
+      !member.static &&
+      member.key.type === 'PrivateIdentifier' &&
+      member.value === null &&
+      scalarAnnotation(member.typeAnnotation?.typeAnnotation)
+        ? [member.key.name]
+        : [],
+    ),
+  );
+  const initializer = declaration.body.body.find(
+    (member) => member.type === 'MethodDefinition' && member.kind === 'constructor',
+  );
+  const scalarParameters = new Set(
+    initializer?.type === 'MethodDefinition'
+      ? initializer.value.params.flatMap((parameter) =>
+          parameter.type === 'Identifier' && scalarAnnotation(parameter.typeAnnotation?.typeAnnotation)
+            ? [parameter.name]
+            : [],
+        )
+      : [],
+  );
+  const positions = new Map<string, Set<number>>();
+  new Visitor({
+    AssignmentExpression: (node) => {
+      const target = node.left;
+      if (
+        node.start < declaration.start ||
+        declaration.end < node.end ||
+        target.type !== 'MemberExpression' ||
+        target.property.type !== 'PrivateIdentifier'
+      ) {
+        return;
+      }
+      const inConstructor = initializer !== undefined && initializer.start <= node.start && node.end <= initializer.end;
+      if (
+        !inConstructor ||
+        target.object.type !== 'ThisExpression' ||
+        node.operator !== '=' ||
+        node.right.type !== 'Identifier' ||
+        !scalarParameters.has(node.right.name) ||
+        !scalarConstructorArgument(node.right, node.start, program)
+      ) {
+        fields.delete(target.property.name);
+      } else if (initializer?.type === 'MethodDefinition') {
+        const inputName = node.right.name;
+        const index = initializer.value.params.findIndex(
+          (parameter) => parameter.type === 'Identifier' && parameter.name === inputName,
+        );
+        const indexes = positions.get(target.property.name) ?? new Set<number>();
+        indexes.add(index);
+        positions.set(target.property.name, indexes);
+      }
+    },
+    UpdateExpression: (node) => {
+      if (
+        declaration.start <= node.start &&
+        node.end <= declaration.end &&
+        node.argument.type === 'MemberExpression' &&
+        node.argument.property.type === 'PrivateIdentifier'
+      ) {
+        fields.delete(node.argument.property.name);
+      }
+    },
+  }).visit(program);
+  new Visitor({
+    NewExpression: (node) => {
+      if (node.callee.type !== 'Identifier' || node.callee.name !== declaration.id?.name) {
+        return;
+      }
+      for (const [field, indexes] of positions) {
+        for (const index of indexes) {
+          const argument = node.arguments[index];
+          if (
+            argument !== undefined &&
+            (argument.type === 'SpreadElement' || !scalarConstructorArgument(argument, node.start, program))
+          ) {
+            fields.delete(field);
+          }
+        }
+      }
+    },
+  }).visit(program);
+  return fields;
+};
+
+const scopedStaticMethods = (
+  program: Program,
+): ReadonlyMap<string, { readonly fields: ReadonlySet<string>; readonly implementation: ImplementationFunction }> => {
+  const methods = new Map<
+    string,
+    { readonly fields: ReadonlySet<string>; readonly implementation: ImplementationFunction }
+  >();
+  new Visitor({
+    ClassDeclaration: (declaration) => {
+      if (
+        declaration.id === null ||
+        declaration.superClass !== null ||
+        !hasClosedClassConstructor(declaration, program)
+      ) {
+        return;
+      }
+      const fields = classScalarFields(declaration, program);
+      for (const member of declaration.body.body) {
+        if (
+          member.type === 'MethodDefinition' &&
+          member.static &&
+          member.kind === 'method' &&
+          !member.computed &&
+          member.key.type === 'Identifier'
+        ) {
+          methods.set(`${declaration.id.name}.${member.key.name}`, { fields, implementation: member.value });
+        }
+      }
+    },
+  }).visit(program);
+  return methods;
+};
+
+const ownsRecordInitializer = (value: Expression | null | undefined): boolean => {
+  if (value?.type === 'ObjectExpression') {
+    return true;
+  }
+  return (
+    value?.type === 'CallExpression' &&
+    value.arguments.length === 1 &&
+    value.arguments[0]?.type === 'ObjectExpression' &&
+    expressionPath(value.callee) === 'Object.freeze'
+  );
+};
+
+const scopedProofModule = (file: string, source: string): ScopedProofModule | undefined => {
+  const parsed = parseSync(file, source, {
+    astType: 'ts',
+    lang: file.endsWith('.tsx') ? 'tsx' : 'ts',
+    sourceType: 'module',
+  });
+  if (parsed.errors.length > 0) {
+    return undefined;
+  }
+  const aliases = new Map<string, string>();
+  const declaredMemberReceivers = new Set<string>();
+  const functions = new Map<string, ImplementationFunction>();
+  const duplicates = new Set<string>();
+  const record = (name: string, implementation: ImplementationFunction): void => {
+    if (functions.has(name)) {
+      duplicates.add(name);
+    }
+    functions.set(name, implementation);
+  };
+  new Visitor({
+    ClassDeclaration: (node) => {
+      if (node.id !== null) {
+        declaredMemberReceivers.add(node.id.name);
+      }
+    },
+    FunctionDeclaration: (node) => {
+      if (node.id !== null) {
+        record(node.id.name, node);
+      }
+    },
+    ImportDeclaration: (node) => {
+      if (node.importKind !== 'type') {
+        for (const specifier of node.specifiers) {
+          if (specifier.type !== 'ImportSpecifier' || specifier.importKind !== 'type') {
+            declaredMemberReceivers.add(specifier.local.name);
+          }
+        }
+      }
+    },
+    VariableDeclaration: (node) => {
+      for (const declaration of node.declarations) {
+        if (declaration.id.type === 'Identifier' && ownsRecordInitializer(declaration.init)) {
+          declaredMemberReceivers.add(declaration.id.name);
+        }
+      }
+      if (node.kind !== 'const') {
+        return;
+      }
+      for (const declaration of node.declarations) {
+        if (declaration.id.type === 'Identifier' && declaration.init?.type === 'Identifier') {
+          aliases.set(declaration.id.name, declaration.init.name);
+        }
+        const implementation = implementationOf(declaration.init, parsed.program);
+        if (declaration.id.type === 'Identifier' && implementation !== undefined) {
+          record(declaration.id.name, implementation);
+        }
+      }
+    },
+  }).visit(parsed.program);
+  for (const name of duplicates) {
+    functions.delete(name);
+  }
+  const privateFields = new Map<ImplementationFunction, ReadonlySet<string>>();
+  for (const [name, method] of scopedStaticMethods(parsed.program)) {
+    functions.set(name, method.implementation);
+    privateFields.set(method.implementation, method.fields);
+  }
+  return {
+    aliases,
+    declaredMemberReceivers,
+    file,
+    functions,
+    privateFields,
+    program: parsed.program,
+    shadowed: unstableScopedBindings(parsed.program),
+  };
+};
+
+// This public Core boundary consumes the already scoped transaction and returns a primitive actor
+// fact Effect. It cannot return the executor. Keep this model bound to the real named value import;
+// similarly named owner functions, other exports, and shadowed bindings are still unknown consumers.
+const isScopedCoreFactConsumer = (name: string, program: Program): boolean => {
+  const imported = program.body.some(
+    (statement) =>
+      statement.type === 'ImportDeclaration' &&
+      statement.source.value === '@app/core-runtime/access/enforcement' &&
+      statement.importKind !== 'type' &&
+      statement.specifiers.some(
+        (specifier) =>
+          specifier.type === 'ImportSpecifier' &&
+          specifier.importKind !== 'type' &&
+          specifier.imported.type === 'Identifier' &&
+          specifier.imported.name === 'readScopedGatewayPrincipalKind' &&
+          specifier.local.name === name,
+      ),
+  );
+  if (!imported) {
+    return false;
+  }
+  let shadowed = false;
+  const inspectParameters = (implementation: ImplementationFunction): void => {
+    shadowed ||= implementation.params.some((parameter) => bindingContains(parameter, name));
+    shadowed ||= implementation.type !== 'ArrowFunctionExpression' && implementation.id?.name === name;
+  };
+  new Visitor({
+    ArrowFunctionExpression: inspectParameters,
+    CatchClause: (clause) => {
+      shadowed ||= clause.param !== null && clause.param !== undefined && bindingContains(clause.param, name);
+    },
+    FunctionDeclaration: inspectParameters,
+    FunctionExpression: inspectParameters,
+    VariableDeclarator: (declaration) => {
+      shadowed ||= bindingContains(declaration.id, name);
+    },
+  }).visit(program);
+  return !shadowed;
+};
+
+const executorArgumentPaths = (
+  argument: Expression,
+  aliases: ReadonlySet<string>,
+  exposes: (expression: Expression | null | undefined) => boolean,
+): readonly string[] => {
+  const path = expressionPath(argument);
+  if (path !== undefined) {
+    return [...aliases].flatMap((alias) => {
+      if (alias === path || path.startsWith(`${alias}.`)) {
+        return [''];
+      }
+      return alias.startsWith(`${path}.`) ? [alias.slice(path.length + 1)] : [];
+    });
+  }
+  if (argument.type === 'ObjectExpression') {
+    return argument.properties.flatMap((property) => {
+      if (property.type === 'SpreadElement') {
+        return executorArgumentPaths(property.argument, aliases, exposes);
+      }
+      const key = staticProperty(property.key);
+      return key === undefined
+        ? ['']
+        : executorArgumentPaths(property.value, aliases, exposes).map((suffix) =>
+            suffix.length === 0 ? key : `${key}.${suffix}`,
+          );
+    });
+  }
+  return exposes(argument) ? [''] : [];
+};
+
+const nativeExecutorPaths = (expression: Expression, receivers: ReadonlySet<string>): readonly string[] => {
+  if (
+    expression.type === 'TSAsExpression' ||
+    expression.type === 'TSNonNullExpression' ||
+    expression.type === 'TSSatisfiesExpression' ||
+    expression.type === 'ParenthesizedExpression'
+  ) {
+    return nativeExecutorPaths(expression.expression, receivers);
+  }
+  const path = expressionPath(expression);
+  if (path !== undefined) {
+    return [...receivers].flatMap((receiver) => {
+      if (receiver === path) {
+        return [''];
+      }
+      return receiver.startsWith(`${path}.`) ? [receiver.slice(path.length + 1)] : [];
+    });
+  }
+  if (expression.type !== 'ObjectExpression') {
+    return [];
+  }
+  const keys = new Set<string>();
+  for (const property of expression.properties) {
+    if (property.type !== 'Property' || property.computed || property.kind !== 'init') {
+      return [];
+    }
+    const key = staticProperty(property.key);
+    if (key === undefined || key === '__proto__' || keys.has(key)) {
+      return [];
+    }
+    keys.add(key);
+  }
+  return expression.properties.flatMap((property) => {
+    if (property.type !== 'Property') {
+      return [];
+    }
+    const key = staticProperty(property.key);
+    return key === undefined
+      ? []
+      : nativeExecutorPaths(property.value, receivers).map((suffix) =>
+          suffix.length === 0 ? key : `${key}.${suffix}`,
+        );
+  });
+};
+
+const nativeExecutorBindings = (
+  pattern: ParamPattern,
+  expression: Expression,
+  receivers: ReadonlySet<string>,
+): readonly string[] => {
+  const paths = nativeExecutorPaths(expression, receivers);
+  if (pattern.type === 'Identifier') {
+    return paths.map((suffix) => (suffix.length === 0 ? pattern.name : `${pattern.name}.${suffix}`));
+  }
+  if (pattern.type !== 'ObjectPattern') {
+    return [];
+  }
+  return pattern.properties.flatMap((property) => {
+    if (property.type !== 'Property' || property.computed || property.value.type !== 'Identifier') {
+      return [];
+    }
+    const key = staticProperty(property.key);
+    const { name } = property.value;
+    if (key === undefined) {
+      return [];
+    }
+    return paths.flatMap((path) => {
+      if (path === key) {
+        return [name];
+      }
+      return path.startsWith(`${key}.`) ? [`${name}.${path.slice(key.length + 1)}`] : [];
+    });
+  });
+};
+
+const nativeQueryReceiver = (callee: Expression, receivers: ReadonlySet<string>): boolean => {
+  if (callee.type !== 'MemberExpression' || callee.computed || callee.property.type !== 'Identifier') {
+    return false;
+  }
+  const receiver = expressionPath(callee.object);
+  return (
+    receiver !== undefined &&
+    receivers.has(receiver) &&
+    ['select', 'selectDistinct', 'insert', 'update', 'delete', 'execute', 'invoke'].includes(callee.property.name)
+  );
+};
+
+const isPrimitiveScopedFactCall = (
+  value: CallExpression,
+  exposedArguments: readonly boolean[],
+  program: Program,
+): boolean =>
+  value.callee.type === 'Identifier' &&
+  value.arguments.length === 2 &&
+  exposedArguments[0] &&
+  !exposedArguments[1] &&
+  isScopedCoreFactConsumer(value.callee.name, program);
+
+const declaresEffectValueImport = (program: Program, local: string): boolean =>
+  declaresNamedValueImport(program, local, 'Effect', 'effect') ||
+  program.body.some(
+    (statement) =>
+      statement.type === 'ImportDeclaration' &&
+      statement.source.value === 'effect/Effect' &&
+      statement.importKind !== 'type' &&
+      statement.specifiers.some(
+        (specifier) => specifier.type === 'ImportNamespaceSpecifier' && specifier.local.name === local,
+      ),
+  );
+
+const hasUnprovedMemberHandoff = (call: CallExpression, program: Program, proof: ScopedProof | undefined): boolean => {
+  const { callee } = call;
+  if (callee.type !== 'MemberExpression' || callee.object.type !== 'Identifier') {
+    return false;
+  }
+  const { name } = callee.object;
+  const receiver = proof?.graph.captureValue({ expression: callee.object, file: proof.module.file });
+  if (receiver !== undefined) {
+    // Respect a resolved lexical binding before consulting declaration inventory.
+    return ownsRecordInitializer(receiver.expression);
+  }
+  if (declaresEffectValueImport(program, name)) {
+    const property =
+      callee.computed && callee.property.type !== 'Literal' ? undefined : staticProperty(callee.property);
+    // Keep raw operands to real native Effect calls, including its value carriers.
+    // A declared Effect binding with broken custody is still a raw handoff.
+    return (
+      !nativeImportCohortClosed(program, 'Effect', 'effect') ||
+      (property !== undefined && nativeEffectMembers.has(property))
+    );
+  }
+  // An unresolvable declared receiver still lacks custody of the raw argument.
+  return proof?.module.declaredMemberReceivers.has(name) === true;
+};
+
+const executorCallExposes = (
+  value: CallExpression,
+  aliases: ReadonlySet<string>,
+  receivers: ReadonlySet<string>,
+  exposes: (expression: Expression | null | undefined) => boolean,
+  program: Program,
+  proof: ScopedProof | undefined,
+  recurse: (
+    implementation: ImplementationFunction,
+    names: ReadonlySet<string>,
+    nativeNames: ReadonlySet<string>,
+    resolved: ScopedResolvedFunction | undefined,
+  ) => boolean,
+  requireResultWitness = false,
+): boolean => {
+  const exposedArguments = value.arguments.map((argument) =>
+    exposes(argument.type === 'SpreadElement' ? argument.argument : argument),
+  );
+  if (
+    value.callee.type === 'MemberExpression' &&
+    exposes(value.callee.object) &&
+    (!nativeQueryReceiver(value.callee, receivers) || exposedArguments.some(Boolean))
+  ) {
+    return true;
+  }
+  if (value.callee.type === 'Identifier' && exposes(value.callee)) {
+    return true;
+  }
+  if (!exposedArguments.some(Boolean)) {
+    return false;
+  }
+  if (isPrimitiveScopedFactCall(value, exposedArguments, program)) {
+    return false;
+  }
+  const calleePath = expressionPath(value.callee);
+  const resolved = calleePath === undefined ? undefined : proof?.graph.resolve(proof.module, calleePath);
+  const candidates =
+    resolved === undefined ? proof?.graph.resolveCall(proof.module, value, requireResultWitness) : [resolved];
+  if (candidates === undefined) {
+    // Direct opaque calls receive the executor itself. An unresolved member result
+    // alone does not establish that the executor was returned by the dependency.
+    return (
+      !requireResultWitness || value.callee.type === 'Identifier' || hasUnprovedMemberHandoff(value, program, proof)
+    );
+  }
+  return candidates.some((target) => {
+    const [firstArgument] = value.arguments;
+    if (
+      proof !== undefined &&
+      firstArgument !== undefined &&
+      firstArgument.type !== 'SpreadElement' &&
+      exposedArguments[0] &&
+      exposedArguments.every((exposed, index) => index === 0 || !exposed) &&
+      nativeExecutorPaths(firstArgument, receivers).includes('') &&
+      proof.graph.provesBooleanFact(target)
+    ) {
+      return false;
+    }
+    const local = target.implementation;
+    if (
+      exposedArguments.some(
+        (exposed, index) =>
+          exposed && (local.params[index]?.type !== 'Identifier' || value.arguments[index]?.type === 'SpreadElement'),
+      )
+    ) {
+      return true;
+    }
+    const parameterNames = new Set(
+      local.params.flatMap((parameter, index) => {
+        const argument = value.arguments[index];
+        return !exposedArguments[index] ||
+          parameter.type !== 'Identifier' ||
+          argument === undefined ||
+          argument.type === 'SpreadElement'
+          ? []
+          : executorArgumentPaths(argument, aliases, exposes).map((suffix) =>
+              suffix.length === 0 ? parameter.name : `${parameter.name}.${suffix}`,
+            );
+      }),
+    );
+    const nativeParameterNames = new Set(
+      local.params.flatMap((parameter, index) => {
+        const argument = value.arguments[index];
+        return parameter.type !== 'Identifier' || argument === undefined || argument.type === 'SpreadElement'
+          ? []
+          : nativeExecutorPaths(argument, receivers).map((suffix) =>
+              suffix.length === 0 ? parameter.name : `${parameter.name}.${suffix}`,
+            );
+      }),
+    );
+    return recurse(local, parameterNames, nativeParameterNames, target);
+  });
+};
+
+const unwrappedValue = (expression: Expression): Expression => {
+  if (
+    expression.type === 'ChainExpression' ||
+    expression.type === 'ParenthesizedExpression' ||
+    expression.type === 'TSAsExpression' ||
+    expression.type === 'TSSatisfiesExpression' ||
+    expression.type === 'TSNonNullExpression'
+  ) {
+    return unwrappedValue(expression.expression);
+  }
+  return expression;
+};
+
+const nativeDescriptorCall = (expression: Expression, receivers: ReadonlySet<string>, program: Program): boolean => {
+  const call = unwrappedValue(expression);
+  if (
+    call.type !== 'CallExpression' ||
+    call.optional ||
+    call.callee.type !== 'MemberExpression' ||
+    call.callee.computed ||
+    call.callee.object.type !== 'Identifier' ||
+    call.callee.object.name !== 'Object' ||
+    call.callee.property.type !== 'Identifier' ||
+    call.callee.property.name !== 'getOwnPropertyDescriptor' ||
+    call.arguments.length !== 2
+  ) {
+    return false;
+  }
+  const [executor] = call.arguments;
+  if (
+    executor === undefined ||
+    executor.type === 'SpreadElement' ||
+    !nativeExecutorPaths(executor, receivers).includes('')
+  ) {
+    return false;
+  }
+  const imported = program.body.some(
+    (statement) =>
+      statement.type === 'ImportDeclaration' &&
+      statement.specifiers.some((specifier) => specifier.local.name === 'Object'),
+  );
+  return !imported && nativeObjectClosed(program);
+};
+
+const nativeSealValue = (expression: Expression, receivers: ReadonlySet<string>, program: Program): boolean => {
+  const value = unwrappedValue(expression);
+  return (
+    value.type === 'MemberExpression' &&
+    staticProperty(value.property) === 'value' &&
+    nativeDescriptorCall(value.object, receivers, program)
+  );
+};
+
+const immutableSealBinding = (node: ImplementationFunction, binding: Span, name: string, program: Program): boolean => {
+  let constant = false;
+  new Visitor({
+    VariableDeclaration: (declaration) => {
+      constant ||=
+        declaration.kind === 'const' &&
+        declaration.declarations.some((entry) => entry.id.start === binding.start && entry.id.end === binding.end);
+    },
+  }).visit(program);
+  return constant && scalarParameterClosed(node, name, program, binding);
+};
+
+const destructuredExecutorNames = (
+  pattern: ParamPattern,
+  initializer: Expression,
+  aliases: ReadonlySet<string>,
+  receivers: ReadonlySet<string>,
+  exposes: (expression: Expression | null | undefined) => boolean,
+): readonly string[] => {
+  const parent = expressionPath(initializer);
+  if (pattern.type !== 'ObjectPattern' || parent === undefined) {
+    return exposes(initializer) ? bindingNames(pattern) : [];
+  }
+  return pattern.properties.flatMap((property) => {
+    if (property.type === 'RestElement') {
+      return exposes(initializer) ? bindingNames(property.argument) : [];
+    }
+    const key = staticProperty(property.key);
+    if (property.computed || key === undefined) {
+      return exposes(initializer) ? bindingNames(property.value) : [];
+    }
+    const path = `${parent}.${key}`;
+    const tainted = [...aliases].some(
+      (alias) =>
+        (alias === path || alias.startsWith(`${path}.`) || alias === parent) &&
+        ![...receivers].some((receiver) => path === `${receiver}.scope` || path.startsWith(`${receiver}.scope.`)),
+    );
+    return tainted ? bindingNames(property.value) : [];
+  });
+};
+
+const nativeScalarPredicateCall = (expression: CallExpression, program: Program): boolean => {
+  const { callee } = expression;
+  if (
+    !expression.optional &&
+    callee.type === 'MemberExpression' &&
+    !callee.computed &&
+    !callee.optional &&
+    callee.object.type === 'Identifier' &&
+    callee.object.name === 'Object' &&
+    callee.property.type === 'Identifier' &&
+    callee.property.name === 'is' &&
+    nativeObjectClosed(program)
+  ) {
+    return true;
+  }
+  return (
+    !expression.optional &&
+    callee.type === 'MemberExpression' &&
+    !callee.computed &&
+    !callee.optional &&
+    callee.object.type === 'Identifier' &&
+    callee.property.type === 'Identifier' &&
+    callee.property.name === 'isObject' &&
+    nativeImportNamed(program, callee.object.name, 'Predicate', 'effect')
+  );
+};
+
+const capturedExecutor = (value: ScopedCapturedValue, graph: ScopedProofGraph): boolean => {
+  const { parameter: terminal } = value;
+  if (terminal === undefined) {
+    return false;
+  }
+  const module = graph.module(terminal.file);
+  if (module === undefined) {
+    return false;
+  }
+  const names = new Set<string>();
+  for (const statement of module.program.body) {
+    if (statement.type === 'ImportDeclaration' && statement.source.value === '@app/core-runtime') {
+      const imported = executorImport(statement);
+      if (imported?.typeOnly === true) {
+        names.add(imported.localName);
+      }
+    }
+  }
+  const parameter = terminal.implementation.params[terminal.index];
+  if (parameter?.type !== 'Identifier') {
+    return false;
+  }
+  if ([...names].some((name) => typeReferenceNamed(parameter.typeAnnotation, name))) {
+    return true;
+  }
+  return value.frames.some((frame) => {
+    const { expression } = frame;
+    return (
+      frame.file === terminal.file &&
+      expression.type === 'TSAsExpression' &&
+      expression.typeAnnotation.type === 'TSTypeReference' &&
+      expression.typeAnnotation.typeName.type === 'Identifier' &&
+      names.has(expression.typeAnnotation.typeName.name) &&
+      expression.expression.type === 'Identifier' &&
+      expression.expression.name === parameter.name
+    );
+  });
+};
+
+interface ExecutorProofState {
+  readonly evaluatingCaptures: Set<string>;
+  readonly memo: WeakMap<ImplementationFunction, Map<string, boolean>>;
+  remaining: number;
+  readonly requireResultWitness: boolean;
+  strictConsumers: boolean;
+}
+
+const makeExecutorProofState = (strictConsumers = false, requireResultWitness = false): ExecutorProofState => ({
+  evaluatingCaptures: new Set(),
+  memo: new WeakMap(),
+  remaining: 32_768,
+  requireResultWitness,
+  strictConsumers,
+});
+
+const captureFingerprint = (captures: ScopedContextFactoryCandidate | undefined): string =>
+  [...(captures?.capturedBindings ?? [])]
+    .map(([name, ref]) => [name, ref.file, ref.expression.start].join(':'))
+    .join('|');
+
+const capturedProofInputs = (proof: ScopedProof | undefined, captures: ScopedContextFactoryCandidate | undefined) => {
+  const executors = new Set<string>();
+  const values = new Map<string, ScopedCapturedValueRequest>();
+  if (proof === undefined || captures === undefined) {
+    return { executors, values };
+  }
+  for (const [name, ref] of captures.capturedBindings) {
+    const origin = proof.graph.captureValue(ref);
+    if (origin !== undefined && capturedExecutor(origin, proof.graph)) {
+      executors.add(name);
+    }
+    values.set(name, origin ?? ref);
+  }
+  for (const [name, parameter] of captures.capturedParameters) {
+    const origin = { expression: captures.implementation, file: parameter.file, frames: [], parameter };
+    if (!captures.capturedBindings.has(name) && capturedExecutor(origin, proof.graph)) {
+      executors.add(name);
+    }
+  }
+  return { executors, values };
+};
+
+const withoutParameterBindings = (
+  names: ReadonlySet<string>,
+  parameters: readonly ParamPattern[],
+): ReadonlySet<string> => {
+  const bindings = parameters.flatMap(bindingNames);
+  return new Set(
+    [...names].filter((name) => !bindings.some((parameter) => name === parameter || name.startsWith(`${parameter}.`))),
+  );
+};
+
+// Keep the established return check for private parameter casts when extended inference is inconclusive.
+const legacyScopeProjection = (expression: Expression): boolean =>
   expression.type === 'MemberExpression' &&
   ((expression.computed && expression.property.type === 'Literal' && expression.property.value === 'scope') ||
     (!expression.computed && expression.property.type === 'Identifier' && expression.property.name === 'scope'));
 
-/** Follow direct value escapes without confusing a method which closes over a transaction with the transaction. */
-const returnsExecutorValue = (
+const legacyReturnsExecutorValue = (
   node: ImplementationFunction,
   names: ReadonlySet<string>,
   functions: ReadonlyMap<string, ImplementationFunction>,
@@ -257,7 +1494,7 @@ const returnsExecutorValue = (
         { type: 'TSNonNullExpression' },
         (value) => exposes(value.expression),
       ),
-      Match.when({ type: 'MemberExpression' }, (value) => !isScopeProjection(value) && exposes(value.object)),
+      Match.when({ type: 'MemberExpression' }, (value) => !legacyScopeProjection(value) && exposes(value.object)),
       Match.when({ type: 'ObjectExpression' }, (value) =>
         value.properties.some((property) =>
           exposes(property.type === 'SpreadElement' ? property.argument : property.value),
@@ -285,7 +1522,7 @@ const returnsExecutorValue = (
             exposedArguments[index] && parameter.type === 'Identifier' ? [parameter.name] : [],
           ),
         );
-        return returnsExecutorValue(local, parameterNames, functions, program, nextVisiting);
+        return legacyReturnsExecutorValue(local, parameterNames, functions, program, nextVisiting);
       }),
       Match.orElse(() => false),
     );
@@ -325,14 +1562,441 @@ const returnsExecutorValue = (
   return escaped;
 };
 
+/** Follow direct value escapes without confusing a method which closes over a transaction with the transaction. */
+const returnsExecutorValue = (
+  node: ImplementationFunction,
+  names: ReadonlySet<string>,
+  functions: ReadonlyMap<string, ImplementationFunction>,
+  program: Program,
+  visiting: ReadonlySet<ImplementationFunction> = new Set(),
+  proof?: ScopedProof,
+  state: ExecutorProofState = makeExecutorProofState(),
+  nativeNames: ReadonlySet<string> = names,
+  captures?: ScopedContextFactoryCandidate,
+): boolean => {
+  const capturedInputs = capturedProofInputs(proof, captures);
+  if (names.size === 0 && capturedInputs.executors.size === 0) {
+    return false;
+  }
+  if (visiting.has(node) || visiting.size >= 128) {
+    return true;
+  }
+  const key = [
+    EffectArray.sort([...names], Order.String).join('\0'),
+    EffectArray.sort([...nativeNames], Order.String).join('\0'),
+    captureFingerprint(captures),
+    String(state.strictConsumers),
+  ].join('\u0001');
+  const cached = state.memo.get(node)?.get(key);
+  if (cached !== undefined) {
+    return cached;
+  }
+  if (state.remaining <= 0) {
+    return true;
+  }
+  const nextVisiting = new Set([...visiting, node]);
+  const aliases = new Set(names);
+  const receivers = new Set(nativeNames);
+  const nativeSeals = new Set<string>();
+  for (const name of capturedInputs.executors) {
+    aliases.add(name);
+    receivers.add(name);
+  }
+  const capturedValues = capturedInputs.values;
+  const exposes = (expression: Expression | null | undefined): boolean => {
+    if (expression === null || expression === undefined) {
+      return false;
+    }
+    state.remaining -= 1;
+    if (state.remaining <= 0) {
+      return true;
+    }
+    return Match.value(expression).pipe(
+      Match.when({ type: 'Identifier' }, (value) => {
+        if ([...aliases].some((alias) => alias === value.name || alias.startsWith(`${value.name}.`))) {
+          return true;
+        }
+        const captured = capturedValues.get(value.name);
+        if (captured === undefined && proof !== undefined && captures !== undefined) {
+          const declared = proof.graph.resolveDeclaredValue(proof.module, value);
+          if (declared !== undefined && declared.module.file === proof.module.file) {
+            return returnsExecutorValue(
+              declared.implementation,
+              withoutParameterBindings(aliases, declared.implementation.params),
+              functions,
+              program,
+              nextVisiting,
+              proof,
+              state,
+              withoutParameterBindings(receivers, declared.implementation.params),
+              captures,
+            );
+          }
+        }
+        if (captured === undefined || proof === undefined || captured.file !== proof.module.file) {
+          return false;
+        }
+        const captureKey = `${captured.file}:${captured.expression.start}:${value.name}`;
+        if (state.evaluatingCaptures.has(captureKey)) {
+          return false;
+        }
+        state.evaluatingCaptures.add(captureKey);
+        const exposed = exposes(captured.expression);
+        state.evaluatingCaptures.delete(captureKey);
+        return exposed;
+      }),
+      Match.whenOr(
+        { type: 'ChainExpression' },
+        { type: 'ParenthesizedExpression' },
+        { type: 'TSAsExpression' },
+        { type: 'TSSatisfiesExpression' },
+        { type: 'TSNonNullExpression' },
+        (value) => exposes(value.expression),
+      ),
+      Match.when({ type: 'MemberExpression' }, (value) => {
+        if (nativeScopeMetadata(value, receivers)) {
+          return false;
+        }
+        if (
+          value.property.type === 'PrivateIdentifier' &&
+          value.object.type === 'Identifier' &&
+          nativeSeals.has(value.object.name) &&
+          proof?.module.privateFields.get(node)?.has(value.property.name) === true
+        ) {
+          return false;
+        }
+        const path = expressionPath(value);
+        if (path !== undefined) {
+          return [...aliases].some(
+            (alias) => path === alias || path.startsWith(`${alias}.`) || alias.startsWith(`${path}.`),
+          );
+        }
+        return exposes(value.object);
+      }),
+      Match.whenOr({ type: 'YieldExpression' }, { type: 'AwaitExpression' }, (value) => exposes(value.argument)),
+      Match.when({ type: 'ObjectExpression' }, (value) =>
+        value.properties.some((property) =>
+          exposes(property.type === 'SpreadElement' ? property.argument : property.value),
+        ),
+      ),
+      Match.when({ type: 'ArrayExpression' }, (value) =>
+        value.elements.some((element) => exposes(element?.type === 'SpreadElement' ? element.argument : element)),
+      ),
+      Match.whenOr({ type: 'ArrowFunctionExpression' }, { type: 'FunctionExpression' }, (value) => {
+        if (captures === undefined || value === node || nextVisiting.has(value)) {
+          return false;
+        }
+        const freeAliases = withoutParameterBindings(aliases, value.params);
+        const freeReceivers = withoutParameterBindings(receivers, value.params);
+        return returnsExecutorValue(
+          value,
+          freeAliases,
+          functions,
+          program,
+          nextVisiting,
+          proof,
+          state,
+          freeReceivers,
+          captures,
+        );
+      }),
+      Match.when(
+        { type: 'NewExpression' },
+        (value) =>
+          exposes(value.callee) ||
+          value.arguments.some((argument) => exposes(argument.type === 'SpreadElement' ? argument.argument : argument)),
+      ),
+      Match.when(
+        { type: 'TaggedTemplateExpression' },
+        (value) => exposes(value.tag) || value.quasi.expressions.some(exposes),
+      ),
+      Match.when({ type: 'ClassExpression' }, (value) =>
+        value.body.body.some((member) => member.type === 'PropertyDefinition' && exposes(member.value)),
+      ),
+      Match.when({ type: 'ConditionalExpression' }, (value) => exposes(value.consequent) || exposes(value.alternate)),
+      Match.when({ type: 'LogicalExpression' }, (value) => exposes(value.left) || exposes(value.right)),
+      Match.when({ type: 'SequenceExpression' }, (value) => exposes(value.expressions.at(-1))),
+      Match.when({ type: 'CallExpression' }, (value) =>
+        executorCallExposes(
+          value,
+          aliases,
+          receivers,
+          exposes,
+          program,
+          proof,
+          (local, parameterNames, nativeParameterNames, resolved) => {
+            const previous = state.strictConsumers;
+            state.strictConsumers ||=
+              resolved?.strictConsumers === true ||
+              (state.requireResultWitness && resolved?.module.privateFields.has(local) === true);
+            try {
+              return returnsExecutorValue(
+                local,
+                parameterNames,
+                resolved?.module.functions ?? functions,
+                resolved?.module.program ?? program,
+                nextVisiting,
+                resolved === undefined || proof === undefined ? proof : { graph: proof.graph, module: resolved.module },
+                state,
+                nativeParameterNames,
+                resolved?.captures,
+              );
+            } finally {
+              state.strictConsumers = previous;
+            }
+          },
+          state.requireResultWitness && !state.strictConsumers,
+        ),
+      ),
+      Match.orElse(() => false),
+    );
+  };
+  let aliasAdded = true;
+  const aliasVisitor = new Visitor({
+    VariableDeclarator: (declaration) => {
+      if (node.start > declaration.start || declaration.end > node.end || declaration.init === null) {
+        return;
+      }
+      if (
+        declaration.id.type === 'Identifier' &&
+        !nativeSeals.has(declaration.id.name) &&
+        (nativeSealValue(declaration.init, receivers, program) ||
+          (declaration.init.type === 'Identifier' && nativeSeals.has(declaration.init.name))) &&
+        immutableSealBinding(node, declaration.id, declaration.id.name, program)
+      ) {
+        nativeSeals.add(declaration.id.name);
+        aliasAdded = true;
+      }
+      for (const name of nativeExecutorBindings(declaration.id, declaration.init, receivers)) {
+        if (!receivers.has(name)) {
+          receivers.add(name);
+          aliasAdded = true;
+        }
+      }
+      for (const name of destructuredExecutorNames(declaration.id, declaration.init, aliases, receivers, exposes)) {
+        if (!aliases.has(name)) {
+          aliases.add(name);
+          aliasAdded = true;
+        }
+      }
+    },
+  });
+  while (aliasAdded) {
+    aliasAdded = false;
+    aliasVisitor.visit(program);
+  }
+  let escaped = node.type === 'ArrowFunctionExpression' && node.body.type !== 'BlockStatement' && exposes(node.body);
+  new Visitor({
+    ArrowFunctionExpression: (expression) => {
+      if (node.start <= expression.start && expression.end <= node.end && expression.body.type !== 'BlockStatement') {
+        escaped ||= exposes(expression.body);
+      }
+    },
+    AssignmentExpression: (statement) => {
+      if (node.start <= statement.start && statement.end <= node.end) {
+        escaped ||= exposes(statement.right);
+      }
+    },
+    CallExpression: (call) => {
+      if (
+        state.strictConsumers &&
+        node.start <= call.start &&
+        call.end <= node.end &&
+        !nativeDescriptorCall(call, receivers, program) &&
+        !nativeScalarPredicateCall(call, program) &&
+        call.arguments.some((argument) => exposes(argument.type === 'SpreadElement' ? argument.argument : argument)) &&
+        exposes(call)
+      ) {
+        escaped = true;
+      }
+    },
+    NewExpression: (expression) => {
+      if (state.strictConsumers && node.start <= expression.start && expression.end <= node.end) {
+        escaped ||= exposes(expression);
+      }
+    },
+    PropertyDefinition: (property) => {
+      if (state.strictConsumers && node.start <= property.start && property.end <= node.end) {
+        escaped ||= exposes(property.value);
+      }
+    },
+    ReturnStatement: (statement) => {
+      if (node.start <= statement.start && statement.end <= node.end) {
+        escaped ||= exposes(statement.argument);
+      }
+    },
+    TaggedTemplateExpression: (expression) => {
+      if (state.strictConsumers && node.start <= expression.start && expression.end <= node.end) {
+        escaped ||= exposes(expression);
+      }
+    },
+  }).visit(program);
+  const results = state.memo.get(node) ?? new Map<string, boolean>();
+  results.set(key, escaped);
+  state.memo.set(node, results);
+  return escaped;
+};
+
+const legacyFunctionBindings = (program: Program): ReadonlyMap<string, ImplementationFunction> => {
+  const functions = new Map<string, ImplementationFunction>();
+  new Visitor({
+    FunctionDeclaration: (node) => {
+      if (node.id !== null) {
+        functions.set(node.id.name, node);
+      }
+    },
+    VariableDeclarator: (node) => {
+      if (
+        node.id.type === 'Identifier' &&
+        (node.init?.type === 'ArrowFunctionExpression' || node.init?.type === 'FunctionExpression')
+      ) {
+        functions.set(node.id.name, node.init);
+      }
+    },
+  }).visit(program);
+  return functions;
+};
+
 /**
  * Core passes the scoped executor only to a private owner service factory. The factory may name that
  * input in its `(transaction, scope)` signature, but the executor must never become handler services.
  */
+interface ExecutorContext {
+  readonly name?: string;
+  readonly properties: readonly string[];
+  readonly span: Span;
+}
+
+const scopedExecutorContexts = (program: Program, executorNames: ReadonlySet<string>): readonly ExecutorContext[] => {
+  const contexts: ExecutorContext[] = [];
+  const properties = (members: readonly TSSignature[]): readonly string[] =>
+    members.flatMap((member) => {
+      if (
+        member.type !== 'TSPropertySignature' ||
+        member.computed ||
+        ![...executorNames].some((name) => typeReferenceNamed(member.typeAnnotation, name))
+      ) {
+        return [];
+      }
+      const name = staticProperty(member.key);
+      return name === undefined ? [] : [name];
+    });
+  new Visitor({
+    TSInterfaceDeclaration: (node) => {
+      const exported = program.body.some(
+        (statement) => statement.type === 'ExportNamedDeclaration' && statement.declaration === node,
+      );
+      const keys = properties(node.body.body);
+      if (!exported && keys.length > 0 && node.extends.length === 0) {
+        contexts.push({ name: node.id.name, properties: keys, span: node });
+      }
+    },
+    TSTypeLiteral: (node) => {
+      const keys = properties(node.members);
+      if (keys.length > 0) {
+        contexts.push({ properties: keys, span: node });
+      }
+    },
+  }).visit(program);
+  return contexts;
+};
+
+const implementationExecutorParameters = (implementation: ImplementationFunction, executorNames: ReadonlySet<string>) =>
+  implementation.params.filter(
+    (parameter) =>
+      parameter.type === 'Identifier' &&
+      [...executorNames].some((name) => typeReferenceNamed(parameter.typeAnnotation, name)),
+  );
+
+const implementationContextParameters = (
+  implementation: ImplementationFunction,
+  contexts: readonly ExecutorContext[],
+) =>
+  implementation.params.flatMap((parameter) => {
+    if (
+      parameter.type !== 'Identifier' ||
+      parameter.typeAnnotation === null ||
+      parameter.typeAnnotation === undefined
+    ) {
+      return [];
+    }
+    const context = contexts.find((candidate) =>
+      candidate.name === undefined
+        ? candidate.span === parameter.typeAnnotation?.typeAnnotation
+        : typeReferenceNamed(parameter.typeAnnotation, candidate.name),
+    );
+    return context === undefined ? [] : [{ context, parameter }];
+  });
+
+const recordPrivateExecutorInputs = (
+  implementation: ImplementationFunction,
+  executorNames: ReadonlySet<string>,
+  contexts: readonly ExecutorContext[],
+  inspect: (implementation: ImplementationFunction, names: ReadonlySet<string>, strictConsumers: boolean) => boolean,
+  allowedFactoryParameters: Span[],
+  allowedContextUses: Map<ExecutorContext, Span[]>,
+): void => {
+  // A private implementation consumes the executor. Its parameter spelling and the layout of
+  // its scope input do not turn that input into a handler dependency or a returned service field.
+  const executorParameters = implementationExecutorParameters(implementation, executorNames);
+  const contextParameters = implementationContextParameters(implementation, contexts);
+  const names = new Set([
+    ...executorParameters.flatMap((parameter) => (parameter.type === 'Identifier' ? [parameter.name] : [])),
+    ...contextParameters.flatMap(({ context, parameter }) =>
+      context.properties.map((property) => `${parameter.name}.${property}`),
+    ),
+  ]);
+  if (!inspect(implementation, names, contextParameters.length > 0)) {
+    allowedFactoryParameters.push(
+      ...executorParameters.flatMap((parameter) =>
+        parameter.type === 'Identifier' && parameter.typeAnnotation !== null && parameter.typeAnnotation !== undefined
+          ? [parameter.typeAnnotation]
+          : [],
+      ),
+    );
+    for (const { context, parameter } of contextParameters) {
+      const annotation = parameter.typeAnnotation;
+      if (annotation !== null && annotation !== undefined) {
+        const uses = allowedContextUses.get(context) ?? [];
+        uses.push(annotation);
+        allowedContextUses.set(context, uses);
+      }
+    }
+  }
+};
+
+const closedExecutorContextSpans = (
+  program: Program,
+  allowedContextUses: ReadonlyMap<ExecutorContext, readonly Span[]>,
+): readonly Span[] => {
+  const spans: Span[] = [];
+  for (const [context, uses] of allowedContextUses) {
+    let unsupportedUse = false;
+    if (context.name !== undefined) {
+      new Visitor({
+        TSTypeReference: (node) => {
+          if (
+            node.typeName.type === 'Identifier' &&
+            node.typeName.name === context.name &&
+            !uses.some((use) => use.start <= node.start && node.end <= use.end)
+          ) {
+            unsupportedUse = true;
+          }
+        },
+      }).visit(program);
+    }
+    if (!unsupportedUse) {
+      spans.push(context.span);
+    }
+  }
+  return spans;
+};
+
 const scopedTransactionExposureIndexes = (
   file: string,
   source: string,
   privateImplementation = false,
+  proof?: ScopedProof,
 ): readonly number[] => {
   if (!scopedTransactionExecutor.test(source)) {
     return [];
@@ -362,6 +2026,8 @@ const scopedTransactionExposureIndexes = (
   }
 
   const allowedFactoryParameters: Span[] = [];
+  const contexts = scopedExecutorContexts(parsed.program, executorNames);
+  const allowedContextUses = new Map<ExecutorContext, Span[]>();
   const allowScopedFactoryParameter = (parameters: readonly ParamPattern[]): void => {
     const span = scopedFactoryTransactionSpan(parameters, executorNames);
     if (span !== undefined) {
@@ -381,22 +2047,38 @@ const scopedTransactionExposureIndexes = (
     },
     TSFunctionType: (node) => allowScopedFactoryParameter(node.params),
   }).visit(parsed.program);
-  const functions = new Map<string, ImplementationFunction>();
-  new Visitor({
-    FunctionDeclaration: (node) => {
-      if (node.id !== null) {
-        functions.set(node.id.name, node);
-      }
-    },
-    VariableDeclarator: (node) => {
-      if (
-        node.id.type === 'Identifier' &&
-        (node.init?.type === 'ArrowFunctionExpression' || node.init?.type === 'FunctionExpression')
-      ) {
-        functions.set(node.id.name, node.init);
-      }
-    },
-  }).visit(parsed.program);
+  const functions =
+    proof?.module.functions ?? scopedProofModule(file, source)?.functions ?? new Map<string, ImplementationFunction>();
+  let baselineFunctions: ReadonlyMap<string, ImplementationFunction> | undefined;
+  const baseline = (): ReadonlyMap<string, ImplementationFunction> => {
+    baselineFunctions ??= legacyFunctionBindings(parsed.program);
+    return baselineFunctions;
+  };
+  const inspectPrivateInput = (
+    implementation: ImplementationFunction,
+    names: ReadonlySet<string>,
+    strictConsumers = false,
+  ): boolean => {
+    if (names.size === 0) {
+      return false;
+    }
+    // Previously rejected returns and new context-shaped admissions need the full
+    // proof. Extra findings on previously supported inputs need an actual escape
+    // or custody witness before they can become transitive capability seeds.
+    const requireResultWitness =
+      proof !== undefined &&
+      !strictConsumers &&
+      !legacyReturnsExecutorValue(implementation, names, baseline(), parsed.program);
+    return returnsExecutorValue(
+      implementation,
+      names,
+      functions,
+      parsed.program,
+      new Set(),
+      proof,
+      makeExecutorProofState(strictConsumers, requireResultWitness),
+    );
+  };
   for (const implementation of implementations) {
     const nested = implementations.some(
       (parent) => parent !== implementation && parent.start <= implementation.start && implementation.end <= parent.end,
@@ -407,25 +2089,14 @@ const scopedTransactionExposureIndexes = (
       }
       continue;
     }
-    // A private implementation consumes the executor. Its parameter spelling and the layout of
-    // its scope input do not turn that input into a handler dependency or a returned service field.
-    const executorParameters = implementation.params.filter(
-      (parameter) =>
-        parameter.type === 'Identifier' &&
-        [...executorNames].some((name) => typeReferenceNamed(parameter.typeAnnotation, name)),
+    recordPrivateExecutorInputs(
+      implementation,
+      executorNames,
+      contexts,
+      inspectPrivateInput,
+      allowedFactoryParameters,
+      allowedContextUses,
     );
-    const names = new Set(
-      executorParameters.flatMap((parameter) => (parameter.type === 'Identifier' ? [parameter.name] : [])),
-    );
-    if (!returnsExecutorValue(implementation, names, functions, parsed.program)) {
-      allowedFactoryParameters.push(
-        ...executorParameters.flatMap((parameter) =>
-          parameter.type === 'Identifier' && parameter.typeAnnotation !== null && parameter.typeAnnotation !== undefined
-            ? [parameter.typeAnnotation]
-            : [],
-        ),
-      );
-    }
   }
   if (privateImplementation) {
     new Visitor({
@@ -446,13 +2117,14 @@ const scopedTransactionExposureIndexes = (
         if (
           implementation !== undefined &&
           implementation.params.some((parameter) => parameter.type === 'Identifier' && parameter.name === inputName) &&
-          !returnsExecutorValue(implementation, new Set([inputName]), functions, parsed.program)
+          !inspectPrivateInput(implementation, new Set([inputName]))
         ) {
           allowedFactoryParameters.push(node.typeAnnotation);
         }
       },
     }).visit(parsed.program);
   }
+  allowedFactoryParameters.push(...closedExecutorContextSpans(parsed.program, allowedContextUses));
   const scopeProjections: Span[] = [];
   new Visitor({
     TSIndexedAccessType: (node) => {
@@ -482,10 +2154,240 @@ const scopedTransactionExposureIndexes = (
   return EffectArray.sort([...new Set(invalidReferences)], Order.Number);
 };
 
-const containsGlobalDatabaseCapability = (file: string, source: string, privateImplementation: boolean): boolean =>
+const declarationExportsFunction = (declaration: Declaration | null | undefined, name: string): boolean => {
+  if (declaration?.type === 'FunctionDeclaration') {
+    return declaration.id?.name === name;
+  }
+  return (
+    declaration?.type === 'VariableDeclaration' &&
+    declaration.kind === 'const' &&
+    declaration.declarations.some((item) => item.id.type === 'Identifier' && item.id.name === name)
+  );
+};
+
+const resolveScopedExport = (
+  module: ScopedProofModule,
+  name: string,
+  dependency: (specifier: string) => ScopedProofModule | undefined,
+  resolve: (target: ScopedProofModule, localName: string, exported: boolean) => ScopedResolvedFunction | undefined,
+): ScopedResolvedFunction | undefined => {
+  for (const statement of module.program.body) {
+    if (statement.type !== 'ExportNamedDeclaration' || statement.exportKind === 'type') {
+      continue;
+    }
+    const { declaration } = statement;
+    if (declarationExportsFunction(declaration, name)) {
+      return resolve(module, name, false);
+    }
+    for (const specifier of statement.specifiers) {
+      if (
+        specifier.exportKind === 'type' ||
+        specifier.exported.type !== 'Identifier' ||
+        specifier.exported.name !== name ||
+        specifier.local.type !== 'Identifier'
+      ) {
+        continue;
+      }
+      if (statement.source === null) {
+        return resolve(module, specifier.local.name, false);
+      }
+      const target = dependency(statement.source.value);
+      return target === undefined ? undefined : resolve(target, specifier.local.name, true);
+    }
+  }
+  return undefined;
+};
+
+const hasProvenFunctionSyntax = (module: ScopedProofModule, implementation: ImplementationFunction): boolean => {
+  let proven = false;
+  const same = (candidate: ImplementationFunction | undefined): boolean =>
+    candidate?.start === implementation.start && candidate.end === implementation.end;
+  new Visitor({
+    FunctionDeclaration: (node) => {
+      proven ||= same(node);
+    },
+    ObjectExpression: (node) => {
+      for (const property of node.properties) {
+        if (property.type === 'Property') {
+          proven ||= same(implementationOf(property.value, module.program));
+        }
+      }
+    },
+    VariableDeclaration: (node) => {
+      if (node.kind === 'const') {
+        for (const declaration of node.declarations) {
+          proven ||= same(implementationOf(declaration.init, module.program));
+        }
+      }
+    },
+  }).visit(module.program);
+  return proven;
+};
+
+const scopedProofGraph = (
+  sources: ReadonlyMap<string, string>,
+  sourceFiles: ReadonlySet<string>,
+  path: Path.Path,
+  root: string,
+  packageExports: ReadonlyMap<string, string>,
+  conditionalPackageExports: ReadonlyMap<string, readonly string[]>,
+  contractSources: ReadonlyMap<string, string>,
+  nativeRuntimeEnvironment: NativeSqlRuntimeProofEnvironment,
+): ScopedProofIndex => {
+  const factories = makeScopedContextFactoryResolver(
+    sources,
+    root,
+    path,
+    packageExports,
+    conditionalPackageExports,
+    contractSources,
+    nativeRuntimeEnvironment,
+  );
+  const modules = new Map<string, ScopedProofModule>();
+  for (const [file, source] of sources) {
+    if (source.includes('ScopedTransaction') || source.includes('transaction') || source.includes('export ')) {
+      const module = scopedProofModule(file, source);
+      if (module !== undefined) {
+        modules.set(file, module);
+      }
+    }
+  }
+  const resolve = (
+    module: ScopedProofModule,
+    name: string,
+    exported: boolean,
+    visiting: ReadonlySet<string>,
+  ): ScopedResolvedFunction | undefined => {
+    if (!exported && (module.shadowed.has(name) || module.shadowed.has(name.split('.')[0] ?? name))) {
+      return undefined;
+    }
+    const key = `${module.file}:${name}:${exported}`;
+    if (visiting.has(key) || visiting.size >= 64) {
+      return undefined;
+    }
+    const next = new Set([...visiting, key]);
+    const dependency = (specifier: string): ScopedProofModule | undefined => {
+      const file = resolveLocalSource(sourceFiles, path, root, module.file, specifier, packageExports);
+      return file === undefined ? undefined : modules.get(file);
+    };
+    if (exported) {
+      return resolveScopedExport(module, name, dependency, (target, localName, isExported) =>
+        resolve(target, localName, isExported, next),
+      );
+    }
+    const alias = module.aliases.get(name);
+    if (alias !== undefined) {
+      return resolve(module, alias, false, next);
+    }
+    const local = module.functions.get(name);
+    if (local !== undefined) {
+      return { implementation: local, module };
+    }
+    // Value-only named imports and explicit reexports retain the exact implementation identity.
+    // Unknown calls, namespace calls and unsupported public exports remain unproved.
+    if (bindingShadowed(module.program, name)) {
+      return undefined;
+    }
+    for (const statement of module.program.body) {
+      if (statement.type !== 'ImportDeclaration' || statement.importKind === 'type') {
+        continue;
+      }
+      for (const specifier of statement.specifiers) {
+        if (
+          specifier.type !== 'ImportSpecifier' ||
+          specifier.importKind === 'type' ||
+          specifier.local.name !== name ||
+          specifier.imported.type !== 'Identifier'
+        ) {
+          continue;
+        }
+        const target = dependency(statement.source.value);
+        return target === undefined ? undefined : resolve(target, specifier.imported.name, true, next);
+      }
+    }
+    return undefined;
+  };
+  const primitiveFacts = new Map<string, boolean>();
+  const provesBooleanFact = (resolved: ScopedResolvedFunction): boolean => {
+    const relative = path.relative(root, resolved.module.file).split(path.sep).join('/');
+    if (!relative.startsWith(coreRuntimeSourcePrefix)) {
+      return false;
+    }
+    const key = `${resolved.module.file}:${resolved.implementation.start}:${resolved.implementation.end}`;
+    const cached = primitiveFacts.get(key);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const proven = provesScopedCoreBooleanFact(
+      sources,
+      root,
+      path,
+      packageExports,
+      resolved.module.file,
+      resolved.implementation,
+    );
+    primitiveFacts.set(key, proven);
+    return proven;
+  };
+  const candidate = (
+    value: ScopedContextFactoryCandidate,
+    strictConsumers: boolean,
+  ): ScopedResolvedFunction | undefined => {
+    const module = modules.get(value.file);
+    return module === undefined || !hasProvenFunctionSyntax(module, value.implementation)
+      ? undefined
+      : { captures: value, implementation: value.implementation, module, strictConsumers };
+  };
+  const resolveCall = (
+    module: ScopedProofModule,
+    call: CallExpression,
+    inspectOwnDataMethod = false,
+  ): readonly ScopedResolvedFunction[] | undefined => {
+    const request = { at: call.start, callee: call.callee, file: module.file };
+    const declared = factories.resolveDeclaredFunction(request);
+    if (declared !== undefined) {
+      const resolved = candidate(declared, false);
+      return resolved === undefined ? undefined : [resolved];
+    }
+    if (inspectOwnDataMethod) {
+      const direct = factories.resolveDataObjectMethod(request);
+      if (direct !== undefined) {
+        const resolved = candidate(direct, true);
+        return resolved === undefined ? undefined : [resolved];
+      }
+    }
+    const found = factories.resolve(request);
+    if (found === undefined) {
+      return undefined;
+    }
+    const result = found.map((value) => candidate(value, true));
+    return result.some((value) => value === undefined) ? undefined : result.filter((value) => value !== undefined);
+  };
+  return {
+    graph: {
+      captureValue: (request) => factories.resolveCapturedValue(request),
+      module: (file) => modules.get(file),
+      provesBooleanFact,
+      resolve: (module, name) => resolve(module, name, false, new Set()),
+      resolveCall,
+      resolveDeclaredValue: (module, expression) => {
+        const declared = factories.resolveDeclaredFunction({ callee: expression, file: module.file });
+        return declared === undefined ? undefined : candidate(declared, false);
+      },
+    },
+    modules,
+  };
+};
+
+const containsGlobalDatabaseCapability = (
+  file: string,
+  source: string,
+  privateImplementation: boolean,
+  proof?: ScopedProof,
+): boolean =>
   globalDatabaseImplementationImport.test(source) ||
   hiddenCapability.test(source) ||
-  scopedTransactionExposureIndexes(file, source, privateImplementation).length > 0;
+  scopedTransactionExposureIndexes(file, source, privateImplementation, proof).length > 0;
 
 const globalDatabaseCapabilityClosure = (
   sources: ReadonlyMap<string, string>,
@@ -493,7 +2395,20 @@ const globalDatabaseCapabilityClosure = (
   path: Path.Path,
   root: string,
   packageExports: ReadonlyMap<string, string>,
+  conditionalPackageExports: ReadonlyMap<string, readonly string[]>,
+  contractSources: ReadonlyMap<string, string>,
+  nativeRuntimeEnvironment: NativeSqlRuntimeProofEnvironment,
 ): ReadonlySet<string> => {
+  const proof = scopedProofGraph(
+    sources,
+    sourceFiles,
+    path,
+    root,
+    packageExports,
+    conditionalPackageExports,
+    contractSources,
+    nativeRuntimeEnvironment,
+  );
   const importersByDependency = new Map<string, Set<string>>();
   const unsupported = path.join(root, '.unsupported-workspace-export');
   const closure = new Set<string>([unsupported]);
@@ -505,7 +2420,15 @@ const globalDatabaseCapabilityClosure = (
     // owning source line; recursively treating every safe Core type dependency as a
     // database leak makes generated Action and Read registrations impossible.
     if (!relative.startsWith(coreRuntimeSourcePrefix)) {
-      if (containsGlobalDatabaseCapability(file, source, !isGovernedAdapter(relative, source))) {
+      const module = proof.modules.get(file);
+      if (
+        containsGlobalDatabaseCapability(
+          file,
+          source,
+          !isGovernedAdapter(relative, source),
+          module === undefined ? undefined : { graph: proof.graph, module },
+        )
+      ) {
         closure.add(file);
         pending.push(file);
       }
@@ -851,6 +2774,30 @@ const compareViolations = (left: DatabaseAccessViolation, right: DatabaseAccessV
 
 const ViolationOrder = Order.make(compareViolations);
 
+const containedPublicSourceTarget = (packageRoot: string, target: string, path: Path.Path): string | undefined => {
+  if (!target.startsWith('./')) {
+    return undefined;
+  }
+  const resolved = path.resolve(packageRoot, target);
+  const relative = path.relative(packageRoot, resolved);
+  return relative.startsWith('..') || path.isAbsolute(relative) ? undefined : resolved;
+};
+
+type ConditionalSourceTargets = Readonly<Record<string, string>>;
+
+const conditionalPublicSourceTargets = (
+  packageRoot: string,
+  target: ConditionalSourceTargets,
+  path: Path.Path,
+): readonly string[] | undefined => {
+  const values = Object.values(target);
+  if (values.length === 0) {
+    return undefined;
+  }
+  const targets = values.map((value) => containedPublicSourceTarget(packageRoot, value, path));
+  return targets.some((value) => value === undefined) ? undefined : targets.filter((value) => value !== undefined);
+};
+
 // Resolve only declared exact public source exports; unsupported targets remain blocking graph leaves.
 const workspaceSourceExports = (root: string, files: readonly string[]) =>
   Effect.gen(function* workspaceSourceExportsProgram() {
@@ -858,6 +2805,10 @@ const workspaceSourceExports = (root: string, files: readonly string[]) =>
     const path = yield* Path.Path;
     // Follow the package's declared public contract instead of guessing its server entrypoint.
     const packageExports = new Map<string, string>();
+    // Only the Context provider proof consumes every conditional variant. The conservative
+    // dependency and global-capability graph keeps treating these exports as unsupported.
+    const conditionalPackageExports = new Map<string, readonly string[]>();
+    const packageManifests = new Map<string, string>();
     const packageRoots = new Set(
       files.flatMap((file) => {
         const parts = path.relative(root, file).split(path.sep);
@@ -875,27 +2826,35 @@ const workspaceSourceExports = (root: string, files: readonly string[]) =>
       ),
     );
     for (const packageRoot of packageRoots) {
-      const manifest = path.join(packageRoot, 'package.json');
+      const manifest = path.join(packageRoot, packageManifestName);
       if (!(yield* fileSystem.exists(manifest))) {
         continue;
       }
-      const metadata = yield* fileSystem.readFileString(manifest).pipe(Effect.flatMap(decodePackage));
+      const source = yield* fileSystem.readFileString(manifest);
+      const metadata = yield* decodePackage(source);
+      packageManifests.set(manifest, source);
       packageExports.set(`${metadata.name}/`, path.join(root, '.unsupported-workspace-export'));
       if (metadata.exports !== undefined) {
         for (const [key, target] of Object.entries(metadata.exports)) {
-          // Exact source exports only; unresolved/conditional targets stay fail closed.
-          if (!Schema.is(Schema.String)(target) || !target.startsWith('./') || key.includes('*')) {
+          if (key.includes('*') || (key !== '.' && !key.startsWith('./'))) {
             continue;
           }
-          const resolved = path.resolve(packageRoot, target);
-          const relative = path.relative(packageRoot, resolved);
-          if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
-            packageExports.set(key === '.' ? metadata.name : `${metadata.name}/${key.slice(2)}`, resolved);
+          const publicName = key === '.' ? metadata.name : `${metadata.name}/${key.slice(2)}`;
+          if (Schema.is(Schema.String)(target)) {
+            const resolved = containedPublicSourceTarget(packageRoot, target, path);
+            if (resolved !== undefined) {
+              packageExports.set(publicName, resolved);
+            }
+          } else if (Schema.is(Schema.Record(Schema.String, Schema.String))(target)) {
+            const variants = conditionalPublicSourceTargets(packageRoot, target, path);
+            if (variants !== undefined) {
+              conditionalPackageExports.set(publicName, variants);
+            }
           }
         }
       }
     }
-    return packageExports;
+    return { conditionalPackageExports, packageExports, packageManifests };
   });
 
 const nativeTestSourceFiles = (
@@ -934,11 +2893,398 @@ const nativeTestSourceFiles = (
   return testSourceFiles;
 };
 
-export const checkDatabaseAccessBoundaries = (root: string) =>
-  Effect.gen(function* checkDatabaseAccessBoundariesProgram() {
+// This list models registry custody only. It grants no query, result, or service authority.
+const modeledNativeRegistryImports = new Set([
+  'effect',
+  'effect/Effect',
+  'effect/Layer',
+  'effect/Context',
+  'effect/Crypto',
+  'effect/Schema',
+  'effect/SchemaIssue',
+  'effect/Logger',
+  'effect/Tracer',
+  'effect/References',
+  'effect/http-api',
+  'effect/http',
+  'effect/http/HttpClient',
+  'effect/http/FetchHttpClient',
+  'effect/reactivity',
+  'effect/reactivity/Reactivity',
+  'effect/encoding',
+  'effect/http/Cookies',
+  'effect/sql/SqlError',
+  'effect/net',
+  '@effect/sql-pg',
+  '@effect/sql-pg/PgTypes',
+  '@effect/sql-pg/PgClient',
+  '@effect/platform-node/NodeHttpServer',
+  '@modern-js/bff-effect/effect-edge',
+  '@modern-js/bff-effect/effect-client',
+  '@modern-js/bff-effect/assembly',
+  '@modern-js/bff-effect/microvertical-api',
+  '@modern-js/backend-federation-contracts',
+  'drizzle-orm',
+  'drizzle-orm/effect-postgres',
+  'drizzle-orm/pg-core',
+  'drizzle-orm/relations',
+  'drizzle-orm/effect-core',
+  '@authzed/authzed-node',
+  '@noble/hashes/hmac.js',
+  '@noble/hashes/sha2.js',
+  '@noble/hashes/utils.js',
+  'better-auth',
+  'better-auth/adapters',
+  'better-auth/api',
+  'better-auth/cookies',
+  'better-auth/plugins/two-factor',
+  'jose',
+  'node:async_hooks',
+  'node:fs',
+  'node:path',
+  'node:http',
+]);
+const NativeRegistryPackageSchema = Schema.Struct({
+  dependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+  devDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+  exports: Schema.optionalKey(Schema.Unknown),
+  imports: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+  name: Schema.String,
+  version: Schema.optionalKey(Schema.String),
+});
+const decodeNativeRegistryPackage = Schema.decodeUnknownEffect(Schema.fromJsonString(NativeRegistryPackageSchema));
+
+const nativeRuntimeSpecifiers = (file: string, source: string): ReadonlySet<string> => {
+  const parsed = parseSync(file, source);
+  const specifiers = new Set<string>();
+  if (parsed.errors.length > 0) {
+    return specifiers;
+  }
+  new Visitor({
+    CallExpression: (node) => {
+      const { callee } = node;
+      const [first] = node.arguments;
+      if (
+        callee.type === 'MemberExpression' &&
+        !callee.computed &&
+        callee.object.type === 'Identifier' &&
+        callee.object.name === 'process' &&
+        callee.property.type === 'Identifier' &&
+        callee.property.name === 'getBuiltinModule' &&
+        first?.type === 'Literal' &&
+        Schema.is(Schema.String)(first.value) &&
+        ['node:fs', 'node:path', 'http'].includes(first.value)
+      ) {
+        specifiers.add(first.value === 'http' ? 'node:http' : first.value);
+      }
+    },
+    ExportAllDeclaration: (node) => {
+      if (node.exportKind !== 'type') {
+        specifiers.add(node.source.value);
+      }
+    },
+    ExportNamedDeclaration: (node) => {
+      if (node.exportKind !== 'type' && node.source !== null) {
+        specifiers.add(node.source.value);
+      }
+    },
+    ImportDeclaration: (node) => {
+      if (node.importKind !== 'type') {
+        specifiers.add(node.source.value);
+      }
+    },
+    ImportExpression: (node) => {
+      if (node.source.type === 'Literal' && Schema.is(Schema.String)(node.source.value)) {
+        specifiers.add(node.source.value);
+      }
+    },
+  }).visit(parsed.program);
+  return specifiers;
+};
+
+type NativeRegistryMetadata = typeof NativeRegistryPackageSchema.Type;
+type NativeRegistryExport = NativeRegistryMetadata['exports'];
+interface NativeRegistryInstalledPackage {
+  readonly directory: string;
+  readonly metadata: NativeRegistryMetadata;
+}
+type NativeRegistryCatalogs = Readonly<Record<string, Readonly<Record<string, string>>>>;
+interface NativeRegistryResolutionInputs {
+  readonly catalogs: NativeRegistryCatalogs;
+  readonly installed: Map<string, NativeRegistryInstalledPackage | undefined>;
+  readonly metadata: ReadonlyMap<string, NativeRegistryMetadata>;
+  readonly root: string;
+}
+const nativeRegistryContains = (path: Path.Path, base: string, file: string): boolean => {
+  const relative = path.relative(base, file);
+  return !relative.startsWith('..') && !path.isAbsolute(relative);
+};
+const collectNativeRegistryMetadata = (root: string, packageManifests: ReadonlyMap<string, string>) =>
+  Effect.gen(function* collectNativeRegistryMetadataProgram() {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const violations: DatabaseAccessViolation[] = [];
+    const manifests = new Map(packageManifests);
+    const rootManifest = path.join(root, packageManifestName);
+    if (!manifests.has(rootManifest) && (yield* fileSystem.exists(rootManifest))) {
+      manifests.set(rootManifest, yield* fileSystem.readFileString(rootManifest));
+    }
+    const metadata = new Map<string, typeof NativeRegistryPackageSchema.Type>();
+    for (const [file, source] of manifests) {
+      const decoded = yield* decodeNativeRegistryPackage(source).pipe(Effect.option);
+      if (Option.isSome(decoded)) {
+        metadata.set(path.dirname(file), decoded.value);
+      }
+    }
+    const catalogSchema = Schema.Struct({
+      catalogs: Schema.optionalKey(Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.String))),
+    });
+    let catalogs: Readonly<Record<string, Readonly<Record<string, string>>>> = {};
+    const workspaceFile = path.join(root, 'pnpm-workspace.yaml');
+    if (yield* fileSystem.exists(workspaceFile)) {
+      const text = yield* fileSystem.readFileString(workspaceFile);
+      const decoded = yield* Effect.try(() => Schema.decodeUnknownOption(catalogSchema)(parseYaml(text))).pipe(
+        Effect.flatMap(Effect.fromOption),
+        Effect.option,
+      );
+      if (Option.isSome(decoded)) {
+        catalogs = decoded.value.catalogs ?? {};
+      }
+    }
+
+    return { catalogs, metadata };
+  });
+
+const longestNativeRegistryPathFirst = (left: string, right: string): -1 | 0 | 1 => {
+  if (left.length === right.length) {
+    return 0;
+  }
+  return left.length > right.length ? -1 : 1;
+};
+const nativeRegistryDeclaration = (
+  file: string,
+  name: string,
+  inputs: NativeRegistryResolutionInputs,
+  path: Path.Path,
+): string | undefined => {
+  const owner = EffectArray.sort(
+    [...inputs.metadata].filter(([base]) => nativeRegistryContains(path, base, file)),
+    Order.make<readonly [string, NativeRegistryMetadata]>(([left], [right]) =>
+      longestNativeRegistryPathFirst(left, right),
+    ),
+  ).find(
+    ([, manifest]) => manifest.dependencies?.[name] !== undefined || manifest.devDependencies?.[name] !== undefined,
+  );
+  const declaration = owner?.[1].dependencies?.[name] ?? owner?.[1].devDependencies?.[name];
+  return declaration !== undefined && declaration.startsWith('catalog:')
+    ? inputs.catalogs[declaration.slice(8)]?.[name]
+    : declaration;
+};
+const findInstalledNativeRegistryPackage = (root: string, file: string, name: string) =>
+  Effect.gen(function* findInstalledNativeRegistryPackageProgram() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    let directory = path.dirname(file);
+    while (nativeRegistryContains(path, root, directory)) {
+      const candidate = path.join(directory, 'node_modules', name);
+      if (yield* fileSystem.exists(path.join(candidate, packageManifestName))) {
+        const actual = yield* fileSystem.realPath(candidate);
+        const text = yield* fileSystem.readFileString(path.join(actual, packageManifestName));
+        const decoded = yield* decodeNativeRegistryPackage(text).pipe(Effect.option);
+        return decoded.pipe(Option.map((manifest) => ({ directory: actual, metadata: manifest })));
+      }
+      const parent = path.dirname(directory);
+      if (parent === directory) {
+        break;
+      }
+      directory = parent;
+    }
+    return Option.none<NativeRegistryInstalledPackage>();
+  });
+const nativeRegistryOriginMatches = (
+  origin: NativeRegistryInstalledPackage | undefined,
+  declaration: string,
+  name: string,
+  resolved: string,
+  path: Path.Path,
+): boolean => {
+  const alias = /^npm:(?<name>.+)@(?<version>[^@]+)$/u.exec(declaration);
+  const expectedName = alias?.groups?.name ?? name;
+  const expectedVersion = alias?.groups?.version ?? declaration;
+  return (
+    origin !== undefined &&
+    origin.metadata.name === expectedName &&
+    origin.metadata.version === expectedVersion &&
+    origin.metadata.exports !== undefined &&
+    nativeRegistryContains(path, origin.directory, resolved)
+  );
+};
+const resolveNativeRegistryEdge = (file: string, specifier: string, inputs: NativeRegistryResolutionInputs) =>
+  Effect.gen(function* resolveNativeRegistryEdgeProgram() {
+    if (!modeledNativeRegistryImports.has(specifier)) {
+      return Option.none<PgDecoderImportEdge>();
+    }
+    if (isBuiltin(specifier)) {
+      return Option.some(nativeRegistryOtherEdge);
+    }
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const name = specifier.startsWith('@')
+      ? specifier.split('/').slice(0, 2).join('/')
+      : (specifier.split('/')[0] ?? '');
+    const declaration = nativeRegistryDeclaration(file, name, inputs, path);
+    if (declaration === undefined) {
+      return Option.none<PgDecoderImportEdge>();
+    }
+    const resolved = yield* Effect.try(() => createRequire(file).resolve(specifier)).pipe(Effect.option);
+    if (Option.isNone(resolved)) {
+      return Option.none<PgDecoderImportEdge>();
+    }
+    const cacheKey = `${path.dirname(file)}:${name}`;
+    if (!inputs.installed.has(cacheKey)) {
+      inputs.installed.set(
+        cacheKey,
+        Option.getOrUndefined(yield* findInstalledNativeRegistryPackage(inputs.root, file, name)),
+      );
+    }
+    const origin = inputs.installed.get(cacheKey);
+    if (!nativeRegistryOriginMatches(origin, declaration, name, resolved.value, path)) {
+      return Option.none<PgDecoderImportEdge>();
+    }
+    if (origin === undefined) {
+      return Option.none<PgDecoderImportEdge>();
+    }
+    const actual = yield* fileSystem.realPath(resolved.value).pipe(Effect.option);
+    if (Option.isNone(actual) || !nativeRegistryContains(path, origin.directory, actual.value)) {
+      return Option.none<PgDecoderImportEdge>();
+    }
+    if (specifier === '@effect/sql-pg') {
+      return Option.some(Object.freeze({ kind: 'native-pg-root' } as const));
+    }
+    if (specifier === '@effect/sql-pg/PgTypes') {
+      return Option.some(Object.freeze({ kind: 'native-pg-types' } as const));
+    }
+    return Option.some(nativeRegistryOtherEdge);
+  });
+
+const nativeRegistrySourceEdges = (
+  metadata: ReadonlyMap<string, NativeRegistryMetadata>,
+  sources: ReadonlyMap<string, string>,
+  path: Path.Path,
+) => {
+  const workerdTargets = new Set<string>();
+  const sourceTargets = (base: string, value: NativeRegistryExport): readonly string[] | undefined => {
+    const record = Schema.is(Schema.Record(Schema.String, Schema.String))(value) ? value : undefined;
+    let targets: readonly string[] | undefined;
+    if (Schema.is(Schema.String)(value)) {
+      targets = [value];
+    } else if (record !== undefined) {
+      targets = Object.values(record);
+    }
+    if (targets === undefined || targets.length === 0) {
+      return undefined;
+    }
+    const files = targets.map((target) => containedPublicSourceTarget(base, target, path));
+    if (files.some((file) => file === undefined || !sources.has(file))) {
+      return undefined;
+    }
+    if (record?.workerd !== undefined) {
+      const file = containedPublicSourceTarget(base, record.workerd, path);
+      if (file !== undefined) {
+        workerdTargets.add(file);
+      }
+    }
+    return Object.freeze([...new Set(files.filter((file) => file !== undefined))]);
+  };
+  const publicSources = new Map<string, readonly string[]>();
+  const privateSources = new Map<string, ReadonlyMap<string, readonly string[]>>();
+  for (const [base, manifest] of metadata) {
+    if (Schema.is(Schema.Record(Schema.String, Schema.Unknown))(manifest.exports)) {
+      for (const [key, target] of Object.entries(manifest.exports)) {
+        if (key.includes('*') || (key !== '.' && !key.startsWith('./'))) {
+          continue;
+        }
+        const files = sourceTargets(base, target);
+        if (files !== undefined) {
+          publicSources.set(key === '.' ? manifest.name : manifest.name + key.slice(1), files);
+        }
+      }
+    }
+    const imports = new Map<string, readonly string[]>();
+    for (const [key, target] of Object.entries(manifest.imports ?? {})) {
+      const files = sourceTargets(base, target);
+      if (!key.includes('*') && files !== undefined) {
+        imports.set(key, files);
+      }
+    }
+    privateSources.set(base, imports);
+  }
+  return { privateSources, publicSources, workerdTargets };
+};
+
+// Reuses the checker's collected source/manifests. Missing resolution never becomes a native edge.
+export const buildNativeSqlRuntimeProofEnvironment = (
+  root: string,
+  sources: ReadonlyMap<string, string>,
+  packageManifests: ReadonlyMap<string, string>,
+) =>
+  Effect.gen(function* nativeSqlRuntimeProofEnvironmentProgram() {
+    const path = yield* Path.Path;
+    const { catalogs, metadata } = yield* collectNativeRegistryMetadata(root, packageManifests);
+    const { privateSources, publicSources, workerdTargets } = nativeRegistrySourceEdges(metadata, sources, path);
+    const installed = new Map<string, NativeRegistryInstalledPackage | undefined>();
+    const nativeEdge = (file: string, specifier: string) =>
+      resolveNativeRegistryEdge(file, specifier, {
+        catalogs,
+        installed,
+        metadata,
+        root,
+      });
+    const imports = new Map<string, ReadonlyMap<string, PgDecoderImportEdge>>();
+    for (const [file, source] of sources) {
+      const edges = new Map<string, PgDecoderImportEdge>();
+      for (const specifier of nativeRuntimeSpecifiers(file, source)) {
+        let files = publicSources.get(specifier);
+        if (specifier.startsWith('#')) {
+          const owners = EffectArray.sort(
+            [...metadata.keys()].filter((base) => nativeRegistryContains(path, base, file)),
+            Order.make(longestNativeRegistryPathFirst),
+          );
+          const [owner] = owners;
+          files = owner === undefined ? undefined : privateSources.get(owner)?.get(specifier);
+        } else if (specifier.startsWith('.')) {
+          const target = candidatesFor(path, path.resolve(path.dirname(file), specifier)).find((candidate) =>
+            sources.has(candidate),
+          );
+          files = target === undefined ? undefined : [target];
+        }
+        if (files !== undefined) {
+          const [first] = files;
+          if (first !== undefined) {
+            edges.set(
+              specifier,
+              files.length === 1
+                ? Object.freeze({ file: first, kind: 'module' })
+                : Object.freeze({ files: Object.freeze([...files]), kind: 'conditional-modules' }),
+            );
+          }
+        } else if (specifier === 'cloudflare:workers' && workerdTargets.has(file)) {
+          edges.set(specifier, nativeRegistryOtherEdge);
+        } else {
+          const edge = yield* nativeEdge(file, specifier);
+          if (Option.isSome(edge)) {
+            edges.set(specifier, edge.value);
+          }
+        }
+      }
+      imports.set(file, edges);
+    }
+    const environment: NativeSqlRuntimeProofEnvironment = Object.freeze({ imports });
+    return environment;
+  });
+
+export const collectDatabaseAccessRuntimeInputs = (root: string) =>
+  Effect.gen(function* collectDatabaseAccessRuntimeInputsProgram() {
+    const fileSystem = yield* FileSystem.FileSystem;
     const files = yield* collect(root);
     const sourcePairs = yield* Effect.all(
       files.map((file) =>
@@ -948,14 +3294,42 @@ export const checkDatabaseAccessBoundaries = (root: string) =>
     );
     const sources = new Map(sourcePairs);
     const sourceFiles = new Set(files);
-    const packageExports = yield* workspaceSourceExports(root, files);
+    const { conditionalPackageExports, packageExports, packageManifests } = yield* workspaceSourceExports(root, files);
+    const nativeRuntimeEnvironment = yield* buildNativeSqlRuntimeProofEnvironment(root, sources, packageManifests);
+    return {
+      conditionalPackageExports,
+      contractSources: new Map([...sources, ...packageManifests]),
+      nativeSqlRuntimeProofEnvironment: nativeRuntimeEnvironment,
+      packageExports,
+      sourceFiles,
+      sources,
+    };
+  });
+
+export const checkDatabaseAccessBoundaries = (root: string) =>
+  Effect.gen(function* checkDatabaseAccessBoundariesProgram() {
+    const path = yield* Path.Path;
+    const violations: DatabaseAccessViolation[] = [];
+    const {
+      conditionalPackageExports,
+      contractSources,
+      nativeSqlRuntimeProofEnvironment: nativeRuntimeEnvironment,
+      packageExports,
+      sourceFiles,
+      sources,
+    } = yield* collectDatabaseAccessRuntimeInputs(root);
+    const sourcePairs = [...sources];
     const testSourceFiles = nativeTestSourceFiles(root, sources, path, packageExports);
+    const issuerSources = provedShellGatewayDatabaseSources(sources, root, path, packageExports);
     const globalDatabaseCapabilityFiles = globalDatabaseCapabilityClosure(
       sources,
       sourceFiles,
       path,
       root,
       packageExports,
+      conditionalPackageExports,
+      contractSources,
+      nativeRuntimeEnvironment,
     );
     const recorded = new Set<string>();
     const record = (violation: DatabaseAccessViolation): void => {
@@ -971,7 +3345,7 @@ export const checkDatabaseAccessBoundaries = (root: string) =>
       const context: SourceCheckContext = {
         file,
         globalDatabaseCapabilityFiles,
-        governedAdapter: isGovernedAdapter(relative, source),
+        governedAdapter: isGovernedAdapter(relative, source) && !issuerSources.has(file),
         packageExports,
         path,
         record,

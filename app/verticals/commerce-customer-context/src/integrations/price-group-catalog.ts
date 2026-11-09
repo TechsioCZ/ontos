@@ -7,6 +7,7 @@ import {
 } from '@app/price-group-catalog-contracts/validate-price-group-compatibility/client';
 import type { ValidatePriceGroupCompatibilityClientOptions } from '@app/price-group-catalog-contracts/validate-price-group-compatibility/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
+import { readVerifiedGatewayWorkload } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
 import { Crypto, Effect, Match, Redacted, Schema } from 'effect';
 
@@ -19,6 +20,16 @@ import type {
 import { CustomerPriceGroupCatalogUnavailable } from '../../shared/domain/price-group-errors.ts';
 import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain/price-group-ports.ts';
 import type { PriceGroupCatalogPort } from '../../shared/domain/price-group-ports.ts';
+import { commerceSourceDelegationSubject } from './source-delegation-subject.ts';
+
+export const PriceGroupCatalogRequirementSchema = Schema.Literals([
+  'commerce.customer-context.requirement.assign-customer-price-group-catalog',
+  'commerce.customer-context.requirement.assign-counterparty-price-group-catalog',
+  'commerce.customer-context.requirement.migrate-customer-price-group-catalog',
+  'commerce.customer-context.requirement.migrate-counterparty-price-group-catalog',
+  'commerce.customer-context.requirement.price-group-single-assignment',
+]);
+export type PriceGroupCatalogRequirement = typeof PriceGroupCatalogRequirementSchema.Type;
 
 const compatibilityContractVersion = 1 as const;
 type CompatibilityClientError =
@@ -196,12 +207,40 @@ const authorizedExecutor =
     crypto: Crypto.Crypto,
     execute: AuthorizedPriceGroupCompatibilityExecutor,
     acquire: DelegatedGatewayAcquisition,
+    operationRequirementKey: PriceGroupCatalogRequirement | undefined,
   ): PriceGroupCompatibilityExecutor =>
-  (payload, correlation) =>
-    acquire(
-      { audience: 'price-group-catalog', legalEntityScope: 'tenant', requestCorrelation: correlation, subject },
-      crypto,
-    ).pipe(
+  (payload, correlation) => {
+    const destination = Match.value(subject).pipe(
+      Match.tag('Assertion', ({ scope }) => {
+        if (readVerifiedGatewayWorkload(scope) === undefined) {
+          return Effect.succeed(subject);
+        }
+        if (operationRequirementKey === undefined) {
+          return Effect.fail(unavailable('The native Catalog operation requirement is missing'));
+        }
+        return Effect.succeed(
+          commerceSourceDelegationSubject(
+            scope,
+            'pricing.price-group-catalog.price-group.read.compatibility',
+            payload,
+            operationRequirementKey,
+          ),
+        );
+      }),
+      Match.orElse((original) => Effect.succeed(original)),
+    );
+    return destination.pipe(
+      Effect.flatMap((scopedSubject) =>
+        acquire(
+          {
+            audience: 'price-group-catalog',
+            legalEntityScope: 'tenant',
+            requestCorrelation: correlation,
+            subject: scopedSubject,
+          },
+          crypto,
+        ),
+      ),
       Effect.mapError(unavailable),
       Effect.flatMap((issued) =>
         execute(payload, Redacted.make(issued.authorization), correlation, {
@@ -210,17 +249,22 @@ const authorizedExecutor =
         }),
       ),
     );
+  };
 
 export const priceGroupCatalogPortFromEnvironment = Effect.fn('PriceGroupCatalog.portFromEnvironment')(
   function* priceGroupCatalogPortFromEnvironment(
-    context: { readonly requestCorrelation: string; readonly subject: GatewayDelegationSubject },
+    context: {
+      readonly operationRequirementKey?: PriceGroupCatalogRequirement;
+      readonly requestCorrelation: string;
+      readonly subject: GatewayDelegationSubject;
+    },
     execute: AuthorizedPriceGroupCompatibilityExecutor = executeAuthorizedCompatibility,
     acquire: DelegatedGatewayAcquisition = acquireDelegatedGatewayContext,
   ) {
     const crypto = yield* Crypto.Crypto;
     return priceGroupCatalogPort(
       context.requestCorrelation,
-      authorizedExecutor(context.subject, crypto, execute, acquire),
+      authorizedExecutor(context.subject, crypto, execute, acquire, context.operationRequirementKey),
     );
   },
 );

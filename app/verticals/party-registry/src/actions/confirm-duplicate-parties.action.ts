@@ -48,7 +48,14 @@ export const confirmDuplicatePartiesAction = defineAction(
     schemaVersion: '1',
   },
   handleDuplicateCaseResolution,
-  (transaction, scope) => duplicateCaseResolutionService(transaction, scope.tenantId, 'CONFIRMED_DUPLICATE_PARTIES'),
+  (transaction, scope) =>
+    duplicateCaseResolutionService(
+      transaction,
+      scope.tenantId,
+      'CONFIRMED_DUPLICATE_PARTIES',
+      'party.registry.confirm-duplicate-parties',
+      scope,
+    ),
 );
 // Production merge remains deliberately absent: this Action records reviewed readiness only.
 // <generated-outbox-message-exports>

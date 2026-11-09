@@ -14,7 +14,7 @@ import {
   EffectiveCustomerGroupMembershipSetV1ResponseSchema,
 } from '../../shared/apis/effective-customer-group-membership-set-v1.ts';
 import {
-  CommerceCustomerGroupMembershipSchema,
+  CommerceCustomerGroupMembershipReadSchema,
   CommerceCustomerProfileSubjectSchema,
   CustomerGroupIsoTimestampSchema,
   CustomerGroupLegalEntityIdSchema,
@@ -22,6 +22,7 @@ import {
 import {
   customerGroupReadServiceFactory,
   customerGroupReadUnavailable,
+  projectCustomerGroupMembershipRead,
   requireCustomerGroupReadLegalEntityId,
   requireCustomerGroupTenant,
   unwrapCustomerGroupLookup,
@@ -46,7 +47,7 @@ type EffectiveMembershipSetProof = EffectiveCustomerGroupMembershipSetV1Response
 const MembershipSetDigestPayloadSchema = Schema.Struct({
   asOf: CustomerGroupIsoTimestampSchema,
   legalEntityId: CustomerGroupLegalEntityIdSchema,
-  memberships: Schema.Array(CommerceCustomerGroupMembershipSchema),
+  memberships: Schema.Array(CommerceCustomerGroupMembershipReadSchema),
   predicateRef: Schema.Literal(EFFECTIVE_MEMBERSHIP_PREDICATE),
   profile: CommerceCustomerProfileSubjectSchema,
 });
@@ -104,7 +105,7 @@ const handleEffectiveCustomerGroupMembershipSetV1 = Effect.fn('EffectiveCustomer
     const response = {
       asOf: result.effectiveAt,
       legalEntityId,
-      memberships: result.items,
+      memberships: result.items.map(projectCustomerGroupMembershipRead),
       predicateRef: EFFECTIVE_MEMBERSHIP_PREDICATE,
       profile: result.profile,
     };

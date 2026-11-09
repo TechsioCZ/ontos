@@ -11,12 +11,19 @@ import { Brand, identity } from 'effect';
 // <generated-governed-http-api-imports>
 import { AresLookupApi } from './apis/ares-lookup.ts';
 import { CounterpartiesSearchApi } from './apis/counterparties-search.ts';
+import { CounterpartyMigrationCorrelationApi } from './apis/counterparty-migration-correlation.ts';
+import { CounterpartyOrganizationIcoFactsApi } from './apis/counterparty-organization-ico-facts.ts';
 import { CounterpartyReadApi } from './apis/counterparty-read.ts';
 import { CounterpartyRoleHistoryApi } from './apis/counterparty-role-history.ts';
 import { DuplicateCandidateDetailApi } from './apis/duplicate-candidate-detail.ts';
 import { ExecutePrivacyMeasureActionApi } from './apis/execute-privacy-measure-action.ts';
+import { FenceLegacyIcoAuthorityActionApi } from './apis/fence-legacy-ico-authority-action.ts';
 import { GuestPartyResolutionApi } from './apis/guest-party-resolution.ts';
+import { LegacyIcoInventoryApi } from './apis/legacy-ico-inventory.ts';
+import { OrganizationBusinessNameExportApi } from './apis/organization-business-name-export.ts';
 import { OrganizationEngagementProfileApi } from './apis/organization-engagement-profile.ts';
+import { OrganizationIcoFactsApi } from './apis/organization-ico-facts.ts';
+import { OrganizationRecordFactsApi } from './apis/organization-record-facts.ts';
 import { PartiesSearchApi } from './apis/parties-search.ts';
 import { PartyContactPointDetailApi } from './apis/party-contact-point-detail.ts';
 import { PartyContactPointsApi } from './apis/party-contact-points.ts';
@@ -28,8 +35,12 @@ import { PartyMergeReadinessApi } from './apis/party-merge-readiness.ts';
 import { PartyOfficialIdentifierDetailApi } from './apis/party-official-identifier-detail.ts';
 import { PartyOfficialIdentifierHistoryApi } from './apis/party-official-identifier-history.ts';
 import { PartyRelationshipDetailApi } from './apis/party-relationship-detail.ts';
+import { PartySourceEffectReceiptApi } from './apis/party-source-effect-receipt.ts';
 import { PersonEngagementProfileApi } from './apis/person-engagement-profile.ts';
 import { PrivacyMeasureExecutionApi } from './apis/privacy-measure-execution.ts';
+import { SourceCounterpartyAdmissionApi } from './apis/source-counterparty-admission.ts';
+import { SourcePersonAdmissionApi } from './apis/source-person-admission.ts';
+import { SourceProfileExportApi } from './apis/source-profile-export.ts';
 // </generated-governed-http-api-imports>
 import { partyRegistryCommandRecoveryApi, partyRegistryCommandsApi } from './command-api.ts';
 import { organizationEngagementMutationApi, personEngagementMutationApi } from './engagement-profile-api.ts';
@@ -102,12 +113,19 @@ export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   // <generated-governed-http-api-additions>
   .addHttpApi(AresLookupApi)
   .addHttpApi(CounterpartiesSearchApi)
+  .addHttpApi(CounterpartyMigrationCorrelationApi)
+  .addHttpApi(CounterpartyOrganizationIcoFactsApi)
   .addHttpApi(CounterpartyReadApi)
   .addHttpApi(CounterpartyRoleHistoryApi)
   .addHttpApi(DuplicateCandidateDetailApi)
   .addHttpApi(ExecutePrivacyMeasureActionApi)
+  .addHttpApi(FenceLegacyIcoAuthorityActionApi)
   .addHttpApi(GuestPartyResolutionApi)
+  .addHttpApi(LegacyIcoInventoryApi)
+  .addHttpApi(OrganizationBusinessNameExportApi)
   .addHttpApi(OrganizationEngagementProfileApi)
+  .addHttpApi(OrganizationIcoFactsApi)
+  .addHttpApi(OrganizationRecordFactsApi)
   .addHttpApi(PartiesSearchApi)
   .addHttpApi(PartyContactPointDetailApi)
   .addHttpApi(PartyContactPointsApi)
@@ -119,8 +137,12 @@ export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   .addHttpApi(PartyOfficialIdentifierDetailApi)
   .addHttpApi(PartyOfficialIdentifierHistoryApi)
   .addHttpApi(PartyRelationshipDetailApi)
+  .addHttpApi(PartySourceEffectReceiptApi)
   .addHttpApi(PersonEngagementProfileApi)
   .addHttpApi(PrivacyMeasureExecutionApi)
+  .addHttpApi(SourceCounterpartyAdmissionApi)
+  .addHttpApi(SourcePersonAdmissionApi)
+  .addHttpApi(SourceProfileExportApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);
@@ -224,3 +246,24 @@ export const partyRegistryApiContract = {
   ownerId: 'party-registry',
   readinessPath: '/party-registry-api/party-registry/readiness',
 } as const;
+
+export * from './apis/party-source-effect-receipt.ts';
+
+export * from './apis/counterparty-migration-correlation.ts';
+
+export * from './apis/legacy-ico-inventory.ts';
+
+export * from './apis/fence-legacy-ico-authority-action.ts';
+
+export * from './apis/source-person-admission.ts';
+
+export * from './apis/source-profile-export.ts';
+
+export * from './apis/source-counterparty-admission.ts';
+
+export * from './apis/organization-ico-facts.ts';
+
+export * from './apis/counterparty-organization-ico-facts.ts';
+
+export * from './apis/organization-record-facts.ts';
+export * from './apis/organization-business-name-export.ts';

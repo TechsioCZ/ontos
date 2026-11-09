@@ -48,6 +48,11 @@ import type {
   InventoryAuthorization,
   ProtectedEntrypointInventoryEntry,
 } from './authorization/protected-entrypoint-inventory.mts';
+import { AccessDeclarationSchema } from '../packages/core-runtime/src/authorization/access-declaration.ts';
+import {
+  provesPublicDataCodecExport,
+  provesPublicDataCodecTypeExport,
+} from '../tools/oxlint/anti-slop/effect/rules/data-factory-proof.ts';
 import { topLevelSeparators } from './boundary-source-structure.mts';
 import {
   assertPublishedCrossMicroVerticalContractUsage,
@@ -63,6 +68,7 @@ import {
   hasCompleteGeneratedModuleApiSeam,
   hasGeneratedActionClientPublication,
   ownerActionClientPublication,
+  resolvePublishedOwnerReadClient,
   governedApiBinding,
   hasPublishedGeneratedContractShim,
   hasGeneratedGovernedServerContract,
@@ -1044,12 +1050,13 @@ const nativeOwnershipOrigins = (state: BoundaryCheckState, file: string): Readon
 
 const privateImplementationPath =
   /(?:vertical\.(?:registration|manifest|runtime-declaration)\.[cm]?ts$|(?:^|\/)src\/(?:handlers|workers|db|database|repositories?)\/|(?:^|\/)workers\/)/u;
+const EFFECT_HTTP_API_PROVIDER = 'effect/http-api';
 const nativeContractProviders = new Set([
   'effect',
   EFFECT_SCHEMA_PROVIDER,
   'effect/SchemaGetter',
   EFFECT_CLIENT_PROVIDER,
-  'effect/http-api',
+  EFFECT_HTTP_API_PROVIDER,
 ]);
 
 const nativeContractLeaf = (value: GraphValue): boolean =>
@@ -1058,7 +1065,7 @@ const nativeContractLeaf = (value: GraphValue): boolean =>
   (value.specifier === EFFECT_SCHEMA_PROVIDER ||
     value.specifier === 'effect/SchemaGetter' ||
     ['Schema', 'SchemaGetter', 'HttpApi', 'HttpApiEndpoint', 'HttpApiGroup'].includes(value.name) ||
-    ((value.specifier === EFFECT_CLIENT_PROVIDER || value.specifier === 'effect/http-api') &&
+    ((value.specifier === EFFECT_CLIENT_PROVIDER || value.specifier === EFFECT_HTTP_API_PROVIDER) &&
       value.name === 'HttpApiMiddleware' &&
       value.members.length === 1 &&
       value.members[0] === 'Service'));
@@ -1131,36 +1138,79 @@ const hasOnlyNativeContractLeaves = (
     return cached;
   }
   visited.add(expression);
-  const result = state.graph.evaluate(module, expression).every((value) => {
-    if (nativeContractLeaf(value) || isCanonicalContractImport(state, value) || isProblemDetailsFactory(value)) {
-      return true;
-    }
-    if (value.kind !== 'unresolved' && value.kind !== 'node') {
+  // A generated aggregate can have many sibling APIs. Prove its fluent receiver spine
+  // iteratively so sibling count does not consume the descriptor recursion budget.
+  let fluentReceiver = expression;
+  let fluentLinks = 0;
+  const fluentNodes = new Set<SchemaNode>();
+  while (fluentLinks < 256) {
+    if (fluentNodes.has(fluentReceiver)) {
       return false;
     }
-    const { node } = value;
-    if (node.type === 'Identifier' && node.name === 'Number' && state.graph.isUnboundReference(value.module, node)) {
-      let immutableBound = false;
-      traverseFast(value.module.file, (candidate) => {
-        if (
-          candidate.type === 'MemberExpression' &&
-          candidate.object === node &&
-          !candidate.computed &&
-          candidate.property.type === 'Identifier' &&
-          candidate.property.name === 'MAX_SAFE_INTEGER'
-        ) {
-          immutableBound = true;
-        }
-      });
-      return immutableBound;
+    fluentNodes.add(fluentReceiver);
+    const member = fluentReceiver.type === 'CallExpression' ? fluentReceiver.callee : fluentReceiver;
+    if (
+      member.type !== 'MemberExpression' ||
+      member.computed ||
+      member.property.type !== 'Identifier' ||
+      !['addHttpApi', 'annotate'].includes(member.property.name)
+    ) {
+      break;
     }
-    if (node.type !== 'CallExpression' && node.type !== 'MemberExpression') {
-      return false;
-    }
-    const receiver = node.type === 'CallExpression' ? node.callee : node.object;
-    const values = state.graph.evaluate(value.module, receiver);
-    return values.length > 0 && hasOnlyNativeContractLeaves(state, value.module, receiver, new Set(visited), completed);
-  });
+    fluentReceiver = member.object;
+    fluentLinks += 1;
+  }
+  if (fluentLinks === 256) {
+    return false;
+  }
+  const fluentRoot =
+    fluentLinks > 0 && fluentReceiver.type === 'CallExpression'
+      ? state.graph.evaluate(module, fluentReceiver.callee)
+      : [];
+  const nativeApiSpine =
+    fluentRoot.length > 0 &&
+    fluentRoot.every(
+      (value) =>
+        value.kind === 'external' &&
+        (value.specifier === EFFECT_CLIENT_PROVIDER || value.specifier === EFFECT_HTTP_API_PROVIDER) &&
+        value.name === 'HttpApi' &&
+        value.members.length === 1 &&
+        value.members[0] === 'make',
+    );
+  const result =
+    nativeApiSpine ||
+    state.graph.evaluate(module, expression).every((value) => {
+      if (nativeContractLeaf(value) || isCanonicalContractImport(state, value) || isProblemDetailsFactory(value)) {
+        return true;
+      }
+      if (value.kind !== 'unresolved' && value.kind !== 'node') {
+        return false;
+      }
+      const { node } = value;
+      if (node.type === 'Identifier' && node.name === 'Number' && state.graph.isUnboundReference(value.module, node)) {
+        let immutableBound = false;
+        traverseFast(value.module.file, (candidate) => {
+          if (
+            candidate.type === 'MemberExpression' &&
+            candidate.object === node &&
+            !candidate.computed &&
+            candidate.property.type === 'Identifier' &&
+            candidate.property.name === 'MAX_SAFE_INTEGER'
+          ) {
+            immutableBound = true;
+          }
+        });
+        return immutableBound;
+      }
+      if (node.type !== 'CallExpression' && node.type !== 'MemberExpression') {
+        return false;
+      }
+      const receiver = node.type === 'CallExpression' ? node.callee : node.object;
+      const values = state.graph.evaluate(value.module, receiver);
+      return (
+        values.length > 0 && hasOnlyNativeContractLeaves(state, value.module, receiver, new Set(visited), completed)
+      );
+    });
   nodeProofs.set(remainingDepth, result);
   return result;
 };
@@ -1299,6 +1349,128 @@ const resolveSchemaCallReceiver = (state: BoundaryCheckState, source: SourceModu
     : undefined;
 };
 
+const literalContractPropertyKey = (node: SchemaNode): string | undefined => {
+  if (node.type === 'Identifier') {
+    return node.name;
+  }
+  return node.type === 'StringLiteral' ? node.value : undefined;
+};
+
+interface LiteralContractData {
+  readonly value: unknown;
+}
+const literalContractRecord = (
+  node: SchemaNode,
+  depth: number,
+  decode: (node: SchemaNode, depth: number) => LiteralContractData | undefined,
+): LiteralContractData | undefined => {
+  if (node.type !== 'ObjectExpression' || node.properties.length > 32) {
+    return undefined;
+  }
+  const entries: (readonly [string, unknown])[] = [];
+  for (const property of node.properties) {
+    if (property.type !== 'ObjectProperty' || property.computed || property.shorthand) {
+      return undefined;
+    }
+    const key = literalContractPropertyKey(property.key);
+    const value = decode(property.value, depth + 1);
+    if (key === undefined || value === undefined || entries.some(([previous]) => previous === key)) {
+      return undefined;
+    }
+    entries.push([key, value.value]);
+  }
+  return { value: Object.fromEntries(entries) };
+};
+
+/** Decode data only: no spreads, accessors, references, computed keys or executable initializers. */
+const literalContractData = (node: SchemaNode, depth = 0): { readonly value: unknown } | undefined => {
+  if (depth >= 16) {
+    return undefined;
+  }
+  if (node.type === 'TSAsExpression' || node.type === 'TSSatisfiesExpression') {
+    return literalContractData(node.expression, depth + 1);
+  }
+  if (node.type === 'StringLiteral' || node.type === 'BooleanLiteral' || node.type === 'NumericLiteral') {
+    return { value: node.value };
+  }
+  if (node.type === 'NullLiteral') {
+    return { value: null };
+  }
+  if (node.type === 'ArrayExpression' && node.elements.length <= 64) {
+    const elements = node.elements.map((element) =>
+      element === null ? undefined : literalContractData(element, depth + 1),
+    );
+    return elements.every((element) => element !== undefined)
+      ? { value: elements.map((element) => element.value) }
+      : undefined;
+  }
+  return literalContractRecord(node, depth, literalContractData);
+};
+
+const hasLiteralSchemaAnnotation = (node: SchemaNode): boolean => {
+  if (node.type !== 'CallExpression' || node.arguments.length !== 1) {
+    return false;
+  }
+  const [annotation] = node.arguments;
+  return annotation?.type === 'ObjectExpression' && literalContractData(annotation) !== undefined;
+};
+
+const isSchemaAnnotationMethod = (node: SchemaNode): boolean =>
+  node.type === 'CallExpression' &&
+  node.callee.type === 'MemberExpression' &&
+  (node.callee.computed
+    ? node.callee.property.type === 'StringLiteral' && node.callee.property.value === 'annotate'
+    : node.callee.property.type === 'Identifier' && node.callee.property.name === 'annotate');
+
+const isNativeSchemaAnnotationFunction = (value: GraphValue): boolean =>
+  value.kind === 'external' &&
+  ((value.specifier === 'effect' && value.name === 'Schema' && value.members.at(-1) === 'annotate') ||
+    (value.specifier === EFFECT_SCHEMA_PROVIDER &&
+      (value.members.at(-1) === 'annotate' || (value.name === 'annotate' && value.members.length === 0))));
+
+const hasClosedSchemaAnnotations = (
+  state: BoundaryCheckState,
+  module: SourceModule,
+  expression: SchemaNode,
+): boolean => {
+  let closed = true;
+  traverseFast(expression, (node) => {
+    if (
+      node.type === 'CallExpression' &&
+      (isSchemaAnnotationMethod(node) ||
+        state.graph.evaluate(module, node.callee).some(isNativeSchemaAnnotationFunction)) &&
+      !hasLiteralSchemaAnnotation(node)
+    ) {
+      closed = false;
+    }
+  });
+  return closed;
+};
+
+const isNativeSchemaConstructor = (state: BoundaryCheckState, value: GraphValue): boolean =>
+  (nativeContractLeaf(value) &&
+    value.kind === 'external' &&
+    (value.name === 'Schema' || value.specifier === EFFECT_SCHEMA_PROVIDER)) ||
+  isCanonicalContractImport(state, value);
+
+const localSchemaCallee = (state: BoundaryCheckState, source: SourceModule, node: SchemaNode) =>
+  node.type === 'Identifier' ? state.graph.resolve(source, node.name, 'local') : undefined;
+
+const publicSchemaFactoryBody = (
+  state: BoundaryCheckState,
+  binding: ReturnType<BoundaryCheckState['graph']['resolve']>,
+) => {
+  if (
+    binding?.kind !== 'declaration' ||
+    binding.expression.type !== 'ArrowFunctionExpression' ||
+    binding.expression.body.type !== 'CallExpression' ||
+    privateImplementationPath.test(nodePath.relative(state.root, binding.module.path))
+  ) {
+    return null;
+  }
+  return { expression: binding.expression.body, module: binding.module };
+};
+
 const hasCanonicalSchemaConstructor = (
   state: BoundaryCheckState,
   module: SourceModule,
@@ -1310,39 +1482,33 @@ const hasCanonicalSchemaConstructor = (
   let schemaCall = expression;
   let source = module;
   for (let depth = 0; depth < 32; depth += 1) {
+    if (!hasClosedSchemaAnnotations(state, source, schemaCall)) {
+      return false;
+    }
     const constructors = state.graph.evaluate(source, schemaCall.callee);
+    const localFactory = localSchemaCallee(state, source, schemaCall.callee);
     if (
+      localFactory?.kind !== 'declaration' &&
       constructors.length > 0 &&
-      constructors.every(
-        (value) =>
-          (nativeContractLeaf(value) &&
-            value.kind === 'external' &&
-            (value.name === 'Schema' || value.specifier === EFFECT_SCHEMA_PROVIDER)) ||
-          isCanonicalContractImport(state, value),
-      )
+      constructors.every((value) => isNativeSchemaConstructor(state, value))
     ) {
       return true;
     }
     const { callee } = schemaCall;
     if (callee.type === 'Identifier') {
-      const binding = state.graph.resolve(source, callee.name, 'local');
-      if (
-        binding?.kind !== 'declaration' ||
-        binding.expression.type !== 'ArrowFunctionExpression' ||
-        binding.expression.body.type !== 'CallExpression' ||
-        privateImplementationPath.test(nodePath.relative(state.root, binding.module.path))
-      ) {
+      const binding = publicSchemaFactoryBody(state, state.graph.resolve(source, callee.name, 'local'));
+      if (binding === null) {
         return false;
       }
       source = binding.module;
-      schemaCall = binding.expression.body;
+      schemaCall = binding.expression;
       continue;
     }
     if (
       callee.type !== 'MemberExpression' ||
       callee.computed ||
       callee.property.type !== 'Identifier' ||
-      !['check', 'pipe'].includes(callee.property.name)
+      !['check', 'pipe', 'annotate'].includes(callee.property.name)
     ) {
       return false;
     }
@@ -1440,11 +1606,551 @@ const isApprovedApiMetadataCall = (
           value.members.length === 0,
       )));
 
+const dormantNativeEffectFactoryCalls = (state: BoundaryCheckState, module: SourceModule): ReadonlySet<SchemaNode> => {
+  const calls = new Set<SchemaNode>();
+  traverseFast(module.file, (node) => {
+    if (
+      node.type !== 'CallExpression' ||
+      node.callee.type !== 'CallExpression' ||
+      node.arguments.length !== 1 ||
+      node.callee.arguments.length !== 1 ||
+      node.callee.arguments[0]?.type !== 'StringLiteral' ||
+      !isFunction(node.arguments[0])
+    ) {
+      return;
+    }
+    const constructors = state.graph.evaluate(module, node.callee.callee);
+    if (
+      constructors.length > 0 &&
+      constructors.every(
+        (value) =>
+          value.kind === 'external' &&
+          ((value.specifier === 'effect' && value.name === 'Effect') || value.specifier === 'effect/Effect') &&
+          value.members.length === 1 &&
+          value.members[0] === 'fn',
+      )
+    ) {
+      calls.add(node);
+      calls.add(node.callee);
+    }
+  });
+  return calls;
+};
+
+interface NativeSchemaOrigin {
+  readonly expression: SchemaNode;
+  readonly id: SchemaNode;
+  readonly module: SourceModule;
+}
+
+const ownSchemaOrigin = (module: SourceModule, node: SchemaNode): NativeSchemaOrigin | undefined => {
+  for (const entry of module.file.program.body) {
+    const declaration = entry.type === 'ExportNamedDeclaration' ? entry.declaration : entry;
+    if (declaration?.type !== 'VariableDeclaration' || declaration.kind !== 'const') {
+      continue;
+    }
+    for (const binding of declaration.declarations) {
+      if (
+        binding.id.type === 'Identifier' &&
+        binding.init !== undefined &&
+        binding.init !== null &&
+        (binding.id === node || binding.init === node)
+      ) {
+        return { expression: binding.init, id: binding.id, module };
+      }
+    }
+  }
+  return undefined;
+};
+
+const nativeSchemaUnionOrigin = (
+  state: BoundaryCheckState,
+  module: SourceModule,
+  node: SchemaNode,
+): NativeSchemaOrigin | undefined => {
+  const values = state.graph.evaluate(module, node);
+  const origins = values.flatMap((value) =>
+    value.kind === 'node' || value.kind === 'unresolved'
+      ? [ownSchemaOrigin(value.module, value.node)].filter((origin) => origin !== undefined)
+      : [],
+  );
+  const [origin] = origins;
+  if (
+    origin === undefined ||
+    !values.every(
+      (value) =>
+        (value.kind === 'node' || value.kind === 'unresolved') &&
+        value.module.path === origin.module.path &&
+        (value.node === origin.id || value.node === origin.expression),
+    )
+  ) {
+    return undefined;
+  }
+  const { expression } = origin;
+  return expression.type === 'CallExpression' &&
+    expression.callee.type === 'MemberExpression' &&
+    !expression.callee.computed &&
+    expression.callee.property.type === 'Identifier' &&
+    expression.callee.property.name === 'Union' &&
+    hasCanonicalSchemaConstructor(state, origin.module, expression) &&
+    hasOnlyNativeContractLeaves(state, origin.module, expression)
+    ? origin
+    : undefined;
+};
+
+const schemaTupleBinding = (
+  module: SourceModule,
+  name: string,
+): { readonly index: number; readonly object: SchemaNode } | undefined => {
+  const bindings = module.file.program.body.flatMap((entry) => {
+    const declaration = entry.type === 'ExportNamedDeclaration' ? entry.declaration : entry;
+    if (declaration?.type !== 'VariableDeclaration' || declaration.kind !== 'const') {
+      return [];
+    }
+    return declaration.declarations.flatMap((binding) => {
+      if (
+        binding.id.type !== 'ArrayPattern' ||
+        binding.id.elements.some((element) => element?.type !== 'Identifier') ||
+        binding.init?.type !== 'MemberExpression' ||
+        binding.init.computed ||
+        binding.init.property.type !== 'Identifier' ||
+        binding.init.property.name !== 'members'
+      ) {
+        return [];
+      }
+      const index = binding.id.elements.findIndex((element) => element?.type === 'Identifier' && element.name === name);
+      return index === -1 ? [] : [{ index, object: binding.init.object }];
+    });
+  });
+  return bindings.length === 1 ? bindings[0] : undefined;
+};
+
+interface UnwrappedContractMetadata {
+  readonly expression: SchemaNode;
+  readonly readonlyTuple: boolean;
+}
+const unwrappedContractMetadata = (node: SchemaNode): UnwrappedContractMetadata => {
+  let expression = node;
+  let readonlyTuple = false;
+  for (let depth = 0; depth < 16; depth += 1) {
+    if (expression.type !== 'TSAsExpression' && expression.type !== 'TSSatisfiesExpression') {
+      break;
+    }
+    if (
+      expression.type === 'TSAsExpression' &&
+      expression.typeAnnotation.type === 'TSTypeReference' &&
+      expression.typeAnnotation.typeName.type === 'Identifier' &&
+      expression.typeAnnotation.typeName.name === 'const'
+    ) {
+      readonlyTuple = true;
+    }
+    const { expression: inner } = expression;
+    expression = inner;
+  }
+  return { expression, readonlyTuple };
+};
+
+const referencesSchemaOrigin = (node: SchemaNode, names: ReadonlySet<string>): boolean => {
+  let found = false;
+  traverseFast(node, (child) => {
+    if (child.type === 'Identifier' && names.has(child.name)) {
+      found = true;
+    }
+  });
+  return found;
+};
+
+const isNativeSchemaFieldsOmitFunction = (value: GraphValue): boolean =>
+  value.kind === 'external' &&
+  value.specifier === 'effect' &&
+  value.name === 'Struct' &&
+  value.members.length === 1 &&
+  value.members[0] === 'omit';
+
+const strictMetadataEscape = (node: SchemaNode, names: ReadonlySet<string>): boolean => {
+  if (node.type === 'AssignmentExpression') {
+    return referencesSchemaOrigin(node.right, names);
+  }
+  if (node.type === 'CallExpression') {
+    return referencesSchemaOrigin(node.callee, names);
+  }
+  if (node.type === 'NewExpression') {
+    return node.arguments.some((argument) => referencesSchemaOrigin(argument, names));
+  }
+  if (node.type === 'TaggedTemplateExpression') {
+    return (
+      referencesSchemaOrigin(node.tag, names) ||
+      node.quasi.expressions.some((value) => referencesSchemaOrigin(value, names))
+    );
+  }
+  if (node.type === 'ClassProperty' || node.type === 'ClassPrivateProperty' || node.type === 'ClassAccessorProperty') {
+    return node.value !== null && node.value !== undefined && referencesSchemaOrigin(node.value, names);
+  }
+  return false;
+};
+
+const hasClosedSchemaOriginCustody = (
+  state: BoundaryCheckState,
+  origin: NativeSchemaOrigin,
+  permittedCalls: ReadonlySet<SchemaNode> = new Set(),
+  strictData = false,
+): boolean => {
+  const names = new Set(origin.id.type === 'Identifier' ? [origin.id.name] : []);
+  for (let depth = 0; depth < 32; depth += 1) {
+    const count = names.size;
+    traverseFast(origin.module.file, (node) => {
+      if (
+        node.type === 'VariableDeclarator' &&
+        node.init !== undefined &&
+        node.init !== null &&
+        ['Identifier', 'MemberExpression', 'ObjectExpression', 'ArrayExpression'].includes(
+          unwrappedContractMetadata(node.init).expression.type,
+        ) &&
+        referencesSchemaOrigin(node.init, names)
+      ) {
+        for (const name of Object.keys(getBindingIdentifiers(node.id))) {
+          names.add(name);
+        }
+      }
+    });
+    if (names.size === count) {
+      break;
+    }
+  }
+  let closed = true;
+  traverseFast(origin.module.file, (node) => {
+    if (strictData && strictMetadataEscape(node, names)) {
+      closed = false;
+    }
+    if (
+      (node.type === 'AssignmentExpression' && referencesSchemaOrigin(node.left, names)) ||
+      (node.type === 'UpdateExpression' && referencesSchemaOrigin(node.argument, names))
+    ) {
+      closed = false;
+    }
+    if (
+      node.type === 'CallExpression' &&
+      !permittedCalls.has(node) &&
+      node.arguments.some((argument) => referencesSchemaOrigin(argument, names))
+    ) {
+      const native = state.graph.evaluate(origin.module, node.callee);
+      if (
+        !hasCanonicalSchemaConstructor(state, origin.module, node) &&
+        !(
+          native.length > 0 &&
+          native.every(
+            (value) =>
+              nativeContractLeaf(value) ||
+              isCanonicalContractImport(state, value) ||
+              isNativeSchemaFieldsOmitFunction(value),
+          )
+        )
+      ) {
+        closed = false;
+      }
+    }
+  });
+  return closed;
+};
+
+const immutableSchemaOrigins = new WeakMap<BoundaryCheckState, WeakMap<SchemaNode, boolean>>();
+const hasImmutableSchemaOrigin = (
+  state: BoundaryCheckState,
+  module: SourceModule,
+  origin: NativeSchemaOrigin,
+  checkSource: ImmutableContractCheck,
+): boolean => {
+  let proofs = immutableSchemaOrigins.get(state);
+  if (proofs === undefined) {
+    proofs = new WeakMap();
+    immutableSchemaOrigins.set(state, proofs);
+  }
+  const cached = proofs.get(origin.expression);
+  if (cached !== undefined) {
+    return cached;
+  }
+  let closed = true;
+  traverseFast(origin.module.file, (node) => {
+    if (
+      (node.type === 'ObjectMethod' && (node.computed || node.kind !== 'method')) ||
+      (node.type === 'ObjectProperty' && node.computed)
+    ) {
+      closed = false;
+    }
+  });
+  const file = nodePath.relative(state.root, origin.module.path).replaceAll('\\', '/');
+  const valid =
+    closed &&
+    hasClosedSchemaOriginCustody(state, origin) &&
+    !privateImplementationPath.test(file) &&
+    (origin.module.path === module.path ||
+      checkSource(state, file, new Set([nodePath.relative(state.root, module.path)]), false, origin.expression));
+  proofs.set(origin.expression, valid);
+  return valid;
+};
+
+const isSchemaParameterProjection = (node: SchemaNode, parameter: string): boolean => {
+  let root = node;
+  const members: string[] = [];
+  while (root.type === 'MemberExpression' && !root.computed && root.property.type === 'Identifier') {
+    members.unshift(root.property.name);
+    root = root.object;
+  }
+  return (
+    root.type === 'Identifier' &&
+    root.name === parameter &&
+    members.length === 2 &&
+    members[0] === 'fields' &&
+    members.every((member) => !['__proto__', 'prototype', 'constructor'].includes(member))
+  );
+};
+
+const isNativeSchemaStructCall = (
+  state: BoundaryCheckState,
+  module: SourceModule,
+  node: SchemaNode | null | undefined,
+): boolean =>
+  node?.type === 'CallExpression' &&
+  node.callee.type === 'MemberExpression' &&
+  !node.callee.computed &&
+  node.callee.property.type === 'Identifier' &&
+  node.callee.property.name === 'Struct' &&
+  hasCanonicalSchemaConstructor(state, module, node);
+
+const hasNativeSchemaProjectionArgument = (
+  state: BoundaryCheckState,
+  module: SourceModule,
+  node: SchemaNode,
+  checkSource: ImmutableContractCheck,
+  permittedCall: SchemaNode,
+): boolean => {
+  if (node.type !== 'Identifier') {
+    return false;
+  }
+  const binding = schemaTupleBinding(module, node.name);
+  const origin = binding === undefined ? undefined : nativeSchemaUnionOrigin(state, module, binding.object);
+  const actual = nativeSchemaUnionOrigin(state, module, node);
+  if (actual?.expression !== origin?.expression) {
+    return false;
+  }
+  if (
+    binding === undefined ||
+    origin?.expression.type !== 'CallExpression' ||
+    origin.expression.arguments.length !== 1
+  ) {
+    return false;
+  }
+  const [members] = origin.expression.arguments;
+  const member = members?.type === 'ArrayExpression' ? members.elements[binding.index] : undefined;
+  const schemaBinding =
+    member?.type === 'Identifier' ? resolveSchemaCallReceiver(state, origin.module, member) : undefined;
+  const schema = schemaBinding?.expression ?? member;
+  return (
+    isNativeSchemaStructCall(state, origin.module, schema) &&
+    hasImmutableSchemaOrigin(state, module, origin, checkSource) &&
+    hasClosedSchemaOriginCustody(state, { ...origin, id: node, module }, new Set([permittedCall]))
+  );
+};
+
+const hasSchemaFieldsProjectionCall = (
+  state: BoundaryCheckState,
+  module: SourceModule,
+  node: SchemaNode,
+  checkSource: ImmutableContractCheck,
+): boolean => {
+  if (node.type !== 'CallExpression' || node.callee.type !== 'Identifier' || node.arguments.length !== 1) {
+    return false;
+  }
+  const binding = ownConstContractDeclaration(module, node.callee.name);
+  const referenced = state.graph.resolveReference(module, node.callee);
+  if (
+    binding === undefined ||
+    referenced?.kind !== 'declaration' ||
+    referenced.module.path !== binding.module.path ||
+    referenced.expression !== binding.expression
+  ) {
+    return false;
+  }
+  if (
+    binding?.expression.type !== 'ArrowFunctionExpression' ||
+    binding.expression.async ||
+    binding.expression.params.length !== 1 ||
+    binding.expression.params[0]?.type !== 'Identifier' ||
+    binding.expression.body.type !== 'ObjectExpression'
+  ) {
+    return false;
+  }
+  const [parameter] = binding.expression.params;
+  const fields = binding.expression.body.properties;
+  return (
+    fields.length > 0 &&
+    fields.every(
+      (field) =>
+        field.type === 'ObjectProperty' &&
+        !field.computed &&
+        !field.shorthand &&
+        (isSchemaParameterProjection(field.value, parameter.name) ||
+          hasOnlyNativeContractLeaves(state, module, field.value)),
+    ) &&
+    hasNativeSchemaProjectionArgument(state, module, node.arguments[0], checkSource, node)
+  );
+};
+
+const schemaStructReceiver = (
+  state: BoundaryCheckState,
+  module: SourceModule,
+  node: SchemaNode,
+): NativeSchemaOrigin | undefined => {
+  const binding = node.type === 'Identifier' ? resolveSchemaCallReceiver(state, module, node) : undefined;
+  let expression = binding?.expression ?? node;
+  const owner = binding?.module ?? module;
+  if (node.type === 'Identifier') {
+    const referenced = state.graph.resolveReference(module, node);
+    if (
+      binding === undefined ||
+      referenced?.kind !== 'declaration' ||
+      referenced.module.path !== binding.module.path ||
+      referenced.expression !== binding.expression
+    ) {
+      return undefined;
+    }
+  }
+  while (
+    expression.type === 'CallExpression' &&
+    expression.callee.type === 'MemberExpression' &&
+    !expression.callee.computed &&
+    expression.callee.property.type === 'Identifier' &&
+    ['check', 'pipe'].includes(expression.callee.property.name)
+  ) {
+    expression = expression.callee.object;
+  }
+  if (!isNativeSchemaStructCall(state, owner, expression)) {
+    return undefined;
+  }
+  if (binding !== undefined) {
+    return ownSchemaOrigin(owner, binding.expression);
+  }
+  return ownSchemaOrigin(owner, node) ?? { expression: node, id: node, module: owner };
+};
+
+const hasSchemaFieldsOmitCall = (
+  state: BoundaryCheckState,
+  module: SourceModule,
+  node: SchemaNode,
+  checkSource: ImmutableContractCheck,
+): boolean => {
+  if (node.type !== 'CallExpression' || node.arguments.length !== 2) {
+    return false;
+  }
+  const callees = state.graph.evaluate(module, node.callee);
+  if (callees.length !== 1 || !callees.every(isNativeSchemaFieldsOmitFunction)) {
+    return false;
+  }
+  const [fields, keys] = node.arguments;
+  if (
+    fields?.type !== 'MemberExpression' ||
+    fields.computed ||
+    fields.property.type !== 'Identifier' ||
+    fields.property.name !== 'fields' ||
+    keys?.type !== 'ArrayExpression' ||
+    keys.elements.length > 128 ||
+    !keys.elements.every((key) => key?.type === 'StringLiteral')
+  ) {
+    return false;
+  }
+  const schema = schemaStructReceiver(state, module, fields.object);
+  return (
+    schema !== undefined &&
+    hasImmutableSchemaOrigin(state, module, schema, checkSource) &&
+    hasClosedSchemaOriginCustody(state, { ...schema, id: fields.object, module }, new Set([node]))
+  );
+};
+
+const isNativeNominalBrandFactoryCall = (
+  state: BoundaryCheckState,
+  module: SourceModule,
+  node: SchemaNode,
+): boolean => {
+  if (node.type !== 'CallExpression' || node.arguments.length !== 0) {
+    return false;
+  }
+  const values = state.graph.evaluate(module, node.callee);
+  return (
+    values.length === 1 &&
+    values.every(
+      (value) =>
+        value.kind === 'external' &&
+        value.specifier === 'effect' &&
+        value.name === 'Brand' &&
+        value.members.length === 1 &&
+        value.members[0] === 'nominal',
+    )
+  );
+};
+
+const isSchemaAnnotationCall = (state: BoundaryCheckState, module: SourceModule, node: SchemaNode): boolean => {
+  if (
+    node.type === 'CallExpression' &&
+    state.graph.evaluate(module, node.callee).some(isNativeSchemaAnnotationFunction)
+  ) {
+    return true;
+  }
+  if (node.type !== 'CallExpression' || node.callee.type !== 'MemberExpression' || !isSchemaAnnotationMethod(node)) {
+    return false;
+  }
+  const receiver = node.callee.object;
+  const binding = receiver.type === 'Identifier' ? resolveSchemaCallReceiver(state, module, receiver) : undefined;
+  const schema = binding?.expression ?? receiver;
+  if (hasCanonicalSchemaConstructor(state, binding?.module ?? module, schema)) {
+    return true;
+  }
+  return state.graph
+    .evaluate(module, receiver)
+    .some(
+      (value) =>
+        nativeContractLeaf(value) &&
+        value.kind === 'external' &&
+        (value.name === 'Schema' || value.specifier === EFFECT_SCHEMA_PROVIDER),
+    );
+};
+
+const hasImmutableRuntimeCall = (
+  state: BoundaryCheckState,
+  module: SourceModule,
+  node: SchemaNode,
+  dormantFactories: ReadonlySet<SchemaNode>,
+  approvedApiRoot: SchemaNode | undefined,
+  checkSource: ImmutableContractCheck,
+): boolean => {
+  if (node.type !== 'CallExpression') {
+    return false;
+  }
+  if (isSchemaAnnotationCall(state, module, node) && !hasLiteralSchemaAnnotation(node)) {
+    return false;
+  }
+  const callees = state.graph.evaluate(module, node.callee);
+  if (
+    isApprovedApiMetadataCall(node, approvedApiRoot, callees) ||
+    dormantFactories.has(node) ||
+    callees.some(isProblemDetailsFactory) ||
+    hasCanonicalSchemaConstructor(state, module, node) ||
+    hasSchemaFieldsProjectionCall(state, module, node, checkSource) ||
+    hasSchemaFieldsOmitCall(state, module, node, checkSource) ||
+    isNativeNominalBrandFactoryCall(state, module, node)
+  ) {
+    return true;
+  }
+  return (
+    state.graph.reachable(module, node.callee).length > 0 && hasOnlyNativeContractLeaves(state, module, node.callee)
+  );
+};
+
 const hasImmutableContractRuntime = (
   state: BoundaryCheckState,
   module: SourceModule,
   file: string,
   selected: SchemaNode | undefined,
+  checkSource: ImmutableContractCheck,
   approvedApiRoot?: SchemaNode,
 ): boolean => {
   const typeNodes = new Set<SchemaNode>();
@@ -1474,6 +2180,8 @@ const hasImmutableContractRuntime = (
   ) {
     return false;
   }
+  const dormantFactories =
+    selected === undefined ? new Set<SchemaNode>() : dormantNativeEffectFactoryCalls(state, module);
   let immutable = true;
   traverseFast(module.file, (node) => {
     if (selected !== undefined && dormantNodes.has(node)) {
@@ -1484,23 +2192,16 @@ const hasImmutableContractRuntime = (
         selected === undefined) ||
       node.type === 'AssignmentExpression' ||
       node.type === 'UpdateExpression' ||
+      node.type === 'TaggedTemplateExpression' ||
       (selected === undefined && node.type === 'VariableDeclaration' && node.kind !== 'const')
     ) {
       immutable = false;
     }
-    if (node.type === 'CallExpression') {
-      const callees = state.graph.evaluate(module, node.callee);
-      const genuineFactory = callees.some(isProblemDetailsFactory);
-      const approvedMetadata = isApprovedApiMetadataCall(node, approvedApiRoot, callees);
-      const nativeLeaves = state.graph.reachable(module, node.callee);
-      if (
-        !approvedMetadata &&
-        !genuineFactory &&
-        !hasCanonicalSchemaConstructor(state, module, node) &&
-        (nativeLeaves.length === 0 || !hasOnlyNativeContractLeaves(state, module, node.callee))
-      ) {
-        immutable = false;
-      }
+    if (
+      node.type === 'CallExpression' &&
+      !hasImmutableRuntimeCall(state, module, node, dormantFactories, approvedApiRoot, checkSource)
+    ) {
+      immutable = false;
     }
     if (selected === undefined && !hasAllowedUnboundContractReference(state, module, node, typeNodes)) {
       immutable = false;
@@ -1669,7 +2370,7 @@ const isImmutablePublicContract = (
   const apiName = nativeApi ? governedApiBinding(state.sourceMap.get(file) ?? '') : undefined;
   const api = apiName === undefined ? undefined : state.graph.resolve(module, apiName, 'export');
   const approvedApiRoot = api?.kind === 'declaration' && api.expression === selected ? selected : undefined;
-  if (!hasImmutableContractRuntime(state, module, file, selected, approvedApiRoot)) {
+  if (!hasImmutableContractRuntime(state, module, file, selected, isImmutablePublicContract, approvedApiRoot)) {
     return false;
   }
   return module.file.program.body.every((statement) => {
@@ -2078,6 +2779,38 @@ const hasNativeGovernedClientWrapper = (state: BoundaryCheckState, module: Sourc
   return nativeSdk;
 };
 
+const governedReadClientLocation = (
+  state: BoundaryCheckState,
+  owner: string,
+  target: string,
+  appId: string,
+  slug: string,
+): { readonly apiFile: string; readonly contractImport: string; readonly gatewayFile: string } | undefined => {
+  const native = {
+    apiFile: `${owner}/shared/apis/${slug}.ts`,
+    contractImport: `../../shared/apis/${slug}.ts`,
+    gatewayFile: `${owner}/src/api/action-gateway.ts`,
+  };
+  if (target === `${owner}/src/api/${slug}-client.ts`) {
+    return native;
+  }
+  const moduleId = state.ownershipPackages.get(owner)?.metadata.modernjs?.ontosModule?.moduleId;
+  const published =
+    moduleId === undefined ? undefined : resolvePublishedOwnerReadClient(state.sourceMap, owner, appId, moduleId, slug);
+  if (
+    published?.client.sourcePath !== target ||
+    !hasCachedCompleteModuleApiSeam(state, `${owner}/shared/api.ts`, appId)
+  ) {
+    return undefined;
+  }
+  const relativeImport = nodePath.posix.relative(nodePath.posix.dirname(target), published.contract.sourcePath);
+  return {
+    apiFile: published.contract.sourcePath,
+    contractImport: relativeImport.startsWith('.') ? relativeImport : `./${relativeImport}`,
+    gatewayFile: `${published.client.packagePath}/src/api/action-gateway.ts`,
+  };
+};
+
 const hasGovernedClientOperation = (
   state: BoundaryCheckState,
   owner: string,
@@ -2097,6 +2830,10 @@ const hasGovernedClientOperation = (
   if (name !== publicOperation && name !== authorizedOperation) {
     return false;
   }
+  const location = governedReadClientLocation(state, owner, target, appId, slug);
+  if (location === undefined) {
+    return false;
+  }
   const source = state.sourceMap.get(target) ?? '';
   const ownerApiValue = `${pascal}Api`;
   if (
@@ -2107,7 +2844,7 @@ const hasGovernedClientOperation = (
       generatedHeader: MODULE_API_GENERATOR_HEADER,
       invocationKind: 'module-api',
       ownerApiValue,
-      ownerContractImport: `../../shared/apis/${slug}.ts`,
+      ownerContractImport: location.contractImport,
       publicOperation,
     })
   ) {
@@ -2118,7 +2855,7 @@ const hasGovernedClientOperation = (
   if (!matchesSelectedContractBinding(operation, selected)) {
     return false;
   }
-  const apiFile = `${owner}/shared/apis/${slug}.ts`;
+  const { apiFile } = location;
   const api = state.graph.resolve(module, ownerApiValue, 'local');
   if (
     api?.kind !== 'declaration' ||
@@ -2127,7 +2864,7 @@ const hasGovernedClientOperation = (
   ) {
     return false;
   }
-  if (!hasGeneratedOperationGatewayContract(state.sourceMap.get(`${owner}/src/api/action-gateway.ts`) ?? '', appId)) {
+  if (!hasGeneratedOperationGatewayContract(state.sourceMap.get(location.gatewayFile) ?? '', appId)) {
     return false;
   }
   return hasNativeGovernedClientWrapper(state, module, target);
@@ -2435,6 +3172,329 @@ const hasPublishedContractRoutine = (
   );
 };
 
+const closedContractObjectProperty = (node: SchemaNode, name: string): SchemaNode | undefined => {
+  if (node.type !== 'ObjectExpression') {
+    return undefined;
+  }
+  const properties = node.properties.flatMap((property) => {
+    if (property.type !== 'ObjectProperty' || property.computed) {
+      return [];
+    }
+    const key = literalContractPropertyKey(property.key);
+    return key === undefined ? [] : [{ key, value: property.value }];
+  });
+  if (
+    properties.length !== node.properties.length ||
+    new Set(properties.map((property) => property.key)).size !== properties.length
+  ) {
+    return undefined;
+  }
+  return properties.find((property) => property.key === name)?.value;
+};
+
+const hasNativeReadConstruction = (read: SelectedContractDeclaration): boolean => {
+  if (read.expression.type !== 'CallExpression' || read.expression.callee.type !== 'Identifier') {
+    return false;
+  }
+  const { callee } = read.expression;
+  const imports = read.module.file.program.body.flatMap((statement) =>
+    statement.type === 'ImportDeclaration' &&
+    statement.source.value === '@app/core-runtime' &&
+    statement.importKind !== 'type'
+      ? statement.specifiers.filter(
+          (specifier) =>
+            specifier.type === 'ImportSpecifier' &&
+            specifier.importKind !== 'type' &&
+            specifier.imported.type === 'Identifier' &&
+            specifier.imported.name === 'defineRead' &&
+            specifier.local.name === callee.name,
+        )
+      : [],
+  );
+  const [imported] = imports;
+  if (imports.length !== 1 || imported?.type !== 'ImportSpecifier') {
+    return false;
+  }
+  const permitted = new Set<SchemaNode>([callee, imported.local, imported.imported]);
+  let closed = true;
+  traverseFast(read.module.file, (node) => {
+    if (node.type === 'Identifier' && node.name === callee.name && !permitted.has(node)) {
+      closed = false;
+    }
+  });
+  return closed;
+};
+
+const nativeReadAccessBinding = (selection: SelectedOwnerContract): ContractBinding => {
+  const { state } = selection;
+  const readModule = state.graph.module(
+    nodePath.join(state.root, `${selection.owner}/src/api/${selection.name}.read.ts`),
+  );
+  const read = state.graph.resolve(readModule, `${toCamelCase(selection.name)}Read`, 'export');
+  if (read?.kind !== 'declaration' || read.expression.type !== 'CallExpression') {
+    return undefined;
+  }
+  const [descriptor] = read.expression.arguments;
+  if (!hasNativeReadConstruction(read) || descriptor?.type !== 'ObjectExpression') {
+    return undefined;
+  }
+  const access = closedContractObjectProperty(descriptor, 'accessDeclaration');
+  return access?.type === 'Identifier' ? state.graph.resolveReference(read.module, access) : undefined;
+};
+
+/** Published read metadata is the exact immutable declaration consumed by the enrolled native Read. */
+const hasSelectedReadAccessDeclaration = (
+  selection: SelectedOwnerContract,
+  binding: SelectedContractDeclaration,
+): boolean => {
+  const { state } = selection;
+  if (
+    !selection.nativeApi ||
+    selection.target !== `${selection.owner}/shared/apis/${selection.name}.ts` ||
+    binding.module.path !== nodePath.join(state.root, selection.target)
+  ) {
+    return false;
+  }
+  const data = literalContractData(binding.expression);
+  const declaration =
+    data === undefined
+      ? Option.none()
+      : Schema.decodeUnknownOption(AccessDeclarationSchema, {
+          onExcessProperty: 'error',
+        })(data.value);
+  return (
+    Option.isSome(declaration) &&
+    declaration.value.kind === 'read' &&
+    matchesSelectedContractBinding(nativeReadAccessBinding(selection), binding) &&
+    isImmutablePublicContract(state, selection.target, new Set(), false, binding.expression)
+  );
+};
+
+const hasSelectedNativeClientApi = (
+  selection: SelectedOwnerContract,
+  binding: SelectedContractDeclaration,
+): boolean => {
+  if (selection.clientModules === undefined) {
+    return false;
+  }
+  const { state } = selection;
+  const apiModule = state.graph.module(nodePath.join(state.root, `${selection.owner}/shared/api.ts`));
+  const apiName = governedApiBinding(state.sourceMap.get(`${selection.owner}/shared/api.ts`) ?? '');
+  const api = apiName === undefined ? undefined : state.graph.resolve(apiModule, apiName, 'export');
+  return (
+    api?.kind === 'declaration' &&
+    deploymentOwner(state, nodePath.relative(state.root, binding.module.path)) === selection.owner &&
+    hasNativeClientApi(state, binding, api)
+  );
+};
+
+const hasReexportedSchemaInitialization = (
+  state: BoundaryCheckState,
+  file: string,
+  module: SourceModule,
+  binding: SelectedContractDeclaration,
+): boolean => {
+  const owner = deploymentOwner(state, file);
+  const appId = owner === undefined ? undefined : state.ownershipPackages.get(owner)?.metadata.modernjs?.appId;
+  const source = state.sourceMap.get(file) ?? '';
+  const origin = nodePath.relative(state.root, binding.module.path).replaceAll('\\', '/');
+  const apiName = governedApiBinding(source);
+  if (owner === undefined || file !== `${owner}/shared/api.ts`) {
+    // The data proof independently initializes the leaf; this fact describes only the facade's own allocations.
+    return isImmutablePublicContract(state, file, new Set(), false, module.file);
+  }
+  if (
+    !isImmutablePublicContract(state, origin, new Set(), false, binding.expression) ||
+    deploymentOwner(state, origin) !== owner ||
+    appId === undefined ||
+    !hasCachedCompleteModuleApiSeam(state, file, appId) ||
+    apiName === undefined
+  ) {
+    return false;
+  }
+  const api = state.graph.resolve(module, apiName, 'export');
+  return (
+    api?.kind === 'declaration' &&
+    api.module.path === module.path &&
+    isImmutablePublicContract(state, file, new Set(), true, api.expression)
+  );
+};
+
+const publicDataCodecContext = (selection: SelectedOwnerContract) => {
+  const { state } = selection;
+  const initialization = new Map<string, boolean>();
+  return {
+    filename: selection.target,
+    isImmutableContractSource: (file: string, exportedName?: string): boolean => {
+      const key = `${file}:${exportedName ?? ''}`;
+      const known = initialization.get(key);
+      if (known !== undefined) {
+        return known;
+      }
+      initialization.set(key, false);
+      if (!state.sourceMap.has(file) || nodePath.posix.normalize(file) !== file || nodePath.isAbsolute(file)) {
+        return false;
+      }
+      const module = state.graph.module(nodePath.join(state.root, file));
+      const binding =
+        exportedName === undefined ? undefined : resolveContractExport(state, module, exportedName, false);
+      const selected = binding?.kind === 'declaration' ? binding.expression : module.file;
+      const valid =
+        binding?.kind === 'declaration' && binding.module.path !== module.path
+          ? hasReexportedSchemaInitialization(state, file, module, binding)
+          : isImmutablePublicContract(state, file, new Set(), false, selected);
+      initialization.set(key, valid);
+      return valid;
+    },
+    ownerPath: selection.owner,
+    sources: state.sourceMap,
+  };
+};
+
+const hasPublishedContractDataCodec = (
+  selection: SelectedOwnerContract,
+  exportedName: string,
+  binding: SelectedContractDeclaration,
+): boolean => {
+  if (
+    selection.nativeApi ||
+    selection.clientModules !== undefined ||
+    binding.module.path !== nodePath.join(selection.state.root, selection.target)
+  ) {
+    return false;
+  }
+  const source = selection.state.sourceMap.get(selection.target);
+  return (
+    source !== undefined &&
+    provesPublicDataCodecExport(source, exportedName, publicDataCodecContext(selection)) &&
+    isImmutablePublicContract(selection.state, selection.target, new Set(), false, binding.expression)
+  );
+};
+
+const hasPublishedContractCodecType = (
+  selection: SelectedOwnerContract,
+  statement: ImportDeclaration,
+  imported: ImportSpecifier,
+): boolean => {
+  if (
+    (statement.importKind !== 'type' && imported.importKind !== 'type') ||
+    selection.nativeApi ||
+    selection.clientModules !== undefined
+  ) {
+    return false;
+  }
+  const { state } = selection;
+  const name = imported.imported.type === 'Identifier' ? imported.imported.name : imported.imported.value;
+  const source = state.sourceMap.get(selection.target);
+  if (source === undefined || !provesPublicDataCodecTypeExport(source, name, publicDataCodecContext(selection))) {
+    return false;
+  }
+  const module = state.graph.module(nodePath.join(state.root, selection.target));
+  const declarations = module.file.program.body.flatMap((entry) => {
+    if (entry.type !== 'ExportNamedDeclaration') {
+      return [];
+    }
+    const value = entry.declaration;
+    return (value?.type === 'ClassDeclaration' ||
+      value?.type === 'TSTypeAliasDeclaration' ||
+      value?.type === 'TSInterfaceDeclaration') &&
+      value.id?.name === name
+      ? [value]
+      : [];
+  });
+  const [declaration] = declarations;
+  return (
+    declarations.length === 1 &&
+    declaration !== undefined &&
+    isImmutablePublicContract(state, selection.target, new Set(), false, declaration)
+  );
+};
+
+const readonlyMetadataTupleSize = (
+  module: SourceModule,
+  expression: SchemaNode,
+  origins: Map<SchemaNode, NativeSchemaOrigin>,
+  seen = new Set<SchemaNode>(),
+  completed = new WeakMap<SchemaNode, number>(),
+): number | undefined => {
+  const cached = completed.get(expression);
+  if (cached !== undefined) {
+    return cached;
+  }
+  if (seen.size >= 32 || seen.has(expression)) {
+    return undefined;
+  }
+  seen.add(expression);
+  const root = unwrappedContractMetadata(expression);
+  if (!root.readonlyTuple || root.expression.type !== 'ArrayExpression' || root.expression.elements.length > 512) {
+    return undefined;
+  }
+  const origin = ownSchemaOrigin(module, expression);
+  if (origin === undefined) {
+    return undefined;
+  }
+  origins.set(expression, origin);
+  let size = 0;
+  for (const element of root.expression.elements) {
+    if (element?.type === 'StringLiteral') {
+      size += 1;
+    } else if (element?.type === 'SpreadElement' && element.argument.type === 'Identifier') {
+      const child = ownConstContractDeclaration(module, element.argument.name);
+      const childSize =
+        child === undefined
+          ? undefined
+          : readonlyMetadataTupleSize(module, child.expression, origins, new Set(seen), completed);
+      if (childSize === undefined) {
+        return undefined;
+      }
+      size += childSize;
+    } else {
+      return undefined;
+    }
+    if (size > 2048) {
+      return undefined;
+    }
+  }
+  completed.set(expression, size);
+  return size;
+};
+
+const hasSelectedLiteralContractMetadata = (
+  selection: SelectedOwnerContract,
+  binding: SelectedContractDeclaration,
+): boolean => {
+  if (
+    selection.clientModules !== undefined ||
+    binding.module.path !== nodePath.join(selection.state.root, selection.target)
+  ) {
+    return false;
+  }
+  const source = selection.state.sourceMap.get(selection.target) ?? '';
+  if (hasGeneratedSourceHeader(source, MODULE_API_GENERATOR_HEADER) && !selection.nativeApi) {
+    const enrolled =
+      selection.appId !== undefined &&
+      selection.target === `${selection.owner}/shared/apis/${selection.name}.ts` &&
+      hasGeneratedModuleApiContract(
+        source,
+        `${toPascalCase(selection.name)}Api`,
+        toCamelCase(selection.name),
+        selection.name,
+      ) &&
+      hasCachedCompleteModuleApiSeam(selection.state, `${selection.owner}/shared/api.ts`, selection.appId);
+    if (!enrolled) {
+      return false;
+    }
+  }
+  const { expression } = unwrappedContractMetadata(binding.expression);
+  const scalar = ['StringLiteral', 'NumericLiteral', 'BooleanLiteral', 'NullLiteral'].includes(expression.type);
+  const origins = new Map<SchemaNode, NativeSchemaOrigin>();
+  return (
+    (scalar || readonlyMetadataTupleSize(binding.module, binding.expression, origins) !== undefined) &&
+    [...origins.values()].every((origin) => hasClosedSchemaOriginCustody(selection.state, origin, new Set(), true)) &&
+    isImmutablePublicContract(selection.state, selection.target, new Set(), false, binding.expression)
+  );
+};
+
 const hasSelectedOwnerImport = (
   selection: SelectedOwnerContract,
   statement: ImportDeclaration,
@@ -2444,6 +3504,9 @@ const hasSelectedOwnerImport = (
     return false;
   }
   const { state } = selection;
+  if (hasPublishedContractCodecType(selection, statement, imported)) {
+    return true;
+  }
   const binding = resolveSelectedOwnerBinding(selection, statement, imported);
   if (binding === undefined || privateImplementationPath.test(nodePath.relative(state.root, binding.module.path))) {
     return false;
@@ -2468,26 +3531,26 @@ const hasSelectedOwnerImport = (
   if (hasPublishedActionClientOperation(selection, exportedName, binding)) {
     return true;
   }
-  if (selection.clientModules !== undefined) {
-    const apiModule = state.graph.module(nodePath.join(state.root, `${selection.owner}/shared/api.ts`));
-    const apiName = governedApiBinding(state.sourceMap.get(`${selection.owner}/shared/api.ts`) ?? '');
-    const api = apiName === undefined ? undefined : state.graph.resolve(apiModule, apiName, 'export');
-    if (
-      api?.kind === 'declaration' &&
-      deploymentOwner(state, nodePath.relative(state.root, binding.module.path)) === selection.owner &&
-      hasNativeClientApi(state, binding, api)
-    ) {
-      return true;
-    }
+  if (hasSelectedNativeClientApi(selection, binding)) {
+    return true;
   }
-  if (hasPublishedContractRoutine(selection, binding)) {
+  if (
+    hasPublishedContractRoutine(selection, binding) ||
+    hasPublishedContractDataCodec(selection, exportedName, binding)
+  ) {
+    return true;
+  }
+  if (hasSelectedReadAccessDeclaration(selection, binding)) {
     return true;
   }
   if (binding.expression.type !== 'CallExpression') {
     const literalData = ['StringLiteral', 'NumericLiteral', 'BooleanLiteral', 'NullLiteral'].includes(
       binding.expression.type,
     );
-    return literalData && isImmutablePublicContract(state, selection.target, new Set(), false, binding.expression);
+    return (
+      hasSelectedLiteralContractMetadata(selection, binding) ||
+      (literalData && isImmutablePublicContract(state, selection.target, new Set(), false, binding.expression))
+    );
   }
   return hasSelectedContractConstructor(selection, binding);
 };

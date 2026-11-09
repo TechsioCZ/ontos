@@ -25,10 +25,13 @@ import { AssignSkuRecoveryApi } from './apis/assign-sku-recovery.ts';
 import { AssortmentProductClassificationV1Api } from './apis/assortment-product-classification-v1.ts';
 import { AssortmentSelectionAssessmentV1Api } from './apis/assortment-selection-assessment-v1.ts';
 import { AssortmentSetCompositionV1Api } from './apis/assortment-set-composition-v1.ts';
+import { BindInitialVariantSourceActionApi } from './apis/bind-initial-variant-source-action.ts';
+import { BindInitialVariantSourceRecoveryApi } from './apis/bind-initial-variant-source-recovery.ts';
 import { BrandCurrentApi } from './apis/brand-current.ts';
 import { BrandHistoryApi } from './apis/brand-history.ts';
 import { CatalogDocumentCurrentApi } from './apis/catalog-document-current.ts';
 import { CatalogMediaCurrentApi } from './apis/catalog-media-current.ts';
+import { CatalogSourceProductsApi } from './apis/catalog-source-products.ts';
 import { CatalogSourceResolutionApi } from './apis/catalog-source-resolution.ts';
 import { ChangeLocalOverrideActionApi } from './apis/change-local-override-action.ts';
 import { ChangeLocalOverrideRecoveryApi } from './apis/change-local-override-recovery.ts';
@@ -238,6 +241,9 @@ export const catalogFoundationApi = HttpApi.make('CatalogApiFoundation').add(
 type GroupsOf<Api> = Api extends HttpApi.HttpApi<string, infer Groups> ? Groups : never;
 
 type CatalogApiGroups = GroupsOf<
+  | typeof BindInitialVariantSourceRecoveryApi
+  | typeof BindInitialVariantSourceActionApi
+  | typeof CatalogSourceProductsApi
   | typeof catalogFoundationApi
   | typeof ActivateLocalOverrideActionApi
   | typeof ActivateLocalOverrideRecoveryApi
@@ -464,10 +470,13 @@ export const catalogApi: CatalogApi = HttpApi.make('CatalogApi')
   .addHttpApi(AssortmentProductClassificationV1Api)
   .addHttpApi(AssortmentSelectionAssessmentV1Api)
   .addHttpApi(AssortmentSetCompositionV1Api)
+  .addHttpApi(BindInitialVariantSourceActionApi)
+  .addHttpApi(BindInitialVariantSourceRecoveryApi)
   .addHttpApi(BrandCurrentApi)
   .addHttpApi(BrandHistoryApi)
   .addHttpApi(CatalogDocumentCurrentApi)
   .addHttpApi(CatalogMediaCurrentApi)
+  .addHttpApi(CatalogSourceProductsApi)
   .addHttpApi(CatalogSourceResolutionApi)
   .addHttpApi(ChangeLocalOverrideActionApi)
   .addHttpApi(ChangeLocalOverrideRecoveryApi)
@@ -692,6 +701,7 @@ const manufacturerRelationBusinessTarget = 'manufacturer-relation';
 const productTypeBusinessTarget = 'product-type';
 const setCompositionBusinessTarget = 'set-composition';
 const catalogSourceBusinessTarget = 'catalog-source';
+const bindInitialVariantSourcePermission = 'commerce.catalog.bind-initial-variant-source';
 
 export const catalogPublicOperationContracts = {
   'commerce.catalog.activate-local-override': {
@@ -806,6 +816,14 @@ export const catalogPublicOperationContracts = {
     scope: 'tenant',
     version: '1',
   },
+  'commerce.catalog.api.bind-initial-variant-source-recovery': {
+    accessKind: 'read',
+    authorityBundle: 'CATALOG_READER',
+    businessTarget: catalogSourceBusinessTarget,
+    permission: 'commerce.catalog.read.bind-initial-variant-source-recovery',
+    scope: 'tenant',
+    version: '1',
+  },
   'commerce.catalog.api.brand-current': {
     accessKind: 'read',
     authorityBundle: 'CATALOG_READER',
@@ -835,6 +853,14 @@ export const catalogPublicOperationContracts = {
     authorityBundle: 'CATALOG_READER',
     businessTarget: 'catalog-media',
     permission: 'commerce.catalog.read.media',
+    scope: 'tenant',
+    version: '1',
+  },
+  'commerce.catalog.api.catalog-source-products': {
+    accessKind: 'read',
+    authorityBundle: 'CATALOG_READER',
+    businessTarget: catalogSourceBusinessTarget,
+    permission: 'commerce.catalog.read.catalog-source-products',
     scope: 'tenant',
     version: '1',
   },
@@ -1702,6 +1728,14 @@ export const catalogPublicOperationContracts = {
     scope: 'tenant',
     version: '1',
   },
+  'commerce.catalog.bind-initial-variant-source': {
+    accessKind: 'action',
+    authorityBundle: 'PRODUCT_EDITOR',
+    businessTarget: 'product',
+    permission: bindInitialVariantSourcePermission,
+    scope: 'tenant',
+    version: '1',
+  },
   'commerce.catalog.change-local-override': {
     accessKind: 'action',
     authorityBundle: 'CATALOG_OVERRIDE_MANAGER',
@@ -2352,6 +2386,8 @@ export const catalogAuthorityBundles = {
     'commerce.catalog.release-local-override',
   ],
   CATALOG_READER: [
+    'commerce.catalog.read.bind-initial-variant-source-recovery',
+    'commerce.catalog.read.catalog-source-products',
     'commerce.catalog.read.activate-local-override-recovery',
     'commerce.catalog.read.change-local-override-recovery',
     'commerce.catalog.read.import-source-assertion-recovery',
@@ -2473,6 +2509,7 @@ export const catalogAuthorityBundles = {
     'commerce.catalog.read.sku-lookup',
   ],
   PRODUCT_EDITOR: [
+    bindInitialVariantSourcePermission,
     'commerce.catalog.add-product-category-assignment',
     'commerce.catalog.assign-catalog-media',
     'commerce.catalog.assign-sku',

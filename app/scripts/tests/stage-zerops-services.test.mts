@@ -27,6 +27,7 @@ const OUTBOX_WORKERS = [
   'inventoryworker',
   'privacyworker',
   'commerceorderworker',
+  'symmyintegrationworker',
 ];
 const KEPT_ON_ZEROPS = new Set(['cloudflared', 'db18', 'migrator', 'outboxworkerhost', 'spicedb', ...OUTBOX_WORKERS]);
 
@@ -51,6 +52,7 @@ const STAGE_SERVICE_IDS = new Map(
     promotion: 'promotion-service-id',
     shellsuperapp: 'E6Wy3B08Rn60XqS6T666fg',
     storefrontregistry: 't9lSg7HFRne0DJblYFwXbg',
+    symmyintegration: 'symmy-integration-service-id',
     tax: 'tax-service-id',
   }),
 );
@@ -201,6 +203,7 @@ it('retires exactly the application services zerops-import.yaml declares, each w
     'ZEROPS_PROMOTION_SERVICE_ID',
     'ZEROPS_SHELL_SERVICE_ID',
     'ZEROPS_STOREFRONT_REGISTRY_SERVICE_ID',
+    'ZEROPS_SYMMY_INTEGRATION_SERVICE_ID',
     'ZEROPS_TAX_SERVICE_ID',
   ]);
 });

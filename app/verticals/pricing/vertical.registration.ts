@@ -5,6 +5,8 @@ import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { pricingManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
 import { compensateCurrencySupportRecoveryAction } from './src/actions/compensate-currency-support-recovery.action.ts';
+import { currentPricingDecisionRead } from './src/api/current-pricing-decision.read.ts';
+import { currentSupportedCurrenciesRead } from './src/api/current-supported-currencies.read.ts';
 import { defineCommercialFeeAction } from './src/actions/define-commercial-fee.action.ts';
 import { definePriceAction } from './src/actions/define-price.action.ts';
 import { manageCommitmentConfirmationAction } from './src/actions/manage-commitment-confirmation.action.ts';
@@ -14,12 +16,13 @@ import { manageProductPricesBulkAction } from './src/actions/manage-product-pric
 import { manageQuantityTierAction } from './src/actions/manage-quantity-tier.action.ts';
 import { manageQuotationAction } from './src/actions/manage-quotation.action.ts';
 import { manageZeroFloorAuthorizationAction } from './src/actions/manage-zero-floor-authorization.action.ts';
+import { priceDefinitionRead } from './src/api/price-definition.read.ts';
+import { priceGroupSourcePricesRead } from './src/api/price-group-source-prices.read.ts';
+import { priceSourceResultLookupRead } from './src/api/price-source-result-lookup.read.ts';
+import { quotationVerificationRead } from './src/api/quotation-verification.read.ts';
 import { reviseCommercialFeeAction } from './src/actions/revise-commercial-fee.action.ts';
 import { revisePriceAction } from './src/actions/revise-price.action.ts';
 import { setSupportedCurrenciesAction } from './src/actions/set-supported-currencies.action.ts';
-import { currentSupportedCurrenciesRead } from './src/api/current-supported-currencies.read.ts';
-import { currentPricingDecisionRead } from './src/api/current-pricing-decision.read.ts';
-import { quotationVerificationRead } from './src/api/quotation-verification.read.ts';
 // </generated-module-registration-imports>
 export const pricingRegistration = defineVerticalRuntimeRegistration({
   actions: [
@@ -52,8 +55,10 @@ export const pricingRegistration = defineVerticalRuntimeRegistration({
       'current-supported-currencies': () => import('./src/api/current-supported-currencies-client.ts'),
       'exact-price-resolution': () => import('./src/api/exact-price-resolution-client.ts'),
       'price-definition': () => import('./src/api/price-definition-client.ts'),
+      'price-group-source-prices': () => import('./src/api/price-group-source-prices-client.ts'),
       'price-result-lookup': () => import('./src/api/price-result-lookup-client.ts'),
       'price-schedule': () => import('./src/api/price-schedule-client.ts'),
+      'price-source-result-lookup': () => import('./src/api/price-source-result-lookup-client.ts'),
       'quantity-tier-result-lookup': () => import('./src/api/quantity-tier-result-lookup-client.ts'),
       'quotation-result-lookup': () => import('./src/api/quotation-result-lookup-client.ts'),
       'quotation-verification': () => import('./src/api/quotation-verification-client.ts'),
@@ -85,8 +90,11 @@ export const pricingRegistration = defineVerticalRuntimeRegistration({
   ],
   reads: [
     // <generated-module-registration-reads>
-    currentSupportedCurrenciesRead,
     currentPricingDecisionRead,
+    currentSupportedCurrenciesRead,
+    priceDefinitionRead,
+    priceGroupSourcePricesRead,
+    priceSourceResultLookupRead,
     quotationVerificationRead,
     // </generated-module-registration-reads>
   ],

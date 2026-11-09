@@ -178,6 +178,10 @@ export const currentSupportedCurrenciesRead = defineRead(
       selectors: [],
     },
     accessKind: 'detail',
+    accessWorkload: {
+      reason: 'Native Pricing source currency support reads',
+      workloads: ['commerce.pricing.source-read'],
+    },
     entrypoint: currentSupportedCurrenciesEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',

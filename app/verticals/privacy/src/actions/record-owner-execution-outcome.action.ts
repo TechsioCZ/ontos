@@ -24,7 +24,7 @@ import {
 
 export interface RecordOwnerExecutionOutcomeServices extends Pick<
   PrivacyOperationRepositoryService,
-  'getPrivacyMeasureHandoff' | 'recordOwnerOutcome'
+  'getPrivacyMeasureHandoff' | 'getPrivacyMeasureDispatchOriginator' | 'recordOwnerOutcome'
 > {
   readonly authority: OwnerExecutionAuthorityService;
 }
@@ -51,7 +51,7 @@ export const handleRecordOwnerExecutionOutcome = Effect.fn('RecordOwnerExecution
 export const recordOwnerExecutionOutcomeAction = defineAction(
   {
     accessActor: {
-      callers: ['commerce-customer-context', 'party-registry'],
+      callers: ['commerce-customer-context', 'party-registry', 'symmy-integration'],
       reason: 'Owner modules report privacy measure outcomes for a verified originating requester.',
       subject: 'identity',
     },
@@ -98,6 +98,7 @@ export const recordOwnerExecutionOutcomeAction = defineAction(
     ).pipe(
       Effect.map(({ authority, repository }) => ({
         authority,
+        getPrivacyMeasureDispatchOriginator: repository.getPrivacyMeasureDispatchOriginator,
         getPrivacyMeasureHandoff: repository.getPrivacyMeasureHandoff,
         recordOwnerOutcome: repository.recordOwnerOutcome,
       })),

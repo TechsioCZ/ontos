@@ -71,19 +71,18 @@ const recordedField = <Key extends string, Value>(key: Key, value: Option.Option
   Option.match(value, { onNone: () => ({}), onSome: (present) => ({ [key]: present }) });
 
 /**
- * Admits the stored requester of a succeeded invocation: same tenant, a terminal success, a recent
- * record, an active principal and a binding that is still active and not revoked. The principal's
+ * Reconstructs current authentication for a succeeded invocation: an active principal and a binding
+ * that is still active and not revoked. The purpose-specific caller applies any replay age limit. The principal's
  * authentication is the one recorded then, never a live session that may have expired by now. A
  * support impersonation is never admitted: its recorded session has no lifetime to cap a replay by.
  */
-const principalFromEvidence = (row: OriginatorEvidenceRow, tenantId: string, nowSeconds: number) => {
+const currentPrincipalFromEvidence = (row: OriginatorEvidenceRow, tenantId: string) => {
   if (row.status !== TERMINAL_SUCCESS_STATUS) {
     return Effect.fail(delegationForbidden());
   }
   const principalId = Option.getOrUndefined(row.principalId);
   const authMethod = Option.getOrUndefined(row.authMethod);
   const authBindingId = Option.getOrUndefined(row.authBindingId);
-  const started = Option.getOrUndefined(row.startedAtEpochSeconds);
   const expectedSubjectType = subjectBindingTypeOf(authMethod);
   if (
     Option.isSome(row.impersonatedByPrincipalId) ||
@@ -96,13 +95,6 @@ const principalFromEvidence = (row: OriginatorEvidenceRow, tenantId: string, now
     Option.getOrUndefined(row.bindingSubjectType) !== expectedSubjectType ||
     Option.getOrUndefined(row.bindingStatus) !== 'active' ||
     Option.getOrUndefined(row.bindingRevoked) !== false
-  ) {
-    return Effect.fail(delegationForbidden());
-  }
-  if (
-    started === undefined ||
-    started > nowSeconds + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS ||
-    nowSeconds - started > ORIGINATOR_EVIDENCE_MAX_AGE_SECONDS
   ) {
     return Effect.fail(delegationForbidden());
   }
@@ -119,6 +111,37 @@ const principalFromEvidence = (row: OriginatorEvidenceRow, tenantId: string, now
     Effect.map((principal): AdmittedOriginator => ({ principal, workload: isWorkloadKind(row.principalKind) })),
     Effect.mapError((cause) => delegationForbidden(cause)),
   );
+};
+
+const principalFromEvidence = (row: OriginatorEvidenceRow, tenantId: string, nowSeconds: number) =>
+  currentPrincipalFromEvidence(row, tenantId).pipe(
+    Effect.flatMap((principal) => {
+      const started = Option.getOrUndefined(row.startedAtEpochSeconds);
+      return started === undefined ||
+        started > nowSeconds + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS ||
+        nowSeconds - started > ORIGINATOR_EVIDENCE_MAX_AGE_SECONDS
+        ? Effect.fail(delegationForbidden())
+        : Effect.succeed(principal);
+    }),
+  );
+
+/** A durable native Privacy dispatch retains its original human, with current user and binding facts, without a replay age limit. */
+export const admitPrivacyDispatchHumanEvidence = (
+  rows: readonly OriginatorEvidenceRow[],
+  input: { readonly subjectUserBanned: boolean; readonly tenantId: string },
+) => {
+  const [row] = rows;
+  if (
+    rows.length !== 1 ||
+    row === undefined ||
+    row.actionKey !== 'privacy.core.dispatch-privacy-measure' ||
+    Option.getOrUndefined(row.principalKind) !== 'human' ||
+    Option.getOrUndefined(row.bindingSubjectType) !== 'user' ||
+    input.subjectUserBanned
+  ) {
+    return Effect.fail(delegationForbidden());
+  }
+  return currentPrincipalFromEvidence(row, input.tenantId);
 };
 
 /**
@@ -150,6 +173,11 @@ export interface GatewayOriginatorEvidenceService {
   readonly load: (input: {
     readonly actionInvocationId: string;
     readonly originatorActions: readonly string[];
+    readonly tenantId: string;
+  }) => Effect.Effect<AdmittedOriginator, GatewayDelegationError>;
+  /** Fixed human-only native Privacy dispatch evidence; generic Originator replay limits do not apply. */
+  readonly loadPrivacyDispatchHuman: (input: {
+    readonly actionInvocationId: string;
     readonly tenantId: string;
   }) => Effect.Effect<AdmittedOriginator, GatewayDelegationError>;
 }

@@ -19,7 +19,12 @@ import { dispatchPrivacyMeasureAction } from './src/actions/dispatch-privacy-mea
 import { enqueueRetentionEvaluationAction } from './src/actions/enqueue-retention-evaluation.action.ts';
 import { evaluateProcessingEligibilityAction } from './src/actions/evaluate-processing-eligibility.action.ts';
 import { issueDsrDeliveryAccessAction } from './src/actions/issue-dsr-delivery-access.action.ts';
+import { measureExecutionEligibilityRead } from './src/api/measure-execution-eligibility.read.ts';
+import { organizationBusinessApplicabilityRead } from './src/api/organization-business-applicability.read.ts';
+import { organizationIcoApplicabilityRead } from './src/api/organization-ico-applicability.read.ts';
+import { organizationProfileIcoApplicabilityRead } from './src/api/organization-profile-ico-applicability.read.ts';
 import { privacyMeasureDispatchWorker } from './src/workers/privacy-measure-dispatch.worker.ts';
+import { privacySubjectsRead } from './src/api/privacy-subjects.read.ts';
 import { recordAntiResurrectionProtectionAction } from './src/actions/record-anti-resurrection-protection.action.ts';
 import { recordApplicabilityPolicyAction } from './src/actions/record-applicability-policy.action.ts';
 import { recordConsentDecisionAction } from './src/actions/record-consent-decision.action.ts';
@@ -39,12 +44,12 @@ import { recordPrivacyRepresentationAction } from './src/actions/record-privacy-
 import { recordProcessingInterventionAction } from './src/actions/record-processing-intervention.action.ts';
 import { recordRetentionExceptionAction } from './src/actions/record-retention-exception.action.ts';
 import { retentionEvaluationWorker } from './src/workers/retention-evaluation.worker.ts';
+import { sourceProcessingEligibilityRead } from './src/api/source-processing-eligibility.read.ts';
 import { transitionProcessingActivityAction } from './src/actions/transition-processing-activity.action.ts';
 import { updateDsrCaseAction } from './src/actions/update-dsr-case.action.ts';
 import { upsertDsrOwnerTaskAction } from './src/actions/upsert-dsr-owner-task.action.ts';
 import { upsertRetentionRuleAction } from './src/actions/upsert-retention-rule.action.ts';
 import { upsertTemporaryDsrExportAction } from './src/actions/upsert-temporary-dsr-export.action.ts';
-
 // </generated-module-registration-imports>
 
 export const privacyRegistration = defineVerticalRuntimeRegistration({
@@ -97,8 +102,13 @@ export const privacyRegistration = defineVerticalRuntimeRegistration({
       'current-consent': () => import('./src/api/current-consent-client.ts'),
       'dsr-cases': () => import('./src/api/dsr-cases-client.ts'),
       'legal-basis-assignments': () => import('./src/api/legal-basis-assignments-client.ts'),
+      'measure-execution-eligibility': () => import('./src/api/measure-execution-eligibility-client.ts'),
       'notice-presentation': () => import('./src/api/notice-presentation-client.ts'),
       'notice-versions': () => import('./src/api/notice-versions-client.ts'),
+      'organization-business-applicability': () => import('./src/api/organization-business-applicability-client.ts'),
+      'organization-ico-applicability': () => import('./src/api/organization-ico-applicability-client.ts'),
+      'organization-profile-ico-applicability': () =>
+        import('./src/api/organization-profile-ico-applicability-client.ts'),
       'owner-inventory': () => import('./src/api/owner-inventory-client.ts'),
       'privacy-subjects': () => import('./src/api/privacy-subjects-client.ts'),
       'processing-activities': () => import('./src/api/processing-activities-client.ts'),
@@ -106,6 +116,7 @@ export const privacyRegistration = defineVerticalRuntimeRegistration({
       'processing-purposes': () => import('./src/api/processing-purposes-client.ts'),
       'responsibility-assignments': () => import('./src/api/responsibility-assignments-client.ts'),
       'retention-rules': () => import('./src/api/retention-rules-client.ts'),
+      'source-processing-eligibility': () => import('./src/api/source-processing-eligibility-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {
@@ -135,6 +146,12 @@ export const privacyRegistration = defineVerticalRuntimeRegistration({
   ],
   reads: [
     // <generated-module-registration-reads>
+    measureExecutionEligibilityRead,
+    organizationBusinessApplicabilityRead,
+    organizationIcoApplicabilityRead,
+    organizationProfileIcoApplicabilityRead,
+    privacySubjectsRead,
+    sourceProcessingEligibilityRead,
     // </generated-module-registration-reads>
   ],
 });

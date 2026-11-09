@@ -139,3 +139,15 @@ export const getPricingReadiness = (options: PricingClientOptions = {}): Pricing
     ...options,
     operationContext: options.operationContext ?? pricingOperationContexts.readiness,
   }).pipe(Effect.flatMap((client) => client.foundation.readiness({})));
+
+export {
+  executePriceSourceResultLookup,
+  executePriceSourceResultLookupWithAuthorization,
+} from './price-source-result-lookup-client.ts';
+export type { PriceSourceResultLookupClientOptions } from './price-source-result-lookup-client.ts';
+
+export {
+  executePriceGroupSourcePrices,
+  executePriceGroupSourcePricesWithAuthorization,
+} from './price-group-source-prices-client.ts';
+export type { PriceGroupSourcePricesClientOptions } from './price-group-source-prices-client.ts';

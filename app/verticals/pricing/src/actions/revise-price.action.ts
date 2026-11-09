@@ -422,6 +422,7 @@ export const revisePriceAction = defineAction(
       selectors: [],
     },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'commerce.pricing.revise-price.access.v1' },
+    accessWorkload: { reason: 'Native Price source writes', workloads: ['commerce.pricing.source-write'] },
     actionKey: 'commerce.pricing.revise-price',
     auditEvidenceSchema: Schema.Struct({
       intent: Schema.Literals(['CORRECT_REVISION', 'RETIRE_CURRENT', 'SCHEDULE_REVISION', 'VALUE_ONLY_CURRENT']),

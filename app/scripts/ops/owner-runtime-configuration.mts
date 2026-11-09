@@ -1,7 +1,7 @@
 import { Array as EffectArray, Option, Order, Schema } from 'effect';
 
 /**
- * The runtime configuration the Order flow's owners read besides their database and SpiceDB, shared
+ * The runtime configuration delegated module callers read besides their database and SpiceDB, shared
  * by the Zerops deployment generator and the Cloudflare Worker secret plan so both name the same
  * keys. Owners read every value lazily, so a missing value fails only the work that needs it.
  *
@@ -72,6 +72,8 @@ const PRICING_UNIT = 'pricing';
 const MARKET_CATALOG_UNIT = 'commerce-market-catalog';
 const CATALOG_UNIT = 'catalog';
 const PARTY_REGISTRY_UNIT = 'party-registry';
+const PRIVACY_UNIT = 'privacy';
+const SYMMY_INTEGRATION_UNIT = 'symmy-integration';
 
 /** An owner API the Cloudflare Worker calls by URL on the owner's custom domain. */
 const byUrl = (unitId: string, variable: string): OwnerApiDependency => ({ edge: 'custom-domain', unitId, variable });
@@ -172,6 +174,22 @@ export const OWNER_RUNTIME_CONFIGURATIONS: readonly OwnerRuntimeConfiguration[] 
       reference('ONTOS_PRICING_CONFIRMATION_KEY_VERSION'),
     ],
     unitId: PRICING_UNIT,
+  },
+  {
+    apiDependencies: [shellGateway],
+    credentialVariables: [],
+    moduleCredentialHolders: SERVICE_AND_WORKER,
+    moduleCredentialVariable: moduleCredentialVariable(PRIVACY_UNIT),
+    operatorValues: [],
+    unitId: PRIVACY_UNIT,
+  },
+  {
+    apiDependencies: [shellGateway],
+    credentialVariables: [],
+    moduleCredentialHolders: SERVICE_AND_WORKER,
+    moduleCredentialVariable: moduleCredentialVariable(SYMMY_INTEGRATION_UNIT),
+    operatorValues: [],
+    unitId: SYMMY_INTEGRATION_UNIT,
   },
 ];
 

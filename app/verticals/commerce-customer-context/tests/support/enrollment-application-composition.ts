@@ -26,15 +26,64 @@ const contractJson = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
 const unavailable = (cause: unknown) =>
   new ActiveApplicationCompositionUnavailableError({
     cause,
-    reason: 'The enrollment fixture owner contract or published Shell metadata is unavailable',
+    reason: 'The enrollment fixture owner contract or compiled Shell/provider metadata is unavailable',
   });
 
-/** Fixture DTO for the actual running owner; its deployment is never a published backend claim. */
+/** INTERNAL_CONTRACT: actual owner source and compiled Shell metadata; no promotable release is claimed. */
 export const makeEnrollmentApplicationCompositionSnapshot = Effect.fn('EnrollmentTests.makeApplicationComposition')(
   function* makeEnrollmentApplicationComposition(buildMarker: string, additionalAppIds: readonly string[]) {
+    const providers = yield* Effect.forEach(
+      Effect.fn('EnrollmentTests.compiledProviderContract')(function* compiledProviderContract(appId) {
+        const contractDocument = yield* Effect.tryPromise({
+          catch: unavailable,
+          try: async () =>
+            await readFile(
+              new URL(
+                `../../../../verticals/${appId}/dist/public/.well-known/ontos-module-manifest.json`,
+                import.meta.url,
+              ),
+              'utf-8',
+            ),
+        });
+        const contract = yield* Schema.decodeEffect(contractJson)(contractDocument).pipe(Effect.mapError(unavailable));
+        if (contract.deployment.appId !== appId) {
+          return yield* unavailable('The compiled provider contract does not match the selected deployment');
+        }
+        const { components, shellContributions } = contract.manifest.publicSurface;
+        const contributionKeys = Object.values(shellContributions).flatMap((entries) =>
+          entries.map(({ contributionKey }) => contributionKey),
+        );
+        const [component] = components;
+        const federation =
+          component === undefined
+            ? { execution: 'server' as const }
+            : {
+                execution: 'browser' as const,
+                exposes: components.map(({ expose }) => expose),
+                manifest: {
+                  sha256: digest(
+                    yield* Effect.tryPromise({
+                      catch: unavailable,
+                      try: async () =>
+                        await readFile(
+                          new URL(`../../../../verticals/${appId}/dist/bundles/mf-manifest.json`, import.meta.url),
+                          'utf-8',
+                        ),
+                    }),
+                  ),
+                  url: `https://${appId}.compiled-fixture.example/mf-manifest.json`,
+                },
+                remoteName: component.mfBoundaryId,
+              };
+        return { appId, contract, contractDocument, contributionKeys, federation, sha256: digest(contractDocument) };
+      }),
+    )(additionalAppIds);
     const snapshot = yield* makeApplicationCompositionSnapshotFixture(
       [ultramodernApiMarker.appId, ...additionalAppIds],
-      buildMarker,
+      {
+        [ultramodernApiMarker.appId]: buildMarker,
+        ...Object.fromEntries(providers.map(({ appId, contract }) => [appId, contract.deployment.buildMarker])),
+      },
     );
     const owner = yield* Effect.try({
       catch: unavailable,
@@ -126,7 +175,7 @@ export const makeEnrollmentApplicationCompositionSnapshot = Effect.fn('Enrollmen
     const shellFederationDocument = yield* Effect.tryPromise({
       catch: unavailable,
       try: async () =>
-        await readFile(new URL('../../../../apps/shell-super-app/.output/mf-manifest.json', import.meta.url), 'utf-8'),
+        await readFile(new URL('../../../../apps/shell-super-app/dist/mf-manifest.json', import.meta.url), 'utf-8'),
     });
     const shellFederation = yield* Schema.decodeEffect(
       Schema.fromJsonString(
@@ -166,7 +215,31 @@ export const makeEnrollmentApplicationCompositionSnapshot = Effect.fn('Enrollmen
               requiredCoreCapabilities: owner.requirements?.coreCapabilities ?? [],
               requiredShellAbi: shellRuntime.contributionAbi,
             }
-          : module,
+          : (() => {
+              const provider = providers.find(({ appId }) => appId === module.deployment.appId);
+              if (provider === undefined) {
+                return module;
+              }
+              return {
+                ...module,
+                allowedContributions: provider.contributionKeys,
+                contract: { ...module.contract, sha256: provider.sha256 },
+                contractDocument: provider.contractDocument,
+                dependencies: (provider.contract.manifest.requirements?.intrinsic ?? []).map(
+                  ({ moduleId }) => moduleId,
+                ),
+                deployment: provider.contract.deployment,
+                federation: provider.federation,
+                moduleId: provider.contract.manifest.module.id,
+                publicContract: {
+                  id: provider.contract.manifest.module.id,
+                  sha256: provider.sha256,
+                  version: provider.contract.schemaVersion,
+                },
+                requiredCoreCapabilities: provider.contract.manifest.requirements?.coreCapabilities ?? [],
+                requiredShellAbi: shellRuntime.contributionAbi,
+              };
+            })(),
       ),
       revision: '0'.repeat(64),
       shell: {

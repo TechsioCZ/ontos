@@ -1,4 +1,3 @@
-/* eslint-disable anti-slop-effect/no-service-constructor-imports -- ResourceRef helpers construct plain values, not Effect services. expires: 2026-12-31. */
 import { and, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { DateTime, Effect, Option, Schema } from 'effect';
@@ -15,7 +14,7 @@ import {
   PartySubjectEvidenceListSchema,
   PartyTypeRuleVersion,
 } from '../../shared/domain/identity-contracts.ts';
-import type { PartySubjectEvidence, PartyType } from '../../shared/domain/identity-contracts.ts';
+import type { PartyActorAttestation, PartyType } from '../../shared/domain/identity-contracts.ts';
 import { makeDuplicateCandidateCaseRef } from '../../shared/resources/duplicate-candidate-case.ts';
 import type { PartyTransaction } from '../db/types.ts';
 import { resolvePartyAlias } from '../merge/party-alias-resolution.service.ts';
@@ -211,11 +210,12 @@ const supportedGuestDecisionOperation = (decision: GuestDecision): boolean => {
 const acceptedGuestSubjectEvidence = (
   decision: GuestDecision,
   input: GuestPartyResolutionRequest,
-): PartySubjectEvidence | undefined => {
-  const evaluation = decision.evidenceEvaluation;
-  if (!Schema.is(PartyEvidenceEvaluationSchema)(evaluation)) {
+): PartyActorAttestation | undefined => {
+  const decoded = Schema.decodeUnknownOption(PartyEvidenceEvaluationSchema)(decision.evidenceEvaluation);
+  if (Option.isNone(decoded)) {
     return undefined;
   }
+  const evaluation = decoded.value;
   if (
     evaluation.subjectEligibilityVersion !== PartySubjectEligibilityVersion ||
     evaluation.typeRuleVersion !== PartyTypeRuleVersion ||
@@ -234,7 +234,8 @@ const acceptedGuestSubjectEvidence = (
     return undefined;
   }
   return evaluation.evidence.find(
-    (item) =>
+    (item): item is PartyActorAttestation =>
+      item.kind === 'ACTOR_ATTESTATION' &&
       item.evidenceRef === input.guestEvidenceRef &&
       item.guestBinding?.correlationRoot === input.correlationRoot &&
       item.guestBinding.legalEntityRef.tenantId === input.legalEntityRef.tenantId &&
@@ -246,7 +247,7 @@ const acceptedGuestReview = (
   decision: GuestDecision,
   cases: readonly GuestReviewCase[],
   input: GuestPartyResolutionRequest,
-  evidence: PartySubjectEvidence,
+  evidence: PartyActorAttestation,
 ): boolean => {
   const at = DateTime.toEpochMillis(input.requestedAt);
   const review = cases.find(
@@ -262,8 +263,7 @@ const acceptedGuestReview = (
     review === undefined ||
     review.resolvedAt === null ||
     !Number.isFinite(review.resolvedAt.getTime()) ||
-    review.resolvedAt.getTime() > at ||
-    !Schema.is(PartySubjectEvidenceListSchema)(review.candidateSnapshot.subjectEvidence)
+    review.resolvedAt.getTime() > at
   ) {
     return false;
   }
@@ -271,13 +271,17 @@ const acceptedGuestReview = (
   if (Option.isNone(validFrom) || DateTime.toEpochMillis(validFrom.value) > at) {
     return false;
   }
-  return review.candidateSnapshot.subjectEvidence.some(
-    (item) =>
-      item.subjectKey === evidence.subjectKey &&
-      item.evidenceRef === evidence.evidenceRef &&
-      item.guestBinding?.correlationRoot === input.correlationRoot &&
-      item.guestBinding.legalEntityRef.tenantId === input.legalEntityRef.tenantId &&
-      item.guestBinding.legalEntityRef.resourceId === input.legalEntityRef.resourceId,
+  const decoded = Schema.decodeUnknownOption(PartySubjectEvidenceListSchema)(review.candidateSnapshot.subjectEvidence);
+  return Option.exists(decoded, (assertions) =>
+    assertions.some(
+      (item) =>
+        item.kind === 'ACTOR_ATTESTATION' &&
+        item.subjectKey === evidence.subjectKey &&
+        item.evidenceRef === evidence.evidenceRef &&
+        item.guestBinding?.correlationRoot === input.correlationRoot &&
+        item.guestBinding.legalEntityRef.tenantId === input.legalEntityRef.tenantId &&
+        item.guestBinding.legalEntityRef.resourceId === input.legalEntityRef.resourceId,
+    ),
   );
 };
 

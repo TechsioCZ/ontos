@@ -13,14 +13,40 @@ import {
 
 const explicitEntries = DATABASE_ROLE_GRANT_MANIFEST.flatMap((entry) => (entry.kind === 'explicit' ? [entry] : []));
 const schemaOf = (qualifiedName: string): string => qualifiedName.slice(0, qualifiedName.indexOf('.'));
+const openSourceExecutionFenceSignature = 'trust.open_source_execution_fence(uuid,uuid)';
+const cancelSourceExecutionFenceSignature = 'trust.cancel_source_execution_fence(uuid,uuid)';
+const lockSourceExecutionFenceSignature = 'trust.lock_source_execution_fence(uuid,uuid)';
+const readSourceExecutionFenceSignature = 'trust.read_source_execution_fence(uuid,uuid)';
+const registeredWorkloadDeliverySignature = 'trust.registered_workload_delivery_is_active(uuid,text,text,text,uuid)';
+const lockAccessScopeFenceSignature = 'trust.lock_access_scope_fence(uuid,uuid)';
+const sharedRuntimeTrustRoutines = [
+  openSourceExecutionFenceSignature,
+  cancelSourceExecutionFenceSignature,
+  lockSourceExecutionFenceSignature,
+  readSourceExecutionFenceSignature,
+  registeredWorkloadDeliverySignature,
+  lockAccessScopeFenceSignature,
+];
 
-it('pins least-privilege shared exceptions for Promotion and the Market retirement fence', () => {
+it('keeps every shared runtime exception within its exact owner privileges', () => {
   const entry = manifestEntryForRole('ontos_runtime');
   expect(entry?.kind).toBe('legacy_shared');
   if (entry?.kind !== 'legacy_shared') {
     return;
   }
   expect(entry.tableGrantExceptions?.map(({ privileges, table }) => ({ privileges, table }))).toEqual([
+    {
+      privileges: ['select', 'insert', 'delete'],
+      table: 'inventory.gateway_assertion_redemptions',
+    },
+    {
+      privileges: ['select', 'insert', 'delete'],
+      table: 'privacy.gateway_assertion_redemptions',
+    },
+    {
+      privileges: ['select', 'insert'],
+      table: 'symmy_integration.job_effects',
+    },
     { privileges: ['select', 'insert'], table: 'promotion.policy_changes' },
     { privileges: ['select', 'insert', 'update'], table: 'promotion.tenant_generations' },
     { privileges: ['select', 'insert', 'update'], table: 'promotion.promotion_drafts' },
@@ -35,6 +61,18 @@ it('pins least-privilege shared exceptions for Promotion and the Market retireme
     {
       privileges: ['select', 'insert', 'update'],
       table: 'commerce_market_catalog.market_retirement_admissions',
+    },
+    {
+      privileges: ['select', 'insert'],
+      table: 'symmy_integration.gateway_assertion_redemptions',
+    },
+    {
+      privileges: ['select', 'insert'],
+      table: 'symmy_integration.import_jobs',
+    },
+    {
+      privileges: ['select'],
+      table: 'symmy_integration.job_routes',
     },
   ]);
   for (const exception of entry.tableGrantExceptions ?? []) {
@@ -102,10 +140,9 @@ it('grants trust routines only to their executors and owner routines only inside
       if (entry?.kind === 'explicit') {
         expect(entry.grants.routines).toContain(routine.signature);
       } else {
-        // The legacy shared role holds no routine list; it may only lock its Action access fence.
-        expect(routine.signature, `${role} executes ${routine.signature}`).toBe(
-          'trust.lock_access_scope_fence(uuid,uuid)',
-        );
+        // The legacy shared role holds no routine list, so pin its trust surface here.
+        expect(role).toBe('ontos_runtime');
+        expect(sharedRuntimeTrustRoutines, `${role} executes ${routine.signature}`).toContain(routine.signature);
       }
     }
   }
@@ -131,8 +168,22 @@ it('derives trust routine executors from the identity flags', () => {
     if (routine.signature.startsWith('trust.register_gateway_scope_grant(')) {
       expect(executors).toEqual(registrars);
       expect(routine.securityDefiner).toBe(true);
-    } else if (routine.signature === 'trust.lock_access_scope_fence(uuid,uuid)') {
+    } else if (
+      routine.signature === lockAccessScopeFenceSignature ||
+      routine.signature === lockSourceExecutionFenceSignature ||
+      routine.signature === readSourceExecutionFenceSignature
+    ) {
       expect(executors).toEqual(actionRunners);
+      expect(executors).toEqual(['ontos_runtime', 'party_registry_runtime']);
+      expect(routine.securityDefiner).toBe(true);
+    } else if (
+      routine.signature === openSourceExecutionFenceSignature ||
+      routine.signature === cancelSourceExecutionFenceSignature
+    ) {
+      expect(executors, routine.signature).toEqual(['ontos_runtime']);
+      expect(routine.securityDefiner).toBe(true);
+    } else if (routine.signature === registeredWorkloadDeliverySignature) {
+      expect(executors).toEqual(EffectArray.sort(['ontos_runtime', ...gatewayGrantRoles], Order.String));
       expect(executors).toEqual(['ontos_runtime', 'party_registry_runtime']);
       expect(routine.securityDefiner).toBe(true);
     } else if (routine.securityDefiner) {
@@ -141,7 +192,21 @@ it('derives trust routine executors from the identity flags', () => {
       expect(executors, routine.signature).toEqual([]);
     }
   }
-  expect(TRUST_ROUTINES).toHaveLength(8);
+  expect(TRUST_ROUTINES.map(({ signature }) => signature)).toEqual([
+    openSourceExecutionFenceSignature,
+    cancelSourceExecutionFenceSignature,
+    lockSourceExecutionFenceSignature,
+    readSourceExecutionFenceSignature,
+    registeredWorkloadDeliverySignature,
+    'trust.register_gateway_scope_grant(text,text,uuid,uuid,uuid,uuid,timestamptz)',
+    'trust.establish_gateway_scope(text)',
+    'trust.current_tenant_id()',
+    'trust.current_legal_entity_id()',
+    lockAccessScopeFenceSignature,
+    'trust.verified_scope()',
+    'trust.scope_payload(xid8,timestamptz,uuid,uuid)',
+    'trust.scope_mac(text)',
+  ]);
   expect(new Set(TRUST_ROUTINES.map(({ signature }) => signature)).size).toBe(TRUST_ROUTINES.length);
 });
 

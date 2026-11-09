@@ -606,8 +606,8 @@ it.layer(NodeCrypto.layer)('live approvals transaction binding', (suite) => {
         .pipe(Effect.orDie);
       expect(read).toBe(pool.transaction);
       expect(pool.opened).toStrictEqual([undefined, { isolationLevel: 'repeatable read' }]);
-      // Each call installed and verified the request's scope on its own transaction: two statements.
-      expect(pool.statements.length).toBe(4);
+      // Each call installed and verified the request's scope on its own transaction: role selection, installation and verification.
+      expect(pool.statements.length).toBe(6);
       // A failure of the body reaches the caller unchanged, so a rolled-back read stays a failure.
       const refusal = intentUnavailable('The intent store refused this read');
       expect(yield* Effect.flip(transactions.scoped(jana, new Set<string>(), () => Effect.fail(refusal)))).toBe(
@@ -634,8 +634,8 @@ it.layer(NodeCrypto.layer)('live approvals transaction binding', (suite) => {
         .pipe(Effect.orDie);
       expect(written).toBe(caller);
       expect(read).toBe(caller);
-      // ...and neither opened, ended or partitioned it: the only statements are the scope's own two.
-      expect(statements.length).toBe(4);
+      // ...and neither opened, ended or partitioned it: the only statements are the scope's own role selection, installation and verification.
+      expect(statements.length).toBe(6);
       const refusal = intentUnavailable('The owner transaction refused this read');
       expect(yield* Effect.flip(transactions.scopedRead(jana, new Set<string>(), () => Effect.fail(refusal)))).toBe(
         refusal,

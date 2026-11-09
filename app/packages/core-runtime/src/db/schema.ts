@@ -164,6 +164,22 @@ export const applicationCompositionDurableWork = enableCoreGovernedRls(
   ),
 );
 
+/** Permanent admission tombstones serialize cancellation with remote owner effects. Only scoped trust routines mutate these. */
+export const sourceExecutionFences = enableCoreGovernedRls(
+  coreSchema.table(
+    'source_execution_fences',
+    {
+      tenantId: uuid('tenant_id').notNull(),
+      admissionInvocationId: uuid('admission_invocation_id').notNull(),
+      state: text('state').$type<'open' | 'cancelled'>().notNull(),
+    },
+    (table) => [
+      primaryKey({ name: 'source_execution_fences_pk', columns: [table.tenantId, table.admissionInvocationId] }),
+      check('source_execution_fences_state_ck', sql`${table.state} in ('open', 'cancelled')`),
+    ],
+  ),
+);
+
 export const tenants = enableCoreGovernedRls(
   coreSchema.table(
     'tenants',
@@ -1337,6 +1353,7 @@ export const CORE_TABLE_INVENTORY = [
   'search_projection_generations',
   'search_projection_rebuilds',
   'worker_checkpoints',
+  'source_execution_fences',
   ...ACCESS_TABLE_INVENTORY,
 ] as const;
 
@@ -1365,6 +1382,7 @@ export const coreDatabaseSchema = {
   tenantModuleStates,
   tenants,
   workerCheckpoints,
+  sourceExecutionFences,
 } as const;
 
 export const CORE_TABLES = [
@@ -1391,6 +1409,7 @@ export const CORE_TABLES = [
   searchProjectionGenerations,
   searchProjectionRebuilds,
   workerCheckpoints,
+  sourceExecutionFences,
   ...ACCESS_TABLES,
 ] as const;
 

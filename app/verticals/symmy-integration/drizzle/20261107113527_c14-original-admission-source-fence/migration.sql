@@ -1,0 +1,1 @@
+ALTER TABLE "symmy_integration"."import_jobs" ADD COLUMN "admission_invocation_id" uuid;

@@ -259,7 +259,9 @@ const HOSTED_OWNER_CREDENTIALS = [
     binding: 'commerceCustomerContextOutboxWorkerEntry',
     variable: 'ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CUSTOMER_CONTEXT',
   },
+  { binding: 'privacyOutboxWorkerEntry', variable: 'ONTOS_GATEWAY_MODULE_API_KEY_PRIVACY' },
   { binding: 'commerceOrderOutboxWorkerEntry', variable: 'ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER' },
+  { binding: 'symmyIntegrationOutboxWorkerEntry', variable: 'ONTOS_GATEWAY_MODULE_API_KEY_SYMMY_INTEGRATION' },
 ] as const;
 
 it.effect('hands the stage host each hosted owner credential under its own name and never the shared one', () =>
@@ -278,9 +280,8 @@ it.effect('hands the stage host each hosted owner credential under its own name 
         new RegExp(`hostedOutboxWorkerEntry\\(\\s*${binding},\\s*'${variable}',?\\s*\\)`, 'u'),
       );
     }
-    // Inventory and Privacy hold no module credential, so their entries run without one.
+    // Inventory makes no delegated calls, so its entry runs without a module credential.
     expect(generated.hostEntry).toContain('\n    inventoryOutboxWorkerEntry,\n');
-    expect(generated.hostEntry).toContain('\n    privacyOutboxWorkerEntry,\n');
     expect(readFileSync(new URL('../outbox-worker-host.generated.mts', import.meta.url), 'utf-8')).toBe(
       generated.hostEntry,
     );

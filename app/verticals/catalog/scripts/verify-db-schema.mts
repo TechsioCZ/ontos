@@ -179,8 +179,8 @@ const verification = Effect.gen(function* verifyCatalogDatabase() {
     (count, table) => count + getTableConfig(table).foreignKeys.length,
     0,
   );
-  // 78 existing triggers plus accepted-source and override-ledger guards and the mutable-head identity guard.
-  const expectedTriggerCount = 81;
+  // 78 existing triggers plus accepted-source, override-ledger, mutable-head and source-correlation guards.
+  const expectedTriggerCount = 82;
   const expectedInfrastructure = [
     CATALOG_TABLES.filter((table) => getTableConfig(table).name !== 'gateway_assertion_redemptions').length,
     1,

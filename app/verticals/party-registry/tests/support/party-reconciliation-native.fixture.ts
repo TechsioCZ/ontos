@@ -8,6 +8,8 @@ import {
   PARTY_REGISTRY_REQUEST_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
   TrustedPrincipalContextSchema,
+  OntosModuleDeploymentContractSchema,
+  OntosShellRuntimeContractSchema,
 } from '@app/core-runtime';
 import type { DatabaseConnectionPair } from '@app/core-runtime';
 import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime/modules/active-application-composition';
@@ -15,7 +17,8 @@ import { makeGatewayScopeGrantRegistrar } from '@app/core-runtime/testing/action
 import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import { PgClient } from '@effect/sql-pg';
-import { Config, Context, Crypto, Effect, Layer, Redacted, Schema, Stream } from 'effect';
+import { Config, Context, Crypto, Effect, FileSystem, Layer, Redacted, Schema, Stream } from 'effect';
+import { makePublishedApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
 import { assert, expect } from 'effect-rstest';
@@ -27,6 +30,27 @@ import {
 } from '../../api/auth/gateway-assertion-redemption.ts';
 
 const appRoot = fileURLToPath(new URL('../../../../', import.meta.url));
+
+/** Exact public provider contracts keep intrinsic compatibility separate from the test Privacy port. */
+export const makePartyReconciliationComposition = Effect.fn('PartyReconciliation.publishedComposition')(
+  function* publishedComposition() {
+    const fs = yield* FileSystem.FileSystem;
+    const contracts = yield* Effect.forEach(['party-registry', 'privacy'], (appId) =>
+      fs
+        .readFileString(`${appRoot}verticals/${appId}/dist/public/.well-known/ontos-module-manifest.json`)
+        .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema)))),
+    );
+    const document = yield* fs.readFileString(
+      `${appRoot}apps/shell-super-app/dist/public/.well-known/ontos-shell-runtime.json`,
+    );
+    const shell = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(document);
+    return yield* makePublishedApplicationCompositionSnapshotFixture({
+      contractInputs: contracts,
+      publishedShellRuntime: { document, receiverDeployment: shell.deployment },
+      validityMs: 3_600_000,
+    });
+  },
+);
 
 /** Empty owner schemata and physical clone identity are proved by the existing fixed gateways. */
 export const preparePartyReconciliationNative = Effect.fn('PartyReconciliation.prepareNative')(
@@ -51,18 +75,8 @@ export const preparePartyReconciliationNative = Effect.fn('PartyReconciliation.p
     const ownerSchema = (phase: 'rebuild' | 'verify', identityEnvironment: Readonly<Record<string, string>>) =>
       Effect.gen(function* runOwnerSchemaPhase() {
         const child = yield* ChildProcess.make(
-          'mise',
-          [
-            'exec',
-            '--',
-            'pnpm',
-            '--filter',
-            '@app/party-registry',
-            'exec',
-            'node',
-            'tests/support/current-owner-schema.fixture.ts',
-            phase,
-          ],
+          'pnpm',
+          ['--filter', '@app/party-registry', 'exec', 'node', 'tests/support/current-owner-schema.fixture.ts', phase],
           {
             cwd: appRoot,
             env: { ...environment, ...identityEnvironment },
@@ -71,11 +85,15 @@ export const preparePartyReconciliationNative = Effect.fn('PartyReconciliation.p
             stdout: 'pipe',
           },
         );
-        const [code] = yield* Effect.all(
-          [child.exitCode, Stream.runDrain(child.stdout), Stream.runDrain(child.stderr)],
+        const [code, stdout, stderr] = yield* Effect.all(
+          [
+            child.exitCode,
+            child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+            child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+          ],
           { concurrency: 3 },
         );
-        expect(code, `Party owner schema ${phase}`).toBe(0);
+        expect(code, `Party owner schema ${phase}: ${stderr.slice(-4000)} ${stdout.slice(-4000)}`).toBe(0);
       });
     if (schema === 'rebuild') {
       yield* ownerSchema('rebuild', {});

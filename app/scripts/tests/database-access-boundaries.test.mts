@@ -4,12 +4,37 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect } from 'effect';
+import { Array as EffectArray, Effect, Order, Path } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { checkDatabaseAccessBoundaries } from '../check-database-access-boundaries.mts';
+import {
+  buildNativeSqlRuntimeProofEnvironment,
+  checkDatabaseAccessBoundaries,
+} from '../check-database-access-boundaries.mts';
+import { provedShellGatewayDatabaseSources } from '../shell-gateway-database-proof.mts';
+
+const TRANSITIVE_DB_REQUIREMENT_REASON = 'transitive global database capability in governed handler requirements';
 
 const BILLING_TABLE_SOURCE_PATH = 'verticals/billing/src/database/table.ts';
+const PACKAGE_MANIFEST_NAME = 'package.json';
+const PACKAGE_ROOT_SOURCE_EXPORT = './src/index.ts';
+
+const optionalOwnerFactory = (serviceBody: string, factoryBody: string, binding = '') => `
+interface Port {
+  bind?<Transaction>(tx:Transaction,scope:OperationalScope):Port;
+  read?(scope:OperationalScope):unknown;
+}
+const ownerServices=(tx:Executor,scope:OperationalScope,port:Port)=>{
+  const selected=port.bind?.(tx,scope) ?? port;
+  ${serviceBody}
+};
+const scopedServices=(tx:Executor,scope:OperationalScope,port:Port)=>ownerServices(tx,scope,port);
+${binding}
+export const services=${binding ? '()' : '(port:Port)'}=>({make:<Transaction>(input:Transaction,scope:OperationalScope)=>{
+  const tx=input as Executor;
+  ${factoryBody}
+}});
+`;
 
 it.live(
   'allows owner database factories and rejects Action, read, nested BFF, hidden Core database, and second-driver bypasses deterministically',
@@ -171,6 +196,68 @@ it.live('allows private scoped service factories but rejects executor exposure t
   }),
 );
 
+it.live('recognizes the exact Core scoped actor fact boundary without trusting lookalikes or shadowed imports', () =>
+  Effect.gen(function* scopedCoreFactBoundary() {
+    const root = yield* Effect.acquireRelease(
+      Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-db-boundary-core-fact-'))),
+      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+    );
+    const executorType =
+      "import type { ScopedTransactionExecutor as Executor, OperationalScope } from '@app/core-runtime';\n";
+    const factImport =
+      "import { readScopedGatewayPrincipalKind as actorKind } from '@app/core-runtime/access/enforcement';\n";
+    const files = {
+      'verticals/stock/src/actions/alias.action.ts': "import { services } from '../services/alias.ts';\n",
+      'verticals/stock/src/actions/catch.action.ts': "import { services } from '../services/catch.ts';\n",
+      'verticals/stock/src/actions/lookalike.action.ts': "import { services } from '../services/lookalike.ts';\n",
+      'verticals/stock/src/actions/raw.action.ts': "import { services } from '../services/raw.ts';\n",
+      'verticals/stock/src/actions/recursive.action.ts': "import { services } from '../services/recursive.ts';\n",
+      'verticals/stock/src/actions/shadowed.action.ts': "import { services } from '../services/shadowed.ts';\n",
+      'verticals/stock/src/actions/unknown.action.ts': "import { services } from '../services/unknown.ts';\n",
+      'verticals/stock/src/services/alias.ts': `${executorType}${factImport}
+export const services = (transaction: Executor, scope: OperationalScope) => ({ kind: () => actorKind(transaction, scope) });
+`,
+      'verticals/stock/src/services/catch.ts': `${executorType}${factImport}
+export const services = (transaction: Executor, scope: OperationalScope) => ({ kind: () => { try { throw 1; } catch (actorKind) { return actorKind(transaction, scope); } } });
+`,
+      'verticals/stock/src/services/lookalike.ts': `${executorType}
+const readScopedGatewayPrincipalKind = (transaction) => transaction;
+export const services = (transaction: Executor, scope: OperationalScope) => ({ kind: () => readScopedGatewayPrincipalKind(transaction, scope) });
+`,
+      'verticals/stock/src/services/raw.ts': `${executorType}${factImport}
+export const services = (transaction: Executor, scope: OperationalScope) => ({ kind: () => actorKind(transaction, scope), transaction });
+`,
+      'verticals/stock/src/services/recursive.ts': `${executorType}${factImport}
+export const services = (transaction: Executor, scope: OperationalScope) => ({ kind: function actorKind() { return actorKind(transaction, scope); } });
+`,
+      'verticals/stock/src/services/shadowed.ts': `${executorType}${factImport}
+export const services = (transaction: Executor, scope: OperationalScope) => ({ kind: (actorKind) => actorKind(transaction, scope) });
+`,
+      'verticals/stock/src/services/unknown.ts': `${executorType}
+import { unknownConsumer as actorKind } from '@app/core-runtime/access/enforcement';
+export const services = (transaction: Executor, scope: OperationalScope) => ({ kind: () => actorKind(transaction, scope) });
+`,
+    };
+    yield* Effect.forEach(
+      Object.entries(files),
+      ([relative, source]) =>
+        Effect.gen(function* writeFactFixture() {
+          const file = path.join(root, relative);
+          yield* Effect.tryPromise(() => mkdir(path.dirname(file), { recursive: true }));
+          yield* Effect.tryPromise(() => writeFile(file, source));
+        }),
+      { concurrency: 1, discard: true },
+    );
+    const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+    expect(violations.map(({ file, reason }) => ({ file, reason }))).toEqual(
+      ['catch', 'lookalike', 'raw', 'recursive', 'shadowed', 'unknown'].map((name) => ({
+        file: `verticals/stock/src/actions/${name}.action.ts`,
+        reason: TRANSITIVE_DB_REQUIREMENT_REASON,
+      })),
+    );
+  }),
+);
+
 it.live('distinguishes closed private executor inputs and scope metadata from handler capabilities', () =>
   Effect.gen(function* closedOwnerInputs() {
     const root = yield* Effect.acquireRelease(
@@ -298,7 +385,7 @@ it.live(
           'unsafe',
         ].map((name) => ({
           file: `verticals/stock/src/actions/${name}.action.ts`,
-          reason: 'transitive global database capability in governed handler requirements',
+          reason: TRANSITIVE_DB_REQUIREMENT_REASON,
         })),
       );
     }),
@@ -370,7 +457,7 @@ const makeDatabaseOwnershipFixture = Effect.fn(function* databaseOwnershipFixtur
       JSON.stringify({ exports: { './contracts': './shared/contracts.ts' }, name: '@app/accounting-contracts' }),
     ],
   ]);
-  for (const file of ['package.json', 'src/index.ts', 'src/db/scoped-routine.ts']) {
+  for (const file of [PACKAGE_MANIFEST_NAME, 'src/index.ts', 'src/db/scoped-routine.ts']) {
     const relative = `packages/core-runtime/${file}`;
     files.set(
       relative,
@@ -489,6 +576,912 @@ it.live('preserves actual operator tooling consuming Core public composition API
     yield* Effect.promise(() => writeFile(path.join(root, file), source));
     const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
     expect(violations.filter((violation) => violation.file === file)).toEqual([]);
+  }),
+);
+
+it.live('proves actual scoped Core facts and owner recovery without returning their executor identity', () =>
+  Effect.gen(function* actualScopedFactsAndRecovery() {
+    const root = yield* Effect.acquireRelease(
+      Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-db-actual-scoped-facts-'))),
+      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+    );
+    const actualFiles = [
+      'packages/core-runtime/package.json',
+      'packages/core-runtime/src/index.ts',
+      'packages/core-runtime/src/auth/system-principal-context-provenance.ts',
+      'packages/core-runtime/src/access/enforcement/index.ts',
+      'packages/core-runtime/src/access/enforcement/workload-admission.ts',
+      'packages/core-runtime/src/access/enforcement/selected-workload-decision-seal.ts',
+      'packages/core-runtime/src/actions/current-invocation.ts',
+      'packages/core-runtime/src/access/workloads/original-action-invocation.ts',
+      'packages/core-runtime/src/access/workloads/source-execution-fence.ts',
+      'packages/core-runtime/src/access/workloads/system-enrollment.ts',
+      'verticals/catalog/src/actions/bind-initial-variant-source.action.ts',
+      'verticals/catalog/src/actions/create-product.action.ts',
+      'verticals/catalog/src/actions/create-variant.action.ts',
+      'verticals/catalog/src/api/catalog-action-result-recovery.ts',
+      'verticals/catalog/src/persistence/catalog-action-result-snapshot.ts',
+      'verticals/catalog/src/persistence/catalog-source-correlation.ts',
+      'verticals/party-registry/src/services/party-client-source-privacy.service.ts',
+      'verticals/symmy-integration/src/actions/admit-symmy-job.action.ts',
+      'verticals/symmy-integration/src/actions/admit-symmy-sync.action.ts',
+      'verticals/symmy-integration/src/auth/symmy-job-operation-factory.ts',
+      'verticals/symmy-integration/src/persistence/symmy-job-store.ts',
+      'verticals/symmy-integration/src/persistence/symmy-job-execution-store.ts',
+    ];
+    for (const relative of actualFiles) {
+      const source = yield* Effect.promise(() =>
+        readFile(path.resolve(import.meta.dirname, '../..', relative), 'utf-8'),
+      );
+      const target = path.join(root, relative);
+      yield* Effect.promise(() => mkdir(path.dirname(target), { recursive: true }));
+      yield* Effect.promise(() => writeFile(target, source));
+    }
+    yield* Effect.promise(() => mkdir(path.join(root, 'verticals/party-registry/src/actions'), { recursive: true }));
+    yield* Effect.promise(() =>
+      writeFile(
+        path.join(root, 'verticals/party-registry/src/actions/current-action-fact.action.ts'),
+        "import '../services/party-client-source-privacy.service.ts';",
+      ),
+    );
+    const booleanServices = 'verticals/stock/src/services/admitted-workload.ts';
+    yield* Effect.promise(() => mkdir(path.dirname(path.join(root, booleanServices)), { recursive: true }));
+    yield* Effect.promise(() =>
+      writeFile(
+        path.join(root, booleanServices),
+        `import type {ScopedTransactionExecutor,OperationalScope} from '@app/core-runtime';
+import {readScopedAdmittedWorkload} from '@app/core-runtime/access/enforcement';
+export const services=(transaction:ScopedTransactionExecutor,scope:OperationalScope)=>({selected:()=>readScopedAdmittedWorkload(transaction,scope,'registered.workload')});`,
+      ),
+    );
+    const booleanAction = 'verticals/stock/src/actions/admitted-workload.action.ts';
+    yield* Effect.promise(() => mkdir(path.dirname(path.join(root, booleanAction)), { recursive: true }));
+    yield* Effect.promise(() =>
+      writeFile(path.join(root, booleanAction), "import '../services/admitted-workload.ts';"),
+    );
+    const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+    expect(violations).toEqual([]);
+    for (const [name, argumentsSource] of [
+      ['unknown-receiver', "unknownConsumer(transaction),scope,'registered.workload'"],
+      ['extra-executor', 'transaction,scope,transaction'],
+    ] as const) {
+      yield* Effect.promise(() =>
+        writeFile(
+          path.join(root, `verticals/stock/src/services/${name}.ts`),
+          `import type {ScopedTransactionExecutor,OperationalScope} from '@app/core-runtime';
+import {readScopedAdmittedWorkload} from '@app/core-runtime/access/enforcement';
+export const services=(transaction:ScopedTransactionExecutor,scope:OperationalScope)=>({selected:()=>readScopedAdmittedWorkload(${argumentsSource})});`,
+        ),
+      );
+      yield* Effect.promise(() =>
+        writeFile(path.join(root, `verticals/stock/src/actions/${name}.action.ts`), `import '../services/${name}.ts';`),
+      );
+    }
+    const rejected = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+    expect(rejected.map(({ file }) => file)).toEqual([
+      'verticals/stock/src/actions/extra-executor.action.ts',
+      'verticals/stock/src/actions/unknown-receiver.action.ts',
+    ]);
+  }),
+);
+
+it.live('keeps imported scoped consumers and private context inputs closed under raw-identity escape controls', () =>
+  Effect.gen(function* scopedConsumerEscapeControls() {
+    const root = yield* Effect.acquireRelease(
+      Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-db-scoped-consumers-'))),
+      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+    );
+    const executorType =
+      "import type { ScopedTransactionExecutor as Executor, OperationalScope } from '@app/core-runtime';\n";
+    const nativeEffect = "import { Array as EffectArray, Effect, Order, Path } from 'effect';\n";
+    const factsImport =
+      "import { readScopedOriginalActionInvocation as fact } from '@app/core-runtime/access/enforcement';\n";
+    const optionalBoundServices = 'return Effect.succeed(scopedServices(tx,scope,port.bind?.(tx,scope) ?? port));';
+    const returnedOptionalService = 'return Effect.succeed(port.bind?.(tx,scope) ?? port);';
+    const leakingOptionalProvider = 'const port={bind:(tx)=>tx};';
+    const containedOptionalService = `
+const {read}=selected;
+return {read:()=>read?.(scope),query:()=>tx.select()};
+`;
+    const cases = [
+      [
+        'closed-fact',
+        `${factsImport}export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>fact(tx,{tenant:tx.scope.tenantId})});`,
+        false,
+      ],
+      [
+        'closed-alias',
+        `${factsImport}const recover=fact;export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>recover(tx,{tenant:scope.tenantId})});`,
+        false,
+      ],
+      [
+        'closed-context',
+        `${factsImport}interface Context { readonly transaction:Executor;readonly scope:OperationalScope;readonly ref:string; } const read=Effect.fn('read')(function*(context:Context){const {transaction,scope}=context;const result=yield* fact(transaction,{tenant:scope.tenantId});return {result,ref:context.ref};});export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read({transaction:tx,scope,ref:'a'})});`,
+        false,
+      ],
+      [
+        'closed-inline-context',
+        `${factsImport}const read=Effect.fn('read')(function*(context:{transaction:Executor;scope:OperationalScope}){const {transaction:tx,scope}=context;return yield* fact(tx,{tenant:scope.tenantId});});export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read({transaction:tx,scope})});`,
+        false,
+      ],
+      [
+        'closed-optional-private-dependency',
+        optionalOwnerFactory(containedOptionalService, optionalBoundServices),
+        false,
+      ],
+      [
+        'closed-yielded-private-dependency',
+        'declare const provider:{make:(tx:unknown,scope:OperationalScope)=>Effect.Effect<{read:()=>string}>};export const services=Effect.fn("services")(function*(tx:Executor,scope:OperationalScope){const owned=yield* provider.make(tx,scope);return owned.read();});',
+        false,
+      ],
+      [
+        'closed-yielded-private-shadowed-receiver',
+        'const provider=Object.freeze({make:(tx)=>Effect.succeed(tx)});export const services=Effect.fn("services")(function*(tx:Executor,scope:OperationalScope,provider:{make:(tx:unknown,scope:OperationalScope)=>Effect.Effect<{read:()=>string}>}){const owned=yield* provider.make(tx,scope);return owned.read();});',
+        false,
+      ],
+      [
+        'raw-yielded-private-dependency',
+        'const provider=Object.freeze({make:(tx)=>Effect.succeed(tx)});export const services=Effect.fn("services")(function*(tx:Executor,scope:OperationalScope){return yield* provider.make(tx);});',
+        true,
+      ],
+      [
+        'raw-yielded-private-static-member',
+        'const provider=Object.freeze({make:(tx)=>Effect.succeed(tx)});export const services=Effect.fn("services")(function*(tx:Executor,scope:OperationalScope){return yield* provider["make"](tx);});',
+        true,
+      ],
+      [
+        'raw-yielded-private-optional-member',
+        'const provider=Object.freeze({make:(tx)=>Effect.succeed(tx)});export const services=Effect.fn("services")(function*(tx:Executor,scope:OperationalScope){return yield* provider?.make(tx);});',
+        true,
+      ],
+      [
+        'closed-known-optional-private-dependency',
+        optionalOwnerFactory(
+          containedOptionalService,
+          returnedOptionalService,
+          'const port=Object.freeze({bind:(tx,scope)=>({read:()=>tx.select()})});',
+        ),
+        false,
+      ],
+      [
+        'raw-returned-optional-private-dependency',
+        optionalOwnerFactory('return {selected};', optionalBoundServices, leakingOptionalProvider),
+        true,
+      ],
+      [
+        'raw-stored-optional-private-dependency',
+        `let retained:unknown;${optionalOwnerFactory('retained=selected;return {};', optionalBoundServices, leakingOptionalProvider)}`,
+        true,
+      ],
+      [
+        'raw-known-optional-private-dependency',
+        optionalOwnerFactory(containedOptionalService, optionalBoundServices, leakingOptionalProvider),
+        true,
+      ],
+      [
+        'raw-known-optional-discarded-forward',
+        optionalOwnerFactory(
+          containedOptionalService,
+          returnedOptionalService,
+          'const port=Object.freeze({bind:(tx)=>{unknownConsumer(tx);return {};}});',
+        ),
+        true,
+      ],
+      [
+        'raw-direct-optional-private-forward',
+        optionalOwnerFactory(containedOptionalService, returnedOptionalService, leakingOptionalProvider),
+        true,
+      ],
+      [
+        'raw-optional-strict-context-dependency',
+        'interface Context {transaction:Executor;scope:OperationalScope;} declare const port:{bind?:(tx:unknown,scope:unknown)=>unknown};export const services=(context:Context)=>{port.bind?.(context.transaction,context.scope);return {};};',
+        true,
+      ],
+      ['raw-direct', 'export const services=(tx:Executor,scope:OperationalScope)=>tx;', true],
+      [
+        'raw-nested',
+        'export const services=(tx:Executor,scope:OperationalScope)=>({result:[{transaction:tx}]});',
+        true,
+      ],
+      [
+        'raw-effect',
+        "export const services=Effect.fn('raw')(function*(tx:Executor,scope:OperationalScope){return yield* Effect.succeed(tx);});",
+        true,
+      ],
+      [
+        'raw-pipe',
+        "export const services=Effect.fn('raw')(function*(tx:Executor,scope:OperationalScope){return yield* Effect.succeed({tx}).pipe(Effect.map(value=>value));});",
+        true,
+      ],
+      [
+        'raw-effect-subpath-value',
+        'import * as Fx from "effect/Effect";export const services=Effect.fn("raw")(function*(tx:Executor,scope:OperationalScope){return yield* Fx.succeed(tx);});',
+        true,
+      ],
+      [
+        'raw-effect-static-value',
+        'export const services=Effect.fn("raw")(function*(tx:Executor,scope:OperationalScope){return yield* Effect["succeed"](tx);});',
+        true,
+      ],
+      [
+        'raw-effect-replaced-success',
+        'export const services=Effect.fn("raw")(function*(tx:Executor,scope:OperationalScope){return yield* Effect.as(Effect.void,tx);});',
+        true,
+      ],
+      [
+        'raw-effect-aggregate-success',
+        'export const services=Effect.fn("raw")(function*(tx:Executor,scope:OperationalScope){return yield* Effect.all([Effect.succeed(tx)]);});',
+        true,
+      ],
+      [
+        'raw-effect-mutated-value-carrier',
+        'import * as Fx from "effect/Effect";Fx.succeed=unknownConsumer;export const services=Effect.fn("raw")(function*(tx:Executor,scope:OperationalScope){return yield* Fx.succeed(tx);});',
+        true,
+      ],
+      [
+        'raw-counterfeit-value-carrier',
+        'import * as Fake from "fake-effect";export const services=Effect.fn("raw")(function*(tx:Executor,scope:OperationalScope){return yield* Fake.succeed(tx);});',
+        true,
+      ],
+      ['raw-callback', 'export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>tx});', true],
+      [
+        'raw-local-helper',
+        'const recover=(tx)=>({tx});export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>recover(tx)});',
+        true,
+      ],
+      [
+        'raw-imported-helper',
+        "import { raw } from './raw-fact.ts';export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>raw(tx)});",
+        true,
+      ],
+      [
+        'raw-unknown-helper',
+        "import { missing } from './missing.ts';export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>missing(tx)});",
+        true,
+      ],
+      [
+        'raw-fake-core',
+        "import { readScopedOriginalActionInvocation as fact } from '@app/fake-core/access/enforcement';export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>fact(tx,{})});",
+        true,
+      ],
+      [
+        'raw-type-only-core',
+        "import type { readScopedOriginalActionInvocation as fact } from '@app/core-runtime/access/enforcement';export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>fact(tx,{})});",
+        true,
+      ],
+      [
+        'raw-context',
+        'interface Context { transaction:Executor;scope:OperationalScope; }const read=(context:Context)=>context;export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read({transaction:tx,scope})});',
+        true,
+      ],
+      [
+        'raw-context-field',
+        'interface Context { transaction:Executor;scope:OperationalScope; }const read=(context:Context)=>({transaction:context.transaction});export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read({transaction:tx,scope})});',
+        true,
+      ],
+      [
+        'raw-context-rest',
+        'const read=(context:{transaction:Executor;scope:OperationalScope})=>{const {...rest}=context;return rest;};export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read({transaction:tx,scope})});',
+        true,
+      ],
+      [
+        'raw-destructured-array',
+        'export const services=(tx:Executor,scope:OperationalScope)=>{const bag=[tx];const [alias]=bag;return alias;};',
+        true,
+      ],
+      [
+        'raw-destructured-literal',
+        'export const services=(tx:Executor,scope:OperationalScope)=>{const {alias}={alias:tx};return alias;};',
+        true,
+      ],
+      [
+        'raw-mutation',
+        'export const services=(tx:Executor,scope:OperationalScope)=>{const result={};result.transaction=tx;return result;};',
+        true,
+      ],
+      ['raw-constructor', 'export const services=(tx:Executor,scope:OperationalScope)=>new Wrapper(tx);', true],
+      [
+        'raw-exported-context',
+        'export interface Context {transaction:Executor;scope:OperationalScope;}export const services=(tx:Executor,scope:OperationalScope)=>({});',
+        true,
+      ],
+      [
+        'raw-context-handler-contract',
+        'interface Context {transaction:Executor;scope:OperationalScope;}export interface Services {context:Context;}const read=(context:Context)=>({});export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read({transaction:tx,scope})});',
+        true,
+      ],
+      [
+        'fake-effect-wrapper',
+        "import { Effect as Fake } from 'fake-effect';const read=Fake.fn('read')(function*(tx){return {ok:true};});export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read(tx)});",
+        true,
+      ],
+      [
+        'shadowed-helper-alias',
+        `${factsImport}const recover=fact;export const services=(tx:Executor,scope:OperationalScope)=>({read:(recover)=>recover(tx,{})});`,
+        true,
+      ],
+      [
+        'shadowed-helper-local',
+        'const recover=(tx)=>({ok:true});export const services=(tx:Executor,scope:OperationalScope)=>({read:(recover)=>recover(tx)});',
+        true,
+      ],
+      [
+        'reassigned-helper',
+        'let recover=(tx)=>({ok:true});recover=unknownConsumer;export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>recover(tx)});',
+        true,
+      ],
+      [
+        'mutated-effect-alias',
+        "const native=Effect;native.fn=unknownDecorator;const read=Effect.fn('read')(function*(tx){return {ok:true};});export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read(tx)});",
+        true,
+      ],
+      [
+        'closed-static-scalar',
+        'class Seal {readonly #id:string|undefined;constructor(id?:string){this.#id=id;}static read(tx){const seal=Object.getOwnPropertyDescriptor(tx,"seal").value;return seal instanceof Seal ? seal.#id : undefined;}}const read=(tx)=>Seal.read(tx);export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read(tx)});',
+        false,
+      ],
+      [
+        'raw-static-field',
+        'class Seal {readonly #transaction:Executor;constructor(tx:Executor){this.#transaction=tx;}static read(tx){const seal=Object.getOwnPropertyDescriptor(tx,"seal").value;return seal instanceof Seal ? seal.#transaction : undefined;}}export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>Seal.read(tx)});',
+        true,
+      ],
+      [
+        'raw-static-scalar-assignment',
+        'class Seal {readonly #id:string|undefined;constructor(tx:Executor){this.#id=tx;}static read(tx){const seal=Object.getOwnPropertyDescriptor(tx,"seal").value;return seal instanceof Seal ? seal.#id : undefined;}}export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>Seal.read(tx)});',
+        true,
+      ],
+      [
+        'raw-static-replacement',
+        'class Seal {readonly #id:string|undefined;constructor(id?:string){this.#id=id;}static read(tx){const seal=Object.getOwnPropertyDescriptor(tx,"seal").value;return seal instanceof Seal ? seal.#id : undefined;}}Seal.read=unknownConsumer;export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>Seal.read(tx)});',
+        true,
+      ],
+      [
+        'raw-static-scalar-injection',
+        'class Seal {readonly #id:string|undefined;constructor(id?:string){this.#id=id;}static read(tx){const seal=Object.getOwnPropertyDescriptor(tx,"seal").value;return seal instanceof Seal ? seal.#id : undefined;}}export const services=(tx:Executor,scope:OperationalScope)=>{const seal=new Seal(tx as unknown as string);return {read:()=>Seal.read({seal})};};',
+        true,
+      ],
+      [
+        'exported-static-scalar',
+        'export class Seal {readonly #id:string|undefined;constructor(id?:string){this.#id=id;}static read(tx){const seal=Object.getOwnPropertyDescriptor(tx,"seal").value;return seal instanceof Seal ? seal.#id : undefined;}}export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>Seal.read(tx)});',
+        true,
+      ],
+      [
+        'raw-unknown-query-receiver',
+        'declare const box:(tx:Executor)=>unknown;export const services=(tx:Executor,scope:OperationalScope)=>box(tx).select();',
+        true,
+      ],
+      [
+        'raw-unknown-query-alias',
+        'export const services=(tx:Executor,scope:OperationalScope)=>{const box=unknownConsumer(tx);return box.select();};',
+        true,
+      ],
+      [
+        'raw-unknown-query-argument',
+        'const read=(tx)=>tx.select();export const services=(tx:Executor,scope:OperationalScope)=>read(unknownConsumer(tx));',
+        true,
+      ],
+      [
+        'closed-native-query-alias',
+        'export const services=(tx:Executor,scope:OperationalScope)=>{const original=tx;return {read:()=>original.select().from(table)};};',
+        false,
+      ],
+      [
+        'closed-native-context-alias',
+        'const read=(context:{transaction:Executor;scope:OperationalScope})=>context.transaction.select();export const services=(tx:Executor,scope:OperationalScope)=>{const context={transaction:tx,scope};return {read:()=>read(context)};};',
+        false,
+      ],
+      ['raw-class-field', 'export const services=(tx:Executor,scope:OperationalScope)=>class Leak {field=tx;};', true],
+      [
+        'raw-new-class-field',
+        'export const services=(tx:Executor,scope:OperationalScope)=>new (class Leak {field=tx;})();',
+        true,
+      ],
+      [
+        'raw-template-consumer',
+        `export const services=(tx:Executor,scope:OperationalScope)=>unknownTag\`value:\${tx}\`;`,
+        true,
+      ],
+      [
+        'raw-dotted-context-field',
+        'const read=(context:{"transaction.nested":Executor;scope:OperationalScope})=>({read:()=>context["transaction.nested"]});export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read({"transaction.nested":tx,scope})});',
+        true,
+      ],
+      [
+        'shadowed-parameter-property-effect',
+        "class Runtime {constructor(private Effect:unknown){ const read=Effect.fn('read')(function*(tx){return {ok:true};}); const service=(tx:Executor,scope:OperationalScope)=>({read:()=>read(tx)}); exportService(service); }}",
+        true,
+      ],
+      [
+        'closed-native-scope',
+        'export const services=(tx:Executor,scope:OperationalScope)=>{const original=tx;return {scope:original.scope,tenant:original.scope.tenantId,indexed:original["scope"].tenantId};};',
+        false,
+      ],
+      [
+        'raw-unknown-scope',
+        'export const services=(tx:Executor,scope:OperationalScope)=>unknownConsumer(tx).scope;',
+        true,
+      ],
+      [
+        'raw-local-scope',
+        'const box=(tx)=>({scope:tx});export const services=(tx:Executor,scope:OperationalScope)=>box(tx).scope;',
+        true,
+      ],
+      [
+        'raw-unknown-scope-alias',
+        'export const services=(tx:Executor,scope:OperationalScope)=>{const box=unknownConsumer(tx);return box.scope;};',
+        true,
+      ],
+      [
+        'raw-unknown-scope-index',
+        'export const services=(tx:Executor,scope:OperationalScope)=>unknownConsumer(tx)["scope"];',
+        true,
+      ],
+      [
+        'closed-native-scope-destructure',
+        'export const services=(tx:Executor,scope:OperationalScope)=>{const {scope:metadata}=tx;return metadata;};',
+        false,
+      ],
+      [
+        'raw-unknown-scope-destructure',
+        'export const services=(tx:Executor,scope:OperationalScope)=>{const box=unknownConsumer(tx);const {scope:leak}=box;return leak;};',
+        true,
+      ],
+      [
+        'raw-local-scope-destructure',
+        'const box=(tx)=>({scope:tx});export const services=(tx:Executor,scope:OperationalScope)=>{const value=box(tx);const {scope:leak}=value;return leak;};',
+        true,
+      ],
+      [
+        'raw-static-scalar-reassigned',
+        'class Seal {readonly #id:string;constructor(id:string,value:unknown){id=value as string;this.#id=id;}static read(tx){const s=Object.getOwnPropertyDescriptor(tx,"seal").value;return s instanceof Seal?s.#id:undefined;}}const read=(tx)=>Seal.read({seal:new Seal("safe",tx)});export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read(tx)});',
+        true,
+      ],
+      [
+        'raw-static-scalar-shadowed',
+        'class Seal {readonly #id:string;constructor(id:string,value:unknown){{const id=value as string;this.#id=id;}}static read(tx){const s=Object.getOwnPropertyDescriptor(tx,"seal").value;return s instanceof Seal?s.#id:undefined;}}const read=(tx)=>Seal.read({seal:new Seal("safe",tx)});export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read(tx)});',
+        true,
+      ],
+      [
+        'raw-static-constructor-return',
+        'class Seal {readonly #id:string;constructor(id:string){this.#id=id;}static read(tx){const s=Object.getOwnPropertyDescriptor(tx,"seal").value;return s instanceof Seal?s.#id:undefined;}}const expose=()=>Seal;const read=(tx)=>{const Ctor=expose();return Seal.read({seal:new Ctor(tx)});};export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read(tx)});',
+        true,
+      ],
+      [
+        'raw-static-constructor-object',
+        'class Seal {readonly #id:string;constructor(id:string){this.#id=id;}static read(tx){const s=Object.getOwnPropertyDescriptor(tx,"seal").value;return s instanceof Seal?s.#id:undefined;}}const expose=()=>({Ctor:Seal});const read=(tx)=>{const {Ctor}=expose();return Seal.read({seal:new Ctor(tx)});};export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read(tx)});',
+        true,
+      ],
+      [
+        'raw-static-bound-constructor',
+        'class Seal {readonly #id:string;constructor(id:string){this.#id=id;}static read(tx){const s=Object.getOwnPropertyDescriptor(tx,"seal").value;return s instanceof Seal?s.#id:undefined;}}const Ctor=Seal.bind(null);const read=(tx)=>Seal.read({seal:new Ctor(tx)});export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read(tx)});',
+        true,
+      ],
+      [
+        'raw-static-this-constructor',
+        'class Seal {readonly #id:string;constructor(id:string){this.#id=id;}static constructorValue(){return this;}static read(tx){const s=Object.getOwnPropertyDescriptor(tx,"seal").value;return s instanceof Seal?s.#id:undefined;}}const Ctor=Seal.constructorValue();const read=(tx)=>Seal.read({seal:new Ctor(tx)});export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read(tx)});',
+        true,
+      ],
+      [
+        'raw-static-instance-constructor',
+        'class Seal {readonly #id:string;constructor(id:string){this.#id=id;}static read(tx){const s=Object.getOwnPropertyDescriptor(tx,"seal").value;return s instanceof Seal?s.#id:undefined;}}const Ctor=new Seal("safe").constructor;const read=(tx)=>Seal.read({seal:new Ctor(tx)});export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read(tx)});',
+        true,
+      ],
+      [
+        'raw-static-aliased-instance-constructor',
+        'class Seal {readonly #id:string;constructor(id:string){this.#id=id;}static read(tx){const s=Object.getOwnPropertyDescriptor(tx,"seal").value;return s instanceof Seal?s.#id:undefined;}}const seed=new Seal("safe");const Ctor=seed.constructor;const read=(tx)=>Seal.read({seal:new Ctor(tx)});export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read(tx)});',
+        true,
+      ],
+      [
+        'raw-static-scalar-alias-write',
+        'class Seal {readonly #id:string;constructor(id:string,raw:unknown){this.#id=id;const self=this;self.#id=raw as string;}static read(tx){const s=Object.getOwnPropertyDescriptor(tx,"seal").value;return s instanceof Seal?s.#id:undefined;}}const read=(tx)=>Seal.read({seal:new Seal("safe",tx)});export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read(tx)});',
+        true,
+      ],
+      [
+        'raw-static-projection-alias-write',
+        'class Seal {readonly #id:string;constructor(id:string){this.#id=id;}static read(tx){const s=Object.getOwnPropertyDescriptor(tx,"seal").value;return s instanceof Seal?s.#id:undefined;}}const read=(tx)=>{const input:{id:string}={id:"safe"};const alias=input;alias.id=tx as unknown as string;return Seal.read({seal:new Seal(input.id)});};export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read(tx)});',
+        true,
+      ],
+      [
+        'raw-optional-scope',
+        'export const services=(tx:Executor,scope:OperationalScope)=>unknownConsumer(tx)?.scope;',
+        true,
+      ],
+      [
+        'raw-static-bound-constructor-direct',
+        'class Seal {readonly #id:string;constructor(id:string){this.#id=id;}static read(tx){const s=Object.getOwnPropertyDescriptor(tx,"seal").value;return s instanceof Seal?s.#id:undefined;}}const Ctor=Seal.bind(null);const poisoned=new Ctor(hiddenRaw);export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>Seal.read(tx)});',
+        true,
+      ],
+      [
+        'raw-static-this-constructor-direct',
+        'class Seal {readonly #id:string;constructor(id:string){this.#id=id;}static constructorValue(){return this;}static read(tx){const s=Object.getOwnPropertyDescriptor(tx,"seal").value;return s instanceof Seal?s.#id:undefined;}}const Ctor=Seal.constructorValue();const poisoned=new Ctor(hiddenRaw);export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>Seal.read(tx)});',
+        true,
+      ],
+      [
+        'raw-static-instance-constructor-direct',
+        'class Seal {readonly #id:string;constructor(id:string){this.#id=id;}static read(tx){const s=Object.getOwnPropertyDescriptor(tx,"seal").value;return s instanceof Seal?s.#id:undefined;}}const seed=new Seal("safe");const Ctor=seed.constructor;const poisoned=new Ctor(hiddenRaw);export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>Seal.read(tx)});',
+        true,
+      ],
+      [
+        'raw-static-scalar-reassigned-direct',
+        'class Seal {readonly #id:string;constructor(id:string,value:unknown){id=value as string;this.#id=id;}static read(tx){const s=Object.getOwnPropertyDescriptor(tx,"seal").value;return s instanceof Seal?s.#id:undefined;}}const poisoned=new Seal("safe",hiddenRaw);export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>Seal.read(tx)});',
+        true,
+      ],
+      [
+        'raw-static-scalar-alias-write-direct',
+        'class Seal {readonly #id:string;constructor(id:string,value:unknown){this.#id=id;const self=this;self.#id=value as string;}static read(tx){const s=Object.getOwnPropertyDescriptor(tx,"seal").value;return s instanceof Seal?s.#id:undefined;}}const poisoned=new Seal("safe",hiddenRaw);export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>Seal.read(tx)});',
+        true,
+      ],
+      [
+        'raw-static-projection-parameter-alias-write',
+        'class Seal {readonly #id:string;constructor(id:string){this.#id=id;}static read(tx){const s=Object.getOwnPropertyDescriptor(tx,"seal").value;return s instanceof Seal?s.#id:undefined;}}const poison=(input:{id:string},value:unknown)=>{const alias=input;alias.id=value as string;return new Seal(input.id);};const poisoned=poison({id:"safe"},hiddenRaw);export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>Seal.read(tx)});',
+        true,
+      ],
+      [
+        'raw-shadowed-object-class',
+        'class Seal {readonly #id:string;constructor(id:string){this.#id=id;}static read(tx){const s=Object.getOwnPropertyDescriptor(tx,"seal").value;return s instanceof Seal?s.#id:undefined;}}class Object {static getOwnPropertyDescriptor(tx,key){return unknownDescriptor(tx,key);}}export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>Seal.read(tx)});',
+        true,
+      ],
+      [
+        'raw-shadowed-object-function',
+        'class Seal {readonly #id:string;constructor(id:string){this.#id=id;}static read(tx){const s=Object.getOwnPropertyDescriptor(tx,"seal").value;return s instanceof Seal?s.#id:undefined;}}function Object(){}Object.getOwnPropertyDescriptor=unknownDescriptor;export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>Seal.read(tx)});',
+        true,
+      ],
+      [
+        'raw-object-container-escape',
+        'class Seal {readonly #id:string;constructor(id:string){this.#id=id;}static read(tx){const s=Object.getOwnPropertyDescriptor(tx,"seal").value;return s instanceof Seal?s.#id:undefined;}}const box={Object};box.Object.getOwnPropertyDescriptor=unknownDescriptor;export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>Seal.read(tx)});',
+        true,
+      ],
+      [
+        'raw-object-array-escape',
+        'class Seal {readonly #id:string;constructor(id:string){this.#id=id;}static read(tx){const s=Object.getOwnPropertyDescriptor(tx,"seal").value;return s instanceof Seal?s.#id:undefined;}}const box=[Object];mutateNamespace(box);export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>Seal.read(tx)});',
+        true,
+      ],
+      [
+        'raw-static-named-function-shadow',
+        'class Seal {readonly #id:string;constructor(id:string){const install=function id(){this.#id=id;};install();}static read(tx){const s=Object.getOwnPropertyDescriptor(tx,"seal").value;return s instanceof Seal?s.#id:undefined;}}export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>Seal.read(tx)});',
+        true,
+      ],
+      [
+        'raw-static-class-shadow',
+        'class Seal {readonly #id:string;constructor(id:string){{class id{}this.#id=id;}}static read(tx){const s=Object.getOwnPropertyDescriptor(tx,"seal").value;return s instanceof Seal?s.#id:undefined;}}export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>Seal.read(tx)});',
+        true,
+      ],
+      [
+        'raw-native-clone-scope-override',
+        'export const services=(tx:Executor,scope:OperationalScope)=>{const forged={...tx,scope:tx};return {read:()=>forged.scope};};',
+        true,
+      ],
+      [
+        'raw-native-clone-override',
+        'export const services=(tx:Executor,scope:OperationalScope)=>{const forged={...tx,select:unknownSelect(tx)};return {read:()=>forged.select()};};',
+        true,
+      ],
+      [
+        'raw-native-context-duplicate',
+        'const read=(input)=>input.transaction.select();export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read({transaction:tx,transaction:unknown(tx)})});',
+        true,
+      ],
+      [
+        'raw-destructured-consumer',
+        'const read=({transaction})=>transaction;export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read({transaction:tx})});',
+        true,
+      ],
+      [
+        'raw-spread-consumer',
+        'const read=(first,second)=>second;export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read(...["safe",tx])});',
+        true,
+      ],
+      [
+        'raw-rest-consumer',
+        'const read=(...args)=>args[0];export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read(tx)});',
+        true,
+      ],
+      [
+        'raw-implicit-arguments-consumer',
+        'function read(){return arguments[0];}export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read(tx)});',
+        true,
+      ],
+      [
+        'raw-context-discarded-unknown-consumer',
+        'const read=(context:{transaction:Executor;scope:OperationalScope})=>{unknownConsumer(context.transaction);return {ok:true};};export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read({transaction:tx,scope})});',
+        true,
+      ],
+      [
+        'raw-context-discarded-imported-consumer',
+        'import {consume} from "./unknown-consumer.ts";const read=(context:{transaction:Executor;scope:OperationalScope})=>{consume(context.transaction);return {ok:true};};export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read({transaction:tx,scope})});',
+        true,
+      ],
+      [
+        'closed-effect-cohort',
+        'import {Effect as Fx} from "effect";const read=Effect.fn("read")(function*(tx){return Fx.succeed({ok:true});});export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read(tx)});',
+        false,
+      ],
+      [
+        'raw-effect-import-cohort',
+        'import {Effect as Fx} from "effect";Fx.fn=unknownDecorator;const read=Effect.fn("read")(function*(tx){return {ok:true};});export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read(tx)});',
+        true,
+      ],
+      [
+        'raw-effect-subpath-cohort',
+        'import * as Fx from "effect/Effect";Fx.fn=unknownDecorator;const read=Effect.fn("read")(function*(tx){return {ok:true};});export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read(tx)});',
+        true,
+      ],
+      [
+        'raw-effect-object-escape',
+        'const box={Effect};box.Effect.fn=unknownDecorator;const read=Effect.fn("read")(function*(tx){return {ok:true};});export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read(tx)});',
+        true,
+      ],
+      [
+        'raw-object-inherited-mutator',
+        'class Seal {readonly #id:string;constructor(id:string){this.#id=id;}static read(tx){const s=Object.getOwnPropertyDescriptor(tx,"seal").value;return s instanceof Seal?s.#id:undefined;}}Object.__defineGetter__("getOwnPropertyDescriptor",()=>unknownDescriptor);export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>Seal.read(tx)});',
+        true,
+      ],
+      [
+        'mutated-effect-wrapper',
+        "Effect.fn=unknownDecorator;const read=Effect.fn('read')(function*(tx){return {ok:true};});export const services=(tx:Executor,scope:OperationalScope)=>({read:()=>read(tx)});",
+        true,
+      ],
+    ] as const;
+    const files = new Map<string, string>(
+      Object.entries({
+        'packages/core-runtime/package.json': JSON.stringify({
+          exports: { '.': PACKAGE_ROOT_SOURCE_EXPORT, './access/enforcement': './src/access/enforcement.ts' },
+          name: '@app/core-runtime',
+        }),
+        'packages/core-runtime/src/access/enforcement.ts':
+          "export { readScopedOriginalActionInvocation } from './facts.ts';",
+        'packages/core-runtime/src/access/facts.ts': `${nativeEffect}export const readScopedOriginalActionInvocation=Effect.fn('fact')(function*(transaction,input){const rows=yield* transaction.select({id:'id'}).from(table).where(eq('tenant',transaction.scope.tenantId)).limit(2);return {rows,requested:input.tenant};});`,
+        'packages/core-runtime/src/index.ts': 'export {};',
+        'verticals/stock/src/services/raw-fact.ts': 'export const raw=(transaction)=>({nested:[{transaction}]});',
+      }),
+    );
+    for (const [name, source] of cases) {
+      files.set(`verticals/stock/src/services/${name}.ts`, `${executorType}${nativeEffect}${source}`);
+      files.set(`verticals/stock/src/actions/${name}.action.ts`, `import { services } from '../services/${name}.ts';`);
+    }
+    for (const [relative, source] of files) {
+      const target = path.join(root, relative);
+      yield* Effect.promise(() => mkdir(path.dirname(target), { recursive: true }));
+      yield* Effect.promise(() => writeFile(target, source));
+    }
+    const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+    expect(violations.filter(({ file }) => file.includes('/actions/')).map(({ file }) => file)).toEqual(
+      EffectArray.sort(
+        cases.filter((item) => item[2]).map(([name]) => `verticals/stock/src/actions/${name}.action.ts`),
+        Order.String,
+      ),
+    );
+  }),
+);
+
+it.live('preserves global capability taint after proving the exact Shell issuer infrastructure role', () =>
+  Effect.gen(function* registeredIssuerStillCannotSupplyOwnerHandlers() {
+    const root = yield* Effect.acquireRelease(
+      Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-db-registered-issuer-'))),
+      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+    );
+    const proofPath = yield* Path.Path.pipe(Effect.provide(Path.layer));
+    const helper = 'apps/shell-super-app/api/auth/evidence.ts';
+    const shared = 'packages/shared-contracts/src/index.ts';
+    const core = 'packages/core-runtime/src/db/client.ts';
+    const files = {
+      'apps/shell-super-app/api/auth/evidence.ts': `import {CoreDatabase} from '@app/core-runtime/db/client';
+import {Effect} from 'effect';
+import {sql} from 'drizzle-orm';
+export const evidence=Effect.fn('evidence')(function* readEvidence(){
+ const database=yield* CoreDatabase;
+ return yield* database.executor.transaction(Effect.fn('facts')(function* facts(transaction){
+  return yield* transaction.execute(sql\`select tenant_id from core.api_key_principals\`);
+ }));
+});`,
+      'apps/shell-super-app/api/index.ts': `import {Layer} from 'effect';
+import {HttpApi,HttpApiBuilder} from '@modern-js/bff-effect/effect-edge';
+import {assembleEffectBffRuntime} from '@modern-js/bff-effect/assembly';
+import {GatewayContextApiGroup} from '@app/shared-contracts';
+import {evidence} from './auth/evidence.ts';
+const api=HttpApi.make('shell').add(GatewayContextApiGroup);
+export const makeRuntime=()=>{
+ const group=HttpApiBuilder.group(api,'gatewayContext',handlers=>handlers
+  .handle('issueGatewayContext',()=>evidence())
+  .handle('issueApiKeyGatewayContext',()=>evidence())
+  .handle('issueDelegatedGatewayContext',()=>evidence()));
+ const handlers=Layer.mergeAll(group);
+ return assembleEffectBffRuntime({api,handlers});
+};
+export const argumentsTuple=Object.freeze([] as const);
+const runtime=makeRuntime(...argumentsTuple);
+export default runtime;`,
+      'packages/core-runtime/package.json': JSON.stringify({
+        exports: { './db/client': './src/db/client.ts' },
+        name: '@app/core-runtime',
+      }),
+      'packages/core-runtime/src/db/client.ts': 'export class CoreDatabase {}',
+      'packages/shared-contracts/package.json': JSON.stringify({
+        exports: { '.': PACKAGE_ROOT_SOURCE_EXPORT },
+        name: '@app/shared-contracts',
+      }),
+      'packages/shared-contracts/src/index.ts': `import {HttpApiGroup} from '@modern-js/bff-effect/effect-client';
+export const GatewayContextApiGroup=HttpApiGroup.make('gatewayContext');
+export const shellGatewayContextContract={ownerId:'shell-super-app'} as const;`,
+    };
+    const sources = new Map<string, string>();
+    const write = (relative: string, source: string) =>
+      Effect.gen(function* writeFixture() {
+        const target = path.join(root, relative);
+        yield* Effect.promise(() => mkdir(path.dirname(target), { recursive: true }));
+        yield* Effect.promise(() => writeFile(target, source));
+        if (relative.endsWith('.ts')) {
+          sources.set(target, source);
+        }
+      });
+    for (const [relative, source] of Object.entries(files)) {
+      yield* write(relative, source);
+    }
+    const exports = new Map([
+      ['@app/core-runtime/db/client', path.join(root, core)],
+      ['@app/shared-contracts', path.join(root, shared)],
+    ]);
+    expect([...provedShellGatewayDatabaseSources(sources, root, proofPath, exports)]).toEqual([
+      path.join(root, helper),
+    ]);
+    expect(yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer))).toEqual([]);
+    const consumer = 'verticals/stock/src/actions/issuer-dependency.action.ts';
+    yield* write(
+      consumer,
+      `import type {evidence} from '../../../../apps/shell-super-app/api/auth/evidence.ts';
+export type IssuerResult=ReturnType<typeof evidence>;`,
+    );
+    // A type-only edge does not add an issuer consumer, but must not remove the owning source's
+    // global database requirement from the existing conservative operation dependency closure.
+    expect([...provedShellGatewayDatabaseSources(sources, root, proofPath, exports)]).toEqual([
+      path.join(root, helper),
+    ]);
+    const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+    expect(violations).toEqual([{ file: consumer, line: 1, reason: TRANSITIVE_DB_REQUIREMENT_REASON }]);
+  }),
+);
+
+it.live('checks actual resolved Context factory bodies rather than treating their results as database-free', () =>
+  Effect.gen(function* contextualFactoryResultBoundary() {
+    const root = yield* Effect.acquireRelease(
+      Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-db-context-factory-'))),
+      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+    );
+    const provider = 'verticals/owner/src/provider.ts';
+    const action = 'verticals/owner/src/actions/use.action.ts';
+    const files = {
+      'packages/runtime/package.json': JSON.stringify({
+        exports: {
+          '.': PACKAGE_ROOT_SOURCE_EXPORT,
+          './dependency': { default: './src/default.ts', workerd: './src/workerd.ts' },
+        },
+        name: '@app/runtime',
+      }),
+      'packages/runtime/src/default.ts': `import {Layer} from 'effect';import {Dependency} from './tag.ts';export const RuntimeDependencyLive=Layer.succeed(Dependency,{});`,
+      'packages/runtime/src/index.ts': 'export {};',
+      'packages/runtime/src/tag.ts': `import {Context} from 'effect';export class Dependency extends Context.Service<Dependency,{}>()('@app/runtime/Dependency') {}`,
+      'packages/runtime/src/workerd.ts': `import {Layer} from 'effect';import {Dependency} from './tag.ts';export const RuntimeDependencyLive=Layer.succeed(Dependency,{});`,
+      'verticals/owner/api/index.ts': `import {Layer} from 'effect';import {makeActionRuntimeLive} from '@app/core-runtime';import {assembleEffectBffRuntime} from '@modern-js/bff-effect/assembly';import {RuntimeDependencyLive} from '@app/runtime/dependency';import {provider} from '../src/provider.ts';export default assembleEffectBffRuntime({api,handlers:makeActionRuntimeLive(unit,registration).pipe(Layer.provide(Layer.mergeAll(provider,RuntimeDependencyLive)))});`,
+      'verticals/owner/shared/port.ts': `import {Context} from 'effect';export class Factory extends Context.Service<Factory,{readonly make:(input:{transaction:unknown})=>unknown}>()('@app/owner/Factory') {}`,
+      'verticals/owner/src/actions/use.action.ts': "import '../services.ts';",
+      'verticals/owner/src/services.ts': `import type {ScopedTransactionExecutor,OperationalScope} from '@app/core-runtime';import {Effect} from 'effect';import {Factory} from '../shared/port.ts';export const services=(transaction:ScopedTransactionExecutor,scope:OperationalScope)=>Effect.gen(function* services(){const factory=yield* Factory;return factory.make({transaction});});`,
+    };
+    for (const [relative, source] of Object.entries(files)) {
+      const target = path.join(root, relative);
+      yield* Effect.promise(() => mkdir(path.dirname(target), { recursive: true }));
+      yield* Effect.promise(() => writeFile(target, source));
+    }
+    for (const [body, rejected] of [
+      ['({run:()=>input.transaction.invoke()})', false],
+      ['({transaction:input.transaction})', true],
+      ['({run:()=>input.transaction})', true],
+      ['{unknownConsumer(input.transaction);return {ok:true};}', true],
+      ['{new Store(input.transaction);return {ok:true};}', true],
+      [`{tag\`\${input.transaction}\`;return {ok:true};}`, true],
+      ['{const tag=input.transaction.invoke;tag`literal`;return {ok:true};}', true],
+      ['{class Hidden {readonly tx=input.transaction;}return Hidden;}', true],
+      ['{class Hidden {readonly tx=input.transaction;}return {read:()=>new Hidden()};}', true],
+      ['{class Safe {readonly value="safe";}return {read:()=>new Safe()};}', false],
+      ['unknownConsumer(input.transaction).scope', true],
+      ['{const read=()=>input.transaction;return {run:()=>read()};}', true],
+      ['{function read(){return input.transaction;}return {run:()=>read()};}', true],
+      ['{const read=()=>input.transaction.invoke();return {run:()=>read()};}', false],
+      ['{function read(){return input.transaction.invoke();}return {run:()=>read()};}', false],
+      ['{const bound={run:()=>input.transaction.invoke(),rebind:()=>bound};return bound;}', false],
+      [
+        '{const bound={run:()=>input.transaction.invoke(),rebind:()=>bound,transaction:input.transaction};return bound;}',
+        true,
+      ],
+    ] as const) {
+      yield* Effect.promise(() =>
+        writeFile(
+          path.join(root, provider),
+          `import {Effect,Layer} from 'effect';import {Factory} from '../shared/port.ts';export const provider=Layer.effect(Factory,Effect.gen(function* provider(){return Object.freeze({make:(input)=>${body}});}));`,
+        ),
+      );
+      const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+      expect(
+        violations.filter(({ file }) => file === action).map(({ reason }) => reason),
+        body,
+      ).toEqual(rejected ? [TRANSITIVE_DB_REQUIREMENT_REASON] : []);
+    }
+    yield* Effect.promise(() =>
+      writeFile(
+        path.join(root, provider),
+        `import {Effect,Layer} from 'effect';import {Factory} from '../shared/port.ts';export const provider=Layer.effect(Factory,Effect.gen(function* provider(){return Object.freeze({make:(input)=>({run:()=>input.transaction.invoke()})});}));`,
+      ),
+    );
+    for (const variant of ['./src/missing.ts', '../foreign.ts', null, { node: './src/workerd.ts' }]) {
+      yield* Effect.promise(() =>
+        writeFile(
+          path.join(root, 'packages/runtime/package.json'),
+          JSON.stringify({
+            exports: {
+              '.': PACKAGE_ROOT_SOURCE_EXPORT,
+              './dependency': { default: './src/default.ts', workerd: variant },
+            },
+            name: '@app/runtime',
+          }),
+        ),
+      );
+      const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+      expect(violations.filter(({ file }) => file === action).map(({ reason }) => reason)).toEqual([
+        TRANSITIVE_DB_REQUIREMENT_REASON,
+      ]);
+    }
+  }),
+);
+
+it.live('builds native registry edges from the real declared npm alias and rejects unknown packages', () =>
+  Effect.gen(function* realNativeRegistryAlias() {
+    const root = process.cwd();
+    const file = path.join(root, 'scripts/native-registry-alias-fixture.ts');
+    const source =
+      "import '@modern-js/bff-effect/effect-edge'; import '@effect/sql-pg'; import 'unmodeled-registry-package';";
+    const environment = yield* buildNativeSqlRuntimeProofEnvironment(root, new Map([[file, source]]), new Map()).pipe(
+      Effect.provide(NodeServices.layer),
+    );
+    expect(environment.imports.get(file)?.get('@modern-js/bff-effect/effect-edge')).toEqual({ kind: 'other-native' });
+    expect(environment.imports.get(file)?.get('@effect/sql-pg')).toEqual({ kind: 'native-pg-root' });
+    expect(environment.imports.get(file)?.has('unmodeled-registry-package')).toBe(false);
+  }),
+);
+
+it.live('rejects a resolvable native spelling whose installed package has a fake origin', () =>
+  Effect.gen(function* fakeNativeRegistryOrigin() {
+    const root = yield* Effect.acquireRelease(
+      Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-native-registry-origin-'))),
+      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+    );
+    const packageRoot = path.join(root, 'node_modules/@effect/sql-pg');
+    yield* Effect.tryPromise(() => mkdir(packageRoot, { recursive: true }));
+    yield* Effect.tryPromise(() =>
+      writeFile(
+        path.join(root, PACKAGE_MANIFEST_NAME),
+        JSON.stringify({
+          dependencies: { '@effect/sql-pg': '4.0.7' },
+          name: 'registry-origin-control',
+        }),
+      ),
+    );
+    yield* Effect.tryPromise(() =>
+      writeFile(
+        path.join(packageRoot, PACKAGE_MANIFEST_NAME),
+        JSON.stringify({
+          exports: './index.js',
+          name: 'fake-sql-pg',
+          version: '4.0.7',
+        }),
+      ),
+    );
+    yield* Effect.tryPromise(() => writeFile(path.join(packageRoot, 'index.js'), 'export const PgTypes = {};'));
+    const file = path.join(root, 'source.ts');
+    const environment = yield* buildNativeSqlRuntimeProofEnvironment(
+      root,
+      new Map([[file, "import '@effect/sql-pg'; import '@effect/sql-pg/PgTypes';"]]),
+      new Map(),
+    ).pipe(Effect.provide(NodeServices.layer));
+    expect([...(environment.imports.get(file)?.keys() ?? [])]).toEqual([]);
   }),
 );
 

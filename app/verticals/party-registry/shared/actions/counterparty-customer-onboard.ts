@@ -1,4 +1,7 @@
 import { Schema } from 'effect';
+import { SymmySourceOrganizationWitnessSchema } from '@app/shared-contracts/symmy/organization-source-witness';
+
+import { PartyClientSourceReferenceSchema } from '../domain/identity-contracts.ts';
 
 import {
   CounterpartyCreationProvenanceSchema,
@@ -15,6 +18,8 @@ import { PartyRefSchema } from '../resources/party.ts';
  * purchasing relationship is sufficient role evidence but is not, by itself, context evidence.
  */
 export const CounterpartyCustomerOnboardPayloadSchema = Schema.Struct({
+  sourceOrganizationWitness: Schema.optionalKey(SymmySourceOrganizationWitnessSchema),
+  sourceReference: Schema.optionalKey(PartyClientSourceReferenceSchema),
   counterpartyProvenance: CounterpartyCreationProvenanceSchema,
   customerEvidence: CounterpartyProvenanceSchema,
   partyRef: PartyRefSchema,

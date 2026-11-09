@@ -8,6 +8,7 @@ import {
   SavedAddressDefaultsSchema,
 } from './address-book.ts';
 import { SavedAddressRefSchema } from '../resources/saved-address.ts';
+import { SavedAddressSourceAssertionSchema } from './saved-address-source.ts';
 
 const AddressActionReasonSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 const AddressLabelSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
@@ -41,8 +42,17 @@ export const AddSavedAddressPayloadSchema = Schema.Struct({
   profile: AddressBookProfileSchema,
   purposes: SavedAddressPurposesSchema,
   reason: AddressActionReasonSchema,
+  source: Schema.optionalKey(SavedAddressSourceAssertionSchema),
 }).check(
-  Schema.makeFilter(({ origin, profile }) => {
+  Schema.makeFilter(({ origin, profile, purposes, source }) => {
+    if (
+      source !== undefined &&
+      (source.nativeAddressId !== undefined ||
+        purposes.length !== source.purposes.length ||
+        !purposes.every((purpose) => new Set(source.purposes).has(purpose)))
+    ) {
+      return 'A source Add must declare the exact purposes and cannot invent a native address ID';
+    }
     if (!originMatchesTenant(origin, profileTenantId(profile))) {
       return 'The address source and profile must belong to the same Tenant';
     }
@@ -63,9 +73,19 @@ export const UpdateSavedAddressPayloadSchema = Schema.Struct({
   purposes: Schema.optional(SavedAddressPurposesSchema),
   reason: AddressActionReasonSchema,
   savedAddressRef: SavedAddressRefSchema,
+  source: Schema.optionalKey(SavedAddressSourceAssertionSchema),
   sourceTransition: Schema.optional(SavedAddressSourceTransitionSchema),
 }).check(
-  Schema.makeFilter(({ origin, profile, savedAddressRef, sourceTransition }) => {
+  Schema.makeFilter(({ origin, profile, purposes, savedAddressRef, source, sourceTransition }) => {
+    if (
+      source !== undefined &&
+      (source.nativeAddressId !== savedAddressRef.resourceId ||
+        (purposes !== undefined &&
+          (purposes.length !== source.purposes.length ||
+            !purposes.every((purpose) => new Set(source.purposes).has(purpose)))))
+    ) {
+      return 'A source Update must retain its exact native address ID and declared purposes';
+    }
     const tenantId = profileTenantId(profile);
     if (savedAddressRef.tenantId !== tenantId || (origin !== undefined && !originMatchesTenant(origin, tenantId))) {
       return 'The address, source, and profile must belong to the same Tenant';
@@ -88,9 +108,11 @@ export const RemoveSavedAddressPayloadSchema = Schema.Struct({
   profile: AddressBookProfileSchema,
   reason: AddressActionReasonSchema,
   savedAddressRef: SavedAddressRefSchema,
+  source: Schema.optionalKey(SavedAddressSourceAssertionSchema),
 }).check(
-  Schema.makeFilter(({ profile, savedAddressRef }) =>
-    savedAddressRef.tenantId === profileTenantId(profile)
+  Schema.makeFilter(({ profile, savedAddressRef, source }) =>
+    savedAddressRef.tenantId === profileTenantId(profile) &&
+    (source === undefined || source.nativeAddressId === savedAddressRef.resourceId)
       ? undefined
       : 'The address and profile must belong to the same Tenant',
   ),

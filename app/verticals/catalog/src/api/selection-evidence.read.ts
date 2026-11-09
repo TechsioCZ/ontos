@@ -86,6 +86,7 @@ export const selectionEvidenceRead = defineRead(
       callers: ['pricing'],
       reason: 'The Pricing service reads Catalog selection evidence for the buyer whose price decision it evaluates',
       subject: 'identity',
+      subjectWorkloads: ['commerce.catalog.symmy-product-read'],
     },
     accessDeclaration: {
       key: 'commerce.catalog.selection-evidence.read',
@@ -96,6 +97,10 @@ export const selectionEvidenceRead = defineRead(
       selectors: [],
     },
     accessKind: 'detail',
+    accessWorkload: {
+      reason: 'Current Product and Variant readiness facts for the registered Product integration pricing path',
+      workloads: ['commerce.catalog.symmy-product-read'],
+    },
     entrypoint: selectionEvidenceEntrypoint,
     evidencePolicy: { captureMode: 'metadata_only', policyKey: `${readKey}.evidence.v1` },
     inputSchema: SelectionEvidenceRequestSchema,

@@ -1,4 +1,4 @@
-import { Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 
 import {
   InventorySourceImportOutcomeSchema,
@@ -24,6 +24,23 @@ export const ImportSourceAssertionPayloadSchema = Schema.Struct({
   ),
 );
 export type ImportSourceAssertionPayload = typeof ImportSourceAssertionPayloadSchema.Type;
+
+/**
+ * Exact public Core request-hash projection. Position is an owner authorization fact, while this
+ * Action has no record accessTarget; its Core hash target is therefore empty. This computes no
+ * permission, receipt or proof of commit and performs no write.
+ */
+export const prepareImportSourceAssertionRequestIdentity = (payload: ImportSourceAssertionPayload) =>
+  Schema.decodeUnknownEffect(ImportSourceAssertionPayloadSchema, { onExcessProperty: 'error' })(payload).pipe(
+    Effect.flatMap(Schema.encodeEffect(ImportSourceAssertionPayloadSchema)),
+    Effect.map((normalizedPayload) => ({
+      actionKey: 'commerce.inventory.import-source-assertion' as const,
+      normalizedPayload,
+      owningModuleKey: 'commerce.inventory' as const,
+      schemaVersion: '1' as const,
+      target: {},
+    })),
+  );
 
 const nonNegativeInt = Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
 
