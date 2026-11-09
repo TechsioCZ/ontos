@@ -567,6 +567,8 @@ export const paymentEvidencePersistenceForTransaction = (
             eq(observations.paymentId, target.paymentId),
             eq(observations.sourceAuthorityId, target.sourceAuthorityId),
             inArray(observations.acceptanceOutcome, [...QUALIFIED_CORRECTION_OUTCOMES]),
+            // A carrier or POS correction must have proven the selected capability (#1152).
+            or(isNull(observations.capabilityCorrelated), eq(observations.capabilityCorrelated, true)),
             // Only a full disproof clears a held monetary effect: a partial amount leaves the rest owed.
             target.amountMinor === null
               ? undefined
