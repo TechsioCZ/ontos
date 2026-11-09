@@ -12,7 +12,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import type { HttpMethod } from 'effect/http';
 import { HttpApiMiddleware } from 'effect/http-api';
 
-import { ShellServerApi } from './server-api.ts';
+import { ShellAuthenticationApi } from '../../shared/api.ts';
 
 import {
   symmyInvalidProblem,
@@ -383,7 +383,7 @@ const syncRequest = (
   idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type | undefined,
 ): FixtureApply => (idempotencyKey === undefined ? { ...payload, route } : { ...payload, idempotencyKey, route });
 
-export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellServerApi, 'symmy', (group) =>
+export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthenticationApi, 'symmy', (group) =>
   group
     .handle('adminCustomers', ({ headers, query, request }) =>
       handleCustomersRead(headers['x-api-key'], { query, route: 'adminCustomers' }, request),

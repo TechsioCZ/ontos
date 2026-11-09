@@ -1,8 +1,8 @@
 import { Effect, Match, Schema } from 'effect';
 import type { Cause, Config } from 'effect';
 
-import { ResolveModuleTargetPayloadSchema } from '../../../../../shared/api.ts';
-import type { ResolvedModuleTarget } from '../../../../../shared/api.ts';
+import { ResolveModuleTargetPayloadSchema } from '../../../../../shared/browser-api.ts';
+import type { ResolvedModuleTarget } from '../../../../../shared/browser-api.ts';
 import { resolveModuleTarget } from '../../../../api/auth-client.ts';
 import type { ShellTargetClientError } from '../../../../api/auth-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';

@@ -6,23 +6,16 @@ import {
 } from '@app/shared-contracts';
 import type { GatewayInternalProblemSchema } from '@app/shared-contracts';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
-import { SYMMY_ROUTES, SymmyItemOutcomeSchema, SymmySourceRecordKeySchema } from '@app/shared-contracts/symmy';
+import { SymmyItemOutcomeSchema, SymmySourceRecordKeySchema } from '@app/shared-contracts/symmy';
 import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from '@modern-js/bff-effect/effect-client';
+import { HttpApiSchema } from '@modern-js/bff-effect/effect-client';
 import { Schema } from 'effect';
-import { HttpApiMiddleware, OpenApi } from 'effect/http-api';
+import { HttpApiMiddleware } from 'effect/http-api';
 
-import { SymmyDefectBoundary } from './defect-boundary.ts';
-import { SymmyInternalRegionsProjectionSchema } from './regions-projection-contract.ts';
 import {
   SymmyEncodedSourceCodeSchema,
   SymmySelectedSourceCodeSchema,
 } from '@app/symmy-integration/symmy-source-selector';
-import {
-  SymmyInternalProductsProjectionSchema,
-  SymmyInternalPriceListsProjectionSchema,
-  SymmyInternalCustomersProjectionSchema,
-} from './read-projection-contracts.ts';
 
 const SymmyInvalidProblemSchema = makeProblemDetailsSchema('SymmyInvalidProblem', 400);
 const SymmyFixtureJobNotFoundProblemSchema = makeProblemDetailsSchema('SymmyFixtureJobNotFoundProblem', 404);
@@ -144,7 +137,7 @@ export const SymmyInternalWritePayloadSchema = Schema.Union([
   Schema.Struct({ fixtureId: SymmyFixtureIdSchema }),
   SymmyInternalPlanPayloadSchema,
 ]);
-const codeParams = Schema.Struct({
+export const symmyCodeParams = Schema.Struct({
   code: SymmySelectedSourceCodeSchema,
 });
 export const SymmyFixtureJobIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('SymmyJobId'));
@@ -175,8 +168,8 @@ export const SymmyFixtureJobStatusSchema = Schema.Union([
 ]);
 
 const base = { error: ingressProblems, headers, query };
-const read = { ...base, query: SymmyInternalReadQuerySchema, success: SymmyFixtureReadSchema };
-const write = {
+export const symmyReadOptions = { ...base, query: SymmyInternalReadQuerySchema, success: SymmyFixtureReadSchema };
+export const symmyWriteOptions = {
   ...base,
   error: [...ingressProblems, SymmyIdempotencyRequiredProblemSchema, SymmyFixtureIntentConflictProblemSchema],
   headers: Schema.Struct({
@@ -186,7 +179,7 @@ const write = {
   payload: SymmyInternalWritePayloadSchema,
   success: SymmyFixtureItemResultsSchema,
 };
-const submit = {
+export const symmySubmitOptions = {
   ...base,
   error: [...ingressProblems, SymmyFixtureIntentConflictProblemSchema],
   headers: submitHeaders,
@@ -194,104 +187,9 @@ const submit = {
   success: SymmyFixtureAdmissionSchema.pipe(HttpApiSchema.status(202)),
 };
 
-const nativeSymmyPath = (path: `/${string}`): `/${string}` =>
-  `/${path.slice(1).replace('{code}', ':code').replace('{id}', ':id')}`;
-
-const adminCustomersEndpoint = HttpApiEndpoint.get('adminCustomers', SYMMY_ROUTES.adminCustomers.path, {
-  ...read,
-  success: Schema.Union([SymmyFixtureReadSchema, SymmyInternalCustomersProjectionSchema]),
-});
-const adminProductsEndpoint = HttpApiEndpoint.get('adminProducts', SYMMY_ROUTES.adminProducts.path, {
-  ...read,
-  success: Schema.Union([SymmyFixtureReadSchema, SymmyInternalProductsProjectionSchema]),
-});
-const adminRegionsEndpoint = HttpApiEndpoint.get('adminRegions', SYMMY_ROUTES.adminRegions.path, {
-  ...read,
-  success: Schema.Union([SymmyFixtureReadSchema, SymmyInternalRegionsProjectionSchema]),
-});
-const customerGroupCustomersBatchEndpoint = HttpApiEndpoint.post(
-  'customerGroupCustomersBatch',
-  nativeSymmyPath(SYMMY_ROUTES.customerGroupCustomersBatch.path),
-  { ...submit, params: codeParams },
-);
-const customerGroupsBatchEndpoint = HttpApiEndpoint.post(
-  'customerGroupsBatch',
-  SYMMY_ROUTES.customerGroupsBatch.path,
-  write,
-);
-const customersBatchEndpoint = HttpApiEndpoint.post('customersBatch', SYMMY_ROUTES.customersBatch.path, submit);
-const inventoryStockBatchEndpoint = HttpApiEndpoint.post(
-  'inventoryStockBatch',
-  SYMMY_ROUTES.inventoryStockBatch.path,
-  write,
-);
-const jobEndpoint = HttpApiEndpoint.get('job', nativeSymmyPath(SYMMY_ROUTES.job.path), {
+export const symmyJobOptions = {
   ...base,
   error: [...ingressProblems, SymmyFixtureJobNotFoundProblemSchema],
   params: jobParams,
   success: SymmyFixtureJobStatusSchema,
-});
-const priceListPricesBatchEndpoint = HttpApiEndpoint.post(
-  'priceListPricesBatch',
-  nativeSymmyPath(SYMMY_ROUTES.priceListPricesBatch.path),
-  {
-    ...submit,
-    params: codeParams,
-  },
-);
-const priceListsEndpoint = HttpApiEndpoint.get('priceLists', SYMMY_ROUTES.priceLists.path, {
-  ...read,
-  success: Schema.Union([SymmyFixtureReadSchema, SymmyInternalPriceListsProjectionSchema]),
-});
-const priceListsBatchUpsertEndpoint = HttpApiEndpoint.post(
-  'priceListsBatchUpsert',
-  SYMMY_ROUTES.priceListsBatchUpsert.path,
-  submit,
-);
-const productsBatchEndpoint = HttpApiEndpoint.post('productsBatch', SYMMY_ROUTES.productsBatch.path, submit);
-
-type SymmyIngressEndpoints = HttpApiEndpoint.AddMiddleware<
-  HttpApiEndpoint.AddMiddleware<
-    | typeof adminCustomersEndpoint
-    | typeof adminProductsEndpoint
-    | typeof adminRegionsEndpoint
-    | typeof customerGroupCustomersBatchEndpoint
-    | typeof customerGroupsBatchEndpoint
-    | typeof customersBatchEndpoint
-    | typeof inventoryStockBatchEndpoint
-    | typeof jobEndpoint
-    | typeof priceListPricesBatchEndpoint
-    | typeof priceListsEndpoint
-    | typeof priceListsBatchUpsertEndpoint
-    | typeof productsBatchEndpoint,
-    SymmySchemaError
-  >,
-  SymmyDefectBoundary
->;
-
-export interface SymmyIngressGroupContract extends HttpApiGroup.HttpApiGroup<'symmy', SymmyIngressEndpoints> {
-  readonly identifier: 'symmy';
-}
-
-/** Internal fixture inputs and outputs. The real wire DTO and governed owner response require their own acceptance. */
-export const SymmyIngressGroup: SymmyIngressGroupContract = HttpApiGroup.make('symmy')
-  .annotate(HttpApi.PayloadParseOptions, { onExcessProperty: 'error' })
-  .annotate(HttpApi.QueryParseOptions, { onExcessProperty: 'error' })
-  // Shell's OpenAPI describes endpoints callable through the normal Shell mount.
-  .annotate(OpenApi.Exclude, true)
-  .add(
-    adminCustomersEndpoint,
-    adminProductsEndpoint,
-    adminRegionsEndpoint,
-    customerGroupCustomersBatchEndpoint,
-    customerGroupsBatchEndpoint,
-    customersBatchEndpoint,
-    inventoryStockBatchEndpoint,
-    jobEndpoint,
-    priceListPricesBatchEndpoint,
-    priceListsEndpoint,
-    priceListsBatchUpsertEndpoint,
-    productsBatchEndpoint,
-  )
-  .middleware(SymmySchemaError)
-  .middleware(SymmyDefectBoundary);
+};

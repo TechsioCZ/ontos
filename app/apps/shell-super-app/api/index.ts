@@ -152,7 +152,6 @@ import {
   SymmyIngressTransportLive,
 } from './symmy/transport.ts';
 import { symmyUnavailableProblem } from './symmy/contract.ts';
-import { ShellServerApi } from './symmy/server-api.ts';
 import { SymmyDefectBoundary, symmyInternalProblem, symmyRouteNotFoundProblem } from './symmy/defect-boundary.ts';
 import {
   SymmyGovernedDispatch,
@@ -160,6 +159,7 @@ import {
   forwardSymmyOwnerRelease,
 } from './symmy/governed-dispatch.ts';
 
+import { ShellAuthenticationApi } from '../shared/api.ts';
 import {
   ApiKeyIssueResponseSchema,
   ApiKeyLifecycleResponseSchema,
@@ -171,7 +171,6 @@ import {
   PrincipalMutationResponseSchema,
   ResolvedModuleTargetSchema,
   SelfApiKeyListResponseSchema,
-  ShellAuthenticationApi,
   ShellCompositionSchema,
   ShellResourceResponseSchema,
   ShellSearchResponseSchema,
@@ -179,7 +178,7 @@ import {
   SupportImpersonationResponseSchema,
   SwitchLegalEntityResponseSchema,
   SwitchTenantResponseSchema,
-} from '../shared/api.ts';
+} from '../shared/browser-api.ts';
 import type {
   AuthenticationInternalProblem,
   AuthenticationProblem,
@@ -203,7 +202,7 @@ import type {
   TenantAuthenticationRequiredProblem,
   TenantCapabilityUnavailableProblem,
   TenantInternalProblem,
-} from '../shared/api.ts';
+} from '../shared/browser-api.ts';
 import { ApiKeyService, ApiKeyServiceLive } from './auth/api-key-service.ts';
 // @ontos-codesmith-core-read-server-imports:start
 
@@ -2138,7 +2137,7 @@ export const SymmyIngressDefectLive = Layer.succeed(
   }),
 );
 
-const gatewayContextGroupLive = HttpApiBuilder.group(ShellServerApi, 'gatewayContext', (handlers) =>
+const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'gatewayContext', (handlers) =>
   handlers
     .handle('issueGatewayContext', ({ payload, request }) =>
       Effect.gen(function* issueGatewayContextHandler() {
@@ -2391,7 +2390,7 @@ type ShellAuthenticationApiRuntimeArguments = readonly [
 
 export const makeShellAuthenticationApiRuntime = (
   ...args: ShellAuthenticationApiRuntimeArguments
-): EffectBffDefinition<typeof ShellServerApi> & EffectBffRuntime<typeof ShellServerApi> => {
+): EffectBffDefinition<typeof ShellAuthenticationApi> & EffectBffRuntime<typeof ShellAuthenticationApi> => {
   const [
     authenticationLayer,
     issuerLayer,
@@ -2798,7 +2797,7 @@ export const makeShellAuthenticationApiRuntime = (
   );
 
   return assembleEffectBffRuntime({
-    api: ShellServerApi,
+    api: ShellAuthenticationApi,
     handlers: apiHandlersLive,
     transport: Layer.mergeAll(
       ModuleApiTransportLive.pipe(Layer.provide(activeApplicationCompositionLive)),

@@ -54,7 +54,7 @@ import type { ShellNativeOwnedDatabase } from '../support/api-key-gateway-auth-r
 import { GatewayModuleBindingSchema } from '../../api/auth/gateway-delegation-policy.ts';
 import { GatewayIssuerError } from '../../api/auth/gateway-issuer.ts';
 import { ShellGatewayReleaseDiagnosticSchema } from '../../api/auth/gateway-release-diagnostic.ts';
-import { SwitchLegalEntityPayloadSchema } from '../../shared/api.ts';
+import { SwitchLegalEntityPayloadSchema } from '../../shared/browser-api.ts';
 import { SymmyRegionsProjectionConfigurationSchema } from '../../api/symmy/regions-projection.ts';
 import { SymmyPriceReadProjectionConfigurationSchema } from '../../api/symmy/source-read-projections.ts';
 

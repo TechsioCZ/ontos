@@ -7,7 +7,7 @@ import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
 import type { ReactNode } from 'react';
 import { renderToString } from 'react-dom/server';
 
-import { ResolvedModuleTargetSchema, SafeTenantIdentitySchema } from '../../../../shared/api.ts';
+import { ResolvedModuleTargetSchema, SafeTenantIdentitySchema } from '../../../../shared/browser-api.ts';
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts';
 import {
   moduleEntrypointLoadIdentity,
