@@ -80,13 +80,15 @@ export const offeredModules = (
 ): readonly ConnectionModule[] =>
   effectiveAuthority({ labelOf, live, policyCap, requested: 'all', requestedPolicy: policyCap }).modules;
 
+/** `all` means every module offered now, so it is within authority only while something is offered. */
 export const isModulesRequestWithin = (
   requested: ConnectionModulesRequest,
   offered: readonly ConnectionModule[],
 ): boolean =>
-  requested === 'all' ||
-  (requested.length > 0 &&
-    requested.every((grant) => {
-      const module = offered.find((entry) => entry.moduleId === grant.moduleId);
-      return module !== undefined && (grant.access === 'read' || module.write);
-    }));
+  requested === 'all'
+    ? offered.length > 0
+    : requested.length > 0 &&
+      requested.every((grant) => {
+        const module = offered.find((entry) => entry.moduleId === grant.moduleId);
+        return module !== undefined && (grant.access === 'read' || module.write);
+      });

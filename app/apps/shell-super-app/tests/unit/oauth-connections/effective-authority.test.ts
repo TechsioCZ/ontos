@@ -76,6 +76,11 @@ test('isModulesRequestWithin rejects write beyond offered write and accepts all'
   expect(isModulesRequestWithin('all', offered)).toBe(true);
 });
 
+test("isModulesRequestWithin refuses 'all' when nothing is offered, and accepts it only while something is", () => {
+  expect(isModulesRequestWithin('all', [])).toBe(false);
+  expect(isModulesRequestWithin('all', offeredModules(live, 'direct', labelOf))).toBe(true);
+});
+
 test('isModulesRequestWithin rejects an empty module list', () => {
   expect(isModulesRequestWithin([], offeredModules(live, 'direct', labelOf))).toBe(false);
 });

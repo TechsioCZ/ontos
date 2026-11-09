@@ -335,6 +335,7 @@ const approveRequest = { grantId: ConnectionGrantIdSchema.make(draftGrantId), oa
 const approvalSession: ConnectSession = {
   ...session,
   activeLegalEntityId: companyUuid,
+  companies: [{ legalEntityId: companyUuid, legalName: 'Firma A' }],
   principalId: personUuid,
   scope: { ...session.scope, legalEntityId: companyUuid, principalId: personUuid, tenantId: tenantUuid },
   tenantId: tenantUuid,
@@ -400,6 +401,25 @@ const approvalLayers = (
       }),
     );
   });
+
+it.effect('a draft for all modules is refused when nothing is offered, before anything is inserted', () =>
+  Effect.gen(function* allWithNothingOffered() {
+    // No subject holds any right here, so the offer is empty and `all` has nothing to mean.
+    const { layer } = yield* draftLayers([]);
+    const everything: ConnectDraftRequest = {
+      actingPrincipalId: Option.none(),
+      legalEntityId: ConnectionLegalEntityIdSchema.make(companyUuid),
+      modules: 'all',
+      oauthQuery: 'signed-query',
+      writePolicy: 'direct',
+    };
+    const refused = yield* createDraft(approvalSession, everything).pipe(Effect.provide(layer), Effect.result);
+    expect(Result.isFailure(refused)).toBe(true);
+    if (Result.isFailure(refused)) {
+      expect(refused.failure).toStrictEqual(new ConnectionInvalid({ code: 'modules_invalid' }));
+    }
+  }),
+);
 
 it.effect('approval refuses a draft of another company before any authority read or write', () =>
   Effect.gen(function* otherCompanyApproval() {
