@@ -539,18 +539,23 @@ export const acceptPaymentSourceStatement = Effect.fn('PaymentSource.acceptState
     );
   }
   // One transaction connection, in lock order: the source authority rows, then the Payment row.
-  const [authorities, target, existingOccurrence, correctedObservation] = yield* Effect.all(
+  const authorities = yield* services.source.lockAuthorities({
+    factFamily: statement.factFamily,
+    source: statement.source,
+  });
+  const correctedObservation =
+    statement.correctsObservationId === undefined
+      ? Option.none()
+      : yield* services.source.findObservation(statement.correctsObservationId);
+  // A correction that names no Payment is correlated through the accepted observation it corrects (#1152).
+  const [target, existingOccurrence] = yield* Effect.all(
     [
-      services.source.lockAuthorities({ factFamily: statement.factFamily, source: statement.source }),
-      loadTarget(services, statement.paymentId),
+      loadTarget(services, statement.paymentId ?? Option.getOrUndefined(correctedObservation)?.paymentId),
       services.source.findOccurrence({
         source: statement.source,
         sourceOccurrenceId: statement.sourceOccurrenceId,
         sourceRevision: statement.sourceRevision,
       }),
-      statement.correctsObservationId === undefined
-        ? Effect.succeedNone
-        : services.source.findObservation(statement.correctsObservationId),
     ],
     { concurrency: 1 },
   );

@@ -795,7 +795,7 @@ it.live('#1151 Closing a held return case never discards a qualified refund or r
 );
 
 it.live(
-  '#1151 A source corrects governed-attached collection evidence: the debt stays held until governance applies it',
+  '#1151 A source corrects governed-attached collection evidence: the collection reopens like accepted evidence',
   () =>
     native(
       Effect.gen(function* correctionOfAttachedEvidence() {
@@ -861,32 +861,27 @@ it.live(
             paymentId: payment.paymentId,
           }),
         );
-        expect(correction.acceptanceOutcome).toBe('HELD_UNRESOLVED');
-        const correctionCaseId = correction.reconciliationCaseId ?? '';
-        expect(yield* evidence.coverage(payment.paymentId)).toBe('Held UNRESOLVED_EVIDENCE');
-        // A free-text close cannot hand full coverage back to the disproven statement.
+        // The disproof of an attached statement is applied exactly like one of an accepted statement:
+        // the collection returns to CONFLICT and its coverage is no longer established.
+        expect(correction).toMatchObject({
+          acceptanceOutcome: 'ACCEPTED_OBSERVATION',
+          interpretation: 'CORRECTION',
+          outcomeChange: { from: 'EFFECT_CONFIRMED', operationId: collect.operationId, to: 'CONFLICT' },
+        });
+        expect(yield* evidence.coverage(payment.paymentId)).not.toMatch(/^Established/u);
+        const openCase = (yield* evidence.rows.cases(payment.paymentId)).find(
+          (reconciliationCase) => reconciliationCase.status === 'OPEN',
+        );
+        const correctionCaseId = openCase?.caseId ?? '';
+        // A free-text close cannot hand coverage back, and the disproven statement cannot be re-attached.
         const closeCorrection = () =>
           failureCodeOf(
             evidence.decide({
               caseId: correctionCaseId,
               decision: { _tag: 'CLOSE_CASE', evidenceRef: 'operator-note' },
-              reason: 'Close the held correction',
+              reason: 'Close the conflict of the disproven statement',
             }),
           );
-        expect(yield* closeCorrection()).toBe('payment_reconciliation_obligation_unresolved');
-        expect(yield* evidence.coverage(payment.paymentId)).toBe('Held UNRESOLVED_EVIDENCE');
-
-        // Governance applies the disproof: the collection returns to CONFLICT and the disproven
-        // statement can never be attached again.
-        const classified = yield* evidence.decide({
-          caseId: correctionCaseId,
-          decision: { _tag: 'CLASSIFY_CONFLICT' },
-          reason: 'The source disproved the only collection statement',
-        });
-        expect(Option.getOrUndefined(classified.outcomeChange)).toMatchObject({
-          fromOutcome: 'EFFECT_CONFIRMED',
-          toOutcome: 'CONFLICT',
-        });
         expect(
           yield* failureCodeOf(
             evidence.decide({
@@ -1589,6 +1584,115 @@ it.live('#1151 a held second partial correction never removes the receipt from t
           }),
         ),
       ).toBe('payment_reconciliation_evidence_not_qualified');
+    }),
+  ),
+);
+
+it.live('#1151 a replacement charge reconciles the collection after its attached receipt was fully retracted', () =>
+  native(
+    Effect.gen(function* replacementAfterRetractedAttachment() {
+      const evidence = yield* scenario();
+      const payment = yield* evidence.createPayment();
+      const collect = yield* evidence.startOperation({
+        amountMinor: 100_000,
+        operationKey: 'collect-1',
+        paymentId: payment.paymentId,
+      });
+      yield* configureGopay(evidence);
+      yield* evidence.settle(payment.paymentId, collect.operationId, 1, 'CONFLICT');
+      const charge = gopayChargeOf(evidence, payment.paymentId, collect.operationId);
+      const attach = (held: { readonly observationId: string; readonly reconciliationCaseId?: string | undefined }) =>
+        evidence.decide({
+          caseId: held.reconciliationCaseId ?? '',
+          decision: { _tag: 'ATTACH_EVIDENCE', observationId: held.observationId, operationId: collect.operationId },
+          reason: 'The gateway statement proves the collection',
+        });
+      // Charge 1 is held because of the conflict, then governance attaches it: collection confirmed.
+      const first = yield* charge('gopay:charge:1');
+      expect(first.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+      expect(Option.getOrUndefined((yield* attach(first)).outcomeChange)).toMatchObject({
+        toOutcome: 'EFFECT_CONFIRMED',
+      });
+      // The source fully retracts charge 1 and reports the replacement charge 2.
+      const retraction = yield* evidence.accept(
+        gopayStatement({
+          correctsObservationId: first.observationId,
+          economicEffectKey: 'gopay:charge:1:retraction',
+          factKind: 'SOURCE_CORRECTION',
+          paymentId: payment.paymentId,
+        }),
+      );
+      expect(retraction.outcomeChange).toMatchObject({ to: 'CONFLICT' });
+      const replacement = yield* charge('gopay:charge:2');
+      expect(replacement.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+      // The retracted charge can never be attached again; the replacement resolves the collection.
+      expect(yield* failureCodeOf(attach(first))).toBe('payment_reconciliation_evidence_not_qualified');
+      expect(Option.getOrUndefined((yield* attach(replacement)).outcomeChange)).toMatchObject({
+        toOutcome: 'EFFECT_CONFIRMED',
+      });
+    }),
+  ),
+);
+
+it.live('#1151 an attachment to an already confirmed operation keeps its target for later corrections', () =>
+  native(
+    Effect.gen(function* attachmentKeepsItsOperation() {
+      const evidence = yield* scenario();
+      const payment = yield* evidence.createPayment();
+      const collect = yield* evidence.startOperation({
+        amountMinor: 100_000,
+        operationKey: 'collect-1',
+        paymentId: payment.paymentId,
+      });
+      const gopay = yield* configureGopay(evidence);
+      yield* gopayChargeOf(evidence, payment.paymentId, collect.operationId)('gopay:payment:1');
+      const route = yield* refundExecutionRouteOf(gopay);
+      const refundOf = (operationKey: string, item: string) =>
+        evidence.startOperation({
+          amountMinor: 10_000,
+          kind: 'REFUND',
+          operationKey,
+          paymentId: payment.paymentId,
+          refundBasis: itemsBasis(item, 10_000),
+          refundExecutionRoute: route,
+          targetOperationId: collect.operationId,
+        });
+      const refundA = yield* refundOf('refund-a', 'item-a');
+      yield* refundOf('refund-b', 'item-b');
+      const returnOfRefundA = {
+        amount: czk(10_000),
+        economicEffectKey: 'gopay:refund:1',
+        factKind: 'REFUND_CONFIRMED',
+        paymentId: payment.paymentId,
+      } as const;
+      expect(
+        yield* evidence.accept(gopayStatement({ ...returnOfRefundA, operationId: refundA.operationId })),
+      ).toMatchObject({ acceptanceOutcome: 'ACCEPTED_OBSERVATION' });
+      // The same return reported again without naming its REFUND: held on a case with no operation.
+      const uncorrelated = yield* evidence.accept(gopayStatement(returnOfRefundA));
+      expect(uncorrelated.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+      yield* evidence.decide({
+        caseId: uncorrelated.reconciliationCaseId ?? '',
+        decision: {
+          _tag: 'ATTACH_EVIDENCE',
+          observationId: uncorrelated.observationId,
+          operationId: refundA.operationId,
+        },
+        reason: 'The second report is the same return of refund A',
+      });
+      // A later correction that names only the attached statement still lands on refund A.
+      const correction = yield* evidence.accept(
+        gopayStatement({
+          correctsObservationId: uncorrelated.observationId,
+          economicEffectKey: 'gopay:refund:1:correction',
+          factKind: 'SOURCE_CORRECTION',
+          paymentId: payment.paymentId,
+        }),
+      );
+      const correctionCase = (yield* evidence.rows.cases(payment.paymentId)).find(
+        (reconciliationCase) => reconciliationCase.caseId === correction.reconciliationCaseId,
+      );
+      expect(correctionCase?.operationId).toBe(refundA.operationId);
     }),
   ),
 );

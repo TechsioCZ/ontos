@@ -868,6 +868,8 @@ export const reconciliationDecisions = paymentSchema.table.withRLS(
     decisionId: uuid('decision_id').defaultRandom().primaryKey(),
     decisionKind: text('decision_kind').$type<PaymentReconciliationDecisionKind>().notNull(),
     evidenceRef: text('evidence_ref'),
+    /** The operation an ATTACH_EVIDENCE decision counted its evidence toward, when it named or had one. */
+    operationId: uuid('operation_id'),
     reason: text('reason').notNull(),
     resultingOutcome: text('resulting_outcome').$type<PaymentOperationOutcome>(),
   },

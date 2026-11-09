@@ -295,6 +295,7 @@ CREATE TABLE "payment"."reconciliation_decisions" (
 	"decision_id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
 	"decision_kind" text NOT NULL,
 	"evidence_ref" text,
+	"operation_id" uuid,
 	"reason" text NOT NULL,
 	"resulting_outcome" text,
 	CONSTRAINT "payment_reconciliation_decisions_scope_id_uk" UNIQUE("tenant_id","legal_entity_id","decision_id"),

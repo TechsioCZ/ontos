@@ -452,6 +452,77 @@ describe('#1151 Payment evidence interpretation', () => {
     );
   });
 
+  it('#1151 keyed and keyless confirmations are never proven the same money', () => {
+    const keyless = aggregateOf([operation('EFFECT_CONFIRMED')], [accepted('obs-keyless')]);
+    const keyed = aggregateOf(
+      [operation('EFFECT_CONFIRMED')],
+      [accepted('obs-keyed', { economicEffectKey: 'charge:1' })],
+    );
+    const distinct = PaymentEvidenceDecision.HOLD({ operationId: COLLECT_ID, reason: 'DISTINCT_ECONOMIC_EFFECT' });
+    const corroborates = PaymentEvidenceDecision.NO_CHANGE({
+      operationId: COLLECT_ID,
+      reason: 'CORROBORATES_ESTABLISHED_OUTCOME',
+    });
+    expect(interpretPaymentObservation(keyless, observed({ economicEffectKey: 'charge:2' }))).toEqual(distinct);
+    expect(interpretPaymentObservation(keyed, observed({}))).toEqual(distinct);
+    expect(interpretPaymentObservation(keyless, observed({}))).toEqual(corroborates);
+    expect(interpretPaymentObservation(keyed, observed({ economicEffectKey: 'charge:1' }))).toEqual(corroborates);
+  });
+
+  it('#1150 a confirmed cancellation and a confirmed collection of one COLLECT open a conflict, never a silent hold', () => {
+    const cancel = (outcome: PaymentOperationOutcome) =>
+      operation(outcome, { kind: 'CANCEL_OR_VOID', operationId: 'cancel-1', targetOperationId: COLLECT_ID });
+    // The cancellation is confirmed first, then the collection is reported as collected.
+    const lateCollection = interpretPaymentObservation(
+      aggregateOf([operation('PENDING'), cancel('EFFECT_CONFIRMED')]),
+      observed({ amount: czk(100_000) }),
+    );
+    expect(PaymentEvidenceDecision.$is('CONFLICT')(lateCollection)).toBe(true);
+    // The collection is proven first, then the cancellation is reported as confirmed.
+    const lateCancel = interpretPaymentObservation(
+      aggregateOf([operation('EFFECT_CONFIRMED'), cancel('PENDING')]),
+      observed({ factKind: 'CANCEL_CONFIRMED', operationId: 'cancel-1' }),
+    );
+    expect(PaymentEvidenceDecision.$is('CONFLICT')(lateCancel)).toBe(true);
+    // A cancellation that is only pending does not contradict a collection yet.
+    const collectionWhileCancelPending = interpretPaymentObservation(
+      aggregateOf([operation('PENDING'), cancel('PENDING')]),
+      observed({ amount: czk(100_000) }),
+    );
+    expect(PaymentEvidenceDecision.$is('TRANSITION')(collectionWhileCancelPending)).toBe(true);
+  });
+
+  it('#1151 a partial correction below the confirmed and reserved returns is held, never applied silently', () => {
+    const refund = (outcome: PaymentOperationOutcome) =>
+      operation(outcome, {
+        amount: czk(80_000),
+        kind: 'REFUND',
+        operationId: 'refund-1',
+        targetOperationId: COLLECT_ID,
+      });
+    const correction = observed({
+      amount: czk(30_000),
+      correctsObservationId: 'obs-receipt',
+      factKind: 'SOURCE_CORRECTION',
+    });
+    for (const outcome of ['EFFECT_CONFIRMED', 'PENDING'] as const) {
+      expect(
+        interpretPaymentObservation(
+          aggregateOf([operation('EFFECT_CONFIRMED'), refund(outcome)], [accepted('obs-receipt')]),
+          correction,
+        ),
+      ).toEqual(
+        PaymentEvidenceDecision.HOLD({ operationId: COLLECT_ID, reason: 'CORRECTION_EXCEEDS_REMAINING_FUNDS' }),
+      );
+    }
+    // A refund proven not effected reserves nothing: the reduction applies.
+    const applied = interpretPaymentObservation(
+      aggregateOf([operation('EFFECT_CONFIRMED'), refund('NOT_EFFECTED_CONFIRMED')], [accepted('obs-receipt')]),
+      correction,
+    );
+    expect(PaymentEvidenceDecision.$is('CORRECTION')(applied)).toBe(true);
+  });
+
   it('#1151 a re-issued correction of a re-exported statement counts once; an overlapping one is held', () => {
     const correctedReceipt = aggregateOf(
       [operation('EFFECT_CONFIRMED')],
@@ -569,19 +640,28 @@ describe('#1151 Payment evidence interpretation', () => {
     );
   });
 
-  it('#1151 a correction of governed-attached evidence is held on the attached operation, never operationless', () => {
+  it('#1151 a correction of governed-attached evidence is applied like one of accepted evidence', () => {
     const attachedOnly = aggregateOf(
       [operation('EFFECT_CONFIRMED')],
       [],
       [accepted('obs-attached-receipt', { economicEffectKey: 'gopay:payment:1' })],
     );
-    expect(
-      interpretPaymentObservation(
-        attachedOnly,
-        // The source names only the corrected statement, not its operation.
-        { ...uncorrelated(), correctsObservationId: 'obs-attached-receipt', factKind: 'SOURCE_CORRECTION' },
-      ),
-    ).toEqual(PaymentEvidenceDecision.HOLD({ operationId: COLLECT_ID, reason: 'CORRECTION_TARGET_UNKNOWN' }));
+    const acceptedOnly = aggregateOf(
+      [operation('EFFECT_CONFIRMED')],
+      [accepted('obs-attached-receipt', { economicEffectKey: 'gopay:payment:1' })],
+    );
+    // The source names only the corrected statement, not its operation.
+    const fullRetraction = {
+      ...uncorrelated(),
+      correctsObservationId: 'obs-attached-receipt',
+      factKind: 'SOURCE_CORRECTION' as const,
+    };
+    const partialCorrection = { ...fullRetraction, amount: czk(10_000) };
+    for (const correction of [fullRetraction, partialCorrection]) {
+      const decision = interpretPaymentObservation(attachedOnly, correction);
+      expect(PaymentEvidenceDecision.$is('CORRECTION')(decision)).toBe(true);
+      expect(decision).toEqual(interpretPaymentObservation(acceptedOnly, correction));
+    }
   });
 
   it('#1151 corrections: already corrected, unknown target and lineage mismatch', () => {
@@ -600,12 +680,27 @@ describe('#1151 Payment evidence interpretation', () => {
       interpretPaymentObservation(
         correctedOnce,
         observed({
+          amount: czk(100_000),
           correctsObservationId: 'obs-receipt',
           economicEffectKey: 'retraction:1',
           factKind: 'SOURCE_CORRECTION',
         }),
       ),
     ).toEqual(PaymentEvidenceDecision.NO_CHANGE({ operationId: COLLECT_ID, reason: 'ALREADY_CORRECTED' }));
+    // The same key re-issued at another amount is a different claim: held, never deduplicated.
+    expect(
+      interpretPaymentObservation(
+        correctedOnce,
+        observed({
+          amount: czk(40_000),
+          correctsObservationId: 'obs-receipt',
+          economicEffectKey: 'retraction:1',
+          factKind: 'SOURCE_CORRECTION',
+        }),
+      ),
+    ).toEqual(
+      PaymentEvidenceDecision.HOLD({ operationId: COLLECT_ID, reason: 'CORRECTION_OVERLAPS_PRIOR_CORRECTION' }),
+    );
     expect(
       interpretPaymentObservation(
         aggregateOf([operation('EFFECT_CONFIRMED')]),

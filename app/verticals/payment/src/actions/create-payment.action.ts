@@ -79,12 +79,23 @@ const recoverExistingIntent = Effect.fn('CreatePaymentAction.recoverExistingInte
 
 /**
  * A successor intent never mutates its predecessor and never bypasses its effects (#1148): the
- * predecessor is locked and must have no live/indeterminate/conflicting operation, no held evidence, no
- * unreturned proven collection and no other successor.
+ * predecessor is locked and must belong to the same purchase, with no live/indeterminate/conflicting
+ * operation, no held evidence, no unreturned proven collection and no other successor.
  */
 const requireReleasedPredecessor = Effect.fn('CreatePaymentAction.requireReleasedPredecessor')(
-  function* requireReleasedPredecessor(predecessorPaymentId: string, services: PaymentLifecycleServices) {
+  function* requireReleasedPredecessor(
+    predecessorPaymentId: string,
+    purchasePaymentIds: readonly string[],
+    services: PaymentLifecycleServices,
+  ) {
+    // Loaded first so a Payment outside this Tenant + Legal Entity stays `payment_not_found`.
     const predecessor = yield* services.aggregate.loadAggregate(predecessorPaymentId, { lock: true });
+    if (!purchasePaymentIds.includes(predecessorPaymentId)) {
+      return yield* paymentLifecycleConflict(
+        'payment_predecessor_unresolved_conflict',
+        'The predecessor Payment belongs to another purchase; a successor must name a Payment of its own purchase',
+      );
+    }
     const decision = decidePredecessorRelease({
       funds: paymentFundsSnapshotOf(predecessor),
       operations: predecessor.operations,
@@ -135,7 +146,7 @@ export const handleCreatePayment = Effect.fn('CreatePaymentAction.handle')(funct
   yield* recordPaymentLookup(context, { query: 'purchase-intents', resultCount: purchasePaymentIds.length });
   const predecessorPaymentId = Option.fromNullishOr(payload.predecessorPaymentId);
   if (Option.isSome(predecessorPaymentId)) {
-    yield* requireReleasedPredecessor(predecessorPaymentId.value, services);
+    yield* requireReleasedPredecessor(predecessorPaymentId.value, purchasePaymentIds, services);
     yield* recordPaymentAggregateReads(context, [predecessorPaymentId.value]);
     yield* recordPaymentLookup(context, {
       paymentId: predecessorPaymentId.value,

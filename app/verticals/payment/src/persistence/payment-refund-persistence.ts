@@ -13,8 +13,9 @@ import {
   PaymentSourceFactFamilySchema,
   PaymentSourceKindSchema,
 } from '../../shared/domain/payment-vocabulary.ts';
-import { observations, sourceAuthorities } from '../database/schema.ts';
+import { observations, reconciliationDecisions, sourceAuthorities } from '../database/schema.ts';
 import type { PaymentRefundRouteCandidate } from '../domain/refund-execution-route.ts';
+import { correctionReachOf } from '../domain/refund-prior-returns.ts';
 import type { PaymentReturnEvidence } from '../domain/refund-prior-returns.ts';
 
 /**
@@ -25,7 +26,7 @@ import type { PaymentReturnEvidence } from '../domain/refund-prior-returns.ts';
  */
 export interface PaymentRefundPersistence {
   readonly selectRefundRouteCandidates: () => Effect.Effect<readonly PaymentRefundRouteCandidate[], PaymentUnavailable>;
-  /** Qualified, uncorrected REFUND_CONFIRMED statements of the Payment; read under its row lock. */
+  /** Qualified REFUND_CONFIRMED statements of the Payment, less accepted corrections; read under its row lock. */
   readonly selectReturnEvidence: (
     paymentId: string,
   ) => Effect.Effect<readonly PaymentReturnEvidence[], PaymentUnavailable>;
@@ -58,6 +59,55 @@ const storedAmountOf = (row: {
 
 const returnEvidenceReadFailure = (cause: unknown) =>
   paymentUnavailable('Prior return evidence could not be read', cause);
+
+interface ReturnStatementRow {
+  readonly amountMinor: number | null;
+  readonly currency: string | null;
+  readonly economicEffectKey: string | null;
+  readonly observationId: string;
+  readonly operationId: string | null;
+}
+
+interface CorrectionRow {
+  readonly amountMinor: number | null;
+  readonly correctsObservationId: string | null;
+  readonly currency: string | null;
+}
+
+/**
+ * One statement as the refund guard reads it. A statement fully covered by its accepted corrections
+ * is gone (undefined). A partially corrected statement keeps its stated money and the corrected part.
+ * A statement held without an operation counts toward the operation its governed attachment resulted in.
+ */
+const returnEvidenceOf = Effect.fn('PaymentRefundPersistence.returnEvidenceOf')(function* returnEvidenceOf(
+  row: ReturnStatementRow,
+  corrections: readonly CorrectionRow[],
+  attachedOperationId: string | undefined,
+) {
+  const stated = yield* storedAmountOf(row).pipe(
+    Effect.mapError((cause) => paymentUnavailable('Stored return evidence money is unreadable', cause)),
+  );
+  const correctionAmounts = yield* Effect.forEach(
+    corrections,
+    (correction) =>
+      storedAmountOf(correction).pipe(
+        Effect.map(Option.getOrUndefined),
+        Effect.mapError((cause) => paymentUnavailable('Stored return evidence money is unreadable', cause)),
+      ),
+    { concurrency: 1 },
+  );
+  const reach = correctionReachOf(Option.getOrUndefined(stated), correctionAmounts);
+  if (reach.covered) {
+    return null;
+  }
+  return {
+    amount: Option.getOrUndefined(stated),
+    correctedAmount: reach.correctedAmount,
+    economicEffectKey: row.economicEffectKey ?? undefined,
+    observationId: row.observationId,
+    operationId: row.operationId ?? attachedOperationId,
+  } satisfies PaymentReturnEvidence;
+});
 
 export const paymentRefundPersistenceForTransaction = (
   transaction: ScopedTransactionExecutor,
@@ -108,6 +158,45 @@ export const paymentRefundPersistenceForTransaction = (
       );
     },
   );
+  /**
+   * The operation each governed-attached statement counts toward, derived the way the evidence reader
+   * derives attachments (#1151): the attachment's resulting operation, else its case's operation. Only
+   * attachments with a resulting outcome count, and the latest one wins.
+   */
+  const attachedOperationsOf = Effect.fn('PaymentRefundPersistence.attachedOperationsOf')(
+    function* attachedOperationsOf(
+      scope: { readonly legalEntityId: string; readonly tenantId: string },
+      observationIds: readonly string[],
+    ) {
+      const attached = new Map<string, string>();
+      if (observationIds.length === 0) {
+        return attached;
+      }
+      const decisionRows = yield* transaction
+        .select({
+          evidenceRef: reconciliationDecisions.evidenceRef,
+          operationId: reconciliationDecisions.operationId,
+          resultingOutcome: reconciliationDecisions.resultingOutcome,
+        })
+        .from(reconciliationDecisions)
+        .where(
+          and(
+            eq(reconciliationDecisions.tenantId, scope.tenantId),
+            eq(reconciliationDecisions.legalEntityId, scope.legalEntityId),
+            eq(reconciliationDecisions.decisionKind, 'ATTACH_EVIDENCE'),
+            inArray(reconciliationDecisions.evidenceRef, [...observationIds]),
+          ),
+        )
+        .orderBy(asc(reconciliationDecisions.decidedAt), asc(reconciliationDecisions.decisionId))
+        .pipe(Effect.mapError(returnEvidenceReadFailure));
+      for (const row of decisionRows) {
+        if (row.evidenceRef !== null && row.resultingOutcome !== null && row.operationId !== null) {
+          attached.set(row.evidenceRef, row.operationId);
+        }
+      }
+      return attached;
+    },
+  );
   const selectReturnEvidence = Effect.fn('PaymentRefundPersistence.selectReturnEvidence')(
     function* selectReturnEvidence(paymentId: string) {
       const { legalEntityId, tenantId } = transaction.scope;
@@ -140,7 +229,11 @@ export const paymentRefundPersistenceForTransaction = (
             .orderBy(asc(observations.observationId))
             .pipe(Effect.mapError(returnEvidenceReadFailure)),
           transaction
-            .select({ correctsObservationId: observations.correctsObservationId })
+            .select({
+              amountMinor: observations.amountMinor,
+              correctsObservationId: observations.correctsObservationId,
+              currency: observations.currency,
+            })
             .from(observations)
             .where(
               and(
@@ -154,21 +247,21 @@ export const paymentRefundPersistenceForTransaction = (
         ],
         { concurrency: 1 },
       );
-      const corrected = new Set(corrections.map((row) => row.correctsObservationId));
-      return yield* Effect.forEach(
-        statements.filter((row) => !corrected.has(row.observationId)),
+      const attached = yield* attachedOperationsOf(
+        { legalEntityId, tenantId },
+        statements.filter((row) => row.operationId === null).map((row) => row.observationId),
+      );
+      const evidence = yield* Effect.forEach(
+        statements,
         (row) =>
-          storedAmountOf(row).pipe(
-            Effect.map((amount): PaymentReturnEvidence => ({
-              amount: Option.getOrUndefined(amount),
-              economicEffectKey: row.economicEffectKey ?? undefined,
-              observationId: row.observationId,
-              operationId: row.operationId ?? undefined,
-            })),
-            Effect.mapError((cause) => paymentUnavailable('Stored return evidence money is unreadable', cause)),
+          returnEvidenceOf(
+            row,
+            corrections.filter((correction) => correction.correctsObservationId === row.observationId),
+            attached.get(row.observationId),
           ),
         { concurrency: 1 },
       );
+      return evidence.flatMap((entry) => (entry === null ? [] : [entry]));
     },
   );
   return Object.freeze({ selectRefundRouteCandidates, selectReturnEvidence });
