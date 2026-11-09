@@ -166,7 +166,7 @@ const outputExtensionFor = (extension: string, packageIsModule: boolean): string
 const rewriteModuleSpecifiers = (
   code: string,
   file: string,
-  resolve: (specifier: string) => SpecifierResolution,
+  resolve: (specifier: string, commonJs: boolean) => SpecifierResolution,
 ): Effect.Effect<string, PackagedWorkspaceError> =>
   Effect.gen(function* rewriteCompiledModuleSpecifiers() {
     const parsed = parseSync(file, code, { lang: 'js', sourceType: 'module' });
@@ -175,11 +175,14 @@ const rewriteModuleSpecifiers = (
     }
     const edits: { readonly end: number; readonly start: number; readonly text: string }[] = [];
     const problems: PackagedWorkspaceError[] = [];
-    const record = (literal: { readonly end: number; readonly start: number; readonly value?: unknown } | null) => {
+    const record = (
+      literal: { readonly end: number; readonly start: number; readonly value?: unknown } | null,
+      commonJs = false,
+    ) => {
       if (literal === null || !Predicate.isString(literal.value)) {
         return;
       }
-      const replacement = resolve(literal.value);
+      const replacement = resolve(literal.value, commonJs);
       if (replacement === undefined) {
         return;
       }
@@ -198,7 +201,7 @@ const rewriteModuleSpecifiers = (
       CallExpression: (node) => {
         const [argument] = node.arguments;
         if (node.callee.type === 'Identifier' && node.callee.name === 'require' && argument?.type === 'Literal') {
-          record(argument);
+          record(argument, true);
         }
       },
       ExportAllDeclaration: (node) => record(node.source),
@@ -444,7 +447,77 @@ const ensurePackagedSourceParent = (packageDirectory: string, relative: string) 
     }
   });
 
-/** Completes missing relative TypeScript inputs from the declared build dependency, never at runtime. */
+/** Node chooses the first matching condition, independently for import() and require(). */
+const nodeImportTarget = (target: PackagedExportTarget, commonJs: boolean): string | undefined => {
+  if (Predicate.isString(target)) {
+    return target;
+  }
+  const candidates = isExportTargetList(target)
+    ? target
+    : Object.entries(target)
+        .filter(([condition]) =>
+          ['node', 'node-addons', 'module-sync', 'default', commonJs ? 'require' : 'import'].includes(condition),
+        )
+        .map(([, entry]) => entry);
+  for (const entry of candidates) {
+    const selected = nodeImportTarget(entry, commonJs);
+    if (selected !== undefined) {
+      return selected;
+    }
+  }
+  return undefined;
+};
+
+const privateImportTarget = (
+  specifier: string,
+  imports: PackagedExportTarget | undefined,
+  commonJs: boolean,
+): SpecifierResolution => {
+  if (!specifier.startsWith('#')) {
+    return undefined;
+  }
+  const entry = imports !== undefined && isExportTargetConditions(imports) ? imports[specifier] : undefined;
+  const target = entry === undefined ? undefined : nodeImportTarget(entry, commonJs);
+  return target ?? failed(`${specifier}: no declared Node package-import target`);
+};
+
+/** Condition order is meaningful to Node, so ordinary record equivalence is insufficient here. */
+const sameImportTarget = (left: PackagedExportTarget | undefined, right: PackagedExportTarget | undefined): boolean => {
+  if (left === right) {
+    return true;
+  }
+  if (left === undefined || right === undefined) {
+    return false;
+  }
+  if (isExportTargetList(left) && isExportTargetList(right)) {
+    return left.length === right.length && left.every((entry, index) => sameImportTarget(entry, right[index]));
+  }
+  if (isExportTargetConditions(left) && isExportTargetConditions(right)) {
+    const entries = Object.entries(left);
+    const other = Object.entries(right);
+    return (
+      entries.length === other.length &&
+      entries.every(([key, entry], index) => {
+        const candidate = other[index];
+        return candidate !== undefined && key === candidate[0] && sameImportTarget(entry, candidate[1]);
+      })
+    );
+  }
+  return false;
+};
+
+const sameBuildPackageIdentity = (
+  source: typeof PackagedPackageManifestSchema.Type,
+  packaged: typeof PackagedPackageManifestSchema.Type,
+  name: string,
+) =>
+  source.name === name &&
+  packaged.name === name &&
+  source.version === packaged.version &&
+  source.type === packaged.type &&
+  sameImportTarget(source.imports, packaged.imports);
+
+/** Completes missing relative and private-import TypeScript inputs at build time, never at runtime. */
 const completeTracedModuleGraph = (
   unitDirectory: string,
   packageDirectory: string,
@@ -468,11 +541,19 @@ const completeTracedModuleGraph = (
         yield* rewriteModuleSpecifiers(
           yield* transpileTracedModule(module),
           module.sourcePath,
-          (specifier): SpecifierResolution => {
-            if (!RELATIVE_SPECIFIER.test(specifier) || !isTypeScriptModule(path.extname(specifier))) {
+          (specifier, commonJs): SpecifierResolution => {
+            const privateTarget = privateImportTarget(specifier, packagedManifest.imports, commonJs);
+            if (privateTarget !== undefined && !Predicate.isString(privateTarget)) {
+              return privateTarget;
+            }
+            const input = privateTarget ?? specifier;
+            if (!RELATIVE_SPECIFIER.test(input) || !isTypeScriptModule(path.extname(input))) {
               return undefined;
             }
-            const target = path.resolve(path.dirname(module.sourcePath), specifier);
+            const target = path.resolve(
+              privateTarget === undefined ? path.dirname(module.sourcePath) : packageDirectory,
+              input,
+            );
             if (!isInside(packageDirectory, target) || DECLARATION_FILE.test(target)) {
               return failed(`${module.sourcePath}: ${specifier} is not a runtime module inside the packaged package`);
             }
@@ -505,12 +586,7 @@ const completeTracedModuleGraph = (
         const sourceManifest = yield* Schema.decodeUnknownEffect(packagedPackageManifestCodec)(
           yield* fs.readFileString(sourceManifestPath),
         );
-        if (
-          sourceManifest.name !== packageName ||
-          packagedManifest.name !== packageName ||
-          sourceManifest.version !== packagedManifest.version ||
-          sourceManifest.type !== packagedManifest.type
-        ) {
+        if (!sameBuildPackageIdentity(sourceManifest, packagedManifest, packageName)) {
           return yield* Effect.fail(failed(`${packageName}: the traced and build-input package identities differ`));
         }
         // A matching package name alone is insufficient: every carried source must be the same build input.

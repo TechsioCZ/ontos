@@ -396,6 +396,87 @@ it.effect('completes a partial trace from matching build inputs and runs with th
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect(
+  'completes omitted Node private-import targets for both import and require without copying inactive branches',
+  () =>
+    Effect.gen(function* completesPrivateImportBuildInputs() {
+      const root = yield* temporaryRoot;
+      const unit = unitUnder(root);
+      const packaged = path.join(unit, PACKAGED_DIRECTORY);
+      const manifest: WorkspacePackageManifest = {
+        ...manifestOf(TRACED_CONTRACTS, { '.': ENTRY_SUBPATH }),
+        imports: {
+          '#transport': Object.fromEntries([
+            ['workerd', './src/transport.workerd.ts'],
+            ['import', './src/transport.import.ts'],
+            ['require', './src/transport.require.cts'],
+            ['default', './src/transport.default.ts'],
+          ]),
+        },
+      };
+      const entry =
+        "import { value } from '#transport'; import legacy from './legacy.cts'; export const origin = value + legacy.value;\n";
+      const installed = yield* Effect.promise(() =>
+        writeWorkspacePackage(path.join(unit, 'node_modules'), manifest, {
+          [ENTRY_SOURCE]: entry,
+          'src/legacy.cts': "module.exports = require('#transport');\n",
+          'src/transport.import.ts': "export const value: string = 'import';\n",
+          'src/transport.require.cts': "module.exports = { value: '-require' };\n",
+        }),
+      );
+      const before = yield* Effect.promise(() => snapshotTree(installed));
+      const traced = yield* Effect.promise(() =>
+        writeWorkspacePackage(packagedNodeModules(unit), manifest, { [ENTRY_SOURCE]: entry }),
+      );
+      yield* Effect.promise(() => writeProbe(packaged, originProbe(TRACED_CONTRACTS)));
+      yield* compilePackagedWorkspacePackages(unit);
+      expect(existsSync(path.join(traced, 'src/transport.import.js'))).toBe(true);
+      expect(existsSync(path.join(traced, 'src/transport.require.cjs'))).toBe(true);
+      expect(existsSync(path.join(traced, 'src/transport.workerd.ts'))).toBe(false);
+      expect(existsSync(path.join(traced, 'src/transport.default.ts'))).toBe(false);
+      expect(yield* Effect.promise(() => snapshotTree(installed))).toEqual(before);
+      yield* Effect.promise(() => rename(installed, `${installed}-retired-build-input`));
+      const after = runProbe(packaged);
+      expect(after.stderr).toBe('');
+      expect(after.status).toBe(0);
+      expect(Result.getOrThrow(Schema.decodeUnknownResult(OriginObservation)(after.stdout)).origin).toBe(
+        'import-require',
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('refuses a private import map that differs from the declared build input', () =>
+  Effect.gen(function* refusesDifferentPrivateImportMap() {
+    const root = yield* temporaryRoot;
+    const unit = unitUnder(root);
+    const entry = "export { origin } from '#transport';\n";
+    const manifest = {
+      ...manifestOf(TRACED_CONTRACTS, { '.': ENTRY_SUBPATH }),
+      imports: { '#transport': './src/transport.ts' },
+    };
+    yield* Effect.promise(() =>
+      writeWorkspacePackage(path.join(unit, 'node_modules'), manifest, {
+        [ENTRY_SOURCE]: entry,
+        'src/other.ts': "export const origin = 'other';\n",
+        'src/transport.ts': "export const origin = 'declared';\n",
+      }),
+    );
+    const traced = yield* Effect.promise(() =>
+      writeWorkspacePackage(
+        packagedNodeModules(unit),
+        {
+          ...manifest,
+          imports: { '#transport': './src/other.ts' },
+        },
+        { [ENTRY_SOURCE]: entry },
+      ),
+    );
+    const exit = yield* Effect.exit(compilePackagedWorkspacePackages(unit));
+    expect(Exit.isFailure(exit)).toBe(true);
+    expect(existsSync(path.join(traced, 'src/other.ts'))).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect('completes the real Better Auth adapter trace that CI omitted transaction hooks from', () =>
   Effect.gen(function* completesActualAdapterTrace() {
     const root = yield* temporaryRoot;
