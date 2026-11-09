@@ -18,6 +18,7 @@ import type { PaymentEvidenceOperationView, PaymentEvidenceOutcomeChange } from 
 import { paymentFactMeaning } from './evidence-interpretation.ts';
 import { sameAmount } from './money.ts';
 import { isAllowedOutcomeTransition, isDefinitiveOutcome } from './operation-lifecycle.ts';
+import { PAYMENT_SELECTED_CAPABILITY_SOURCES } from './source-qualification.ts';
 
 /**
  * Governed reconciliation decisions (#1151 "Operator reconciliation cannot fabricate money"). Pure:
@@ -59,6 +60,11 @@ export interface PaymentReconciliationEstablishedEffect {
 export interface PaymentReconciliationEvidenceFacts {
   readonly acceptanceOutcome: PaymentObservationAcceptanceOutcome;
   readonly amount: PaymentMonetaryAmount | undefined;
+  /**
+   * Selected-capability sources only: source qualification proved the statement names the selected
+   * Delivery Offer / pickup capability of its Payment (recorded with the observation).
+   */
+  readonly capabilityCorrelated: boolean | undefined;
   /** A qualified SOURCE_CORRECTION (accepted, held or conflicting) disproved this statement. */
   readonly corrected: boolean;
   /**
@@ -214,19 +220,13 @@ const qualificationRefusal = (
 };
 
 /**
- * Sources that speak for a Payment only through its exact selected capability (#1152): the COD carrier
- * must name the selected Delivery Offer, the local POS operator the selected pickup capability.
- */
-const SELECTED_CAPABILITY_SOURCES: ReadonlySet<PaymentSourceKind> = new Set(['CARRIER', 'LOCAL_POS_OPERATOR'] as const);
-
-/**
- * Source qualification holds a statement of such a source that does not prove the selected capability
- * (CAPABILITY_NOT_CORRELATED) and keeps no capability reference, so a held statement of these sources
- * never proves that correlation: governance cannot establish its effect, only a source statement naming
- * the capability can.
+ * A COD carrier or local POS statement speaks for a Payment only through its exact selected capability
+ * (#1152). Source qualification records whether it proved that capability; a statement held as
+ * CAPABILITY_NOT_CORRELATED keeps no capability reference, so governance cannot establish its effect.
+ * A statement that did prove it (e.g. held only because its operation is in CONFLICT) can be attached.
  */
 const selectedCapabilityUnproven = (facts: PaymentReconciliationEvidenceFacts): boolean =>
-  facts.acceptanceOutcome === 'HELD_UNRESOLVED' && SELECTED_CAPABILITY_SOURCES.has(facts.source.sourceKind);
+  PAYMENT_SELECTED_CAPABILITY_SOURCES.has(facts.source.sourceKind) && facts.capabilityCorrelated !== true;
 
 /**
  * The attached statement and another uncorrected statement confirming this operation's effect carry

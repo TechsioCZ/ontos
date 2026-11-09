@@ -21,7 +21,11 @@ import {
   PaymentEvidenceDecision,
   paymentFactMeaning,
 } from './evidence-interpretation.ts';
-import { PaymentSourceQualification, qualifyPaymentSourceStatement } from './source-qualification.ts';
+import {
+  PaymentSourceQualification,
+  qualifyPaymentSourceStatement,
+  selectedCapabilityCorrelation,
+} from './source-qualification.ts';
 import type {
   PaymentRecordedObservationView,
   PaymentSourceAuthorityView,
@@ -66,6 +70,8 @@ export interface PaymentSourceStatementAcceptance {
 
 /** Everything one statement execution has established before recording. */
 interface StatementRun {
+  /** Qualification proved the selected Delivery Offer / pickup capability (selected-capability sources only). */
+  readonly capabilityCorrelated: boolean | undefined;
   readonly input: PaymentSourceStatementInput;
   readonly receivedAt: DateTime.Utc;
   readonly services: PaymentSourceServices;
@@ -134,6 +140,7 @@ const recordObservation = (run: StatementRun, row: RecordedRow) => {
     acceptanceOutcome: row.acceptanceOutcome,
     amount: row.amount,
     authority: row.authority,
+    capabilityCorrelated: run.capabilityCorrelated,
     correctionEffect: row.correctionEffect,
     correctsObservationId: statement.correctsObservationId,
     economicEffectKey: statement.economicEffectKey,
@@ -547,7 +554,6 @@ export const acceptPaymentSourceStatement = Effect.fn('PaymentSource.acceptState
     ],
     { concurrency: 1 },
   );
-  const run: StatementRun = { input, receivedAt, services, target, verifiedAt };
   const qualification = qualifyPaymentSourceStatement({
     authorities,
     correctedObservation: Option.getOrUndefined(correctedObservation),
@@ -556,6 +562,14 @@ export const acceptPaymentSourceStatement = Effect.fn('PaymentSource.acceptState
     statement,
     target: Option.getOrUndefined(target),
   });
+  const run: StatementRun = {
+    capabilityCorrelated: selectedCapabilityCorrelation(statement, qualification),
+    input,
+    receivedAt,
+    services,
+    target,
+    verifiedAt,
+  };
   return yield* PaymentSourceQualification.$match(qualification, {
     CurrencyMismatch: ({ claimed, required }) =>
       Effect.fail(

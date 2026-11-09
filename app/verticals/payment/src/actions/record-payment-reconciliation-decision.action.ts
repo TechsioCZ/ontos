@@ -248,6 +248,7 @@ const evidenceFactsFor = Effect.fn('RecordPaymentReconciliationDecisionAction.ev
   return Option.some<PaymentReconciliationEvidenceFacts>({
     acceptanceOutcome: observation.acceptanceOutcome,
     amount: observation.amount,
+    capabilityCorrelated: observation.capabilityCorrelated,
     corrected: yield* isObservationCorrected(context, observation.observationId),
     countedToward: yield* countedTowardOf(context, observation),
     economicEffectKey: observation.economicEffectKey,

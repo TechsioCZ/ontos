@@ -6,6 +6,7 @@ import type { PaymentMethod } from '../../shared/domain/payment-vocabulary.ts';
 import {
   PaymentSourceQualification,
   qualifyPaymentSourceStatement,
+  selectedCapabilityCorrelation,
   sourceAuthorityConfigurationProblem,
 } from '../../src/domain/source-qualification.ts';
 import type {
@@ -307,6 +308,14 @@ describe('#1152 exact source qualification', () => {
     expect(tagOf(qualify({ ...input, statement: codStatement() }))).toBe('Held');
     expect(tagOf(qualify({ ...input, statement: codStatement('ppl-delivery-offer-2') }))).toBe('Unauthorized');
     expect(tagOf(qualify({ ...input, statement: codStatement('ppl-delivery-offer-1') }))).toBe('Qualified');
+    // What qualification proved about the selected Delivery Offer is recorded with the observation.
+    const correlation = (deliveryOfferRef?: string) =>
+      selectedCapabilityCorrelation(
+        codStatement(deliveryOfferRef),
+        qualify({ ...input, statement: codStatement(deliveryOfferRef) }),
+      );
+    expect([correlation(), correlation('ppl-delivery-offer-1')]).toEqual([false, true]);
+    expect(selectedCapabilityCorrelation(statement(), qualify())).toBeUndefined();
     // Another configured COD carrier naming the selected offer is not the carrier the Payment is bound to.
     const foreignCarrierSource = { ...carrierSource, accountRef: 'dpd-merchant-12', sourceSystem: 'dpd' } as const;
     const foreignCarrier = authority({
