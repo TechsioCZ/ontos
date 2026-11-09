@@ -182,7 +182,10 @@ export const loadActingAuthority = Effect.fn('OAuthConnectionService.loadActingA
     });
     const { labelOf } = composedModulesOf(mcpModulesOf(sets.installed.composition));
     const live: LiveRights = { read: sets.access, write: new Set([...sets.run, ...sets.propose]) };
-    const policyCap: ConnectionWritePolicy = 'direct';
+    // A module the person may only propose to cannot take a direct write, so while one exists the ceiling is approval.
+    // The MCP execution path enforces the same thing per call; this keeps the offer and the consent truthful.
+    const proposeOnly = [...sets.propose].some((moduleId) => !sets.run.has(moduleId));
+    const policyCap: ConnectionWritePolicy = proposeOnly ? 'approval' : 'direct';
     return { labelOf, live, offered: offeredModules(live, policyCap, labelOf), policyCap };
   },
   Effect.mapError(toUnavailable),

@@ -66,13 +66,14 @@ let actionFixtureSequence = 0;
 const action = (
   actionKey: string,
   legalEntityScope: OntosActionContract['legalEntityScope'] = 'required',
+  modes: readonly ('propose' | 'run')[] = ['run'],
 ): OntosActionContract => {
   actionFixtureSequence += 1;
   return Schema.decodeUnknownSync(OntosActionContractSchema)({
     accessDeclaration: {
       key: `${moduleId}.action-${actionFixtureSequence}.run`,
       kind: 'action',
-      modes: ['run'],
+      modes,
       placement: { group: 'actions', level: 'extended' },
       risk: 'routine',
       selectors: [],
@@ -454,6 +455,36 @@ it.effect('projects current human Action modes without turning the result into e
     expect([...authority.live.write]).toEqual([moduleId]);
     expect(authority.policyCap).toBe('direct');
     expect(inspection.requesterScopes.every((observed) => observed === scope)).toBe(true);
+  }),
+);
+
+it.effect('caps the human write ceiling at approval while a module is proposable but not executable', () =>
+  Effect.gen(function* proposeOnlyCeiling() {
+    // The Action declares both modes; the person holds only the proposal right, so `run` is denied.
+    const installed = yield* catalog([action(`${moduleId}.apply-command`, 'required', ['propose', 'run'])]);
+    const declarations = installed.contracts.flatMap(({ manifest }) =>
+      manifest.publicSurface.actions.flatMap(({ accessDeclaration }) =>
+        accessDeclaration === undefined ? [] : [accessDeclaration],
+      ),
+    );
+    const inspection = subjectInspectionFixture({
+      capabilities: declarations.map(({ key }) => ({ key, modes: ['propose'] })),
+      snapshot: yield* makeCompositionSnapshot(installed.contracts),
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const authority = yield* loadActingAuthority(scope, {
+      actingKind: 'human',
+      actingPrincipalId: principalId,
+      legalEntityId,
+      tenantId,
+    }).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+    );
+    // The module stays offered for proposals, but no direct write is possible, so the ceiling is approval.
+    expect([...authority.live.write]).toEqual([moduleId]);
+    expect(authority.policyCap).toBe('approval');
+    expect(authority.offered.map((module) => [module.moduleId, module.write])).toEqual([[moduleId, true]]);
   }),
 );
 
