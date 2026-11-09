@@ -65,6 +65,7 @@ import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
 import { assert, expect, it } from 'effect-rstest';
 
+import { marketSourceComponentContracts } from '../fixtures/market-source-components.ts';
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
 import {
   GatewayAssertionRedemptionDatabaseLive,
@@ -177,7 +178,7 @@ const makeMarketSourceContract = Effect.fn('MarketRevisionNative.sourceContract'
       actions: owner.actions,
       api: apis,
       businessPermissions: manifest.publicSurface.businessPermissions ?? [],
-      components: Object.values(manifest.publicSurface.components),
+      components: yield* marketSourceComponentContracts(),
       events,
       operationContracts: owner.operationContracts,
       reports: manifest.publicSurface.reports,
