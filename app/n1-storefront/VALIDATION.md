@@ -1819,3 +1819,36 @@ Celá N1 sada **787/787 v 75 souborech PASS**, bez skip/todo. N1 typecheck,
 lint, formát a kontrola všech 447 kanonických tokenů PASS. Nejde o
 potvrzení úspěšného Stage checkoutu ani plošnou vizuální shodu storefrontu.
 Známé rozdíly metrik UI kitu a chybějící owner schopnosti se tím neuzavírají.
+
+## 9. 11. 2026 — validace přihlášení, registrace a minipřihlášení
+
+Čerstvá kontrola Figma 56:883/978, 333:6888 a 59:1709 odhalila rozdíly
+required-password copy, valid okraje a CTA v chybovém stavu. Samostatná
+browser diagnostika potvrdila i ztracené první kliknutí na souhlas: blur
+potvrzení hesla posunul checkbox o 64 px před dokončením stejného kliknutí.
+Oprava podrží jen výsledek blur validace do dokončení pointer gesta;
+klávesnicovou validaci neodkládá. Čtyři nové jednotkové regrese pokrývají
+běžný blur, odložený výsledek, zrušení a následující gesto.
+
+Public FormInputRaw a StatusText zachovávají knihovní tokeny a neutrální
+valid okraj se samostatnou success zprávou bez ikony. Chyby mají stabilní
+aria-describedby/aria-invalid, i při souběhu hlavního a popup formuláře.
+Pravidla jmen a hesla 12–128 určuje owner kontrakt; návrhová ukázka
+8 znaků + číslice je nenahrazuje. Kontrola neodesílá skutečný signup/login,
+nepotvrzuje doručení e-mailu ani úspěšné přihlášení na Stage.
+
+Skutečný browser ověřil 80/80 kombinací: osm validačních stavů ve dvou jazycích
+na šířkách 320/390/768/1024/1440. Souhlas se zaškrtne prvním kliknutím,
+oprava mismatch obnoví CTA, popup validuje vlastní pole a Escape vrací focus.
+Business POST ani blokovaný pokus o něj nevznikl. Root a nezávislý reviewer
+otevřeli reprezentativní actual PNG; dílčí source + visual GO je omezené
+na tuto opravu, nikoli celý storefront nebo přesnou shodu kanonického theme
+s odlišnou Figma fixture.
+
+Celá N1 regrese: **801/801 v 76 souborech PASS**, bez skip/todo. Typová kontrola
+PASS. Nevzniká nový důkaz funkční registrace nebo nákupu na Stage.
+
+Finální lint cleanup zachoval chování: controller se jednou inicializuje
+z event handleru, pomocná metoda se jmenuje validateOnBlur. N1 lint PASS bez
+suppressions; cílených 8/8 auth/recovery testů i opakovaná finální typová
+kontrola a formát PASS. Kontrola 447 kanonických tokenů PASS.

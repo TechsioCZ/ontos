@@ -3,9 +3,10 @@
 import NextLink from "next/link";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { Link } from "@techsio/ui-kit/atoms/link";
+import { StatusText } from "@techsio/ui-kit/atoms/status-text";
 import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
 import { useToast } from "@techsio/ui-kit/molecules/toast";
-import { FormInput } from "@techsio/ui-kit/molecules/form-input";
+import { FormInput, FormInputRaw } from "@techsio/ui-kit/molecules/form-input";
 import { Effect, Exit, Fiber, Struct } from "effect";
 import type { HttpClient } from "effect/http";
 import {
@@ -38,6 +39,8 @@ import {
   portalVerificationOutcome,
 } from "@/ontos/portal-model";
 import { subscribePortalSessionRefresh } from "./portal-session-events";
+import { makeAuthBlurValidation } from "./auth-blur-validation";
+import type { AuthBlurResult } from "./auth-blur-validation";
 
 type AuthMode = "login" | "register";
 const fieldNames = [
@@ -103,12 +106,40 @@ const AuthForm = ({
 }) => {
   const fieldId = useId();
   const form = useRef<HTMLFormElement>(null);
+  const blurValidationRef = useRef<ReturnType<typeof makeAuthBlurValidation<InputField>> | null>(
+    null,
+  );
+  const getBlurValidation = () => {
+    const validation = blurValidationRef.current ?? makeAuthBlurValidation<InputField>();
+    blurValidationRef.current = validation;
+    return validation;
+  };
   const [errors, setErrors] = useState<FieldErrors>({});
+  const [attemptedInvalid, setAttemptedInvalid] = useState(false);
   const [showPasswordHelp, setShowPasswordHelp] = useState(false);
   const [validated, setValidated] = useState({ password: false, passwordConfirmation: false });
   const clearError = (field: AuthField) => setErrors((previous) => Struct.omit(previous, [field]));
-  const invalidField = (field: AuthField) =>
-    setErrors((previous) => ({ ...previous, [field]: d.auth.errors[field] }));
+  const invalidField = (field: AuthField, valueMissing = false) =>
+    setErrors((previous) => ({
+      ...previous,
+      [field]:
+        field === "password" && valueMissing ? d.auth.passwordRequired : d.auth.errors[field],
+    }));
+  const commitBlur = (result: AuthBlurResult<InputField> | null) => {
+    if (result === null) {
+      return;
+    }
+    const { field, valid, valueMissing } = result;
+    if (field === "password" || field === "passwordConfirmation") {
+      setValidated((previous) => ({ ...previous, [field]: valid }));
+    }
+    if (valid) {
+      clearError(field);
+    } else {
+      invalidField(field, valueMissing);
+    }
+  };
+  const finishPointerValidation = () => commitBlur(getBlurValidation().finish());
   const successText = (field: InputField) => {
     if (mode !== "register") {
       return null;
@@ -124,6 +155,8 @@ const AuthForm = ({
   const input = (field: InputField) => {
     const error = errors[field] ?? (field === "password" ? passwordError : undefined);
     const success = successText(field);
+    const helpText = error ?? success;
+    const hasHelpText = helpText !== null && helpText.length > 0;
     let status: "default" | "error" | "success" = "default";
     if (success !== null) {
       status = "success";
@@ -132,13 +165,26 @@ const AuthForm = ({
       status = "error";
     }
     return (
-      <FormInput
+      <FormInputRaw
         {...inputAttributes[field]}
+        aria-describedby={hasHelpText ? `${fieldId}-${field}-help` : undefined}
+        aria-invalid={error === undefined ? undefined : true}
         autoComplete={
           field === "password" ? passwordAutoComplete[mode] : inputAttributes[field].autoComplete
         }
         disabled={pending}
-        helpText={error ?? success}
+        helpText={
+          hasHelpText ? (
+            <StatusText
+              id={`${fieldId}-${field}-help`}
+              showIcon={status === "error"}
+              size="md"
+              status={status}
+            >
+              {helpText}
+            </StatusText>
+          ) : null
+        }
         id={`${fieldId}-${field}`}
         label={d.auth.fields[field]}
         name={field}
@@ -153,14 +199,13 @@ const AuthForm = ({
             (form.current !== null &&
               event.currentTarget.value === new FormData(form.current).get("password"));
           const valid = event.currentTarget.validity.valid && confirmationMatches;
-          if (field === "password" || field === "passwordConfirmation") {
-            setValidated((previous) => ({ ...previous, [field]: valid }));
-          }
-          if (valid) {
-            clearError(field);
-          } else {
-            invalidField(field);
-          }
+          commitBlur(
+            getBlurValidation().validateOnBlur({
+              field,
+              valid,
+              valueMissing: event.currentTarget.validity.valueMissing,
+            }),
+          );
         }}
         onChange={(event) => {
           clearError(field);
@@ -187,14 +232,14 @@ const AuthForm = ({
         }}
         onInvalid={(event) => {
           event.preventDefault();
-          invalidField(field);
+          invalidField(field, event.currentTarget.validity.valueMissing);
           if (mode === "register" && field === "password") {
             setShowPasswordHelp(true);
           }
         }}
         required
         size="md"
-        validateStatus={status}
+        validateStatus={error === undefined ? "default" : "error"}
       />
     );
   };
@@ -204,8 +249,12 @@ const AuthForm = ({
       aria-busy={pending}
       className={mode === "register" ? "flex flex-col gap-2" : "flex flex-col gap-1"}
       method="post"
+      onClickCapture={finishPointerValidation}
       onInvalidCapture={(event) => {
         event.preventDefault();
+        if (mode === "register") {
+          setAttemptedInvalid(true);
+        }
         const terms = event.currentTarget.querySelector<HTMLInputElement>(
           'input[name="termsAccepted"]',
         );
@@ -214,10 +263,19 @@ const AuthForm = ({
         }
         event.currentTarget.querySelector<HTMLInputElement>("input:invalid")?.focus();
       }}
+      onKeyDownCapture={finishPointerValidation}
+      onPointerCancel={finishPointerValidation}
+      onPointerDownCapture={(event) => {
+        if (event.button === 0) {
+          commitBlur(getBlurValidation().start());
+        }
+      }}
+      onPointerLeave={finishPointerValidation}
       onSubmit={(event) => {
         event.preventDefault();
         const fields = new FormData(event.currentTarget);
         if (mode === "register" && fields.get("password") !== fields.get("passwordConfirmation")) {
+          setAttemptedInvalid(true);
           invalidField("passwordConfirmation");
           event.currentTarget
             .querySelector<HTMLInputElement>('input[name="passwordConfirmation"]')
@@ -275,7 +333,9 @@ const AuthForm = ({
       <Button
         block
         density="compact"
-        disabled={pending}
+        disabled={
+          pending || (mode === "register" && attemptedInvalid && Object.keys(errors).length > 0)
+        }
         size="sm"
         theme="solid"
         type="submit"

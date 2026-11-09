@@ -819,3 +819,18 @@ ještě obecnou hlášku o nedostupném nákupu. Pro neznámý sklad nebo chybě
 nákupní kontext tato diagnostika zůstává. Podmínky nákupu, validace množství,
 kit komponenty a jejich vzhled se nemění. Skutečný vyprodaný produkt byl
 zkontrolovaný v CS/EN na mobilu a v CS na desktopu; nákup zůstává zakázaný.
+
+### Přihlášení a registrace — 56:883/978, 333:6888 a 59:1709
+
+Formuláře používají `FormInputRaw` se standardním `StatusText`: validní heslo
+má neutrální okraj a samostatnou úspěšnou zprávu podle návrhu; chyba zachovává
+nativní error variantu. Prázdné heslo rozlišuje povinné pole od nesplnění
+vlastnického pravidla délky 12–128 znaků. Návrhová ukázka 8 znaků toto pravidlo
+backendu nemění. Stav chyby registrace po neplatném odeslání zakáže CTA,
+oprava polí ho znovu povolí; políčka zůstávají editovatelná.
+
+Validace při kliknutí počká na dokončení stejného pointer gesta. Zobrazení
+chyby při blur tak neposune souhlas před dopadem prvního kliknutí. Klávesnice
+validuje bez tohoto odkladu. Pomocný stav uchovává pouze název pole a výsledek
+validace, žádné hodnoty ani přístupové údaje. Názvy a popisy jsou navázané
+na jedinečné ID formuláře, i když je současně otevřené minipřihlášení.
