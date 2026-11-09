@@ -262,8 +262,7 @@ test('loads localized English and Czech Contacts pages only after login', async 
   await expect(page.getByRole('heading', { name: 'Kontakty' })).toHaveCount(0);
 
   await login(page, 'cs', authentication.credentials);
-  // Party Registry contributes Customers to navigation. Contacts remains a
-  // protected direct route, not a sidebar destination.
+  // Party Registry contributes Customers and the protected Contacts destination to navigation.
   const dashboardNavigation = page.getByRole('navigation', { name: 'Navigace přehledu' });
   const customersLink = dashboardNavigation.getByRole('link', { name: 'Zákazníci' });
   await expect(customersLink).toBeVisible();
@@ -287,7 +286,7 @@ test('loads localized English and Czech Contacts pages only after login', async 
   }) => {
     await expect(page).toHaveURL(content.url);
     await expect(page.getByRole('heading', { name: content.heading })).toBeVisible();
-    await expect(page.getByRole('heading', { name: content.module })).toHaveCount(0);
+    await expect(page.getByRole('heading', { exact: true, name: content.module })).toHaveCount(0);
     await expect(page.getByText(content.description)).toBeVisible();
     await expect(page.getByText(content.placeholder)).toHaveCount(0);
     await expect(page.getByText(content.empty)).toHaveCount(0);
@@ -424,10 +423,10 @@ test('contains a Contacts render-phase failure and rechecks revoked access acros
   await expectApprovedManifestBytes();
   const navigation = page.getByRole('navigation', { name: 'Dashboard navigation' });
   const sidebar = page.getByRole('complementary', { name: 'Dashboard sidebar' });
-  await expect(navigation.getByRole('link', { exact: true, name: 'Party Registry' })).toBeVisible();
+  await expect(navigation.getByRole('link', { exact: true, name: 'Contacts' })).toBeVisible();
   const restoreFault = await installContactsRenderInitializationFault(page);
   try {
-    await navigation.getByRole('link', { exact: true, name: 'Party Registry' }).click();
+    await navigation.getByRole('link', { exact: true, name: 'Contacts' }).click();
     const localFailure = page.getByRole('alert');
     await expect(localFailure).toHaveText('This module could not be displayed. Reload the page to try again.');
     await expect(localFailure).not.toContainText(contactsRenderInitializationFault);
@@ -570,7 +569,7 @@ test('reloads failed Contacts into a genuinely published R2 with exact retained 
   const navigation = page.getByRole('navigation', { name: 'Dashboard navigation' });
   const restoreFault = await installContactsRenderInitializationFault(page);
   try {
-    await navigation.getByRole('link', { exact: true, name: 'Party Registry' }).click();
+    await navigation.getByRole('link', { exact: true, name: 'Contacts' }).click();
     await expect(page.getByRole('alert')).toHaveText(
       'This module could not be displayed. Reload the page to try again.',
     );
