@@ -5,7 +5,7 @@ import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
 import { readMigrationFiles } from 'drizzle-orm/migrator';
 import type { MigrationMeta } from 'drizzle-orm/migrator';
 import { migrate } from 'drizzle-orm/pg-core/effect/session';
-import { Config, Crypto, Duration, Effect, FileSystem, Layer, Predicate, Schema } from 'effect';
+import { Config, Crypto, Duration, Effect, FileSystem, Layer, Option, Predicate, Schema } from 'effect';
 
 import {
   MigrationEquivalenceError,
@@ -105,6 +105,53 @@ const readPlan = Effect.fn('MigrationConvergence.readPlan')(function* readMigrat
   return yield* planEquivalentMigrations(history, source.migrations, ledger);
 });
 
+export const NativeMigrationFailureSchema = Schema.Struct({
+  cause: Schema.optionalKey(Schema.Unknown),
+  code: Schema.optionalKey(Schema.String),
+  query: Schema.optionalKey(Schema.String),
+  reason: Schema.optionalKey(Schema.Unknown),
+});
+const SqlStateSchema = Schema.String.pipe(Schema.check(Schema.isPattern(/^[0-9A-Z]{5}$/u)));
+
+/** Identify the owner and known migration without exposing SQL, parameters, credentials or database row data. */
+export const describeMigrationFailure = (
+  history: MigrationHistory,
+  migrations: readonly MigrationMeta[],
+  error: typeof NativeMigrationFailureSchema.Type | MigrationEquivalenceError,
+): MigrationEquivalenceError => {
+  if (Schema.is(MigrationEquivalenceError)(error)) {
+    return error;
+  }
+  const initial = Option.getOrUndefined(Schema.decodeUnknownOption(NativeMigrationFailureSchema)(error));
+  let current = initial?.cause ?? initial?.reason;
+  let code: string | undefined;
+  let query: string | undefined;
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (Schema.is(MigrationEquivalenceError)(current)) {
+      return current;
+    }
+    const failure =
+      depth === 0 ? initial : Option.getOrUndefined(Schema.decodeUnknownOption(NativeMigrationFailureSchema)(current));
+    if (failure === undefined) {
+      break;
+    }
+    code ??= Schema.is(SqlStateSchema)(failure.code) ? failure.code : undefined;
+    query ??= failure.query;
+    current = failure.cause ?? failure.reason;
+  }
+  const matches =
+    query === undefined
+      ? []
+      : migrations.filter((migration) => migration.sql.some((statement) => statement.trim() === query?.trim()));
+  const migration = matches.length === 1 ? matches[0]?.name : undefined;
+  const status = code === undefined ? '' : ` (SQLSTATE ${code})`;
+  const details = {
+    history,
+    reason: `Native migration convergence failed${status}; transaction rolled back or outcome is unknown`,
+  };
+  return new MigrationEquivalenceError(migration === undefined ? details : { ...details, migration });
+};
+
 /** Native Drizzle owns DDL, savepoints and real journal inserts; existing rows are never rewritten. */
 export const convergeMigrationHistories = Effect.fn('MigrationConvergence.run')(function* converge(
   sources: readonly ConvergentMigrationSource[],
@@ -138,7 +185,15 @@ export const convergeMigrationHistories = Effect.fn('MigrationConvergence.run')(
             migrationsFolder: manifest.folder,
             migrationsSchema: 'drizzle',
             migrationsTable: journal(plan.history),
-          });
+          }).pipe(
+            Effect.mapError((error) =>
+              describeMigrationFailure(
+                plan.history,
+                plan.migrations,
+                Option.getOrElse(Schema.decodeUnknownOption(NativeMigrationFailureSchema)(error), () => ({})),
+              ),
+            ),
+          );
         }
       }),
     )
@@ -146,10 +201,11 @@ export const convergeMigrationHistories = Effect.fn('MigrationConvergence.run')(
       Effect.mapError((error) =>
         Predicate.isTagged(error, 'MigrationEquivalenceError')
           ? error
-          : new MigrationEquivalenceError({
-              history: first.manifest.history,
-              reason: 'Native migration convergence failed; transaction rolled back or outcome is unknown',
-            }),
+          : describeMigrationFailure(
+              first.manifest.history,
+              [],
+              Option.getOrElse(Schema.decodeUnknownOption(NativeMigrationFailureSchema)(error), () => ({})),
+            ),
       ),
     );
 });

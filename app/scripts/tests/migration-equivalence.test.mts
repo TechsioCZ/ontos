@@ -9,9 +9,19 @@ import { CORE_MIGRATION_MANIFEST } from '../../packages/core-runtime/scripts/mig
 import { scriptedPgClientLayer } from '../../packages/core-runtime/src/testing/scripted-pg-client.ts';
 import { testSqlConnection } from '../../packages/core-runtime/tests/support/sql-connection.ts';
 import { PARTY_MIGRATION_MANIFESTS } from '../../verticals/party-registry/scripts/migration-equivalence.mts';
-import { convergeMigrationHistories, loadConvergentMigrationSource } from '../migration-convergence.mts';
+import {
+  convergeMigrationHistories,
+  describeMigrationFailure,
+  NativeMigrationFailureSchema,
+  loadConvergentMigrationSource,
+} from '../migration-convergence.mts';
 import type { ConvergentMigrationSource } from '../migration-convergence.mts';
-import { MIGRATION_EQUIVALENCES, MIGRATION_MERGES, planEquivalentMigrations } from '../migration-equivalence.mts';
+import {
+  MIGRATION_EQUIVALENCES,
+  MIGRATION_MERGES,
+  MigrationEquivalenceError,
+  planEquivalentMigrations,
+} from '../migration-equivalence.mts';
 import type { MigrationHistory, MigrationLedgerRow } from '../migration-equivalence.mts';
 
 const manifests = [CORE_MIGRATION_MANIFEST, ...PARTY_MIGRATION_MANIFESTS];
@@ -132,7 +142,71 @@ const nativeFixture = (journals: readonly JournalFixture[], options: FixtureOpti
   return { events, layer, ledger };
 };
 
+it('retains an original migration equivalence failure inside native SQL wrappers', () => {
+  const original = new MigrationEquivalenceError({
+    history: 'contacts',
+    reason: 'Existing journal requires a separate version upgrade',
+  });
+  const failure = describeMigrationFailure('core', [], { reason: { cause: original } });
+  expect(failure).toBe(original);
+  expect(failure.message).toBe('[contacts] Existing journal requires a separate version upgrade');
+});
+
+it('never copies unknown database messages or non-SQLSTATE codes into migration failures', () => {
+  const detail = 'private database connection and row values';
+  const failure = describeMigrationFailure(
+    'party',
+    [],
+    Schema.decodeUnknownSync(NativeMigrationFailureSchema)({
+      code: detail,
+      message: detail,
+      params: [detail],
+      query: detail,
+    }),
+  );
+  expect(failure.history).toBe('party');
+  expect(failure.migration).toBeUndefined();
+  expect(failure.message).not.toContain(detail);
+  expect(JSON.stringify(failure)).not.toContain(detail);
+});
+
+it('bounds cyclic native error traversal', () => {
+  interface NativeErrorCycle {
+    cause?: NativeErrorCycle;
+  }
+  const cycle: NativeErrorCycle = {};
+  cycle.cause = cycle;
+  const failure = describeMigrationFailure('core', [], cycle);
+  expect(failure.history).toBe('core');
+  expect(failure.message).toContain('transaction rolled back or outcome is unknown');
+});
+
 it.layer(Layer.mergeAll(NodeFileSystem.layer, NodeCrypto.layer))((suite) => {
+  suite.effect('identifies the exact owner migration and SQLSTATE without exposing database details', () =>
+    Effect.gen(function* migrationFailureDetails() {
+      const [source] = yield* loadSources;
+      assert.isOk(source !== undefined);
+      const [migration] = source.migrations;
+      assert.isOk(migration !== undefined);
+      const [query] = migration.sql;
+      assert.isOk(query !== undefined);
+      const failure = describeMigrationFailure(
+        'party',
+        [migration],
+        Schema.decodeUnknownSync(NativeMigrationFailureSchema)({
+          cause: { reason: { cause: { code: '42703', message: 'private database failure details' } } },
+          params: ['private row value'],
+          query,
+        }),
+      );
+      expect(failure.history).toBe('party');
+      expect(failure.migration).toBe(migration.name);
+      expect(failure.message).toContain(`[party/${migration.name}]`);
+      expect(failure.message).toContain('SQLSTATE 42703');
+      expect(failure.message).not.toContain(query);
+      expect(JSON.stringify(failure)).not.toContain('private');
+    }),
+  );
   suite.effect('pins the six exact equivalences and every retained historical snapshot', () =>
     Effect.gen(function* sourcePins() {
       const sources = yield* loadSources;

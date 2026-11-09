@@ -8,8 +8,13 @@ export type MigrationHistory = typeof MigrationHistorySchema.Type;
 
 export class MigrationEquivalenceError extends Schema.TaggedError<MigrationEquivalenceError>()(
   'MigrationEquivalenceError',
-  { history: MigrationHistorySchema, reason: Schema.String },
-) {}
+  { history: MigrationHistorySchema, migration: Schema.optionalKey(Schema.String), reason: Schema.String },
+) {
+  override get message() {
+    const migration = this.migration === undefined ? '' : `/${this.migration}`;
+    return `[${this.history}${migration}] ${this.reason}`;
+  }
+}
 
 /** These are historical identities, not a general content-hash deduplication rule. */
 export const MIGRATION_EQUIVALENCES = [
