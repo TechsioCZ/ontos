@@ -25,7 +25,7 @@ import {
   SymmyFixtureJobIdSchema,
   symmyFixtureJobNotFoundProblem,
   symmyUnavailableProblem,
-} from '../../api/symmy/contract.ts';
+} from '../../shared/symmy/contract.ts';
 import { forwardSymmyOwnerRelease, makeSymmyGovernedDispatch } from '../../api/symmy/governed-dispatch.ts';
 import {
   SymmyHostMountLive,
@@ -37,7 +37,7 @@ import {
 import type { SymmyIngressAdmission, SymmyIngressRequest } from '../../api/symmy/transport.ts';
 import { ShellAuthenticationApi } from '../../shared/api.ts';
 import { encodeSymmySourceSelector } from '@app/symmy-integration/symmy-source-selector';
-import { SymmyInternalPriceListsProjectionSchema } from '../../api/symmy/read-projection-contracts.ts';
+import { SymmyInternalPriceListsProjectionSchema } from '../../shared/symmy/read-projection-contracts.ts';
 
 const host = 'https://shell.example.test';
 const shellPrefix = '/shell-super-app-api';

@@ -151,8 +151,12 @@ import {
   SymmyIngressSchemaErrorLive,
   SymmyIngressTransportLive,
 } from './symmy/transport.ts';
-import { symmyUnavailableProblem } from './symmy/contract.ts';
-import { SymmyDefectBoundary, symmyInternalProblem, symmyRouteNotFoundProblem } from './symmy/defect-boundary.ts';
+import { symmyUnavailableProblem } from '../shared/symmy/contract.ts';
+import {
+  SymmyDefectBoundary,
+  symmyInternalProblem,
+  symmyRouteNotFoundProblem,
+} from '../shared/symmy/defect-boundary.ts';
 import {
   SymmyGovernedDispatch,
   SymmyGovernedDispatchLive,
