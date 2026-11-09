@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { expect, it } from 'effect-rstest';
+import { parseSync } from 'oxc-parser';
 import {
   hasCompleteGeneratedModuleRead,
   hasOriginalConditionalActionMount,
@@ -961,5 +962,326 @@ for (const [file, defect, before, after] of [
     const invalid = original.replaceAll(before, after);
     expect(invalid).not.toBe(original);
     expect(accepts(selectedRead, new Map([...sources, [file, invalid]]))).toBe(false);
+  });
+}
+
+// The declared affected-use reads carry their trusted context in the immutable declaration, so the
+// declared signature, the trusted Tenant guard, the exact declared service member, and the single
+// native tail are what prove them: none of them may be substituted, flipped, or widened.
+const declaredMarketRead = 'market-affected-use-assessment';
+const declaredMarketFile = readFile(declaredMarketRead);
+const declaredMarketTail = 'context.services\n    .assess(input)';
+const declaredPaymentRead = 'payment-term-affected-use-assessment';
+const declaredPaymentFile = readFile(declaredPaymentRead);
+const declaredPaymentTail = 'context.services.assess(input)';
+const foreignLoadContextDefect = 'a foreign declared load context';
+const substitutedPhaseDefect = 'a substituted phase';
+const foreignResultMapperDefect = 'a foreign result mapper';
+const nativeMapAnchor = 'Effect.map((result) =>';
+for (const [read, file, defect, before, after] of [
+  [
+    declaredMarketRead,
+    declaredMarketFile,
+    foreignLoadContextDefect,
+    'context: ReadLoadContext<MarketAffectedUseAssessmentServices>',
+    'context: ForeignLoadContext<MarketAffectedUseAssessmentServices>',
+  ],
+  [
+    declaredMarketRead,
+    declaredMarketFile,
+    'a foreign declared service member',
+    '.assess(input)',
+    '.foreignAssess(input)',
+  ],
+  [
+    declaredMarketRead,
+    declaredMarketFile,
+    'a foreign declared service receiver',
+    declaredMarketTail,
+    'foreign.services\n    .assess(input)',
+  ],
+  [
+    declaredMarketRead,
+    declaredMarketFile,
+    'a foreign declared request projection',
+    '.assess(input)',
+    '.assess(input.foreign)',
+  ],
+  [
+    declaredMarketRead,
+    declaredMarketFile,
+    'an extra executable block before the native tail',
+    `  return ${declaredMarketTail}`,
+    `  foreign();\n  return ${declaredMarketTail}`,
+  ],
+  [
+    declaredMarketRead,
+    declaredMarketFile,
+    'a removed tenant guard',
+    'input.tenantId !== context.scope.tenantId || input.marketRef.tenantId !== context.scope.tenantId',
+    'false',
+  ],
+  [
+    declaredMarketRead,
+    declaredMarketFile,
+    'a flipped tenant guard',
+    'input.tenantId !== context.scope.tenantId',
+    'input.tenantId === context.scope.tenantId',
+  ],
+  [
+    declaredMarketRead,
+    declaredMarketFile,
+    'the request Tenant replacing the trusted Tenant',
+    'context.scope.tenantId) {',
+    'input.tenantId) {',
+  ],
+  [
+    declaredMarketRead,
+    declaredMarketFile,
+    substitutedPhaseDefect,
+    '{ load: handleMarketAffectedUseAssessment }',
+    '{ load: handleMarketAffectedUseAssessment, finish: () => Effect.succeed(undefined) }',
+  ],
+  [
+    declaredMarketRead,
+    declaredMarketFile,
+    foreignResultMapperDefect,
+    "(result) => ({ evidence: { resultCount: result.outcome === 'VERIFIED' ? 1 : 0 }, result })",
+    '() => foreign',
+  ],
+  [declaredMarketRead, declaredMarketFile, 'a side-effecting tap', nativeMapAnchor, 'Effect.tap((result) =>'],
+  [
+    declaredPaymentRead,
+    declaredPaymentFile,
+    foreignLoadContextDefect,
+    'context: ReadLoadContext<PaymentTermAffectedUseAssessmentServices>',
+    'context: ForeignLoadContext<PaymentTermAffectedUseAssessmentServices>',
+  ],
+  [
+    declaredPaymentRead,
+    declaredPaymentFile,
+    'a foreign declared service member',
+    declaredPaymentTail,
+    'context.services.foreignAssess(input)',
+  ],
+  [
+    declaredPaymentRead,
+    declaredPaymentFile,
+    'a foreign declared service receiver',
+    declaredPaymentTail,
+    'foreign.services.assess(input)',
+  ],
+  [
+    declaredPaymentRead,
+    declaredPaymentFile,
+    'a foreign declared request projection',
+    declaredPaymentTail,
+    'context.services.assess(input.foreign)',
+  ],
+  [
+    declaredPaymentRead,
+    declaredPaymentFile,
+    'an extra executable block before the native tail',
+    `  return ${declaredPaymentTail}`,
+    `  foreign();\n  return ${declaredPaymentTail}`,
+  ],
+  [
+    declaredPaymentRead,
+    declaredPaymentFile,
+    'a removed tenant guard',
+    '[input.paymentTermRef, ...input.equivalentPaymentTermRefs].some(\n      ({ tenantId }) => tenantId !== context.scope.tenantId,\n    )',
+    'false',
+  ],
+  [
+    declaredPaymentRead,
+    declaredPaymentFile,
+    'a flipped tenant guard',
+    'tenantId !== context.scope.tenantId,',
+    'tenantId === context.scope.tenantId,',
+  ],
+  [
+    declaredPaymentRead,
+    declaredPaymentFile,
+    'the trusted Legal Entity replacing the trusted Tenant',
+    'tenantId !== context.scope.tenantId,',
+    'tenantId !== context.scope.legalEntityId,',
+  ],
+  [
+    declaredPaymentRead,
+    declaredPaymentFile,
+    substitutedPhaseDefect,
+    '{ load: handlePaymentTermAffectedUseAssessment }',
+    '{ load: handlePaymentTermAffectedUseAssessment, finish: () => Effect.succeed(undefined) }',
+  ],
+  [
+    declaredPaymentRead,
+    declaredPaymentFile,
+    'a dropped result mapper parameter',
+    'Effect.map((result) => ({',
+    'Effect.map(() => ({',
+  ],
+  [
+    declaredPaymentRead,
+    declaredPaymentFile,
+    'a side-effecting tap',
+    'Effect.map((result) => ({',
+    'Effect.tap((result) => ({',
+  ],
+  [
+    declaredPaymentRead,
+    declaredPaymentFile,
+    'a foreign counted result field',
+    "result.kind === 'VERIFIED' ? 1 : 0",
+    "result.foreign === 'VERIFIED' ? 1 : 0",
+  ],
+] as const) {
+  it(`rejects ${defect} in the declared affected-use Read ${read}`, () => {
+    const original = sources.get(file) ?? '';
+    const invalid = original.replaceAll(before, after);
+    expect(invalid).not.toBe(original);
+    expect(parseSync(file, invalid).errors).toEqual([]);
+    expect(accepts(read, new Map([...sources, [file, invalid]]))).toBe(false);
+  });
+}
+
+// The retail subject reads forward the trusted scope and services into an owner-local helper whose own
+// closed body resolves or verifies the principal: the forwarding, the scope shape, the owner helper
+// provenance, and every trusted-tenant / legal-entity / binding / revision check are all part of it.
+const retailSubjectRead = 'retail-purchasing-subject-current-v1';
+const retailSubjectFile = readFile(retailSubjectRead);
+const retailSubjectPhase = 'readRetailPurchasingSubjectCurrentV1(input, context.scope, context.services)';
+const retailSubjectLoad = 'load: (input, context: ReadLoadContext<RetailPurchasingSubjectCurrentV1Services>) =>';
+const verifySubjectRead = 'verify-retail-purchasing-subject-current-v1';
+const verifySubjectFile = readFile(verifySubjectRead);
+const verifySubjectPhase = 'verifyRetailPurchasingSubjectCurrentV1(input, context.scope, context.services)';
+for (const [read, file, defect, before, after] of [
+  [
+    retailSubjectRead,
+    retailSubjectFile,
+    foreignLoadContextDefect,
+    'context: ReadLoadContext<RetailPurchasingSubjectCurrentV1Services>',
+    'context: ForeignLoadContext<RetailPurchasingSubjectCurrentV1Services>',
+  ],
+  [
+    retailSubjectRead,
+    retailSubjectFile,
+    'a fabricated scope object',
+    retailSubjectPhase,
+    'readRetailPurchasingSubjectCurrentV1(input, { ...context.scope }, context.services)',
+  ],
+  [
+    retailSubjectRead,
+    retailSubjectFile,
+    'spread services',
+    retailSubjectPhase,
+    'readRetailPurchasingSubjectCurrentV1(input, context.scope, { ...context.services })',
+  ],
+  [
+    retailSubjectRead,
+    retailSubjectFile,
+    'a foreign owner helper receiver',
+    retailSubjectPhase,
+    'foreign(input, context.scope, context.services)',
+  ],
+  [
+    retailSubjectRead,
+    retailSubjectFile,
+    substitutedPhaseDefect,
+    retailSubjectLoad,
+    `finish: () => Effect.succeed(undefined),\n    ${retailSubjectLoad}`,
+  ],
+  [retailSubjectRead, retailSubjectFile, foreignResultMapperDefect, nativeMapAnchor, 'Effect.map(() =>'],
+  [
+    retailSubjectRead,
+    retailSubjectFile,
+    'a flipped trusted Tenant guard',
+    'input.profileRef.tenantId !== scope.tenantId',
+    'input.profileRef.tenantId === scope.tenantId',
+  ],
+  [
+    retailSubjectRead,
+    retailSubjectFile,
+    'a dropped trusted Legal Entity guard',
+    'if (legalEntityId === undefined) {',
+    'if (false) {',
+  ],
+  [
+    retailSubjectRead,
+    retailSubjectFile,
+    'a dropped owner revision check',
+    'if (ownerProvenance === undefined || ownerRevision === undefined) {',
+    'if (false) {',
+  ],
+  [
+    retailSubjectRead,
+    retailSubjectFile,
+    'a dropped owner binding check',
+    'profileRef.tenantId !== scope.tenantId ||',
+    'false ||',
+  ],
+  [
+    retailSubjectRead,
+    retailSubjectFile,
+    'a foreign currentness observation',
+    'observedAt: ownerProvenance.freshness.observedAt,',
+    'observedAt: input.observedAt,',
+  ],
+  [
+    retailSubjectRead,
+    retailSubjectFile,
+    'the request Legal Entity replacing the trusted one',
+    'resourceId: legalEntityId,',
+    'resourceId: input.legalEntityId,',
+  ],
+  [
+    verifySubjectRead,
+    verifySubjectFile,
+    'a foreign owner helper receiver',
+    verifySubjectPhase,
+    'foreign(input, context.scope, context.services)',
+  ],
+  [
+    verifySubjectRead,
+    verifySubjectFile,
+    'spread services',
+    verifySubjectPhase,
+    'verifyRetailPurchasingSubjectCurrentV1(input, context.scope, { ...context.services })',
+  ],
+  [
+    verifySubjectRead,
+    verifySubjectFile,
+    substitutedPhaseDefect,
+    retailSubjectLoad,
+    `finish: () => Effect.succeed(undefined),\n    ${retailSubjectLoad}`,
+  ],
+  [verifySubjectRead, verifySubjectFile, foreignResultMapperDefect, nativeMapAnchor, 'Effect.map(() =>'],
+  [
+    verifySubjectRead,
+    verifySubjectFile,
+    'a dropped observed-proof guard',
+    '!sameResourceReference(observed.profileRef, input.profileRef)',
+    'false',
+  ],
+  [
+    verifySubjectRead,
+    verifySubjectFile,
+    'a foreign input-derived request',
+    'const currentRequest: RetailPurchasingSubjectCurrentV1Request = { profileRef: input.profileRef };',
+    'const currentRequest: RetailPurchasingSubjectCurrentV1Request = { profileRef: input.foreign };',
+  ],
+  [
+    verifySubjectRead,
+    verifySubjectFile,
+    'a foreign nested resolution helper',
+    'readRetailPurchasingSubjectCurrentV1(currentRequest, scope, services)',
+    'foreign(currentRequest, scope, services)',
+  ],
+] as const) {
+  it(`rejects ${defect} in the CCC subject Read ${read}`, () => {
+    const original = sources.get(file) ?? '';
+    const invalid = original.replaceAll(before, after);
+    expect(invalid).not.toBe(original);
+    expect(parseSync(file, invalid).errors).toEqual([]);
+    expect(accepts(read, new Map([...sources, [file, invalid]]))).toBe(false);
   });
 }
