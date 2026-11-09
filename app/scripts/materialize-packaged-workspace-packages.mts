@@ -110,7 +110,7 @@ const packagedPackageManifestCodec = Schema.fromJsonString(PackagedPackageManife
 
 /** One traced TypeScript module of a packaged workspace package. */
 interface TracedModule {
-  /** `.cts` compiles to CommonJS; every other traced TypeScript module compiles to an ES module. */
+  /** Node loads this module as CommonJS: a `.cts` output, a native `.cjs`, or a native `.js` whose `type` is not `module`. */
   readonly commonJs: boolean;
   /** `.tsx` carries JSX; every other traced TypeScript module does not. */
   readonly jsx: boolean;
@@ -170,10 +170,12 @@ const outputExtensionFor = (extension: string, packageIsModule: boolean): string
 const rewriteModuleSpecifiers = (
   code: string,
   file: string,
-  resolve: (specifier: string, commonJs: boolean) => SpecifierResolution,
+  commonJs: boolean,
+  resolve: (specifier: string, viaRequire: boolean) => SpecifierResolution,
 ): Effect.Effect<string, PackagedWorkspaceError> =>
   Effect.gen(function* rewriteCompiledModuleSpecifiers() {
-    const parsed = parseSync(file, code, { lang: 'js', sourceType: 'module' });
+    // CommonJS parses with Node's own top-level rules, so a top-level `return` is valid there.
+    const parsed = parseSync(file, code, { lang: 'js', sourceType: commonJs ? 'commonjs' : 'module' });
     if (parsed.errors.length > 0) {
       return yield* Effect.fail(failed(`${file}: the compiled module does not parse`));
     }
@@ -181,12 +183,12 @@ const rewriteModuleSpecifiers = (
     const problems: PackagedWorkspaceError[] = [];
     const record = (
       literal: { readonly end: number; readonly start: number; readonly value?: unknown } | null,
-      commonJs = false,
+      viaRequire = false,
     ) => {
       if (literal === null || !Predicate.isString(literal.value)) {
         return;
       }
-      const replacement = resolve(literal.value, commonJs);
+      const replacement = resolve(literal.value, viaRequire);
       if (replacement === undefined) {
         return;
       }
@@ -245,6 +247,40 @@ const compiledExportTarget = (
     : undefined;
 };
 
+/**
+ * The compiled form of a `*` import target such as `./src/lib/*.ts`, or `undefined` when no carried TypeScript module
+ * matches it. Every carried module is compiled before any target is repointed, so the pattern serves only compiled files.
+ */
+const compiledPatternTarget = (
+  packageDirectory: string,
+  packageIsModule: boolean,
+  modules: readonly TracedModule[],
+  specifier: string,
+): string | undefined => {
+  const star = specifier.indexOf('*');
+  const extension = path.extname(specifier);
+  if (
+    !RELATIVE_SPECIFIER.test(specifier) ||
+    star === -1 ||
+    specifier.lastIndexOf('*') !== star ||
+    !isTypeScriptModule(extension)
+  ) {
+    return undefined;
+  }
+  const prefix = path.join(packageDirectory, specifier.slice(0, star));
+  const tail = specifier.slice(star + 1);
+  const served = modules.some(
+    (module) =>
+      module.typescript &&
+      module.sourcePath.startsWith(prefix) &&
+      module.sourcePath.endsWith(tail) &&
+      module.sourcePath.length >= prefix.length + tail.length,
+  );
+  return served
+    ? `${specifier.slice(0, star + 1)}${tail.slice(0, tail.length - extension.length)}${outputExtensionFor(extension, packageIsModule)}`
+    : undefined;
+};
+
 const isUntracedTypeScriptTarget = (specifier: string): boolean =>
   RELATIVE_SPECIFIER.test(specifier) && isTypeScriptModule(path.extname(specifier));
 
@@ -286,7 +322,7 @@ const rewriteExportTarget = (
 /** Repoints package exports and private imports without flattening their ordered condition maps. */
 const rewriteManifestTargets = (
   field: PackagedExportTarget | undefined,
-  repoint: (specifier: string) => string | undefined,
+  repointFor: (subpath: string) => (specifier: string) => string | undefined,
 ) => {
   const repointed: string[] = [];
   const untraced: string[] = [];
@@ -294,7 +330,9 @@ const rewriteManifestTargets = (
     return { repointed, target: field, untraced };
   }
   const entries = isExportTargetConditions(field) ? Object.entries(field) : [['.', field] as const];
-  const rewrites = entries.map(([subpath, entry]) => [subpath, rewriteExportTarget(entry, repoint)] as const);
+  const rewrites = entries.map(
+    ([subpath, entry]) => [subpath, rewriteExportTarget(entry, repointFor(subpath))] as const,
+  );
   for (const [subpath, rewrite] of rewrites) {
     if (rewrite.repointed) {
       repointed.push(subpath);
@@ -312,12 +350,37 @@ const rewriteManifestTargets = (
   };
 };
 
+/** A nested `package.json` only supplies the `type` that Node reads for the files beneath it. */
+const NestedPackageManifestSchema = Schema.fromJsonString(
+  Schema.StructWithRest(Schema.Struct({ type: Schema.optionalKey(Schema.String) }), [
+    Schema.Record(Schema.String, Schema.Unknown),
+  ]),
+);
+
+/** `.cjs` is CommonJS and `.mjs` an ES module; `.js` takes the `type` of its nearest package.json. */
+const isCommonJsJavaScript = (extension: string, scopeIsModule: boolean): boolean =>
+  extension === COMMONJS_EXTENSION || (extension === MODULE_EXTENSION && !scopeIsModule);
+
+/** Whether the nearest package.json at or above `directory`, below the package root, declares `type: module`. */
+const nearestScopeIsModule = (directory: string, inherited: boolean) =>
+  Effect.gen(function* readNearestScope() {
+    const fs = yield* FileSystem.FileSystem;
+    const manifestPath = path.join(directory, PACKAGE_MANIFEST);
+    if (!(yield* fs.exists(manifestPath))) {
+      return inherited;
+    }
+    const nested = yield* Schema.decodeUnknownEffect(NestedPackageManifestSchema)(
+      yield* fs.readFileString(manifestPath),
+    ).pipe(Effect.mapError((cause) => failed(`${manifestPath}: ${String(cause)}`)));
+    return nested.type === MODULE_MANIFEST_TYPE;
+  });
+
 /** Every TypeScript module the packaged package carries, skipping nested installs and every symlink. */
 const collectTracedModules = (packageDirectory: string, packageIsModule: boolean) =>
   Effect.gen(function* collectPackagedModules() {
     const fs = yield* FileSystem.FileSystem;
     const modules: TracedModule[] = [];
-    const recordFile = (absolute: string) => {
+    const recordFile = (absolute: string, scopeIsModule: boolean) => {
       const extension = path.extname(absolute);
       if (!isRuntimeModule(extension) || DECLARATION_FILE.test(absolute)) {
         return;
@@ -327,7 +390,7 @@ const collectTracedModules = (packageDirectory: string, packageIsModule: boolean
       const sourceRelativePath = path.relative(packageDirectory, absolute);
       const outputRelativePath = `${sourceRelativePath.slice(0, -extension.length)}${outputExtension}`;
       modules.push({
-        commonJs: outputExtension === COMMONJS_EXTENSION,
+        commonJs: typescript ? outputExtension === COMMONJS_EXTENSION : isCommonJsJavaScript(extension, scopeIsModule),
         jsx: absolute.endsWith(TYPESCRIPT_JSX_EXTENSION),
         outputPath: path.join(packageDirectory, outputRelativePath),
         outputRelativePath,
@@ -335,7 +398,10 @@ const collectTracedModules = (packageDirectory: string, packageIsModule: boolean
         typescript,
       });
     };
-    const visit = (directory: string): Effect.Effect<void, PlatformError> =>
+    const visit = (
+      directory: string,
+      scopeIsModule: boolean,
+    ): Effect.Effect<void, PlatformError | PackagedWorkspaceError, FileSystem.FileSystem> =>
       Effect.gen(function* visitPackagedDirectory() {
         for (const name of (yield* fs.readDirectory(directory)).toSorted()) {
           if (name === TRACED_DEPENDENCIES_DIRECTORY) {
@@ -346,14 +412,14 @@ const collectTracedModules = (packageDirectory: string, packageIsModule: boolean
           // A symlink is an installed dependency or a path out of the packaged copy; neither is ours to write.
           if (info.type !== 'SymbolicLink') {
             if (info.type === 'Directory') {
-              yield* visit(absolute);
+              yield* visit(absolute, yield* nearestScopeIsModule(absolute, scopeIsModule));
             } else if (info.type === 'File') {
-              recordFile(absolute);
+              recordFile(absolute, scopeIsModule);
             }
           }
         }
       });
-    yield* visit(packageDirectory);
+    yield* visit(packageDirectory, packageIsModule);
     const generated = new Set(modules.filter((module) => module.typescript).map((module) => module.outputPath));
     return modules.filter((module) => module.typescript || !generated.has(module.sourcePath));
   });
@@ -394,7 +460,7 @@ const compileTracedModule = (module: TracedModule, resolve: (specifier: string) 
   Effect.gen(function* compilePackagedModule() {
     const fs = yield* FileSystem.FileSystem;
     const code = yield* transpileTracedModule(module);
-    const compiled = yield* rewriteModuleSpecifiers(code, module.sourcePath, resolve);
+    const compiled = yield* rewriteModuleSpecifiers(code, module.sourcePath, module.commonJs, resolve);
     if (!module.typescript) {
       if (compiled !== code) {
         yield* fs.writeFileString(module.outputPath, compiled);
@@ -414,19 +480,24 @@ const compileTracedModule = (module: TracedModule, resolve: (specifier: string) 
     }
   });
 
-/** The relative specifier inside a compiled package that `specifier` names, or a failure explaining why not. */
+/**
+ * The relative specifier inside a compiled package that `specifier` names, `undefined` to keep it as written, or a
+ * failure explaining why not. A native module keeps every specifier Node resolves itself, and only names a TypeScript
+ * source that this step compiled; a TypeScript module's extensionless specifier must name one.
+ */
 const resolveCompiledSpecifier = (
   importer: string,
   packageDirectory: string,
   packageIsModule: boolean,
   compiledPaths: ReadonlySet<string>,
+  importerIsTypeScript: boolean,
   specifier: string,
 ): SpecifierResolution => {
   if (!RELATIVE_SPECIFIER.test(specifier)) {
     return undefined;
   }
   const target = path.resolve(path.dirname(importer), specifier);
-  if (!isInside(packageDirectory, target)) {
+  if (target !== packageDirectory && !isInside(packageDirectory, target)) {
     return failed(`${importer}: ${specifier} leaves the packaged package`);
   }
   const extension = path.extname(target);
@@ -442,9 +513,18 @@ const resolveCompiledSpecifier = (
   const compiledExtension = outputExtensionFor(TYPESCRIPT_EXTENSION, packageIsModule);
   const candidates = [`${target}${compiledExtension}`, path.join(target, `index${compiledExtension}`)];
   const resolved = candidates.find((candidate) => compiledPaths.has(candidate));
-  return resolved === undefined
-    ? failed(`${importer}: ${specifier} resolves to no compiled module`)
-    : `./${path.relative(path.dirname(importer), resolved)}`;
+  if (importerIsTypeScript) {
+    return resolved === undefined
+      ? failed(`${importer}: ${specifier} resolves to no compiled module`)
+      : `./${path.relative(path.dirname(importer), resolved)}`;
+  }
+  // Node's extensionless lookup takes a native `.js` (or its index) before anything else, so a native module's
+  // specifier is rewritten only when the TypeScript module it names is the one Node would otherwise miss.
+  const javaScript = [`${target}${MODULE_EXTENSION}`, path.join(target, `index${MODULE_EXTENSION}`)];
+  if (resolved === undefined || javaScript.some((candidate) => compiledPaths.has(candidate))) {
+    return undefined;
+  }
+  return `./${path.relative(path.dirname(importer), resolved)}`;
 };
 
 const ensurePackagedSourceParent = (packageDirectory: string, relative: string) =>
@@ -464,7 +544,7 @@ const ensurePackagedSourceParent = (packageDirectory: string, relative: string) 
   });
 
 /** Node chooses the first matching condition, independently for import() and require(). */
-const nodeImportTarget = (target: PackagedExportTarget, commonJs: boolean): string | undefined => {
+const nodeImportTarget = (target: PackagedExportTarget, viaRequire: boolean): string | undefined => {
   if (Predicate.isString(target)) {
     return target;
   }
@@ -472,11 +552,11 @@ const nodeImportTarget = (target: PackagedExportTarget, commonJs: boolean): stri
     ? target
     : Object.entries(target)
         .filter(([condition]) =>
-          ['node', 'node-addons', 'module-sync', 'default', commonJs ? 'require' : 'import'].includes(condition),
+          ['node', 'node-addons', 'module-sync', 'default', viaRequire ? 'require' : 'import'].includes(condition),
         )
         .map(([, entry]) => entry);
   for (const entry of candidates) {
-    const selected = nodeImportTarget(entry, commonJs);
+    const selected = nodeImportTarget(entry, viaRequire);
     if (selected !== undefined) {
       return selected;
     }
@@ -484,17 +564,62 @@ const nodeImportTarget = (target: PackagedExportTarget, commonJs: boolean): stri
   return undefined;
 };
 
+/** The text a `*` import key captures from `specifier`, or `undefined` when the key is not a matching pattern. */
+const importPatternCapture = (key: string, specifier: string): string | undefined => {
+  const star = key.indexOf('*');
+  if (star === -1 || key.lastIndexOf('*') !== star) {
+    return undefined;
+  }
+  const prefix = key.slice(0, star);
+  const suffix = key.slice(star + 1);
+  return specifier.length >= key.length && specifier.startsWith(prefix) && specifier.endsWith(suffix)
+    ? specifier.slice(prefix.length, specifier.length - suffix.length)
+    : undefined;
+};
+
+/** The import-map entry Node selects, with the text a matching `*` key captured (absent for an exact key). */
+interface SelectedImportEntry {
+  readonly capture?: string;
+  readonly entry: PackagedExportTarget;
+}
+
+/** Node's choice: an exact key first, else the matching `*` key with the longest prefix, then the longest key. */
+const selectImportEntry = (
+  specifier: string,
+  imports: PackagedExportTarget | undefined,
+): SelectedImportEntry | undefined => {
+  if (imports === undefined || !isExportTargetConditions(imports)) {
+    return undefined;
+  }
+  const exact = specifier.includes('*') ? undefined : imports[specifier];
+  if (exact !== undefined) {
+    return { entry: exact };
+  }
+  const [key] = Object.keys(imports)
+    .filter((candidate) => importPatternCapture(candidate, specifier) !== undefined)
+    .toSorted((left, right) => right.indexOf('*') - left.indexOf('*') || right.length - left.length);
+  if (key === undefined) {
+    return undefined;
+  }
+  const entry = imports[key];
+  return entry === undefined ? undefined : { capture: importPatternCapture(key, specifier), entry };
+};
+
 const privateImportTarget = (
   specifier: string,
   imports: PackagedExportTarget | undefined,
-  commonJs: boolean,
+  viaRequire: boolean,
 ): SpecifierResolution => {
   if (!specifier.startsWith('#')) {
     return undefined;
   }
-  const entry = imports !== undefined && isExportTargetConditions(imports) ? imports[specifier] : undefined;
-  const target = entry === undefined ? undefined : nodeImportTarget(entry, commonJs);
-  return target ?? failed(`${specifier}: no declared Node package-import target`);
+  const selected = selectImportEntry(specifier, imports);
+  const target = selected === undefined ? undefined : nodeImportTarget(selected.entry, viaRequire);
+  if (selected === undefined || target === undefined) {
+    return failed(`${specifier}: no declared Node package-import target`);
+  }
+  // Node fills every `*` in the target with the text the key captured.
+  return selected.capture === undefined ? target : target.split('*').join(selected.capture);
 };
 
 /** Condition order is meaningful to Node, so ordinary record equivalence is insufficient here. */
@@ -557,8 +682,9 @@ const completeTracedModuleGraph = (
         yield* rewriteModuleSpecifiers(
           yield* transpileTracedModule(module),
           module.sourcePath,
-          (specifier, commonJs): SpecifierResolution => {
-            const privateTarget = privateImportTarget(specifier, packagedManifest.imports, commonJs);
+          module.commonJs,
+          (specifier, viaRequire): SpecifierResolution => {
+            const privateTarget = privateImportTarget(specifier, packagedManifest.imports, viaRequire);
             if (privateTarget !== undefined && !Predicate.isString(privateTarget)) {
               return privateTarget;
             }
@@ -655,17 +781,28 @@ const compilePackagedWorkspacePackage = Effect.fn(
     modules,
     (module) =>
       compileTracedModule(module, (specifier) =>
-        resolveCompiledSpecifier(module.sourcePath, packageDirectory, packageIsModule, compiledPaths, specifier),
+        resolveCompiledSpecifier(
+          module.sourcePath,
+          packageDirectory,
+          packageIsModule,
+          compiledPaths,
+          module.typescript,
+          specifier,
+        ),
       ),
     { concurrency: 1, discard: true },
   );
   const compiledTypeScriptPaths = new Set(
     modules.filter((module) => module.typescript).map((module) => module.outputPath),
   );
-  const repoint = (specifier: string) =>
+  const repointExport = (specifier: string) =>
     compiledExportTarget(packageDirectory, packageIsModule, compiledTypeScriptPaths, specifier);
-  const exportsRewrite = rewriteManifestTargets(manifest[MANIFEST_EXPORTS], repoint);
-  const importsRewrite = rewriteManifestTargets(manifest[MANIFEST_IMPORTS], repoint);
+  const repointPattern = (specifier: string) =>
+    compiledPatternTarget(packageDirectory, packageIsModule, modules, specifier);
+  const exportsRewrite = rewriteManifestTargets(manifest[MANIFEST_EXPORTS], () => repointExport);
+  const importsRewrite = rewriteManifestTargets(manifest[MANIFEST_IMPORTS], (subpath) =>
+    subpath.includes('*') ? repointPattern : repointExport,
+  );
   const repointed = [...exportsRewrite.repointed, ...importsRewrite.repointed];
   const untraced = [...exportsRewrite.untraced, ...importsRewrite.untraced];
   if (repointed.length > 0) {

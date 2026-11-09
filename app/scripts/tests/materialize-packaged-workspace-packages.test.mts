@@ -6,7 +6,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, Exit, Result, Schema } from 'effect';
+import { Effect, Exit, Option, Predicate, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { compilePackagedWorkspacePackages, PACKAGED_DIRECTORY } from '../materialize-packaged-workspace-packages.mts';
@@ -26,13 +26,19 @@ const COLLIDING_CONTRACTS = '@app/colliding-contracts';
 const DANGLING_CONTRACTS = '@app/dangling-contracts';
 const STABLE_CONTRACTS = '@app/stable-contracts';
 const RELATIVE_CONTRACTS = '@app/relative-contracts';
+const COMMONJS_CONTRACTS = '@app/commonjs-contracts';
+const TOP_LEVEL_RETURN_CONTRACTS = '@app/top-level-return-contracts';
+const PATTERN_CONTRACTS = '@app/pattern-contracts';
+const NESTED_SCOPE_CONTRACTS = '@app/nested-scope-contracts';
+const BOOTSTRAP_SOURCE = 'src/bootstrap.cjs';
+const BOOTSTRAP_IMPORT = "import bootstrap from './bootstrap.cjs'; export const origin = bootstrap.origin;\n";
 
 /** A traced workspace package manifest, as this step reads it. */
 interface WorkspacePackageManifest {
   readonly exports: Readonly<Record<string, string>>;
   readonly imports?: Readonly<Record<string, string | Readonly<Record<string, string>>>>;
   readonly name: string;
-  readonly type: string;
+  readonly type?: string;
   readonly version: string;
 }
 
@@ -40,6 +46,13 @@ const manifestOf = (name: string, exports: Readonly<Record<string, string>>): Wo
   exports,
   name,
   type: 'module',
+  version: '0.1.0',
+});
+
+/** A package without a `type`, so Node reads its `.js` files as CommonJS. */
+const untypedManifestOf = (name: string, exports: Readonly<Record<string, string>>): WorkspacePackageManifest => ({
+  exports,
+  name,
   version: '0.1.0',
 });
 
@@ -101,6 +114,22 @@ const writeProbe = (packagedDirectory: string, source: string) =>
 
 const resolvedInsidePackaged = (resolved: string, packagedDirectory: string) =>
   resolved.startsWith(pathToFileURL(realpathSync(packagedDirectory)).href);
+
+/** The message of the typed refusal a build ended with, or `undefined` when it did not fail with one. */
+const refusalOf = (exit: Exit.Exit<unknown, unknown>) => {
+  const error = Option.getOrUndefined(Exit.findErrorOption(exit));
+  return Predicate.hasProperty(error, 'message') && Predicate.isString(error.message) ? error.message : undefined;
+};
+
+/** Deletes every TypeScript source below `directory`, so only what this step compiled remains to be loaded. */
+const removeTypeScriptSources = async (directory: string) => {
+  const relativePaths = await readdir(directory, { recursive: true });
+  await Promise.all(
+    relativePaths
+      .filter((relative) => /\.(?:c|m)?tsx?$/u.test(relative) && !relative.endsWith('.d.ts'))
+      .map((relative) => rm(path.join(directory, relative))),
+  );
+};
 
 /** Every path below `directory`, mapped to its text, so two runs can be compared byte for byte. */
 const snapshotTree = async (directory: string) => {
@@ -451,11 +480,11 @@ it.effect('completes omitted native CommonJS inputs and follows their own TypeSc
     const unit = unitUnder(root);
     const packaged = path.join(unit, PACKAGED_DIRECTORY);
     const manifest = manifestOf(TRACED_CONTRACTS, { '.': ENTRY_SUBPATH });
-    const entry = "import bootstrap from './bootstrap.cjs'; export const origin = bootstrap.origin;\n";
+    const entry = BOOTSTRAP_IMPORT;
     const installed = yield* Effect.promise(() =>
       writeWorkspacePackage(path.join(unit, 'node_modules'), manifest, {
+        [BOOTSTRAP_SOURCE]: "module.exports = require('./nested/runtime.cjs');\n",
         [ENTRY_SOURCE]: entry,
-        'src/bootstrap.cjs': "module.exports = require('./nested/runtime.cjs');\n",
         'src/nested/runtime.cjs': "module.exports = require('../value.cts');\n",
         'src/value.cts': "module.exports = { origin: 'completed-native-commonjs' };\n",
       }),
@@ -467,7 +496,7 @@ it.effect('completes omitted native CommonJS inputs and follows their own TypeSc
     yield* Effect.promise(() => writeProbe(packaged, originProbe(TRACED_CONTRACTS)));
     yield* compilePackagedWorkspacePackages(unit);
     expect(yield* Effect.promise(() => snapshotTree(installed))).toEqual(before);
-    expect(yield* Effect.promise(() => readFile(path.join(traced, 'src/bootstrap.cjs'), ENCODING))).toBe(
+    expect(yield* Effect.promise(() => readFile(path.join(traced, BOOTSTRAP_SOURCE), ENCODING))).toBe(
       "module.exports = require('./nested/runtime.cjs');\n",
     );
     expect(yield* Effect.promise(() => readFile(path.join(traced, 'src/nested/runtime.cjs'), ENCODING))).toBe(
@@ -480,6 +509,180 @@ it.effect('completes omitted native CommonJS inputs and follows their own TypeSc
     expect(Result.getOrThrow(Schema.decodeUnknownResult(OriginObservation)(after.stdout)).origin).toBe(
       'completed-native-commonjs',
     );
+    const snapshot = yield* Effect.promise(() => snapshotTree(traced));
+    yield* compilePackagedWorkspacePackages(unit);
+    expect(yield* Effect.promise(() => snapshotTree(traced))).toEqual(snapshot);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  'loads native CommonJS without a module type through extensionless requires to a .js, a .json, and a TypeScript file',
+  () =>
+    Effect.gen(function* loadsExtensionlessNativeRequires() {
+      const root = yield* temporaryRoot;
+      const unit = unitUnder(root);
+      const packaged = path.join(unit, PACKAGED_DIRECTORY);
+      const bootstrap =
+        "const { origin: base } = require('./lib'); const { suffix } = require('./data'); const { helper } = require('./helper'); module.exports = { origin: base + suffix + helper };\n";
+      const directory = yield* Effect.promise(() =>
+        writeWorkspacePackage(
+          packagedNodeModules(unit),
+          untypedManifestOf(COMMONJS_CONTRACTS, { '.': ENTRY_SUBPATH }),
+          {
+            [BOOTSTRAP_SOURCE]: bootstrap,
+            [ENTRY_SOURCE]: BOOTSTRAP_IMPORT,
+            'src/data.json': '{ "suffix": "-json" }\n',
+            'src/helper.ts': "export const helper = '-ts';\n",
+            'src/lib.js': "module.exports = { origin: 'native' };\n",
+          },
+        ),
+      );
+      yield* Effect.promise(() => writeProbe(packaged, originProbe(COMMONJS_CONTRACTS)));
+
+      const compilation = yield* compilePackagedWorkspacePackages(unit);
+
+      expect(compilation.packages[0]?.compiled).toEqual(['src/helper.mjs', 'src/index.mjs']);
+      expect(yield* Effect.promise(() => readExports(directory))).toEqual({ '.': './src/index.mjs' });
+      // Node finds `lib.js` and `data.json` itself, so only the require of the TypeScript-only `helper` is rewritten.
+      expect(yield* Effect.promise(() => readFile(path.join(directory, BOOTSTRAP_SOURCE), ENCODING))).toBe(
+        bootstrap.replace("require('./helper')", "require('./helper.mjs')"),
+      );
+      yield* Effect.promise(() => removeTypeScriptSources(directory));
+      const after = runProbe(packaged);
+      expect(after.stderr).toBe('');
+      expect(after.status).toBe(0);
+      const observed = Result.getOrThrow(Schema.decodeUnknownResult(OriginObservation)(after.stdout));
+      expect(observed.origin).toBe('native-json-ts');
+      expect(resolvedInsidePackaged(observed.resolved, packaged)).toBe(true);
+      const snapshot = yield* Effect.promise(() => snapshotTree(directory));
+      yield* compilePackagedWorkspacePackages(unit);
+      expect(yield* Effect.promise(() => snapshotTree(directory))).toEqual(snapshot);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('keeps native CommonJS with a top-level return loadable and rewrites its TypeScript require', () =>
+  Effect.gen(function* keepsTopLevelReturn() {
+    const root = yield* temporaryRoot;
+    const unit = unitUnder(root);
+    const packaged = path.join(unit, PACKAGED_DIRECTORY);
+    const bootstrap = [
+      "const { value } = require('./value.cts');",
+      "if (value !== '') {",
+      '  module.exports = { origin: value };',
+      '  return;',
+      '}',
+      "module.exports = { origin: 'unreachable' };",
+      '',
+    ].join('\n');
+    const directory = yield* Effect.promise(() =>
+      writeWorkspacePackage(packagedNodeModules(unit), manifestOf(TOP_LEVEL_RETURN_CONTRACTS, { '.': ENTRY_SUBPATH }), {
+        [BOOTSTRAP_SOURCE]: bootstrap,
+        [ENTRY_SOURCE]: BOOTSTRAP_IMPORT,
+        'src/value.cts': "exports.value = 'top-level-return';\n",
+      }),
+    );
+    yield* Effect.promise(() => writeProbe(packaged, originProbe(TOP_LEVEL_RETURN_CONTRACTS)));
+
+    const compilation = yield* compilePackagedWorkspacePackages(unit);
+
+    expect(compilation.packages[0]?.compiled).toEqual([ENTRY_OUTPUT, 'src/value.cjs']);
+    expect(yield* Effect.promise(() => readFile(path.join(directory, BOOTSTRAP_SOURCE), ENCODING))).toBe(
+      bootstrap.replace("require('./value.cts')", "require('./value.cjs')"),
+    );
+    yield* Effect.promise(() => removeTypeScriptSources(directory));
+    const after = runProbe(packaged);
+    expect(after.stderr).toBe('');
+    expect(after.status).toBe(0);
+    expect(Result.getOrThrow(Schema.decodeUnknownResult(OriginObservation)(after.stdout))).toMatchObject({
+      origin: 'top-level-return',
+    });
+    const snapshot = yield* Effect.promise(() => snapshotTree(directory));
+    yield* compilePackagedWorkspacePackages(unit);
+    expect(yield* Effect.promise(() => snapshotTree(directory))).toEqual(snapshot);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('keeps a native .js under a nested package.json type rather than the package root type', () =>
+  Effect.gen(function* parsesNestedScope() {
+    const root = yield* temporaryRoot;
+    const unit = unitUnder(root);
+    const packaged = path.join(unit, PACKAGED_DIRECTORY);
+    const legacy =
+      "if (typeof module === 'object') {\n  module.exports = { origin: 'nested-commonjs' };\n  return;\n}\n";
+    const directory = yield* Effect.promise(() =>
+      writeWorkspacePackage(packagedNodeModules(unit), manifestOf(NESTED_SCOPE_CONTRACTS, { '.': ENTRY_SUBPATH }), {
+        [ENTRY_SOURCE]: "import legacy from './legacy/index.js'; export const origin = legacy.origin;\n",
+        'src/legacy/index.js': legacy,
+        'src/legacy/package.json': '{ "type": "commonjs" }\n',
+      }),
+    );
+    yield* Effect.promise(() => writeProbe(packaged, originProbe(NESTED_SCOPE_CONTRACTS)));
+
+    const compilation = yield* compilePackagedWorkspacePackages(unit);
+
+    expect(compilation.packages[0]?.compiled).toEqual([ENTRY_OUTPUT]);
+    expect(yield* Effect.promise(() => readFile(path.join(directory, 'src/legacy/index.js'), ENCODING))).toBe(legacy);
+    yield* Effect.promise(() => removeTypeScriptSources(directory));
+    const after = runProbe(packaged);
+    expect(after.stderr).toBe('');
+    expect(after.status).toBe(0);
+    expect(Result.getOrThrow(Schema.decodeUnknownResult(OriginObservation)(after.stdout)).origin).toBe(
+      'nested-commonjs',
+    );
+    const snapshot = yield* Effect.promise(() => snapshotTree(directory));
+    yield* compilePackagedWorkspacePackages(unit);
+    expect(yield* Effect.promise(() => snapshotTree(directory))).toEqual(snapshot);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('completes and runs pattern private imports from an ES module and a CommonJS importer', () =>
+  Effect.gen(function* completesPatternImports() {
+    const root = yield* temporaryRoot;
+    const unit = unitUnder(root);
+    const packaged = path.join(unit, PACKAGED_DIRECTORY);
+    const manifest = {
+      ...manifestOf(PATTERN_CONTRACTS, { '.': ENTRY_SUBPATH }),
+      imports: { '#lib/*': './src/lib/*.ts', '#lib/special/*': './src/special/*.ts' },
+    };
+    const entry =
+      "import { a } from '#lib/a'; import { special } from '#lib/special/s'; import bootstrap from './bootstrap.cjs'; export const origin = [a, special, bootstrap.b].join('-');\n";
+    const bootstrap = "module.exports = { b: require('#lib/b').b };\n";
+    const installed = yield* Effect.promise(() =>
+      writeWorkspacePackage(path.join(unit, 'node_modules'), manifest, {
+        [BOOTSTRAP_SOURCE]: bootstrap,
+        [ENTRY_SOURCE]: entry,
+        'src/lib/a.ts': "export const a = 'a';\n",
+        'src/lib/b.ts': "export const b = 'b';\n",
+        // A `#lib/special/*` import must select the longer prefix, never this file under `#lib/*`.
+        'src/lib/special/s.ts': "export const special = 'wrong';\n",
+        'src/special/s.ts': "export const special = 'special';\n",
+      }),
+    );
+    const before = yield* Effect.promise(() => snapshotTree(installed));
+    const traced = yield* Effect.promise(() =>
+      writeWorkspacePackage(packagedNodeModules(unit), manifest, {
+        [BOOTSTRAP_SOURCE]: bootstrap,
+        [ENTRY_SOURCE]: entry,
+      }),
+    );
+    yield* Effect.promise(() => writeProbe(packaged, originProbe(PATTERN_CONTRACTS)));
+
+    yield* compilePackagedWorkspacePackages(unit);
+
+    const { imports } = Result.getOrThrow(
+      Schema.decodeUnknownResult(
+        Schema.fromJsonString(Schema.Struct({ imports: Schema.Record(Schema.String, Schema.String) })),
+      )(yield* Effect.promise(() => readFile(path.join(traced, PACKAGE_MANIFEST), ENCODING))),
+    );
+    expect(imports).toEqual({ '#lib/*': './src/lib/*.js', '#lib/special/*': './src/special/*.js' });
+    // The build input is only read: nothing it carries is written or removed.
+    expect(yield* Effect.promise(() => snapshotTree(installed))).toEqual(before);
+    yield* Effect.promise(() => rename(installed, `${installed}-retired-build-input`));
+    yield* Effect.promise(() => removeTypeScriptSources(traced));
+    const after = runProbe(packaged);
+    expect(after.stderr).toBe('');
+    expect(after.status).toBe(0);
+    expect(Result.getOrThrow(Schema.decodeUnknownResult(OriginObservation)(after.stdout)).origin).toBe('a-special-b');
     const snapshot = yield* Effect.promise(() => snapshotTree(traced));
     yield* compilePackagedWorkspacePackages(unit);
     expect(yield* Effect.promise(() => snapshotTree(traced))).toEqual(snapshot);
@@ -513,7 +716,7 @@ it.effect('refuses a private import map that differs from the declared build inp
       ),
     );
     const exit = yield* Effect.exit(compilePackagedWorkspacePackages(unit));
-    expect(Exit.isFailure(exit)).toBe(true);
+    expect(refusalOf(exit)).toBe(`${TRACED_CONTRACTS}: the traced and build-input package identities differ`);
     expect(existsSync(path.join(traced, 'src/other.ts'))).toBe(false);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
@@ -565,7 +768,7 @@ it.effect('refuses to complete a trace from a different build input with the sam
       }),
     );
     const exit = yield* Effect.exit(compilePackagedWorkspacePackages(unit));
-    expect(Exit.isFailure(exit)).toBe(true);
+    expect(refusalOf(exit)).toBe(`${TRACED_CONTRACTS}: a traced source differs from its declared build input`);
     expect(existsSync(path.join(traced, 'src', 'helper.ts'))).toBe(false);
     expect(existsSync(path.join(traced, ENTRY_OUTPUT))).toBe(false);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -585,7 +788,9 @@ it.effect('refuses to overwrite a different module already at a compiled path', 
 
     const exit = yield* Effect.exit(compilePackagedWorkspacePackages(unit));
 
-    expect(Exit.isFailure(exit)).toBe(true);
+    expect(refusalOf(exit)).toContain(
+      `${path.join(directory, ENTRY_OUTPUT)}: the packaged tree already carries a different module at this path`,
+    );
     expect(yield* Effect.promise(() => readFile(path.join(directory, ENTRY_OUTPUT), ENCODING))).toBe(handWritten);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
@@ -602,7 +807,7 @@ it.effect('refuses a traced relative import whose source the packaged tree does 
 
     const exit = yield* Effect.exit(compilePackagedWorkspacePackages(unit));
 
-    expect(Exit.isFailure(exit)).toBe(true);
+    expect(refusalOf(exit)).toBe(`${DANGLING_CONTRACTS}: the declared build dependency could not be resolved`);
     // The module is rejected before anything is written for it.
     expect(existsSync(path.join(directory, ENTRY_OUTPUT))).toBe(false);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
