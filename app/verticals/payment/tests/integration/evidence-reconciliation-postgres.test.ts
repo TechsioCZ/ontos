@@ -1124,6 +1124,29 @@ it.live('#1151 a second charge held after a partial correction cannot be attache
         ),
       ).toBe('payment_reconciliation_evidence_not_qualified');
       expect(yield* evidence.coverage(payment.paymentId)).toBe('Held UNRESOLVED_EVIDENCE');
+
+      // A partial correction of the held second charge is no full disproof: its case still cannot close.
+      const partialOfSecond = yield* evidence.accept(
+        gopayStatement({
+          amount: czk(10_000),
+          correctsObservationId: second.observationId,
+          economicEffectKey: 'gopay:charge:2:correction',
+          factKind: 'SOURCE_CORRECTION',
+          operationId: collect.operationId,
+          paymentId: payment.paymentId,
+        }),
+      );
+      expect(partialOfSecond.acceptanceOutcome).not.toBe('UNAUTHORIZED_SOURCE');
+      expect(
+        yield* failureCodeOf(
+          evidence.decide({
+            caseId: second.reconciliationCaseId ?? '',
+            decision: { _tag: 'CLOSE_CASE', evidenceRef: 'operator-note' },
+            reason: 'Close the second charge as corrected',
+          }),
+        ),
+      ).toBe('payment_reconciliation_obligation_unresolved');
+      expect(yield* evidence.coverage(payment.paymentId)).toBe('Held UNRESOLVED_EVIDENCE');
     }),
   ),
 );
