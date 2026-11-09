@@ -12,9 +12,10 @@ import {
   testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { testOperationalScopeResolver } from '../../../../packages/core-runtime/tests/fixtures/operational-scope.ts';
+import { configurePaymentSourceAuthorityAction } from '../../src/actions/configure-payment-source-authority.action.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
 
-import { paymentTestRelations } from './database-fixture.ts';
+import { failureCodeOf, paymentTestRelations, randomUuid } from './database-fixture.ts';
 import {
   acceptObservation,
   decideReconciliation,
@@ -23,6 +24,7 @@ import {
   refundItem,
   requestRefund,
 } from '../support/refund-action-driver.ts';
+import type { RefundCase } from '../support/refund-action-driver.ts';
 import {
   loadPaymentAggregate,
   refundRuntimeContextAccess,
@@ -66,6 +68,46 @@ const gopayRefundExecution = {
   sourceSystem: 'GOPAY',
 } as const;
 
+/** The GoPay refund execution account as a method-neutral refund route authority. */
+const neutralRefundAuthority = {
+  factFamily: 'REFUND_EXECUTION',
+  reason: 'GoPay executes and reports refunds of this account',
+  refundRoute: true,
+  source: gopayRefundExecution,
+  status: 'ACTIVE',
+} as const;
+
+/** The same GoPay account and source binding, configured for online gateway Payments specifically. */
+const onlineGatewayRefundAuthority = { ...neutralRefundAuthority, method: 'ONLINE_GATEWAY' } as const;
+
+/** Configures one refund route authority through the registered Action, bound to the case principal. */
+const configureRefundAuthority = Effect.fn('EconomicEffectTest.configureRefundAuthority')(function* configure(
+  refundCase: RefundCase,
+  configuration: typeof neutralRefundAuthority | typeof onlineGatewayRefundAuthority,
+) {
+  const key = yield* randomUuid;
+  return yield* refundCase.native.actionRuntime.runAction({
+    payload: { ...configuration, submitterPrincipalIds: [refundCase.scope.principalId] },
+    principal: refundCase.principal,
+    registration: configurePaymentSourceAuthorityAction,
+    transport: { correlationId: 'payment-economic-effect-authority', idempotencyKey: key },
+  });
+});
+
+/** The GoPay confirmation of the one 100 CZK return `gopay:refund:1`, correlated to `operationId`. */
+const refundConfirmation = (refundCase: RefundCase, operationId: string, sourceOccurrenceId: string) =>
+  acceptObservation(refundCase, {
+    amount: { amountMinor: 10_000, currency: 'CZK' },
+    economicEffectKey: 'gopay:refund:1',
+    factFamily: 'REFUND_EXECUTION',
+    factKind: 'REFUND_CONFIRMED',
+    operationId,
+    paymentId: refundCase.payment.paymentId,
+    source: gopayRefundExecution,
+    sourceOccurrenceId,
+    sourceRevision: 0,
+  });
+
 it.live(
   '#1151 one economic effect confirms one refund: a second occurrence of the same effect for another pending refund is held',
   () =>
@@ -78,17 +120,7 @@ it.live(
         const first = yield* requestRefund(refundCase, itemsRefund(refundCase, 'refund-a', [A]), owners);
         const second = yield* requestRefund(refundCase, itemsRefund(refundCase, 'refund-b', [B]), owners);
         const confirmation = (operationId: string, sourceOccurrenceId: string) =>
-          acceptObservation(refundCase, {
-            amount: { amountMinor: 10_000, currency: 'CZK' },
-            economicEffectKey: 'gopay:refund:1',
-            factFamily: 'REFUND_EXECUTION',
-            factKind: 'REFUND_CONFIRMED',
-            operationId,
-            paymentId: refundCase.payment.paymentId,
-            source: gopayRefundExecution,
-            sourceOccurrenceId,
-            sourceRevision: 0,
-          });
+          refundConfirmation(refundCase, operationId, sourceOccurrenceId);
         // The provider's callback confirms the 100 CZK return for the first refund.
         const confirmed = yield* confirmation(first.operation.operationId, 'gopay-callback-refund-1');
         expect(confirmed.acceptanceOutcome).toBe('ACCEPTED_OBSERVATION');
@@ -157,6 +189,114 @@ it.live(
           sourceOccurrenceId: 'gopay-lookup-refund-1',
         });
         expect(reused.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+
+        const aggregate = yield* loadPaymentAggregate(
+          refundCase.native.database,
+          refundCase.scope,
+          refundCase.payment.paymentId,
+        );
+        const outcomeOf = (operationId: string) =>
+          aggregate.operations.find((operation) => operation.operationId === operationId)?.outcome;
+        expect(outcomeOf(first.operation.operationId)).toBe('EFFECT_CONFIRMED');
+        expect(outcomeOf(second.operation.operationId)).toBe('PENDING');
+      }),
+    ),
+);
+
+it.live(
+  '#1151 one economic effect confirms one refund across the method-neutral and method-specific authorities of one source binding',
+  () =>
+    native(
+      Effect.gen(function* sameBindingAcrossAuthorities() {
+        const refundCase = yield* refundCaseFor(yield* nativeRuntime, {
+          amountMinor: 100_000,
+          collected: true,
+          gatewayRoute: false,
+        });
+        const neutral = yield* configureRefundAuthority(refundCase, neutralRefundAuthority);
+        const A = refundItem('A', 10_000);
+        const B = refundItem('B', 10_000);
+        const owners = { items: [A, B] };
+        const first = yield* requestRefund(refundCase, itemsRefund(refundCase, 'refund-a', [A]), owners);
+        const second = yield* requestRefund(refundCase, itemsRefund(refundCase, 'refund-b', [B]), owners);
+        const confirmation = (operationId: string, sourceOccurrenceId: string) =>
+          refundConfirmation(refundCase, operationId, sourceOccurrenceId);
+        // The method-neutral authority confirms the 100 CZK return for the first refund.
+        const confirmed = yield* confirmation(first.operation.operationId, 'gopay-callback-refund-1');
+        expect(confirmed.acceptanceOutcome).toBe('ACCEPTED_OBSERVATION');
+        expect(confirmed.sourceAuthorityId).toBe(neutral.sourceAuthorityId);
+        // The same GoPay account is then also configured for online gateway Payments specifically.
+        const specific = yield* configureRefundAuthority(refundCase, onlineGatewayRefundAuthority);
+        expect(specific.sourceAuthorityId).not.toBe(neutral.sourceAuthorityId);
+        // The same source's lookup of that return, now qualified by the method-specific authority,
+        // is correlated to the second refund: one effect of one source binding cannot confirm it too.
+        const reused = yield* confirmation(second.operation.operationId, 'gopay-lookup-refund-1');
+        expect(reused.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+        expect(reused.sourceAuthorityId).toBe(specific.sourceAuthorityId);
+
+        const aggregate = yield* loadPaymentAggregate(
+          refundCase.native.database,
+          refundCase.scope,
+          refundCase.payment.paymentId,
+        );
+        const outcomeOf = (operationId: string) =>
+          aggregate.operations.find((operation) => operation.operationId === operationId)?.outcome;
+        expect(outcomeOf(first.operation.operationId)).toBe('EFFECT_CONFIRMED');
+        expect(outcomeOf(second.operation.operationId)).toBe('PENDING');
+      }),
+    ),
+);
+
+it.live(
+  '#1151 one economic effect confirms one refund: governed attachment never counts an effect of the same source binding twice across its authorities',
+  () =>
+    native(
+      Effect.gen(function* attachAcrossAuthorities() {
+        const refundCase = yield* refundCaseFor(yield* nativeRuntime, {
+          amountMinor: 100_000,
+          collected: true,
+          gatewayRoute: false,
+        });
+        yield* configureRefundAuthority(refundCase, neutralRefundAuthority);
+        const A = refundItem('A', 10_000);
+        const B = refundItem('B', 10_000);
+        const owners = { items: [A, B] };
+        const first = yield* requestRefund(refundCase, itemsRefund(refundCase, 'refund-a', [A]), owners);
+        const second = yield* requestRefund(refundCase, itemsRefund(refundCase, 'refund-b', [B]), owners);
+        const statement = {
+          amount: { amountMinor: 10_000, currency: 'CZK' },
+          economicEffectKey: 'gopay:refund:1',
+          factFamily: 'REFUND_EXECUTION',
+          factKind: 'REFUND_CONFIRMED',
+          paymentId: refundCase.payment.paymentId,
+          source: gopayRefundExecution,
+          sourceRevision: 0,
+        } as const;
+        // The method-neutral authority confirms the 100 CZK return for the first refund.
+        const confirmed = yield* acceptObservation(refundCase, {
+          ...statement,
+          operationId: first.operation.operationId,
+          sourceOccurrenceId: 'gopay-callback-refund-1',
+        });
+        expect(confirmed.acceptanceOutcome).toBe('ACCEPTED_OBSERVATION');
+        yield* configureRefundAuthority(refundCase, onlineGatewayRefundAuthority);
+        // The method-specific authority reports the same return without naming a refund: held.
+        const uncorrelated = yield* acceptObservation(refundCase, {
+          ...statement,
+          sourceOccurrenceId: 'gopay-settlement-refund-1',
+        });
+        expect(uncorrelated.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+        // Governance cannot attach that already counted return to the second refund.
+        const attachSecond = decideReconciliation(refundCase, {
+          caseId: uncorrelated.reconciliationCaseId ?? '',
+          decision: {
+            _tag: 'ATTACH_EVIDENCE',
+            observationId: uncorrelated.observationId,
+            operationId: second.operation.operationId,
+          },
+          reason: 'The settlement line is the second refund',
+        });
+        expect(yield* failureCodeOf(attachSecond)).toBe('payment_reconciliation_evidence_not_qualified');
 
         const aggregate = yield* loadPaymentAggregate(
           refundCase.native.database,

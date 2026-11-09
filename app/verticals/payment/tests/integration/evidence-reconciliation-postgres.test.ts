@@ -119,6 +119,13 @@ const qualified = (
   economicEffectKey: overrides.economicEffectKey,
   factKind: overrides.factKind ?? 'COLLECTION_CONFIRMED',
   operationId: overrides.operationId,
+  // The binding `evidence.recordObservation` writes its observation rows under.
+  source: overrides.source ?? {
+    accountRef: 'gopay-account-1',
+    environment: 'production',
+    sourceKind: 'PAYMENT_GATEWAY',
+    sourceSystem: 'gopay',
+  },
   sourceAuthorityId: overrides.sourceAuthorityId,
 });
 

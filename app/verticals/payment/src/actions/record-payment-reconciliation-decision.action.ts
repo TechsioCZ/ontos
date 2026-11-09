@@ -97,7 +97,10 @@ const closingCaseObservationId = (body: PaymentReconciliationDecisionBody, locke
     CLOSE_CASE: () => Option.fromUndefinedOr(locked.observationId),
   });
 
-/** Observations of the same source, Payment and economic effect as `observation` (itself included). */
+/**
+ * Observations of the same source binding, Payment and economic effect as `observation` (itself
+ * included), whichever configured authority record of that binding qualified them.
+ */
 const sameEffectObservations = Effect.fn('RecordPaymentReconciliationDecisionAction.sameEffectObservations')(
   function* sameEffectObservations(context: DecisionContext, observation: PaymentObservationRecord) {
     const { economicEffectKey, paymentId, sourceAuthorityId } = observation;
@@ -108,7 +111,12 @@ const sameEffectObservations = Effect.fn('RecordPaymentReconciliationDecisionAct
       economicEffectKey,
       factKind: observation.factKind,
       paymentId,
-      sourceAuthorityId,
+      source: {
+        accountRef: observation.accountRef,
+        environment: observation.environment,
+        sourceKind: observation.sourceKind,
+        sourceSystem: observation.sourceSystem,
+      },
     });
     return siblings.some((sibling) => sibling.observationId === observation.observationId)
       ? siblings
