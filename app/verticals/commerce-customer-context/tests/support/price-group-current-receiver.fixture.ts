@@ -466,29 +466,21 @@ const migrateOwner = Effect.fn('PriceGroupTemporal.migrateOwner')(function* migr
   const directory = path.join(appRoot, 'verticals', owner === 'ccc' ? commerceAppId : partyAppId);
   const migrationCommand = 'node_modules/drizzle-kit/bin.cjs';
   if (owner === 'party') {
-    // Follow Party's source-owned db:migrate gateway: prepare Contacts, migrate Contacts, then Party.
-    const steps = [
-      ['scripts/prepare-contacts-migration.mts'],
-      [migrationCommand, 'migrate', '--config', 'drizzle.contacts.config.ts'],
-      [migrationCommand, 'migrate', '--config', 'drizzle.config.ts'],
-    ];
-    for (const args of steps) {
-      const child = yield* ChildProcess.make(process.execPath, args, {
-        cwd: directory,
-        env: {
-          APP_ENV_PATH: '/dev/null',
-          DATABASE_ADMIN_URL: Redacted.value(bootstrap.database.adminUrl),
-        },
-        extendEnv: true,
-        stderr: 'pipe',
-        stdin: 'ignore',
-        stdout: 'pipe',
-      });
-      const [code] = yield* Effect.all([child.exitCode, Stream.runDrain(child.stdout), Stream.runDrain(child.stderr)], {
-        concurrency: 3,
-      });
-      yield* requireCondition(code === 0, 'owned-party-migration');
-    }
+    // Party owns Contacts preparation, structured-name preservation and migration-history convergence.
+    const child = yield* ChildProcess.make('pnpm', ['run', 'db:migrate'], {
+      cwd: directory,
+      env: {
+        APP_ENV_PATH: '/dev/null',
+        DATABASE_ADMIN_URL: Redacted.value(bootstrap.database.adminUrl),
+        DATABASE_URL: Redacted.value(bootstrap.database.runtimeUrl),
+      },
+      extendEnv: true,
+      stderr: 'inherit',
+      stdin: 'ignore',
+      stdout: 'pipe',
+    });
+    const [code] = yield* Effect.all([child.exitCode, Stream.runDrain(child.stdout)], { concurrency: 2 });
+    yield* requireCondition(code === 0, 'owned-party-migration');
     return;
   }
   const history = path.join(directory, 'drizzle');
