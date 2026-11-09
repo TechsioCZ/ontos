@@ -58,6 +58,8 @@ const nativeGuestEvidenceAuthority = Effect.fn('GuestEvidenceTest.nativeGuestEvi
         authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
         compositionRevision: snapshot.composition.revision,
         adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
+        // Session-setting authority for the scoped writers; the dedicated request role serves the requests.
+        bootstrapConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
         // The Party request role installs scope through its gateway grant only as an enrolled identity.
         databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
         ownerRegistration: partyRegistryBackendRegistration,

@@ -100,6 +100,9 @@ const makeFixture = Effect.gen(function* makeFixture() {
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       compositionRevision: composition.composition.revision,
       adminConnectionString: Redacted.make(connections.admin.connectionString),
+      // Scoped native writers need session-setting authority: this isolated target's shared runtime
+      // credential. The dedicated request role above still serves every Action and Read.
+      bootstrapConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
       databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       ownerRegistration: partyRegistryBackendRegistration,
       runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
@@ -726,6 +729,7 @@ it.layer(
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
             compositionRevision: h.composition.composition.revision,
             adminConnectionString: Redacted.make(h.connections.admin.connectionString),
+            bootstrapConnectionString: Redacted.make(h.isolated.connections.runtime.connectionString),
             databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
             ownerRegistration: partyRegistryBackendRegistration,
             runtimeConnectionString: Redacted.make(h.connections.runtime.connectionString),

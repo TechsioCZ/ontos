@@ -16,6 +16,7 @@ import { assert, expect, it } from 'effect-rstest';
 import { makePartyDatabase } from '../../src/db/client.ts';
 import { partyContactPoints, partyOfficialIdentifiers } from '../../src/db/schema.ts';
 
+import { historicalContactsMigrationFolder } from '../fixtures/historical-contacts-migrations.ts';
 import { makeGovernedContactFixture } from '../support/governed-contact.fixture.ts';
 import {
   makePartyReconciliationGateway,
@@ -69,7 +70,7 @@ it.layer(nativeServices, { excludeTestServices: true })('verification removal up
         const { executor: admin } = yield* makePartyDatabase(isolated.connections.admin);
         // Gateway redemption uses the separately journaled Contacts schema.
         yield* migrate(admin, {
-          migrationsFolder: fileURLToPath(new URL('../../drizzle-contacts/', import.meta.url)),
+          migrationsFolder: yield* historicalContactsMigrationFolder(),
           migrationsSchema: 'drizzle',
           migrationsTable: '__drizzle_migrations_contacts',
         });
@@ -305,6 +306,7 @@ it.layer(nativeServices, { excludeTestServices: true })('verification removal up
         expect(native.partyConfiguration.expectedRole).toBe(PARTY_REGISTRY_REQUEST_IDENTITY.role);
         const governed = yield* makeGovernedContactFixture({
           adminConnectionString: isolated.connections.admin.connectionString,
+          bootstrapConnectionString: isolated.connections.runtime.connectionString,
           composition,
           gateway: yield* makePartyReconciliationGateway(native, composition),
           partyConfiguration: native.partyConfiguration,

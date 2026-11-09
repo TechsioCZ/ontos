@@ -190,6 +190,15 @@ const RuntimeFixtureConfigurationSchema = Schema.Struct(fixtureConfigurationFiel
 const LiveOperationFixtureConfigurationSchema = Schema.Struct({
   ...fixtureConfigurationFields,
   adminConnectionString: Schema.optional(Schema.Redacted(Schema.String)),
+  /**
+   * Creation-only, never part of the serial creator/attachment handoff. A session-setting credential on
+   * the exact disposable local target of `runtimeConnectionString`, used only by the scoped native
+   * writers (access bootstrap and workload bindings). A dedicated gateway-grant actor role cannot install
+   * scope, so such callers supply the shared runtime credential here while the actor runtime keeps its
+   * own dedicated role and connection. Absent means the runtime executor is reused; the fixture never
+   * falls back to admin or another ambient credential.
+   */
+  bootstrapConnectionString: Schema.optional(Schema.Redacted(Schema.String)),
   runtimeConnectionString: Schema.Redacted(Schema.String),
 });
 
@@ -1042,6 +1051,36 @@ const parseFixtureDatabaseConfig = (connectionString: Redacted.Redacted) =>
   parseDatabaseConfig({ DATABASE_URL: Redacted.value(connectionString) }).pipe(
     Effect.mapError((cause) => fixtureFailure('Invalid database configuration', cause)),
   );
+
+/**
+ * Validates and resolves the creation-only bootstrap credential before any pool is opened. A dedicated
+ * gateway-grant actor role can never install scope, so a caller may name a session-setting credential that
+ * must be a local address on the runtime's exact disposable database. Absent means the runtime executor is
+ * reused; the fixture never falls back to admin, an ambient URL or a rewritten user.
+ */
+const validateFixtureBootstrapConfiguration = Effect.fn('LiveOperations.validateBootstrapConfiguration')(
+  function* validateFixtureBootstrapConfiguration(
+    bootstrapConnectionString: Redacted.Redacted | undefined,
+    runtimeConfiguration: Effect.Success<ReturnType<typeof parseFixtureDatabaseConfig>>,
+  ) {
+    if (bootstrapConnectionString === undefined) {
+      return Option.none<Effect.Success<ReturnType<typeof parseFixtureDatabaseConfig>>>();
+    }
+    const address = yield* decodeDatabaseAddress(bootstrapConnectionString);
+    if (!LOCAL_DATABASE_HOSTS.has(address.hostname)) {
+      return yield* fixtureFailure('Live test fixtures require disposable localhost services');
+    }
+    const configuration = yield* parseFixtureDatabaseConfig(bootstrapConnectionString);
+    if (
+      configuration.host !== runtimeConfiguration.host ||
+      configuration.port !== runtimeConfiguration.port ||
+      configuration.database !== runtimeConfiguration.database
+    ) {
+      return yield* fixtureFailure('Fixture bootstrap credential must target the runtime disposable local database');
+    }
+    return Option.some(configuration);
+  },
+);
 const revokeFixtureResourceAccess = Effect.fn('LiveOperations.revokeResourceAccess')(
   function* revokeFixtureResourceAccessEffect(
     spice: FixtureSpiceClient,
@@ -1541,7 +1580,7 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
     const spiceDb = yield* loadSpiceDbConfig({ envPath: '/dev/null' }).pipe(
       Effect.mapError((cause) => fixtureFailure('Unable to load the SpiceDB configuration', cause)),
     );
-    const { runtimeConnectionString } = configuration;
+    const { bootstrapConnectionString, runtimeConnectionString } = configuration;
     const adminConnectionString =
       configuration.adminConnectionString ??
       (yield* Config.schema(Schema.Redacted(Schema.String), 'DATABASE_ADMIN_URL').pipe(
@@ -1564,10 +1603,23 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
       [parseFixtureDatabaseConfig(runtimeConnectionString), parseFixtureDatabaseConfig(adminConnectionString)],
       { concurrency: 1 },
     );
+    const bootstrapDatabaseConfiguration = Option.getOrUndefined(
+      yield* validateFixtureBootstrapConfiguration(bootstrapConnectionString, databaseConfiguration),
+    );
     const { executor } = yield* makeCoreDatabase({ ...databaseConfiguration, maxConnections: 8 }).pipe(
       Scope.provide(databaseScope),
       Effect.mapError((cause) => fixtureFailure('Unable to initialize fixture database', cause)),
     );
+    // The scoped native writers install scope through the session-setting bootstrap credential. Without an
+    // explicit one they reuse the runtime executor, exactly as an ordinary shared-runtime fixture does.
+    const scopedExecutor =
+      bootstrapDatabaseConfiguration === undefined
+        ? executor
+        : (yield* Effect.suspend(() => makeCoreDatabase({ ...bootstrapDatabaseConfiguration, maxConnections: 2 })).pipe(
+            Scope.provide(databaseScope),
+            Effect.mapError((cause) => fixtureFailure('Unable to initialize the fixture bootstrap database', cause)),
+            Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(databaseScope, exit) : Effect.void)),
+          )).executor;
     const spice = newSpiceDbGrpcClient(spiceDb);
     const [tenantId, legalEntityId] = yield* Effect.all([makeFixtureId(), makeFixtureId()], {
       concurrency: 2,
@@ -1621,7 +1673,7 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
           namespaceRelationships,
           reader,
           readerProviderSubjectId: configuration.readerProviderSubjectId,
-          scopedExecutor: executor,
+          scopedExecutor,
           secondaryLegalEntityId,
           spice,
           tenantId,

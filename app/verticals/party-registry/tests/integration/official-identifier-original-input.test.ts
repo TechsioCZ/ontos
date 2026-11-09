@@ -96,6 +96,9 @@ it.layer(
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
             compositionRevision: composition.composition.revision,
             adminConnectionString: Redacted.make(connections.admin.connectionString),
+            // Scoped native writers need session-setting authority, so they take this isolated target's
+            // shared runtime credential while the dedicated request role serves every Action and Read.
+            bootstrapConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
             databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
             ownerRegistration: partyRegistryBackendRegistration,
             runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
@@ -298,6 +301,7 @@ it.layer(
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
             compositionRevision: composition.composition.revision,
             adminConnectionString: Redacted.make(connections.admin.connectionString),
+            bootstrapConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
             databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
             ownerRegistration: partyRegistryBackendRegistration,
             runtimeConnectionString: Redacted.make(connections.runtime.connectionString),

@@ -6,6 +6,7 @@ import {
   loadDatabaseIdentityConnections,
   ReadRuntime,
   SHELL_GATEWAY_ISSUER_IDENTITY,
+  SHARED_RUNTIME_IDENTITY,
   resolveActionCommit,
   runAction,
 } from '@app/core-runtime';
@@ -135,10 +136,13 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           });
           const partyConfiguration = connections.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id];
           const issuerConfiguration = connections.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id];
+          const bootstrapConfiguration = connections.runtime[SHARED_RUNTIME_IDENTITY.id];
           assert.isOk(partyConfiguration);
           assert.isOk(issuerConfiguration);
+          assert.isOk(bootstrapConfiguration);
           expect(partyConfiguration.expectedRole).toBe(PARTY_REGISTRY_REQUEST_IDENTITY.role);
           expect(issuerConfiguration.expectedRole).toBe(SHELL_GATEWAY_ISSUER_IDENTITY.role);
+          expect(bootstrapConfiguration.expectedRole).toBe(SHARED_RUNTIME_IDENTITY.role);
           const partyRuntimeConnectionString = partyConfiguration.connectionString;
           const issuerClient = yield* makeTestPgClient(issuerConfiguration.connectionString, { maxConnections: 1 });
           const compositionSnapshot = yield* partyCompositionSnapshot;
@@ -163,6 +167,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               actionKeys,
               adminConnectionString: Redacted.make(connections.admin.connectionString),
               authenticationNamespaceId: testAuthenticationNamespaceId,
+              // The dedicated request role cannot install scope; the scoped native writers take the
+              // same target's shared runtime credential while the actor keeps its own role.
+              bootstrapConnectionString: Redacted.make(bootstrapConfiguration.connectionString),
               compositionRevision: compositionSnapshot.composition.revision,
               databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
               ownerRegistration: partyRegistryBackendRegistration,
@@ -176,6 +183,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               actionKeys,
               adminConnectionString: Redacted.make(connections.admin.connectionString),
               authenticationNamespaceId: testAuthenticationNamespaceId,
+              bootstrapConnectionString: Redacted.make(bootstrapConfiguration.connectionString),
               compositionRevision: compositionSnapshot.composition.revision,
               databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
               ownerRegistration: partyRegistryBackendRegistration,

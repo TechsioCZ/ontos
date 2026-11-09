@@ -9,8 +9,10 @@ import {
   GatewayScopeGrantRegistrar,
   GatewayScopeGrantRegistrarLive,
   loadDatabaseConnectionPair,
+  loadDatabaseConfig,
   makeDatabaseConfigLive,
   DatabaseIdentityEnrollmentContext,
+  SHARED_RUNTIME_IDENTITY,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
@@ -129,6 +131,12 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           envPath: '/dev/null',
           identity: PARTY_REGISTRY_REQUEST_IDENTITY,
         });
+        // The dedicated request role serves every Action, Read and redemption but cannot install scope,
+        // so the scoped native writers take the same target's shared runtime credential.
+        const bootstrapConfiguration = yield* loadDatabaseConfig({
+          envPath: '/dev/null',
+          identity: SHARED_RUNTIME_IDENTITY,
+        });
         const grantRegistrar = Context.get(
           yield* Layer.build(GatewayScopeGrantRegistrarLive).pipe(
             Effect.provideService(DatabaseIdentityEnrollmentContext, PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT),
@@ -151,6 +159,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             // The runtime's action boundary registers the staff namespace Shell-issued assertions name.
             adminConnectionString: Redacted.make(connections.admin.connectionString),
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+            bootstrapConnectionString: Redacted.make(bootstrapConfiguration.connectionString),
             compositionRevision: compositionSnapshot.composition.revision,
             ownerRegistration: partyRegistryBackendRegistration,
             runtimeConnectionString: Redacted.make(connections.runtime.connectionString),

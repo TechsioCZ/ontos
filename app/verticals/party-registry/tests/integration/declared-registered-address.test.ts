@@ -1,6 +1,10 @@
 // @rstest-environment happy-dom
 // @rstest-environment-options {"url":"https://party.ontos.test"}
-import { loadDatabaseIdentityConnections, SHELL_GATEWAY_ISSUER_IDENTITY } from '@app/core-runtime';
+import {
+  loadDatabaseIdentityConnections,
+  SHELL_GATEWAY_ISSUER_IDENTITY,
+  SHARED_RUNTIME_IDENTITY,
+} from '@app/core-runtime';
 import {
   PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
   PARTY_REGISTRY_REQUEST_IDENTITY,
@@ -45,8 +49,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         const composition = yield* partyCompositionSnapshot;
         const partyConfiguration = connections.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id];
         const issuerConfiguration = connections.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id];
+        const bootstrapConfiguration = connections.runtime[SHARED_RUNTIME_IDENTITY.id];
         assert.isOk(partyConfiguration);
         assert.isOk(issuerConfiguration);
+        assert.isOk(bootstrapConfiguration);
         expect(partyConfiguration.expectedRole).toBe(PARTY_REGISTRY_REQUEST_IDENTITY.role);
         expect(issuerConfiguration.expectedRole).toBe(SHELL_GATEWAY_ISSUER_IDENTITY.role);
         const native = {
@@ -55,6 +61,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         };
         const h = yield* makeGovernedContactFixture({
           adminConnectionString: connections.admin.connectionString,
+          bootstrapConnectionString: bootstrapConfiguration.connectionString,
           composition,
           gateway: yield* makePartyReconciliationGateway(native, composition),
           partyConfiguration: native.partyConfiguration,

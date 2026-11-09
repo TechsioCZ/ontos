@@ -2,7 +2,21 @@ import { v1 } from '@authzed/authzed-node';
 import type { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { NodeCrypto } from '@effect/platform-node';
-import { ConfigProvider, Context, DateTime, Effect, Layer, Predicate, Redacted, Result, Schema, Scope } from 'effect';
+import {
+  ConfigProvider,
+  Context,
+  DateTime,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Predicate,
+  Redacted,
+  Result,
+  Schema,
+  Scope,
+} from 'effect';
 import { assert, afterAll, expect, it, rs } from 'effect-rstest';
 
 import { AccessIntent } from '../../src/access/decision/authority.ts';
@@ -46,6 +60,7 @@ import {
   toModuleAccessObjectId,
 } from '../../src/permissions/context-access.ts';
 import { ReadRuntime } from '../../src/reads/runtime.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT, FIXTURE_REQUEST_IDENTITY } from '../support/database-identities.ts';
 
 import {
   makeLiveOperationFixture,
@@ -95,6 +110,7 @@ class FixtureModuleStateUpdateFailure extends Schema.TaggedError<FixtureModuleSt
 
 const transport = rs.hoisted(() => ({
   checkPermission: rs.fn<(request: v1.CheckPermissionRequest) => Promise<v1.CheckPermissionResponse>>(),
+  closeDatabase: rs.fn<(role: string) => void>(),
   connectionInsert: rs.fn<(role: string, table: FixtureInsertTable) => void>(),
   executeStatement: rs.fn<(statement: string) => void>(),
   insert: rs.fn<(table: FixtureInsertTable, value: FixtureInsertValues) => void>(),
@@ -109,7 +125,7 @@ const transport = rs.hoisted(() => ({
       readonly superuser: boolean;
     }[]
   >(),
-  openDatabase: rs.fn<() => void>(),
+  openDatabase: rs.fn<(role: string) => void>(),
   selectRows: rs.fn<(table: FixtureReadTable, predicate?: SQL) => readonly FixtureReadRow[]>(),
   updateRows:
     rs.fn<
@@ -157,6 +173,10 @@ const fixtureDelete = () => ({
 // The scripted connection uses the declared shared runtime identity, whose scope authority is
 // session settings. Unknown roles must not acquire that authority merely by returning the settings.
 const fixtureRuntimeRole = SHARED_RUNTIME_IDENTITY.role;
+
+/** The real pool closes with the scope that owns it; mirror that so a test can prove both pools die. */
+const closeFixtureDatabaseWithScope = (role: string) =>
+  Effect.addFinalizer(() => Effect.sync(() => transport.closeDatabase(role)));
 
 /**
  * One transaction's session settings. `set_config(..., true)` is transaction-local in Postgres, so each
@@ -206,8 +226,9 @@ const makeFixtureTransactionExecutor = (role: string) => {
 rs.mock('../../src/db/client.ts', () => ({
   ...rs.requireActual('../../src/db/client.ts'),
   makeCoreDatabase: (configuration: Pick<DatabaseConfigValue, 'expectedRole'>) => {
-    transport.openDatabase();
-    const executor = makeFixtureTransactionExecutor(configuration.expectedRole);
+    const { expectedRole } = configuration;
+    transport.openDatabase(expectedRole);
+    const executor = makeFixtureTransactionExecutor(expectedRole);
     return Effect.succeed({
       executor: {
         ...executor,
@@ -215,9 +236,9 @@ rs.mock('../../src/db/client.ts', () => ({
           operation: (
             transaction: ReturnType<typeof makeFixtureTransactionExecutor>,
           ) => Effect.Effect<Value, Failure, Requirements>,
-        ) => operation(makeFixtureTransactionExecutor(configuration.expectedRole)),
+        ) => operation(makeFixtureTransactionExecutor(expectedRole)),
       },
-    });
+    }).pipe(Effect.tap(() => closeFixtureDatabaseWithScope(expectedRole)));
   },
 }));
 rs.mock('../../src/permissions/config.ts', () => ({
@@ -249,6 +270,13 @@ const configuration = {
   compositionRevision: 'a'.repeat(64),
   runtimeConnectionString: Redacted.make(`postgresql://${fixtureRuntimeRole}:unit@127.0.0.1/unit`),
 };
+
+/** A dedicated gateway-grant actor role: it may never be granted session-setting scope authority. */
+const dedicatedRuntimeConnectionString = Redacted.make(
+  `postgresql://${FIXTURE_REQUEST_IDENTITY.role}:unit@127.0.0.1/unit`,
+);
+/** The shared runtime credential on the same disposable target; enrolled session-setting authority. */
+const sharedBootstrapConnectionString = Redacted.make(`postgresql://${fixtureRuntimeRole}:unit@127.0.0.1/unit`);
 
 const commerceProvisioningNamespace = 'ontos.commerce.portal.better-auth.v1';
 const namespaceResourceType = 'identity_namespace';
@@ -339,6 +367,7 @@ it.layer(NodeCrypto.layer)('live operation fixture', (suite) => {
       Effect.gen(function* separateBootstrapAuthorities() {
         transport.writeRelationships.mockResolvedValue(v1.WriteRelationshipsResponse.create());
         const start = transport.connectionInsert.mock.calls.length;
+        const opens = transport.openDatabase.mock.calls.length;
         const fixture = yield* makeLiveOperationFixture(configuration);
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
         const writes = transport.connectionInsert.mock.calls.slice(start);
@@ -348,6 +377,11 @@ it.layer(NodeCrypto.layer)('live operation fixture', (suite) => {
           .filter((call) => call[1] === accessScopes || call[1] === accessScopeFences)
           .map((call) => call[0]);
         expect(scopedRoles).toEqual([fixtureRuntimeRole, fixtureRuntimeRole]);
+        // No separate bootstrap credential means no second runtime pool: the runtime executor is reused.
+        expect(transport.openDatabase.mock.calls.slice(opens).map(([role]) => role)).toEqual([
+          fixtureRuntimeRole,
+          'unit_admin',
+        ]);
       }),
     ),
   );
@@ -364,6 +398,161 @@ it.layer(NodeCrypto.layer)('live operation fixture', (suite) => {
       expect(failure.reason).toBe('Unable to seed the live fixture access fences');
     }),
   );
+
+  suite.effect(
+    'keeps a dedicated gateway-grant actor runtime while scoped writers use the explicit bootstrap credential',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* separateActorRuntimeFromBootstrapAuthority() {
+          transport.writeRelationships.mockResolvedValue(v1.WriteRelationshipsResponse.create());
+          const start = transport.connectionInsert.mock.calls.length;
+          const opens = transport.openDatabase.mock.calls.length;
+          const fixture = yield* makeLiveOperationFixture({
+            ...configuration,
+            bootstrapConnectionString: sharedBootstrapConnectionString,
+            databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+            runtimeConnectionString: dedicatedRuntimeConnectionString,
+          });
+          yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
+          const writes = transport.connectionInsert.mock.calls.slice(start);
+          expect(writes).toContainEqual(['unit_admin', tenants]);
+          expect(writes).toContainEqual(['unit_admin', principals]);
+          const scopedRoles = writes
+            .filter((call) => call[1] === accessScopes || call[1] === accessScopeFences)
+            .map((call) => call[0]);
+          // Scope installs through the session-setting bootstrap identity, never the gateway-grant actor.
+          expect(scopedRoles).toEqual([fixtureRuntimeRole, fixtureRuntimeRole]);
+          // Two pools: the actor runtime keeps its dedicated role and the scoped writer takes the bootstrap.
+          expect(transport.openDatabase.mock.calls.slice(opens).map(([role]) => role)).toEqual([
+            FIXTURE_REQUEST_IDENTITY.role,
+            fixtureRuntimeRole,
+            'unit_admin',
+          ]);
+          const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(LiveOperationFixtureRuntimeHandoffSchema))(
+            fixture.runtimeHandoff,
+          );
+          // The creation-only bootstrap credential never reaches the serial handoff or its target pin.
+          expect(encoded).not.toContain('bootstrapConnectionString');
+          expect(encoded).not.toContain(fixtureRuntimeRole);
+          expect(encoded).toContain(FIXTURE_REQUEST_IDENTITY.role);
+        }),
+      ),
+  );
+
+  suite.effect('refuses a bootstrap credential outside the runtime disposable local target before any write', () =>
+    Effect.gen(function* refuseForeignBootstrapTarget() {
+      const before = fixtureIoCounts();
+      for (const [bootstrap, reason] of [
+        [
+          'postgresql://ontos_runtime:unit@127.0.0.1/other',
+          'Fixture bootstrap credential must target the runtime disposable local database',
+        ],
+        [
+          'postgresql://ontos_runtime:unit@127.0.0.1:5433/unit',
+          'Fixture bootstrap credential must target the runtime disposable local database',
+        ],
+        [
+          'postgresql://ontos_runtime:unit@db.example.test/unit',
+          'Live test fixtures require disposable localhost services',
+        ],
+        ['postgresql://ontos_runtime:unit@10.0.0.5/unit', 'Live test fixtures require disposable localhost services'],
+      ] as const) {
+        const failure = yield* Effect.flip(
+          makeLiveOperationFixture({
+            ...configuration,
+            bootstrapConnectionString: Redacted.make(bootstrap),
+            databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+            runtimeConnectionString: dedicatedRuntimeConnectionString,
+          }),
+        );
+        expect(failure.reason).toBe(reason);
+      }
+      expect(fixtureIoCounts()).toEqual(before);
+    }),
+  );
+
+  suite.effect('refuses an explicit bootstrap credential without session-setting scope authority', () =>
+    Effect.gen(function* refuseUnenrolledBootstrapCredential() {
+      transport.writeRelationships.mockResolvedValue(v1.WriteRelationshipsResponse.create());
+      for (const bootstrapRole of ['unregistered_fixture_bootstrap', FIXTURE_REQUEST_IDENTITY.role]) {
+        const failure = yield* Effect.flip(
+          makeLiveOperationFixture({
+            ...configuration,
+            bootstrapConnectionString: Redacted.make(`postgresql://${bootstrapRole}:unit@127.0.0.1/unit`),
+            databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+            runtimeConnectionString: dedicatedRuntimeConnectionString,
+          }),
+        );
+        expect(failure.reason).toBe('Unable to seed the live fixture access fences');
+      }
+    }),
+  );
+
+  suite.effect('closes the actor pool when bootstrap acquisition fails', () =>
+    Effect.gen(function* failedBootstrapAcquisition() {
+      const before = transport.closeDatabase.mock.calls.length;
+      transport.openDatabase.mockImplementation((role) => {
+        if (role === fixtureRuntimeRole) {
+          throw new Error('Bootstrap pool acquisition failed');
+        }
+      });
+      const outcome = yield* Effect.exit(
+        makeLiveOperationFixture({
+          ...configuration,
+          bootstrapConnectionString: sharedBootstrapConnectionString,
+          databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+          runtimeConnectionString: dedicatedRuntimeConnectionString,
+        }),
+      ).pipe(Effect.ensuring(Effect.sync(() => transport.openDatabase.mockReset())));
+      expect(Exit.isFailure(outcome)).toBe(true);
+      expect(transport.closeDatabase.mock.calls.slice(before).map(([role]) => role)).toEqual([
+        FIXTURE_REQUEST_IDENTITY.role,
+      ]);
+    }),
+  );
+
+  suite.effect('closes the actor and bootstrap pools on failure and on interruption', () =>
+    Effect.gen(function* closeBothAuthorityPools() {
+      transport.writeRelationships.mockResolvedValue(v1.WriteRelationshipsResponse.create());
+      const failedBefore = transport.closeDatabase.mock.calls.length;
+      const failure = yield* Effect.flip(
+        makeLiveOperationFixture({
+          ...configuration,
+          bootstrapConnectionString: Redacted.make('postgresql://unregistered_fixture_bootstrap:unit@127.0.0.1/unit'),
+          databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+          runtimeConnectionString: dedicatedRuntimeConnectionString,
+        }),
+      );
+      expect(failure.reason).toBe('Unable to seed the live fixture access fences');
+      const closedOnFailure = transport.closeDatabase.mock.calls.slice(failedBefore).map(([role]) => role);
+      expect(closedOnFailure).toContain(FIXTURE_REQUEST_IDENTITY.role);
+      expect(closedOnFailure).toContain('unregistered_fixture_bootstrap');
+      expect(closedOnFailure).toContain('unit_admin');
+
+      // The fiber suspends on the first SpiceDB write, after the actor and bootstrap pools are open.
+      const reachedWrite = yield* Deferred.make<null>();
+      const pendingWrite = Promise.withResolvers<v1.WriteRelationshipsResponse>();
+      transport.writeRelationships.mockImplementation(() => {
+        Deferred.doneUnsafe(reachedWrite, Effect.succeed(null));
+        return pendingWrite.promise;
+      });
+      const interruptedBefore = transport.closeDatabase.mock.calls.length;
+      const running = yield* makeLiveOperationFixture({
+        ...configuration,
+        bootstrapConnectionString: sharedBootstrapConnectionString,
+        databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+        runtimeConnectionString: dedicatedRuntimeConnectionString,
+      }).pipe(Effect.forkChild);
+      yield* Deferred.await(reachedWrite);
+      yield* Fiber.interrupt(running);
+      const closedOnInterrupt = transport.closeDatabase.mock.calls.slice(interruptedBefore).map(([role]) => role);
+      expect(closedOnInterrupt).toContain(FIXTURE_REQUEST_IDENTITY.role);
+      expect(closedOnInterrupt).toContain(fixtureRuntimeRole);
+      transport.writeRelationships.mockReset();
+      transport.openDatabase.mockReset();
+    }),
+  );
+
   suite.effect('exports its exact services through one memoized layer without extra SQL, grants or connections', () =>
     Effect.scoped(
       Effect.gen(function* captureOriginalFixtureServices() {

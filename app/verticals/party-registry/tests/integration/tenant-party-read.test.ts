@@ -2,6 +2,7 @@ import {
   loadDatabaseIdentityConnections,
   makeActiveApplicationCompositionLayer,
   SHELL_GATEWAY_ISSUER_IDENTITY,
+  SHARED_RUNTIME_IDENTITY,
   ReadRuntime,
   runAction,
   TrustedPrincipalContextSchema,
@@ -45,7 +46,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         const snapshot = yield* partyCompositionSnapshot;
         const partyConfiguration = connections.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id];
         const issuerConfiguration = connections.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id];
+        const bootstrapConfiguration = connections.runtime[SHARED_RUNTIME_IDENTITY.id];
         assert.isOk(partyConfiguration !== undefined && issuerConfiguration !== undefined);
+        assert.isOk(bootstrapConfiguration !== undefined);
         const issuerContext = yield* Layer.build(
           PgClient.layer({
             maxConnections: 1,
@@ -72,6 +75,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             actionKeys: [createPartyAction.descriptor.actionKey],
             adminConnectionString: Redacted.make(connections.admin.connectionString),
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+            // The dedicated request role cannot install scope; the scoped native writers take the same
+            // target's shared runtime credential while the actor keeps its own role.
+            bootstrapConnectionString: Redacted.make(bootstrapConfiguration.connectionString),
             compositionRevision: snapshot.composition.revision,
             ownerRegistration: partyRegistryBackendRegistration,
             runtimeConnectionString: Redacted.make(partyConfiguration.connectionString),
