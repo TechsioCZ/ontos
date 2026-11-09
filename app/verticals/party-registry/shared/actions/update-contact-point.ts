@@ -1,6 +1,8 @@
 // Canonical schema-only contract extracted from the generated update-contact-point Action.
 import { Schema } from 'effect';
 
+import { PartyClientSourceReferenceSchema } from '../domain/identity-contracts.ts';
+
 import {
   AddressPurposeAssignmentSchema,
   AddressPurposeTargetSchema,
@@ -49,6 +51,7 @@ const ContactPointMetadataChangeSchema = Schema.Union([
 ]);
 
 export const UpdateContactPointPayloadSchema = Schema.Struct({
+  sourceReference: Schema.optionalKey(PartyClientSourceReferenceSchema),
   change: ContactPointMetadataChangeSchema,
   contactPointRef: PartyContactPointRefSchema,
   expectedRevision: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),

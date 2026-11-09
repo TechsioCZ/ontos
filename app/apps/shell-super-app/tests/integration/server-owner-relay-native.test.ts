@@ -147,9 +147,10 @@ const priceGroupReadCapabilities = [
   'pricing.price-group-catalog.price-group.read.definition',
   'pricing.price-group-catalog.price-group.read.compatibility',
 ] as const;
-type PartySubjectKey = NonNullable<
-  Parameters<typeof createPartyWithAuthorization>[0]['candidate']['subjectEvidence']
->[number]['subjectKey'];
+type PartySubjectKey = Extract<
+  NonNullable<Parameters<typeof createPartyWithAuthorization>[0]['candidate']['subjectEvidence']>[number],
+  { readonly kind: 'ACTOR_ATTESTATION' }
+>['subjectKey'];
 const nativeManufacturerSubjectKey = Brand.nominal<PartySubjectKey>()('manufacturer-subject');
 
 // Catalog's emitted public product-detail contract declares this shared Problem Details schema.

@@ -61,6 +61,10 @@ export const updateProductRecoveryRead = defineRead(
       selectors: [],
     },
     accessKind: 'detail',
+    accessWorkload: {
+      reason: 'Original native Product effect recovery for the registered source integration',
+      workloads: ['commerce.catalog.symmy-product-read'],
+    },
     entrypoint: updateProductRecoveryEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',

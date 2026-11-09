@@ -347,21 +347,18 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
       );
     }
 
+    const context = handlerContext(
+      claim,
+      registration.descriptor.legalEntityScope ?? 'required',
+      nativeOutboxClaimRevision(claim, registration) ?? execution.compositionRevision,
+    );
     const handler = getOutboxWorkerHandler(registration);
     const handlerExit = yield* Effect.exit(
       withNativeOutboxClaimExecution(
         claim,
         registration,
-        Effect.suspend(() =>
-          handler(
-            decoded.value,
-            handlerContext(
-              claim,
-              registration.descriptor.legalEntityScope ?? 'required',
-              nativeOutboxClaimRevision(claim, registration) ?? execution.compositionRevision,
-            ),
-          ),
-        ),
+        context,
+        Effect.suspend(() => handler(decoded.value, context)),
       ).pipe(
         Effect.match({
           onFailure: (error) => {

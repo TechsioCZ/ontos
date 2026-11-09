@@ -259,3 +259,25 @@ it.effect('types database failures as resolver unavailability', () =>
     expect(error.reason).not.toMatch(/secret database error/u);
   }),
 );
+
+it.effect('resolves a current human through a select-only database port', () =>
+  Effect.gen(function* resolvesThroughReadOnlyPort() {
+    const database = yield* makeTestDatabase(() => Effect.succeed([activeRecord]));
+    const resolved = yield* database.transaction(
+      Effect.fn('PrincipalResolverReadPortTest.read')(function* read(transaction) {
+        const selectOnly = { select: transaction.select.bind(transaction) };
+        return yield* makePrincipalResolver(
+          { executor: selectOnly },
+          { authenticationNamespaceId: 'test.staff.better-auth.v1' },
+        ).resolveBetterAuthUserForTenant('subject', activeRecord.tenantId);
+      }),
+    );
+    expect(resolved).toEqual({
+      authBindingId: activeRecord.authBindingId,
+      displayName: activeRecord.displayName,
+      principalId: activeRecord.principalId,
+      principalKind: activeRecord.principalKind,
+      tenantId: activeRecord.tenantId,
+    });
+  }),
+);

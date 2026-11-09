@@ -1,6 +1,8 @@
 // Canonical schema-only contract extracted from the generated end-contact-point Action.
 import { Schema } from 'effect';
 
+import { PartyClientSourceReferenceSchema } from '../domain/identity-contracts.ts';
+
 import {
   AddressPurposeTargetSchema,
   ContactPointProvenanceSchema,
@@ -17,6 +19,7 @@ const EndTargetSchema = Schema.Union([
 ]);
 
 export const EndContactPointPayloadSchema = Schema.Struct({
+  sourceReference: Schema.optionalKey(PartyClientSourceReferenceSchema),
   contactPointRef: PartyContactPointRefSchema,
   effectiveEnd: ContactPointTimestampSchema,
   provenance: ContactPointProvenanceSchema,

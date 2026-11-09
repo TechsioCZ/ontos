@@ -1,4 +1,5 @@
-import { Context, Effect, Layer } from 'effect';
+import { Context, Effect } from 'effect';
+import type { OperationalScope } from '@app/core-runtime';
 
 import type {
   OwnerExecutionAuthorityResult,
@@ -8,11 +9,15 @@ import type {
 import type { PrivacyActionRejected } from './privacy-action-rejected.ts';
 import { PrivacyOperationPersistenceError } from '../persistence/privacy-operation-repository.ts';
 
-interface OwnerExecutionAuthorityContext {
+export interface OwnerExecutionAuthorityContext {
   readonly actionInvocationId: string;
+  readonly dispatchOriginator:
+    | { readonly actionInvocationId: string; readonly compositionRevision: string }
+    | undefined;
   readonly handoff: PrivacyMeasureHandoff;
   readonly legalEntityId: string;
   readonly principalId: string;
+  readonly scope: OperationalScope;
   readonly tenantId: string;
 }
 
@@ -40,8 +45,3 @@ export const ownerExecutionAuthorityUnavailable = Object.freeze({
       }),
     ),
 }) satisfies OwnerExecutionAuthorityService;
-
-export const OwnerExecutionAuthorityUnavailableLive = Layer.succeed(
-  OwnerExecutionAuthority,
-  ownerExecutionAuthorityUnavailable,
-);

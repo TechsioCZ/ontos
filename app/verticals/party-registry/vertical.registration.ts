@@ -9,13 +9,20 @@ export const partyRegistryRegistration = defineVerticalRuntimeRegistration({
   ...partyRegistryRuntimeDeclaration,
   entrypoints: {
     api: {
+      'party-commands': () => import('./src/api/party-command-client.ts'),
       // <generated-module-registration-apis>
       'ares-lookup': () => import('./src/api/ares-lookup-client.ts'),
+      'counterparty-migration-correlation': () => import('./src/api/counterparty-migration-correlation-client.ts'),
+      'counterparty-organization-ico-facts': () => import('./src/api/counterparty-organization-ico-facts-client.ts'),
       'counterparty-read': () => import('./src/api/counterparty-read-client.ts'),
       'counterparty-role-history': () => import('./src/api/counterparty-role-history-client.ts'),
       'duplicate-candidate-detail': () => import('./src/api/duplicate-candidate-detail-client.ts'),
       'guest-party-resolution': () => import('./src/api/guest-party-resolution-client.ts'),
+      'legacy-ico-inventory': () => import('./src/api/legacy-ico-inventory-client.ts'),
+      'organization-business-name-export': () => import('./src/api/organization-business-name-export-client.ts'),
       'organization-engagement-profile': () => import('./src/api/organization-engagement-profile-client.ts'),
+      'organization-ico-facts': () => import('./src/api/organization-ico-facts-client.ts'),
+      'organization-record-facts': () => import('./src/api/organization-record-facts-client.ts'),
       'party-contact-point-detail': () => import('./src/api/party-contact-point-detail-client.ts'),
       'party-contact-points': () => import('./src/api/party-contact-points-client.ts'),
       'party-correction': () => import('./src/api/party-correction-client.ts'),
@@ -26,8 +33,12 @@ export const partyRegistryRegistration = defineVerticalRuntimeRegistration({
       'party-official-identifier-detail': () => import('./src/api/party-official-identifier-detail-client.ts'),
       'party-official-identifier-history': () => import('./src/api/party-official-identifier-history-client.ts'),
       'party-relationship-detail': () => import('./src/api/party-relationship-detail-client.ts'),
+      'party-source-effect-receipt': () => import('./src/api/party-source-effect-receipt-client.ts'),
       'person-engagement-profile': () => import('./src/api/person-engagement-profile-client.ts'),
       'privacy-measure-execution': () => import('./src/api/privacy-measure-execution-client.ts'),
+      'source-counterparty-admission': () => import('./src/api/source-counterparty-admission-client.ts'),
+      'source-person-admission': () => import('./src/api/source-person-admission-client.ts'),
+      'source-profile-export': () => import('./src/api/source-profile-export-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {

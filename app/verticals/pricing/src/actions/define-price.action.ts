@@ -352,6 +352,7 @@ export const definePriceAction = defineAction(
       captureMode: 'metadata_only',
       policyKey: 'commerce.pricing.define-price.access.v1',
     },
+    accessWorkload: { reason: 'Native Price source writes', workloads: ['commerce.pricing.source-write'] },
     actionKey: 'commerce.pricing.define-price',
     auditEvidenceSchema,
     auditProfile: 'standard',
@@ -391,12 +392,14 @@ export const definePriceAction = defineAction(
           catalog: catalogSelectionAssessmentPortFromEnvironment({
             compositionRevision,
             legalEntityId,
+            operationRequirementKey: 'commerce.pricing.requirement.define-price-catalog',
             requestCorrelation: scope.correlationId,
             scope,
           }),
           commercialContext: commercialContextAssessmentPortFromEnvironment({
             compositionRevision,
             legalEntityId,
+            operationRequirementKey: 'commerce.pricing.requirement.define-price-market',
             requestCorrelation: scope.correlationId,
             scope,
           }),

@@ -7,7 +7,13 @@ import { Array as EffectArray, Order } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { compareInventoryCatalog } from '../../src/database/catalog.ts';
-import { INVENTORY_SCHEMA_NAME, INVENTORY_TABLE_INVENTORY, INVENTORY_TABLES } from '../../src/database/schema.ts';
+import {
+  INVENTORY_GOVERNED_TABLES,
+  INVENTORY_SCHEMA_NAME,
+  INVENTORY_TABLE_INVENTORY,
+  INVENTORY_TABLES,
+  inventoryGatewayAssertionRedemptions,
+} from '../../src/database/schema.ts';
 import { inventoryBackendConfigurationImmutabilityTriggerContract } from '../../src/persistence/inventory-backend-configuration-table.ts';
 import { inventoryBindingCorrectionReconciliations } from '../../src/persistence/binding-correction-impact-table.ts';
 import {
@@ -117,7 +123,7 @@ const requireMigrationFolder = (folder: string | undefined, suffix: string): str
   return folder ?? '';
 };
 
-it('owns thirty-five tenant-scoped Inventory tables with row-level security', () => {
+it('owns thirty-five governed Inventory tables and one exact pre-Tenant ingress receipt store', () => {
   expect(INVENTORY_SCHEMA_NAME).toBe('inventory');
   expect(INVENTORY_TABLE_INVENTORY).toEqual([
     'backend_configurations',
@@ -129,6 +135,7 @@ it('owns thirty-five tenant-scoped Inventory tables with row-level security', ()
     'effect_ledger',
     'effect_ledger_history',
     'external_stock_correlations',
+    'gateway_assertion_redemptions',
     'obligation_allocations',
     'obligation_requirements',
     'obligations',
@@ -165,7 +172,19 @@ it('owns thirty-five tenant-scoped Inventory tables with row-level security', ()
       Order.String,
     ),
   ).toEqual(INVENTORY_TABLE_INVENTORY.map((name) => `inventory.${name}`));
-  for (const table of INVENTORY_TABLES) {
+  expect(INVENTORY_GOVERNED_TABLES).toHaveLength(35);
+  const ingress = getTableConfig(inventoryGatewayAssertionRedemptions);
+  expect(ingress.enableRLS).toBe(false);
+  expect(ingress.columns.map((column) => column.name)).toEqual([
+    'audience',
+    'expires_at',
+    'issuer',
+    'jti',
+    'redeemed_at',
+  ]);
+  expect(ingress.uniqueConstraints[0]?.columns.map((column) => column.name)).toEqual(['issuer', 'audience', 'jti']);
+  expect(ingress.checks.map((check) => check.name)).toEqual(['inventory_gateway_redemptions_audience_ck']);
+  for (const table of INVENTORY_GOVERNED_TABLES) {
     const config = getTableConfig(table);
     expect(config.enableRLS, `${config.name} must enable RLS`).toBe(true);
     expect(config.columns.some((column) => column.name === 'tenant_id' && column.notNull)).toBe(true);

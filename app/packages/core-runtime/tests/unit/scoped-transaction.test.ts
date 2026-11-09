@@ -143,12 +143,15 @@ interface ScopeSettingRow {
 const recordScopeInstallation = (scope: OperationalScope, settingRow: ScopeSettingRow) =>
   Effect.gen(function* recordScopeInstallationEffect() {
     const statements: RecordedStatement[] = [];
-    const database = yield* makeTestDatabase((statement, params) => {
-      if (!isTransactionControl(statement)) {
-        statements.push({ params, sql: statement });
-      }
-      return Effect.succeed([settingRow]);
-    });
+    const database = yield* makeTestDatabase(
+      (statement, params) => {
+        if (!isTransactionControl(statement)) {
+          statements.push({ params, sql: statement });
+        }
+        return Effect.succeed([settingRow]);
+      },
+      { currentRole: null },
+    );
     const result = yield* Effect.exit(
       database.transaction((transaction) => installOperationalScope(transaction, scope)),
     );
@@ -164,6 +167,7 @@ it.effect('a redeemed party-registry assertion establishes the scope through the
     });
     expect(Exit.isSuccess(result)).toBe(true);
     expect(statements).toEqual([
+      { params: [], sql: 'select current_user::text as role' },
       {
         params: [assertionValue],
         sql: "select established_tenant_id::text as tenant_id, coalesce(established_legal_entity_id::text, '') as legal_entity_id from trust.establish_gateway_scope($1)",
@@ -208,10 +212,11 @@ it.effect('non-enrolled audiences and contexts without an assertion keep the ses
         tenant_id: tenantId,
       });
       expect(Exit.isSuccess(result)).toBe(true);
-      expect(statements.length).toBe(2);
-      expect(statements[0]?.sql).toContain("set_config('ontos.tenant_id'");
-      expect(statements[0]?.params).toEqual([tenantId, '']);
-      expect(statements[1]?.sql).toContain("current_setting('ontos.tenant_id', true)");
+      expect(statements.length).toBe(3);
+      expect(statements[0]?.sql).toBe('select current_user::text as role');
+      expect(statements[1]?.sql).toContain("set_config('ontos.tenant_id'");
+      expect(statements[1]?.params).toEqual([tenantId, '']);
+      expect(statements[2]?.sql).toContain("current_setting('ontos.tenant_id', true)");
       expect(statements.some(({ sql }) => sql.includes('trust.'))).toBe(false);
       expect(statements.some(({ params }) => params.includes(assertionValue))).toBe(false);
     }
@@ -236,19 +241,22 @@ it.effect('a gateway-grant role never trusts session settings, even when they ma
         tenant_id: tenantId,
       });
       expectOperationContextUnavailable(result);
-      expect(statements.some(({ sql }) => sql.includes('trust.'))).toBe(false);
+      expect(statements).toEqual([{ params: [], sql: 'select current_user::text as role' }]);
     }
   }),
 );
 
-it.effect('a session-setting role cannot verify a gateway grant scope', () =>
+it.effect('a session-setting role installs a genuine gateway context with its own session authority', () =>
   Effect.gen(function* sessionRoleWithAssertion() {
-    const { result } = yield* recordScopeInstallation(gatewayScope('party-registry'), {
-      legal_entity_id: '',
+    const { result, statements } = yield* recordScopeInstallation(gatewayScope('party-registry', true), {
+      legal_entity_id: legalEntityId,
       role: 'ontos_runtime',
       tenant_id: tenantId,
     });
-    expectOperationContextUnavailable(result);
+    expect(Exit.isSuccess(result)).toBe(true);
+    expect(statements[1]?.params).toEqual([tenantId, legalEntityId]);
+    expect(statements.some(({ sql }) => sql.includes('trust.'))).toBe(false);
+    expect(statements.some(({ params }) => params.includes(assertionValue))).toBe(false);
   }),
 );
 
@@ -324,3 +332,23 @@ it('renders gateway-grant and session read policies with their exact predicates 
     `${sessionTenantPredicate} and "fixture"."legal_entity_id" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`,
   );
 });
+
+it.effect('refuses a missing actual database role before installing settings or a grant', () =>
+  Effect.gen(function* missingDatabaseRoleIsUnavailable() {
+    const statements: string[] = [];
+    const database = yield* makeTestDatabase(
+      (statement) => {
+        if (!isTransactionControl(statement)) {
+          statements.push(statement);
+        }
+        return Effect.succeed([]);
+      },
+      { currentRole: null },
+    );
+    const result = yield* Effect.exit(
+      database.transaction((transaction) => installOperationalScope(transaction, gatewayScope('party-registry'))),
+    );
+    expectOperationContextUnavailable(result);
+    expect(statements).toEqual(['select current_user::text as role']);
+  }),
+);

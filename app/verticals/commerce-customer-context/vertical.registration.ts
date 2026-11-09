@@ -10,6 +10,8 @@ import { administerCommerceQuantityRuleAction } from './src/actions/administer-c
 import { administerMarketBootstrapPolicyAction } from './src/actions/administer-market-bootstrap-policy.action.ts';
 import { administerPaymentTermPolicyAction } from './src/actions/administer-payment-term-policy.action.ts';
 import { administerPurchaseCurrencyPolicyAction } from './src/actions/administer-purchase-currency-policy.action.ts';
+import { admitCustomerGroupMembershipSnapshotAction } from './src/actions/admit-customer-group-membership-snapshot.action.ts';
+import { applyCustomerGroupMembershipSourceAction } from './src/actions/apply-customer-group-membership-source.action.ts';
 import { archiveCustomerGroupAction } from './src/actions/archive-customer-group.action.ts';
 import { archiveCustomerProfileAction } from './src/actions/archive-customer-profile.action.ts';
 import { assignCommerceQuantityRuleAction } from './src/actions/assign-commerce-quantity-rule.action.ts';
@@ -21,29 +23,74 @@ import { bindRetailPortalProfileAction } from './src/actions/bind-retail-portal-
 import { bootstrapCounterpartyAccessAdministratorAction } from './src/actions/bootstrap-counterparty-access-administrator.action.ts';
 import { changeCounterpartyPurchaseLimitAction } from './src/actions/change-counterparty-purchase-limit.action.ts';
 import { changeCustomerPaymentTermsAction } from './src/actions/change-customer-payment-terms.action.ts';
+import { changeCustomerProfileIcoAction } from './src/actions/change-customer-profile-ico.action.ts';
+import { changeOrganizationCustomerProfileIcoAction } from './src/actions/change-organization-customer-profile-ico.action.ts';
 import { changePrincipalPurchaseLimitOverrideAction } from './src/actions/change-principal-purchase-limit-override.action.ts';
 import { changeRetailPaymentTermPreferenceAction } from './src/actions/change-retail-payment-term-preference.action.ts';
 import { claimCounterpartyAccessInvitationAction } from './src/actions/claim-counterparty-access-invitation.action.ts';
 import { claimPortalEnrollmentTransitionAction } from './src/actions/claim-portal-enrollment-transition.action.ts';
 import { clearDefaultBillingAddressAction } from './src/actions/clear-default-billing-address.action.ts';
 import { clearDefaultDeliveryDestinationAction } from './src/actions/clear-default-delivery-destination.action.ts';
+import { commerceQuantityResolutionRead } from './src/api/commerce-quantity-resolution.read.ts';
 import { completePurchaseProposalBasisAction } from './src/actions/complete-purchase-proposal-basis.action.ts';
 import { consumeOrderPurchaseApprovalAction } from './src/actions/consume-order-purchase-approval.action.ts';
 import { consumePurchaseApprovalAction } from './src/actions/consume-purchase-approval.action.ts';
+import { counterpartyAccessInvitationReadRead } from './src/api/counterparty-access-invitation-read.read.ts';
+import { counterpartyAllCustomerArchiveRead } from './src/api/counterparty-all-customer-archive.read.ts';
+import { counterpartyAllOrderHistoryDetailRead } from './src/api/counterparty-all-order-history-detail.read.ts';
+import { counterpartyAllOrderHistoryRead } from './src/api/counterparty-all-order-history.read.ts';
+import { counterpartyCommerceAccessCheckRead } from './src/api/counterparty-commerce-access-check.read.ts';
+import { counterpartyCommerceAccessDetailRead } from './src/api/counterparty-commerce-access-detail.read.ts';
+import { counterpartyCommerceAccessListRead } from './src/api/counterparty-commerce-access-list.read.ts';
+import { counterpartyOrderHistoryDetailRead } from './src/api/counterparty-order-history-detail.read.ts';
+import { counterpartyOrderHistoryRead } from './src/api/counterparty-order-history.read.ts';
 import { createApprovalHierarchyAction } from './src/actions/create-approval-hierarchy.action.ts';
 import { createCounterpartyAccessInvitationAction } from './src/actions/create-counterparty-access-invitation.action.ts';
 import { createCounterpartyPurchasingProfileAction } from './src/actions/create-counterparty-purchasing-profile.action.ts';
 import { createCustomerGroupAction } from './src/actions/create-customer-group.action.ts';
 import { createPurchaseProposalRevisionAction } from './src/actions/create-purchase-proposal-revision.action.ts';
+import { customerArchiveRead } from './src/api/customer-archive.read.ts';
+import { customerGroupDefinitionSourceRead } from './src/api/customer-group-definition-source.read.ts';
+import { customerGroupMembershipSourceReceiptRead } from './src/api/customer-group-membership-source-receipt.read.ts';
+import { customerPaymentTermEntitlementReadRead } from './src/api/customer-payment-term-entitlement-read.read.ts';
+import { customerPriceGroupAssignmentReadRead } from './src/api/customer-price-group-assignment-read.read.ts';
+import { customerPriceGroupAssignmentReceiptRead } from './src/api/customer-price-group-assignment-receipt.read.ts';
+import { customerPriceGroupResolutionRead } from './src/api/customer-price-group-resolution.read.ts';
+import { customerProfileIcoMigrationRead } from './src/api/customer-profile-ico-migration.read.ts';
+import { customerProfileIcoRead } from './src/api/customer-profile-ico.read.ts';
+import { customerProfileOrganizationIcoFactsRead } from './src/api/customer-profile-organization-ico-facts.read.ts';
+import { customerProfileReadRead } from './src/api/customer-profile-read.read.ts';
+import { customerProfileSourceRead } from './src/api/customer-profile-source.read.ts';
+import { customerProfileTradingGateRead } from './src/api/customer-profile-trading-gate.read.ts';
+import { customerRecordVisibilityRead } from './src/api/customer-record-visibility.read.ts';
 import { decidePurchaseApprovalRequestAction } from './src/actions/decide-purchase-approval-request.action.ts';
+import { deliveryDestinationResolutionRead } from './src/api/delivery-destination-resolution.read.ts';
+import { effectiveCustomerGroupMembershipSetV1Read } from './src/api/effective-customer-group-membership-set-v1.read.ts';
 import { ensureRetailCustomerProfileAction } from './src/actions/ensure-retail-customer-profile.action.ts';
 import { executePrivacyMeasureAction } from './src/actions/execute-privacy-measure.action.ts';
 import { executePrivacyMeasureWorker } from './src/workers/execute-privacy-measure.worker.ts';
 import { grantCounterpartyCommerceAccessAction } from './src/actions/grant-counterparty-commerce-access.action.ts';
+import { guestPaymentTermsResolutionRead } from './src/api/guest-payment-terms-resolution.read.ts';
+import { invoiceRecipientResolutionRead } from './src/api/invoice-recipient-resolution.read.ts';
+import { marketAffectedUseAssessmentRead } from './src/api/market-affected-use-assessment.read.ts';
+import { marketBootstrapResolutionRead } from './src/api/market-bootstrap-resolution.read.ts';
+import { marketRetirementReservationRecoveryRead } from './src/api/market-retirement-reservation-recovery.read.ts';
+import { marketSubjectRestrictionsCurrentRead } from './src/api/market-subject-restrictions-current.read.ts';
 import { migrateCounterpartyPriceGroupAction } from './src/actions/migrate-counterparty-price-group.action.ts';
 import { migrateCustomerPriceGroupAction } from './src/actions/migrate-customer-price-group.action.ts';
+import { migrateCustomerProfileIcoAction } from './src/actions/migrate-customer-profile-ico.action.ts';
+import { migrateOrganizationCustomerProfileIcoAction } from './src/actions/migrate-organization-customer-profile-ico.action.ts';
 import { openProfileReconciliationAction } from './src/actions/open-profile-reconciliation.action.ts';
+import { orderCommitmentApprovalEvidenceRead } from './src/api/order-commitment-approval-evidence.read.ts';
+import { organizationCustomerProfileIcoMigrationRead } from './src/api/organization-customer-profile-ico-migration.read.ts';
+import { organizationCustomerProfileIcoRead } from './src/api/organization-customer-profile-ico.read.ts';
+import { paymentTermAffectedUseAssessmentRead } from './src/api/payment-term-affected-use-assessment.read.ts';
+import { paymentTermsResolutionRead } from './src/api/payment-terms-resolution.read.ts';
 import { preparePurchaseProposalBasisAction } from './src/actions/prepare-purchase-proposal-basis.action.ts';
+import { pricingPurchaseContextVerificationRead } from './src/api/pricing-purchase-context-verification.read.ts';
+import { purchaseCurrencyResolutionRead } from './src/api/purchase-currency-resolution.read.ts';
+import { purchaseLimitEvaluationRead } from './src/api/purchase-limit-evaluation.read.ts';
+import { purchaseLimitPolicyReadRead } from './src/api/purchase-limit-policy-read.read.ts';
 import { reactivateCustomerGroupAction } from './src/actions/reactivate-customer-group.action.ts';
 import { reactivateCustomerProfileAction } from './src/actions/reactivate-customer-profile.action.ts';
 import { reconcilePartyMergeWorker } from './src/workers/reconcile-party-merge.worker.ts';
@@ -55,17 +102,28 @@ import { removeCustomerPaymentTermAction } from './src/actions/remove-customer-p
 import { removeCustomerPriceGroupAction } from './src/actions/remove-customer-price-group.action.ts';
 import { removeSavedAddressAction } from './src/actions/remove-saved-address.action.ts';
 import { repeatCounterpartyOrderAction } from './src/actions/repeat-counterparty-order.action.ts';
+import { repeatOrderPreparationRead } from './src/api/repeat-order-preparation.read.ts';
 import { repeatRetailOrderAction } from './src/actions/repeat-retail-order.action.ts';
 import { reroutePurchaseApprovalRequestAction } from './src/actions/reroute-purchase-approval-request.action.ts';
 import { resendCounterpartyAccessInvitationAction } from './src/actions/resend-counterparty-access-invitation.action.ts';
 import { reserveMarketRetirementAction } from './src/actions/reserve-market-retirement.action.ts';
 import { reservePaymentTermRetirementAction } from './src/actions/reserve-payment-term-retirement.action.ts';
 import { resolveProfileReconciliationAction } from './src/actions/resolve-profile-reconciliation.action.ts';
+import { retailAccessDecisionRead } from './src/api/retail-access-decision.read.ts';
+import { retailOrderHistoryDetailRead } from './src/api/retail-order-history-detail.read.ts';
+import { retailOrderHistoryRead } from './src/api/retail-order-history.read.ts';
+import { retailPortalProfileBindingReadRead } from './src/api/retail-portal-profile-binding-read.read.ts';
+import { retailPrincipalResolutionRead } from './src/api/retail-principal-resolution.read.ts';
+import { retailPurchasingSubjectCurrentV1Read } from './src/api/retail-purchasing-subject-current-v1.read.ts';
 import { revalidateOrderPurchaseApprovalAction } from './src/actions/revalidate-order-purchase-approval.action.ts';
 import { revalidatePurchaseApprovalAction } from './src/actions/revalidate-purchase-approval.action.ts';
 import { revokeCounterpartyAccessInvitationAction } from './src/actions/revoke-counterparty-access-invitation.action.ts';
 import { revokeCounterpartyCommerceAccessAction } from './src/actions/revoke-counterparty-commerce-access.action.ts';
 import { revokeRetailPortalProfileBindingAction } from './src/actions/revoke-retail-portal-profile-binding.action.ts';
+import { savedAddressDefaultsRead } from './src/api/saved-address-defaults.read.ts';
+import { savedAddressDetailRead } from './src/api/saved-address-detail.read.ts';
+import { savedAddressListRead } from './src/api/saved-address-list.read.ts';
+import { savedAddressSourceReceiptRead } from './src/api/saved-address-source-receipt.read.ts';
 import { setDefaultBillingAddressAction } from './src/actions/set-default-billing-address.action.ts';
 import { setDefaultDeliveryDestinationAction } from './src/actions/set-default-delivery-destination.action.ts';
 import { startPortalEnrollmentAction } from './src/actions/start-portal-enrollment.action.ts';
@@ -75,49 +133,7 @@ import { terminatePortalEnrollmentAction } from './src/actions/terminate-portal-
 import { triggerPurchaseApprovalAction } from './src/actions/trigger-purchase-approval.action.ts';
 import { updateCustomerGroupAction } from './src/actions/update-customer-group.action.ts';
 import { updateSavedAddressAction } from './src/actions/update-saved-address.action.ts';
-import { marketSubjectRestrictionsCurrentRead } from './src/api/market-subject-restrictions-current.read.ts';
-import { marketAffectedUseAssessmentRead } from './src/api/market-affected-use-assessment.read.ts';
-import { paymentTermAffectedUseAssessmentRead } from './src/api/payment-term-affected-use-assessment.read.ts';
-import { customerPriceGroupResolutionRead } from './src/api/customer-price-group-resolution.read.ts';
-import { pricingPurchaseContextVerificationRead } from './src/api/pricing-purchase-context-verification.read.ts';
-import { effectiveCustomerGroupMembershipSetV1Read } from './src/api/effective-customer-group-membership-set-v1.read.ts';
 import { verifyEffectiveCustomerGroupMembershipSetV1Read } from './src/api/verify-effective-customer-group-membership-set-v1.read.ts';
-import { invoiceRecipientResolutionRead } from './src/api/invoice-recipient-resolution.read.ts';
-import { deliveryDestinationResolutionRead } from './src/api/delivery-destination-resolution.read.ts';
-import { marketBootstrapResolutionRead } from './src/api/market-bootstrap-resolution.read.ts';
-import { paymentTermsResolutionRead } from './src/api/payment-terms-resolution.read.ts';
-import { guestPaymentTermsResolutionRead } from './src/api/guest-payment-terms-resolution.read.ts';
-import { purchaseCurrencyResolutionRead } from './src/api/purchase-currency-resolution.read.ts';
-import { marketRetirementReservationRecoveryRead } from './src/api/market-retirement-reservation-recovery.read.ts';
-import { commerceQuantityResolutionRead } from './src/api/commerce-quantity-resolution.read.ts';
-import { counterpartyAccessInvitationReadRead } from './src/api/counterparty-access-invitation-read.read.ts';
-import { counterpartyAllCustomerArchiveRead } from './src/api/counterparty-all-customer-archive.read.ts';
-import { counterpartyAllOrderHistoryDetailRead } from './src/api/counterparty-all-order-history-detail.read.ts';
-import { counterpartyAllOrderHistoryRead } from './src/api/counterparty-all-order-history.read.ts';
-import { counterpartyCommerceAccessCheckRead } from './src/api/counterparty-commerce-access-check.read.ts';
-import { counterpartyCommerceAccessDetailRead } from './src/api/counterparty-commerce-access-detail.read.ts';
-import { counterpartyCommerceAccessListRead } from './src/api/counterparty-commerce-access-list.read.ts';
-import { counterpartyOrderHistoryDetailRead } from './src/api/counterparty-order-history-detail.read.ts';
-import { counterpartyOrderHistoryRead } from './src/api/counterparty-order-history.read.ts';
-import { customerArchiveRead } from './src/api/customer-archive.read.ts';
-import { customerPaymentTermEntitlementReadRead } from './src/api/customer-payment-term-entitlement-read.read.ts';
-import { customerPriceGroupAssignmentReadRead } from './src/api/customer-price-group-assignment-read.read.ts';
-import { customerProfileReadRead } from './src/api/customer-profile-read.read.ts';
-import { customerProfileTradingGateRead } from './src/api/customer-profile-trading-gate.read.ts';
-import { customerRecordVisibilityRead } from './src/api/customer-record-visibility.read.ts';
-import { orderCommitmentApprovalEvidenceRead } from './src/api/order-commitment-approval-evidence.read.ts';
-import { purchaseLimitEvaluationRead } from './src/api/purchase-limit-evaluation.read.ts';
-import { purchaseLimitPolicyReadRead } from './src/api/purchase-limit-policy-read.read.ts';
-import { repeatOrderPreparationRead } from './src/api/repeat-order-preparation.read.ts';
-import { retailAccessDecisionRead } from './src/api/retail-access-decision.read.ts';
-import { retailOrderHistoryDetailRead } from './src/api/retail-order-history-detail.read.ts';
-import { retailOrderHistoryRead } from './src/api/retail-order-history.read.ts';
-import { retailPortalProfileBindingReadRead } from './src/api/retail-portal-profile-binding-read.read.ts';
-import { retailPrincipalResolutionRead } from './src/api/retail-principal-resolution.read.ts';
-import { retailPurchasingSubjectCurrentV1Read } from './src/api/retail-purchasing-subject-current-v1.read.ts';
-import { savedAddressDefaultsRead } from './src/api/saved-address-defaults.read.ts';
-import { savedAddressDetailRead } from './src/api/saved-address-detail.read.ts';
-import { savedAddressListRead } from './src/api/saved-address-list.read.ts';
 import { verifyRetailPurchasingSubjectCurrentV1Read } from './src/api/verify-retail-purchasing-subject-current-v1.read.ts';
 // </generated-module-registration-imports>
 /* jscpd:ignore-end */
@@ -131,6 +147,8 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     administerMarketBootstrapPolicyAction,
     administerPaymentTermPolicyAction,
     administerPurchaseCurrencyPolicyAction,
+    admitCustomerGroupMembershipSnapshotAction,
+    applyCustomerGroupMembershipSourceAction,
     archiveCustomerGroupAction,
     archiveCustomerProfileAction,
     assignCommerceQuantityRuleAction,
@@ -142,6 +160,8 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     bootstrapCounterpartyAccessAdministratorAction,
     changeCounterpartyPurchaseLimitAction,
     changeCustomerPaymentTermsAction,
+    changeCustomerProfileIcoAction,
+    changeOrganizationCustomerProfileIcoAction,
     changePrincipalPurchaseLimitOverrideAction,
     changeRetailPaymentTermPreferenceAction,
     claimCounterpartyAccessInvitationAction,
@@ -162,6 +182,8 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     grantCounterpartyCommerceAccessAction,
     migrateCounterpartyPriceGroupAction,
     migrateCustomerPriceGroupAction,
+    migrateCustomerProfileIcoAction,
+    migrateOrganizationCustomerProfileIcoAction,
     openProfileReconciliationAction,
     preparePurchaseProposalBasisAction,
     reactivateCustomerGroupAction,
@@ -213,14 +235,24 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
       'counterparty-order-history': () => import('./src/api/counterparty-order-history-client.ts'),
       'counterparty-order-history-detail': () => import('./src/api/counterparty-order-history-detail-client.ts'),
       'customer-archive': () => import('./src/api/customer-archive-client.ts'),
+      'customer-group-definition-source': () => import('./src/api/customer-group-definition-source-client.ts'),
       'customer-group-detail': () => import('./src/api/customer-group-detail-client.ts'),
       'customer-group-history': () => import('./src/api/customer-group-history-client.ts'),
       'customer-group-members': () => import('./src/api/customer-group-members-client.ts'),
+      'customer-group-membership-source-receipt': () =>
+        import('./src/api/customer-group-membership-source-receipt-client.ts'),
       'customer-payment-term-entitlement-read': () =>
         import('./src/api/customer-payment-term-entitlement-read-client.ts'),
       'customer-price-group-assignment-read': () => import('./src/api/customer-price-group-assignment-read-client.ts'),
+      'customer-price-group-assignment-receipt': () =>
+        import('./src/api/customer-price-group-assignment-receipt-client.ts'),
       'customer-price-group-resolution': () => import('./src/api/customer-price-group-resolution-client.ts'),
+      'customer-profile-ico': () => import('./src/api/customer-profile-ico-client.ts'),
+      'customer-profile-ico-migration': () => import('./src/api/customer-profile-ico-migration-client.ts'),
+      'customer-profile-organization-ico-facts': () =>
+        import('./src/api/customer-profile-organization-ico-facts-client.ts'),
       'customer-profile-read': () => import('./src/api/customer-profile-read-client.ts'),
+      'customer-profile-source': () => import('./src/api/customer-profile-source-client.ts'),
       'customer-profile-trading-gate': () => import('./src/api/customer-profile-trading-gate-client.ts'),
       'customer-record-visibility': () => import('./src/api/customer-record-visibility-client.ts'),
       'delivery-destination-resolution': () => import('./src/api/delivery-destination-resolution-client.ts'),
@@ -238,6 +270,9 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
       'market-subject-restrictions-current': () => import('./src/api/market-subject-restrictions-current-client.ts'),
       'order-commitment-approval-evidence': () => import('./src/api/order-commitment-approval-evidence-client.ts'),
       'order-service-approval-evidence': () => import('./src/api/order-service-approval-evidence-client.ts'),
+      'organization-customer-profile-ico': () => import('./src/api/organization-customer-profile-ico-client.ts'),
+      'organization-customer-profile-ico-migration': () =>
+        import('./src/api/organization-customer-profile-ico-migration-client.ts'),
       'payment-term-affected-use-assessment': () => import('./src/api/payment-term-affected-use-assessment-client.ts'),
       'payment-term-policy-current': () => import('./src/api/payment-term-policy-current-client.ts'),
       'payment-terms-resolution': () => import('./src/api/payment-terms-resolution-client.ts'),
@@ -260,6 +295,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
       'saved-address-defaults': () => import('./src/api/saved-address-defaults-client.ts'),
       'saved-address-detail': () => import('./src/api/saved-address-detail-client.ts'),
       'saved-address-list': () => import('./src/api/saved-address-list-client.ts'),
+      'saved-address-source-receipt': () => import('./src/api/saved-address-source-receipt-client.ts'),
       'verify-effective-customer-group-membership-set-v1': () =>
         import('./src/api/verify-effective-customer-group-membership-set-v1-client.ts'),
       'verify-retail-purchasing-subject-current-v1': () =>
@@ -322,20 +358,30 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     savedAddressListRead,
     verifyRetailPurchasingSubjectCurrentV1Read,
     // <generated-module-registration-reads>
-    marketSubjectRestrictionsCurrentRead,
-    marketAffectedUseAssessmentRead,
-    paymentTermAffectedUseAssessmentRead,
+    customerGroupDefinitionSourceRead,
+    customerGroupMembershipSourceReceiptRead,
+    customerPriceGroupAssignmentReceiptRead,
     customerPriceGroupResolutionRead,
-    pricingPurchaseContextVerificationRead,
-    effectiveCustomerGroupMembershipSetV1Read,
-    verifyEffectiveCustomerGroupMembershipSetV1Read,
-    invoiceRecipientResolutionRead,
+    customerProfileIcoMigrationRead,
+    customerProfileIcoRead,
+    customerProfileOrganizationIcoFactsRead,
+    customerProfileSourceRead,
     deliveryDestinationResolutionRead,
-    marketBootstrapResolutionRead,
-    paymentTermsResolutionRead,
+    effectiveCustomerGroupMembershipSetV1Read,
     guestPaymentTermsResolutionRead,
-    purchaseCurrencyResolutionRead,
+    invoiceRecipientResolutionRead,
+    marketAffectedUseAssessmentRead,
+    marketBootstrapResolutionRead,
     marketRetirementReservationRecoveryRead,
+    marketSubjectRestrictionsCurrentRead,
+    organizationCustomerProfileIcoMigrationRead,
+    organizationCustomerProfileIcoRead,
+    paymentTermAffectedUseAssessmentRead,
+    paymentTermsResolutionRead,
+    pricingPurchaseContextVerificationRead,
+    purchaseCurrencyResolutionRead,
+    savedAddressSourceReceiptRead,
+    verifyEffectiveCustomerGroupMembershipSetV1Read,
     // </generated-module-registration-reads>
   ],
 });

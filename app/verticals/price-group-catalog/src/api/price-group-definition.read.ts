@@ -194,6 +194,10 @@ export const priceGroupDefinitionRead = defineRead(
       selectors: [],
     },
     accessKind: 'detail',
+    accessWorkload: {
+      reason: 'Native Price Group source definition reads',
+      workloads: ['pricing.price-group-catalog.source-read'],
+    },
     domainErrorSchema: PriceGroupDefinitionDomainErrorSchema,
     entrypoint: priceGroupDefinitionEntrypoint,
     evidencePolicy: {

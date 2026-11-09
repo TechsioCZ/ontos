@@ -122,6 +122,7 @@ const orderedSources: readonly OwnerStreamSource[] = [
       ['pricing', 'pricing'],
       ['privacy', 'privacy'],
       ['storefront-registry', 'storefront_registry'],
+      ['symmy-integration', 'symmy_integration'],
       ['tax', 'tax'],
     ] as const
   ).map(([ownerId, schema]) =>

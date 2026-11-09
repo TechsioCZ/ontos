@@ -3,11 +3,14 @@
 // @ontos-action-http-slug update-customer-group
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { UpdateCustomerGroupPayloadSchema, UpdateCustomerGroupResultSchema } from '../actions/update-customer-group.ts';
 
 export { UpdateCustomerGroupPayloadSchema } from '../actions/update-customer-group.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 export const UpdateCustomerGroupActionInvalidProblemSchema = makeProblemDetailsSchema(
   'UpdateCustomerGroupActionInvalidProblem',
   400,
@@ -43,6 +46,8 @@ export const UpdateCustomerGroupActionConflictProblemSchema = makeProblemDetails
     code: Schema.Literals([
       'action_request_hash_conflict',
       'action_invocation_state_invalid',
+      'customer_group_source_conflict',
+      'customer_group_source_stale',
       'customer_group_revision_conflict',
     ]),
   },
@@ -51,7 +56,11 @@ export const UpdateCustomerGroupActionIneligibleProblemSchema = makeProblemDetai
   'UpdateCustomerGroupActionIneligibleProblem',
   422,
   {
-    code: Schema.Literals(['action_policy_denied', 'customer_group_definition_change_requires_new_group']),
+    code: Schema.Literals([
+      'action_policy_denied',
+      'customer_group_definition_change_requires_new_group',
+      'customer_group_source_authority_denied',
+    ]),
   },
 );
 export const UpdateCustomerGroupActionPreconditionProblemSchema = makeProblemDetailsSchema(

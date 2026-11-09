@@ -10,6 +10,7 @@ import {
 } from '@app/shared-contracts';
 
 import { GatewayScopeGrantUnavailableError, makeActiveApplicationCompositionLayer } from '@app/core-runtime';
+import { RegisteredGatewayWorkloadSchema } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { makeModuleContractFixture } from '../../../../packages/core-runtime/src/testing/module-contract.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import { capturingScopeGrantRegistrar, scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
@@ -27,7 +28,10 @@ import {
   GatewayIssuer,
   GatewayIssuerError,
   issueGatewayContextAssertion,
+  issueRouteScopedGatewayContextAssertion,
+  issueSymmyGatewayContextAssertion,
   makeGatewayIssuerLayer,
+  SYMMY_INGRESS_AUDIENCE,
 } from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerLayerOptions } from '../../api/auth/gateway-issuer.ts';
 
@@ -612,6 +616,124 @@ it.effect('fails closed for unknown audiences and invalid Effect-managed time', 
   }),
 );
 
+it.effect('never admits raw processing metadata or a caller-named flag through generic issuance', () =>
+  Effect.gen(function* rejectRawProcessingAuthority() {
+    const { configuration } = yield* makeConfiguration();
+    const runReference = '70000000-0000-4000-8000-000000000001';
+    const workload = yield* Schema.decodeUnknownEffect(RegisteredGatewayWorkloadSchema)({
+      admissionInvocationId: runReference,
+      bindingIncarnation: '70000000-0000-4000-8000-000000000002',
+      claimId: 'native-claim',
+      declarationKey: 'integration.symmy.symmy-source-organization-facts.read',
+      entrypointKey: 'integration.symmy.api.symmy-source-organization-facts',
+      jobKey: 'integration.symmy.execute-symmy-job',
+      legalEntityId: principal.legalEntityId,
+      legalEntityScope: 'required',
+      organizationProcessingRead: { requestHash: 'a'.repeat(64) },
+      originalOwnerBindingIncarnation: '70000000-0000-4000-8000-000000000003',
+      originalPrincipalId: principal.principalId,
+      originalWorkloadBindingIncarnation: '70000000-0000-4000-8000-000000000004',
+      originalWorkloadKey: 'integration.symmy-admit',
+      runReference,
+      schemaVersion: '1',
+      sourceAppId: 'privacy',
+      sourceBuildMarker: 'privacy-build',
+      sourceMode: 'worker',
+      workerKey: 'integration.symmy.execute-symmy-job',
+      workerModuleKey: 'integration.symmy',
+      workloadKey: 'integration.symmy.source-organization-facts.read',
+    });
+    const input = {
+      compositionRevision,
+      organizationProcessingReadIssuance: true,
+      principal: {
+        authContextRef: `job:${workload.jobKey}:run:${runReference}`,
+        authMethod: 'system' as const,
+        principalId: principal.principalId,
+        tenantId: principal.tenantId,
+      },
+      sourceValidity: { expiresAt: 1_700_000_301, issuedAt: 1_700_000_001 },
+      workload,
+    };
+    const errors = yield* Effect.forEach([SYMMY_INGRESS_AUDIENCE, 'property-registry'], (audience) =>
+      Effect.flip(issueGatewayContextAssertionWith({ ...input, audience }, dependencies(configuration))),
+    );
+    expect(errors[0]?.code).toBe('gateway_audience_invalid');
+    expect(errors[1]?.stage).toBe('principal');
+  }),
+);
+
+it.effect('reserves the Symmy audience for fresh verified Integration Principal issuance', () =>
+  Effect.gen(function* requiresExactSymmyAdmission() {
+    const { configuration, publicKey } = yield* makeConfiguration();
+    const apiKeyPrincipal = {
+      authBindingId: principal.authBindingId,
+      authContextRef: 'better-auth-api-key:safe-reference',
+      authMethod: 'api_key' as const,
+      principalId: principal.principalId,
+      tenantId: principal.tenantId,
+    };
+    const layer = makeGatewayIssuerLayer(
+      dependencies(configuration, {
+        loadAdmission: Effect.succeed({
+          audiences: new Map([
+            [SYMMY_INGRESS_AUDIENCE, 'symmy-fixture-build'],
+            ['property-registry', 'property-registry-build'],
+          ]),
+          revision: compositionRevision,
+        }),
+      }),
+    ).pipe(Layer.provide(scopeGrantRegistrarLayer()));
+    yield* Effect.gen(function* checkSymmyAndUnchangedAudiences() {
+      const generic = yield* Effect.flip(
+        issueGatewayContextAssertion({
+          audience: SYMMY_INGRESS_AUDIENCE,
+          compositionRevision,
+          principal: apiKeyPrincipal,
+        }),
+      );
+      expect(generic.code).toBe('gateway_audience_invalid');
+      const denied = yield* Effect.forEach(['human', 'service', 'system'], (principalKind) =>
+        Effect.flip(
+          issueSymmyGatewayContextAssertion({ compositionRevision, principal: apiKeyPrincipal, principalKind }),
+        ),
+      );
+      expect(denied.every(({ code }) => code === 'gateway_audience_invalid')).toBe(true);
+      const session = yield* Effect.flip(
+        issueSymmyGatewayContextAssertion({
+          compositionRevision,
+          principal: { ...apiKeyPrincipal, authMethod: 'session' },
+          principalKind: 'integration',
+        }),
+      );
+      expect(session.code).toBe('gateway_audience_invalid');
+
+      const result = yield* issueSymmyGatewayContextAssertion({
+        compositionRevision,
+        principal: apiKeyPrincipal,
+        principalKind: 'integration',
+      });
+      expect(result.apiBaseUrl).toBe(
+        '/shell-super-app-api/module-api/symmy-integration/symmy-fixture-build/symmy-integration-api',
+      );
+      yield* Effect.promise(() =>
+        jwtVerify(result.token, publicKey, {
+          algorithms: ['EdDSA'],
+          audience: SYMMY_INGRESS_AUDIENCE,
+          currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(1_700_000_001_000)),
+          issuer,
+        }),
+      );
+      const regular = yield* issueGatewayContextAssertion({
+        audience: 'property-registry',
+        compositionRevision,
+        principal: apiKeyPrincipal,
+      });
+      expect(decodeJwt(regular.token).aud).toBe('property-registry');
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
 it.effect('rejects transport correlation or any other excess principal claim', () =>
   Effect.gen(function* testProgram11() {
     const { configuration } = yield* makeConfiguration();
@@ -995,5 +1117,63 @@ it.effect('refuses an actor for a subject without an authentication namespace', 
         expect(failure.stage).toBe('principal');
       }
     }
+  }),
+);
+
+it.effect('signs an exact route scope only through its private issuance wrapper', () =>
+  Effect.gen(function* signedRouteScope() {
+    const { configuration, publicKey } = yield* makeConfiguration();
+    const apiKeyPrincipal = {
+      authBindingId: principal.authBindingId,
+      authContextRef: 'better-auth-api-key:route-native-key',
+      authenticationNamespaceId: 'test.integration.better-auth.v1',
+      authMethod: 'api_key' as const,
+      legalEntityId: principal.legalEntityId,
+      principalId: principal.principalId,
+      tenantId: principal.tenantId,
+    };
+    const routeScope = {
+      legalEntityId: principal.legalEntityId,
+      operations: [{ entrypointKey: 'party.registry.api.definition', schemaVersion: '1' }],
+      principalId: principal.principalId,
+      routeId: '70000000-0000-4000-8000-000000000001',
+      routeKey: 'adminCustomers',
+      routeRevision: 'route-1',
+      sourceRouteId: '80000000-0000-4000-8000-000000000001',
+      sourceRouteRevision: 'source-1',
+      tenantId: principal.tenantId,
+    };
+    const input = { audience: 'property-registry', compositionRevision, principal: apiKeyPrincipal, routeScope };
+    const layer = makeGatewayIssuerLayer(dependencies(configuration)).pipe(Layer.provide(scopeGrantRegistrarLayer()));
+    const result = yield* Effect.gen(function* enforcePrivateRouteSeal() {
+      const gateway = yield* GatewayIssuer;
+      const genericFailure = yield* Effect.flip(gateway.issue(input));
+      expect(genericFailure.stage).toBe('principal');
+      const wrongTenant = yield* Effect.flip(
+        issueRouteScopedGatewayContextAssertion({
+          ...input,
+          routeScope: { ...routeScope, tenantId: '90000000-0000-4000-8000-000000000001' },
+        }),
+      );
+      expect(wrongTenant.stage).toBe('principal');
+      const wrongCompany = yield* Effect.flip(
+        issueRouteScopedGatewayContextAssertion({
+          ...input,
+          routeScope: { ...routeScope, legalEntityId: '90000000-0000-4000-8000-000000000001' },
+        }),
+      );
+      expect(wrongCompany.stage).toBe('principal');
+      return yield* issueRouteScopedGatewayContextAssertion(input);
+    }).pipe(Effect.provide(layer));
+    const verified = yield* Effect.promise(() =>
+      jwtVerify(result.token, publicKey, {
+        algorithms: ['EdDSA'],
+        audience: 'property-registry',
+        currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(1_700_000_001_000)),
+        issuer,
+      }),
+    );
+    expect(verified.payload['routeScope']).toEqual(routeScope);
+    expect(verified.payload['ver']).toBe(EXTERNAL_GATEWAY_ASSERTION_VERSION);
   }),
 );

@@ -30,8 +30,8 @@ describe('all published Catalog Action snapshot/recovery tuples', () => {
   it('covers exactly the published registry and manifest inventory', () => {
     const manifestKeys = catalogManifest.publicSurface.actions.map((action) => action.descriptor.actionKey);
     const runtimeKeys = getVerticalRuntimeActions(catalogRegistration).map((action) => action.descriptor.actionKey);
-    expect(manifestKeys).toHaveLength(82);
-    expect(new Set(manifestKeys).size).toBe(82);
+    expect(manifestKeys).toHaveLength(83);
+    expect(new Set(manifestKeys).size).toBe(83);
     expect(new Set(runtimeKeys)).toEqual(new Set(manifestKeys));
   });
 

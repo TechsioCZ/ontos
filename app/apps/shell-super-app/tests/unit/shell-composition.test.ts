@@ -1,6 +1,6 @@
 import { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY, ONTOS_SHELL_CONTRIBUTION_ABI } from '@app/core-runtime';
 import type { AccessDeclarationInput, ApplicationComposition, TenantModuleState } from '@app/core-runtime';
-import { Cause, Effect, Exit, Predicate, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { contentDigest, makeCompositionSnapshot } from '../fixtures/application-composition.ts';
@@ -858,12 +858,7 @@ it.effect('pins published fixture bytes to its receiver and rejects a different 
     const mismatch = yield* makeCompositionSnapshot([], 60_000, {
       document,
       receiverDeployment: { appId: 'shell-super-app', buildMarker: 'different-compiled-fixture-shell-release' },
-    }).pipe(Effect.exit);
-    expect(Exit.isFailure(mismatch)).toBe(true);
-    if (Exit.isFailure(mismatch)) {
-      expect(Cause.pretty(mismatch.cause)).toContain(
-        'The actual Shell runtime document must match the compiled fixture receiver',
-      );
-    }
+    }).pipe(Effect.flip);
+    expect(mismatch.reason).toBe('The actual Shell runtime document must match the compiled fixture receiver');
   }),
 );

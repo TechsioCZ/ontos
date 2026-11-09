@@ -26,6 +26,18 @@ type ProblemOf<Tag extends CreateCustomerGroupActionProblem['_tag']> = Extract<
   CreateCustomerGroupActionProblem,
   { readonly _tag: Tag }
 >;
+type DomainProblemIdentity =
+  | {
+      readonly code:
+        | 'customer_group_business_code_conflict'
+        | 'customer_group_source_conflict'
+        | 'customer_group_source_stale'
+        | 'customer_group_semantic_duplicate';
+      readonly kind: 'conflict';
+    }
+  | { readonly code: 'customer_group_scope_mismatch'; readonly kind: 'forbidden' }
+  | { readonly code: 'customer_group_source_authority_denied'; readonly kind: 'ineligible' }
+  | { readonly code: 'customer_group_persistence_unavailable'; readonly kind: 'unavailable' };
 
 const problemStatus = {
   authentication: 401,
@@ -40,6 +52,15 @@ const problemStatus = {
   timeout: 504,
   unavailable: 503,
 } as const;
+
+const customerGroupDefinitionSourceRejectedProblemByCode = {
+  customer_group_source_authority_denied: { code: 'customer_group_source_authority_denied', kind: 'ineligible' },
+  customer_group_source_conflict: { code: 'customer_group_source_conflict', kind: 'conflict' },
+  customer_group_source_stale: { code: 'customer_group_source_stale', kind: 'conflict' },
+} as const satisfies Record<
+  Extract<DomainError, { readonly _tag: 'CustomerGroupDefinitionSourceRejected' }>['code'],
+  DomainProblemIdentity
+>;
 
 export const createCustomerGroupActionProblem = {
   authentication: (): ProblemOf<'CreateCustomerGroupActionAuthenticationProblem'> =>
@@ -123,11 +144,24 @@ export const createCustomerGroupActionProblem = {
     }),
 } as const;
 
+const mapDomainIdentity = (identity: DomainProblemIdentity): CreateCustomerGroupActionProblem =>
+  Match.value(identity).pipe(
+    Match.when({ kind: 'conflict' as const }, (matched) => createCustomerGroupActionProblem.conflict(matched.code)),
+    Match.when({ kind: 'forbidden' as const }, (matched) => createCustomerGroupActionProblem.forbidden(matched.code)),
+    Match.when({ kind: 'ineligible' as const }, (matched) => createCustomerGroupActionProblem.ineligible(matched.code)),
+    Match.when({ kind: 'unavailable' as const }, (matched) =>
+      createCustomerGroupActionProblem.unavailable(matched.code),
+    ),
+    Match.exhaustive,
+  );
+
 const mapDomainProblem = (error: DomainError): CreateCustomerGroupActionProblem =>
   Match.value(error).pipe(
     Match.tags({
       CustomerGroupBusinessCodeConflict: () =>
         createCustomerGroupActionProblem.conflict('customer_group_business_code_conflict'),
+      CustomerGroupDefinitionSourceRejected: (failure) =>
+        mapDomainIdentity(customerGroupDefinitionSourceRejectedProblemByCode[failure.code]),
       CustomerGroupPersistenceUnavailable: () =>
         createCustomerGroupActionProblem.unavailable('customer_group_persistence_unavailable'),
       CustomerGroupScopeMismatch: () => createCustomerGroupActionProblem.forbidden('customer_group_scope_mismatch'),

@@ -3,7 +3,7 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import {
-  CommerceCustomerGroupMembershipSchema,
+  CommerceCustomerGroupMembershipReadSchema,
   CommerceCustomerProfileSubjectSchema,
   CustomerGroupIsoTimestampSchema,
   CustomerGroupLegalEntityIdSchema,
@@ -29,7 +29,7 @@ export type EffectiveCustomerGroupMembershipSetProofV1 = typeof EffectiveCustome
 export const EffectiveCustomerGroupMembershipSetV1ResponseSchema = Schema.Struct({
   asOf: CustomerGroupIsoTimestampSchema,
   legalEntityId: CustomerGroupLegalEntityIdSchema,
-  memberships: Schema.Array(CommerceCustomerGroupMembershipSchema),
+  memberships: Schema.Array(CommerceCustomerGroupMembershipReadSchema),
   predicateRef: Schema.Literal('commerce.customer-context.customer-group-memberships.effective.v1'),
   profile: CommerceCustomerProfileSubjectSchema,
   proof: EffectiveCustomerGroupMembershipSetProofV1Schema,

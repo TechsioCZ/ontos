@@ -1,3 +1,9 @@
+export {
+  SystemPrincipalContextResolver,
+  SystemPrincipalContextResolverLive,
+  registerSystemWorkload,
+  registeredAdmissionAuthContextRef,
+} from '../auth/system-principal-context.ts';
 /** Focused server-only entrypoint used to bundle the combined Outbox Worker host and its MicroVertical entries. */
 export { defineAction, defineActionOwnerPermissions, defineActionResourcePermission } from '../actions/definition.ts';
 export { ActionPermissionCheckError } from '../actions/errors.ts';
@@ -8,6 +14,7 @@ export {
   isVerifiedGatewayPrincipalContext,
   readVerifiedGatewayActor,
   readVerifiedGatewayCompositionRevision,
+  readVerifiedGatewayOrganizationGovernanceRead,
   readVerifiedGatewayScopeAssertion,
 } from '../auth/system-principal-context-provenance.ts';
 export {
@@ -18,7 +25,10 @@ export {
 } from '../reads/definition.ts';
 export { OperationContextUnavailable } from '../operations/operation-context-unavailable.ts';
 export { defineVerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
-export { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '../modules/module-dependency-contracts.ts';
+export {
+  ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY,
+  OntosRequiredOperationContractSchema,
+} from '../modules/module-dependency-contracts.ts';
 export {
   ShellNavigationContributionSchema,
   ShellPageContributionSchema,
@@ -26,7 +36,7 @@ export {
   ShellReportContributionSchema,
   ShellSearchContributionSchema,
 } from '../modules/shell-contribution.ts';
-export { requireModuleOperation } from '../modules/module-operation-requirement.ts';
+export { readModuleOperationRequirement, requireModuleOperation } from '../modules/module-operation-requirement.ts';
 export {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,
@@ -135,3 +145,12 @@ export type {
 } from '../search/worker-snapshot.ts';
 
 export type { OwnerPermissionAccessTarget, OwnerPermissionContract } from '../permissions/context-access.ts';
+
+export { readWorkerModuleOperationRequirement } from '../modules/module-operation-requirement.ts';
+export type { WorkerModuleOperationRequirementFact } from '../modules/module-operation-requirement.ts';
+
+export { readWorkerExecutionContext } from '../modules/module-operation-execution.ts';
+export type { WorkerExecutionContextFact } from '../modules/module-operation-execution.ts';
+
+export { readScopedCurrentActionInvocation } from '../actions/current-invocation.ts';
+export type { ScopedCurrentActionInvocationFact } from '../actions/current-invocation.ts';

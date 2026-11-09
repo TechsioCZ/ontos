@@ -107,3 +107,5 @@ export const deleteTestGatewayScopeGrants = (admin: PgClient.PgClient, tenantIds
 /** Registers a scope finalizer that deletes the gateway scope grants of `tenantIds` through `admin`. */
 export const addTestGatewayScopeGrantCleanup = (admin: PgClient.PgClient, tenantIds: readonly string[]) =>
   Effect.addFinalizer(() => deleteTestGatewayScopeGrants(admin, tenantIds).pipe(Effect.orDie));
+
+export { makeGatewayScopeGrantRegistrar } from '../auth/gateway-scope-grant.ts';

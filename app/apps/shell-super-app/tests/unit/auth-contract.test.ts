@@ -94,9 +94,9 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
   ]);
   expect(
     Object.fromEntries(
-      Object.values(ShellAuthenticationApi.groups).flatMap((group) =>
-        Object.entries(group.endpoints).map(([name, endpoint]) => [name, endpoint.path]),
-      ),
+      Object.values(ShellAuthenticationApi.groups)
+        .filter((group) => group.identifier !== 'symmy')
+        .flatMap((group) => Object.entries(group.endpoints).map(([name, endpoint]) => [name, endpoint.path])),
     ),
   ).toEqual({
     activatePrincipalBinding: '/auth/identity/external/bindings/activate',

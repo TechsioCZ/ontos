@@ -60,10 +60,13 @@ import { assignSkuRecoveryReadApiLive } from './assign-sku-recovery-read-server.
 import { assortmentProductClassificationV1ReadApiLive } from './assortment-product-classification-v1-read-server.ts';
 import { assortmentSelectionAssessmentV1ReadApiLive } from './assortment-selection-assessment-v1-read-server.ts';
 import { assortmentSetCompositionV1ReadApiLive } from './assortment-set-composition-v1-read-server.ts';
+import { bindInitialVariantSourceActionApiLive } from './bind-initial-variant-source-action-server.ts';
+import { bindInitialVariantSourceRecoveryReadApiLive } from './bind-initial-variant-source-recovery-read-server.ts';
 import { brandCurrentReadApiLive } from './brand-current-read-server.ts';
 import { brandHistoryReadApiLive } from './brand-history-read-server.ts';
 import { catalogDocumentCurrentReadApiLive } from './catalog-document-current-read-server.ts';
 import { catalogMediaCurrentReadApiLive } from './catalog-media-current-read-server.ts';
+import { catalogSourceProductsReadApiLive } from './catalog-source-products-read-server.ts';
 import { catalogSourceResolutionReadApiLive } from './catalog-source-resolution-read-server.ts';
 import { changeLocalOverrideActionApiLive } from './change-local-override-action-server.ts';
 import { changeLocalOverrideRecoveryReadApiLive } from './change-local-override-recovery-read-server.ts';
@@ -404,10 +407,13 @@ export const makeCatalogApiRuntime = (
     assortmentProductClassificationV1ReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     assortmentSelectionAssessmentV1ReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     assortmentSetCompositionV1ReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    bindInitialVariantSourceActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    bindInitialVariantSourceRecoveryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     brandCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     brandHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     catalogDocumentCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     catalogMediaCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    catalogSourceProductsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     catalogSourceResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     changeLocalOverrideActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     changeLocalOverrideRecoveryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

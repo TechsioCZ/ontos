@@ -4,19 +4,26 @@
 import { defineOntosModuleManifest, ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '@app/core-runtime';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 // <generated-module-manifest-imports>
+import { priceGroupDefinitionRead } from './src/api/price-group-definition.read.ts';
+import { CreatePriceGroupActionApi } from './shared/apis/create-price-group-action.ts';
+import { CreatePriceGroupDefinitionRevisionActionApi } from './shared/apis/create-price-group-definition-revision-action.ts';
 import { createPriceGroupAction } from './src/actions/create-price-group.action.ts';
 import { createPriceGroupDefinitionRevisionAction } from './src/actions/create-price-group-definition-revision.action.ts';
 import { priceGroupCatalogRootResourceDescriptor } from './shared/resources/price-group-catalog-root.ts';
 import { PriceGroupDefinitionApi } from './shared/apis/price-group-definition.ts';
 import { priceGroupResourceDescriptor } from './shared/resources/price-group.ts';
-import { pricingPriceGroupCreatePermission } from './shared/permissions/pricing-price-group-create.ts';
-import { pricingPriceGroupReadPermission } from './shared/permissions/pricing-price-group-read.ts';
-import { pricingPriceGroupRetirePermission } from './shared/permissions/pricing-price-group-retire.ts';
-import { pricingPriceGroupRevisionCreatePermission } from './shared/permissions/pricing-price-group-revision-create.ts';
+import { PriceGroupResultLookupApi } from './shared/apis/price-group-result-lookup.ts';
+import { priceGroupResultLookupRead } from './src/api/price-group-result-lookup.read.ts';
+import { PriceGroupSourceAssociationsApi } from './shared/apis/price-group-source-associations.ts';
+import { priceGroupSourceAssociationsRead } from './src/api/price-group-source-associations.read.ts';
 import { retirePriceGroupAction } from './src/actions/retire-price-group.action.ts';
 import { ValidatePriceGroupCompatibilityApi } from './shared/apis/validate-price-group-compatibility.ts';
 import { validatePriceGroupCompatibilityRead } from './src/api/validate-price-group-compatibility.read.ts';
 // </generated-module-manifest-imports>
+import { pricingPriceGroupCreatePermission } from './shared/permissions/pricing-price-group-create.ts';
+import { pricingPriceGroupReadPermission } from './shared/permissions/pricing-price-group-read.ts';
+import { pricingPriceGroupRetirePermission } from './shared/permissions/pricing-price-group-retire.ts';
+import { pricingPriceGroupRevisionCreatePermission } from './shared/permissions/pricing-price-group-revision-create.ts';
 
 export const priceGroupCatalogManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   activation: {
@@ -42,7 +49,11 @@ export const priceGroupCatalogManifest: OntosModuleManifestInput = defineOntosMo
     ],
     api: {
       // <generated-module-manifest-apis>
+      'create-price-group-action': CreatePriceGroupActionApi,
+      'create-price-group-definition-revision-action': CreatePriceGroupDefinitionRevisionActionApi,
       'price-group-definition': PriceGroupDefinitionApi,
+      'price-group-result-lookup': PriceGroupResultLookupApi,
+      'price-group-source-associations': PriceGroupSourceAssociationsApi,
       'validate-price-group-compatibility': ValidatePriceGroupCompatibilityApi,
       // </generated-module-manifest-apis>
     },
@@ -61,6 +72,31 @@ export const priceGroupCatalogManifest: OntosModuleManifestInput = defineOntosMo
     events: [],
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
+      {
+        apiKey: 'price-group-definition',
+        operationKey: 'priceGroupDefinition.execute',
+        registration: priceGroupDefinitionRead,
+      },
+      {
+        apiKey: 'create-price-group-action',
+        operationKey: 'createPriceGroupAction.execute',
+        registration: createPriceGroupAction,
+      },
+      {
+        apiKey: 'create-price-group-definition-revision-action',
+        operationKey: 'createPriceGroupDefinitionRevisionAction.execute',
+        registration: createPriceGroupDefinitionRevisionAction,
+      },
+      {
+        apiKey: 'price-group-result-lookup',
+        operationKey: 'priceGroupResultLookup.execute',
+        registration: priceGroupResultLookupRead,
+      },
+      {
+        apiKey: 'price-group-source-associations',
+        operationKey: 'priceGroupSourceAssociations.execute',
+        registration: priceGroupSourceAssociationsRead,
+      },
       {
         apiKey: 'validate-price-group-compatibility',
         operationKey: 'validatePriceGroupCompatibility.execute',

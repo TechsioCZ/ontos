@@ -115,9 +115,9 @@ const partyDetailEntrypoint = defineTenantModuleEntrypoint({
 export const partyDetailRead = defineRead(
   {
     accessActor: {
-      callers: ['commerce-customer-context', 'catalog'],
+      callers: ['commerce-customer-context', 'catalog', 'privacy'],
       reason:
-        "Customer Context and Catalog read Party detail for the requester they relay, under that requester's own rights; Retail self-enrollment resolves the Party it created for the Storefront client.",
+        "Customer Context, Catalog and Privacy read Party detail for the requester they relay, under that requester's own rights; Retail self-enrollment resolves the Party it created for the Storefront client.",
       subject: 'rights',
       subjectWorkloads: ['commerce.storefront-client'],
     },

@@ -10,6 +10,7 @@ import type { CreateVariantPayload, CreateVariantResult } from '../../shared/act
 import { requireVariantCreationClassification } from '../../shared/domain/product-change-classification.ts';
 import type { VariantPersistence } from '../persistence/variant-persistence.ts';
 import { captureCatalogActionResult } from '../persistence/catalog-action-result-snapshot.ts';
+import { catalogSourceCorrelationForScope } from '../persistence/catalog-source-correlation.ts';
 import {
   checkVariantTenant,
   conflictForOutcome,
@@ -27,16 +28,29 @@ type CreateVariantServices = VariantPersistence & {
     actionInvocationId: string,
     result: CreateVariantResult,
   ) => Effect.Effect<void, ActionTransactionError>;
+  readonly sourceCorrelation?: ReturnType<typeof catalogSourceCorrelationForScope>;
 };
 const ACTION_KEY = 'commerce.catalog.create-variant' as const;
 
 export const handleCreateVariant = Effect.fn('CreateVariantAction.handle')(function* handleCreateVariant(
   payload: CreateVariantPayload,
-  context: ActionHandlerContext<Readonly<Record<string, never>>, VariantPersistence>,
+  context: ActionHandlerContext<
+    Readonly<Record<string, never>>,
+    VariantPersistence & Pick<CreateVariantServices, 'sourceCorrelation'>
+  >,
 ) {
   yield* checkVariantTenant(context.scope.tenantId, payload.variantRef);
   if (payload.productRef.tenantId !== context.scope.tenantId) {
     return yield* variantNotFound();
+  }
+  if (payload.sourceCorrelation !== undefined && context.services.sourceCorrelation !== undefined) {
+    const original = yield* context.services.sourceCorrelation
+      .recoverVariant(payload)
+      .pipe(Effect.catchTag('ProductPersistenceConflict', () => Effect.fail(conflictForOutcome('identity_conflict'))));
+    if (original !== null) {
+      yield* recordVariantAccess(context, original.variant.variantId);
+      return original;
+    }
   }
   const classification = yield* requireVariantCreationClassification({
     classification: payload.classification,
@@ -56,7 +70,7 @@ export const handleCreateVariant = Effect.fn('CreateVariantAction.handle')(funct
     reason: payload.reason,
     variantRef: payload.variantRef,
   });
-  const result = yield* Match.value(outcome).pipe(
+  const created = yield* Match.value(outcome).pipe(
     Match.tag('created', ({ variant }) => Effect.succeed({ classification, variant })),
     Match.tag('not_found', () => Effect.fail(variantNotFound())),
     Match.tag('revision_conflict', () => Effect.fail(conflictForOutcome('revision_conflict'))),
@@ -65,7 +79,19 @@ export const handleCreateVariant = Effect.fn('CreateVariantAction.handle')(funct
     Match.tag('invalid_change', () => Effect.fail(conflictForOutcome('invalid_change'))),
     Match.exhaustive,
   );
+  const result =
+    payload.sourceCorrelation === undefined
+      ? created
+      : { ...created, businessOriginalCreateInvocationId: context.actionInvocationId };
   yield* context.recordAuditEvidence({ evidenceRefs: payload.evidenceRefs, reason: payload.reason });
+  if (payload.sourceCorrelation !== undefined) {
+    if (context.services.sourceCorrelation === undefined) {
+      return yield* conflictForOutcome('identity_conflict');
+    }
+    yield* context.services.sourceCorrelation
+      .captureVariant(payload, result, context.actionInvocationId)
+      .pipe(Effect.catchTag('ProductPersistenceConflict', () => Effect.fail(conflictForOutcome('identity_conflict'))));
+  }
   yield* recordVariantAccess(context, result.variant.variantRef.resourceId);
   return result;
 });
@@ -83,6 +109,10 @@ export const createVariantAction = defineAction(
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.create-variant.access.v1',
+    },
+    accessWorkload: {
+      reason: 'Native Product writes for the registered source integration',
+      workloads: ['commerce.catalog.symmy-product-import'],
     },
     actionKey: ACTION_KEY,
     auditEvidenceSchema: ProductAuditEvidenceSchema,
@@ -130,6 +160,7 @@ export const createVariantAction = defineAction(
               ),
             ),
           ),
+        sourceCorrelation: catalogSourceCorrelationForScope(transaction, scope),
       })),
     ),
   ({ actionInvocationId, result, services }) => services.captureResult(actionInvocationId, result),

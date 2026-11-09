@@ -1196,6 +1196,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.catalog.bind-initial-variant-source-recovery.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "bind-initial-variant-source-recovery",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.catalog.api.bind-initial-variant-source-recovery",
+            "moduleKey": "commerce.catalog",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.catalog.brand-current.read",
             "kind": "read",
             "modes": [
@@ -1491,6 +1517,32 @@
             "entrypointKey": "commerce.catalog.reorder-catalog-media",
             "moduleKey": "commerce.catalog",
             "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.catalog.catalog-source-products.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "catalog-source-products",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.catalog.api.catalog-source-products",
+            "moduleKey": "commerce.catalog",
+            "role": "api",
             "scope": "tenant"
           }
         },
@@ -2657,6 +2709,34 @@
             "entrypointKey": "commerce.catalog.api.import-source-assertion-recovery",
             "moduleKey": "commerce.catalog",
             "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.catalog.initial-variant-source.bind",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "initial-variant-source",
+              "level": "extended"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.catalog.bind-initial-variant-source",
+            "moduleKey": "commerce.catalog",
+            "role": "action",
             "scope": "tenant"
           }
         },
@@ -5426,7 +5506,10 @@
             "callers": [
               "pricing"
             ],
-            "subject": "identity"
+            "subject": "identity",
+            "subjectWorkloads": [
+              "commerce.catalog.symmy-product-read"
+            ]
           }
         },
         {
@@ -7077,6 +7160,114 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.customer-context.customer-group-definition-source.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "customer-group-definition-source",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.api.customer-group-definition-source",
+            "moduleKey": "commerce.customer-context",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.customer-context.customer-group-membership-snapshot.admit",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "customer-group-membership-snapshot",
+              "level": "extended"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.admit-customer-group-membership-snapshot",
+            "moduleKey": "commerce.customer-context",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.customer-context.customer-group-membership-source-receipt.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "customer-groups",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.api.customer-group-membership-source-receipt",
+            "moduleKey": "commerce.customer-context",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.customer-context.customer-group-membership-source.apply",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "customer-groups",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.apply-customer-group-membership-source",
+            "moduleKey": "commerce.customer-context",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.customer-context.customer-group-membership.read-effective",
             "kind": "read",
             "modes": [
@@ -7483,6 +7674,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.customer-context.customer-price-group-assignment-receipt.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "customer-pricing",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.api.customer-price-group-assignment-receipt",
+            "moduleKey": "commerce.customer-context",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.customer-context.customer-price-group-assignment.read",
             "kind": "read",
             "modes": [
@@ -7621,6 +7838,179 @@
               "pricing"
             ],
             "subject": "identity"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.customer-context.customer-profile-ico-migration.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "customer-profile-ico-migration",
+              "level": "basic"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.api.customer-profile-ico-migration",
+            "moduleKey": "commerce.customer-context",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.customer-context.customer-profile-ico.change",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "customer-profile-ico",
+              "level": "extended"
+            },
+            "risk": "critical",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.change-customer-profile-ico",
+            "moduleKey": "commerce.customer-context",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.customer-context.customer-profile-ico.migrate",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "customer-profile-ico",
+              "level": "extended"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.migrate-customer-profile-ico",
+            "moduleKey": "commerce.customer-context",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.customer-context.customer-profile-ico.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "customer-profiles",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.api.customer-profile-ico",
+            "moduleKey": "commerce.customer-context",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.customer-context.customer-profile-organization-ico-facts.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "customer-profile-organization-ico-facts",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.api.customer-profile-organization-ico-facts",
+            "moduleKey": "commerce.customer-context",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "privacy"
+            ],
+            "subject": "rights",
+            "subjectWorkloads": [
+              "commerce.customer-context.organization-ico-facts.read"
+            ]
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.customer-context.customer-profile-source.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "customer-profile-source",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.api.customer-profile-source",
+            "moduleKey": "commerce.customer-context",
+            "role": "api",
+            "scope": "tenant"
           }
         },
         {
@@ -8306,6 +8696,118 @@
               "commerce-order"
             ],
             "subject": "identity"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.customer-context.organization-customer-profile-ico-migration.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "organization-customer-profile-ico-migration",
+              "level": "basic"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.api.organization-customer-profile-ico-migration",
+            "moduleKey": "commerce.customer-context",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.customer-context.organization-customer-profile-ico.change",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "organization-customer-profile-ico",
+              "level": "extended"
+            },
+            "risk": "critical",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.change-organization-customer-profile-ico",
+            "moduleKey": "commerce.customer-context",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.customer-context.organization-customer-profile-ico.migrate",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "organization-customer-profile-ico",
+              "level": "extended"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.migrate-organization-customer-profile-ico",
+            "moduleKey": "commerce.customer-context",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.customer-context.organization-customer-profile-ico.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "organization-customer-profile-ico",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.api.organization-customer-profile-ico",
+            "moduleKey": "commerce.customer-context",
+            "role": "api",
+            "scope": "tenant"
           }
         },
         {
@@ -9579,6 +10081,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.customer-context.saved-address-source-receipt.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "saved-address-source-receipt",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.api.saved-address-source-receipt",
+            "moduleKey": "commerce.customer-context",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.customer-context.saved-address.add",
             "kind": "action",
             "modes": [
@@ -10248,6 +10776,34 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.inventory.inventory-source-import-receipt.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "source-evidence",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.inventory.api.inventory-source-import-receipt",
+            "moduleKey": "commerce.inventory",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.inventory.reconciliation-evidence.read",
             "kind": "read",
             "modes": [
@@ -10686,7 +11242,10 @@
             "callers": [
               "pricing"
             ],
-            "subject": "identity"
+            "subject": "identity",
+            "subjectWorkloads": [
+              "commerce.market-catalog.source-read"
+            ]
           }
         },
         {
@@ -11961,6 +12520,58 @@
               "kind": "protected"
             },
             "entrypointKey": "commerce.pricing.api.current-pricing-decision",
+            "moduleKey": "commerce.pricing",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.pricing.price-group-source-prices.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "price-group-source-prices",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.pricing.api.price-group-source-prices",
+            "moduleKey": "commerce.pricing",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.pricing.price-source-result-lookup.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "price-source-result-lookup",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.pricing.api.price-source-result-lookup",
             "moduleKey": "commerce.pricing",
             "role": "api",
             "scope": "tenant"
@@ -13879,6 +14490,115 @@
       "descriptors": [
         {
           "accessDeclaration": {
+            "key": "integration.symmy.privacy-measure.read-receipt",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "symmy-job-privacy-execution",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "integration.symmy.api.symmy-job-privacy-execution",
+            "moduleKey": "integration.symmy",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "privacy",
+              "symmy-integration"
+            ],
+            "subject": "identity"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "integration.symmy.symmy-retention.execute",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "symmy-retention",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "integration.symmy.execute-symmy-retention",
+            "moduleKey": "integration.symmy",
+            "role": "action",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "symmy-integration"
+            ],
+            "subject": "identity"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "integration.symmy.symmy-source-organization-facts.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "symmy-source-organization-facts",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "integration.symmy.api.symmy-source-organization-facts",
+            "moduleKey": "integration.symmy",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "privacy"
+            ],
+            "subject": "identity",
+            "subjectWorkloads": [
+              "integration.symmy.source-organization-facts.read"
+            ]
+          }
+        }
+      ],
+      "moduleId": "integration.symmy"
+    },
+    {
+      "descriptors": [
+        {
+          "accessDeclaration": {
             "key": "party.registry.ares-subject.lookup",
             "kind": "read",
             "modes": [
@@ -14115,6 +14835,75 @@
             "moduleKey": "party.registry",
             "role": "page",
             "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "party.registry.counterparty-migration-correlation.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "counterparty-migration-correlation",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "party.registry.api.counterparty-migration-correlation",
+            "moduleKey": "party.registry",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "commerce-customer-context"
+            ],
+            "subject": "rights"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "party.registry.counterparty-organization-ico-facts.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "counterparty-organization-ico-facts",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "party.registry.api.counterparty-organization-ico-facts",
+            "moduleKey": "party.registry",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "commerce-customer-context"
+            ],
+            "subject": "rights",
+            "subjectWorkloads": [
+              "party.registry.source-read"
+            ]
           }
         },
         {
@@ -14595,6 +15384,66 @@
         },
         {
           "accessDeclaration": {
+            "key": "party.registry.legacy-ico-authority.fence",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "legacy-ico-authority",
+              "level": "extended"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "party.registry.fence-legacy-ico-authority",
+            "moduleKey": "party.registry",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "party.registry.legacy-ico-inventory.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "legacy-ico-inventory",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "party.registry.api.legacy-ico-inventory",
+            "moduleKey": "party.registry",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "commerce-customer-context"
+            ],
+            "subject": "rights"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "party.registry.official-identifier.add",
             "kind": "action",
             "modes": [
@@ -14781,6 +15630,43 @@
         },
         {
           "accessDeclaration": {
+            "key": "party.registry.organization-business-name-export.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "organization-business-name-export",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "party.registry.api.organization-business-name-export",
+            "moduleKey": "party.registry",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "commerce-customer-context"
+            ],
+            "subject": "rights",
+            "subjectWorkloads": [
+              "party.registry.source-read"
+            ]
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "party.registry.organization-engagement.archive",
             "kind": "action",
             "modes": [
@@ -14893,6 +15779,81 @@
             "moduleKey": "party.registry",
             "role": "action",
             "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "party.registry.organization-ico-facts.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "organization-ico-facts",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "party.registry.api.organization-ico-facts",
+            "moduleKey": "party.registry",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "privacy"
+            ],
+            "subject": "rights",
+            "subjectWorkloads": [
+              "party.registry.source-read"
+            ]
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "party.registry.organization-record-facts.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "organization-record-facts",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "party.registry.api.organization-record-facts",
+            "moduleKey": "party.registry",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "commerce-customer-context",
+              "privacy"
+            ],
+            "subject": "rights",
+            "subjectWorkloads": [
+              "party.registry.source-read"
+            ]
           }
         },
         {
@@ -15248,6 +16209,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "party.registry.party-source-effect-receipt.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "party-source-effect-receipt",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "party.registry.api.party-source-effect-receipt",
+            "moduleKey": "party.registry",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "party.registry.party.archive",
             "kind": "action",
             "modes": [
@@ -15366,7 +16353,8 @@
           "actor": {
             "callers": [
               "catalog",
-              "commerce-customer-context"
+              "commerce-customer-context",
+              "privacy"
             ],
             "subject": "rights",
             "subjectWorkloads": [
@@ -15689,6 +16677,100 @@
             "entrypointKey": "party.registry.request-search-rebuild",
             "moduleKey": "party.registry",
             "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "party.registry.source-counterparty-admission.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "source-counterparty-admission",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "party.registry.api.source-counterparty-admission",
+            "moduleKey": "party.registry",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "party.registry.source-person-admission.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "source-person-admission",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "party.registry.api.source-person-admission",
+            "moduleKey": "party.registry",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "commerce-customer-context",
+              "privacy"
+            ],
+            "subject": "rights",
+            "subjectWorkloads": [
+              "party.registry.source-read"
+            ]
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "party.registry.source-profile-export.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "source-profile-export",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "party.registry.api.source-profile-export",
+            "moduleKey": "party.registry",
+            "role": "api",
             "scope": "tenant"
           }
         }
@@ -16452,6 +17534,58 @@
         },
         {
           "accessDeclaration": {
+            "key": "pricing.price-group-catalog.price-group-result-lookup.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "price-group-result-lookup",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "pricing.price-group-catalog.api.price-group-result-lookup",
+            "moduleKey": "pricing.price-group-catalog",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "pricing.price-group-catalog.price-group-source-associations.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "price-group-source-associations",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "pricing.price-group-catalog.api.price-group-source-associations",
+            "moduleKey": "pricing.price-group-catalog",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "pricing.price-group-catalog.price-group.create",
             "kind": "action",
             "modes": [
@@ -17179,6 +18313,41 @@
         },
         {
           "accessDeclaration": {
+            "key": "privacy.core.measure-execution-eligibility.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "measure-execution-eligibility",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "privacy.core.api.measure-execution-eligibility",
+            "moduleKey": "privacy.core",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "symmy-integration"
+            ],
+            "subject": "identity",
+            "subjectWorkloads": [
+              "privacy.core.measure-execution-check"
+            ]
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "privacy.core.notice-provision.record",
             "kind": "action",
             "modes": [
@@ -17314,6 +18483,112 @@
         },
         {
           "accessDeclaration": {
+            "key": "privacy.core.organization-business-applicability.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "organization-business-applicability",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "privacy.core.api.organization-business-applicability",
+            "moduleKey": "privacy.core",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "commerce-customer-context",
+              "party-registry"
+            ],
+            "subject": "identity",
+            "subjectWorkloads": [
+              "privacy.core.organization-business-check"
+            ]
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "privacy.core.organization-ico-applicability.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "organization-ico-applicability",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "privacy.core.api.organization-ico-applicability",
+            "moduleKey": "privacy.core",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "party-registry"
+            ],
+            "subject": "identity",
+            "subjectWorkloads": [
+              "privacy.core.organization-ico-check"
+            ]
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "privacy.core.organization-profile-ico-applicability.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "organization-profile-ico-applicability",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "privacy.core.api.organization-profile-ico-applicability",
+            "moduleKey": "privacy.core",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "commerce-customer-context"
+            ],
+            "subject": "identity",
+            "subjectWorkloads": [
+              "privacy.core.organization-profile-ico-check"
+            ]
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "privacy.core.owner-contribution.record",
             "kind": "action",
             "modes": [
@@ -17370,7 +18645,8 @@
           "actor": {
             "callers": [
               "commerce-customer-context",
-              "party-registry"
+              "party-registry",
+              "symmy-integration"
             ],
             "subject": "identity"
           }
@@ -17947,6 +19223,43 @@
             "moduleKey": "privacy.core",
             "role": "action",
             "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "privacy.core.source-processing-eligibility.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "processing-governance",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "privacy.core.api.source-processing-eligibility",
+            "moduleKey": "privacy.core",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "commerce-customer-context",
+              "party-registry",
+              "symmy-integration"
+            ],
+            "subject": "identity",
+            "subjectWorkloads": [
+              "privacy.core.source-processing-check"
+            ]
           }
         },
         {

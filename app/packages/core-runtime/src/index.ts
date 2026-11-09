@@ -1,3 +1,5 @@
+export { readScopedCurrentActionInvocation } from './actions/current-invocation.ts';
+export type { ScopedCurrentActionInvocationFact } from './actions/current-invocation.ts';
 export {
   ACTION_PROVISIONING_INTENTS,
   ActionExecutionAuthorizationSchema,
@@ -152,9 +154,12 @@ export type {
 export {
   SystemPrincipalContextDeniedError,
   SystemPrincipalContextInvalidError,
+  SystemPrincipalContextResolver,
+  SystemPrincipalContextResolverLive,
   SystemPrincipalContextUnavailableError,
   makeSystemPrincipalContextResolver,
   registerSystemWorkload,
+  registeredAdmissionAuthContextRef,
 } from './auth/system-principal-context.ts';
 export {
   SupportRecoveryPrincipalContextDeniedError,
@@ -1011,6 +1016,38 @@ export type {
 } from './actions/retained-owner-history.ts';
 
 export { ModuleOperationRequirementError } from './modules/module-operation-requirement-error.ts';
-export { requireModuleOperation } from './modules/module-operation-requirement.ts';
+export { requireModuleOperation, readModuleOperationRequirement } from './modules/module-operation-requirement.ts';
+export type { ModuleOperationRequirementFact } from './modules/module-operation-requirement.ts';
 
 export type { ActionPostAttemptHook, ActionPostAttemptOutcome, ActionPostAttemptResult } from './actions/definition.ts';
+
+export { readWorkerModuleOperationRequirement } from './modules/module-operation-requirement.ts';
+export type { WorkerModuleOperationRequirementFact } from './modules/module-operation-requirement.ts';
+
+export {
+  RegisteredGatewayPrivacyDispatchSchema,
+  PrivacyDispatchOperationSchema,
+  privacyDispatchOperationContract,
+  readVerifiedGatewayPrivacyDispatch,
+} from './auth/system-principal-context-provenance.ts';
+export type {
+  RegisteredGatewayPrivacyDispatch,
+  PrivacyDispatchOperation,
+} from './auth/system-principal-context-provenance.ts';
+
+export { readWorkerExecutionContext } from './modules/module-operation-execution.ts';
+export type { WorkerExecutionContextFact } from './modules/module-operation-execution.ts';
+
+export {
+  RegisteredGatewayOrganizationGovernanceReadSchema,
+  organizationGovernanceReadOperationContract,
+  readVerifiedGatewayOrganizationGovernanceRead,
+} from './auth/system-principal-context-provenance.ts';
+export type { RegisteredGatewayOrganizationGovernanceRead } from './auth/system-principal-context-provenance.ts';
+
+export {
+  RegisteredGatewayOrganizationProcessingReadSchema,
+  readVerifiedGatewayOrganizationProcessingRead,
+  organizationProcessingReadOperationContract,
+} from './auth/system-principal-context-provenance.ts';
+export type { RegisteredGatewayOrganizationProcessingRead } from './auth/system-principal-context-provenance.ts';

@@ -278,7 +278,7 @@ export interface PrincipalResolverConfiguration {
 
 export const makePrincipalResolver = (
   database: {
-    readonly executor: CoreDatabaseExecutor;
+    readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
   },
   configuration: PrincipalResolverConfiguration,
 ): PrincipalResolverService => {

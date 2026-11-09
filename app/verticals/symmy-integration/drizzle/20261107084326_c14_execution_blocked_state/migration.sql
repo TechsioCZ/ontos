@@ -1,0 +1,3 @@
+ALTER TABLE "symmy_integration"."job_effects" ADD CONSTRAINT "symmy_job_effects_blocked_ck" CHECK ("state" <> 'blocked' or "outcome"->>'status' = 'denied');--> statement-breakpoint
+ALTER TABLE "symmy_integration"."job_effects" DROP CONSTRAINT "symmy_job_effects_state_ck", ADD CONSTRAINT "symmy_job_effects_state_ck" CHECK ("state" in ('planned', 'attempting', 'indeterminate', 'blocked', 'settled'));--> statement-breakpoint
+ALTER TABLE "symmy_integration"."job_effects" DROP CONSTRAINT "symmy_job_effects_outcome_ck", ADD CONSTRAINT "symmy_job_effects_outcome_ck" CHECK (("state" in ('settled', 'blocked')) = ("outcome" is not null));

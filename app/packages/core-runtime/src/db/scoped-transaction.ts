@@ -2,7 +2,7 @@ import { sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { pgPolicy } from 'drizzle-orm/pg-core';
-import { Context, Effect, Option, Redacted } from 'effect';
+import { Context, Effect, Option, Predicate, Redacted } from 'effect';
 
 import { readVerifiedGatewayScopeAssertion } from '../auth/system-principal-context-provenance.ts';
 import type { GatewayScopeAssertion } from '../auth/system-principal-context-provenance.ts';
@@ -145,25 +145,54 @@ const gatewayGrantScopeAuthority = (
   ),
 });
 
-const operationalScopeAuthority = (
-  transaction: OperationalScopeRawTransaction,
-  scope: OperationalScope,
-): OperationalScopeAuthority => {
-  const scopeAssertion = readVerifiedGatewayScopeAssertion(scope);
-  return scopeAssertion !== undefined && Option.isSome(gatewayScopeGrantRoleForAudience(scopeAssertion.audience))
-    ? gatewayGrantScopeAuthority(transaction, scopeAssertion)
-    : sessionSettingScopeAuthority(transaction);
-};
+interface CurrentDatabaseRoleRow extends Record<string, unknown> {
+  readonly role: string;
+}
+
+const operationalScopeAuthority = Effect.fn('OperationalScope.resolveDatabaseAuthority')(
+  function* operationalScopeAuthority(
+    transaction: OperationalScopeRawTransaction,
+    scope: OperationalScope,
+  ): Effect.fn.Return<OperationalScopeAuthority, OperationContextUnavailable> {
+    const rows = yield* transaction
+      .execute<CurrentDatabaseRoleRow>(sql`select current_user::text as role`, 'objects')
+      .pipe(Effect.mapError(operationContextUnavailable));
+    const [row] = rows;
+    if (rows.length !== 1 || row === undefined || !Predicate.isString(row.role) || row.role.length === 0) {
+      return yield* operationContextUnavailable();
+    }
+    const authority =
+      DATABASE_IDENTITIES.find((candidate) => candidate.role === row.role)?.scopeAuthority ?? 'session_setting';
+    if (authority === 'session_setting') {
+      return sessionSettingScopeAuthority(transaction);
+    }
+    if (authority === 'none') {
+      return yield* operationContextUnavailable();
+    }
+    const scopeAssertion = readVerifiedGatewayScopeAssertion(scope);
+    if (
+      scopeAssertion === undefined ||
+      !Option.contains(gatewayScopeGrantRoleForAudience(scopeAssertion.audience), row.role)
+    ) {
+      return yield* operationContextUnavailable();
+    }
+    return gatewayGrantScopeAuthority(transaction, scopeAssertion);
+  },
+);
 
 const operationalScopeTransactionFromCoreTransaction = (
   transaction: OperationalScopeRawTransaction,
   scope: OperationalScope,
 ): OperationalScopeTransactionService => {
-  const authority = operationalScopeAuthority(transaction, scope);
+  let installedAuthority: OperationalScopeAuthority | undefined;
   return {
     delete: transaction.delete.bind(transaction),
     insert: transaction.insert.bind(transaction),
-    install: authority.install,
+    install: Effect.fn('OperationalScopeTransaction.installActualRole')(function* installActualRole(requestedScope) {
+      const authority = yield* operationalScopeAuthority(transaction, scope);
+      yield* authority.install(requestedScope);
+      installedAuthority = authority;
+    }),
     scopedRoutineInvoker: (routineScope) =>
       scopedRoutineInvokerFromTransaction(
         (statement) => transaction.execute<ScopedRoutineRawRow>(statement, 'objects'),
@@ -171,7 +200,9 @@ const operationalScopeTransactionFromCoreTransaction = (
       ),
     select: transaction.select.bind(transaction),
     update: transaction.update.bind(transaction),
-    verify: authority.verify,
+    verify: Effect.suspend(() =>
+      installedAuthority === undefined ? Effect.fail(operationContextUnavailable()) : installedAuthority.verify,
+    ),
   };
 };
 

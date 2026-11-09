@@ -51,7 +51,7 @@ it('never grants table-wide reads of Core identity tables', () => {
   }
 });
 
-it('grants the request role full DML on every RLS-protected Party and Contacts table and nothing more', () => {
+it('covers RLS-protected Party and Contacts tables while keeping source receipts append-only', () => {
   const rlsTables = [...PARTY_TABLES, ...CONTACTS_TABLES]
     .filter((table) => getTableConfig(table).enableRLS)
     .map(qualifiedName)
@@ -63,7 +63,15 @@ it('grants the request role full DML on every RLS-protected Party and Contacts t
   );
   expect(ownedGrants.map((grant) => grant.table).toSorted()).toEqual(rlsTables);
   for (const grant of ownedGrants) {
-    expect(grant.privileges).toEqual(['select', 'insert', 'update', 'delete']);
+    expect(grant.privileges).toEqual(
+      [
+        'party.party_create_source_receipts',
+        'party.party_source_effect_receipts',
+        'party.party_legacy_ico_authority_fences',
+      ].includes(grant.table)
+        ? ['select', 'insert']
+        : ['select', 'insert', 'update', 'delete'],
+    );
     expect(grant.columns).toBeUndefined();
   }
 });

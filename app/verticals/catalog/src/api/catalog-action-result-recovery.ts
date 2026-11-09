@@ -1,5 +1,6 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { ActionRuntime } from '@app/core-runtime';
+import { readVerifiedGatewayRecovery } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { and, eq } from 'drizzle-orm';
 import { Effect } from 'effect';
 
@@ -10,6 +11,7 @@ import type {
 } from '../persistence/catalog-action-result-snapshot.ts';
 import {
   catalogActionResultSnapshotForScope,
+  catalogRecoveryIdentityMatchesScope,
   validCatalogActionResultIdentity,
 } from '../persistence/catalog-action-result-snapshot.ts';
 
@@ -51,7 +53,7 @@ export const recoverCatalogActionResult = Effect.fn('CatalogActionResultRecovery
   identity: CatalogActionResultIdentity,
   codec: CatalogActionResultCodec<Result>,
 ) {
-  if (!validCatalogActionResultIdentity(identity)) {
+  if (!validCatalogActionResultIdentity(identity) || !catalogRecoveryIdentityMatchesScope(scope, identity)) {
     return { status: 'absent' } as const;
   }
   const runtime = yield* ActionRuntime;
@@ -100,7 +102,8 @@ export const recoverCatalogActionResult = Effect.fn('CatalogActionResultRecovery
   if (row === null || row === undefined) {
     return { status: 'unavailable' } as const;
   }
-  if (row.actingPrincipalId !== scope.principalId || row.actionKey !== identity.actionKey) {
+  const expectedPrincipalId = readVerifiedGatewayRecovery(scope)?.originalPrincipalId ?? scope.principalId;
+  if (row.actingPrincipalId !== expectedPrincipalId || row.actionKey !== identity.actionKey) {
     return { status: 'absent' } as const;
   }
   if (row.schemaVersion !== identity.schemaVersion) {

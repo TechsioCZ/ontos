@@ -13,7 +13,8 @@ import {
 } from '../modules/module-operation-execution.ts';
 import { ModuleOperationRequirementError } from '../modules/module-operation-requirement-error.ts';
 import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
-import type { AnyOutboxWorkerRegistration } from './definition.ts';
+import { isVerifiedOutboxWorkerHandlerContext } from './definition.ts';
+import type { AnyOutboxWorkerRegistration, OutboxWorkerHandlerContext } from './definition.ts';
 
 interface WorkerBindingInput {
   readonly authority: ActiveApplicationCompositionServiceContract;
@@ -134,14 +135,60 @@ export const nativeOutboxClaimRevision = (
     ? trusted.admission.revision
     : undefined;
 };
+const contextMatchesNativeClaim = (
+  context: OutboxWorkerHandlerContext,
+  claim: OutboxClaim,
+  revision: string,
+): boolean =>
+  isVerifiedOutboxWorkerHandlerContext(context) &&
+  context.compositionRevision === revision &&
+  context.tenantId === claim.tenantId &&
+  context.claimId === claim.claimId &&
+  context.deliveryId === claim.deliveryId &&
+  context.messageId === claim.messageId &&
+  context.domainEventId === claim.domainEventId &&
+  context.consumerModuleKey === claim.consumerModuleKey &&
+  context.producerModuleKey === claim.producerModuleKey &&
+  context.topic === claim.topic &&
+  context.workerKey === claim.workerKey &&
+  context.attemptNumber === claim.attemptNumber &&
+  context.tenantSequenceNo === claim.tenantSequenceNo &&
+  context.originatorInvocationId === claim.originatorInvocationId &&
+  context.actorPrincipalId === claim.actorPrincipalId &&
+  context.correlationId === claim.correlationId;
+
+const contextMatchesRegistration = (
+  context: OutboxWorkerHandlerContext,
+  registration: AnyOutboxWorkerRegistration,
+): boolean =>
+  context.consumerModuleKey === registration.descriptor.consumerModuleKey &&
+  context.producerModuleKey === registration.descriptor.producerModuleKey &&
+  context.topic === registration.descriptor.topic &&
+  context.workerKey === registration.descriptor.workerKey &&
+  context.legalEntityScope === (registration.descriptor.legalEntityScope ?? 'required');
+
 export const withNativeOutboxClaimExecution = <Value, Failure, Requirements>(
   claim: OutboxClaim,
   registration: AnyOutboxWorkerRegistration,
+  context: OutboxWorkerHandlerContext,
   effect: Effect.Effect<Value, Failure, Requirements>,
 ) =>
   Effect.suspend(() => {
     const trusted = readNativeOutboxClaim(claim);
     if (trusted === undefined || trusted.registration !== registration || !trusted.admission.binding.active) {
+      return withoutModuleOperationExecution(effect);
+    }
+    const isCurrent = () => {
+      const current = readNativeOutboxClaim(claim);
+      return (
+        current === trusted &&
+        current.registration === registration &&
+        current.admission.binding.active &&
+        contextMatchesNativeClaim(context, claim, current.admission.revision) &&
+        contextMatchesRegistration(context, registration)
+      );
+    };
+    if (!isCurrent()) {
       return withoutModuleOperationExecution(effect);
     }
     return withModuleOperationExecution(
@@ -152,6 +199,7 @@ export const withNativeOutboxClaimExecution = <Value, Failure, Requirements>(
         registration,
         revision: trusted.admission.revision,
         scope: { tenantId: claim.tenantId },
+        workerExecution: { context, isCurrent },
       },
       effect,
     );

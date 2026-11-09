@@ -1,6 +1,9 @@
 import { Schema } from 'effect';
+import { PriceGroupBusinessOriginalInvocationIdSchema } from '../domain/source-operation.ts';
+import { PriceGroupSourceCorrelationSchema } from '../apis/price-group-source-associations.ts';
 
 import {
+  PriceGroupDefinitionRevisionSchema,
   ExpectedPriceGroupCurrentEvidenceSchema,
   PriceGroupCompatibilityContractSchema,
   PriceGroupDescriptionSchema,
@@ -44,6 +47,7 @@ export const CreatePriceGroupDefinitionRevisionPayloadSchema = Schema.Struct({
     }),
     Schema.Struct({ decision: Schema.Literal('MATERIAL_CHANGE') }),
   ]),
+  sourceCorrelation: Schema.optionalKey(PriceGroupSourceCorrelationSchema),
 }).check(
   Schema.makeFilter((payload) => {
     if (!isEffectivePeriod({ effectiveFrom: payload.effectiveFrom, effectiveTo: payload.effectiveTo })) {
@@ -57,4 +61,13 @@ export const CreatePriceGroupDefinitionRevisionPayloadSchema = Schema.Struct({
 );
 export type CreatePriceGroupDefinitionRevisionPayload = typeof CreatePriceGroupDefinitionRevisionPayloadSchema.Type;
 
-export { PriceGroupDefinitionRevisionSchema as CreatePriceGroupDefinitionRevisionResultSchema } from '../domain/price-group.ts';
+export const CreatePriceGroupDefinitionRevisionResultSchema = Schema.Struct({
+  ...PriceGroupDefinitionRevisionSchema.fields,
+  businessOriginalInvocationId: Schema.optionalKey(PriceGroupBusinessOriginalInvocationIdSchema),
+}).check(
+  Schema.makeFilter((result) =>
+    Schema.is(PriceGroupDefinitionRevisionSchema)(result)
+      ? undefined
+      : 'The original Price Group result must retain its native invariants',
+  ),
+);

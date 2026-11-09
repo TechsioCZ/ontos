@@ -178,7 +178,7 @@ const trustedEnforcementAuthority: AntiResurrectionEnforcementAuthorityService =
 describe('Owner execution authority-bound Actions', () => {
   it('declares the module callers that may record an owner outcome for a verified requester', () => {
     expect(recordOwnerExecutionOutcomeAction.descriptor.accessActor).toEqual({
-      callers: ['commerce-customer-context', 'party-registry'],
+      callers: ['commerce-customer-context', 'party-registry', 'symmy-integration'],
       reason: expect.any(String),
       subject: 'identity',
     });
@@ -201,6 +201,7 @@ describe('Owner execution authority-bound Actions', () => {
       let recordedAuthority: unknown;
       const { collector, context } = ownerContext({
         authority: trustedAuthority,
+        getPrivacyMeasureDispatchOriginator: () => Effect.succeed(Option.none()),
         getPrivacyMeasureHandoff: () => Effect.succeed(Option.some(handoff)),
         recordOwnerOutcome: (_tenant, _legalEntity, _invocation, request, trusted) =>
           Effect.sync(() => {
@@ -222,6 +223,7 @@ describe('Owner execution authority-bound Actions', () => {
     Effect.gen(function* rejectUnavailableOwnerAuthority() {
       const { context } = ownerContext({
         authority: ownerExecutionAuthorityUnavailable,
+        getPrivacyMeasureDispatchOriginator: () => Effect.succeed(Option.none()),
         getPrivacyMeasureHandoff: () => Effect.succeed(Option.some(handoff)),
         recordOwnerOutcome: () => Effect.die('must not be called'),
       });
@@ -239,6 +241,7 @@ describe('Owner execution authority-bound Actions', () => {
         authority: {
           resolve: () => Effect.succeed({ ...authority, contentScopeRefs: ['different-scope'] }),
         },
+        getPrivacyMeasureDispatchOriginator: () => Effect.succeed(Option.none()),
         getPrivacyMeasureHandoff: () => Effect.succeed(Option.some(handoff)),
         recordOwnerOutcome: () => Effect.die('must not be called'),
       });
@@ -263,6 +266,7 @@ describe('Owner execution authority-bound Actions', () => {
       };
       const { context } = ownerContext({
         authority: { resolve: () => Effect.succeed(incompleteAuthority) },
+        getPrivacyMeasureDispatchOriginator: () => Effect.succeed(Option.none()),
         getPrivacyMeasureHandoff: () => Effect.succeed(Option.some(handoff)),
         recordOwnerOutcome: () =>
           Effect.sync(() => {
@@ -284,6 +288,7 @@ describe('Owner execution authority-bound Actions', () => {
       const { collector, context } = antiResurrectionContext({
         authority: trustedAuthority,
         enforcementAuthority: trustedEnforcementAuthority,
+        getPrivacyMeasureDispatchOriginator: () => Effect.succeed(Option.none()),
         getPrivacyMeasureHandoff: () => Effect.succeed(Option.some(handoff)),
         recordAntiResurrectionProtection: (_tenant, _legalEntity, _invocation, request, trusted) =>
           Effect.sync(() => {
@@ -305,6 +310,7 @@ describe('Owner execution authority-bound Actions', () => {
       const { context } = antiResurrectionContext({
         authority: ownerExecutionAuthorityUnavailable,
         enforcementAuthority: trustedEnforcementAuthority,
+        getPrivacyMeasureDispatchOriginator: () => Effect.succeed(Option.none()),
         getPrivacyMeasureHandoff: () => Effect.succeed(Option.some(handoff)),
         recordAntiResurrectionProtection: () => Effect.die('must not be called'),
       });
@@ -321,6 +327,7 @@ describe('Owner execution authority-bound Actions', () => {
       const { context } = antiResurrectionContext({
         authority: trustedAuthority,
         enforcementAuthority: antiResurrectionEnforcementAuthorityUnavailable,
+        getPrivacyMeasureDispatchOriginator: () => Effect.succeed(Option.none()),
         getPrivacyMeasureHandoff: () => Effect.succeed(Option.some(handoff)),
         recordAntiResurrectionProtection: () => Effect.die('must not be called'),
       });

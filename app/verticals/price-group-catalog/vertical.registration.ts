@@ -4,9 +4,11 @@
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { priceGroupCatalogManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
-import { priceGroupDefinitionRead } from './src/api/price-group-definition.read.ts';
 import { createPriceGroupAction } from './src/actions/create-price-group.action.ts';
 import { createPriceGroupDefinitionRevisionAction } from './src/actions/create-price-group-definition-revision.action.ts';
+import { priceGroupDefinitionRead } from './src/api/price-group-definition.read.ts';
+import { priceGroupResultLookupRead } from './src/api/price-group-result-lookup.read.ts';
+import { priceGroupSourceAssociationsRead } from './src/api/price-group-source-associations.read.ts';
 import { retirePriceGroupAction } from './src/actions/retire-price-group.action.ts';
 import { validatePriceGroupCompatibilityRead } from './src/api/validate-price-group-compatibility.read.ts';
 // </generated-module-registration-imports>
@@ -23,6 +25,8 @@ export const priceGroupCatalogRegistration = defineVerticalRuntimeRegistration({
     api: {
       // <generated-module-registration-apis>
       'price-group-definition': () => import('./src/api/price-group-definition-client.ts'),
+      'price-group-result-lookup': () => import('./src/api/price-group-result-lookup-client.ts'),
+      'price-group-source-associations': () => import('./src/api/price-group-source-associations-client.ts'),
       'validate-price-group-compatibility': () => import('./src/api/validate-price-group-compatibility-client.ts'),
       // </generated-module-registration-apis>
     },
@@ -51,6 +55,8 @@ export const priceGroupCatalogRegistration = defineVerticalRuntimeRegistration({
   reads: [
     // <generated-module-registration-reads>
     priceGroupDefinitionRead,
+    priceGroupResultLookupRead,
+    priceGroupSourceAssociationsRead,
     validatePriceGroupCompatibilityRead,
     // </generated-module-registration-reads>
   ],

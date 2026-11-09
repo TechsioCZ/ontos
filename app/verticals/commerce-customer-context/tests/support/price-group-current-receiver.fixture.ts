@@ -89,6 +89,7 @@ import {
 } from '../../api/auth/gateway-assertion-redemption.ts';
 import { assignCustomerPriceGroupActionApiLive } from '../../api/assign-customer-price-group-action-server.ts';
 import { assignCounterpartyPriceGroupActionApiLive } from '../../api/assign-counterparty-price-group-action-server.ts';
+import { customerPriceGroupAssignmentReceiptReadApiLive } from '../../api/customer-price-group-assignment-receipt-read-server.ts';
 import { removeCustomerPriceGroupActionApiLive } from '../../api/remove-customer-price-group-action-server.ts';
 import { removeCounterpartyPriceGroupActionApiLive } from '../../api/remove-counterparty-price-group-action-server.ts';
 import { ensureRetailCustomerProfileActionApiLive } from '../../api/ensure-retail-customer-profile-action-server.ts';
@@ -453,6 +454,47 @@ const checkFixedEnvironment = Effect.fn('PriceGroupTemporal.checkFixedEnvironmen
   }
 });
 
+/** Only the resolver body is historical; the running Action and its complete owner schema stay current. */
+const installResolverFixture = Effect.fn('PriceGroupTemporal.installResolverFixture')(function* installResolverFixture(
+  bootstrap: typeof PriceGroupTemporalBootstrapSchema.Type,
+  revision: 'historical' | 'current',
+) {
+  yield* guardPriceGroupOwnedDatabase(bootstrap.database);
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const history = path.join(appRoot, 'verticals', commerceAppId, 'drizzle');
+  const current = yield* fs.readFileString(
+    path.join(history, '20261019224642_price_group_effective_current/migration.sql'),
+  );
+  const declaration = 'CREATE OR REPLACE FUNCTION "commerce_customer_context"."resolve_price_group_assignments"(';
+  const bodyMarker = 'AS $$';
+  const currentBody = current.indexOf(bodyMarker);
+  yield* requireCondition(current.startsWith(declaration) && currentBody > 0, 'resolver-current-source-identity');
+  let statements: readonly string[];
+  if (revision === 'historical') {
+    const previous = yield* fs.readFileString(path.join(history, '20260909112237_price-group-routines/migration.sql'));
+    const start = previous.indexOf(declaration);
+    const body = previous.indexOf(bodyMarker, start);
+    const end = previous.indexOf('$$;', body + bodyMarker.length);
+    yield* requireCondition(
+      start !== -1 && !previous.includes(declaration, start + declaration.length) && body > start && end > body,
+      'resolver-historical-source-identity',
+    );
+    // Keep the current hardened signature/configuration. The body bytes are exactly the old source,
+    // which the parent independently verifies against pg_proc before exercising the public Read.
+    statements = [
+      `${current.slice(0, currentBody + bodyMarker.length)}${previous.slice(body + bodyMarker.length, end + 3)}`,
+    ];
+  } else {
+    statements = current.split('--> statement-breakpoint').filter((statement) => statement.trim().length > 0);
+  }
+  const context = yield* Layer.build(
+    PgClient.layer({ url: bootstrap.database.adminUrl }).pipe(Layer.provide(Reactivity.layer)),
+  );
+  const client = Context.get(context, PgClient.PgClient);
+  yield* Effect.forEach(statements, (statement) => client.unsafe(statement), { concurrency: 1, discard: true });
+});
+
 const migrateOwner = Effect.fn('PriceGroupTemporal.migrateOwner')(function* migrateOwner(
   bootstrap: typeof PriceGroupTemporalBootstrapSchema.Type,
   owner: 'ccc' | 'party',
@@ -490,15 +532,6 @@ const migrateOwner = Effect.fn('PriceGroupTemporal.migrateOwner')(function* migr
   }
   const history = path.join(directory, 'drizzle');
   const temporary = yield* fs.makeTempDirectoryScoped({ prefix: 'ontos-1248-migration-' });
-  const out = before ? path.join(temporary, 'prefix') : history;
-  if (before) {
-    yield* fs.makeDirectory(out);
-    for (const folder of yield* fs.readDirectory(history)) {
-      if (folder < '20261019224642_price_group_effective_current') {
-        yield* fs.copy(path.join(history, folder), path.join(out, folder));
-      }
-    }
-  }
   const configuration = path.join(temporary, 'drizzle.config.mjs');
   yield* fs.writeFileString(
     configuration,
@@ -512,7 +545,7 @@ const migrateOwner = Effect.fn('PriceGroupTemporal.migrateOwner')(function* migr
       env: {
         APP_ENV_PATH: '/dev/null',
         DATABASE_ADMIN_URL: Redacted.value(bootstrap.database.adminUrl),
-        ONTOS_1248_HISTORY: out,
+        ONTOS_1248_HISTORY: history,
         ONTOS_1248_JOURNAL:
           owner === 'ccc' ? '__drizzle_migrations_commerce_customer_context' : '__drizzle_migrations_party',
       },
@@ -526,6 +559,9 @@ const migrateOwner = Effect.fn('PriceGroupTemporal.migrateOwner')(function* migr
     concurrency: 3,
   });
   yield* requireCondition(code === 0, 'owned-migration');
+  if (before) {
+    yield* installResolverFixture(bootstrap, 'historical');
+  }
 });
 
 const PublicKeySchema = Schema.Struct({ crv: Schema.Literal('Ed25519'), kty: Schema.Literal('OKP'), x: Schema.String });
@@ -980,16 +1016,19 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
       const runtime = yield* ReadRuntime;
       const observed: typeof runtime = {
         runRead: (input) =>
-          runtime
-            .runRead(input)
-            .pipe(
-              Effect.tapCause((cause) =>
+          runtime.runRead(input).pipe(
+            Effect.tapCause((cause) => {
+              if (
                 input.registration.descriptor.readKey ===
-                'commerce.customer-context.api.customer-price-group-resolution'
-                  ? reportPriceGroupReadFailure(cause)
-                  : Effect.void,
-              ),
-            ),
+                  'commerce.customer-context.api.customer-price-group-assignment-receipt' ||
+                input.registration.descriptor.readKey ===
+                  'commerce.customer-context.api.customer-price-group-resolution'
+              ) {
+                return reportPriceGroupReadFailure(cause);
+              }
+              return Effect.void;
+            }),
+          ),
       };
       return observed;
     }),
@@ -1014,6 +1053,7 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
   const handlers = Layer.mergeAll(
     assignCustomerPriceGroupActionApiLive,
     assignCounterpartyPriceGroupActionApiLive,
+    customerPriceGroupAssignmentReceiptReadApiLive,
     removeCustomerPriceGroupActionApiLive,
     removeCounterpartyPriceGroupActionApiLive,
     ensureRetailCustomerProfileActionApiLive,
@@ -1043,6 +1083,7 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
           HttpApi.make('CommerceCustomerContextApi')
             .add(commerceCustomerContextApi.groups.assignCustomerPriceGroupAction)
             .add(commerceCustomerContextApi.groups.assignCounterpartyPriceGroupAction)
+            .add(commerceCustomerContextApi.groups.customerPriceGroupAssignmentReceipt)
             .add(commerceCustomerContextApi.groups.removeCustomerPriceGroupAction)
             .add(commerceCustomerContextApi.groups.removeCounterpartyPriceGroupAction)
             .add(commerceCustomerContextApi.groups.ensureRetailCustomerProfileAction)
@@ -1123,9 +1164,10 @@ const createParty = Effect.fn('PriceGroupTemporal.createParty')(function* create
   };
   const subject = subjects[purpose];
   const subjectKey = Brand.nominal<
-    NonNullable<
-      Parameters<typeof createPartyWithAuthorization>[0]['candidate']['subjectEvidence']
-    >[number]['subjectKey']
+    Extract<
+      NonNullable<Parameters<typeof createPartyWithAuthorization>[0]['candidate']['subjectEvidence']>[number],
+      { readonly kind: 'ACTOR_ATTESTATION' }
+    >['subjectKey']
   >()(yield* nextId);
   const payload: Parameters<typeof createPartyWithAuthorization>[0] = {
     candidate: {
@@ -1338,6 +1380,7 @@ export const runReceiver = Effect.fn('PriceGroupTemporal.runReceiver')(function*
       yield* requireCondition(!upgraded, 'upgrade-once');
       yield* guardPriceGroupOwnedDatabase(bootstrap.database);
       yield* migrateOwner(bootstrap, 'ccc', false);
+      yield* installResolverFixture(bootstrap, 'current');
       upgraded = true;
       yield* sendParent({ type: 'UPGRADED', version: priceGroupTemporalProtocol });
     } else if (command.type === 'STOP_CATALOG') {

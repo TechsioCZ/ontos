@@ -3,21 +3,18 @@ import { Reactivity } from 'effect/reactivity';
 import { PgClient } from '@effect/sql-pg';
 import { generateKeyPairSync, sign } from 'node:crypto';
 
-import {
-  GatewayAssertionRedemptionService,
-  GatewayAssertionReplayError,
-  findPostgresFailure,
-  loadDatabaseConnectionPair,
-} from '@app/core-runtime';
+import { GatewayAssertionRedemptionService, GatewayAssertionReplayError, findPostgresFailure } from '@app/core-runtime';
 import type { OwnerAuthorizationInput } from '@app/core-runtime';
+import { computeActionRequestHash } from '@app/core-runtime/access/enforcement';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
+import { sourceImportCompositionFixture } from '../support/source-import-composition.fixture.ts';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
-import { NodeCrypto } from '@effect/platform-node';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { eq } from 'drizzle-orm';
 import { ConfigProvider, Context, Crypto, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
@@ -25,6 +22,9 @@ import { FetchHttpClient } from 'effect/http';
 import { assert, expect, it } from 'effect-rstest';
 
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
+import { inventorySourceImportReceiptReadApiLive } from '../../api/inventory-source-import-receipt-read-server.ts';
+import { InventorySourceImportReceiptResponseSchema } from '../../shared/apis/inventory-source-import-receipt.ts';
+import { executeInventorySourceImportReceiptWithAuthorization } from '../../src/api/inventory-source-import-receipt-client.ts';
 import { importSourceAssertionActionApiLive } from '../../api/import-source-assertion-action-server.ts';
 import { inventoryApi } from '../../shared/api.ts';
 import {
@@ -49,7 +49,10 @@ import { StockLocationSchema } from '../../shared/domain/stock-location.ts';
 import { StockPositionSchema } from '../../shared/domain/stock-position.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { importSourceAssertionAction } from '../../src/actions/import-source-assertion.action.ts';
-import { ImportSourceAssertionResultSchema } from '../../shared/actions/import-source-assertion.ts';
+import {
+  prepareImportSourceAssertionRequestIdentity,
+  ImportSourceAssertionResultSchema,
+} from '../../shared/actions/import-source-assertion.ts';
 import { requireExecutionResult } from '../support/action-execution-result.ts';
 import { executeImportSourceAssertionWithAuthorization } from '../../src/api/import-source-assertion-action-client.ts';
 import {
@@ -62,7 +65,11 @@ import { inventoryBackendConfigurationPersistenceForScope } from '../../src/pers
 import { inventorySourceAssertionPersistenceForScope } from '../../src/persistence/inventory-source-assertion-repository.ts';
 import { inventorySourceImportLedgerPersistenceForScope } from '../../src/persistence/inventory-source-import-ledger-repository.ts';
 import { physicalStockEffectPersistenceForScope } from '../../src/persistence/physical-stock-effect-repository.ts';
-import { makeDrizzleStockItemRepository } from '../../src/persistence/stock-item-repository.ts';
+import {
+  StockItemRepository,
+  stockItemRepositoryLayerForTransaction,
+  makeDrizzleStockItemRepository,
+} from '../../src/persistence/stock-item-repository.ts';
 import { stockLocationPersistenceForScope } from '../../src/persistence/stock-location-repository.ts';
 import { stockPositionPersistenceForScope } from '../../src/persistence/stock-position-repository.ts';
 import {
@@ -79,11 +86,13 @@ it.live(
   'generated Import preserves committed uncertain Source Assertion through fresh invocation, batch, race and rollback',
   () =>
     Effect.gen(function* nativeIndeterminateRetry() {
-      const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
-      const composition = yield* makeApplicationCompositionSnapshotFixture(
-        ['inventory'],
-        ultramodernApiMarker.buildMarker,
-      );
+      const composition = yield* sourceImportCompositionFixture;
+      const isolated = yield* makeIsolatedNativeDatabaseFixture({
+        compositionSnapshot: composition,
+        mode: 'schema-only',
+        purpose: 'implementation-1134-inventory-source-import-receipt',
+      });
+      const { connections } = isolated;
       const now = Math.floor(DateTime.toEpochMillis(composition.observedAt) / 1000);
       const fixture = yield* Effect.acquireRelease(
         makeLiveOperationFixture({
@@ -91,8 +100,10 @@ it.live(
           actionKeys: [importSourceAssertionAction.descriptor.actionKey],
           adminConnectionString: Redacted.make(connections.admin.connectionString),
           allowedAudiences: ['inventory'],
+          applicationComposition: { load: Effect.succeed(composition) },
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: composition.composition.revision,
+          expectedDeployment: ultramodernApiMarker,
           moduleKeys: ['commerce.inventory'],
           ownerRegistration: inventoryRegistration,
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
@@ -325,6 +336,10 @@ it.live(
           Effect.gen(function* verifyImportOwnerBoundary() {
             // The owner rule is about one Position (O70): Core resolves these facts from the decoded
             // payload, the overlay locks that row and checks its on-hand authority (O20/O31).
+            const stockItems = yield* Layer.build(stockItemRepositoryLayerForTransaction(transaction));
+            const boundItem = yield* Context.get(stockItems, StockItemRepository).findById(tenantId, itemId);
+            assert(Option.isSome(boundItem));
+            expect(boundItem.value.stockItemRef).toEqual(itemRef);
             const positionFacts = {
               inventoryPositionModuleId: 'commerce.inventory',
               inventoryPositionResourceId: positionId,
@@ -452,8 +467,10 @@ it.live(
             return Effect.void;
           }),
       });
-      const api = HttpApi.make('InventoryApi').add(inventoryApi.groups.importSourceAssertionAction);
-      const handlers = importSourceAssertionActionApiLive.pipe(
+      const api = HttpApi.make('InventoryApi')
+        .add(inventoryApi.groups.importSourceAssertionAction)
+        .add(inventoryApi.groups.inventorySourceImportReceipt);
+      const handlers = Layer.mergeAll(importSourceAssertionActionApiLive, inventorySourceImportReceiptReadApiLive).pipe(
         Layer.provide(
           Layer.mergeAll(
             ActionPrincipalVerifierLive,
@@ -513,6 +530,18 @@ it.live(
           ).pipe(Effect.provideService(FetchHttpClient.Fetch, fetcher ?? nativeFetch)),
         );
       });
+      const readReceipt = Effect.fn('SourceRetryTest.readReceipt')(function* readReceipt(
+        proposal: typeof InventorySourceAssertionProposalSchema.Type,
+        invocationId: string,
+        itemIndex = 0,
+      ) {
+        return yield* executeInventorySourceImportReceiptWithAuthorization(
+          { actionInvocationId: InventorySourceImportActionInvocationIdSchema.make(invocationId), itemIndex, proposal },
+          yield* authorization(),
+          yield* nextId,
+          { baseUrl: 'https://inventory.ontos.test', compositionRevision: composition.composition.revision },
+        ).pipe(Effect.provideService(FetchHttpClient.Fetch, nativeFetch));
+      });
       const observe = () =>
         fixture
           .prepareOwner((transaction) =>
@@ -549,6 +578,15 @@ it.live(
       expect(committed.assertions).toHaveLength(1);
       expect(committed.ledger).toHaveLength(1);
       expect(committed.effects).toMatchObject([{ state: 'APPLIED' }]);
+      // Internal C14 fixture: the public governed read recovers the exact committed original
+      // without a new Action, and a changed proposal never retargets that receipt.
+      const originalCommit = yield* importItems([original], firstKey).pipe(Effect.flip);
+      assert(Schema.is(ImportSourceAssertionActionAlreadyCommittedProblemSchema)(originalCommit));
+      const originalReceipt = yield* readReceipt(original, originalCommit.invocationId);
+      assert(Schema.is(InventorySourceImportReceiptResponseSchema.members[0])(originalReceipt));
+      expect(originalReceipt.receipt.outcome).toEqual(first.items[0]);
+      expect(originalReceipt.receipt.proposal).toEqual(original);
+      expect((yield* observe()).ledger).toHaveLength(1);
       const repeated = yield* importItems([original]);
       expect(repeated.items).toEqual(first.items);
       expect((yield* observe()).assertions).toEqual(committed.assertions);
@@ -563,16 +601,36 @@ it.live(
         { reason: 'ASSERTION_ID_CONFLICT', status: 'REJECTED' },
       ]);
       const next = yield* createProposal(2, 'INCLUDES');
-      const mixed = yield* importItems([original, next]);
+      const mixedKey = yield* nextId;
+      const mixed = yield* importItems([original, next], mixedKey);
       expect(mixed.items).toMatchObject([{ status: 'INDETERMINATE' }, { status: 'ACCEPTED' }]);
       expect((yield* importItems([next])).items).toMatchObject([
         { duplicateOfAssertionId: next.assertionId, status: 'DUPLICATE' },
       ]);
+      const mixedCommit = yield* importItems([original, next], mixedKey).pipe(Effect.flip);
+      assert(Schema.is(ImportSourceAssertionActionAlreadyCommittedProblemSchema)(mixedCommit));
+      const acceptedReceipt = yield* readReceipt(next, mixedCommit.invocationId, 1);
+      assert(Schema.is(InventorySourceImportReceiptResponseSchema.members[0])(acceptedReceipt));
+      expect(acceptedReceipt.receipt.outcome.status).toBe('ACCEPTED');
+      const mismatchedReceipt = yield* readReceipt(
+        { ...next, sourceReference: 'revised-mapping-source' },
+        mixedCommit.invocationId,
+        1,
+      );
+      expect(Schema.is(InventorySourceImportReceiptResponseSchema.members[1])(mismatchedReceipt)).toBe(true);
+      const stale = yield* createProposal(0, 'INCLUDES');
+      expect((yield* importItems([stale])).items).toMatchObject([
+        { currentAssertionId: next.assertionId, status: 'STALE' },
+      ]);
+      const acceptedAfterStale = yield* readReceipt(next, mixedCommit.invocationId, 1);
+      expect(acceptedAfterStale).toEqual(acceptedReceipt);
       const race = yield* createProposal(3, 'UNKNOWN');
       const raced = yield* Effect.all([importItems([race]), importItems([race])], { concurrency: 2 });
       expect(raced.map((result) => result.items[0]?.status)).toEqual(['INDETERMINATE', 'INDETERMINATE']);
       expect((yield* observe()).assertions.filter((value) => value.assertionId === race.assertionId)).toHaveLength(1);
       const rolledBack = yield* createProposal(4, 'MISSING');
+      const absentReceipt = yield* readReceipt(rolledBack, yield* nextId);
+      expect(Schema.is(InventorySourceImportReceiptResponseSchema.members[1])(absentReceipt)).toBe(true);
       fixture.faultNextTransaction('rollback');
       const rollback = yield* importItems([race, rolledBack]).pipe(Effect.flip);
       expect(Schema.is(ImportSourceAssertionActionUnavailableProblemSchema)(rollback)).toBe(true);
@@ -622,11 +680,28 @@ it.live(
       expect(Option.isSome(findPostgresFailure(sqlAbort, ({ code }) => code === '25P02'))).toBe(true);
       expect(yield* observe()).toEqual(beforeSqlAbort);
       const evidence = yield* fixture.evidence(coreEvidenceExecutor);
-      expect(evidence.invocations.filter((value) => value.status === 'succeeded')).toHaveLength(8);
+      expect(evidence.invocations.filter((value) => value.status === 'succeeded')).toHaveLength(9);
+      // The public owner projection is proven against Core's actual persisted invocation hash.
+      // In particular, the Position owner fact must not be substituted as a Core record target.
+      const requestIdentity = yield* prepareImportSourceAssertionRequestIdentity({
+        authorizationTargetRef: original.positionRef,
+        items: [original],
+      });
+      expect(requestIdentity.actionKey).toBe(importSourceAssertionAction.descriptor.actionKey);
+      expect(requestIdentity.schemaVersion).toBe(importSourceAssertionAction.descriptor.schemaVersion);
+      expect(requestIdentity.target).toEqual({});
+      const originalInvocation = evidence.invocations.find(
+        ({ actionInvocationId }) => actionInvocationId === originalCommit.invocationId,
+      );
+      assert(originalInvocation !== undefined);
+      expect(originalInvocation.requestHash).toBe(
+        computeActionRequestHash({ ...requestIdentity, principal: fixture.manager }),
+      );
+
       expect(evidence.invocations.some((value) => value.traceId === 'inventory-native-trace')).toBe(true);
       expect(evidence.invocations.filter((value) => value.status === 'received')).toHaveLength(1);
       expect((yield* observe()).assertions.find((value) => value.assertionId === original.assertionId)).toEqual(
         committed.assertions[0],
       );
-    }).pipe(Effect.provide(NodeCrypto.layer)),
+    }).pipe(Effect.provide(NodeCrypto.layer), Effect.provide(NodeServices.layer)),
 );

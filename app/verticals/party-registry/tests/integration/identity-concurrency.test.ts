@@ -1,12 +1,13 @@
 import { addTestGatewayScopeGrantCleanup } from '@app/core-runtime/testing/gateway-scope-grant';
 import { eq } from 'drizzle-orm';
-import { DateTime, Effect, Match } from 'effect';
+import { ConfigProvider, DateTime, Effect, Match, Schema } from 'effect';
 import { NodeCrypto } from '@effect/platform-node';
-import { expect, it } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 
 import { makeTestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
 import { normalizeOfficialIdentifier } from '../../shared/domain/identifier-contracts.ts';
+import type { PartyClientSourceAssertion } from '../../shared/domain/identity-contracts.ts';
 import { partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
 import {
   duplicateCandidateCaseParties,
@@ -18,6 +19,7 @@ import {
   partyRelations,
 } from '../../src/db/schema.ts';
 import type { PartyTransaction } from '../../src/db/types.ts';
+import { PartyClientSourcePrivacy } from '../../src/services/party-client-source-evidence.service.ts';
 import { lockTenantIdentityWrites } from '../../src/services/party-identifier-claim.service.ts';
 import {
   createOrMatchParty,
@@ -290,6 +292,96 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         expect(upgraded.filter((row) => row.normalizedValue === '26168685')).toHaveLength(1);
         const upgradedAssertion = upgraded.find((row) => row.normalizedValue === '26168685');
         expect(upgradedAssertion?.acceptedByActionInvocationId).toBe('bc300000-0000-4000-8000-000000000005');
+        const sourceAssertion: PartyClientSourceAssertion = {
+          kind: 'CLIENT_SOURCE_ASSERTION',
+          observedSubject: 'ORGANIZATION',
+          occurrenceId: 'revision-1',
+          recordId: 'fixture-record-1',
+          source: {
+            issuer: 'internal-contract-fixture-one',
+            namespace: 'customers',
+            recordType: 'customer',
+            routeRef: 'internal-contract-party-route',
+          },
+          sourceObservedAt: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
+          statement: 'Internal contract fixture declares this organization',
+          subjectKey: partySubjectKeyFromString('fixture-source-subject'),
+        };
+        const sourceCandidate = {
+          ...candidate,
+          businessName: 'Internal fixture organization',
+          officialIdentifiers: [],
+          subjectEvidence: [sourceAssertion],
+        };
+        const sourceScope = { authMethod: 'api_key' as const, principalId, tenantId };
+        const sourceBindings = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))([
+          { ...sourceScope, ...sourceAssertion.source },
+          { ...sourceScope, ...sourceAssertion.source, issuer: 'another-issuer' },
+        ]);
+        const sourceConfig = ConfigProvider.fromUnknown({ ONTOS_PARTY_CLIENT_SOURCE_BINDINGS: sourceBindings });
+        const createSource = (invocation: string, input = sourceCandidate) =>
+          scoped((transaction) =>
+            createOrMatchParty(transaction, {
+              actionInvocationId: invocation,
+              candidate: input,
+              principalId,
+              sourceScope,
+              tenantId,
+            }),
+          ).pipe(
+            Effect.provideService(ConfigProvider.ConfigProvider, sourceConfig),
+            Effect.provideService(PartyClientSourcePrivacy, { checkImport: () => Effect.succeed('ALLOWED') }),
+          );
+        const sourceAttempts = yield* Effect.forEach(
+          ['bc300000-0000-4000-8000-000000000020', 'bc300000-0000-4000-8000-000000000021'],
+          (invocation) => createSource(invocation),
+          { concurrency: 'unbounded' },
+        );
+        const sourceCreated = sourceAttempts.find((attempt) => attempt.replayed !== true);
+        const sourceReplay = sourceAttempts.find((attempt) => attempt.replayed === true);
+        expect(sourceCreated?.outcome).toBe('CREATED');
+        expect(sourceReplay).toEqual({ ...sourceCreated, replayed: true });
+        const conflict = yield* Effect.flip(
+          createSource('bc300000-0000-4000-8000-000000000022', {
+            ...sourceCandidate,
+            businessName: 'Changed source content',
+          }),
+        );
+        expect(conflict).toMatchObject({ reason: 'client_source_occurrence_conflict' });
+        const unrelated = yield* createSource('bc300000-0000-4000-8000-000000000023', {
+          ...sourceCandidate,
+          businessName: 'Unrelated fixture organization',
+          subjectEvidence: [{ ...sourceAssertion, source: { ...sourceAssertion.source, issuer: 'another-issuer' } }],
+        });
+        expect(unrelated.outcome).toBe('CREATED');
+        expect(unrelated.decisionRef).not.toEqual(sourceCreated?.decisionRef);
+        assert.isOk(sourceCreated?.outcome === 'CREATED');
+        assert.isOk(unrelated.outcome === 'CREATED');
+        const revision = yield* createSource('bc300000-0000-4000-8000-000000000024', {
+          ...sourceCandidate,
+          subjectEvidence: [{ ...sourceAssertion, occurrenceId: 'revision-2' }],
+        });
+        expect(revision).toMatchObject({ outcome: 'MATCHED_EXISTING', partyRef: sourceCreated.partyRef });
+        const [stored] = yield* admin
+          .select()
+          .from(partyMatchDecisions)
+          .where(eq(partyMatchDecisions.matchDecisionId, sourceCreated.decisionRef.resourceId));
+        assert.isOk(stored);
+        const { matchDecisionId: _existingDecisionId, ...contradictoryReceipt } = stored;
+        yield* admin.insert(partyMatchDecisions).values({
+          ...contradictoryReceipt,
+          actionInvocationId: 'bc300000-0000-4000-8000-000000000025',
+          partyId: unrelated.partyRef.resourceId,
+        });
+        const exactAmbiguity = yield* Effect.flip(createSource('bc300000-0000-4000-8000-000000000026'));
+        expect(exactAmbiguity).toMatchObject({ reason: 'client_source_receipt_ambiguous' });
+        const recordAmbiguity = yield* Effect.flip(
+          createSource('bc300000-0000-4000-8000-000000000027', {
+            ...sourceCandidate,
+            subjectEvidence: [{ ...sourceAssertion, occurrenceId: 'revision-3' }],
+          }),
+        );
+        expect(recordAmbiguity).toMatchObject({ reason: 'client_source_party_target_ambiguous' });
       }),
   );
 });

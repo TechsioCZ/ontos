@@ -108,6 +108,10 @@ export const importSourceAssertionAction = defineAction(
       inventoryPositionResourceType: payload.authorizationTargetRef.resourceType,
       inventoryPositionTenantId: payload.authorizationTargetRef.tenantId,
     }),
+    accessWorkload: {
+      reason: 'Explicitly enrolled source integrations import exact qualified physical stock observations',
+      workloads: ['commerce.inventory.source-write'],
+    },
     actionKey: ACTION_KEY,
     auditProfile: 'standard',
     domainErrorSchema: ImportSourceAssertionErrorSchema,

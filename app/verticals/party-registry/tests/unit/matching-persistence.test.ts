@@ -1,7 +1,7 @@
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This harness implements the narrow Drizzle Effect boundary exercised by the owner-local matching service. expires: 2026-12-31. */
 import { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
-import { DateTime, Effect, Layer, Schema, Predicate } from 'effect';
+import { ConfigProvider, DateTime, Effect, Layer, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
@@ -19,11 +19,14 @@ import { makeDuplicateCandidateCaseRef } from '../../shared/resources/duplicate-
 import { matchPartyAction } from '../../src/actions/match-party.action.ts';
 import { resolveDuplicateCandidateMatchAction } from '../../src/actions/resolve-duplicate-candidate-match.action.ts';
 import { partyMatchRead } from '../../src/api/party-match.read.ts';
+import { PartyClientSourcePrivacy } from '../../src/services/party-client-source-evidence.service.ts';
+import type { PartySourceCreateTarget } from '../../src/services/party-client-source-evidence.service.ts';
 import {
   duplicateCandidateCaseParties,
   duplicateCandidateCases,
   parties,
   partyAliases,
+  partyCreateSourceReceipts,
   partyMatchDecisions,
   partyOfficialIdentifiers,
 } from '../../src/db/schema.ts';
@@ -32,6 +35,7 @@ import {
   candidateFingerprint,
   createOrMatchParty,
   findDuplicateCandidateCase,
+  findMatchDecision,
   matchParty,
   previewPartyMatch,
   resolveDuplicateCandidateCreate,
@@ -112,6 +116,7 @@ type HarnessTable =
   | typeof duplicateCandidateCases
   | typeof parties
   | typeof partyAliases
+  | typeof partyCreateSourceReceipts
   | typeof partyMatchDecisions
   | typeof partyOfficialIdentifiers;
 type RecordedValues = Row | readonly Row[] | undefined;
@@ -154,6 +159,7 @@ const harness = (queues: ReadonlyMap<unknown, readonly Rows[]> = new Map()) => {
           return chain;
         },
         limit: () => chain,
+        innerJoin: () => chain,
         orderBy: () => chain,
         where: (predicate: SQL | undefined) => {
           if (predicate !== undefined) {
@@ -1165,18 +1171,22 @@ it.layer(
 const guestLegalEntityId = '80000000-0000-4000-8000-000000000001';
 const guestCandidate = (): PartyCandidate =>
   candidate({
-    subjectEvidence: (candidate().subjectEvidence ?? []).map((item) => ({
-      ...item,
-      guestBinding: {
-        correlationRoot: 'purchase-1241',
-        legalEntityRef: {
-          moduleId: 'core.identity',
-          resourceId: guestLegalEntityId,
-          resourceType: 'core.identity.legal-entity',
-          tenantId,
-        },
-      },
-    })),
+    subjectEvidence: (candidate().subjectEvidence ?? []).map((item) =>
+      item.kind === 'ACTOR_ATTESTATION'
+        ? {
+            ...item,
+            guestBinding: {
+              correlationRoot: 'purchase-1241',
+              legalEntityRef: {
+                moduleId: 'core.identity' as const,
+                resourceId: guestLegalEntityId,
+                resourceType: 'core.identity.legal-entity' as const,
+                tenantId,
+              },
+            },
+          }
+        : item,
+    ),
   });
 
 it.effect('bound Guest evidence cannot enter Create or Match without its exact trusted LE', () =>
@@ -1333,5 +1343,239 @@ it.effect('reviewed Guest binding is restored from the immutable case and cannot
       expect(subject.inserts).toEqual([]);
       expect(subject.updates).toEqual([]);
     }
+  }),
+);
+
+const storedClientSourceEvidence = [
+  {
+    kind: 'CLIENT_SOURCE_ASSERTION',
+    observedSubject: 'ORGANIZATION',
+    occurrenceId: 'fixture-revision-1',
+    recordId: 'fixture-record-1',
+    source: {
+      issuer: 'internal-contract-fixture',
+      namespace: 'customers',
+      recordType: 'customer',
+      routeRef: 'internal-party-fixture-route',
+    },
+    sourceObservedAt: '2020-01-01T00:00:00.000Z',
+    statement: 'This fixture records one declared organization',
+    subjectKey: 'source-subject',
+  },
+] as const;
+
+const sourceCaseRow = () => {
+  const row = caseRow();
+  return {
+    ...row,
+    candidateSnapshot: { ...row.candidateSnapshot, subjectEvidence: storedClientSourceEvidence },
+  };
+};
+const sourceCaseHarness = () =>
+  harness(new Map<unknown, readonly Rows[]>([[duplicateCandidateCases, [[sourceCaseRow()]]]]));
+
+const sourceAmbiguityInput = Effect.gen(function* sourceAmbiguityFixture() {
+  yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-01T00:00:00.000Z')));
+  const sourceScope = { authMethod: 'api_key' as const, principalId, tenantId };
+  const [assertion] = storedClientSourceEvidence;
+  const sourceConfig = ConfigProvider.fromUnknown({
+    ONTOS_PARTY_CLIENT_SOURCE_BINDINGS: yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))([
+      { ...sourceScope, ...assertion.source },
+    ]),
+  });
+  const sourceCandidate = yield* Schema.decodeEffect(PartyCandidateSchema)({
+    ...(yield* Schema.encodeEffect(PartyCandidateSchema)(candidate())),
+    subjectEvidence: storedClientSourceEvidence,
+  });
+  return {
+    input: { actionInvocationId, candidate: sourceCandidate, principalId, sourceScope, tenantId },
+    sourceConfig,
+  };
+});
+
+const sourceAmbiguityHarness = () =>
+  harness(
+    new Map<unknown, readonly Rows[]>([
+      [partyOfficialIdentifiers, [[{ partyId: partyA }], []]],
+      [partyAliases, [[]]],
+      [parties, [[activePartyRow(partyA)]]],
+    ]),
+  );
+
+for (const operation of ['CREATE', 'MATCH'] as const) {
+  it.effect(`source ${operation} protects ambiguous Party and case targets before recording a decision`, () =>
+    Effect.gen(function* protectSourceAmbiguity() {
+      const { input, sourceConfig } = yield* sourceAmbiguityInput;
+      const partyTarget = { kind: 'PARTY', partyId: partyA } as const;
+      const caseTarget = { kind: 'DUPLICATE_CANDIDATE', caseId: candidateCaseId } as const;
+      for (const denied of ['PARTY', 'DUPLICATE_CANDIDATE', null] as const) {
+        const subject = sourceAmbiguityHarness();
+        const targets: PartySourceCreateTarget[] = [];
+        const request =
+          operation === 'CREATE'
+            ? createOrMatchParty(subject.transaction, input).pipe(Effect.map(({ outcome }) => outcome))
+            : matchParty(subject.transaction, input).pipe(Effect.map(({ outcome }) => outcome));
+        const admitted = request.pipe(
+          Effect.provideService(ConfigProvider.ConfigProvider, sourceConfig),
+          Effect.provideService(PartyClientSourcePrivacy, {
+            checkImport: ({ intent }) =>
+              Effect.sync(() => {
+                expect(intent.operation).toBe(operation);
+                if ('target' in intent && intent.target !== undefined) {
+                  targets.push(intent.target);
+                  return intent.target.kind === denied ? 'DENIED' : 'ALLOWED';
+                }
+                return 'ALLOWED';
+              }),
+          }),
+        );
+        if (denied === null) {
+          expect(yield* admitted).toBe('AMBIGUOUS');
+          expect(subject.inserts.some(({ table }) => table === partyMatchDecisions)).toBe(true);
+        } else {
+          expect(yield* Effect.flip(admitted)).toMatchObject({ reason: 'client_source_privacy_denied' });
+          expect(subject.inserts.some(({ table }) => table === partyMatchDecisions)).toBe(false);
+          if (denied === 'PARTY') {
+            expect(subject.inserts).toEqual([]);
+          }
+        }
+        expect(targets).toEqual(denied === 'PARTY' ? [partyTarget] : [partyTarget, caseTarget]);
+      }
+    }),
+  );
+}
+
+it.effect('an ambiguous source Create replay rechecks retained Party Privacy even when the case is allowed', () =>
+  Effect.gen(function* recheckSourceAmbiguity() {
+    const { input, sourceConfig } = yield* sourceAmbiguityInput;
+    const subject = sourceAmbiguityHarness();
+    const accepted = yield* createOrMatchParty(subject.transaction, input).pipe(
+      Effect.provideService(ConfigProvider.ConfigProvider, sourceConfig),
+      Effect.provideService(PartyClientSourcePrivacy, { checkImport: () => Effect.succeed('ALLOWED') }),
+    );
+    expect(accepted.outcome).toBe('AMBIGUOUS');
+    const stored = recordedRow(subject.inserts.find(({ table }) => table === partyMatchDecisions)?.values);
+    for (const retained of [[], [{ partyId: partyA }]] as const) {
+      const replay = harness(
+        new Map<unknown, readonly Rows[]>([
+          [partyMatchDecisions, [[], [{ ...stored, matchDecisionId: decisionId }]]],
+          [duplicateCandidateCaseParties, [retained]],
+        ]),
+      );
+      const seenTargets: PartySourceCreateTarget[] = [];
+      const denied = yield* createOrMatchParty(replay.transaction, input).pipe(
+        Effect.provideService(ConfigProvider.ConfigProvider, sourceConfig),
+        Effect.provideService(PartyClientSourcePrivacy, {
+          checkImport: ({ intent }) =>
+            Effect.sync(() => {
+              if (intent.operation !== 'RECOVER_CREATE') {
+                return 'ALLOWED';
+              }
+              seenTargets.push(intent.target);
+              return intent.target.kind === 'PARTY' ? 'DENIED' : 'ALLOWED';
+            }),
+        }),
+        Effect.flip,
+      );
+      expect(denied).toMatchObject(
+        retained.length === 0 ? { code: 'party_persistence_unavailable' } : { reason: 'client_source_privacy_denied' },
+      );
+      expect(seenTargets[0]).toEqual({ kind: 'DUPLICATE_CANDIDATE', caseId: candidateCaseId });
+      expect(seenTargets[1]).toEqual(retained.length === 0 ? undefined : { kind: 'PARTY', partyId: partyA });
+      expect(replay.inserts).toEqual([]);
+    }
+  }),
+);
+
+it.effect('source Match checks exact prior case Privacy before its lookup', () =>
+  Effect.gen(function* protectPriorCase() {
+    const { input, sourceConfig } = yield* sourceAmbiguityInput;
+    const subject = sourceCaseHarness();
+    const seenTargets: PartySourceCreateTarget[] = [];
+    const denied = yield* matchParty(subject.transaction, {
+      ...input,
+      priorCandidateCaseId: candidateCaseId,
+      priorCaseTenantId: tenantId,
+    }).pipe(
+      Effect.provideService(ConfigProvider.ConfigProvider, sourceConfig),
+      Effect.provideService(PartyClientSourcePrivacy, {
+        checkImport: ({ intent }) =>
+          Effect.sync(() => {
+            if (intent.operation === 'MATCH' && intent.target !== undefined) {
+              seenTargets.push(intent.target);
+              return 'DENIED';
+            }
+            return 'ALLOWED';
+          }),
+      }),
+      Effect.flip,
+    );
+    expect(denied).toMatchObject({ reason: 'client_source_privacy_denied' });
+    expect(seenTargets).toEqual([{ kind: 'DUPLICATE_CANDIDATE', caseId: candidateCaseId }]);
+    expect(subject.reads.some(({ table }) => table === duplicateCandidateCases)).toBe(false);
+    expect(subject.inserts).toEqual([]);
+  }),
+);
+
+it.effect('a stored source case cannot authorize a later duplicate Match or Create', () =>
+  Effect.gen(function* rejectStoredSourceReview() {
+    for (const operation of ['MATCH', 'CREATE'] as const) {
+      const subject = sourceCaseHarness();
+      const input = {
+        actionInvocationId,
+        candidateCaseId,
+        expectedRevision: 1,
+        principalId,
+        reason: 'Review the source case',
+        selectedPartyId: partyA,
+        selectedPartyTenantId: tenantId,
+        tenantId,
+      };
+      const failure =
+        operation === 'MATCH'
+          ? yield* resolveDuplicateCandidateMatch(subject.transaction, input).pipe(Effect.flip)
+          : yield* resolveDuplicateCandidateCreate(subject.transaction, input).pipe(Effect.flip);
+      expect(failure).toMatchObject({ code: 'party_persistence_unavailable' });
+      expect(subject.inserts).toEqual([]);
+      expect(subject.updates).toEqual([]);
+    }
+  }),
+);
+
+it.effect('source assertions cannot expose evidence or weak candidates through generic reads', () =>
+  Effect.gen(function* rejectSourceReadWithoutCurrentAuthority() {
+    const caseSubject = sourceCaseHarness();
+    const decisionSubject = harness(
+      new Map<unknown, readonly Rows[]>([
+        [partyMatchDecisions, [[{ evidenceEvaluation: { evidence: storedClientSourceEvidence } }]]],
+      ]),
+    );
+    const candidateInput = yield* Schema.encodeEffect(PartyCandidateSchema)(candidate());
+    const sourceCandidate = yield* Schema.decodeEffect(PartyCandidateSchema)({
+      ...candidateInput,
+      subjectEvidence: storedClientSourceEvidence,
+    });
+    const failures = yield* Effect.all([
+      Effect.flip(findDuplicateCandidateCase(caseSubject.transaction, tenantId, candidateCaseId)),
+      Effect.flip(findMatchDecision(decisionSubject.transaction, tenantId, { actionInvocationId })),
+      Effect.flip(previewPartyMatch(caseSubject.transaction, tenantId, sourceCandidate)),
+    ]);
+    for (const failure of failures) {
+      expect(failure).toMatchObject({ code: 'party_persistence_unavailable' });
+    }
+  }),
+);
+
+it.effect('an erased source snapshot remains protected by its immutable source receipt marker', () =>
+  Effect.gen(function* erasedSourceCaseDoesNotBecomeGeneric() {
+    const row = caseRow();
+    const subject = harness(
+      new Map<unknown, readonly Rows[]>([
+        [duplicateCandidateCases, [[{ ...row, candidateSnapshot: { ...row.candidateSnapshot, subjectEvidence: [] } }]]],
+        [partyCreateSourceReceipts, [[{ actionInvocationId }]]],
+      ]),
+    );
+    const failure = yield* findDuplicateCandidateCase(subject.transaction, tenantId, candidateCaseId).pipe(Effect.flip);
+    expect(failure).toMatchObject({ code: 'party_persistence_unavailable' });
   }),
 );
