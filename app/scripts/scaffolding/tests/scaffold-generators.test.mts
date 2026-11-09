@@ -52,6 +52,7 @@ import {
   OntosModuleDeploymentContractSchema,
   OntosModuleIdSchema,
   OntosShellRuntimeContractSchema,
+  ShellNavigationContributionSchema,
 } from '../../../packages/core-runtime/src/index.ts';
 import { deriveActiveApplicationCompositionSnapshot } from '../../active-application-composition.mts';
 import { createSharedRuntimeConfig } from '../../../module-federation.shared.ts';
@@ -97,6 +98,9 @@ const DEFAULT_RUNTIME_EXPORT = 'export default apiRuntime;';
 const UNRELATED_RUNTIME_EXPORT = 'export default unrelatedRuntime;';
 const PRIVACY_CONTRACT_PATH = 'verticals/privacy/shared/api.ts';
 const PRIVACY_HANDLER_PATH = 'verticals/privacy/api/index.ts';
+// Privacy binds its owner runtime through the backend runtime declaration, so the composition
+// proof must name that backend registration exactly as the owner handler imports it.
+const PRIVACY_BACKEND_REGISTRATION = 'privacyBackendRegistration';
 const CRYPTO_LAYER_IMPORT = "import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';";
 const PRIVACY_CRYPTO_READ_MERGE = 'const governedReadRuntimeLive = Layer.merge(nodeCryptoLayer, readRuntimeLive);';
 const INJECTED_READ_MERGE_SUFFIX = 'readRuntimeLive);';
@@ -409,9 +413,20 @@ const InventoryLocaleSchema = Schema.Struct({
   }),
 });
 
+// A declared conditional target must resolve for Node through `default` or `node`; the optional
+// `types` and `workerd` keys describe the other conditions. A Workerd-only (or otherwise
+// Node-unresolvable) declaration stays rejected.
 const NodeConditionalPackageTargetSchema = Schema.Union([
-  Schema.Struct({ default: Schema.String, workerd: Schema.String }),
-  Schema.Struct({ node: Schema.String, workerd: Schema.String }),
+  Schema.Struct({
+    default: Schema.String,
+    types: Schema.optionalKey(Schema.String),
+    workerd: Schema.optionalKey(Schema.String),
+  }),
+  Schema.Struct({
+    node: Schema.String,
+    types: Schema.optionalKey(Schema.String),
+    workerd: Schema.optionalKey(Schema.String),
+  }),
 ]);
 const CorePackageTargetSchema = Schema.Union([Schema.String, NodeConditionalPackageTargetSchema]);
 const CorePackageExportsSchema = Schema.Struct({
@@ -1398,7 +1413,10 @@ it.live(
         const owner = path.join(appRoot, 'verticals/party-registry');
         const ownerFiles = yield* Effect.promise(() => readdir(path.join(owner, 'api')));
         const serverNames = ownerFiles.filter((name) => /-(?:read|search)-server\.ts$/u.test(name));
-        expect(serverNames.length).toBe(20);
+        // Authored Party read/search transports. This guard was written against 20; the four
+        // Party transports added since (crm-client-intake-review, customer-list,
+        // duplicate-candidate-list, search-labels) are each compared below like the rest.
+        expect(serverNames.length).toBe(24);
         yield* Effect.all(
           serverNames.map(
             Effect.fn(function* compareLiveTransport(serverName) {
@@ -2738,10 +2756,13 @@ it.live(
       Effect.fn(function* rejectBoundaryWithoutStaffNamespaceFixture(fixture) {
         yield* run(fixture, scaffoldCommand.microverticalActionBoundary, [scaffoldFlag.vertical, inventorySlug]);
         const generated = yield* readFixtureFile(fixture.root, inventoryActionPrincipalFile);
+        // Drop only the staff namespace registration: the merge keeps the gateway verifier and the
+        // current-release composition the earlier contract requires, so the staff-namespace
+        // migration is the first unsatisfied contract and its own negative executes.
         const stale = generated
           .replace(/^import \{ staffAuthenticationNamespaceRegistryLayer \}.*\n/mu, '')
           .replaceAll(/\s*\| ReturnType<typeof staffAuthenticationNamespaceRegistryLayer>/gu, '')
-          .replace(/staffAuthenticationNamespaceRegistryLayer\(\[ACTION_GATEWAY_AUDIENCE\]\)/u, 'Layer.empty');
+          .replace(/\n\s*staffAuthenticationNamespaceRegistryLayer\(\[ACTION_GATEWAY_AUDIENCE\]\),/u, '');
         expect(stale).not.toMatch(/AuthenticationNamespaceRegistry/u);
         yield* write(fixture.root, inventoryActionPrincipalFile, stale);
         const before = yield* snapshotTree(fixture.root);
@@ -3051,19 +3072,23 @@ export const makeHarness = (applicationComposition) => makeActionTestHarness({
             .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
         ).toEqual(principal);
         yield* expectFailure(
-          generatedModule.verifyActionPrincipal(`Bearer ${billingAssertion.token}`, {
-            currentTimeSeconds: Effect.succeed(1_700_000_001),
-            environment,
-            redemption: testRedemption,
-          }),
+          generatedModule
+            .verifyActionPrincipal(`Bearer ${billingAssertion.token}`, {
+              currentTimeSeconds: Effect.succeed(1_700_000_001),
+              environment,
+              redemption: testRedemption,
+            })
+            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalScopeError')(error)).toBe(true),
         );
         yield* expectFailure(
-          billingGeneratedModule.verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
-            currentTimeSeconds: Effect.succeed(1_700_000_001),
-            environment,
-            redemption: testRedemption,
-          }),
+          billingGeneratedModule
+            .verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
+              currentTimeSeconds: Effect.succeed(1_700_000_001),
+              environment,
+              redemption: testRedemption,
+            })
+            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalScopeError')(error)).toBe(true),
         );
         expect(yield* verify(retiringAssertion.token)).toEqual(principal);
@@ -3202,19 +3227,23 @@ export const makeHarness = (applicationComposition) => makeActionTestHarness({
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalMissingError')(error)).toBe(true),
         );
         yield* expectFailure(
-          generatedModule.verifyActionPrincipal('bearer malformed', {
-            currentTimeSeconds: Effect.succeed(1_700_000_001),
-            environment,
-            redemption: testRedemption,
-          }),
+          generatedModule
+            .verifyActionPrincipal('bearer malformed', {
+              currentTimeSeconds: Effect.succeed(1_700_000_001),
+              environment,
+              redemption: testRedemption,
+            })
+            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalInvalidError')(error)).toBe(true),
         );
         yield* expectFailure(
-          generatedModule.verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
-            currentTimeSeconds: Effect.succeed(1_700_000_001),
-            environment: {},
-            redemption: testRedemption,
-          }),
+          generatedModule
+            .verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
+              currentTimeSeconds: Effect.succeed(1_700_000_001),
+              environment: {},
+              redemption: testRedemption,
+            })
+            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalConfigurationError')(error)).toBe(true),
         );
         let acquisitions = 0;
@@ -4470,11 +4499,17 @@ export const outboxWorkers = Object.freeze([
           .toBe(`// @generated by scaffold:outbox-worker worker-host
 // @ontos-outbox-worker-host-owner billing.core
 import { Layer } from 'effect';
+import { makeDatabaseIdentityEnrollmentLive } from '@app/core-runtime';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
 import { OutboxWorkerInfrastructureLive } from '@app/core-runtime/outbox/worker';
 
 export { CorePersistenceLive as outboxWorkerCorePersistenceLive } from '@app/core-runtime/outbox/worker';
 export { DatabaseConfigLive as outboxWorkerDatabaseConfigLive } from '@app/core-runtime/outbox/worker';
 export { OutboxRepositoryLive as outboxWorkerRepositoryLive } from '@app/core-runtime/outbox/worker';
+
+export const outboxWorkerDatabaseIdentityEnrollmentLive = makeDatabaseIdentityEnrollmentLive(
+  defineDatabaseIdentityEnrollment([]),
+);
 
 /** Add owner-local repositories and services required by worker handlers here. */
 const outboxWorkerHandlerLayer = Layer.empty;
@@ -4499,6 +4534,7 @@ import { billingRegistration } from '../../vertical.registration.ts';
 import {
   outboxWorkerCorePersistenceLive,
   outboxWorkerDatabaseConfigLive,
+  outboxWorkerDatabaseIdentityEnrollmentLive,
   outboxWorkerLayer as outboxWorkerDefinitionLayer,
   outboxWorkerRepositoryLive,
 } from './layer.ts';
@@ -4525,6 +4561,7 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
     Layer.provide(outboxWorkerRepositoryLive),
     Layer.provide(outboxWorkerCorePersistenceLive),
     Layer.provide(outboxWorkerDatabaseConfigLive),
+    Layer.provide(outboxWorkerDatabaseIdentityEnrollmentLive),
     Layer.provide(NodeCrypto.layer),
   ),
   registrations: outboxWorkers,
@@ -4896,6 +4933,17 @@ export default PurchaseOrdersPage;
         const manifest = yield* readFixtureFile(fixture.root, inventoryManifestFile);
         const registration = yield* readFixtureFile(fixture.root, inventoryRegistrationFile);
         const federation = yield* readFixtureFile(fixture.root, inventoryFederationConfigFile);
+        const contribution = yield* Schema.decodeUnknownEffect(Schema.String)(
+          /navigationContribution\((?<value>\{[\s\S]+?\})\),/u.exec(manifest)?.groups?.['value'],
+        );
+        const navigationModule = `export const navigation = ${contribution};`;
+        const navigationUrl = `data:text/javascript,${encodeURIComponent(navigationModule)}`;
+        const { navigation } = yield* Schema.decodeUnknownEffect(
+          Schema.Struct({ navigation: ShellNavigationContributionSchema }),
+        )(yield* Effect.promise(() => import(navigationUrl)));
+        expect(navigation.icon).toBe('icon-[mdi--file-document-outline]');
+        expect(navigation.label).toEqual({ cs: 'Purchase Orders', en: 'Purchase Orders' });
+        expect(navigation.accessDeclaration?.key).toBe('inventory.stock.purchase-orders.view');
         expect(manifest).toMatch(/inventory\.stock\.navigation\.purchase-orders/u);
         expect(manifest).toMatch(/inventory\.stock\.page\.purchase-orders/u);
         expect(manifest).toMatch(/routePath: '\/inventory-stock\/purchase-orders'/u);
@@ -6294,6 +6342,19 @@ it.live(
         );
         // Every generated-runtime dependency is linked from the real workspace so the fixture
         // typechecks and runs against the same modules the shipped verticals resolve.
+        // The fixture mirrors the whole Core source tree. A partial mirror resolves the same Core
+        // module twice - once through the fixture and once through @app/core-runtime - and then
+        // compares two structurally different copies of one type. The fixture still owns its own
+        // index, its policies and the generated core actions, so those stay out of the mirror.
+        const coreSourceRoot = path.join(appRoot, 'packages/core-runtime/src');
+        const mirroredCoreSourceLinks: readonly (readonly [string, string, 'dir' | 'file'])[] = (yield* Effect.promise(
+          () => readdir(coreSourceRoot, { withFileTypes: true }),
+        ))
+          .filter((entry) => !['index.ts', 'modules', 'policies'].includes(entry.name))
+          .map((entry) => {
+            const relativePath = `packages/core-runtime/src/${entry.name}`;
+            return [relativePath, relativePath, entry.isDirectory() ? 'dir' : 'file'] as const;
+          });
         yield* Effect.all(
           (
             [
@@ -6316,19 +6377,9 @@ it.live(
               ['apps/shell-super-app/node_modules/@types/react', 'node_modules/@types/react', 'dir'],
               ['packages/core-runtime/node_modules/@types/pg', 'node_modules/@types/pg', 'dir'],
               ['node_modules/@types/node', 'node_modules/@types/node', 'dir'],
-              ['packages/core-runtime/src/access', 'packages/core-runtime/src/access', 'dir'],
-              ['packages/core-runtime/src/actions', 'packages/core-runtime/src/actions', 'dir'],
-              ['packages/core-runtime/src/db', 'packages/core-runtime/src/db', 'dir'],
-              ['packages/core-runtime/src/outbox', 'packages/core-runtime/src/outbox', 'dir'],
-              ['packages/core-runtime/src/operations', 'packages/core-runtime/src/operations', 'dir'],
-              ['packages/core-runtime/src/reads', 'packages/core-runtime/src/reads', 'dir'],
-              ['packages/core-runtime/src/database', 'packages/core-runtime/src/database', 'dir'],
-              ['packages/core-runtime/src/environment', 'packages/core-runtime/src/environment', 'dir'],
-              ['packages/core-runtime/src/permissions', 'packages/core-runtime/src/permissions', 'dir'],
-              ['packages/core-runtime/src/auth', 'packages/core-runtime/src/auth', 'dir'],
-              ['packages/core-runtime/src/authorization', 'packages/core-runtime/src/authorization', 'dir'],
+              ...mirroredCoreSourceLinks,
               [coreRuntimeModuleEntrypointFile, coreRuntimeModuleEntrypointFile, 'file'],
-            ] as const
+            ] satisfies readonly (readonly [string, string, 'dir' | 'file'])[]
           ).map(([source, target, kind]) =>
             Effect.promise(() => symlink(path.join(appRoot, source), path.join(fixture.root, target), kind)),
           ),
@@ -6658,16 +6709,16 @@ it.live(
     const shared = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_CONTRACT_PATH), 'utf-8'));
     const handler = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_HANDLER_PATH), 'utf-8'));
     expect(handler).toContain(PRIVACY_CRYPTO_READ_MERGE);
-    expect(hasValidGovernedHttpCompositionRoot(shared, handler)).toBe(true);
+    expect(hasValidGovernedHttpCompositionRoot(shared, handler, PRIVACY_BACKEND_REGISTRATION)).toBe(true);
     const quoted = handler.replace(
       PRIVACY_CRYPTO_READ_MERGE,
       `${PRIVACY_CRYPTO_READ_MERGE}\n  const displayLabel = 'Layer';`,
     );
     expect(quoted).not.toBe(handler);
-    expect(hasValidGovernedHttpCompositionRoot(shared, quoted)).toBe(true);
+    expect(hasValidGovernedHttpCompositionRoot(shared, quoted, PRIVACY_BACKEND_REGISTRATION)).toBe(true);
     const renamed = handler.replaceAll(/\breadRuntimeLive\b/gu, 'injectedOwnerRead');
     expect(renamed).not.toBe(handler);
-    expect(hasValidGovernedHttpCompositionRoot(shared, renamed)).toBe(true);
+    expect(hasValidGovernedHttpCompositionRoot(shared, renamed, PRIVACY_BACKEND_REGISTRATION)).toBe(true);
   }),
 );
 
@@ -6676,7 +6727,7 @@ it.live(
   Effect.fn(function* cryptoMergedPrivacyIdentityGuards() {
     const shared = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_CONTRACT_PATH), 'utf-8'));
     const handler = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_HANDLER_PATH), 'utf-8'));
-    expect(hasValidGovernedHttpCompositionRoot(shared, handler)).toBe(true);
+    expect(hasValidGovernedHttpCompositionRoot(shared, handler, PRIVACY_BACKEND_REGISTRATION)).toBe(true);
     const tuple = 'const [readRuntimeLive, actionRuntimeLive, gatewayAssertionRedemption] = args;';
     const merge = PRIVACY_CRYPTO_READ_MERGE;
     const mutations: readonly (readonly [string, string])[] = [
@@ -6759,7 +6810,7 @@ it.live(
       expect(handler).toContain(before);
       const changed = handler.replace(before, after);
       expect(changed).not.toBe(handler);
-      expect(hasValidGovernedHttpCompositionRoot(shared, changed), after).toBe(false);
+      expect(hasValidGovernedHttpCompositionRoot(shared, changed, PRIVACY_BACKEND_REGISTRATION), after).toBe(false);
     }
   }),
 );
@@ -6769,7 +6820,7 @@ it.live(
   Effect.fn(function* cryptoMergedPrivacyRootGuards() {
     const shared = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_CONTRACT_PATH), 'utf-8'));
     const handler = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_HANDLER_PATH), 'utf-8'));
-    expect(hasValidGovernedHttpCompositionRoot(shared, handler)).toBe(true);
+    expect(hasValidGovernedHttpCompositionRoot(shared, handler, PRIVACY_BACKEND_REGISTRATION)).toBe(true);
     const tuple = 'const [readRuntimeLive, actionRuntimeLive, gatewayAssertionRedemption] = args;';
     const merge = PRIVACY_CRYPTO_READ_MERGE;
     const mutations: readonly (readonly [string, string])[] = [
@@ -6805,7 +6856,7 @@ it.live(
       expect(handler).toContain(before);
       const changed = handler.replace(before, after);
       expect(changed).not.toBe(handler);
-      expect(hasValidGovernedHttpCompositionRoot(shared, changed), after).toBe(false);
+      expect(hasValidGovernedHttpCompositionRoot(shared, changed, PRIVACY_BACKEND_REGISTRATION), after).toBe(false);
     }
     const legacyDecoy =
       '\nconst readRuntimeLive = ReadRuntimeLive.pipe(Layer.provide(readRuntimeDependenciesLive));\nconst governedReadRuntimeLive = readRuntimeLive;\n';
@@ -6813,7 +6864,9 @@ it.live(
       expect(handler).toContain(tuple);
       const changed = handler.replace(tuple, replacement) + legacyDecoy;
       expect(changed).not.toBe(handler);
-      expect(hasValidGovernedHttpCompositionRoot(shared, changed), replacement).toBe(false);
+      expect(hasValidGovernedHttpCompositionRoot(shared, changed, PRIVACY_BACKEND_REGISTRATION), replacement).toBe(
+        false,
+      );
     }
     expect(shared).toContain('// <generated-governed-http-api-additions>');
     const decoyShared = shared.replace(
@@ -6821,7 +6874,7 @@ it.live(
       "// const decoy = '// <generated-governed-http-api-additions>';\n// <generated-governed-http-api-additions>",
     );
     expect(decoyShared).not.toBe(shared);
-    expect(hasValidGovernedHttpCompositionRoot(decoyShared, handler)).toBe(false);
+    expect(hasValidGovernedHttpCompositionRoot(decoyShared, handler, PRIVACY_BACKEND_REGISTRATION)).toBe(false);
   }),
 );
 

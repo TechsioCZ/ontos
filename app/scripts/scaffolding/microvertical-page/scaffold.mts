@@ -35,6 +35,7 @@ import {
   toCamelCase,
   toPascalCase,
   toReadAccessDeclarationKey,
+  toTitle,
   updateMutation,
 } from '../shared.mts';
 import type {
@@ -417,7 +418,7 @@ const pageWiring = (
   const componentKey = `${vertical.moduleId}.page-${page}`;
   const contributionKey = `${vertical.moduleId}.page.${page}`;
   const entrypoint = `{ access: 'read', authorization: ${renderReadAuthorization(config)}, entrypointKey: '${contributionKey}', moduleKey: '${vertical.moduleId}', role: 'page', scope: 'tenant' }`;
-  // Only a protected page carries a declaration; the navigation entry shares this entrypoint.
+  // Protected page and navigation contributions carry the same declaration and entrypoint.
   const accessDeclaration =
     config.authorization === 'protected'
       ? `accessDeclaration: { key: '${toReadAccessDeclarationKey(vertical.moduleId, page, 'view')}', kind: 'read', modes: ['run'], placement: { group: '${page}', level: 'basic' }, risk: '${config.accessRisk ?? DEFAULT_ACCESS_RISK}', selectors: [] }, `
@@ -430,7 +431,7 @@ const pageWiring = (
     manifestImport: `import { ${componentName} } from './src/routes/[lang]/${route.relativePath}/page.tsx';`,
     manifestNavigation: route.isDynamic
       ? undefined
-      : `navigationContribution({ contributionKey: '${vertical.moduleId}.navigation.${page}', entrypoint: ${entrypoint}, groupKey: 'shell.navigation.modules', order: 100, pageKey: '${contributionKey}' }),`,
+      : `navigationContribution({ ${accessDeclaration}contributionKey: '${vertical.moduleId}.navigation.${page}', entrypoint: ${entrypoint}, groupKey: 'shell.navigation.modules', icon: 'icon-[mdi--file-document-outline]', label: { cs: '${toTitle(page)}', en: '${toTitle(page)}' }, order: 100, pageKey: '${contributionKey}' }),`,
     manifestPage: `pageContribution({ ${accessDeclaration}componentKey: '${componentKey}', contributionKey: '${contributionKey}', entrypoint: ${entrypoint}, expose: './Page${toPascalCase(page)}', routePath: '${route.canonicalPath}' }),`,
     registrationPage: `'page-${page}': () => import('./src/routes/[lang]/${route.relativePath}/page.tsx'),`,
   } as const;
