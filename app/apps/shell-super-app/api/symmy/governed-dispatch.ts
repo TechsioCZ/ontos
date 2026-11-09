@@ -16,8 +16,8 @@ import {
   symmyInvalidProblem,
   symmyUnsupportedProblem,
   SymmyInternalPlanPayloadSchema,
-} from './contract.ts';
-import type { SymmyInternalReadQuerySchema } from './contract.ts';
+} from '../../shared/symmy/contract.ts';
+import type { SymmyInternalReadQuerySchema } from '../../shared/symmy/contract.ts';
 import type { SymmyIngressDispatch, SymmyIngressAdmission, SymmyOwnerAssertion } from './transport.ts';
 import {
   acquireSymmyReadAssertion,

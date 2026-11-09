@@ -217,7 +217,7 @@ it.live('proves exactly the six current Shell issuer bootstrap sources', () =>
         to: '.foreignAdmit(rawKey, httpRequest)',
       },
       {
-        file: nodePath.join(root, 'apps/shell-super-app/api/symmy/contract.ts'),
+        file: nodePath.join(root, 'apps/shell-super-app/shared/symmy/contract.ts'),
         from: "from '@app/shared-contracts/symmy'",
         to: "from '@app/foreign-contracts/symmy'",
       },

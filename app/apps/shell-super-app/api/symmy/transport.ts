@@ -26,7 +26,7 @@ import {
   symmyIdempotencyRequiredProblem,
   SymmyInternalPlanPayloadSchema,
   SymmyInternalReadQuerySchema,
-} from './contract.ts';
+} from '../../shared/symmy/contract.ts';
 import type {
   SymmyClientIdempotencyKeySchema,
   symmyFixtureIntentConflictProblem,
@@ -34,15 +34,15 @@ import type {
   SymmyFixtureJobIdSchema,
   SymmyIngressProblem,
   SymmyInternalWritePayloadSchema,
-} from './contract.ts';
-import { SymmyInternalRegionsProjectionSchema } from './regions-projection-contract.ts';
+} from '../../shared/symmy/contract.ts';
+import { SymmyInternalRegionsProjectionSchema } from '../../shared/symmy/regions-projection-contract.ts';
 import {
   SymmyInternalProductsProjectionSchema,
   SymmyInternalPriceListsProjectionSchema,
   SymmyInternalCustomersProjectionSchema,
-} from './read-projection-contracts.ts';
+} from '../../shared/symmy/read-projection-contracts.ts';
 
-import { SymmyRouteNotFoundProblemSchema, symmyRouteNotFoundProblem } from './defect-boundary.ts';
+import { SymmyRouteNotFoundProblemSchema, symmyRouteNotFoundProblem } from '../../shared/symmy/defect-boundary.ts';
 
 export const SymmyHostMount = Context.Reference<boolean>('@app/shell-super-app/api/symmy/transport/SymmyHostMount', {
   defaultValue: () => false,

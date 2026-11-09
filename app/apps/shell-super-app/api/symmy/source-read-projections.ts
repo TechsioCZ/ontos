@@ -32,15 +32,15 @@ import { GatewayAuthenticationRequiredProblemSchema, GatewayForbiddenProblemSche
 import { SymmyRouteContextSchema } from '@app/shared-contracts/symmy';
 import { Config, DateTime, Effect, Match, Option, Schema, Redacted } from 'effect';
 
-import { symmyInvalidProblem, symmyUnavailableProblem, symmyUnsupportedProblem } from './contract.ts';
-import type { SymmyInternalReadQuerySchema, SymmyIngressProblem } from './contract.ts';
+import { symmyInvalidProblem, symmyUnavailableProblem, symmyUnsupportedProblem } from '../../shared/symmy/contract.ts';
+import type { SymmyInternalReadQuerySchema, SymmyIngressProblem } from '../../shared/symmy/contract.ts';
 import { resolveSymmyOwnerReleaseBase } from './owner-release-transport.ts';
 import { encodeSymmySourceSelector } from '@app/symmy-integration/symmy-source-selector';
 import type {
   SymmyInternalCustomersProjection,
   SymmyInternalPriceListsProjection,
   SymmyInternalProductsProjection,
-} from './read-projection-contracts.ts';
+} from '../../shared/symmy/read-projection-contracts.ts';
 import type { SymmyIngressAdmission, SymmyOwnerAssertion } from './transport.ts';
 
 export interface SymmySourceReadScope {

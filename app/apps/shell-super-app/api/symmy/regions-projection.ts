@@ -13,9 +13,9 @@ import { executeCurrentSupportedCurrenciesWithAuthorization } from '@app/pricing
 import { SymmyRouteRefSchema, SymmySourceRecordRefSchema } from '@app/shared-contracts/symmy';
 import { Crypto, DateTime, Effect, Match, Redacted, Schema } from 'effect';
 
-import type { SymmyIngressProblem } from './contract.ts';
-import { SymmyRegionSourceIdSchema } from './regions-projection-contract.ts';
-import type { SymmyInternalRegionsProjection } from './regions-projection-contract.ts';
+import type { SymmyIngressProblem } from '../../shared/symmy/contract.ts';
+import { SymmyRegionSourceIdSchema } from '../../shared/symmy/regions-projection-contract.ts';
+import type { SymmyInternalRegionsProjection } from '../../shared/symmy/regions-projection-contract.ts';
 
 const scopeFields = {
   issuerId: SymmySourceRecordRefSchema.fields.issuerId,
