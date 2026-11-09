@@ -276,6 +276,35 @@ const rewriteExportTarget = (
     : { repointed: true, target: repointed, untraced: false };
 };
 
+/** Repoints package exports and private imports without flattening their ordered condition maps. */
+const rewriteManifestTargets = (
+  field: PackagedExportTarget | undefined,
+  repoint: (specifier: string) => string | undefined,
+) => {
+  const repointed: string[] = [];
+  const untraced: string[] = [];
+  if (field === undefined) {
+    return { repointed, target: field, untraced };
+  }
+  const entries = isExportTargetConditions(field) ? Object.entries(field) : [['.', field] as const];
+  const rewrites = entries.map(([subpath, entry]) => [subpath, rewriteExportTarget(entry, repoint)] as const);
+  for (const [subpath, rewrite] of rewrites) {
+    if (rewrite.repointed) {
+      repointed.push(subpath);
+    }
+    if (rewrite.untraced) {
+      untraced.push(subpath);
+    }
+  }
+  return {
+    repointed,
+    target: isExportTargetConditions(field)
+      ? Object.fromEntries(rewrites.map(([subpath, rewrite]) => [subpath, rewrite.target]))
+      : rewrites[0]?.[1].target,
+    untraced,
+  };
+};
+
 /** Every TypeScript module the packaged package carries, skipping nested installs and every symlink. */
 const collectTracedModules = (packageDirectory: string, packageIsModule: boolean) =>
   Effect.gen(function* collectPackagedModules() {
@@ -530,11 +559,6 @@ const compilePackagedWorkspacePackage = Effect.fn(
   const packageIsModule = manifest[MANIFEST_TYPE] === MODULE_MANIFEST_TYPE;
   const modules = yield* completeTracedModuleGraph(unitDirectory, packageDirectory, name, packageIsModule, manifest);
   const compiledPaths = new Set(modules.map((module) => module.outputPath));
-  if (modules.length > 0 && manifest[MANIFEST_IMPORTS] !== undefined) {
-    return yield* Effect.fail(
-      failed(`${manifestPath}: this step does not repoint \`${MANIFEST_IMPORTS}\` targets at compiled modules`),
-    );
-  }
   yield* Effect.forEach(
     modules,
     (module) =>
@@ -543,42 +567,23 @@ const compilePackagedWorkspacePackage = Effect.fn(
       ),
     { concurrency: 1, discard: true },
   );
-  const exportsField = manifest[MANIFEST_EXPORTS];
-  const repointed: string[] = [];
-  const untraced: string[] = [];
-  let nextExports: PackagedExportTarget | undefined;
-  if (exportsField !== undefined) {
-    const repoint = (specifier: string) =>
-      compiledExportTarget(packageDirectory, packageIsModule, compiledPaths, specifier);
-    if (isExportTargetConditions(exportsField)) {
-      const rewrites = Object.entries(exportsField).map(
-        ([subpath, entry]) => [subpath, rewriteExportTarget(entry, repoint)] as const,
-      );
-      for (const [subpath, rewrite] of rewrites) {
-        if (rewrite.repointed) {
-          repointed.push(subpath);
-        }
-        if (rewrite.untraced) {
-          untraced.push(subpath);
-        }
-      }
-      nextExports = Object.fromEntries(rewrites.map(([subpath, rewrite]) => [subpath, rewrite.target]));
-    } else {
-      const rewrite = rewriteExportTarget(exportsField, repoint);
-      if (rewrite.repointed) {
-        repointed.push('.');
-      }
-      if (rewrite.untraced) {
-        untraced.push('.');
-      }
-      nextExports = rewrite.target;
+  const repoint = (specifier: string) =>
+    compiledExportTarget(packageDirectory, packageIsModule, compiledPaths, specifier);
+  const exportsRewrite = rewriteManifestTargets(manifest[MANIFEST_EXPORTS], repoint);
+  const importsRewrite = rewriteManifestTargets(manifest[MANIFEST_IMPORTS], repoint);
+  const repointed = [...exportsRewrite.repointed, ...importsRewrite.repointed];
+  const untraced = [...exportsRewrite.untraced, ...importsRewrite.untraced];
+  if (repointed.length > 0) {
+    const nextManifest = { ...manifest };
+    if (exportsRewrite.target !== undefined) {
+      nextManifest[MANIFEST_EXPORTS] = exportsRewrite.target;
     }
-  }
-  if (nextExports !== undefined && repointed.length > 0) {
-    const encoded = yield* Schema.encodeEffect(packagedPackageManifestCodec)({
-      ...manifest,
-      [MANIFEST_EXPORTS]: nextExports,
-    }).pipe(Effect.mapError((cause) => failed(`${manifestPath}: ${String(cause)}`)));
+    if (importsRewrite.target !== undefined) {
+      nextManifest[MANIFEST_IMPORTS] = importsRewrite.target;
+    }
+    const encoded = yield* Schema.encodeEffect(packagedPackageManifestCodec)(nextManifest).pipe(
+      Effect.mapError((cause) => failed(`${manifestPath}: ${String(cause)}`)),
+    );
     yield* fs.writeFileString(manifestPath, `${encoded}\n`);
   }
   return {

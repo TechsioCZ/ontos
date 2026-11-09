@@ -30,6 +30,7 @@ const RELATIVE_CONTRACTS = '@app/relative-contracts';
 /** A traced workspace package manifest, as this step reads it. */
 interface WorkspacePackageManifest {
   readonly exports: Readonly<Record<string, string>>;
+  readonly imports?: Readonly<Record<string, string | Readonly<Record<string, string>>>>;
   readonly name: string;
   readonly type: string;
   readonly version: string;
@@ -157,6 +158,79 @@ it.effect('loads the packaged copy from inside .output instead of the installed 
     expect(existsSync(path.join(traced, ENTRY_SOURCE))).toBe(true);
     expect(existsSync(path.join(installed, ENTRY_OUTPUT))).toBe(false);
     expect(existsSync(path.join(installed, ENTRY_SOURCE))).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('runs private package imports through their compiled Node condition without changing other conditions', () =>
+  Effect.gen(function* compilesPrivateImports() {
+    const root = yield* temporaryRoot;
+    const unit = unitUnder(root);
+    const packaged = path.join(unit, PACKAGED_DIRECTORY);
+    const directory = yield* Effect.promise(() =>
+      writeWorkspacePackage(
+        packagedNodeModules(unit),
+        {
+          ...manifestOf(PACKAGED_CONTRACTS, { '.': ENTRY_SUBPATH }),
+          imports: {
+            '#database-runtime': Object.fromEntries([
+              ['workerd', './src/database-runtime.workerd.ts'],
+              ['default', './src/database-runtime.node.ts'],
+            ]),
+            '#external': 'node:path',
+            '#unit-service-fetch': Object.fromEntries([
+              ['types', './src/unit-service-fetch.d.ts'],
+              ['workerd', './src/unit-service-fetch.workerd.ts'],
+              ['node', './src/unit-service-fetch.node.ts'],
+            ]),
+          },
+        },
+        {
+          [ENTRY_SOURCE]:
+            "import { origin } from '#database-runtime'; import { suffix } from '#unit-service-fetch'; export const value = origin + suffix;\n",
+          'src/database-runtime.node.ts': "export const origin: string = 'native';\n",
+          'src/unit-service-fetch.d.ts': 'export declare const suffix: string;\n',
+          'src/unit-service-fetch.node.ts': "export const suffix: string = '-node';\n",
+        },
+      ),
+    );
+    yield* Effect.promise(() =>
+      writeProbe(packaged, `const { value } = await import('${PACKAGED_CONTRACTS}'); process.stdout.write(value);`),
+    );
+    const report = yield* compilePackagedWorkspacePackages(unit);
+    expect(report.packages[0]?.repointed).toEqual(['.', '#database-runtime', '#unit-service-fetch']);
+    const { imports } = Result.getOrThrow(
+      Schema.decodeUnknownResult(
+        Schema.fromJsonString(
+          Schema.Struct({
+            imports: Schema.Record(
+              Schema.String,
+              Schema.Union([Schema.String, Schema.Record(Schema.String, Schema.String)]),
+            ),
+          }),
+        ),
+      )(yield* Effect.promise(() => readFile(path.join(directory, PACKAGE_MANIFEST), ENCODING))),
+    );
+    expect(JSON.stringify(imports)).toBe(
+      JSON.stringify({
+        '#database-runtime': Object.fromEntries([
+          ['workerd', './src/database-runtime.workerd.ts'],
+          ['default', './src/database-runtime.node.js'],
+        ]),
+        '#external': 'node:path',
+        '#unit-service-fetch': Object.fromEntries([
+          ['types', './src/unit-service-fetch.d.ts'],
+          ['workerd', './src/unit-service-fetch.workerd.ts'],
+          ['node', './src/unit-service-fetch.node.js'],
+        ]),
+      }),
+    );
+    const after = runProbe(packaged);
+    expect(after.stderr).toBe('');
+    expect(after.status).toBe(0);
+    expect(after.stdout).toBe('native-node');
+    const snapshot = yield* Effect.promise(() => snapshotTree(directory));
+    yield* compilePackagedWorkspacePackages(unit);
+    expect(yield* Effect.promise(() => snapshotTree(directory))).toEqual(snapshot);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
