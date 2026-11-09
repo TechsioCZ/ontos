@@ -577,9 +577,11 @@ export const paymentAggregatePersistenceForTransaction = (
       ],
       { concurrency: 1 },
     );
+    // A correction reduces only the collection it corrected while that collection still establishes the
+    // funds; a correction of an attempt later proven not effected never reduces a retry's collection.
     const collectIds = new Set<string>();
     for (const operation of operations) {
-      if (operation.kind === 'COLLECT') {
+      if (operation.kind === 'COLLECT' && operation.outcome !== 'NOT_EFFECTED_CONFIRMED') {
         collectIds.add(operation.operationId);
       }
     }

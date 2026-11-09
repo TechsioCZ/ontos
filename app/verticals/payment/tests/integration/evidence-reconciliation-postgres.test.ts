@@ -487,6 +487,37 @@ it.live('#1151 a partial correction reduces Current coverage without a refund op
   ),
 );
 
+it.live('#1151 a correction of a collection later reconciled not effected never reduces the retry that collected', () =>
+  native(
+    Effect.gen(function* correctionStaysWithItsCollection() {
+      const evidence = yield* scenario();
+      const { authority, collect, payment, receipt } = yield* confirmedCollection(evidence);
+      yield* evidence.recordObservation({
+        amountMinor: 1000,
+        correctionEffect: 'REDUCE_ESTABLISHED_COLLECTION',
+        correctsObservationId: receipt,
+        factKind: 'SOURCE_CORRECTION',
+        operationId: collect.operationId,
+        paymentId: payment.paymentId,
+        sourceAuthorityId: authority,
+      });
+      // Collection A is later reconciled as not effected, and retry B proves the whole collection.
+      yield* evidence.settle(payment.paymentId, collect.operationId, 2, 'CONFLICT');
+      yield* evidence.settle(payment.paymentId, collect.operationId, 3, 'NOT_EFFECTED_CONFIRMED');
+      const retry = yield* evidence.startOperation({
+        amountMinor: 100_000,
+        operationKey: 'collect-retry',
+        paymentId: payment.paymentId,
+      });
+      yield* evidence.settle(payment.paymentId, retry.operationId, 1, 'EFFECT_CONFIRMED');
+      const snapshot = paymentFundsSnapshotOf((yield* evidence.evidenceAggregate(payment.paymentId)).current);
+      expect(ledgerSummary(computePaymentFunds(snapshot))).toBe(
+        'Established collected=100000 returned=0 remaining=100000',
+      );
+    }),
+  ),
+);
+
 it.live('#1151 governed reconciliation attaches qualified evidence, closes the case and never fabricates money', () =>
   native(
     Effect.gen(function* governedReconciliation() {
