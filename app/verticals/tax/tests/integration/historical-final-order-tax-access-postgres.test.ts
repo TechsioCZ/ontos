@@ -3,9 +3,14 @@ import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import {
   ActionRuntime,
   ActiveApplicationCompositionService,
+  ContextAccess,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfig,
+  DatabaseIdentityEnrollmentContext,
+  ModuleEntrypointGateway,
+  ModuleStateGate,
+  OperationalScopeResolver,
   ModuleStateDeniedError,
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
@@ -13,7 +18,6 @@ import {
   ReadRuntime,
   TenantModuleStateServiceLive,
   TrustedPrincipalContextSchema,
-  makeActionRuntimeLive,
   makeReadRuntimeLive,
   parseDatabaseConfig,
   defineDatabaseIdentityEnrollment,
@@ -24,6 +28,7 @@ import {
   trustVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime';
 import {
+  ActionPermission,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
@@ -38,6 +43,9 @@ import { Config, ConfigProvider, Context, Crypto, Data, Effect, Layer, Schema, p
 import { expect, it } from 'effect-rstest';
 import { Client } from 'pg';
 
+import { ActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
+import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
+import { CoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
 import { FinalizeOrderTaxResultSchema } from '../../shared/actions/order-tax-finalization.ts';
 import { makeSellerScopedAccessGate } from '../support/scoped-access-gate.ts';
 import { declareSellerVatRegimeAction } from '../../src/actions/declare-seller-vat-regime.action.ts';
@@ -100,7 +108,8 @@ interface HistoricalFixtureDatabaseResult {
 /**
  * Native infrastructure bootstrap only: disposable records and exact SpiceDB relationships are admin-created and
  * cleaned up. Authenticated session and validated release publication are fixtures, not a signed/redeemed gateway
- * test. Every business operation below uses the real public Core runtime, SpiceDB, PostgreSQL/RLS and TAX handlers.
+ * test. Business operations use the real Core runner, PostgreSQL/RLS and TAX handlers. The company-scope
+ * capability gate is explicitly scripted; this suite does not prove persisted v2 authorization currentness.
  * Foreign purchase inputs remain the named CALLER_SUPPLIED_UNVERIFIED receiving doubles; no owner integration is claimed.
  */
 const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect() {
@@ -318,12 +327,35 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
   );
   const dependencies = Layer.mergeAll(CorePersistenceLive, ContextAccessLive, gateway, resolver, accessGate.layer);
   const compositionSource = Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) });
+  // Keep the declared scripted gate already bound: a live authority preparation cannot rebind a double.
+  // The production runner still owns the real module gates, composition lock and access fence.
+  const actionRuntime = Layer.effect(
+    ActionRuntime,
+    Effect.gen(function* historicalActionRuntime() {
+      return makeActionRuntime(
+        yield* CoreDatabase,
+        yield* ActionRepository,
+        yield* ActionPermission,
+        yield* OperationalScopeResolver,
+        {
+          accessDecision: accessGate.bound,
+          applicationComposition: yield* ActiveApplicationCompositionService,
+          contextAccess: yield* ContextAccess,
+          databaseIdentities: yield* DatabaseIdentityEnrollmentContext,
+          expectedDeployment: deployment,
+          moduleEntrypointGateway: yield* ModuleEntrypointGateway,
+          moduleStateGate: yield* ModuleStateGate,
+          ownerRegistration: taxRegistration,
+        },
+      );
+    }),
+  );
   const runtimes = Layer.mergeAll(
     makeReadRuntimeLive(deployment, taxRegistration).pipe(
       Layer.provide(dependencies),
       Layer.provide(compositionSource),
     ),
-    makeActionRuntimeLive(deployment, taxRegistration).pipe(
+    actionRuntime.pipe(
       Layer.provide(
         Layer.mergeAll(dependencies, stateGate, ActionPermissionLive, ActionRepositoryLive, compositionSource),
       ),
