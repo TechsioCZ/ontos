@@ -1,5 +1,31 @@
 CREATE SCHEMA "payment";
 --> statement-breakpoint
+CREATE TABLE "payment"."economic_effect_attributions" (
+	"legal_entity_id" uuid NOT NULL,
+	"tenant_id" uuid NOT NULL,
+	"action_invocation_id" uuid NOT NULL,
+	"actor_principal_id" uuid NOT NULL,
+	"composition_revision" text NOT NULL,
+	"account_ref" text NOT NULL,
+	"attributed_at" timestamp with time zone NOT NULL,
+	"attribution_id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+	"economic_effect_key" text NOT NULL,
+	"environment" text NOT NULL,
+	"fact_kind" text NOT NULL,
+	"operation_id" uuid NOT NULL,
+	"payment_id" uuid NOT NULL,
+	"source_kind" text NOT NULL,
+	"source_system" text NOT NULL,
+	CONSTRAINT "payment_economic_effect_attributions_effect_uk" UNIQUE("tenant_id","legal_entity_id","source_kind","source_system","account_ref","environment","fact_kind","economic_effect_key"),
+	CONSTRAINT "payment_economic_effect_attributions_vocabulary_ck" CHECK ("fact_kind" in ('COLLECTION_PENDING', 'COLLECTION_CONFIRMED', 'COLLECTION_NOT_EFFECTED', 'CANCEL_CONFIRMED', 'CANCEL_NOT_EFFECTED', 'REFUND_PENDING', 'REFUND_CONFIRMED', 'REFUND_NOT_EFFECTED', 'SETTLEMENT_OBSERVED', 'SOURCE_CORRECTION', 'UNRECOGNIZED') and "source_kind" in ('BANK_ACCOUNTING', 'CARRIER', 'LOCAL_POS_OPERATOR', 'PAYMENT_GATEWAY', 'MANUAL_EXTERNAL_REFUND')),
+	CONSTRAINT "payment_economic_effect_attributions_system_ck" CHECK ("source_system" = btrim("source_system") and length("source_system") between 1 and 200),
+	CONSTRAINT "payment_economic_effect_attributions_account_ck" CHECK ("account_ref" = btrim("account_ref") and length("account_ref") between 1 and 200),
+	CONSTRAINT "payment_economic_effect_attributions_environment_ck" CHECK ("environment" = btrim("environment") and length("environment") between 1 and 200),
+	CONSTRAINT "payment_economic_effect_attributions_effect_ck" CHECK ("economic_effect_key" = btrim("economic_effect_key") and length("economic_effect_key") between 1 and 200),
+	CONSTRAINT "payment_economic_effect_attributions_composition_ck" CHECK ("composition_revision" ~ '^[a-f0-9]{64}$')
+);
+--> statement-breakpoint
+ALTER TABLE "payment"."economic_effect_attributions" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 CREATE TABLE "payment"."gateway_assertion_redemptions" (
 	"audience" text NOT NULL,
 	"expires_at" timestamp with time zone NOT NULL,
@@ -386,6 +412,7 @@ CREATE INDEX "payment_operations_target_idx" ON "payment"."payment_operations" (
 CREATE INDEX "payment_payments_purchase_idx" ON "payment"."payments" ("tenant_id","legal_entity_id","purchase_correlation_id");--> statement-breakpoint
 CREATE INDEX "payment_reconciliation_cases_open_idx" ON "payment"."reconciliation_cases" ("tenant_id","legal_entity_id","status","payment_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "payment_refund_item_claims_active_item_uk" ON "payment"."refund_item_claims" ("tenant_id","legal_entity_id","payment_id","item_ref") WHERE "active";--> statement-breakpoint
+ALTER TABLE "payment"."economic_effect_attributions" ADD CONSTRAINT "payment_economic_effect_attributions_operation_fk" FOREIGN KEY ("tenant_id","legal_entity_id","payment_id","operation_id") REFERENCES "payment"."payment_operations"("tenant_id","legal_entity_id","payment_id","operation_id") ON DELETE RESTRICT;--> statement-breakpoint
 ALTER TABLE "payment"."method_enablement_revisions" ADD CONSTRAINT "payment_method_enablement_revisions_current_fk" FOREIGN KEY ("tenant_id","legal_entity_id","method_enablement_id") REFERENCES "payment"."method_enablements"("tenant_id","legal_entity_id","method_enablement_id") ON DELETE RESTRICT;--> statement-breakpoint
 ALTER TABLE "payment"."observations" ADD CONSTRAINT "payment_observations_authority_fk" FOREIGN KEY ("tenant_id","legal_entity_id","source_authority_id") REFERENCES "payment"."source_authorities"("tenant_id","legal_entity_id","source_authority_id") ON DELETE RESTRICT;--> statement-breakpoint
 ALTER TABLE "payment"."observations" ADD CONSTRAINT "payment_observations_payment_fk" FOREIGN KEY ("tenant_id","legal_entity_id","payment_id") REFERENCES "payment"."payments"("tenant_id","legal_entity_id","payment_id") ON DELETE RESTRICT;--> statement-breakpoint
@@ -403,6 +430,10 @@ ALTER TABLE "payment"."reconciliation_decisions" ADD CONSTRAINT "payment_reconci
 ALTER TABLE "payment"."recovery_requests" ADD CONSTRAINT "payment_recovery_requests_operation_fk" FOREIGN KEY ("tenant_id","legal_entity_id","payment_id","operation_id") REFERENCES "payment"."payment_operations"("tenant_id","legal_entity_id","payment_id","operation_id") ON DELETE RESTRICT;--> statement-breakpoint
 ALTER TABLE "payment"."refund_item_claims" ADD CONSTRAINT "payment_refund_item_claims_operation_fk" FOREIGN KEY ("tenant_id","legal_entity_id","payment_id","operation_id") REFERENCES "payment"."payment_operations"("tenant_id","legal_entity_id","payment_id","operation_id") ON DELETE RESTRICT;--> statement-breakpoint
 ALTER TABLE "payment"."source_authority_revisions" ADD CONSTRAINT "payment_source_authority_revisions_current_fk" FOREIGN KEY ("tenant_id","legal_entity_id","source_authority_id") REFERENCES "payment"."source_authorities"("tenant_id","legal_entity_id","source_authority_id") ON DELETE RESTRICT;--> statement-breakpoint
+CREATE POLICY "payment_economic_effect_attributions_select" ON "payment"."economic_effect_attributions" AS PERMISSIVE FOR SELECT TO "ontos_runtime" USING ("payment"."economic_effect_attributions"."tenant_id" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and "payment"."economic_effect_attributions"."legal_entity_id" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid);--> statement-breakpoint
+CREATE POLICY "payment_economic_effect_attributions_insert" ON "payment"."economic_effect_attributions" AS PERMISSIVE FOR INSERT TO "ontos_runtime" WITH CHECK ("payment"."economic_effect_attributions"."tenant_id" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and "payment"."economic_effect_attributions"."legal_entity_id" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid);--> statement-breakpoint
+CREATE POLICY "payment_economic_effect_attributions_update" ON "payment"."economic_effect_attributions" AS PERMISSIVE FOR UPDATE TO "ontos_runtime" USING ("payment"."economic_effect_attributions"."tenant_id" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and "payment"."economic_effect_attributions"."legal_entity_id" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid) WITH CHECK ("payment"."economic_effect_attributions"."tenant_id" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and "payment"."economic_effect_attributions"."legal_entity_id" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid);--> statement-breakpoint
+CREATE POLICY "payment_economic_effect_attributions_delete" ON "payment"."economic_effect_attributions" AS PERMISSIVE FOR DELETE TO "ontos_runtime" USING ("payment"."economic_effect_attributions"."tenant_id" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and "payment"."economic_effect_attributions"."legal_entity_id" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid);--> statement-breakpoint
 CREATE POLICY "payment_method_enablement_revisions_select" ON "payment"."method_enablement_revisions" AS PERMISSIVE FOR SELECT TO "ontos_runtime" USING ("payment"."method_enablement_revisions"."tenant_id" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and "payment"."method_enablement_revisions"."legal_entity_id" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid);--> statement-breakpoint
 CREATE POLICY "payment_method_enablement_revisions_insert" ON "payment"."method_enablement_revisions" AS PERMISSIVE FOR INSERT TO "ontos_runtime" WITH CHECK ("payment"."method_enablement_revisions"."tenant_id" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and "payment"."method_enablement_revisions"."legal_entity_id" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid);--> statement-breakpoint
 CREATE POLICY "payment_method_enablement_revisions_update" ON "payment"."method_enablement_revisions" AS PERMISSIVE FOR UPDATE TO "ontos_runtime" USING ("payment"."method_enablement_revisions"."tenant_id" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and "payment"."method_enablement_revisions"."legal_entity_id" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid) WITH CHECK ("payment"."method_enablement_revisions"."tenant_id" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and "payment"."method_enablement_revisions"."legal_entity_id" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid);--> statement-breakpoint

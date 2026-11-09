@@ -12,6 +12,7 @@ ALTER TABLE payment.payment_operations FORCE ROW LEVEL SECURITY;
 ALTER TABLE payment.operation_outcome_transitions FORCE ROW LEVEL SECURITY;
 ALTER TABLE payment.refund_item_claims FORCE ROW LEVEL SECURITY;
 ALTER TABLE payment.observations FORCE ROW LEVEL SECURITY;
+ALTER TABLE payment.economic_effect_attributions FORCE ROW LEVEL SECURITY;
 ALTER TABLE payment.payment_authorizations FORCE ROW LEVEL SECURITY;
 ALTER TABLE payment.recovery_requests FORCE ROW LEVEL SECURITY;
 ALTER TABLE payment.reconciliation_cases FORCE ROW LEVEL SECURITY;
@@ -29,6 +30,7 @@ GRANT SELECT, INSERT ON
   payment.operation_outcome_transitions,
   payment.refund_item_claims,
   payment.observations,
+  payment.economic_effect_attributions,
   payment.payment_authorizations,
   payment.recovery_requests,
   payment.reconciliation_cases,
@@ -55,6 +57,7 @@ CREATE TRIGGER payment_method_enablement_revisions_append_only BEFORE UPDATE OR 
 CREATE TRIGGER payment_source_authority_revisions_append_only BEFORE UPDATE OR DELETE OR TRUNCATE ON payment.source_authority_revisions FOR EACH STATEMENT EXECUTE FUNCTION payment.reject_ledger_mutation();
 CREATE TRIGGER payment_outcome_transitions_append_only BEFORE UPDATE OR DELETE OR TRUNCATE ON payment.operation_outcome_transitions FOR EACH STATEMENT EXECUTE FUNCTION payment.reject_ledger_mutation();
 CREATE TRIGGER payment_observations_append_only BEFORE UPDATE OR DELETE OR TRUNCATE ON payment.observations FOR EACH STATEMENT EXECUTE FUNCTION payment.reject_ledger_mutation();
+CREATE TRIGGER payment_economic_effect_attributions_append_only BEFORE UPDATE OR DELETE OR TRUNCATE ON payment.economic_effect_attributions FOR EACH STATEMENT EXECUTE FUNCTION payment.reject_ledger_mutation();
 CREATE TRIGGER payment_authorizations_append_only BEFORE UPDATE OR DELETE OR TRUNCATE ON payment.payment_authorizations FOR EACH STATEMENT EXECUTE FUNCTION payment.reject_ledger_mutation();
 CREATE TRIGGER payment_recovery_requests_append_only BEFORE UPDATE OR DELETE OR TRUNCATE ON payment.recovery_requests FOR EACH STATEMENT EXECUTE FUNCTION payment.reject_ledger_mutation();
 CREATE TRIGGER payment_reconciliation_decisions_append_only BEFORE UPDATE OR DELETE OR TRUNCATE ON payment.reconciliation_decisions FOR EACH STATEMENT EXECUTE FUNCTION payment.reject_ledger_mutation();

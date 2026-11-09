@@ -374,6 +374,35 @@ describe('#1151 Payment evidence interpretation', () => {
     );
   });
 
+  it('#1151 a correction against governed-attached corroboration is held exactly like accepted corroboration', () => {
+    const correctReceipt = (aggregate: PaymentEvidenceAggregate) =>
+      interpretPaymentObservation(
+        aggregate,
+        observed({ amount: czk(30_000), correctsObservationId: 'obs-receipt', factKind: 'SOURCE_CORRECTION' }),
+      );
+    const held = PaymentEvidenceDecision.HOLD({
+      operationId: COLLECT_ID,
+      reason: 'CORRECTION_CONTRADICTS_CORROBORATING_EVIDENCE',
+    });
+    const receipt = accepted('obs-receipt');
+    const corroboration = accepted('obs-lookup');
+    expect(correctReceipt(aggregateOf([operation('EFFECT_CONFIRMED')], [receipt, corroboration]))).toEqual(held);
+    // A held statement a governed ATTACH_EVIDENCE counted toward the collection corroborates it the same.
+    expect(correctReceipt(aggregateOf([operation('EFFECT_CONFIRMED')], [receipt], [corroboration]))).toEqual(held);
+    // A statement attached to another operation does not corroborate this collection.
+    expect(
+      correctReceipt(
+        aggregateOf([operation('EFFECT_CONFIRMED')], [receipt], [accepted('obs-lookup', { operationId: 'collect-2' })]),
+      ),
+    ).toEqual(
+      PaymentEvidenceDecision.CORRECTION({
+        affectedOperationId: COLLECT_ID,
+        correctedObservationId: 'obs-receipt',
+        effect: PaymentCorrectionEffect.REDUCE_ESTABLISHED_COLLECTION({ amount: czk(30_000) }),
+      }),
+    );
+  });
+
   it('#1151 a re-issued correction of a re-exported statement counts once; an overlapping one is held', () => {
     const correctedReceipt = aggregateOf(
       [operation('EFFECT_CONFIRMED')],

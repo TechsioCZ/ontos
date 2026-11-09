@@ -334,3 +334,69 @@ it.live('ACTIONS.md: an accepted source statement persists Data Access Events fo
     }),
   ),
 );
+
+/** A GoPay gateway outcome naming a Payment that does not exist in the invoking scope. */
+const unresolvedStatement = (missingPaymentId: string) =>
+  ({
+    amount: { amountMinor: 100_000, currency: 'CZK' },
+    economicEffectKey: `gopay:payment:${missingPaymentId}`,
+    factFamily: 'GATEWAY_OUTCOME',
+    factKind: 'COLLECTION_CONFIRMED',
+    paymentId: missingPaymentId,
+    source: GOPAY_SOURCE,
+    sourceOccurrenceId: `gopay-callback-${randomUUID()}`,
+    sourceRevision: 0,
+  }) as const;
+
+it.live('ACTIONS.md: a statement held for a missing Payment persists its zero-result Payment lookup', () =>
+  native(
+    Effect.gen(function* unresolvedTargetEvidence() {
+      const evidence = yield* scenario();
+      yield* evidence.configureSource({
+        factFamily: 'GATEWAY_OUTCOME',
+        reason: 'GoPay callbacks are the gateway outcome authority',
+        refundRoute: false,
+        source: GOPAY_SOURCE,
+        status: 'ACTIVE',
+        submitterPrincipalIds: [evidence.scope.principalId],
+      });
+      const missingPaymentId = randomUUID();
+
+      const held = yield* evidence.accept(unresolvedStatement(missingPaymentId));
+      expect(held.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+
+      const events = yield* accessEventsOf(evidence);
+      const acceptEvents = events.filter((event) => event.actionKey === 'payment.core.accept-payment-observation');
+      // The Action decided on the Payment lookup that found nothing; no Payment resource was read.
+      expect(acceptEvents).toContainEqual({
+        accessKind: 'read',
+        actionInvocationId: acceptEvents[0]?.actionInvocationId,
+        actionKey: 'payment.core.accept-payment-observation',
+        evidenceCaptureMode: 'metadata_only',
+        evidencePayloadJson: null,
+        evidencePolicyKey: 'payment.core.accept-payment-observation.access.v1',
+        outcome: 'allowed',
+        queryHash: `payment.core.payment-aggregate:${missingPaymentId}`,
+        resultCount: 0,
+        servingModuleKey: 'payment.core',
+        targetModuleKey: null,
+        targetResourceId: null,
+        targetResourceType: null,
+      });
+    }),
+  ),
+);
+
+it.live('ACTIONS.md: a refused statement for a missing Payment persists no Data Access Event', () =>
+  native(
+    Effect.gen(function* refusedUnresolvedTargetEvidence() {
+      const evidence = yield* scenario();
+
+      // No authority is configured for the source: the Action looked the Payment up, then failed.
+      const code = yield* failureCodeOf(evidence.accept(unresolvedStatement(randomUUID())));
+      expect(code).toBe('payment_source_authority_forbidden');
+
+      expect(yield* accessEventsOf(evidence)).toStrictEqual([]);
+    }),
+  ),
+);

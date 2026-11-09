@@ -23,6 +23,7 @@ const redemptionTable = 'gateway_assertion_redemptions';
 const expectedTriggers = EffectArray.sort(
   [
     'payment_authorizations_append_only',
+    'payment_economic_effect_attributions_append_only',
     'payment_method_enablement_revisions_append_only',
     'payment_method_enablements_no_delete',
     'payment_method_enablements_transition',
