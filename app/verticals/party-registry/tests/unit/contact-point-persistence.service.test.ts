@@ -8,6 +8,7 @@ import { TestClock } from 'effect/testing';
 import { PrincipalIdSchema, TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
+import { PartyContactPointPersistenceUnavailable } from '../../shared/domain/contact-point-errors.ts';
 import { makePartyAliasResolutionService } from '../../src/merge/party-alias-resolution.service.ts';
 import {
   addContactPointRecord as addRecord,
@@ -988,6 +989,20 @@ it.effect('projects a scheduled whole ADDRESS End as Current strictly before its
     }
   }),
 );
+
+for (const field of ['privacyClassification', 'provenanceMethod', 'provenanceSource', 'state'] as const) {
+  it.effect(`rejects an unknown persisted Contact Point ${field} through its owning schema`, () =>
+    Effect.gen(function* invalidPersistedVocabulary() {
+      const harness = transactionHarness([[contactRow({ [field]: 'UNRECOGNIZED' })], []]);
+      const error = yield* Effect.flip(
+        findPartyContactPointRecord(harness.transaction, scope, contactPointId, directAliases),
+      );
+      expect(error).toBeInstanceOf(PartyContactPointPersistenceUnavailable);
+      expect(harness.updateSets).toEqual([]);
+      expect(harness.insertValues).toEqual([]);
+    }),
+  );
+}
 
 it.effect('projects an open-ended ADDRESS as non-Current at the exact End of its final owner purpose', () =>
   Effect.gen(function* exactFinalAddressPurposeBoundary() {

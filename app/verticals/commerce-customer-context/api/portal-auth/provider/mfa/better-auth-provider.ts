@@ -34,8 +34,8 @@ import { commercePortalAuthMfaProviderUnavailable } from './service.ts';
 import { CommercePortalAuthMfaRateLimitCodeSchema, CommercePortalAuthMfaRateLimited } from './rate-limited.ts';
 import type { CommercePortalAuthTwoFactorPlugin } from './plugin.ts';
 
-/** The plugin endpoint API preserved by an inferred Better Auth options object. */
-export type CommercePortalAuthTwoFactorApi = Pick<
+/** Native endpoint input contracts preserved by the inferred Better Auth options. */
+type NativeCommercePortalAuthTwoFactorApi = Pick<
   InferAPI<CommercePortalAuthTwoFactorPlugin['endpoints']>,
   | 'disableTwoFactor'
   | 'enableTwoFactor'
@@ -46,6 +46,13 @@ export type CommercePortalAuthTwoFactorApi = Pick<
   | 'verifyTOTP'
   | 'verifyTwoFactorOTP'
 >;
+
+/** This driver calls only the native `asResponse: true` contract, never endpoint metadata or decoded results. */
+export type CommercePortalAuthTwoFactorApi = {
+  readonly [Endpoint in keyof NativeCommercePortalAuthTwoFactorApi]: (
+    input: Parameters<NativeCommercePortalAuthTwoFactorApi[Endpoint]>[0] & { readonly asResponse: true },
+  ) => Promise<Response>;
+};
 
 const CHALLENGE_EXPIRED_CODES = new Set(['OTP_HAS_EXPIRED']);
 const RATE_LIMIT_CODES = new Set([

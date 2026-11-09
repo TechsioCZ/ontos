@@ -2,7 +2,7 @@ import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/ef
 import { Context, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { HttpApi } from 'effect/http-api';
-import { expect, it } from 'effect-rstest';
+import { expect, it, rstest } from 'effect-rstest';
 
 import type { OTPOptions } from 'better-auth/plugins/two-factor';
 
@@ -1280,24 +1280,35 @@ it.effect('forwards a verification the audit store accepted, with both rows and 
  * `Set-Cookie` header must never ride along on the resulting failure — from the provider layer
  * through the strict verification's completion row to whatever the caller receives.
  */
-/**
- * The two-factor endpoint stub only `makeCommercePortalAuthMfaProvider` ever calls in this test:
- * `verifyTOTP` bound with `asResponse: true`. Better Auth's inferred endpoint type is a generic
- * conditional this fixture does not reproduce, so the whole stub is asserted once; nothing about
- * the double besides that assertion is unusual, and only `verifyTOTP` is invoked.
- */
 const malformedVerificationTwoFactorApi = () => {
-  const stub = {
-    verifyTOTP: () =>
-      Promise.resolve(
-        new Response('{"not":"the-expected-verification-shape"}', {
-          headers: { 'set-cookie': VERIFICATION_COOKIE },
-          status: 200,
-        }),
-      ),
-  };
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion, anti-slop/no-chained-type-assertions -- SAFETY: only verifyTOTP is invoked by makeCommercePortalAuthMfaProvider(...).verifyTOTP in this test; Better Auth's generic endpoint type is not reproduced by this fixture.
-  return stub as unknown as CommercePortalAuthTwoFactorApi;
+  const unexpectedEndpoint = new Error('Unexpected MFA endpoint in malformed verification fixture');
+  return {
+    disableTwoFactor: rstest
+      .fn<CommercePortalAuthTwoFactorApi['disableTwoFactor']>()
+      .mockRejectedValue(unexpectedEndpoint),
+    enableTwoFactor: rstest
+      .fn<CommercePortalAuthTwoFactorApi['enableTwoFactor']>()
+      .mockRejectedValue(unexpectedEndpoint),
+    generateBackupCodes: rstest
+      .fn<CommercePortalAuthTwoFactorApi['generateBackupCodes']>()
+      .mockRejectedValue(unexpectedEndpoint),
+    getTOTPURI: rstest.fn<CommercePortalAuthTwoFactorApi['getTOTPURI']>().mockRejectedValue(unexpectedEndpoint),
+    sendTwoFactorOTP: rstest
+      .fn<CommercePortalAuthTwoFactorApi['sendTwoFactorOTP']>()
+      .mockRejectedValue(unexpectedEndpoint),
+    verifyBackupCode: rstest
+      .fn<CommercePortalAuthTwoFactorApi['verifyBackupCode']>()
+      .mockRejectedValue(unexpectedEndpoint),
+    verifyTOTP: rstest.fn<CommercePortalAuthTwoFactorApi['verifyTOTP']>().mockResolvedValue(
+      new Response('{"not":"the-expected-verification-shape"}', {
+        headers: { 'set-cookie': VERIFICATION_COOKIE },
+        status: 200,
+      }),
+    ),
+    verifyTwoFactorOTP: rstest
+      .fn<CommercePortalAuthTwoFactorApi['verifyTwoFactorOTP']>()
+      .mockRejectedValue(unexpectedEndpoint),
+  } satisfies CommercePortalAuthTwoFactorApi;
 };
 
 it.effect('never carries a 2xx malformed-body cookie past the provider driver', () =>
