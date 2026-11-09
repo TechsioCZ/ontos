@@ -1486,3 +1486,59 @@ it.live(
       }),
     ),
 );
+
+it.live('#1152 a carrier correction without the selected Delivery Offer never clears a held second COD receipt', () =>
+  native(
+    Effect.gen(function* uncorrelatedCorrectionStaysDebt() {
+      const evidence = yield* scenario();
+      yield* evidence.configureSource({
+        factFamily: 'COD_CUSTOMER_COLLECTION',
+        method: 'CASH_ON_DELIVERY',
+        reason: 'Configured COD carrier',
+        refundRoute: false,
+        source: codCarrier,
+        status: 'ACTIVE',
+        submitterPrincipalIds: [evidence.scope.principalId],
+      });
+      const { payment } = yield* capabilityCollect(evidence, codOfferBinding, 'CASH_ON_DELIVERY');
+      const receipt = (economicEffectKey: string, sourceOccurrenceId: string) =>
+        evidence.accept({
+          amount: czk(100_000),
+          deliveryOfferRef: 'dpd-home-delivery-offer-1',
+          economicEffectKey,
+          factFamily: 'COD_CUSTOMER_COLLECTION',
+          factKind: 'COLLECTION_CONFIRMED',
+          paymentId: payment.paymentId,
+          source: codCarrier,
+          sourceOccurrenceId,
+          sourceRevision: 1,
+        });
+      expect(yield* receipt('dpd:cod:1', 'dpd-shipment-1')).toMatchObject({
+        acceptanceOutcome: 'ACCEPTED_OBSERVATION',
+      });
+      // A distinct second COD collection is held as debt.
+      const second = yield* receipt('dpd:cod:2', 'dpd-shipment-2');
+      expect(second).toMatchObject({ acceptanceOutcome: 'HELD_UNRESOLVED' });
+      // The carrier "corrects" it without naming the selected Delivery Offer: no proven disproof.
+      const uncorrelated = yield* evidence.accept({
+        correctsObservationId: second.observationId,
+        factFamily: 'COD_CUSTOMER_COLLECTION',
+        factKind: 'SOURCE_CORRECTION',
+        paymentId: payment.paymentId,
+        source: codCarrier,
+        sourceOccurrenceId: 'dpd-shipment-2-retraction',
+        sourceRevision: 1,
+      });
+      expect(uncorrelated.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+      expect(
+        yield* failureCodeOf(
+          evidence.decide({
+            caseId: second.reconciliationCaseId ?? '',
+            decision: { _tag: 'CLOSE_CASE', evidenceRef: 'operator-note' },
+            reason: 'Close the second COD receipt as retracted',
+          }),
+        ),
+      ).toBe('payment_reconciliation_obligation_unresolved');
+    }),
+  ),
+);
