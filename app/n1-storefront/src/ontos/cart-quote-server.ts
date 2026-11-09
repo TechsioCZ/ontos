@@ -9,6 +9,7 @@ import {
 import type { ApplyCommandResult } from "@app/merchandise/contracts/apply-command";
 import { StorefrontMarketSchema } from "@app/merchandise/domain/market-offers";
 import { Clock, Effect, Match, Predicate, Schema, Struct } from "effect";
+import type { Cause } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { CartQuoteDiagnosticSchema, CartQuoteRequestSchema, CartQuoteSchema } from "./cart-quote";
 import type { CartQuoteRequest, CartScope } from "./cart-quote";
@@ -201,6 +202,71 @@ export const confirmCartQuote = (scope: CartScope, result: ApplyCommandResult) =
     }).pipe(Effect.mapError(() => new CartQuoteFailure({ state: "unavailable" })));
   });
 
+type NativeQuoteFailure =
+  | Effect.Error<ReturnType<typeof executePlaceStorefrontOrderWithAuthorization>>
+  | Cause.TimeoutError;
+/** Only closed contract tags/codes enter logs, never the error, HTTP request, body or cause. */
+const logNativeQuoteFailure = (error: NativeQuoteFailure) =>
+  Effect.logWarning("N1 cart quote native request failed").pipe(
+    Effect.annotateLogs({
+      nativeCode: Match.value(error).pipe(
+        Match.tags({
+          PlaceStorefrontOrderActionAlreadyCommittedProblem: (problem) => problem.code,
+          PlaceStorefrontOrderActionConflictProblem: (problem) => problem.code,
+          PlaceStorefrontOrderActionForbiddenProblem: (problem) => problem.code,
+          PlaceStorefrontOrderActionIneligibleProblem: (problem) => problem.code,
+          PlaceStorefrontOrderActionNotFoundProblem: (problem) => problem.code,
+          PlaceStorefrontOrderActionUnavailableProblem: (problem) => problem.code,
+        }),
+        Match.orElse(() => "other"),
+      ),
+      nativeTag: Match.value(error).pipe(
+        Match.tags({
+          HttpClientError: () => "HttpClientError",
+          PlaceStorefrontOrderActionAlreadyCommittedProblem: () =>
+            "PlaceStorefrontOrderActionAlreadyCommittedProblem",
+          PlaceStorefrontOrderActionAuthenticationProblem: () =>
+            "PlaceStorefrontOrderActionAuthenticationProblem",
+          PlaceStorefrontOrderActionCommitIndeterminateProblem: () =>
+            "PlaceStorefrontOrderActionCommitIndeterminateProblem",
+          PlaceStorefrontOrderActionConflictProblem: () =>
+            "PlaceStorefrontOrderActionConflictProblem",
+          PlaceStorefrontOrderActionForbiddenProblem: () =>
+            "PlaceStorefrontOrderActionForbiddenProblem",
+          PlaceStorefrontOrderActionIneligibleProblem: () =>
+            "PlaceStorefrontOrderActionIneligibleProblem",
+          PlaceStorefrontOrderActionInternalProblem: () =>
+            "PlaceStorefrontOrderActionInternalProblem",
+          PlaceStorefrontOrderActionInvalidProblem: () =>
+            "PlaceStorefrontOrderActionInvalidProblem",
+          PlaceStorefrontOrderActionNotFoundProblem: () =>
+            "PlaceStorefrontOrderActionNotFoundProblem",
+          PlaceStorefrontOrderActionPreconditionProblem: () =>
+            "PlaceStorefrontOrderActionPreconditionProblem",
+          PlaceStorefrontOrderActionUnavailableProblem: () =>
+            "PlaceStorefrontOrderActionUnavailableProblem",
+          SchemaError: () => "SchemaError",
+          TimeoutError: () => "TimeoutError",
+        }),
+        Match.orElse(() => "other"),
+      ),
+      operation: "cart-quote",
+      transportReason: Match.value(error).pipe(
+        Match.tag("HttpClientError", (problem) => problem.reason._tag),
+        Match.orElse(() => "none"),
+      ),
+      upstreamStatus: Match.value(error).pipe(
+        Match.tag("HttpClientError", (problem) => {
+          const status = problem.response?.status;
+          return status !== undefined && Number.isInteger(status) && status >= 100 && status <= 599
+            ? status
+            : "none";
+        }),
+        Match.orElse(() => "none"),
+      ),
+    }),
+  );
+
 export const quoteCart = (input: CartQuoteRequest) =>
   Effect.gen(function* quoteCartProgram() {
     const request = yield* Schema.decodeUnknownEffect(CartQuoteRequestSchema, {
@@ -249,6 +315,7 @@ export const quoteCart = (input: CartQuoteRequest) =>
       },
     ).pipe(
       Effect.timeout("20 seconds"),
+      Effect.tapError(logNativeQuoteFailure),
       Effect.catch((error) =>
         Match.value(error).pipe(
           Match.tag("PlaceStorefrontOrderActionForbiddenProblem", () =>
