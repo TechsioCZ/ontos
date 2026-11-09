@@ -232,22 +232,24 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
     const roleLayer = Layer.succeed(ProfileCounterpartyRoleEligibilityResolverFactory, {
       make:
         (scope) =>
-        ({ counterpartyResourceId, tenantId: targetTenant }) => {
-          const known = roleFacts.get(counterpartyResourceId);
-          return Effect.succeed(
-            known !== undefined &&
+        ({ counterpartyResourceId, tenantId: targetTenant }) =>
+          Effect.gen(function* observeExactApprovalRole() {
+            const known = roleFacts.get(counterpartyResourceId);
+            const now = yield* DateTime.now;
+            return known !== undefined &&
               scope.tenantId === tenantId &&
               targetTenant === tenantId &&
               scope.legalEntityId === legalEntityId
               ? {
                   managedLegalEntityId: legalEntityId,
+                  observedAt: DateTime.formatIso(now),
                   outcome: 'ELIGIBLE' as const,
                   roleResourceId: known.roleId,
                   roleResourceRevision: known.at,
+                  validUntil: DateTime.formatIso(DateTime.add(now, { seconds: 30 })),
                 }
-              : { outcome: 'INDETERMINATE' as const },
-          );
-        },
+              : { outcome: 'INDETERMINATE' as const };
+          }),
     });
     const currentFacts: PurchaseLimitEvaluationCurrentnessPortService['resolveCurrent'] = (request) =>
       Effect.gen(function* resolveExactTESTCurrentFacts() {
