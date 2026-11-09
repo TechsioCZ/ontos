@@ -111,12 +111,15 @@ const scenario = Effect.fn('EvidenceReconciliationTest.scenario')(function* scen
 
 const czk = (amountMinor: number) => ({ amountMinor, currency: 'CZK' as const });
 
-const qualified = (overrides: Partial<QualifiedPaymentObservation>): QualifiedPaymentObservation => ({
+const qualified = (
+  overrides: Partial<QualifiedPaymentObservation> & Pick<QualifiedPaymentObservation, 'sourceAuthorityId'>,
+): QualifiedPaymentObservation => ({
   amount: overrides.amount,
   correctsObservationId: overrides.correctsObservationId,
   economicEffectKey: overrides.economicEffectKey,
   factKind: overrides.factKind ?? 'COLLECTION_CONFIRMED',
   operationId: overrides.operationId,
+  sourceAuthorityId: overrides.sourceAuthorityId,
 });
 
 /** Interprets one qualified observation against the native aggregate loaded under the row lock. */
@@ -146,7 +149,7 @@ const confirmedCollection = Effect.fn('EvidenceReconciliationTest.confirmedColle
   const decision = yield* interpret(
     evidence,
     payment.paymentId,
-    qualified({ amount: czk(100_000), operationId: collect.operationId }),
+    qualified({ amount: czk(100_000), operationId: collect.operationId, sourceAuthorityId: authority }),
   );
   expect(PaymentEvidenceDecision.$is('TRANSITION')(decision)).toBe(true);
   const settled = yield* evidence.settle(payment.paymentId, collect.operationId, 1, 'EFFECT_CONFIRMED');
@@ -207,7 +210,12 @@ it.live('#1151 Duplicate and corroborating observations describe one effect and 
       const corroboration = yield* interpret(
         evidence,
         payment.paymentId,
-        qualified({ amount: czk(100_000), economicEffectKey: 'gopay:payment:1', operationId: collect.operationId }),
+        qualified({
+          amount: czk(100_000),
+          economicEffectKey: 'gopay:payment:1',
+          operationId: collect.operationId,
+          sourceAuthorityId: authority,
+        }),
       );
       expect(corroboration).toEqual(
         PaymentEvidenceDecision.NO_CHANGE({
@@ -258,7 +266,12 @@ it.live('#1151 Late refund does not erase collection or preserve a stale proof',
       const decision = yield* interpret(
         evidence,
         payment.paymentId,
-        qualified({ amount: czk(40_000), factKind: 'REFUND_CONFIRMED', operationId: refund.operationId }),
+        qualified({
+          amount: czk(40_000),
+          factKind: 'REFUND_CONFIRMED',
+          operationId: refund.operationId,
+          sourceAuthorityId: authority,
+        }),
       );
       expect(decision).toEqual(
         PaymentEvidenceDecision.TRANSITION({
@@ -302,13 +315,18 @@ it.live('#1151 a return that no Payment operation explains is held debt and bloc
   native(
     Effect.gen(function* unmatchedReturn() {
       const evidence = yield* scenario();
-      const { collect, payment } = yield* confirmedCollection(evidence);
+      const { authority, collect, payment } = yield* confirmedCollection(evidence);
       const loaded = yield* evidence.evidenceAggregate(payment.paymentId);
       const proofRevision = loaded.current.payment.coverageRevision;
       const decision = yield* interpret(
         evidence,
         payment.paymentId,
-        qualified({ amount: czk(40_000), factKind: 'REFUND_CONFIRMED', operationId: collect.operationId }),
+        qualified({
+          amount: czk(40_000),
+          factKind: 'REFUND_CONFIRMED',
+          operationId: collect.operationId,
+          sourceAuthorityId: authority,
+        }),
       );
       expect(decision).toEqual(
         PaymentEvidenceDecision.HOLD({ operationId: collect.operationId, reason: 'UNMATCHED_RETURN_EFFECT' }),
@@ -342,7 +360,12 @@ it.live('#1151 A source corrects a statement rather than reversing money; histor
       const decision = yield* interpret(
         evidence,
         payment.paymentId,
-        qualified({ correctsObservationId: receipt, factKind: 'SOURCE_CORRECTION', operationId: collect.operationId }),
+        qualified({
+          correctsObservationId: receipt,
+          factKind: 'SOURCE_CORRECTION',
+          operationId: collect.operationId,
+          sourceAuthorityId: authority,
+        }),
       );
       expect(correctionEffectTag(decision)).toBe('REOPEN_TO_CONFLICT');
       const correction = yield* evidence.recordObservation({
@@ -401,11 +424,16 @@ it.live('#1151 correction vs reversal: a full correction reopens the collection,
   native(
     Effect.gen(function* correctionDecision() {
       const evidence = yield* scenario();
-      const { collect, payment, receipt } = yield* confirmedCollection(evidence);
+      const { authority, collect, payment, receipt } = yield* confirmedCollection(evidence);
       const full = yield* interpret(
         evidence,
         payment.paymentId,
-        qualified({ correctsObservationId: receipt, factKind: 'SOURCE_CORRECTION', operationId: collect.operationId }),
+        qualified({
+          correctsObservationId: receipt,
+          factKind: 'SOURCE_CORRECTION',
+          operationId: collect.operationId,
+          sourceAuthorityId: authority,
+        }),
       );
       expect(correctionEffectTag(full)).toBe('REOPEN_TO_CONFLICT');
       const partial = yield* interpret(
@@ -416,6 +444,7 @@ it.live('#1151 correction vs reversal: a full correction reopens the collection,
           correctsObservationId: receipt,
           factKind: 'SOURCE_CORRECTION',
           operationId: collect.operationId,
+          sourceAuthorityId: authority,
         }),
       );
       expect(correctionEffectTag(partial)).toBe('REDUCE_ESTABLISHED_COLLECTION');

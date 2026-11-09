@@ -28,7 +28,7 @@ import type {
   PaymentSourceFactFamily,
   PaymentSourceKind,
 } from '../../shared/domain/payment-vocabulary.ts';
-import type { PaymentAcceptedObservationView } from '../domain/evidence-interpretation.ts';
+import type { PaymentAcceptedObservationView, PaymentInterpretedEvidence } from '../domain/evidence-interpretation.ts';
 import type { PaymentReconciliationEstablishedEffect } from '../domain/evidence-reconciliation.ts';
 import {
   observations,
@@ -247,6 +247,20 @@ type DecisionRow = typeof reconciliationDecisions.$inferSelect;
 type ObservationRow = typeof observations.$inferSelect;
 type RecoveryRow = typeof recoveryRequests.$inferSelect;
 
+/** One statement as the interpreter reads it, counted toward `operationId`. */
+const interpretedViewOf = (row: ObservationRow, operationId: string | undefined) =>
+  amountOrUndefined(row.amountMinor, row.currency).pipe(
+    Effect.map((amount): PaymentAcceptedObservationView => ({
+      amount: Option.getOrUndefined(amount),
+      correctsObservationId: row.correctsObservationId ?? undefined,
+      economicEffectKey: row.economicEffectKey ?? undefined,
+      factKind: row.factKind,
+      observationId: row.observationId,
+      operationId,
+      sourceAuthorityId: row.sourceAuthorityId ?? undefined,
+    })),
+  );
+
 const caseRecordOf = (row: CaseRow): PaymentReconciliationCaseRecord => ({
   caseId: row.caseId,
   caseKind: row.caseKind,
@@ -364,10 +378,6 @@ export interface PaymentEvidencePersistence {
   ) => Effect.Effect<PaymentRecoveryRequestRecord, PaymentUnavailable>;
   /** Whether a qualified SOURCE_CORRECTION (accepted, held or conflicting) names this observation. */
   readonly isObservationCorrected: (observationId: string) => Effect.Effect<boolean, PaymentUnavailable>;
-  /** Accepted observations of one Payment, the interpreter's lineage input. */
-  readonly listAcceptedObservations: (
-    paymentId: string,
-  ) => Effect.Effect<readonly PaymentAcceptedObservationView[], PaymentUnavailable>;
   /**
    * Uncorrected statements of one Payment whose effect already counts toward an operation: accepted
    * interpretations naming the operation and governed attachments that resolved one.
@@ -375,6 +385,10 @@ export interface PaymentEvidencePersistence {
   readonly listEstablishedEffects: (
     paymentId: string,
   ) => Effect.Effect<readonly PaymentReconciliationEstablishedEffect[], PaymentUnavailable>;
+  /** The interpreter's lineage input for one Payment: accepted and governed-attached statements. */
+  readonly listInterpretedEvidence: (
+    paymentId: string,
+  ) => Effect.Effect<PaymentInterpretedEvidence, PaymentUnavailable>;
   /** Governed ATTACH_EVIDENCE decisions of these observations, in any case of this scope. */
   readonly listObservationAttachments: (
     observationIds: readonly string[],
@@ -422,40 +436,6 @@ export const paymentEvidencePersistenceForTransaction = (
       ? Effect.fail(paymentUnavailable('A verified Selling Legal Entity scope is required'))
       : Effect.succeed({ legalEntityId, tenantId });
   });
-
-  const listAcceptedObservations = Effect.fn('PaymentEvidencePersistence.listAcceptedObservations')(
-    function* listAcceptedObservations(paymentId: string) {
-      const scope = yield* ownerScope;
-      const rows = yield* transaction
-        .select()
-        .from(observations)
-        .where(
-          and(
-            eq(observations.tenantId, scope.tenantId),
-            eq(observations.legalEntityId, scope.legalEntityId),
-            eq(observations.paymentId, paymentId),
-            eq(observations.acceptanceOutcome, 'ACCEPTED_OBSERVATION'),
-          ),
-        )
-        .orderBy(asc(observations.verifiedAt), asc(observations.observationId))
-        .pipe(Effect.mapError(readFailure));
-      return yield* Effect.forEach(
-        rows,
-        (row) =>
-          amountOrUndefined(row.amountMinor, row.currency).pipe(
-            Effect.map((amount): PaymentAcceptedObservationView => ({
-              amount: Option.getOrUndefined(amount),
-              correctsObservationId: row.correctsObservationId ?? undefined,
-              economicEffectKey: row.economicEffectKey ?? undefined,
-              factKind: row.factKind,
-              observationId: row.observationId,
-              operationId: row.operationId ?? undefined,
-            })),
-          ),
-        { concurrency: 1 },
-      );
-    },
-  );
 
   const findObservation = Effect.fn('PaymentEvidencePersistence.findObservation')(function* findObservation(
     observationId: string,
@@ -613,6 +593,58 @@ export const paymentEvidencePersistenceForTransaction = (
               },
             ],
       );
+    },
+  );
+
+  const listInterpretedEvidence = Effect.fn('PaymentEvidencePersistence.listInterpretedEvidence')(
+    function* listInterpretedEvidence(paymentId: string) {
+      const scope = yield* ownerScope;
+      const rows = yield* transaction
+        .select()
+        .from(observations)
+        .where(
+          and(
+            eq(observations.tenantId, scope.tenantId),
+            eq(observations.legalEntityId, scope.legalEntityId),
+            eq(observations.paymentId, paymentId),
+            inArray(observations.acceptanceOutcome, [...QUALIFIED_STATEMENT_OUTCOMES]),
+          ),
+        )
+        .orderBy(asc(observations.verifiedAt), asc(observations.observationId))
+        .pipe(Effect.mapError(readFailure));
+      const corrected = new Set(
+        rows.flatMap((row) =>
+          row.factKind === 'SOURCE_CORRECTION' && row.correctsObservationId !== null ? [row.correctsObservationId] : [],
+        ),
+      );
+      const held = rows.filter(
+        (row) =>
+          row.acceptanceOutcome !== 'ACCEPTED_OBSERVATION' &&
+          row.factKind !== 'SOURCE_CORRECTION' &&
+          !corrected.has(row.observationId),
+      );
+      const attachments = yield* listObservationAttachments(held.map((row) => row.observationId));
+      const attachedOperation = new Map(
+        attachments.flatMap((attachment) =>
+          attachment.operationId === undefined || attachment.resultingOutcome === undefined
+            ? []
+            : [[attachment.observationId, attachment.operationId] as const],
+        ),
+      );
+      const acceptedObservations = yield* Effect.forEach(
+        rows.filter((row) => row.acceptanceOutcome === 'ACCEPTED_OBSERVATION'),
+        (row) => interpretedViewOf(row, row.operationId ?? undefined),
+        { concurrency: 1 },
+      );
+      const attachedStatements = yield* Effect.forEach(
+        held.flatMap((row) => {
+          const operationId = attachedOperation.get(row.observationId);
+          return operationId === undefined ? [] : [{ operationId, row }];
+        }),
+        ({ operationId, row }) => interpretedViewOf(row, operationId),
+        { concurrency: 1 },
+      );
+      return { acceptedObservations, attachedStatements } satisfies PaymentInterpretedEvidence;
     },
   );
 
@@ -1196,8 +1228,8 @@ export const paymentEvidencePersistenceForTransaction = (
     insertDecision,
     insertRecoveryRequest,
     isObservationCorrected,
-    listAcceptedObservations,
     listEstablishedEffects,
+    listInterpretedEvidence,
     listObservationAttachments,
     listOpenCases,
     listOpenOperations,

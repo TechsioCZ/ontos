@@ -514,8 +514,8 @@ export const evidenceScenarioOf = ({ native, r1, r2, scope }: EvidenceScenarioIn
     inTransaction((aggregate, evidence) =>
       Effect.gen(function* loadEvidenceAggregate() {
         const current = yield* aggregate.loadAggregate(paymentId, { lock: true });
-        const acceptedObservations = yield* evidence.listAcceptedObservations(paymentId);
-        return { acceptedObservations, current, operations: current.operations };
+        const lineage = yield* evidence.listInterpretedEvidence(paymentId);
+        return { ...lineage, current, operations: current.operations };
       }),
     );
 

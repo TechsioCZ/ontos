@@ -17,6 +17,7 @@ import type {
 const czk = (amountMinor: number) => ({ amountMinor, currency: 'CZK' as const });
 const COLLECT_ID = 'collect-1';
 const REFUND_ID = 'refund-1';
+const GATEWAY_AUTHORITY = 'authority-gateway';
 
 const operation = (
   outcome: PaymentOperationOutcome,
@@ -40,6 +41,7 @@ const accepted = (
   factKind: overrides.factKind ?? 'COLLECTION_CONFIRMED',
   observationId,
   operationId: overrides.operationId ?? COLLECT_ID,
+  sourceAuthorityId: overrides.sourceAuthorityId ?? GATEWAY_AUTHORITY,
 });
 
 const observed = (overrides: Partial<QualifiedPaymentObservation>): QualifiedPaymentObservation => ({
@@ -48,6 +50,7 @@ const observed = (overrides: Partial<QualifiedPaymentObservation>): QualifiedPay
   economicEffectKey: overrides.economicEffectKey,
   factKind: overrides.factKind ?? 'COLLECTION_CONFIRMED',
   operationId: overrides.operationId ?? COLLECT_ID,
+  sourceAuthorityId: overrides.sourceAuthorityId ?? GATEWAY_AUTHORITY,
 });
 /** Evidence whose source could not prove an exact operation correlation. */
 const uncorrelated = (): QualifiedPaymentObservation => {
@@ -58,7 +61,8 @@ const uncorrelated = (): QualifiedPaymentObservation => {
 const aggregateOf = (
   operations: readonly PaymentEvidenceOperationView[],
   acceptedObservations: readonly PaymentAcceptedObservationView[] = [],
-): PaymentEvidenceAggregate => ({ acceptedObservations, operations });
+  attachedStatements: readonly PaymentAcceptedObservationView[] = [],
+): PaymentEvidenceAggregate => ({ acceptedObservations, attachedStatements, operations });
 
 describe('#1151 Payment evidence interpretation', () => {
   it('#1151 Duplicate and corroborating observations describe one effect: a corroborating statement counts once', () => {
@@ -90,6 +94,75 @@ describe('#1151 Payment evidence interpretation', () => {
     );
     expect(decision).toEqual(
       PaymentEvidenceDecision.HOLD({ operationId: COLLECT_ID, reason: 'DISTINCT_ECONOMIC_EFFECT' }),
+    );
+  });
+
+  it('#1151 an economic effect that confirmed one refund is held when it is correlated to another refund', () => {
+    const refund = (operationId: string, outcome: PaymentOperationOutcome) =>
+      operation(outcome, { amount: czk(10_000), kind: 'REFUND', operationId });
+    const confirmedFirst = accepted('obs-refund-1', {
+      amount: czk(10_000),
+      economicEffectKey: 'gopay:refund:1',
+      factKind: 'REFUND_CONFIRMED',
+      operationId: 'refund-a',
+    });
+    const sameEffect = observed({
+      amount: czk(10_000),
+      economicEffectKey: 'gopay:refund:1',
+      factKind: 'REFUND_CONFIRMED',
+      operationId: 'refund-b',
+    });
+    const operations = [refund('refund-a', 'EFFECT_CONFIRMED'), refund('refund-b', 'PENDING')];
+    expect(interpretPaymentObservation(aggregateOf(operations, [confirmedFirst]), sameEffect)).toEqual(
+      PaymentEvidenceDecision.HOLD({
+        operationId: 'refund-b',
+        reason: 'ECONOMIC_EFFECT_ESTABLISHED_ANOTHER_OPERATION',
+      }),
+    );
+    // A held statement governance attached to the first refund established it just the same.
+    expect(interpretPaymentObservation(aggregateOf(operations, [], [confirmedFirst]), sameEffect)).toEqual(
+      PaymentEvidenceDecision.HOLD({
+        operationId: 'refund-b',
+        reason: 'ECONOMIC_EFFECT_ESTABLISHED_ANOTHER_OPERATION',
+      }),
+    );
+    // A disproven statement no longer establishes the first refund: the effect may confirm the second.
+    const correction = accepted('obs-correction', {
+      correctsObservationId: 'obs-refund-1',
+      factKind: 'SOURCE_CORRECTION',
+      operationId: 'refund-a',
+    });
+    expect(
+      PaymentEvidenceDecision.$is('TRANSITION')(
+        interpretPaymentObservation(aggregateOf(operations, [confirmedFirst, correction]), sameEffect),
+      ),
+    ).toBe(true);
+  });
+
+  it('#1151 an economic effect key of another source authority is not the same economic effect', () => {
+    const refund = (operationId: string, outcome: PaymentOperationOutcome) =>
+      operation(outcome, { amount: czk(10_000), kind: 'REFUND', operationId });
+    const confirmedFirst = accepted('obs-refund-1', {
+      amount: czk(10_000),
+      economicEffectKey: 'refund:1',
+      factKind: 'REFUND_CONFIRMED',
+      operationId: 'refund-a',
+      sourceAuthorityId: 'authority-bank',
+    });
+    const otherSource = observed({
+      amount: czk(10_000),
+      economicEffectKey: 'refund:1',
+      factKind: 'REFUND_CONFIRMED',
+      operationId: 'refund-b',
+    });
+    const operations = [refund('refund-a', 'EFFECT_CONFIRMED'), refund('refund-b', 'PENDING')];
+    expect(interpretPaymentObservation(aggregateOf(operations, [confirmedFirst]), otherSource)).toEqual(
+      PaymentEvidenceDecision.TRANSITION({
+        expectedOutcomeRevision: 2,
+        from: 'PENDING',
+        operationId: 'refund-b',
+        to: 'EFFECT_CONFIRMED',
+      }),
     );
   });
 

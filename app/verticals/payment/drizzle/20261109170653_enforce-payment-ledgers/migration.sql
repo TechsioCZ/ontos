@@ -200,7 +200,10 @@ FROM PUBLIC;
 -- unknown; it has neither a proven outcome nor a safe durable checkpoint. It is tracked as Core durable
 -- work of payment.core under the runtime revision of the invocation that made the effect unknown, so the
 -- existing Core fence refuses to drain or seal that release until the unknown is resolved by proven
--- evidence or a governed reconciliation decision. Business waiting (PENDING) is never tracked here.
+-- evidence or a governed reconciliation decision. Business waiting (PENDING) never starts tracking here.
+-- Leaving INDETERMINATE for another unresolved outcome (CONFLICT, or PENDING from weak evidence) proves
+-- nothing about the original effect, so the work stays until a definitive outcome is proven, also when
+-- that happens later from CONFLICT or PENDING.
 -- The work is cleared under the exact revision it was tracked with; Core keeps that revision active
 -- while the work exists, so no unknown effect is relabelled to another revision.
 CREATE FUNCTION "payment"."track_indeterminate_operation_work"()
@@ -213,7 +216,7 @@ DECLARE
   operation_work_id text := 'payment-operation:' || NEW.tenant_id || ':' || NEW.operation_id;
   tracked_revision text;
 BEGIN
-  IF NEW.from_outcome = 'INDETERMINATE' THEN
+  IF NEW.to_outcome IN ('EFFECT_CONFIRMED', 'NOT_EFFECTED_CONFIRMED') THEN
     FOR tracked_revision IN
       SELECT work.original_revision
       FROM core.application_composition_durable_work AS work

@@ -255,6 +255,20 @@ const recordUnassigned = Effect.fn('PaymentSource.recordUnassigned')(function* r
   });
 });
 
+/**
+ * One live or proven collection lineage per Payment (#1148): a not-effected COLLECT cannot leave
+ * NOT_EFFECTED_CONFIRMED while a permitted retry COLLECT stands. Evidence contradicting it stays
+ * OPERATION_CONFLICT debt (coverage held) without reopening the operation.
+ */
+const reopensBehindRetriedCollect = (run: StatementRun, change: PaymentEvidenceOutcomeChange): boolean =>
+  change.from === 'NOT_EFFECTED_CONFIRMED' &&
+  Option.exists(
+    run.target,
+    ({ operations }) =>
+      operations.some((operation) => operation.operationId === change.operationId && operation.kind === 'COLLECT') &&
+      operations.some((operation) => operation.kind === 'COLLECT' && operation.outcome !== 'NOT_EFFECTED_CONFIRMED'),
+  );
+
 const applyConflict = Effect.fn('PaymentSource.applyConflict')(function* applyConflict(
   run: StatementRun,
   qualified: QualifiedStatement,
@@ -268,9 +282,10 @@ const applyConflict = Effect.fn('PaymentSource.applyConflict')(function* applyCo
     operationId,
     paymentId: qualified.paymentId,
   });
-  const change = Option.isSome(decision.change)
-    ? yield* applyOutcomeChange(run, qualified.paymentId, decision.change.value, observationId)
-    : undefined;
+  const change =
+    Option.isSome(decision.change) && !reopensBehindRetriedCollect(run, decision.change.value)
+      ? yield* applyOutcomeChange(run, qualified.paymentId, decision.change.value, observationId)
+      : undefined;
   const reconciliationCaseId = yield* openCase(run, 'OPERATION_CONFLICT', {
     observationId,
     operationId,
@@ -294,8 +309,20 @@ const applyCorrection = Effect.fn('PaymentSource.applyCorrection')(function* app
   qualified: QualifiedStatement,
   decision: DecisionOf<'CORRECTION'>,
 ) {
-  const operationId = operationInTarget(run, decision.affectedOperationId);
   const { effect } = decision;
+  if (PaymentCorrectionEffect.$is('REOPEN_TO_CONFLICT')(effect) && reopensBehindRetriedCollect(run, effect.change)) {
+    // The disproof cannot reopen the attempt behind a standing retry: it is recorded as conflict debt.
+    return yield* applyConflict(
+      run,
+      qualified,
+      PaymentEvidenceDecision.CONFLICT({
+        change: Option.none(),
+        operationId: decision.affectedOperationId,
+        reason: 'CONTRADICTS_DEFINITIVE_OUTCOME',
+      }),
+    );
+  }
+  const operationId = operationInTarget(run, decision.affectedOperationId);
   // Every correction keeps its exact claimed amount as evidence (#1152). Only a partial disproof of
   // proven collection (`correction_effect`) carries money into Current coverage, so the funds guard
   // never deducts the same money twice.
@@ -419,9 +446,9 @@ const applyQualified = Effect.fn('PaymentSource.applyQualified')(function* apply
   if (Option.isNone(run.target)) {
     return yield* paymentUnavailable('The qualified Payment is no longer loaded');
   }
-  const acceptedObservations = yield* run.services.source.listAcceptedObservations(qualified.paymentId);
+  const lineage = yield* run.services.source.listInterpretedEvidence(qualified.paymentId);
   const decision = interpretPaymentObservation(
-    { acceptedObservations, operations: run.target.value.operations },
+    { ...lineage, operations: run.target.value.operations },
     qualified.observation,
   );
   return yield* PaymentEvidenceDecision.$match(decision, {
