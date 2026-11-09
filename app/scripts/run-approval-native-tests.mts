@@ -6,6 +6,7 @@ import { ChildProcess } from 'effect/process';
 import { loadDatabaseIdentityConnections } from '../packages/core-runtime/src/db/config.ts';
 import { APP_DATABASE_IDENTITY_ENROLLMENT, DATABASE_IDENTITIES } from '../database/identity-enrollment.ts';
 import { loadSpiceDbConfig } from '../packages/core-runtime/src/permissions/config.ts';
+import { governedSharedSingletonPackages } from '../module-federation.shared.ts';
 
 class ApprovalNativeTestFailed extends Schema.TaggedError<ApprovalNativeTestFailed>()('ApprovalNativeTestFailed', {
   exitCode: Schema.Number,
@@ -58,6 +59,9 @@ const cli = Command.make(
         ...preproposal,
         APP_ENV_PATH: '/dev/null',
         DATABASE_ADMIN_URL: database.admin.connectionString,
+        ONTOS_PREPROPOSAL_GOVERNED_SINGLETON_PACKAGES: yield* Schema.encodeEffect(
+          Schema.fromJsonString(Schema.Array(Schema.NonEmptyString)),
+        )(governedSharedSingletonPackages),
         ONTOS_PREPROPOSAL_STANDALONE: 'false',
         ...Object.fromEntries(
           DATABASE_IDENTITIES.map((identity) => [identity.urlKey, database.runtime[identity.id].connectionString]),
