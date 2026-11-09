@@ -18,6 +18,12 @@ const czk = (amountMinor: number) => ({ amountMinor, currency: 'CZK' as const })
 const COLLECT_ID = 'collect-1';
 const REFUND_ID = 'refund-1';
 const GATEWAY_AUTHORITY = 'authority-gateway';
+const GATEWAY_SOURCE = {
+  accountRef: 'gopay-account-1',
+  environment: 'production',
+  sourceKind: 'PAYMENT_GATEWAY',
+  sourceSystem: 'GOPAY',
+} as const;
 
 const operation = (
   outcome: PaymentOperationOutcome,
@@ -41,6 +47,7 @@ const accepted = (
   factKind: overrides.factKind ?? 'COLLECTION_CONFIRMED',
   observationId,
   operationId: overrides.operationId ?? COLLECT_ID,
+  source: overrides.source ?? GATEWAY_SOURCE,
   sourceAuthorityId: overrides.sourceAuthorityId ?? GATEWAY_AUTHORITY,
 });
 
@@ -50,6 +57,7 @@ const observed = (overrides: Partial<QualifiedPaymentObservation>): QualifiedPay
   economicEffectKey: overrides.economicEffectKey,
   factKind: overrides.factKind ?? 'COLLECTION_CONFIRMED',
   operationId: overrides.operationId ?? COLLECT_ID,
+  source: overrides.source ?? GATEWAY_SOURCE,
   sourceAuthorityId: overrides.sourceAuthorityId ?? GATEWAY_AUTHORITY,
 });
 /** Evidence whose source could not prove an exact operation correlation. */
@@ -139,7 +147,7 @@ describe('#1151 Payment evidence interpretation', () => {
     ).toBe(true);
   });
 
-  it('#1151 an economic effect key of another source authority is not the same economic effect', () => {
+  it('#1151 an economic effect key of another source binding is not the same economic effect', () => {
     const refund = (operationId: string, outcome: PaymentOperationOutcome) =>
       operation(outcome, { amount: czk(10_000), kind: 'REFUND', operationId });
     const confirmedFirst = accepted('obs-refund-1', {
@@ -147,6 +155,12 @@ describe('#1151 Payment evidence interpretation', () => {
       economicEffectKey: 'refund:1',
       factKind: 'REFUND_CONFIRMED',
       operationId: 'refund-a',
+      source: {
+        accountRef: 'erp-bank-1',
+        environment: 'production',
+        sourceKind: 'BANK_ACCOUNTING',
+        sourceSystem: 'ERP',
+      },
       sourceAuthorityId: 'authority-bank',
     });
     const otherSource = observed({
@@ -164,6 +178,37 @@ describe('#1151 Payment evidence interpretation', () => {
         to: 'EFFECT_CONFIRMED',
       }),
     );
+  });
+
+  it('#1151 one source binding is one economic effect namespace across its method-neutral and method-specific authorities', () => {
+    const refund = (operationId: string, outcome: PaymentOperationOutcome) =>
+      operation(outcome, { amount: czk(10_000), kind: 'REFUND', operationId });
+    const confirmedFirst = accepted('obs-refund-1', {
+      amount: czk(10_000),
+      economicEffectKey: 'gopay:refund:1',
+      factKind: 'REFUND_CONFIRMED',
+      operationId: 'refund-a',
+      sourceAuthorityId: 'authority-gateway-method-neutral',
+    });
+    const sameSourceOtherAuthority = observed({
+      amount: czk(10_000),
+      economicEffectKey: 'gopay:refund:1',
+      factKind: 'REFUND_CONFIRMED',
+      operationId: 'refund-b',
+      sourceAuthorityId: 'authority-gateway-online',
+    });
+    const operations = [refund('refund-a', 'EFFECT_CONFIRMED'), refund('refund-b', 'PENDING')];
+    const heldForB = PaymentEvidenceDecision.HOLD({
+      operationId: 'refund-b',
+      reason: 'ECONOMIC_EFFECT_ESTABLISHED_ANOTHER_OPERATION',
+    });
+    expect(interpretPaymentObservation(aggregateOf(operations, [confirmedFirst]), sameSourceOtherAuthority)).toEqual(
+      heldForB,
+    );
+    // A governed attachment of a statement qualified by the other authority record establishes it the same.
+    expect(
+      interpretPaymentObservation(aggregateOf(operations, [], [confirmedFirst]), sameSourceOtherAuthority),
+    ).toEqual(heldForB);
   });
 
   it('#1151 qualified collection evidence moves a PENDING collection to EFFECT_CONFIRMED with its fence', () => {

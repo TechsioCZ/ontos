@@ -6,6 +6,7 @@ import type {
   PaymentOperationKind,
   PaymentOperationOutcome,
 } from '../../shared/domain/payment-vocabulary.ts';
+import type { PaymentSourceBinding } from '../../shared/domain/source-statement.ts';
 import { sameAmount } from './money.ts';
 import { decideOutcomeTransition, OutcomeTransitionDecision } from './operation-lifecycle.ts';
 
@@ -47,7 +48,12 @@ export interface PaymentAcceptedObservationView {
   readonly factKind: PaymentObservationFactKind;
   readonly observationId: string;
   readonly operationId: string | undefined;
-  /** The configured authority that issued the statement; economic effect keys are its own. */
+  /**
+   * The immutable source binding that issued the statement: its economic effect keys are this source's
+   * own, whichever configured authority record (method-neutral or method-specific) qualified it.
+   */
+  readonly source: PaymentSourceBinding;
+  /** Provenance only: the configured authority record that qualified the statement. */
   readonly sourceAuthorityId: string | undefined;
 }
 
@@ -79,7 +85,9 @@ export interface QualifiedPaymentObservation {
   readonly factKind: PaymentObservationFactKind;
   /** Exact Payment Operation correlation; absent when the source could not prove it. */
   readonly operationId: string | undefined;
-  /** The configured authority that qualified the statement. */
+  /** The exact source binding the statement came from (equal to its qualifying authority's binding). */
+  readonly source: PaymentSourceBinding;
+  /** Provenance only: the configured authority record that qualified the statement. */
   readonly sourceAuthorityId: string;
 }
 
@@ -225,10 +233,18 @@ const uncorrectedStatements = (aggregate: PaymentEvidenceAggregate) => {
 const standingObservations = (aggregate: PaymentEvidenceAggregate, operationId: string) =>
   uncorrectedStatements(aggregate).filter((observation) => observation.operationId === operationId);
 
+/** One source identity: kind, system, account and environment, independent of authority records. */
+const sameSourceBinding = (left: PaymentSourceBinding, right: PaymentSourceBinding) =>
+  left.sourceKind === right.sourceKind &&
+  left.sourceSystem === right.sourceSystem &&
+  left.accountRef === right.accountRef &&
+  left.environment === right.environment;
+
 /**
  * The confirmed economic effect already established another operation of this Payment: an uncorrected
- * accepted or governed-attached statement of the same source, fact and effect key counted elsewhere
- * (#1151 "Several observations proven to describe the same economic effect count once").
+ * accepted or governed-attached statement of the same source binding, fact and effect key counted
+ * elsewhere (#1151 "Several observations proven to describe the same economic effect count once"). The
+ * method-neutral and method-specific authorities of one binding are one source: one key namespace.
  */
 const establishedAnotherOperation = (
   aggregate: PaymentEvidenceAggregate,
@@ -244,7 +260,7 @@ const establishedAnotherOperation = (
       (prior) =>
         prior.operationId !== undefined &&
         prior.operationId !== operation.operationId &&
-        prior.sourceAuthorityId === observation.sourceAuthorityId &&
+        sameSourceBinding(prior.source, observation.source) &&
         prior.economicEffectKey === economicEffectKey &&
         prior.factKind === observation.factKind,
     )

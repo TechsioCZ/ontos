@@ -1,5 +1,5 @@
 import type { ScopedTransactionExecutor } from '@app/core-runtime';
-import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
 import { DateTime, Effect, Option, Schema } from 'effect';
 
 import type { PaymentAuthorizationProof } from '../../shared/domain/authorization-proof.ts';
@@ -12,6 +12,7 @@ import type { PaymentExecutionProvenance } from '../../shared/domain/payment-pro
 import { paymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
 import type { PaymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
 import { UNRESOLVED_PAYMENT_OPERATION_OUTCOMES } from '../../shared/domain/payment-vocabulary.ts';
+import type { PaymentSourceBinding } from '../../shared/domain/source-statement.ts';
 import type {
   PaymentMethod,
   PaymentObservationAcceptanceOutcome,
@@ -257,6 +258,12 @@ const interpretedViewOf = (row: ObservationRow, operationId: string | undefined)
       factKind: row.factKind,
       observationId: row.observationId,
       operationId,
+      source: {
+        accountRef: row.accountRef,
+        environment: row.environment,
+        sourceKind: row.sourceKind,
+        sourceSystem: row.sourceSystem,
+      },
       sourceAuthorityId: row.sourceAuthorityId ?? undefined,
     })),
   );
@@ -405,12 +412,15 @@ export interface PaymentEvidencePersistence {
     { readonly rows: readonly PaymentOpenOperationRecord[]; readonly truncated: boolean },
     PaymentUnavailable
   >;
-  /** Observations of one Payment from the same source authority stating the same economic effect. */
+  /**
+   * Authority-qualified observations of one Payment from the same source binding (under any of its
+   * configured authority records) stating the same economic effect.
+   */
   readonly listSameEffectObservations: (input: {
     readonly economicEffectKey: string;
     readonly factKind: PaymentObservationFactKind;
     readonly paymentId: string;
-    readonly sourceAuthorityId: string;
+    readonly source: PaymentSourceBinding;
   }) => Effect.Effect<readonly PaymentObservationRecord[], PaymentUnavailable>;
   readonly loadHistory: (paymentId: string) => Effect.Effect<Option.Option<PaymentHistoryRecord>, PaymentUnavailable>;
   /** Locks one case of this scope; a foreign or unknown case is not found. */
@@ -717,7 +727,7 @@ export const paymentEvidencePersistenceForTransaction = (
       readonly economicEffectKey: string;
       readonly factKind: PaymentObservationFactKind;
       readonly paymentId: string;
-      readonly sourceAuthorityId: string;
+      readonly source: PaymentSourceBinding;
     }) {
       const scope = yield* ownerScope;
       const rows = yield* transaction
@@ -728,7 +738,11 @@ export const paymentEvidencePersistenceForTransaction = (
             eq(observations.tenantId, scope.tenantId),
             eq(observations.legalEntityId, scope.legalEntityId),
             eq(observations.paymentId, input.paymentId),
-            eq(observations.sourceAuthorityId, input.sourceAuthorityId),
+            eq(observations.sourceKind, input.source.sourceKind),
+            eq(observations.sourceSystem, input.source.sourceSystem),
+            eq(observations.accountRef, input.source.accountRef),
+            eq(observations.environment, input.source.environment),
+            isNotNull(observations.sourceAuthorityId),
             eq(observations.economicEffectKey, input.economicEffectKey),
             eq(observations.factKind, input.factKind),
           ),

@@ -474,6 +474,7 @@ const qualifyAgainstPayment = (
       economicEffectKey: statement.economicEffectKey,
       factKind: statement.factKind,
       operationId,
+      source: statement.source,
       sourceAuthorityId: authority.sourceAuthorityId,
     },
     paymentId: payment.paymentId,
