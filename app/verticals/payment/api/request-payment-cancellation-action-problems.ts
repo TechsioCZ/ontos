@@ -26,6 +26,24 @@ type ProblemOf<Tag extends RequestPaymentCancellationActionProblem['_tag']> = Ex
   RequestPaymentCancellationActionProblem,
   { readonly _tag: Tag }
 >;
+type DomainProblemIdentity =
+  | {
+      readonly code:
+        | 'payment_aggregate_version_conflict'
+        | 'payment_cancellation_in_progress'
+        | 'payment_held_for_reconciliation'
+        | 'payment_operation_material_conflict';
+      readonly kind: 'conflict';
+    }
+  | {
+      readonly code:
+        | 'payment_cancellation_after_collection'
+        | 'payment_cancellation_target_invalid'
+        | 'payment_cancellation_target_not_live';
+      readonly kind: 'ineligible';
+    }
+  | { readonly code: 'payment_not_found' | 'payment_operation_not_found'; readonly kind: 'notFound' }
+  | { readonly code: 'payment_unavailable'; readonly kind: 'unavailable' };
 
 const problemStatus = {
   authentication: 401,
@@ -40,6 +58,27 @@ const problemStatus = {
   timeout: 504,
   unavailable: 503,
 } as const;
+
+const paymentCancellationConflictProblemByCode = {
+  payment_aggregate_version_conflict: { code: 'payment_aggregate_version_conflict', kind: 'conflict' },
+  payment_cancellation_in_progress: { code: 'payment_cancellation_in_progress', kind: 'conflict' },
+  payment_held_for_reconciliation: { code: 'payment_held_for_reconciliation', kind: 'conflict' },
+  payment_operation_material_conflict: { code: 'payment_operation_material_conflict', kind: 'conflict' },
+} as const satisfies Record<
+  Extract<DomainError, { readonly _tag: 'PaymentCancellationConflict' }>['code'],
+  DomainProblemIdentity
+>;
+
+const paymentCancellationRejectedProblemByCode = {
+  payment_cancellation_after_collection: { code: 'payment_cancellation_after_collection', kind: 'ineligible' },
+  payment_cancellation_target_invalid: { code: 'payment_cancellation_target_invalid', kind: 'ineligible' },
+  payment_cancellation_target_not_live: { code: 'payment_cancellation_target_not_live', kind: 'ineligible' },
+  payment_not_found: { code: 'payment_not_found', kind: 'notFound' },
+  payment_operation_not_found: { code: 'payment_operation_not_found', kind: 'notFound' },
+} as const satisfies Record<
+  Extract<DomainError, { readonly _tag: 'PaymentCancellationRejected' }>['code'],
+  DomainProblemIdentity
+>;
 
 export const requestPaymentCancellationActionProblem = {
   authentication: (): ProblemOf<'RequestPaymentCancellationActionAuthenticationProblem'> =>
@@ -123,11 +162,31 @@ export const requestPaymentCancellationActionProblem = {
     }),
 } as const;
 
+const mapDomainIdentity = (identity: DomainProblemIdentity): RequestPaymentCancellationActionProblem =>
+  Match.value(identity).pipe(
+    Match.when({ kind: 'conflict' as const }, (matched) =>
+      requestPaymentCancellationActionProblem.conflict(matched.code),
+    ),
+    Match.when({ kind: 'ineligible' as const }, (matched) =>
+      requestPaymentCancellationActionProblem.ineligible(matched.code),
+    ),
+    Match.when({ kind: 'notFound' as const }, (matched) =>
+      requestPaymentCancellationActionProblem.notFound(matched.code),
+    ),
+    Match.when({ kind: 'unavailable' as const }, (matched) =>
+      requestPaymentCancellationActionProblem.unavailable(matched.code),
+    ),
+    Match.exhaustive,
+  );
+
 const mapDomainProblem = (error: DomainError): RequestPaymentCancellationActionProblem =>
   Match.value(error).pipe(
     Match.tags({
-      RequestPaymentCancellationNotImplemented: () =>
-        requestPaymentCancellationActionProblem.ineligible('action_not_implemented'),
+      PaymentCancellationConflict: (failure) =>
+        mapDomainIdentity(paymentCancellationConflictProblemByCode[failure.code]),
+      PaymentCancellationRejected: (failure) =>
+        mapDomainIdentity(paymentCancellationRejectedProblemByCode[failure.code]),
+      PaymentCancellationUnavailable: () => requestPaymentCancellationActionProblem.unavailable('payment_unavailable'),
     }),
     Match.exhaustive,
   );

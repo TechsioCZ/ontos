@@ -33,9 +33,24 @@ import { RefundableItemsPort, unavailableRefundableItems } from '../../src/ports
  * `payment-method-applicability` fails typecheck here until the owning lane supplies a valid request.
  */
 const actionPath = '/payment/actions/configure-payment-method-enablement';
-const actionBody: typeof ConfigurePaymentMethodEnablementPayloadSchema.Encoded = {};
+const actionBody: typeof ConfigurePaymentMethodEnablementPayloadSchema.Encoded = {
+  customerConfigurationId: 'customer-configuration-composition',
+  enabled: true,
+  method: 'BANK_TRANSFER_ADVANCE',
+  reason: 'Composition proof enablement',
+};
 const readPath = '/reads/payment-method-applicability';
-const readBody: typeof PaymentMethodApplicabilityRequestSchema.Encoded = {};
+const readBody: typeof PaymentMethodApplicabilityRequestSchema.Encoded = {
+  amount: { amountMinor: 10_000, currency: 'CZK' },
+  branches: [{ method: 'BANK_TRANSFER_ADVANCE' }],
+  customerConfigurationId: 'customer-configuration-composition',
+  paymentTermRef: {
+    moduleId: 'payment.term-catalog',
+    resourceId: '77777777-7777-4777-8777-777777777777',
+    resourceType: 'payment.term-catalog.payment-term',
+    tenantId: '11111111-1111-4111-8111-111111111111',
+  },
+};
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const principalId = '22222222-2222-4222-8222-222222222222';

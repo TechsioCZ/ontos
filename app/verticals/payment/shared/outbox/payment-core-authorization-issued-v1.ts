@@ -3,8 +3,16 @@
 // @ontos-outbox-topic payment.core.authorization-issued.v1
 import { Schema } from 'effect';
 
+import { PaymentAuthorizationProofSchema } from '../domain/authorization-proof.ts';
+
+/** The JSON wire form of the proof (canonical ISO instants), as it travels in the Outbox. */
+export const PaymentAuthorizationProofJsonSchema = Schema.toEncoded(
+  Schema.toCodecJson(PaymentAuthorizationProofSchema),
+);
+
+/** One newly issued immutable Payment Authorization (never emitted for an issuance replay). */
 export const OutboxPayloadSchema = Schema.Struct({
-  data: Schema.Json,
+  proof: PaymentAuthorizationProofJsonSchema,
 });
 export type OutboxPayload = Schema.Schema.Type<typeof OutboxPayloadSchema>;
 

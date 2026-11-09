@@ -3,9 +3,37 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
-export const PaymentAuthorizationValidationRequestSchema = Schema.Struct({});
+import {
+  PaymentAuthorizationBindingSchema,
+  PaymentAuthorizationInvalidityReasonSchema,
+  PaymentAuthorizationProofSchema,
+  PaymentAuthorizationValidationOutcomeSchema,
+} from '../domain/authorization-proof.ts';
+import { PaymentAuthorizationIdSchema, PaymentRevisionSchema } from '../domain/payment-identifiers.ts';
+
+/**
+ * Non-mutating Current validation of one Payment Authorization for actual use (#1149). The caller
+ * presents the proof identity and the exact Attempt binding it intends to use the proof for.
+ */
+export const PaymentAuthorizationValidationRequestSchema = Schema.Struct({
+  authorizationId: PaymentAuthorizationIdSchema,
+  binding: PaymentAuthorizationBindingSchema,
+});
 export type PaymentAuthorizationValidationRequest = typeof PaymentAuthorizationValidationRequestSchema.Type;
-export const PaymentAuthorizationValidationResponseSchema = Schema.Struct({ ok: Schema.Literal(true) });
+
+/**
+ * `validatedAt` is the actual owner time at the validation boundary (after the Payment row lock
+ * wait). `proof` is the original immutable proof when it exists in this scope; returning it never
+ * implies Current validity.
+ */
+export const PaymentAuthorizationValidationResponseSchema = Schema.Struct({
+  currentCoverageRevision: Schema.optionalKey(PaymentRevisionSchema),
+  outcome: PaymentAuthorizationValidationOutcomeSchema,
+  proof: Schema.optionalKey(PaymentAuthorizationProofSchema),
+  reasons: Schema.Array(PaymentAuthorizationInvalidityReasonSchema),
+  validatedAt: Schema.DateTimeUtcFromString,
+});
+export type PaymentAuthorizationValidationResponse = typeof PaymentAuthorizationValidationResponseSchema.Type;
 
 export const PaymentAuthorizationValidationAuthenticationProblemSchema = makeProblemDetailsSchema(
   'PaymentAuthorizationValidationAuthenticationProblem',

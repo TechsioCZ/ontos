@@ -38,17 +38,33 @@ export const RequestPaymentCancellationActionForbiddenProblemSchema = makeProble
 export const RequestPaymentCancellationActionNotFoundProblemSchema = makeProblemDetailsSchema(
   'RequestPaymentCancellationActionNotFoundProblem',
   404,
-  { code: Schema.Literal('action_invocation_not_found') },
+  { code: Schema.Literals(['action_invocation_not_found', 'payment_not_found', 'payment_operation_not_found']) },
 );
 export const RequestPaymentCancellationActionConflictProblemSchema = makeProblemDetailsSchema(
   'RequestPaymentCancellationActionConflictProblem',
   409,
-  { code: Schema.Literals(['action_request_hash_conflict', 'action_invocation_state_invalid']) },
+  {
+    code: Schema.Literals([
+      'action_request_hash_conflict',
+      'action_invocation_state_invalid',
+      'payment_aggregate_version_conflict',
+      'payment_cancellation_in_progress',
+      'payment_held_for_reconciliation',
+      'payment_operation_material_conflict',
+    ]),
+  },
 );
 export const RequestPaymentCancellationActionIneligibleProblemSchema = makeProblemDetailsSchema(
   'RequestPaymentCancellationActionIneligibleProblem',
   422,
-  { code: Schema.Literals(['action_policy_denied', 'action_not_implemented']) },
+  {
+    code: Schema.Literals([
+      'action_policy_denied',
+      'payment_cancellation_after_collection',
+      'payment_cancellation_target_invalid',
+      'payment_cancellation_target_not_live',
+    ]),
+  },
 );
 export const RequestPaymentCancellationActionPreconditionProblemSchema = makeProblemDetailsSchema(
   'RequestPaymentCancellationActionPreconditionProblem',
@@ -65,6 +81,7 @@ export const RequestPaymentCancellationActionUnavailableProblemSchema = makeRetr
       'action_transaction_failed',
       'module_state_check_unavailable',
       'operation_context_unavailable',
+      'payment_unavailable',
     ]),
   },
 );

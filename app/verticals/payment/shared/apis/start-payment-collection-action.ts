@@ -38,17 +38,48 @@ export const StartPaymentCollectionActionForbiddenProblemSchema = makeProblemDet
 export const StartPaymentCollectionActionNotFoundProblemSchema = makeProblemDetailsSchema(
   'StartPaymentCollectionActionNotFoundProblem',
   404,
-  { code: Schema.Literal('action_invocation_not_found') },
+  { code: Schema.Literals(['action_invocation_not_found', 'payment_not_found', 'payment_operation_not_found']) },
 );
 export const StartPaymentCollectionActionConflictProblemSchema = makeProblemDetailsSchema(
   'StartPaymentCollectionActionConflictProblem',
   409,
-  { code: Schema.Literals(['action_request_hash_conflict', 'action_invocation_state_invalid']) },
+  {
+    code: Schema.Literals([
+      'action_request_hash_conflict',
+      'action_invocation_state_invalid',
+      'payment_aggregate_version_conflict',
+      'payment_collect_lineage_conflict',
+      'payment_held_for_reconciliation',
+      'payment_identity_conflict',
+      'payment_intent_material_conflict',
+      'payment_operation_material_conflict',
+      'payment_refund_item_reserved',
+      'payment_refundable_funds_exceeded',
+      'payment_collection_meaning_conflict',
+      'payment_predecessor_superseded_conflict',
+      'payment_predecessor_unresolved_conflict',
+      'payment_superseded_conflict',
+    ]),
+  },
 );
 export const StartPaymentCollectionActionIneligibleProblemSchema = makeProblemDetailsSchema(
   'StartPaymentCollectionActionIneligibleProblem',
   422,
-  { code: Schema.Literals(['action_policy_denied', 'action_not_implemented']) },
+  {
+    code: Schema.Literals([
+      'action_policy_denied',
+      'payment_binding_not_enabled',
+      'payment_zero_payable_no_collection',
+      'payment_amount_invalid',
+      'payment_currency_mismatch',
+      'payment_method_binding_mismatch',
+      'payment_no_established_collection',
+      'payment_outcome_transition_illegal',
+      'payment_refund_amount_mismatch',
+      'payment_refund_basis_invalid',
+      'payment_refund_item_fractioned',
+    ]),
+  },
 );
 export const StartPaymentCollectionActionPreconditionProblemSchema = makeProblemDetailsSchema(
   'StartPaymentCollectionActionPreconditionProblem',
@@ -65,6 +96,8 @@ export const StartPaymentCollectionActionUnavailableProblemSchema = makeRetryabl
       'action_transaction_failed',
       'module_state_check_unavailable',
       'operation_context_unavailable',
+      'payment_owner_evidence_unavailable',
+      'payment_unavailable',
     ]),
   },
 );

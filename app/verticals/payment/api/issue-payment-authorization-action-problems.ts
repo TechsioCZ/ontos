@@ -26,6 +26,37 @@ type ProblemOf<Tag extends IssuePaymentAuthorizationActionProblem['_tag']> = Ext
   IssuePaymentAuthorizationActionProblem,
   { readonly _tag: Tag }
 >;
+type DomainProblemIdentity =
+  | {
+      readonly code:
+        | 'payment_authorization_issuance_conflict'
+        | 'payment_aggregate_version_conflict'
+        | 'payment_collect_lineage_conflict'
+        | 'payment_held_for_reconciliation'
+        | 'payment_identity_conflict'
+        | 'payment_intent_material_conflict'
+        | 'payment_operation_material_conflict'
+        | 'payment_refund_item_reserved'
+        | 'payment_refundable_funds_exceeded';
+      readonly kind: 'conflict';
+    }
+  | {
+      readonly code:
+        | 'payment_authorization_binding_mismatch'
+        | 'payment_authorization_coverage_insufficient'
+        | 'payment_authorization_method_condition_not_met'
+        | 'payment_amount_invalid'
+        | 'payment_currency_mismatch'
+        | 'payment_method_binding_mismatch'
+        | 'payment_no_established_collection'
+        | 'payment_outcome_transition_illegal'
+        | 'payment_refund_amount_mismatch'
+        | 'payment_refund_basis_invalid'
+        | 'payment_refund_item_fractioned';
+      readonly kind: 'ineligible';
+    }
+  | { readonly code: 'payment_not_found' | 'payment_operation_not_found'; readonly kind: 'notFound' }
+  | { readonly code: 'payment_owner_evidence_unavailable' | 'payment_unavailable'; readonly kind: 'unavailable' };
 
 const problemStatus = {
   authentication: 401,
@@ -40,6 +71,46 @@ const problemStatus = {
   timeout: 504,
   unavailable: 503,
 } as const;
+
+const paymentAuthorizationRefusedProblemByCode = {
+  payment_authorization_binding_mismatch: { code: 'payment_authorization_binding_mismatch', kind: 'ineligible' },
+  payment_authorization_coverage_insufficient: {
+    code: 'payment_authorization_coverage_insufficient',
+    kind: 'ineligible',
+  },
+  payment_authorization_issuance_conflict: { code: 'payment_authorization_issuance_conflict', kind: 'conflict' },
+  payment_authorization_method_condition_not_met: {
+    code: 'payment_authorization_method_condition_not_met',
+    kind: 'ineligible',
+  },
+} as const satisfies Record<
+  Extract<DomainError, { readonly _tag: 'PaymentAuthorizationRefused' }>['code'],
+  DomainProblemIdentity
+>;
+
+const paymentConflictProblemByCode = {
+  payment_aggregate_version_conflict: { code: 'payment_aggregate_version_conflict', kind: 'conflict' },
+  payment_collect_lineage_conflict: { code: 'payment_collect_lineage_conflict', kind: 'conflict' },
+  payment_held_for_reconciliation: { code: 'payment_held_for_reconciliation', kind: 'conflict' },
+  payment_identity_conflict: { code: 'payment_identity_conflict', kind: 'conflict' },
+  payment_intent_material_conflict: { code: 'payment_intent_material_conflict', kind: 'conflict' },
+  payment_operation_material_conflict: { code: 'payment_operation_material_conflict', kind: 'conflict' },
+  payment_refund_item_reserved: { code: 'payment_refund_item_reserved', kind: 'conflict' },
+  payment_refundable_funds_exceeded: { code: 'payment_refundable_funds_exceeded', kind: 'conflict' },
+} as const satisfies Record<Extract<DomainError, { readonly _tag: 'PaymentConflict' }>['code'], DomainProblemIdentity>;
+
+const paymentRejectedProblemByCode = {
+  payment_amount_invalid: { code: 'payment_amount_invalid', kind: 'ineligible' },
+  payment_currency_mismatch: { code: 'payment_currency_mismatch', kind: 'ineligible' },
+  payment_method_binding_mismatch: { code: 'payment_method_binding_mismatch', kind: 'ineligible' },
+  payment_no_established_collection: { code: 'payment_no_established_collection', kind: 'ineligible' },
+  payment_not_found: { code: 'payment_not_found', kind: 'notFound' },
+  payment_operation_not_found: { code: 'payment_operation_not_found', kind: 'notFound' },
+  payment_outcome_transition_illegal: { code: 'payment_outcome_transition_illegal', kind: 'ineligible' },
+  payment_refund_amount_mismatch: { code: 'payment_refund_amount_mismatch', kind: 'ineligible' },
+  payment_refund_basis_invalid: { code: 'payment_refund_basis_invalid', kind: 'ineligible' },
+  payment_refund_item_fractioned: { code: 'payment_refund_item_fractioned', kind: 'ineligible' },
+} as const satisfies Record<Extract<DomainError, { readonly _tag: 'PaymentRejected' }>['code'], DomainProblemIdentity>;
 
 export const issuePaymentAuthorizationActionProblem = {
   authentication: (): ProblemOf<'IssuePaymentAuthorizationActionAuthenticationProblem'> =>
@@ -123,11 +194,33 @@ export const issuePaymentAuthorizationActionProblem = {
     }),
 } as const;
 
+const mapDomainIdentity = (identity: DomainProblemIdentity): IssuePaymentAuthorizationActionProblem =>
+  Match.value(identity).pipe(
+    Match.when({ kind: 'conflict' as const }, (matched) =>
+      issuePaymentAuthorizationActionProblem.conflict(matched.code),
+    ),
+    Match.when({ kind: 'ineligible' as const }, (matched) =>
+      issuePaymentAuthorizationActionProblem.ineligible(matched.code),
+    ),
+    Match.when({ kind: 'notFound' as const }, (matched) =>
+      issuePaymentAuthorizationActionProblem.notFound(matched.code),
+    ),
+    Match.when({ kind: 'unavailable' as const }, (matched) =>
+      issuePaymentAuthorizationActionProblem.unavailable(matched.code),
+    ),
+    Match.exhaustive,
+  );
+
 const mapDomainProblem = (error: DomainError): IssuePaymentAuthorizationActionProblem =>
   Match.value(error).pipe(
     Match.tags({
-      IssuePaymentAuthorizationNotImplemented: () =>
-        issuePaymentAuthorizationActionProblem.ineligible('action_not_implemented'),
+      PaymentAuthorizationRefused: (failure) =>
+        mapDomainIdentity(paymentAuthorizationRefusedProblemByCode[failure.code]),
+      PaymentConflict: (failure) => mapDomainIdentity(paymentConflictProblemByCode[failure.code]),
+      PaymentOwnerEvidenceUnavailable: () =>
+        issuePaymentAuthorizationActionProblem.unavailable('payment_owner_evidence_unavailable'),
+      PaymentRejected: (failure) => mapDomainIdentity(paymentRejectedProblemByCode[failure.code]),
+      PaymentUnavailable: () => issuePaymentAuthorizationActionProblem.unavailable('payment_unavailable'),
     }),
     Match.exhaustive,
   );

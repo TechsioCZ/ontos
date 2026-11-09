@@ -2,10 +2,41 @@
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
+import { PaymentTermRefSchema } from '@app/payment-term-catalog-contracts/resources/payment-term';
 
-export const PaymentMethodApplicabilityRequestSchema = Schema.Struct({});
+import {
+  PaymentMethodBranchApplicabilitySchema,
+  PaymentMethodBranchSelectionsSchema,
+} from '../domain/applicability-contract.ts';
+import { PaymentCustomerConfigurationIdSchema } from '../domain/payment-identifiers.ts';
+import { PaymentMonetaryAmountSchema } from '../domain/payment-money.ts';
+
+/**
+ * Pure Current applicability evaluation (#1147) of the exact trusted purchase context: Tenant and
+ * Selling Legal Entity come from the verified Core scope, never from this payload. Creates no durable
+ * business result, so it is a `read`; recording a Payment intent is the `create-payment` Action.
+ */
+export const PaymentMethodApplicabilityRequestSchema = Schema.Struct({
+  /** Exact authoritative Purchase Payable Amount; Payment adds no VAT, Shipping or rounding. */
+  amount: PaymentMonetaryAmountSchema,
+  /** The exact branches to evaluate, each with its explicit method-specific selection. */
+  branches: PaymentMethodBranchSelectionsSchema,
+  customerConfigurationId: PaymentCustomerConfigurationIdSchema,
+  /** The resolved term; returned unchanged and never replaced by a method choice. */
+  paymentTermRef: PaymentTermRefSchema,
+});
 export type PaymentMethodApplicabilityRequest = typeof PaymentMethodApplicabilityRequestSchema.Type;
-export const PaymentMethodApplicabilityResponseSchema = Schema.Struct({ ok: Schema.Literal(true) });
+
+/** One typed outcome per requested branch, in request order; nothing is selected for the customer. */
+export const PaymentMethodApplicabilityResponseSchema = Schema.Struct({
+  amount: PaymentMonetaryAmountSchema,
+  branches: Schema.Array(PaymentMethodBranchApplicabilitySchema),
+  customerConfigurationId: PaymentCustomerConfigurationIdSchema,
+  /** Actual evaluation time; prior results are invalid once any material input changes. */
+  evaluatedAt: Schema.DateTimeUtcFromString,
+  paymentTermRef: PaymentTermRefSchema,
+});
+export type PaymentMethodApplicabilityResponse = typeof PaymentMethodApplicabilityResponseSchema.Type;
 
 export const PaymentMethodApplicabilityAuthenticationProblemSchema = makeProblemDetailsSchema(
   'PaymentMethodApplicabilityAuthenticationProblem',

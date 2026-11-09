@@ -26,6 +26,36 @@ type ProblemOf<Tag extends RequestPaymentRefundActionProblem['_tag']> = Extract<
   RequestPaymentRefundActionProblem,
   { readonly _tag: Tag }
 >;
+type DomainProblemIdentity =
+  | {
+      readonly code:
+        | 'payment_aggregate_version_conflict'
+        | 'payment_held_for_reconciliation'
+        | 'payment_operation_material_conflict'
+        | 'payment_refund_item_refunded'
+        | 'payment_refund_item_reserved'
+        | 'payment_refund_route_conflict'
+        | 'payment_refundable_funds_exceeded';
+      readonly kind: 'conflict';
+    }
+  | {
+      readonly code:
+        | 'payment_amount_invalid'
+        | 'payment_compensation_not_established'
+        | 'payment_currency_mismatch'
+        | 'payment_no_established_collection'
+        | 'payment_refund_amount_mismatch'
+        | 'payment_refund_basis_invalid'
+        | 'payment_refund_item_fractioned'
+        | 'payment_refund_item_mismatch'
+        | 'payment_refund_item_not_refundable';
+      readonly kind: 'ineligible';
+    }
+  | { readonly code: 'payment_not_found'; readonly kind: 'notFound' }
+  | {
+      readonly code: 'payment_owner_evidence_unavailable' | 'payment_refund_route_unavailable' | 'payment_unavailable';
+      readonly kind: 'unavailable';
+    };
 
 const problemStatus = {
   authentication: 401,
@@ -40,6 +70,44 @@ const problemStatus = {
   timeout: 504,
   unavailable: 503,
 } as const;
+
+const paymentRefundConflictProblemByCode = {
+  payment_aggregate_version_conflict: { code: 'payment_aggregate_version_conflict', kind: 'conflict' },
+  payment_held_for_reconciliation: { code: 'payment_held_for_reconciliation', kind: 'conflict' },
+  payment_operation_material_conflict: { code: 'payment_operation_material_conflict', kind: 'conflict' },
+  payment_refund_item_refunded: { code: 'payment_refund_item_refunded', kind: 'conflict' },
+  payment_refund_item_reserved: { code: 'payment_refund_item_reserved', kind: 'conflict' },
+  payment_refund_route_conflict: { code: 'payment_refund_route_conflict', kind: 'conflict' },
+  payment_refundable_funds_exceeded: { code: 'payment_refundable_funds_exceeded', kind: 'conflict' },
+} as const satisfies Record<
+  Extract<DomainError, { readonly _tag: 'PaymentRefundConflict' }>['code'],
+  DomainProblemIdentity
+>;
+
+const paymentRefundRejectedProblemByCode = {
+  payment_amount_invalid: { code: 'payment_amount_invalid', kind: 'ineligible' },
+  payment_compensation_not_established: { code: 'payment_compensation_not_established', kind: 'ineligible' },
+  payment_currency_mismatch: { code: 'payment_currency_mismatch', kind: 'ineligible' },
+  payment_no_established_collection: { code: 'payment_no_established_collection', kind: 'ineligible' },
+  payment_not_found: { code: 'payment_not_found', kind: 'notFound' },
+  payment_refund_amount_mismatch: { code: 'payment_refund_amount_mismatch', kind: 'ineligible' },
+  payment_refund_basis_invalid: { code: 'payment_refund_basis_invalid', kind: 'ineligible' },
+  payment_refund_item_fractioned: { code: 'payment_refund_item_fractioned', kind: 'ineligible' },
+  payment_refund_item_mismatch: { code: 'payment_refund_item_mismatch', kind: 'ineligible' },
+  payment_refund_item_not_refundable: { code: 'payment_refund_item_not_refundable', kind: 'ineligible' },
+} as const satisfies Record<
+  Extract<DomainError, { readonly _tag: 'PaymentRefundRejected' }>['code'],
+  DomainProblemIdentity
+>;
+
+const paymentRefundUnavailableProblemByCode = {
+  payment_owner_evidence_unavailable: { code: 'payment_owner_evidence_unavailable', kind: 'unavailable' },
+  payment_refund_route_unavailable: { code: 'payment_refund_route_unavailable', kind: 'unavailable' },
+  payment_unavailable: { code: 'payment_unavailable', kind: 'unavailable' },
+} as const satisfies Record<
+  Extract<DomainError, { readonly _tag: 'PaymentRefundUnavailable' }>['code'],
+  DomainProblemIdentity
+>;
 
 export const requestPaymentRefundActionProblem = {
   authentication: (): ProblemOf<'RequestPaymentRefundActionAuthenticationProblem'> =>
@@ -123,10 +191,25 @@ export const requestPaymentRefundActionProblem = {
     }),
 } as const;
 
+const mapDomainIdentity = (identity: DomainProblemIdentity): RequestPaymentRefundActionProblem =>
+  Match.value(identity).pipe(
+    Match.when({ kind: 'conflict' as const }, (matched) => requestPaymentRefundActionProblem.conflict(matched.code)),
+    Match.when({ kind: 'ineligible' as const }, (matched) =>
+      requestPaymentRefundActionProblem.ineligible(matched.code),
+    ),
+    Match.when({ kind: 'notFound' as const }, (matched) => requestPaymentRefundActionProblem.notFound(matched.code)),
+    Match.when({ kind: 'unavailable' as const }, (matched) =>
+      requestPaymentRefundActionProblem.unavailable(matched.code),
+    ),
+    Match.exhaustive,
+  );
+
 const mapDomainProblem = (error: DomainError): RequestPaymentRefundActionProblem =>
   Match.value(error).pipe(
     Match.tags({
-      RequestPaymentRefundNotImplemented: () => requestPaymentRefundActionProblem.ineligible('action_not_implemented'),
+      PaymentRefundConflict: (failure) => mapDomainIdentity(paymentRefundConflictProblemByCode[failure.code]),
+      PaymentRefundRejected: (failure) => mapDomainIdentity(paymentRefundRejectedProblemByCode[failure.code]),
+      PaymentRefundUnavailable: (failure) => mapDomainIdentity(paymentRefundUnavailableProblemByCode[failure.code]),
     }),
     Match.exhaustive,
   );

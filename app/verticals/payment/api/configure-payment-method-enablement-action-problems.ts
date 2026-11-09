@@ -126,8 +126,9 @@ export const configurePaymentMethodEnablementActionProblem = {
 const mapDomainProblem = (error: DomainError): ConfigurePaymentMethodEnablementActionProblem =>
   Match.value(error).pipe(
     Match.tags({
-      ConfigurePaymentMethodEnablementNotImplemented: () =>
-        configurePaymentMethodEnablementActionProblem.ineligible('action_not_implemented'),
+      PaymentMethodEnablementConflict: () =>
+        configurePaymentMethodEnablementActionProblem.conflict('payment_method_enablement_revision_conflict'),
+      PaymentUnavailable: () => configurePaymentMethodEnablementActionProblem.unavailable('payment_unavailable'),
     }),
     Match.exhaustive,
   );

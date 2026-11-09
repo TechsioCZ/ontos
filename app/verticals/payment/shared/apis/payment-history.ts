@@ -3,9 +3,12 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
-export const PaymentHistoryRequestSchema = Schema.Struct({});
+import { PaymentHistoryViewSchema } from '../domain/evidence-history.ts';
+import { PaymentIdSchema } from '../domain/payment-identifiers.ts';
+
+export const PaymentHistoryRequestSchema = Schema.Struct({ paymentId: PaymentIdSchema });
 export type PaymentHistoryRequest = typeof PaymentHistoryRequestSchema.Type;
-export const PaymentHistoryResponseSchema = Schema.Struct({ ok: Schema.Literal(true) });
+export const PaymentHistoryResponseSchema = PaymentHistoryViewSchema;
 
 export const PaymentHistoryAuthenticationProblemSchema = makeProblemDetailsSchema(
   'PaymentHistoryAuthenticationProblem',

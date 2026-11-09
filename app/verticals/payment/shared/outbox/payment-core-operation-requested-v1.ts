@@ -3,8 +3,46 @@
 // @ontos-outbox-topic payment.core.operation-requested.v1
 import { Schema } from 'effect';
 
+import { PaymentInstantJsonSchema } from '../domain/lifecycle-views.ts';
+import { PaymentExecutionBindingSchema } from '../domain/payment-execution-binding.ts';
+import {
+  PaymentIdSchema,
+  PaymentMaterialHashSchema,
+  PaymentOperationIdSchema,
+  PaymentOperationKeySchema,
+  PaymentPurchaseCorrelationIdSchema,
+} from '../domain/payment-identifiers.ts';
+import { PaymentPositiveMonetaryAmountSchema } from '../domain/payment-money.ts';
+import { PaymentExecutionProvenanceSchema } from '../domain/payment-provenance.ts';
+import { PaymentRefundBasisSchema } from '../domain/payment-refund-basis.ts';
+import { PaymentMethodSchema, PaymentOperationKindSchema } from '../domain/payment-vocabulary.ts';
+import { PaymentRefundExecutionRouteSchema } from '../domain/refund-contract.ts';
+
+/**
+ * Durable request for the execution route (C17 gateway adapter or configured external executor) to
+ * cause one Payment Operation (A4 COLLECT, A6 CANCEL_OR_VOID, A7 REFUND). This Core Outbox row is the
+ * admitted work under its original Composition revision (TECH-01). It always carries the operation's
+ * original immutable binding: an executor never selects or fails over to another provider/account.
+ * `targetOperationId` names the COLLECT a cancellation/refund acts on (absent for COLLECT);
+ * `refundBasis` is the one immutable basis of a REFUND and `refundExecutionRoute` the configured
+ * executor it was requested through (both absent otherwise). No destination is carried: the executor
+ * establishes the permitted destination under its own governed contract (#1150/#1152).
+ */
 export const OutboxPayloadSchema = Schema.Struct({
-  data: Schema.Json,
+  amount: PaymentPositiveMonetaryAmountSchema,
+  binding: PaymentExecutionBindingSchema,
+  kind: PaymentOperationKindSchema,
+  materialHash: PaymentMaterialHashSchema,
+  method: PaymentMethodSchema,
+  operationId: PaymentOperationIdSchema,
+  operationKey: PaymentOperationKeySchema,
+  paymentId: PaymentIdSchema,
+  provenance: PaymentExecutionProvenanceSchema,
+  purchaseCorrelationId: PaymentPurchaseCorrelationIdSchema,
+  refundBasis: Schema.optionalKey(PaymentRefundBasisSchema),
+  refundExecutionRoute: Schema.optionalKey(PaymentRefundExecutionRouteSchema),
+  requestedAt: PaymentInstantJsonSchema,
+  targetOperationId: Schema.optionalKey(PaymentOperationIdSchema),
 });
 export type OutboxPayload = Schema.Schema.Type<typeof OutboxPayloadSchema>;
 

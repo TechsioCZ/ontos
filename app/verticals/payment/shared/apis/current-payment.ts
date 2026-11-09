@@ -3,9 +3,33 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
-export const CurrentPaymentRequestSchema = Schema.Struct({});
+import {
+  PaymentCoverageSummarySchema,
+  PaymentInstantSchema,
+  PaymentIntentViewSchema,
+  PaymentOperationViewSchema,
+  PaymentUnresolvedStateSchema,
+} from '../domain/lifecycle-views.ts';
+import { PaymentIdSchema } from '../domain/payment-identifiers.ts';
+
+/** Current inspection of one Payment in the trusted Tenant + Selling Legal Entity scope (#1148, R2). */
+export const CurrentPaymentRequestSchema = Schema.Struct({ paymentId: PaymentIdSchema });
 export type CurrentPaymentRequest = typeof CurrentPaymentRequestSchema.Type;
-export const CurrentPaymentResponseSchema = Schema.Struct({ ok: Schema.Literal(true) });
+
+/**
+ * The immutable intent with its original provenance, every operation with its Current outcome, the
+ * derived funds coverage, the unresolved state and the successor that replaced it (if any). It carries
+ * no provider secret, credential or raw provider payload; `observedAt` is the actual read instant.
+ */
+export const CurrentPaymentResponseSchema = Schema.Struct({
+  coverage: PaymentCoverageSummarySchema,
+  observedAt: PaymentInstantSchema,
+  operations: Schema.Array(PaymentOperationViewSchema),
+  payment: PaymentIntentViewSchema,
+  successorPaymentId: Schema.OptionFromNullOr(PaymentIdSchema),
+  unresolved: PaymentUnresolvedStateSchema,
+});
+export type CurrentPaymentResponse = typeof CurrentPaymentResponseSchema.Type;
 
 export const CurrentPaymentAuthenticationProblemSchema = makeProblemDetailsSchema(
   'CurrentPaymentAuthenticationProblem',
