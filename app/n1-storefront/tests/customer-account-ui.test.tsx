@@ -55,6 +55,95 @@ const order = {
 } satisfies typeof CustomerOrderSchema.Encoded;
 
 describe("native customer account presentation", () => {
+  for (const locale of ["cs", "en"]) {
+    it.effect(`shows the stored shipping method in ${locale}`, () =>
+      Effect.gen(function* storedShippingMethod() {
+        const value = yield* Schema.decodeEffect(CustomerOrderSchema)({
+          ...order,
+          shipping: { ...order.shipping, label: "PPL Private" },
+        });
+        const dictionary = getDictionary(locale);
+        const html = renderToStaticMarkup(
+          <CustomerOrderContent dictionary={dictionary} locale={locale} order={value} />,
+        );
+        expect(html).toContain(`${dictionary.accountPage.shipping} (PPL Private)`);
+      }),
+    );
+    it.effect(`does not invent a missing shipping method in ${locale}`, () =>
+      Effect.gen(function* missingShippingMethod() {
+        const value = yield* Schema.decodeEffect(CustomerOrderSchema)({ ...order, shipping: null });
+        const dictionary = getDictionary(locale);
+        const html = renderToStaticMarkup(
+          <CustomerOrderContent dictionary={dictionary} locale={locale} order={value} />,
+        );
+        expect(html).toContain(dictionary.accountPage.shipping);
+        expect(html).toContain(dictionary.accountPage.unknown);
+        expect(html).not.toContain("PPL");
+        expect(html).not.toContain(`${dictionary.accountPage.shipping} ()`);
+        const blank = yield* Schema.decodeEffect(CustomerOrderSchema)({
+          ...order,
+          shipping: { ...order.shipping, label: "   " },
+        });
+        const blankHtml = renderToStaticMarkup(
+          <CustomerOrderContent dictionary={dictionary} locale={locale} order={blank} />,
+        );
+        expect(blankHtml).toContain(dictionary.accountPage.shipping);
+        expect(blankHtml).not.toContain(`${dictionary.accountPage.shipping} (`);
+      }),
+    );
+    it.effect(`renders the shipping method as literal text in ${locale}`, () =>
+      Effect.gen(function* literalShippingMethod() {
+        const value = yield* Schema.decodeEffect(CustomerOrderSchema)({
+          ...order,
+          shipping: { ...order.shipping, label: "$& <script>owner label</script>" },
+        });
+        const dictionary = getDictionary(locale);
+        const html = renderToStaticMarkup(
+          <CustomerOrderContent dictionary={dictionary} locale={locale} order={value} />,
+        );
+        expect(html).toContain(
+          `${dictionary.accountPage.shipping} ($&amp; &lt;script&gt;owner label&lt;/script&gt;)`,
+        );
+        expect(html).not.toContain("<script>owner label</script>");
+      }),
+    );
+    it.effect(`keeps both stored metadata timestamps in ${locale}`, () =>
+      Effect.gen(function* storedMetadataTimes() {
+        const value = yield* Schema.decodeEffect(CustomerOrderSchema)(order);
+        const dictionary = getDictionary(locale);
+        const html = renderToStaticMarkup(
+          <CustomerOrderContent dictionary={dictionary} locale={locale} order={value} />,
+        );
+        const formatter = new Intl.DateTimeFormat(locale === "en" ? "en-GB" : "cs-CZ", {
+          dateStyle: "medium",
+          timeStyle: "short",
+        });
+        expect(html).toContain(formatter.format(Date.parse(order.createdAt)));
+        expect(html).toContain(formatter.format(Date.parse(order.updatedAt)));
+        expect(html).toContain(
+          new Intl.DateTimeFormat(locale === "en" ? "en-GB" : "cs-CZ", {
+            dateStyle: "long",
+          }).format(Date.parse(order.createdAt)),
+        );
+      }),
+    );
+    it.effect(`keeps invalid and absent order dates explicit in ${locale}`, () =>
+      Effect.gen(function* unavailableOrderDates() {
+        const value = yield* Schema.decodeEffect(CustomerOrderSchema)({
+          ...order,
+          createdAt: "not-a-date",
+          updatedAt: null,
+        });
+        const dictionary = getDictionary(locale);
+        const html = renderToStaticMarkup(
+          <CustomerOrderContent dictionary={dictionary} locale={locale} order={value} />,
+        );
+        expect(html.split(dictionary.accountPage.unknown).length).toBeGreaterThan(2);
+        expect(html).not.toContain(dictionary.accountPage.updatedAt);
+        expect(html).not.toContain("Invalid Date");
+      }),
+    );
+  }
   it.effect("keeps a historical order currency when the storefront locale is Czech", () =>
     Effect.gen(function* historicalCurrency() {
       const value = yield* Schema.decodeEffect(CustomerOrderSchema)(order);
@@ -84,6 +173,16 @@ describe("native customer account presentation", () => {
         expect(html).toContain("/cs/ucet/objednavky/order-1");
         expect(html).not.toContain("customer@example.invalid");
         expect(html).not.toContain("Test 1");
+        expect(html).toContain(
+          new Intl.DateTimeFormat("cs-CZ", { dateStyle: "medium" }).format(
+            Date.parse(order.createdAt),
+          ),
+        );
+        expect(html).not.toContain(
+          new Intl.DateTimeFormat("cs-CZ", { dateStyle: "medium", timeStyle: "short" }).format(
+            Date.parse(order.createdAt),
+          ),
+        );
       }),
   );
   it.effect("renders owner notes as text and does not invent stored line totals or media", () =>

@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { Badge } from "@techsio/ui-kit/atoms/badge";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
+import { Link } from "@techsio/ui-kit/atoms/link";
+import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { ProductCard } from "@techsio/ui-kit/molecules/product-card";
 import { TotalsSummary } from "@techsio/ui-kit/molecules/totals-summary";
 import type { Dictionary } from "@/i18n";
@@ -39,21 +41,22 @@ export const CustomerOrderContent = ({
     return <p>{d.accountPage.notFound}</p>;
   }
   const money = (amount: number) => formatMarketAmount(amount, locale, order.currency);
+  const { shipping } = order;
   return (
     <>
-      <div className="flex flex-wrap items-start justify-between gap-2">
+      <div className="flex flex-col flex-wrap items-start justify-between gap-2 md:flex-row">
         <div className="min-w-0">
           <h1 className="text-xl leading-normal font-bold wrap-break-word">
             {d.accountPage.orderNumber} {order.number}
           </h1>
           <p className="text-sm text-fg-secondary">
-            {customerOrderDate(order.createdAt, locale, d.accountPage.unknown)}
+            {customerOrderDate(order.createdAt, locale, d.accountPage.unknown, "longDate")}
           </p>
         </div>
         <CustomerOrderStatus dictionary={d} status={order.status} />
       </div>
       <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-semibold">{d.accountPage.items}</h2>
+        <h2 className="text-lg font-semibold">{d.accountPage.orderedProducts}</h2>
         <div className="grid min-w-0 gap-3 md:grid-cols-3">
           {detail.lines.map((line) => (
             <ProductCard
@@ -76,7 +79,7 @@ export const CustomerOrderContent = ({
       </section>
       <div className="grid min-w-0 gap-4 md:grid-cols-2">
         <section className="flex min-w-0 flex-col gap-2 rounded-xs border border-border-secondary p-4">
-          <h2 className="text-lg font-semibold">{d.accountPage.total}</h2>
+          <h2 className="text-lg font-semibold">{d.accountPage.paymentSummary}</h2>
           <TotalsSummary
             rows={[
               ...(order.pricesIncludeVat === true
@@ -91,7 +94,10 @@ export const CustomerOrderContent = ({
               { id: "vat", label: d.accountPage.vat, value: money(order.totalVatMinor) },
               {
                 id: "shipping",
-                label: d.accountPage.shipping,
+                label:
+                  shipping === null || shipping.label.trim() === ""
+                    ? d.accountPage.shipping
+                    : d.accountPage.shippingWithMethod.replace("{method}", () => shipping.label),
                 value:
                   order.shipping === null
                     ? d.accountPage.unknown
@@ -103,22 +109,22 @@ export const CustomerOrderContent = ({
           />
         </section>
         <section className="flex min-w-0 flex-col gap-2 rounded-xs border border-border-secondary p-4">
-          <h2 className="text-lg font-semibold">{d.accountPage.detail}</h2>
+          <h2 className="text-lg font-semibold">{d.accountPage.orderDetails}</h2>
           <div>
             <p className="text-xs text-fg-secondary">{d.accountPage.orderId}</p>
             <p className="text-sm wrap-break-word">{order.id}</p>
           </div>
           <div>
-            <p className="text-xs text-fg-secondary">{d.accountPage.createdAt}</p>
+            <p className="text-xs text-fg-secondary">{d.accountPage.createdAtDetail}</p>
             <p className="text-sm">
-              {customerOrderDate(order.createdAt, locale, d.accountPage.unknown)}
+              {customerOrderDate(order.createdAt, locale, d.accountPage.unknown, "dateTime")}
             </p>
           </div>
           {order.updatedAt !== null && (
             <div>
               <p className="text-xs text-fg-secondary">{d.accountPage.updatedAt}</p>
               <p className="text-sm">
-                {customerOrderDate(order.updatedAt, locale, d.accountPage.unknown)}
+                {customerOrderDate(order.updatedAt, locale, d.accountPage.unknown, "dateTime")}
               </p>
             </div>
           )}
@@ -229,17 +235,12 @@ export const CustomerOrderDetailView = ({
     );
   }
   return (
-    <article className="mx-auto flex w-full max-w-5xl flex-col gap-4 p-4 md:p-8">
-      <div>
-        <LinkButton
-          as={NextLink}
-          href={`/${locale}/ucet?tab=orders`}
-          size="sm"
-          theme="borderless"
-          variant="tertiary"
-        >
+    <article className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-8 py-4 md:py-8">
+      <div className="flex items-center gap-2">
+        <Icon icon="icon-[mdi--arrow-left]" size="sm" />
+        <Link as={NextLink} href={`/${locale}/ucet?tab=orders`}>
           {d.accountPage.backToOrders}
-        </LinkButton>
+        </Link>
       </div>
       {body}
     </article>

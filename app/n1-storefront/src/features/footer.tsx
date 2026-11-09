@@ -18,14 +18,14 @@ export const StorefrontFooter = ({
     <div className="w-full p-4">
       <Footer.Container>
         <Footer.Section>
-          <div className="relative aspect-n1-footer-logo w-full max-w-n1-footer-logo">
+          <div className="relative aspect-n1-footer-logo w-full md:max-w-n1-footer-logo">
             <Image
               alt="N1 shop"
               as={NextImage}
               fill
               loading="eager"
               size="full"
-              sizes="322px"
+              sizes="(min-width: 48rem) 322px, calc(100vw - 2rem)"
               src="/brand/logo-footer.png"
             />
           </div>

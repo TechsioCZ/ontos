@@ -6,6 +6,8 @@
 [data-theme="n1"] {
   /* PDP39:2187/2547 owns description and panels; Account uses Tabs sm. */
   --spacing-tabs-content-padding-md: var(--dimension-0);
+  /* Account54:1545/1682: the native sm panel owns x8 / top0 / bottom8. */
+  --spacing-tabs-content-padding-sm: var(--dimension-0) var(--dimension-8) var(--dimension-8);
   /* Desktop PDP parameter rows219:2885/2892 use the existing striped roles. */
   --color-data-table-row-bg-striped-primary: var(--color-neutral-300);
   --color-data-table-row-bg-striped-secondary: var(--color-fill-hover);
@@ -165,6 +167,12 @@
 /* Quantity61:1377 uses the canonical neutral fill only for desktop steppers. */
 @utility n1-product-quantity-desktop {
   --color-numeric-input-trigger-bg: var(--color-neutral-300);
+}
+
+/* Account54:1668: compact native navigation without changing PDP or other buttons. */
+@utility n1-account-navigation {
+  --padding-tabs-trigger-sm: var(--padding-tabs-trigger-y-sm) var(--dimension-6);
+  --padding-button-sm: var(--padding-button-y-sm) var(--dimension-8);
 }
 
 /* Desktop PDP219:2876 uses a neutral strip and compact controls. */

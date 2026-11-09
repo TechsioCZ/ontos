@@ -1,5 +1,31 @@
 # N1 — aktuální komponentové a tokenové mapování
 
+## Cílené převody podle Figmy — 2026-11-09
+
+- Home171:2215/2047: slot nadpisu má na layout wrapperu šířku186px na
+  mobilu a240px od md. Footer34:1258/35:1131 vyplňuje mobilní sloupec;
+  desktop zachovává limit322px a veřejný Image/NextImage adaptér.
+- Účet54:1417/1629: nativní Tabs sm a Button secondary/solid. Neinteraktivní
+  wrapper uvnitř Tabs.List skládá skutečné triggery s gap2px; jejich klávesnici,
+  focus a výběr dál vlastní kit. Navigace je horizontální na mobilu a vertikální
+  od md. Rozměry triggerů zůstávají přirozené podle lokalizovaného textu.
+  `n1-account-navigation` mění pouze veřejné padding tokeny v tomto rozsahu
+  (trigger x6, logout x8). Nativní sm panel má padding0/8/8/8; PDP používá md.
+  Save button je mimo navigační scope. Profil stále používá jediné owner displayName;
+  samostatné firstName/lastName se z něj nevyrábějí.
+- Detail objednávky55:2509/2784: mobilní status pod nadpisem, padding x32/y16
+  a od md y32. Zpětná navigace používá kit Link/NextLink a Icon. Nadpis má dlouhé
+  datum, metadata zachovávají čas. Souhrn ukazuje uložený název dopravy, pokud
+  existuje; částky, měna a dostupná pole dál pocházejí z nativního DTO. Chybějící
+  obrázky nebo řádkové součty se neodvozují z aktuálního katalogu.
+- Doprava51:1020/1174 a platba51:1255/1404 nepřebírají generické minimum výšky
+  shellu. Článek zachovává vlastní desktop minimum424px a mobilní padding40px.
+- Našeptávání63:1566 používá přesný loading text „Vyhledávám...“; stávající
+  nativní SearchSuggestions a oddělený unavailable text zůstávají zachované.
+
+Tyto změny mají dílčí vizuální review. Neznamenají schválení celých stránek,
+úspěšné živé přihlášení nebo podporu všech schopností z Figma fixtures.
+
 Mobilní kategorie / Figma31:639: stávající Button secondary/outlined/md a kit
 TreeView zůstávají. Po otevření se zaměří jeho existující `[role=treeitem]`
 roving tab stop pouze uvnitř daného aside. Kit dále vlastní šipky a selekci;

@@ -67,11 +67,13 @@ export const AccountView = ({
         variant="default"
       >
         <div className="flex w-full min-w-0 flex-col items-start gap-4 md:flex-row">
-          <div className="flex w-full shrink-0 flex-wrap items-start gap-0.5 md:w-auto md:flex-col md:flex-nowrap">
+          <div className="n1-account-navigation flex w-full shrink-0 flex-wrap items-start gap-0.5 md:w-auto md:flex-col md:flex-nowrap">
             <Tabs.List>
-              <Tabs.Trigger value="profile">{d.accountPage.profile}</Tabs.Trigger>
-              <Tabs.Trigger value="addresses">{d.accountPage.addresses}</Tabs.Trigger>
-              <Tabs.Trigger value="orders">{d.accountPage.orders}</Tabs.Trigger>
+              <div className="flex items-start gap-0.5 md:flex-col">
+                <Tabs.Trigger value="profile">{d.accountPage.profile}</Tabs.Trigger>
+                <Tabs.Trigger value="addresses">{d.accountPage.addresses}</Tabs.Trigger>
+                <Tabs.Trigger value="orders">{d.accountPage.orders}</Tabs.Trigger>
+              </div>
             </Tabs.List>
             <Button
               disabled={auth.pending}
@@ -80,7 +82,7 @@ export const AccountView = ({
               onClick={() => auth.run(logoutPortal())}
               size="sm"
               theme="solid"
-              variant="primary"
+              variant="secondary"
             >
               {d.auth.signOut}
             </Button>

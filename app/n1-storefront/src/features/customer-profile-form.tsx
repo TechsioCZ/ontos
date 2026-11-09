@@ -160,7 +160,7 @@ export const CustomerProfileForm = ({
           size="md"
           theme="solid"
           type="submit"
-          variant="primary"
+          variant="secondary"
         >
           {d.accountPage.save}
         </Button>

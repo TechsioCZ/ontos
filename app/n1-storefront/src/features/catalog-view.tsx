@@ -66,7 +66,10 @@ export const CatalogView = ({
       {presentation === "featured" && (
         <div className="mb-6 flex items-center gap-4">
           <div className="h-px flex-1 bg-border-primary" />
-          <h1 className="text-center text-lg leading-n1-copy font-bold" id="catalog-title">
+          <h1
+            className="w-46.5 shrink-0 text-center text-lg leading-n1-copy font-bold md:w-60"
+            id="catalog-title"
+          >
             {title}
           </h1>
           <div className="h-px flex-1 bg-border-primary" />

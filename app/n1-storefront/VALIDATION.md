@@ -1,5 +1,56 @@
 # Kontrola převodu N1 storefrontu
 
+## Systematická matice a cílené opravy — 2026-11-09
+
+Soukromá matice zachycuje87 Figma rámců × šířky320/390/768/1024/1440.
+Rozložení, ovládání a vizuální schválení jsou oddělené výsledky; samotné HTTP200
+ani screenshot bez přetékání neznamenají vizuální shodu.
+
+Celá N1 regrese:797/797 testů,75 souborů. Veřejné routy:95 jedinečných
+kombinací stav/šířka s aktuálním layout PASS. Soukromé account renderer QA
+se do těchto95 veřejných kontrol nezapočítává.
+
+Samostatné N1 typy, lint, formát a447 tokenů prošly. Celková repository gate
+na eb5ce50a3 prošla module contracts; globální lint byl následně ukončen po
+výrazném zpomalení hostu. Exit130 není PASS ani potvrzený lint defect.
+Žádná diagnostika nebo Git hook nebyly vypnuté; celková brána není uzavřená.
+Samostatné repository i18n:boundaries znovu hlásí28 diagnostik Effect API mimo
+N1. Plný log je zachovaný; nebyly filtrované, potlačené ani opravené mimo rozsah.
+
+- Home: cílené měření před opravou5FAIL, po opravě5PASS. Ověřen slot nadpisu
+  a mobilní/desktop šířka loga v patičce; nezávislé review schvaluje jen tyto změny.
+- Profil: skutečný client AccountView v izolované soukromé QA, CS/EN × pět
+  šířek,10PASS. Nativní šipky/Home, resize a obnovení orientace fungují. Reviewer
+  otevřel CS390/1440 a EN320. Testovací identity/router seam není runtime cesta
+  ani důkaz živého zákaznického účtu; žádný profilový zápis se neodeslal.
+- Detail objednávky: skutečný SSR renderer, CS/EN × pět šířek × tři stavy
+  dopravy,30PASS po původních10FAIL. Částky nepřetékají ani s dlouhým názvem
+  dopravy. Regrese ověřuje uložený název, chybějící/blank hodnotu, doslovné
+  escapování `$& <script>`, data/časy i zachování původního formátu seznamu.
+  Izolovaná QA neprokazuje živé načtení vlastní objednávky.
+- Navigace: skutečný mobilní drawer a desktop megamenu, pět šířek,5PASS.
+  Rozbalení, Escape, návrat fokusu, klávesnice a přechod na kategorii ověřené.
+- Doprava a platba: deset skutečných route/viewport kontrol,10PASS; nezávislé
+  review schvaluje odstranění minima shellu, nikoli platební integraci.
+- Našeptávání:16 desktopových scénářů, CS768/1024/1440 a EN1024 × čtyři stavy.
+  Výsledky/prázdné hledání ze skutečných GET; loading drží původní GET a error
+  jej přeruší pouze v soukromé browser QA. Šipky/Escape a fallback odkazy prošly,
+  všech32 obrázků má nenulovou naturalWidth. Čtyři lokální Next stack-frame POSTy
+  jsou diagnostické reads; žádný business zápis se neodeslal ani neobešel.
+  Původní prázdné listboxy a nedočkané obrázky byly chyby QA, záznamy zůstávají.
+  Mobilní hledání nemá vstup ani ve Figmě/historickém N1 a čeká rozhodnutí.
+  Figma15px cena/modrá role a footer34px se rozcházejí s N1 tokeny/kitem;
+  celý popup nemá vizuální GO a kvůli snapshotu se nevyrábí nová paleta.
+
+Screenshotování nyní používá `caret: initial`: výchozí Playwright skrývání
+kurzoru dočasně měnilo style atribut vstupů a závodilo s hydratací. Původní
+záznamy zůstávají v evidenci. Nepřidalo se suppressHydrationWarning ani
+aplikační CSS/DOM obcházení.
+
+Otevřené hranice: plná vizuální shoda všech stavů, živý ověřený Portal účet,
+chybějící owner pole detailu objednávky, adresní zápisy a naplněné CMS/Novinky.
+Soukromé QA soubory a snímky jsou mimo Git; nejsou součástí runtime storefrontu.
+
 ## Mobilní procházení kategorií klávesnicí — 2026-11-09
 
 - Reálné otevření category tree dříve ponechalo fokus na tlačítku pod stromem,
