@@ -2,7 +2,8 @@
 // Contract: app/scripts/demo/reset-demo.mts spawns this script with `--sales-demo`, DATABASE_ADMIN_URL
 // and DEMO_RESET_PROFILE=sales in the environment. It writes only the party schema, with deterministic
 // client-supplied IDs from the explicit operator fixture, and restores every seeded customer to its baseline:
-// seeded rows return to ACTIVE, and other current facts on seeded Parties are superseded.
+// seeded rows return to ACTIVE, and other current facts on seeded Parties are superseded. Fixture customers
+// are organizations, so each explicit `name` is seeded as the Party business name, never split into person parts.
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { DatabaseConfig, parseDatabaseConfig } from '@app/core-runtime';
 import {
@@ -19,7 +20,7 @@ import { Config, Console, DateTime, Effect, FileSystem, Layer, Path, Redacted, S
 import { Command, Flag } from 'effect/cli';
 
 import { normalizeEmail, normalizePhone } from '../shared/domain/contact-point.ts';
-import { partySubjectKeyFromString } from '../shared/domain/identity-contracts.ts';
+import { derivePartyDisplayName, partySubjectKeyFromString } from '../shared/domain/identity-contracts.ts';
 import { PartyDatabase, PartyDatabaseLive } from '../src/db/client.ts';
 import {
   counterparties,
@@ -40,6 +41,84 @@ class SalesDemoSeedError extends Schema.TaggedError<SalesDemoSeedError>()('Sales
 }) {}
 
 const evidenceRef = (customer: SalesDemoCustomerFixture) => `sales-demo:ico-${customer.ico}`;
+
+const CONTACT_POINT_NAMESPACE = 'party.contact-point';
+
+/** Deterministic, client-supplied ids for one fixture customer's seeded rows. */
+export const salesDemoSeedIds = (
+  customer: SalesDemoCustomerFixture,
+  demoId: (namespace: string, key: string) => string,
+) => {
+  const key = `ico-${customer.ico}`;
+  return {
+    address: demoId(CONTACT_POINT_NAMESPACE, `${key}:ADDRESS`),
+    addressPurpose: demoId('party.contact-point-purpose', `${key}:ADDRESS:CORRESPONDENCE`),
+    businessName: demoId('party.fact-assertion', `${key}:BUSINESS_NAME`),
+    counterparty: customer.counterpartyId,
+    email: demoId(CONTACT_POINT_NAMESPACE, `${key}:EMAIL`),
+    ico: demoId('party.official-identifier', `${key}:ICO`),
+    party: customer.partyId,
+    partyType: demoId('party.fact-assertion', `${key}:PARTY_TYPE`),
+    phone: demoId(CONTACT_POINT_NAMESPACE, `${key}:PHONE`),
+    role: demoId('party.customer-role', key),
+    vatId: demoId('party.official-identifier', `${key}:CZ_DIC`),
+  };
+};
+export type SalesDemoSeedIds = ReturnType<typeof salesDemoSeedIds>;
+
+/**
+ * Every fixture customer is an organization from the public business register, so the seeded Party
+ * projects the explicit fixture `name` through the canonical current-name contract as its business name.
+ * Splitting that name into person parts would fabricate facts the register does not attest.
+ */
+export const salesDemoOrganizationParty = (input: {
+  readonly businessName: string;
+  readonly now: Date;
+  readonly partyId: string;
+  readonly since: Date;
+  readonly tenantId: string;
+}) => ({
+  archivedAt: null,
+  businessName: input.businessName,
+  createdAt: input.since,
+  currentDisplayName: derivePartyDisplayName({ businessName: input.businessName, partyType: 'ORGANIZATION' }),
+  currentType: 'ORGANIZATION',
+  partyId: input.partyId,
+  tenantId: input.tenantId,
+  updatedAt: input.now,
+});
+
+/** Identity facts a synthetic organization customer asserts: its type, then its business name. */
+export const salesDemoOrganizationIdentityFacts = (input: {
+  readonly customer: SalesDemoCustomerFixture;
+  readonly ids: Pick<SalesDemoSeedIds, 'businessName' | 'partyType'>;
+  readonly reference: string;
+}) =>
+  [
+    {
+      assertionId: input.ids.partyType,
+      evidenceEvaluation: evaluatePartySubjectEvidence({
+        partyType: 'ORGANIZATION',
+        subjectEvidence: [
+          {
+            basis: 'REVIEWED_DOCUMENT',
+            evidenceRef: input.reference,
+            kind: 'ACTOR_ATTESTATION',
+            observedSubject: 'ORGANIZATION',
+            statement: 'Synthetic sales-demo customer organization from the public business register',
+            subjectKey: partySubjectKeyFromString(`ico-${input.customer.ico}`),
+          },
+        ],
+      }),
+      factKind: 'PARTY_TYPE',
+      normalizedValue: 'ORGANIZATION',
+    },
+    {
+      assertionId: input.ids.businessName,
+      factKind: 'BUSINESS_NAME',
+      normalizedValue: input.customer.name,
+    },
+  ] as const;
 
 const seedCustomers = Effect.fn('PartyRegistrySalesDemo.seedCustomers')(function* seedCustomers(
   fixturePath: string,
@@ -69,7 +148,6 @@ const seedCustomers = Effect.fn('PartyRegistrySalesDemo.seedCustomers')(function
   const salesDemoCustomers = input.customers;
   const demoId = (namespace: string, key: string): string => v5(`${namespace}:${key}`, input.namespace);
   const SEED_KEY = 'sales-demo';
-  const CONTACT_POINT_NAMESPACE = 'party.contact-point';
   const acceptance = {
     acceptedByActionInvocationId: demoId('party.seed-invocation', SEED_KEY),
     acceptedByPrincipalId: demoId('party.seed-principal', SEED_KEY),
@@ -99,22 +177,7 @@ const seedCustomers = Effect.fn('PartyRegistrySalesDemo.seedCustomers')(function
   const customerSince = (index: number): Date =>
     DateTime.toDateUtc(DateTime.add(FIRST_CUSTOMER_AT, { days: index * 21, hours: (index * 37) % 9 }));
 
-  const seedIds = (customer: SalesDemoCustomerFixture) => {
-    const key = `ico-${customer.ico}`;
-    return {
-      address: demoId(CONTACT_POINT_NAMESPACE, `${key}:ADDRESS`),
-      addressPurpose: demoId('party.contact-point-purpose', `${key}:ADDRESS:CORRESPONDENCE`),
-      counterparty: customer.counterpartyId,
-      displayName: demoId('party.fact-assertion', `${key}:DISPLAY_NAME`),
-      email: demoId(CONTACT_POINT_NAMESPACE, `${key}:EMAIL`),
-      ico: demoId('party.official-identifier', `${key}:ICO`),
-      party: customer.partyId,
-      partyType: demoId('party.fact-assertion', `${key}:PARTY_TYPE`),
-      phone: demoId(CONTACT_POINT_NAMESPACE, `${key}:PHONE`),
-      role: demoId('party.customer-role', key),
-      vatId: demoId('party.official-identifier', `${key}:CZ_DIC`),
-    };
-  };
+  const seedIds = (customer: SalesDemoCustomerFixture) => salesDemoSeedIds(customer, demoId);
 
   const contactProvenance = (customer: SalesDemoCustomerFixture) => ({
     ...acceptance,
@@ -194,20 +257,24 @@ const seedCustomers = Effect.fn('PartyRegistrySalesDemo.seedCustomers')(function
     const ids = seedIds(customer);
     const since = customerSince(index);
     const reference = evidenceRef(customer);
-    const party = {
-      archivedAt: null,
-      createdAt: since,
-      currentDisplayName: customer.name,
-      currentType: 'ORGANIZATION',
+    const party = salesDemoOrganizationParty({
+      businessName: customer.name,
+      now,
       partyId: ids.party,
+      since,
       tenantId: demoTenantId,
-      updatedAt: now,
-    };
+    });
     yield* transaction
       .insert(parties)
       .values(party)
       .onConflictDoUpdate({
-        set: { archivedAt: null, currentDisplayName: customer.name, currentType: 'ORGANIZATION', updatedAt: now },
+        set: {
+          archivedAt: null,
+          businessName: party.businessName,
+          currentDisplayName: party.currentDisplayName,
+          currentType: party.currentType,
+          updatedAt: now,
+        },
         target: parties.partyId,
       });
     const assertionBase = {
@@ -223,28 +290,10 @@ const seedCustomers = Effect.fn('PartyRegistrySalesDemo.seedCustomers')(function
       validFrom: since,
       validTo: null,
     };
-    const assertions = [
-      {
-        ...assertionBase,
-        assertionId: ids.partyType,
-        evidenceEvaluation: evaluatePartySubjectEvidence({
-          partyType: 'ORGANIZATION',
-          subjectEvidence: [
-            {
-              basis: 'REVIEWED_DOCUMENT',
-              evidenceRef: reference,
-              kind: 'ACTOR_ATTESTATION',
-              observedSubject: 'ORGANIZATION',
-              statement: 'Synthetic sales-demo customer organization from the public business register',
-              subjectKey: partySubjectKeyFromString(`ico-${customer.ico}`),
-            },
-          ],
-        }),
-        factKind: 'PARTY_TYPE',
-        normalizedValue: 'ORGANIZATION',
-      },
-      { ...assertionBase, assertionId: ids.displayName, factKind: 'DISPLAY_NAME', normalizedValue: customer.name },
-    ];
+    const assertions = salesDemoOrganizationIdentityFacts({ customer, ids, reference }).map((fact) => ({
+      ...assertionBase,
+      ...fact,
+    }));
     for (const assertion of assertions) {
       yield* transaction
         .insert(partyFactAssertions)
@@ -373,7 +422,7 @@ const seedCustomers = Effect.fn('PartyRegistrySalesDemo.seedCustomers')(function
           inArray(partyFactAssertions.partyId, partyIds),
           notInArray(
             partyFactAssertions.assertionId,
-            ids.flatMap(({ displayName, partyType }) => [displayName, partyType]),
+            ids.flatMap(({ businessName, partyType }) => [businessName, partyType]),
           ),
           eq(partyFactAssertions.state, 'ACTIVE'),
         ),
@@ -590,4 +639,6 @@ const command = Command.make(
 const runtimeLive = Layer.effectDiscard(Command.run(command, { version: '1.0.0' })).pipe(
   Layer.provide(NodeServices.layer),
 );
-NodeRuntime.runMain(Effect.scoped(Layer.build(runtimeLive)));
+if (import.meta.main) {
+  NodeRuntime.runMain(Effect.scoped(Layer.build(runtimeLive)));
+}
