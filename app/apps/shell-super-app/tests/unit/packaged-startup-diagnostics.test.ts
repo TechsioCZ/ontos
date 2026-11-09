@@ -29,3 +29,14 @@ it('still refuses a clean exit before readiness when no known error is present',
     'Packaged application exited before readiness (exit=0; diagnostic codes=not reported)',
   );
 });
+
+it('names a packaged workspace package Node refuses to load from its traced node_modules copy', () => {
+  const reason = packagedStartupFailureReason(1, [
+    Redacted.make(
+      'Error [ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING]: Stripping types is currently unsupported for files under node_modules, for "private/path/node_modules/@app/shared-contracts/src/credential-url.ts"',
+    ),
+  ]);
+  expect(reason).toBe(
+    'Packaged application exited before readiness (exit=1; diagnostic codes=ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING)',
+  );
+});
