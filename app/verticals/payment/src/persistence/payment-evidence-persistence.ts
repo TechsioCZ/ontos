@@ -1,5 +1,5 @@
 import type { ScopedTransactionExecutor } from '@app/core-runtime';
-import { and, asc, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNotNull, isNull, or } from 'drizzle-orm';
 import { DateTime, Effect, Option, Schema } from 'effect';
 
 import type { PaymentAuthorizationProof } from '../../shared/domain/authorization-proof.ts';
@@ -531,10 +531,14 @@ export const paymentEvidencePersistenceForTransaction = (
   const isObservationCorrected = Effect.fn('PaymentEvidencePersistence.isObservationCorrected')(
     function* isObservationCorrected(observationId: string) {
       const scope = yield* ownerScope;
-      // A correction disproves its target only once it is correlated to the target's Payment and issued
-      // by the target's own authority; an unresolved correction claim stays debt, never disproof.
+      // A correction disproves its target only once it is correlated to the target's Payment, issued by
+      // the target's own authority and covers its whole amount; anything less stays debt, never disproof.
       const [target] = yield* transaction
-        .select({ paymentId: observations.paymentId, sourceAuthorityId: observations.sourceAuthorityId })
+        .select({
+          amountMinor: observations.amountMinor,
+          paymentId: observations.paymentId,
+          sourceAuthorityId: observations.sourceAuthorityId,
+        })
         .from(observations)
         .where(
           and(
@@ -560,6 +564,10 @@ export const paymentEvidencePersistenceForTransaction = (
             eq(observations.paymentId, target.paymentId),
             eq(observations.sourceAuthorityId, target.sourceAuthorityId),
             inArray(observations.acceptanceOutcome, [...QUALIFIED_CORRECTION_OUTCOMES]),
+            // Only a full disproof clears a held monetary effect: a partial amount leaves the rest owed.
+            target.amountMinor === null
+              ? undefined
+              : or(isNull(observations.amountMinor), gte(observations.amountMinor, target.amountMinor)),
           ),
         )
         .limit(1)
