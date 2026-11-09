@@ -38,7 +38,10 @@ import type {
   QualifiedPaymentObservation,
 } from '../../src/domain/evidence-interpretation.ts';
 import { PaymentRefundBasisSchema } from '../../shared/domain/payment-refund-basis.ts';
+import type { PaymentExecutionBinding } from '../../shared/domain/payment-execution-binding.ts';
 import { PaymentRefundExecutionRouteSchema } from '../../shared/domain/refund-contract.ts';
+import type { PaymentSourceBinding } from '../../shared/domain/source-statement.ts';
+import { recordPaymentLocalEvidenceAction } from '../../src/actions/record-payment-local-evidence.action.ts';
 import { paymentFundsSnapshotOf } from '../../src/persistence/payment-aggregate-persistence.ts';
 import { refundExecutionRouteOf } from '../support/refund-execution-route.fixture.ts';
 import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
@@ -51,6 +54,7 @@ import {
   evidenceContextAccess,
   evidenceScenarioOf,
   OUTCOME_CHANGED,
+  principalOf,
   seedCoreScope,
 } from './evidence-native-support.ts';
 import type { EvidenceNativeDatabase, EvidenceScenario } from './evidence-native-support.ts';
@@ -1191,6 +1195,140 @@ it.live('#1151 A re-issued correction of a re-exported receipt reduces the estab
       const correctionB = yield* evidence.accept(statement(correctionOf(receiptB.observationId)));
       expect(correctionB).toMatchObject({ acceptanceOutcome: 'ACCEPTED_OBSERVATION', interpretation: 'NO_CHANGE' });
       expect(yield* collected()).toBe('Established collected=70000 returned=0 remaining=70000');
+    }),
+  ),
+);
+
+const codCarrier = {
+  accountRef: 'dpd-merchant-12',
+  environment: 'production',
+  sourceKind: 'CARRIER',
+  sourceSystem: 'dpd',
+} as const satisfies PaymentSourceBinding;
+const codOfferBinding: PaymentExecutionBinding = {
+  _tag: 'COD_DELIVERY_OFFER',
+  capabilityEvidenceRef: 'dpd-cod-capability-evidence',
+  carrier: { accountRef: 'dpd-merchant-12', environment: 'production', sourceSystem: 'dpd' },
+  deliveryOfferRef: 'dpd-home-delivery-offer-1',
+};
+const posOperator = {
+  accountRef: 'pos-drawer-1',
+  environment: 'production',
+  sourceKind: 'LOCAL_POS_OPERATOR',
+  sourceSystem: 'store-pos',
+} as const satisfies PaymentSourceBinding;
+const pickupBinding: PaymentExecutionBinding = {
+  _tag: 'PICKUP_CAPABILITY',
+  capabilityEvidenceRef: 'pickup-capability-evidence-1',
+  pickupCapabilityRef: 'pickup-prague-1',
+};
+
+/** A pending 1000 CZK COLLECT of a Payment whose execution binding names a selected capability. */
+const capabilityCollect = Effect.fn('EvidenceReconciliationTest.capabilityCollect')(function* capabilityCollect(
+  evidence: EvidenceScenario,
+  binding: PaymentExecutionBinding,
+  method: 'CASH_ON_DELIVERY' | 'PAY_ON_PICKUP_OR_ON_SITE',
+) {
+  const payment = yield* evidence.createPayment(100_000, binding, method);
+  const collect = yield* evidence.startOperation({
+    amountMinor: 100_000,
+    binding,
+    operationKey: 'collect-1',
+    paymentId: payment.paymentId,
+  });
+  return { collect, payment };
+});
+
+/** Attaches a held observation to the COLLECT, then reports the refusal code and the COLLECT outcome. */
+const attachHeldToCollect = Effect.fn('EvidenceReconciliationTest.attachHeldToCollect')(function* attachHeldToCollect(
+  evidence: EvidenceScenario,
+  held: { readonly observationId: string; readonly reconciliationCaseId?: string | undefined },
+  paymentId: string,
+  operationId: string,
+) {
+  const refusal = yield* failureCodeOf(
+    evidence.decide({
+      caseId: held.reconciliationCaseId ?? '',
+      decision: { _tag: 'ATTACH_EVIDENCE', observationId: held.observationId, operationId },
+      reason: 'Operator attaches the held collection statement',
+    }),
+  );
+  const after = yield* evidence.inTransaction((aggregate) => aggregate.loadAggregate(paymentId));
+  const outcome = after.operations.find((operation) => operation.operationId === operationId)?.outcome;
+  return { outcome, refusal };
+});
+
+it.live(
+  '#1152 a COD carrier statement held without the selected Delivery Offer never confirms COLLECT by attachment',
+  () =>
+    native(
+      Effect.gen(function* codCapabilityAttach() {
+        const evidence = yield* scenario();
+        yield* evidence.configureSource({
+          factFamily: 'COD_CUSTOMER_COLLECTION',
+          method: 'CASH_ON_DELIVERY',
+          reason: 'Configured COD carrier',
+          refundRoute: false,
+          source: codCarrier,
+          status: 'ACTIVE',
+          submitterPrincipalIds: [evidence.scope.principalId],
+        });
+        const { collect, payment } = yield* capabilityCollect(evidence, codOfferBinding, 'CASH_ON_DELIVERY');
+        // The selected carrier names no Delivery Offer: CAPABILITY_NOT_CORRELATED held debt.
+        const held = yield* evidence.accept({
+          amount: czk(100_000),
+          factFamily: 'COD_CUSTOMER_COLLECTION',
+          factKind: 'COLLECTION_CONFIRMED',
+          paymentId: payment.paymentId,
+          source: codCarrier,
+          sourceOccurrenceId: 'dpd-shipment-9',
+          sourceRevision: 1,
+        });
+        expect(held.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+        expect(yield* attachHeldToCollect(evidence, held, payment.paymentId, collect.operationId)).toEqual({
+          outcome: 'PENDING',
+          refusal: 'payment_reconciliation_evidence_not_qualified',
+        });
+      }),
+    ),
+);
+
+it.live('#1152 a POS statement held without the selected pickup capability never confirms COLLECT by attachment', () =>
+  native(
+    Effect.gen(function* pickupCapabilityAttach() {
+      const evidence = yield* scenario();
+      yield* evidence.configureSource({
+        factFamily: 'LOCAL_POS_COLLECTION',
+        method: 'PAY_ON_PICKUP_OR_ON_SITE',
+        reason: 'The store POS records pickup payments',
+        refundRoute: false,
+        source: posOperator,
+        status: 'ACTIVE',
+        submitterPrincipalIds: [evidence.scope.principalId],
+      });
+      const { collect, payment } = yield* capabilityCollect(evidence, pickupBinding, 'PAY_ON_PICKUP_OR_ON_SITE');
+      // The POS receipt names no pickup capability: CAPABILITY_NOT_CORRELATED held debt.
+      const held = yield* evidence.r1.actions.runAction({
+        payload: {
+          amount: czk(100_000),
+          evidenceRef: 'pos-receipt-1',
+          factFamily: 'LOCAL_POS_COLLECTION',
+          factKind: 'COLLECTION_CONFIRMED',
+          paymentId: payment.paymentId,
+          reason: 'Customer paid at pickup',
+          source: posOperator,
+          sourceOccurrenceId: 'pos-receipt-1',
+          sourceRevision: 1,
+        },
+        principal: principalOf(evidence.scope),
+        registration: recordPaymentLocalEvidenceAction,
+        transport: { correlationId: 'payment-evidence-pos', idempotencyKey: randomUUID() },
+      });
+      expect(held.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+      expect(yield* attachHeldToCollect(evidence, held, payment.paymentId, collect.operationId)).toEqual({
+        outcome: 'PENDING',
+        refusal: 'payment_reconciliation_evidence_not_qualified',
+      });
     }),
   ),
 );

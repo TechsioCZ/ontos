@@ -437,6 +437,51 @@ describe('#1151 Payment evidence interpretation', () => {
     }
   });
 
+  it('#1151 a further correction of an already partially corrected statement is held, never deduplicated', () => {
+    const partiallyCorrected = aggregateOf(
+      [operation('EFFECT_CONFIRMED', { amount: czk(10_000) })],
+      [
+        accepted('obs-receipt', { amount: czk(10_000), economicEffectKey: 'bank:line:1' }),
+        accepted('obs-correction', {
+          amount: czk(1000),
+          correctsObservationId: 'obs-receipt',
+          economicEffectKey: 'bank:line:1:correction',
+          factKind: 'SOURCE_CORRECTION',
+        }),
+      ],
+    );
+    const correctReceipt = (economicEffectKey: string | undefined, amount = czk(10_000)) =>
+      interpretPaymentObservation(
+        partiallyCorrected,
+        observed({ amount, correctsObservationId: 'obs-receipt', economicEffectKey, factKind: 'SOURCE_CORRECTION' }),
+      );
+    // Only a proven re-issue of the same correction (same source binding and correction key) counts once.
+    expect(correctReceipt('bank:line:1:correction', czk(1000))).toEqual(
+      PaymentEvidenceDecision.NO_CHANGE({ operationId: COLLECT_ID, reason: 'ALREADY_CORRECTED' }),
+    );
+    // A full retraction under another key, or one that cannot prove its key, is a new disproof to reconcile.
+    for (const key of ['bank:line:1:retraction', undefined]) {
+      expect(correctReceipt(key)).toEqual(
+        PaymentEvidenceDecision.HOLD({ operationId: COLLECT_ID, reason: 'CORRECTION_OVERLAPS_PRIOR_CORRECTION' }),
+      );
+    }
+    // The same correction key from another source binding is not a proven re-issue either.
+    expect(
+      interpretPaymentObservation(
+        partiallyCorrected,
+        observed({
+          amount: czk(1000),
+          correctsObservationId: 'obs-receipt',
+          economicEffectKey: 'bank:line:1:correction',
+          factKind: 'SOURCE_CORRECTION',
+          source: { ...GATEWAY_SOURCE, accountRef: 'gopay-account-2' },
+        }),
+      ),
+    ).toEqual(
+      PaymentEvidenceDecision.HOLD({ operationId: COLLECT_ID, reason: 'CORRECTION_OVERLAPS_PRIOR_CORRECTION' }),
+    );
+  });
+
   it('#1151 a correction key is scoped to its source binding: another source retracting its receipt is applied', () => {
     const bankSource = {
       accountRef: 'erp-bank-1',
@@ -480,13 +525,21 @@ describe('#1151 Payment evidence interpretation', () => {
       [operation('CONFLICT')],
       [
         accepted('obs-receipt'),
-        accepted('obs-correction', { correctsObservationId: 'obs-receipt', factKind: 'SOURCE_CORRECTION' }),
+        accepted('obs-correction', {
+          correctsObservationId: 'obs-receipt',
+          economicEffectKey: 'retraction:1',
+          factKind: 'SOURCE_CORRECTION',
+        }),
       ],
     );
     expect(
       interpretPaymentObservation(
         correctedOnce,
-        observed({ correctsObservationId: 'obs-receipt', factKind: 'SOURCE_CORRECTION' }),
+        observed({
+          correctsObservationId: 'obs-receipt',
+          economicEffectKey: 'retraction:1',
+          factKind: 'SOURCE_CORRECTION',
+        }),
       ),
     ).toEqual(PaymentEvidenceDecision.NO_CHANGE({ operationId: COLLECT_ID, reason: 'ALREADY_CORRECTED' }));
     expect(
