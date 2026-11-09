@@ -253,16 +253,30 @@ it.live('persists immutable credential-free registration and admits only exact l
             expect(Result.isFailure(foreignRegistration)).toBe(true);
             yield* execute(sql`select set_config('ontos.legal_entity_id', ${legalEntityId}, true)`);
             yield* execute(sql`reset role`);
-            for (const state of ['PENDING_REVOKE', 'REVOKED', 'RECONCILIATION_REQUIRED']) {
-              yield* execute(
+            // Bindings now persist only final owner access states; intermediate states must not fit the table.
+            for (const state of ['PENDING_GRANT', 'PENDING_REVOKE', 'RECONCILIATION_REQUIRED']) {
+              yield* execute(sql`savepoint invalid_binding_state`);
+              const invalidState = yield* execute(
                 sql`update commerce_customer_context.retail_portal_profile_bindings set authorization_state = ${state} where retail_portal_profile_binding_id = ${bindingId}::uuid`,
-              );
-              yield* execute(sql`set local role ontos_runtime`);
-              expect(yield* account()).toEqual([]);
-              yield* execute(sql`reset role`);
+              ).pipe(Effect.result);
+              yield* execute(sql`rollback to savepoint invalid_binding_state`);
+              expect(Result.isFailure(invalidState)).toBe(true);
             }
+            yield* execute(sql`set local role ontos_runtime`);
+            expect(yield* account()).toEqual([{ party_id: partyId, profile_id: profileId }]);
+            yield* execute(sql`reset role`);
             yield* execute(
-              sql`update commerce_customer_context.retail_portal_profile_bindings set authorization_state = 'ACTIVE' where retail_portal_profile_binding_id = ${bindingId}::uuid`,
+              sql`update commerce_customer_context.retail_portal_profile_bindings
+                set lifecycle = 'REVOKED', authorization_operation = 'revoke', authorization_state = 'REVOKED'
+                where retail_portal_profile_binding_id = ${bindingId}::uuid`,
+            );
+            yield* execute(sql`set local role ontos_runtime`);
+            expect(yield* account()).toEqual([]);
+            yield* execute(sql`reset role`);
+            yield* execute(
+              sql`update commerce_customer_context.retail_portal_profile_bindings
+                set lifecycle = 'ACTIVE', authorization_operation = 'grant', authorization_state = 'ACTIVE'
+                where retail_portal_profile_binding_id = ${bindingId}::uuid`,
             );
             yield* execute(
               sql`update commerce_customer_context.customer_profiles set lifecycle = 'SUSPENDED' where customer_profile_id = ${profileId}::uuid`,
@@ -450,19 +464,35 @@ it.live('admits the new provider account immediately after verification and one 
       if (permissionObjectId === undefined) {
         return yield* Effect.die('The exact retail profile permission must have a native identity');
       }
-      const relationship = v1.Relationship.create({
-        relation: 'self_service_grantee',
-        resource: v1.ObjectReference.create({ objectId: permissionObjectId, objectType: 'business_permission' }),
-        subject: v1.SubjectReference.create({
-          object: v1.ObjectReference.create({ objectId: principalId, objectType: 'principal' }),
-        }),
+      const permissionResource = v1.ObjectReference.create({
+        objectId: permissionObjectId,
+        objectType: 'business_permission',
       });
+      const principalSubject = v1.SubjectReference.create({
+        object: v1.ObjectReference.create({ objectId: principalId, objectType: 'principal' }),
+      });
+      // The canonical grantee predicate requires this exact tenant membership; all three tuples are test-owned.
+      const relationships = [
+        v1.Relationship.create({ relation: 'grantee', resource: permissionResource, subject: principalSubject }),
+        v1.Relationship.create({
+          relation: 'tenant',
+          resource: permissionResource,
+          subject: v1.SubjectReference.create({
+            object: v1.ObjectReference.create({ objectId: tenantId, objectType: 'tenant' }),
+          }),
+        }),
+        v1.Relationship.create({
+          relation: 'member',
+          resource: v1.ObjectReference.create({ objectId: tenantId, objectType: 'tenant' }),
+          subject: principalSubject,
+        }),
+      ];
       const grant = (operation: v1.RelationshipUpdate_Operation) =>
         Effect.promise(
           async () =>
             await spice.promises.writeRelationships(
               v1.WriteRelationshipsRequest.create({
-                updates: [v1.RelationshipUpdate.create({ operation, relationship })],
+                updates: relationships.map((relationship) => v1.RelationshipUpdate.create({ operation, relationship })),
               }),
             ),
         );
