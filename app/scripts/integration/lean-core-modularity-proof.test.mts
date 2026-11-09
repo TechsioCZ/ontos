@@ -392,7 +392,7 @@ const acquireLeanCoreComposition = Effect.fn('LeanCoreProof.acquireComposition')
   expect(approved.composition.modules[0]?.federation.execution).toBe('server');
   return {
     adminDatabase,
-    adminUrl: connections.admin.connectionString,
+    runtimeUrl: connections.runtime.connectionString,
     // The lean composition enrolls no module deployment credential, so every verified key is a subject's key.
     configuration: ConfigProvider.fromUnknown({
       ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: `${origin}/active`,
@@ -440,12 +440,13 @@ const authorizationCatalogJson = Schema.fromJsonString(Schema.Struct({ modules: 
 /**
  * The tenant's first authority, written the way a tenant gets it: the bootstrap makes the staff principal
  * the owner, a member of the tenant and of its company holding "Plný přístup" in both scopes, and reconciles
- * that intent into SpiceDB through the single projection writer over the administrative pool.
+ * that intent into SpiceDB through the single projection writer over the shared runtime login Core writes
+ * a tenant's access intent through, never an administrative one.
  */
 const bootstrapFixtureTenantAccess = Effect.fn('LeanCoreProof.bootstrapTenantAccess')(
   function* bootstrapTenantAccess(input: {
-    readonly adminUrl: string;
     readonly legalEntityId: string;
+    readonly runtimeUrl: string;
     readonly scope: OperationalScope;
   }) {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -453,7 +454,7 @@ const bootstrapFixtureTenantAccess = Effect.fn('LeanCoreProof.bootstrapTenantAcc
       yield* fileSystem.readFileString(catalogArtifactPath),
     );
     const spiceDb = yield* loadSpiceDbConfig();
-    const databaseConfiguration = yield* parseDatabaseConfig({ DATABASE_URL: input.adminUrl });
+    const databaseConfiguration = yield* parseDatabaseConfig({ DATABASE_URL: input.runtimeUrl });
     const database = CoreDatabaseLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, databaseConfiguration)));
     const engine = Layer.effect(
       AccessProjectionCompiler,
@@ -649,8 +650,8 @@ it.live(
     });
     yield* coreDatabase.insert(tenantModuleStates).values({ moduleKey: 'core.identity', state: 'active', tenantId });
     yield* bootstrapFixtureTenantAccess({
-      adminUrl: composition.adminUrl,
       legalEntityId,
+      runtimeUrl: composition.runtimeUrl,
       scope: {
         ...(yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
           authBindingId,

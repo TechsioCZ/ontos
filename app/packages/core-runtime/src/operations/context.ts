@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { Context, Crypto, DateTime, Effect, Layer, Option } from 'effect';
 
@@ -18,10 +18,10 @@ import {
   readVerifiedGatewayScopeAssertion,
 } from '../auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../db/client.ts';
-import { DatabaseIdentityEnrollmentContext } from '../db/database-identities.ts';
+import { DatabaseIdentityEnrollmentContext, gatewayScopeGrantRoleForAudience } from '../db/database-identities.ts';
 import type { DatabaseIdentityEnrollment } from '../db/database-identity-manifest.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
-import { legalEntities, principalAuthBindings, principals, tenants } from '../db/schema.ts';
+import { auditEvents, legalEntities, principalAuthBindings, principals, tenants } from '../db/schema.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import { decodeProtectedAccessDeclaration } from '../authorization/access-declaration.ts';
 import { recordSupportImpersonationAction } from '../modules/actions/record-support-impersonation.action.ts';
@@ -125,9 +125,19 @@ export const makeOperationalScopeRepository = (
   load: (principal) =>
     selectPersistedScope(database, principal, enrollment, (executor) => {
       const impersonators = alias(principals, 'impersonators');
-      return executor
+      const bindingAudit = alias(auditEvents, 'binding_creation_audit');
+      const scopeAssertion = readVerifiedGatewayScopeAssertion(principal);
+      const gatewayScoped =
+        scopeAssertion !== undefined &&
+        Option.isSome(gatewayScopeGrantRoleForAudience(enrollment, scopeAssertion.audience));
+      const query = executor
         .select({
           bindingAuthenticationNamespaceId: principalAuthBindings.authenticationNamespaceId,
+          bindingIssuingLegalEntityId: gatewayScoped
+            ? sql<
+                string | null
+              >`trust.auth_binding_issuing_legal_entity(${principal.authBindingId ?? null}::uuid, ${principal.principalId}::uuid)`
+            : bindingAudit.legalEntityId,
           bindingPrincipalId: principalAuthBindings.principalId,
           bindingRevision: principalAuthBindings.bindingRevision,
           bindingRevokedAt: principalAuthBindings.revokedAt,
@@ -138,6 +148,7 @@ export const makeOperationalScopeRepository = (
           impersonatorTenantId: impersonators.tenantId,
           legalEntityStatus: legalEntities.status,
           legalEntityTenantId: legalEntities.tenantId,
+          principalKind: principals.kind,
           principalStatus: principals.status,
           principalTenantId: principals.tenantId,
           tenantStatus: tenants.status,
@@ -164,7 +175,24 @@ export const makeOperationalScopeRepository = (
                 eq(principalAuthBindings.tenantId, principal.tenantId),
                 eq(principalAuthBindings.principalAuthBindingId, principal.authBindingId),
               ),
-        )
+        );
+      // The dedicated request role cannot read binding-creation audit evidence. Its hardened
+      // attestation returns only the issuing company within the sealed tenant and company scope.
+      const attestedQuery = gatewayScoped
+        ? query.$dynamic()
+        : query
+            .$dynamic()
+            .leftJoin(
+              bindingAudit,
+              and(
+                eq(bindingAudit.tenantId, principalAuthBindings.tenantId),
+                eq(bindingAudit.actionInvocationId, principalAuthBindings.createdByInvocationId),
+                eq(bindingAudit.eventType, 'action.executed'),
+                eq(bindingAudit.outcome, 'succeeded'),
+                sql`${bindingAudit.evidenceJson}->>'actionKey' = 'core.identity.bind-managed-api-key'`,
+              ),
+            );
+      return attestedQuery
         .leftJoin(
           legalEntities,
           principal.legalEntityId === undefined
@@ -183,6 +211,7 @@ export const makeOperationalScopeRepository = (
         ([record]) =>
           record ?? {
             bindingAuthenticationNamespaceId: null,
+            bindingIssuingLegalEntityId: null,
             bindingPrincipalId: null,
             bindingRevision: null,
             bindingRevokedAt: null,
@@ -193,6 +222,7 @@ export const makeOperationalScopeRepository = (
             impersonatorTenantId: null,
             legalEntityStatus: null,
             legalEntityTenantId: null,
+            principalKind: null,
             principalStatus: null,
             principalTenantId: null,
             tenantStatus: null,
@@ -290,6 +320,20 @@ const validatePersistedPrincipal = (
     return new OperationAuthenticationRequired({
       code: 'operation_authentication_required',
       reason: 'The authenticated principal binding is no longer valid',
+    });
+  }
+  // The binding's successful creation audit, never the caller's requested scope or the principal's
+  // other roles, owns a company-issued agent key's boundary.
+  if (
+    principal.authMethod === 'api_key' &&
+    persisted.principalKind === 'agent' &&
+    (persisted.bindingIssuingLegalEntityId === null ||
+      persisted.bindingIssuingLegalEntityId === undefined ||
+      principal.legalEntityId !== persisted.bindingIssuingLegalEntityId)
+  ) {
+    return new OperationContextDenied({
+      code: 'operation_context_denied',
+      reason: 'The agent key requires its issuing company context',
     });
   }
   const expectedSubjectType = subjectTypeForPrincipal(principal);

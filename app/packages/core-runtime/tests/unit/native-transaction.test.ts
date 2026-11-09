@@ -44,6 +44,63 @@ const retainedFailures = (cause: Cause.Cause<never> | undefined): readonly unkno
     return Cause.isDieReason(reason) ? [reason.defect] : [];
   });
 
+/**
+ * The binding columns and the issuing-company source one scope lookup must read for its audience. The
+ * agent-key fence reads the acting principal's kind and takes the issuing company from the hardened
+ * attestation routine for a gateway-grant role; the shared runtime cannot read that evidence itself,
+ * so it derives the company from the binding's own successful creation audit.
+ */
+const expectScopeLookup = (
+  lookup: { readonly params: readonly unknown[]; readonly sql: string } | undefined,
+  principal: { readonly authBindingId: string | undefined; readonly principalId: string; readonly tenantId: string },
+  gatewayGrant: boolean,
+) => {
+  expect(lookup?.sql).toContain('from "core"."tenants"');
+  for (const column of [
+    'authentication_namespace_id',
+    'principal_id',
+    'binding_revision',
+    'revoked_at',
+    'status',
+    'subject_type',
+    'tenant_id',
+  ]) {
+    expect(lookup?.sql).toContain(`"principal_auth_bindings"."${column}"`);
+  }
+  expect(lookup?.sql).toContain('"principals"."kind"');
+  if (gatewayGrant) {
+    expect(lookup?.sql).toContain('trust.auth_binding_issuing_legal_entity(');
+    expect(lookup?.sql).not.toContain('"core"."audit_events"');
+  } else {
+    expect(lookup?.sql).not.toContain('trust.auth_binding_issuing_legal_entity(');
+    expect(lookup?.sql).toContain('"core"."audit_events"');
+  }
+  const expectedParams = gatewayGrant
+    ? [
+        principal.authBindingId,
+        principal.principalId,
+        principal.principalId,
+        '00000000-0000-0000-0000-000000000000',
+        principal.tenantId,
+        principal.authBindingId,
+        '00000000-0000-0000-0000-000000000000',
+        principal.tenantId,
+        1,
+      ]
+    : [
+        principal.principalId,
+        '00000000-0000-0000-0000-000000000000',
+        principal.tenantId,
+        principal.authBindingId,
+        'action.executed',
+        'succeeded',
+        '00000000-0000-0000-0000-000000000000',
+        principal.tenantId,
+        1,
+      ];
+  expect(lookup?.params).toEqual(expectedParams);
+};
+
 const scopedPrincipal = trustVerifiedGatewayPrincipalContext(
   {
     authBindingId: '40000000-0000-4000-8000-000000000001',
@@ -92,27 +149,7 @@ for (const [audience, role, gatewayGrant] of [
       expect(verify?.sql).toContain(
         gatewayGrant ? 'trust.current_legal_entity_id()' : "current_setting('ontos.legal_entity_id', true)",
       );
-      expect(lookup?.sql).toContain('from "core"."tenants"');
-      for (const column of [
-        'authentication_namespace_id',
-        'principal_id',
-        'binding_revision',
-        'revoked_at',
-        'status',
-        'subject_type',
-        'tenant_id',
-      ]) {
-        expect(lookup?.sql).toContain(`"principal_auth_bindings"."${column}"`);
-      }
-      expect(lookup?.params).toEqual([
-        principal.principalId,
-        '00000000-0000-0000-0000-000000000000',
-        principal.tenantId,
-        principal.authBindingId,
-        '00000000-0000-0000-0000-000000000000',
-        principal.tenantId,
-        1,
-      ]);
+      expectScopeLookup(lookup, principal, gatewayGrant);
       expect(commit?.sql).toBe('COMMIT');
     }),
   );
