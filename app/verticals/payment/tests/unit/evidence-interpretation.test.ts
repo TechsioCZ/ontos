@@ -425,6 +425,33 @@ describe('#1151 Payment evidence interpretation', () => {
     );
   });
 
+  it('#1151 retracting an applied correction is held for reconciliation, never recorded without effect', () => {
+    const corrected = aggregateOf(
+      [operation('EFFECT_CONFIRMED')],
+      [
+        accepted('obs-receipt', { economicEffectKey: 'bank:line:1' }),
+        accepted('obs-partial', {
+          amount: czk(10_000),
+          correctsObservationId: 'obs-receipt',
+          economicEffectKey: 'bank:line:1:correction',
+          factKind: 'SOURCE_CORRECTION',
+        }),
+      ],
+    );
+    expect(
+      interpretPaymentObservation(
+        corrected,
+        observed({
+          correctsObservationId: 'obs-partial',
+          economicEffectKey: 'bank:line:1:correction:retracted',
+          factKind: 'SOURCE_CORRECTION',
+        }),
+      ),
+    ).toEqual(
+      PaymentEvidenceDecision.HOLD({ operationId: COLLECT_ID, reason: 'CORRECTION_OVERLAPS_PRIOR_CORRECTION' }),
+    );
+  });
+
   it('#1151 a re-issued correction of a re-exported statement counts once; an overlapping one is held', () => {
     const correctedReceipt = aggregateOf(
       [operation('EFFECT_CONFIRMED')],
