@@ -707,6 +707,7 @@ export const paymentEvidencePersistenceForTransaction = (
       const rows = yield* transaction
         .select({
           acceptanceOutcome: observations.acceptanceOutcome,
+          correctionEffect: observations.correctionEffect,
           correctsObservationId: observations.correctsObservationId,
           economicEffectKey: observations.economicEffectKey,
           factKind: observations.factKind,
@@ -724,9 +725,14 @@ export const paymentEvidencePersistenceForTransaction = (
         )
         .orderBy(asc(observations.verifiedAt), asc(observations.observationId))
         .pipe(Effect.mapError(readFailure));
+      // Only a full disproof removes a statement's effect identity; a partial reduction keeps it (#1151).
       const corrected = new Set(
         rows.flatMap((row) =>
-          row.factKind === 'SOURCE_CORRECTION' && row.correctsObservationId !== null ? [row.correctsObservationId] : [],
+          row.factKind === 'SOURCE_CORRECTION' &&
+          row.correctsObservationId !== null &&
+          row.correctionEffect !== 'REDUCE_ESTABLISHED_COLLECTION'
+            ? [row.correctsObservationId]
+            : [],
         ),
       );
       const statements = rows.filter(
