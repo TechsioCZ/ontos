@@ -301,6 +301,7 @@ const sameStatement = (recorded: PaymentRecordedObservationView, statement: Paym
   recorded.evidenceRef === statement.evidenceRef &&
   sameInstant(recorded.sourceOccurredAt, statement.sourceOccurredAt) &&
   (recorded.paymentId === undefined || recorded.paymentId === statement.paymentId) &&
+  (statement.operationId === undefined || recorded.operationId === statement.operationId) &&
   (recorded.amount === undefined ||
     (recorded.amount.amountMinor === statement.amount?.amountMinor &&
       recorded.amount.currency === statement.amount.currency));

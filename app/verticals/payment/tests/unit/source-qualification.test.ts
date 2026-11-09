@@ -268,6 +268,18 @@ describe('#1152 exact source qualification', () => {
     ).toBe('Duplicate');
   });
 
+  it('#1151 a replayed occurrence that names a different operation conflicts; an inferred original still replays', () => {
+    // The original was recorded against the inferred COLLECT; a resubmission naming it or naming nothing replays.
+    expect(tagOf(qualify({ existingOccurrence: recorded(), statement: statement({ operationId: COLLECT_ID }) }))).toBe(
+      'Duplicate',
+    );
+    expect(tagOf(qualify({ existingOccurrence: recorded(), statement: statement() }))).toBe('Duplicate');
+    // Re-correlating the same occurrence to another operation is changed content, never a silent replay.
+    expect(tagOf(qualify({ existingOccurrence: recorded(), statement: statement({ operationId: REFUND_ID }) }))).toBe(
+      'OccurrenceConflict',
+    );
+  });
+
   it('#1152 operator evidence cannot enter through the integration Action and vice versa', () => {
     const localSource = { ...bankSource, sourceKind: 'LOCAL_POS_OPERATOR' as const, sourceSystem: 'pos-1' };
     expect(tagOf(qualify({ statement: statement({ source: localSource }) }))).toBe('Unauthorized');
