@@ -44,7 +44,7 @@ import {
   portalAuthMfaStandaloneApiLive,
 } from '../../api/portal-auth/provider/mfa/http.ts';
 import { makeCommercePortalAuthMfaProvider } from '../../api/portal-auth/provider/mfa/better-auth-provider.ts';
-import type { CommercePortalAuthTwoFactorApi } from '../../api/portal-auth/provider/mfa/better-auth-provider.ts';
+import type { CommercePortalAuthMfaResponseApi } from '../../api/portal-auth/provider/mfa/better-auth-provider.ts';
 import type {
   CommercePortalAuthMfaFreshnessReader,
   CommercePortalAuthMfaSessionReadApi,
@@ -1284,31 +1284,31 @@ const malformedVerificationTwoFactorApi = () => {
   const unexpectedEndpoint = new Error('Unexpected MFA endpoint in malformed verification fixture');
   return {
     disableTwoFactor: rstest
-      .fn<CommercePortalAuthTwoFactorApi['disableTwoFactor']>()
+      .fn<CommercePortalAuthMfaResponseApi['disableTwoFactor']>()
       .mockRejectedValue(unexpectedEndpoint),
     enableTwoFactor: rstest
-      .fn<CommercePortalAuthTwoFactorApi['enableTwoFactor']>()
+      .fn<CommercePortalAuthMfaResponseApi['enableTwoFactor']>()
       .mockRejectedValue(unexpectedEndpoint),
     generateBackupCodes: rstest
-      .fn<CommercePortalAuthTwoFactorApi['generateBackupCodes']>()
+      .fn<CommercePortalAuthMfaResponseApi['generateBackupCodes']>()
       .mockRejectedValue(unexpectedEndpoint),
-    getTOTPURI: rstest.fn<CommercePortalAuthTwoFactorApi['getTOTPURI']>().mockRejectedValue(unexpectedEndpoint),
+    getTOTPURI: rstest.fn<CommercePortalAuthMfaResponseApi['getTOTPURI']>().mockRejectedValue(unexpectedEndpoint),
     sendTwoFactorOTP: rstest
-      .fn<CommercePortalAuthTwoFactorApi['sendTwoFactorOTP']>()
+      .fn<CommercePortalAuthMfaResponseApi['sendTwoFactorOTP']>()
       .mockRejectedValue(unexpectedEndpoint),
     verifyBackupCode: rstest
-      .fn<CommercePortalAuthTwoFactorApi['verifyBackupCode']>()
+      .fn<CommercePortalAuthMfaResponseApi['verifyBackupCode']>()
       .mockRejectedValue(unexpectedEndpoint),
-    verifyTOTP: rstest.fn<CommercePortalAuthTwoFactorApi['verifyTOTP']>().mockResolvedValue(
+    verifyTOTP: rstest.fn<CommercePortalAuthMfaResponseApi['verifyTOTP']>().mockResolvedValue(
       new Response('{"not":"the-expected-verification-shape"}', {
         headers: { 'set-cookie': VERIFICATION_COOKIE },
         status: 200,
       }),
     ),
     verifyTwoFactorOTP: rstest
-      .fn<CommercePortalAuthTwoFactorApi['verifyTwoFactorOTP']>()
+      .fn<CommercePortalAuthMfaResponseApi['verifyTwoFactorOTP']>()
       .mockRejectedValue(unexpectedEndpoint),
-  } satisfies CommercePortalAuthTwoFactorApi;
+  } satisfies CommercePortalAuthMfaResponseApi;
 };
 
 it.effect('never carries a 2xx malformed-body cookie past the provider driver', () =>

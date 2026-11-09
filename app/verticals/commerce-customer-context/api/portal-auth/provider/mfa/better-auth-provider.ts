@@ -35,7 +35,7 @@ import { CommercePortalAuthMfaRateLimitCodeSchema, CommercePortalAuthMfaRateLimi
 import type { CommercePortalAuthTwoFactorPlugin } from './plugin.ts';
 
 /** Native endpoint input contracts preserved by the inferred Better Auth options. */
-type NativeCommercePortalAuthTwoFactorApi = Pick<
+export type CommercePortalAuthTwoFactorApi = Pick<
   InferAPI<CommercePortalAuthTwoFactorPlugin['endpoints']>,
   | 'disableTwoFactor'
   | 'enableTwoFactor'
@@ -48,9 +48,9 @@ type NativeCommercePortalAuthTwoFactorApi = Pick<
 >;
 
 /** This driver calls only the native `asResponse: true` contract, never endpoint metadata or decoded results. */
-export type CommercePortalAuthTwoFactorApi = {
-  readonly [Endpoint in keyof NativeCommercePortalAuthTwoFactorApi]: (
-    input: Parameters<NativeCommercePortalAuthTwoFactorApi[Endpoint]>[0] & { readonly asResponse: true },
+export type CommercePortalAuthMfaResponseApi = {
+  readonly [Endpoint in keyof CommercePortalAuthTwoFactorApi]: (
+    input: Parameters<CommercePortalAuthTwoFactorApi[Endpoint]>[0] & { readonly asResponse: true },
   ) => Promise<Response>;
 };
 
@@ -295,7 +295,7 @@ const mapVerificationResult = (
  * handoff because MFA may rotate or expire the provider session.
  */
 export const makeCommercePortalAuthMfaProvider = (
-  api: CommercePortalAuthTwoFactorApi,
+  api: CommercePortalAuthMfaResponseApi,
 ): CommercePortalAuthMfaProvider => ({
   disableTwoFactor: (input: CommercePortalAuthMfaDisableProviderRequest) =>
     callBetterAuth(

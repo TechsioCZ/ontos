@@ -108,6 +108,7 @@ const readPlan = Effect.fn('MigrationConvergence.readPlan')(function* readMigrat
 export const NativeMigrationFailureSchema = Schema.Struct({
   cause: Schema.optionalKey(Schema.Unknown),
   code: Schema.optionalKey(Schema.String),
+  constraint: Schema.optionalKey(Schema.String),
   query: Schema.optionalKey(Schema.String),
   reason: Schema.optionalKey(Schema.Unknown),
 });
@@ -121,6 +122,15 @@ const knownMigrationName = (migrations: readonly MigrationMeta[], query: string 
   return matches.length === 1 ? matches[0]?.name : undefined;
 };
 
+const knownConstraintLabel = (
+  query: string | undefined,
+  migration: string | undefined,
+  constraint: string | undefined,
+): string =>
+  migration !== undefined && constraint !== undefined && query?.includes(`CONSTRAINT "${constraint}"`) === true
+    ? `; constraint ${constraint}`
+    : '';
+
 /** Identify the owner and known migration without exposing SQL, parameters, credentials or database row data. */
 export const describeMigrationFailure = (
   history: MigrationHistory,
@@ -132,8 +142,9 @@ export const describeMigrationFailure = (
   }
   const initial = Option.getOrUndefined(Schema.decodeUnknownOption(NativeMigrationFailureSchema)(error));
   let current = initial?.cause ?? initial?.reason;
-  let code = Schema.is(SqlStateSchema)(initial?.code) ? initial?.code : undefined;
+  let code = Option.getOrUndefined(Schema.decodeUnknownOption(SqlStateSchema)(initial?.code));
   let query = initial?.query;
+  let constraint = initial?.constraint;
   for (let depth = 0; depth < 8; depth += 1) {
     if (Cause.isCause(current)) {
       current = Option.getOrUndefined(Cause.findErrorOption(current));
@@ -145,8 +156,9 @@ export const describeMigrationFailure = (
       if (failure === undefined) {
         break;
       }
-      code ??= Schema.is(SqlStateSchema)(failure.code) ? failure.code : undefined;
+      code ??= Option.getOrUndefined(Schema.decodeUnknownOption(SqlStateSchema)(failure.code));
       query ??= failure.query;
+      constraint ??= failure.constraint;
       current = failure.cause ?? failure.reason;
     }
   }
@@ -154,7 +166,7 @@ export const describeMigrationFailure = (
   const status = code === undefined ? '' : ` (SQLSTATE ${code})`;
   const details = {
     history,
-    reason: `Native migration convergence failed${status}; transaction rolled back or outcome is unknown`,
+    reason: `Native migration convergence failed${status}${knownConstraintLabel(query, migration, constraint)}; transaction rolled back or outcome is unknown`,
   };
   return new MigrationEquivalenceError(migration === undefined ? details : { ...details, migration });
 };

@@ -196,6 +196,30 @@ it('bounds cyclic native error traversal', () => {
 });
 
 it.layer(Layer.mergeAll(NodeFileSystem.layer, NodeCrypto.layer))((suite) => {
+  suite.effect('exposes only a constraint name declared by the exact known migration statement', () =>
+    Effect.gen(function* knownConstraintDiagnostic() {
+      const source = (yield* loadSources).find(({ manifest }) => manifest.history === 'party');
+      assert.isOk(source !== undefined);
+      const migration = source.migrations.find(({ name }) => name === '20261105082358_flashy_gravity');
+      assert.isOk(migration !== undefined);
+      const constraint = 'party_duplicate_cases_snapshot_ck';
+      const query = migration.sql.find((statement) => statement.includes(`CONSTRAINT "${constraint}"`));
+      assert.isOk(query !== undefined);
+      const failure = describeMigrationFailure('party', [migration], {
+        cause: Cause.fail(new SqlError({ reason: new UnknownError({ cause: { code: '23514', constraint } }) })),
+        query,
+      });
+      expect(failure.message).toContain(`constraint ${constraint}`);
+      expect(failure.message).toContain('SQLSTATE 23514');
+      expect(failure.message).not.toContain(query);
+      const unknown = describeMigrationFailure('party', [migration], {
+        cause: Cause.fail({ code: '23514', constraint: 'private-db-value' }),
+        query,
+      });
+      expect(unknown.message).not.toContain('private-db-value');
+    }),
+  );
+
   suite.effect('identifies the exact owner migration and SQLSTATE without exposing database details', () =>
     Effect.gen(function* migrationFailureDetails() {
       const [source] = yield* loadSources;
