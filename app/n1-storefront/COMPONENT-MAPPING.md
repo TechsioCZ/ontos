@@ -1,5 +1,10 @@
 # N1 — aktuální komponentové a tokenové mapování
 
+Auth chyby / Figma56:883: stávající FormInput validateStatus/helpText zachované,
+focus jde na první neplatné pole pouze vlastního formuláře. Při pointer přechodu
+na jeho submit se chybový obsah nevloží před dokončením kliknutí; nativní
+invalid/submit stejnou chybu zpracují. Vzhled ani tokeny se nepřepisují.
+
 Registrace / Figma333:6888, confirmation333:7202 + feedback333:7210:
 existující FormInput validateStatus/helpText dostává platnou shodu při onChange.
 Native FormCheckbox ani vzhled se nemění; jeho řádek se při prvním kliknutí

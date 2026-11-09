@@ -1,5 +1,22 @@
 # Kontrola převodu N1 storefrontu
 
+## Fokus neplatných auth formulářů — 2026-11-09
+
+- `AuthForm` při neplatném odeslání zaměří první nativně neplatný input vlastního
+  formuláře; neshoda hesel zaměří potvrzení. Dosavadní inline chyby, required,
+  validace, kit komponenty a odesílání se nemění.
+- Při přechodu na submit téhož formuláře přebírá validaci samotné odeslání.
+  Blur tak nepřesune tlačítko mezi pointerdown/up v mini loginu. Běžný Tab nebo
+  jiné tlačítko nadále vyvolá blur validaci. Submit se poznává přes vlastní
+  nativní button a jeho form asociaci, bez instanceof, časovačů nebo CSS.
+- RED: sedm browser případů ponechalo fokus mimo chybné pole. GREEN: stejných
+  sedm prošlo, včetně mini loginu nad stránkovým loginem, neshody hesel a souhlasu.
+  Dvě negativní kontroly zachovaly běžnou blur validaci. Všechny zápisy blokované.
+- Figma56:883 je reference chybových polí, ne nový návrh rozložení nebo fontů.
+  Bounded source/screenshot review GO; skutečná Portal registrace není tímto testovaná.
+- Finální kombinovaný N1 checkpoint:780/74souborů, lint, typy a447tokenů PASS.
+  Globální i18n gate má známé nálezy mimoN1; neoznačuje se za celorepo PASS.
+
 ## První kliknutí na registrační souhlas — 2026-11-09
 
 - Platná shoda hesel se zobrazí při dopsání potvrzení, ne až při blur. První

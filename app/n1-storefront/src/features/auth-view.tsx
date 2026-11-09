@@ -143,6 +143,11 @@ const AuthForm = ({
         label={d.auth.fields[field]}
         name={field}
         onBlur={(event) => {
+          const submitButton =
+            form.current?.querySelector<HTMLButtonElement>('button[type="submit"]');
+          if (submitButton?.form === form.current && event.relatedTarget === submitButton) {
+            return;
+          }
           const confirmationMatches =
             field !== "passwordConfirmation" ||
             (form.current !== null &&
@@ -207,12 +212,16 @@ const AuthForm = ({
         if (terms?.validity.valueMissing === true) {
           invalidField("termsAccepted");
         }
+        event.currentTarget.querySelector<HTMLInputElement>("input:invalid")?.focus();
       }}
       onSubmit={(event) => {
         event.preventDefault();
         const fields = new FormData(event.currentTarget);
         if (mode === "register" && fields.get("password") !== fields.get("passwordConfirmation")) {
           invalidField("passwordConfirmation");
+          event.currentTarget
+            .querySelector<HTMLInputElement>('input[name="passwordConfirmation"]')
+            ?.focus();
           return;
         }
         if (mode === "register") {
