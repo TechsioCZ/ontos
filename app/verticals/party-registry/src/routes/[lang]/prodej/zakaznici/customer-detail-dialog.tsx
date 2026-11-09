@@ -1,3 +1,5 @@
+import type { RefObject } from 'react';
+import { useImperativeHandle } from 'react';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { SidePanel } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -6,12 +8,14 @@ import { useToast } from '@techsio/ui-kit/molecules/toast';
 import type { CustomerListItem } from '../../../../api/customers-client.ts';
 import { CUSTOMER_DETAIL_KEY, CustomerDetailContent } from './customer-detail-content.tsx';
 import { useCustomerDetail } from './customers-data.ts';
-import type { CustomerDetailSnapshot } from './customers-data.ts';
+import type { CustomerDetailSnapshot, CustomerLeaveRun } from './customers-data.ts';
 import { customerIdentitySummary } from './customers-model.ts';
 
 export interface CustomerDetailDialogProps {
   readonly customer: CustomerListItem | null;
   readonly failure?: 'forbidden' | 'unavailable' | undefined;
+  /** Exposes this view's leave check while it is mounted; the ref is cleared when it unmounts. */
+  readonly leaveRunRef?: RefObject<CustomerLeaveRun | null> | undefined;
   readonly onOpenChange: (open: boolean) => void;
   readonly onRenamed: () => void;
   readonly onRetry: () => void;
@@ -23,6 +27,7 @@ type CustomerDetailViewProps = Omit<CustomerDetailDialogProps, 'customer'> & { r
 const CustomerDetailView = ({
   customer,
   failure,
+  leaveRunRef,
   onOpenChange,
   onRenamed,
   onRetry,
@@ -42,6 +47,8 @@ const CustomerDetailView = ({
   );
   const { name } = customerIdentitySummary(customer, detail.party);
   const handleOpenChange = (open: boolean) => detail.requestClose(open);
+  const { requestLeaveThen } = detail;
+  useImperativeHandle(leaveRunRef, () => requestLeaveThen, [requestLeaveThen]);
 
   return (
     <SidePanel
@@ -68,11 +75,6 @@ const CustomerDetailView = ({
   );
 };
 
+/** Keyed on the customer only: a refresh that passes through loading keeps the view's unsaved drafts and reason. */
 export const CustomerDetailDialog = ({ customer, ...props }: CustomerDetailDialogProps) =>
-  customer === null ? null : (
-    <CustomerDetailView
-      customer={customer}
-      key={`${customer.counterpartyId}:${props.snapshot === undefined ? 'loading' : 'ready'}`}
-      {...props}
-    />
-  );
+  customer === null ? null : <CustomerDetailView customer={customer} key={customer.counterpartyId} {...props} />;

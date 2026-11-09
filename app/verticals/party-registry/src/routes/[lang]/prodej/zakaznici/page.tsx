@@ -395,20 +395,21 @@ const navigationFailureKey = Match.type<Cause.TimeoutError | Cause.UnknownError>
   Match.exhaustive,
 );
 
-/** A row click opens the full customer page by default, or the side panel when the user chose that view. */
-const useCustomerRowOpen = (openPanel: (customer: CustomerListItem) => void) => {
+/**
+ * A row click opens the full customer page by default, or the side panel when the user chose that view.
+ * Both go through `runAfterLeave`, so an open detail with unsaved edits asks before it is left or retargeted.
+ */
+const useCustomerRowOpen = (
+  openPanel: (customer: CustomerListItem) => void,
+  runAfterLeave: (run: () => void) => void,
+) => {
   const { language, t } = useModernI18n();
   const navigate = useNavigate();
   const toaster = useToast();
   const [detailViewMode, setDetailViewMode] = useDetailViewMode();
 
-  const openCustomer = (customer: CustomerListItem) => {
-    const href = customerRowHref(detailViewMode, language ?? 'cs', customer.counterpartyId);
-    if (href === null) {
-      openPanel(customer);
-      return;
-    }
-    // Navigation has a timeout and a toast on failure, as the product list does; the earlier toasts are cleared first.
+  // Navigation has a timeout and a toast on failure, as the product list does; the earlier toasts are cleared first.
+  const openPage = (href: string) => {
     toaster.dismiss();
     void browserRuntime.runPromise(
       Effect.tryPromise(() => navigate({ to: href })).pipe(
@@ -422,6 +423,15 @@ const useCustomerRowOpen = (openPanel: (customer: CustomerListItem) => void) => 
         }),
       ),
     );
+  };
+
+  const openCustomer = (customer: CustomerListItem) => {
+    const href = customerRowHref(detailViewMode, language ?? 'cs', customer.counterpartyId);
+    if (href === null) {
+      runAfterLeave(() => openPanel(customer));
+      return;
+    }
+    runAfterLeave(() => openPage(href));
   };
 
   return { detailViewMode, openCustomer, setDetailViewMode } as const;
@@ -444,9 +454,9 @@ const CustomersContent = ({ context }: CustomersContentProps) => {
   };
   const [search, setSearch] = useState('');
   const [selection, setSelection] = useState<Selection>({});
-  const { closeDetail, detail, detailFailure, detailValue, openDetail, retryDetail } =
+  const { closeDetail, detail, detailFailure, detailValue, leaveRunRef, openDetail, retryDetail, runAfterLeave } =
     useCustomerDetailSelection(context);
-  const { detailViewMode, openCustomer, setDetailViewMode } = useCustomerRowOpen(openDetail);
+  const { detailViewMode, openCustomer, setDetailViewMode } = useCustomerRowOpen(openDetail, runAfterLeave);
   const review = useCustomerIdentityReview(reload);
   const [createOpen, setCreateOpen] = useState(false);
   const [columnVisibility, setColumnVisibility] = useState<ColumnVisibility>(defaultColumnVisibility);
@@ -701,6 +711,7 @@ const CustomersContent = ({ context }: CustomersContentProps) => {
       <CustomerDetailDialog
         customer={detail}
         failure={detailFailure}
+        leaveRunRef={leaveRunRef}
         onOpenChange={closeDetail}
         onRenamed={reload}
         onRetry={retryDetail}
