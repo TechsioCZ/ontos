@@ -126,6 +126,49 @@ export const catalogSourceObservationProcess = (
     stdout: 'pipe',
   });
 
+/** Observe the actual Shell SOURCE sharing policy when no packaged browser pair is available. */
+export const observeCatalogSourceShellFederation = Effect.fn('ActualCatalogComposition.shellSourceFederation')(
+  function* shellSourceFederation(appRoot: string, environment: Readonly<Record<string, string>>) {
+    const program = `import { createRequire } from 'node:module';
+      import { readFileSync } from 'node:fs';
+      import { Schema } from 'effect';
+      import { createSharedRuntimeConfig } from './module-federation.shared.ts';
+      const require = createRequire(process.cwd() + '/apps/shell-super-app/package.json');
+      const version = (name) => Schema.decodeUnknownSync(Schema.Struct({ version: Schema.NonEmptyString }))(
+        require(name + '/package.json')).version;
+      const { dependencies } = Schema.decodeUnknownSync(Schema.Struct({
+        dependencies: Schema.Record(Schema.String, Schema.NonEmptyString)
+      }))(require('./package.json'));
+      const { shell } = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Struct({
+        shell: Schema.Struct({ moduleFederation: Schema.Struct({ name: Schema.NonEmptyString }) })
+      })))(readFileSync('./topology/reference-topology.json', 'utf8'));
+      const sharing = createSharedRuntimeConfig({
+        '@modern-js/plugin-i18n/runtime': version('@modern-js/plugin-i18n'),
+        '@modern-js/runtime': version('@modern-js/runtime'),
+        '@tanstack/react-router': dependencies['@tanstack/react-router'],
+        react: version('react'), 'react-dom': version('react-dom')
+      });
+      const output = Schema.fromJsonString(Schema.Struct({
+        name: Schema.NonEmptyString, exposes: Schema.Array(Schema.Never),
+        shared: Schema.Array(Schema.Struct({ name: Schema.NonEmptyString,
+          requiredVersion: Schema.NonEmptyString, singleton: Schema.Literal(true) }))
+      }));
+      process.stdout.write(Schema.encodeSync(output)({
+        name: shell.moduleFederation.name, exposes: [],
+        shared: Object.entries(sharing).map(([name, { requiredVersion, singleton }]) => ({ name, requiredVersion, singleton }))
+      }));`;
+    const child = yield* catalogSourceObservationProcess(program, appRoot, environment);
+    const [document, code] = yield* Effect.all(
+      [child.stdout.pipe(Stream.decodeText(), Stream.mkString), child.exitCode, Stream.runDrain(child.stderr)],
+      { concurrency: 3 },
+    );
+    if (code !== 0) {
+      return yield* unavailable('shell-source-sharing-policy');
+    }
+    return document;
+  },
+);
+
 /** Actual owner SOURCE identity and observed MF bytes; no deployed backend/browser receipt is claimed. */
 export const deriveActualCatalogCompositionSnapshot = Effect.fn('ActualCatalogComposition.make')(function* make(
   appRoot: string,
@@ -171,6 +214,12 @@ export const deriveActualCatalogCompositionSnapshot = Effect.fn('ActualCatalogCo
   // Backend-only CI uses explicitly SOURCE-native metadata, never an invented browser-build receipt.
   const available = yield* Effect.all({ catalog: fs.exists(catalogManifestPath), shell: fs.exists(shellManifestPath) });
   const observedBuildPair = available.catalog && available.shell;
+  const environment = {
+    APP_ENV_PATH: '/dev/null',
+    HOME: yield* Config.String('HOME'),
+    PATH: yield* Config.String('PATH'),
+    TMPDIR: yield* Config.String('TMPDIR').pipe(Config.withDefault('/tmp')),
+  };
   const metadata = yield* Effect.all({
     catalog: observedBuildPair
       ? fs.readFileString(catalogManifestPath)
@@ -181,11 +230,7 @@ export const deriveActualCatalogCompositionSnapshot = Effect.fn('ActualCatalogCo
         }),
     shell: observedBuildPair
       ? fs.readFileString(shellManifestPath)
-      : Schema.encodeEffect(Schema.fromJsonString(federationSchema))({
-          exposes: [],
-          name: topology.shell.moduleFederation.name,
-          shared: [],
-        }),
+      : observeCatalogSourceShellFederation(appRoot, environment),
   });
   const catalogFederationDocument = metadata.catalog;
   const shellFederationDocument = metadata.shell;
@@ -243,12 +288,7 @@ export const deriveActualCatalogCompositionSnapshot = Effect.fn('ActualCatalogCo
       });
       return yield* Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(composition);
     })); process.stdout.write(text); } finally { await runtime.dispose(); }`;
-  const child = yield* catalogSourceObservationProcess(program, appRoot, {
-    APP_ENV_PATH: '/dev/null',
-    HOME: yield* Config.String('HOME'),
-    PATH: yield* Config.String('PATH'),
-    TMPDIR: yield* Config.String('TMPDIR').pipe(Config.withDefault('/tmp')),
-  });
+  const child = yield* catalogSourceObservationProcess(program, appRoot, environment);
   const [output, code] = yield* Effect.all(
     [child.stdout.pipe(Stream.decodeText(), Stream.runCollect), child.exitCode, Stream.runDrain(child.stderr)],
     { concurrency: 3 },
