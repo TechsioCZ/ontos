@@ -41,11 +41,13 @@ import {
   DateTime,
   Deferred,
   Effect,
+  Exit,
   Fiber,
   Layer,
   Option,
   Predicate,
   Redacted,
+  Ref,
   Result,
   Schema,
   Stream,
@@ -363,7 +365,24 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
       stderr: 'pipe',
       stdout: 'pipe',
     });
-    yield* Stream.runDrain(child.stderr).pipe(Effect.forkScoped);
+    // The Party fixture redacts credentials before writing its private diagnostic channel.
+    const diagnostics = yield* Ref.make('');
+    yield* child.stderr.pipe(
+      Stream.decodeText(),
+      Stream.runForEach((chunk) => Ref.update(diagnostics, (previous) => `${previous}${chunk}`.slice(-16_384))),
+      Effect.forkScoped,
+    );
+    yield* Effect.addFinalizer((exit) =>
+      Exit.isFailure(exit)
+        ? Ref.get(diagnostics).pipe(
+            Effect.flatMap((tail) =>
+              tail.length > 0
+                ? Effect.logError({ diagnostics: tail, event: 'guest-party-receiver-failure' })
+                : Effect.void,
+            ),
+          )
+        : Effect.void,
+    );
     const first = yield* child.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runHead);
     assert.isOk(Option.isSome(first));
     const ready = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReadySchema))(first.value);
