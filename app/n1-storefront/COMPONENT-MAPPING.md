@@ -1,5 +1,10 @@
 # N1 — aktuální komponentové a tokenové mapování
 
+Neplatný/neuložený quantity draft: `QuantityField.error` v řádku košíku a
+`NumericInput` s navázaným feedback ID v mini košíku zůstávají konkrétním
+zdrojem chyby. `CartQuoteFeedback` pro tyto stavy nepřidává obecné shrnutí.
+Nezměněné komponenty, vzhled, tokeny, quote request i checkout gate.
+
 Košík/minikošík: jediný stávající CartQuoteFeedback skládá aktuální obecné a
 owner globální chyby, deduplikuje podle výsledného překladu a zachovává chyby
 položek v jejich řádcích. Nedostupný checkout používá již existující CS/EN

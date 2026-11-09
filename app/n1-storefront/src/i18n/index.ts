@@ -369,7 +369,6 @@ const cs = {
     emptyPreviewDescription: "Přidejte si něco hezkého z naší nabídky",
     feesNote: "Doprava a platba nejsou zahrnuté.",
     increaseQuantity: "Zvýšit množství",
-    invalidDraft: "Zkontrolujte množství položek v košíku.",
     invalidQuantity: "Zadejte platné množství.",
     issues: {
       AVAILABILITY_UNKNOWN: "Dostupnost nelze potvrdit.",
@@ -794,7 +793,6 @@ const en: typeof cs = {
     emptyPreviewDescription: "Find something you like in our store",
     feesNote: "Shipping and payment are not included.",
     increaseQuantity: "Increase quantity",
-    invalidDraft: "Check the quantities of the items in your cart.",
     invalidQuantity: "Enter a valid quantity.",
     issues: {
       AVAILABILITY_UNKNOWN: "Availability cannot be confirmed.",

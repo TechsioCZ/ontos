@@ -1,5 +1,21 @@
 # Kontrola převodu N1 storefrontu
 
+## Chyba množství versus neuložená změna — 2026-11-09
+
+- Řízená chyba lokálního zápisu při platném množství dříve vedle správné
+  řádkové chyby nesprávně žádala zkontrolovat množství. Invalid draft nyní
+  nevkládá obecné shrnutí; konkrétní validace a failed-save zpráva zůstávají
+  u pole. Odstraněny dva nevyužité překlady. Quote/checkout guard se nemění.
+- RED4 → GREEN32 cílených testů, celá N1 sada783/74 PASS. Lint, typy,
+  formát a447kanonických tokenů PASS. Globální i18n gate má28 chyb mimoN1,
+  bez suppression. Čtyři izolované browser případy PASS:
+  save-failure CS1440 cart/EN390 mini; invalid0 CS390 cart/EN1440 mini.
+  Jedna správná řádková zpráva, žádné obecné quantity shrnutí, bez overflow.
+  Checkout při chybném draftu blokován, odkaz mini→košík správně přístupný.
+- Quote odpovědi jsou pouze řízené testovací vstupy; skutečný katalog GET a
+  lokální přidání, žádné business zápisy. Root i reviewer otevřeli before/after
+  PNG; bounded source/UI review GO, nikoliv schválení celého UI nebo živého BE.
+
 ## Přesné a neopakované chyby košíku — 2026-11-09
 
 - Nedostupné ověření používá existující `checkout.unavailable`, nikoli tvrzení,

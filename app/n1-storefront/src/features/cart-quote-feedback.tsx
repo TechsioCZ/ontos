@@ -6,7 +6,7 @@ import { cartIssueText, globalCartIssues } from "./cart-validation";
 
 const quoteNotice = (quote: CartQuoteFeedbackState, invalid: boolean, d: Dictionary) => {
   if (invalid) {
-    return d.shopping.invalidDraft;
+    return null;
   }
   if (quote.state === "scope-mismatch") {
     return d.shopping.marketChanged;

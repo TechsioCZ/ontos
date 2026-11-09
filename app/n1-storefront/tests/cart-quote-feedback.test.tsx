@@ -5,6 +5,8 @@ import { verifiedCartQuote } from "../src/features/cart-quote-state";
 import type { CartQuoteFeedbackState } from "../src/features/cart-quote-state";
 import { getDictionary } from "../src/i18n";
 import type { CartQuote } from "../src/ontos/cart-quote";
+import { hasInvalidCartDraft } from "../src/features/cart-validation";
+import { cartLineKey } from "../src/features/cart-state";
 
 const result: CartQuote = {
   issues: [],
@@ -133,13 +135,46 @@ describe("cart feedback without technical captions", () => {
     }
   });
 
-  it("shows quantity corrections without a warning about internal draft prices", () => {
-    const html = renderToStaticMarkup(
-      <CartQuoteFeedback dictionary={d} invalid quote={{ result, state: "ready" }} />,
-    );
-    expect(html).toContain(d.shopping.invalidDraft);
-    expect(html).not.toContain("neověřen");
-  });
+  it.each([
+    ["cs", "0", false],
+    ["en", "0", false],
+    ["cs", "3", true],
+    ["en", "3", true],
+  ] as const)(
+    "leaves field feedback to the row and keeps checkout blocked (%s, quantity %s, save error %s)",
+    (locale, value, saveError) => {
+      const entry = {
+        expectedUnitPriceMinor: 12_100,
+        image: null,
+        name: "Product",
+        productId: "p1",
+        quantity: 2,
+        sku: "SKU",
+        slug: "product",
+        unit: "ks",
+        variantName: "",
+      };
+      const drafts = { [cartLineKey(entry)]: { quantity: entry.quantity, saveError, value } };
+      const invalid = hasInvalidCartDraft(drafts, [entry]);
+      expect(invalid).toBe(true);
+      for (const state of ["ready", "unavailable", "scope-mismatch", "pending"] as const) {
+        const quote = {
+          result: { ...result, issues: [{ code: "MARKET_UNAVAILABLE" }] },
+          state,
+        };
+        expect(
+          renderToStaticMarkup(
+            <CartQuoteFeedback
+              dictionary={getDictionary(locale)}
+              invalid={invalid}
+              quote={quote}
+            />,
+          ),
+        ).toBe("");
+        expect(verifiedCartQuote(quote, invalid)).toBeNull();
+      }
+    },
+  );
 
   it("keeps rejected owner outcomes actionable", () => {
     const quote: CartQuoteFeedbackState = {
