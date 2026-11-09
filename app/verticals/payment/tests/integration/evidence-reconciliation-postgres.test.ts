@@ -724,6 +724,19 @@ const gopayStatement = <
   ...fields,
 });
 
+/** A GoPay 1000 CZK collection confirmation of one COLLECT under the given economic effect key. */
+const gopayChargeOf =
+  (evidence: EvidenceScenario, paymentId: string, operationId: string) => (economicEffectKey: string) =>
+    evidence.accept(
+      gopayStatement({
+        amount: czk(100_000),
+        economicEffectKey,
+        factKind: 'COLLECTION_CONFIRMED',
+        operationId,
+        paymentId,
+      }),
+    );
+
 const itemsBasis = (itemRef: string, amountMinor: number) =>
   Schema.decodeUnknownSync(PaymentRefundBasisSchema)({
     _tag: 'REFUNDABLE_ITEMS',
@@ -1089,16 +1102,7 @@ it.live('#1151 a second charge held after a partial correction cannot be attache
         paymentId: payment.paymentId,
       });
       yield* configureGopay(evidence);
-      const charge = (economicEffectKey: string) =>
-        evidence.accept(
-          gopayStatement({
-            amount: czk(100_000),
-            economicEffectKey,
-            factKind: 'COLLECTION_CONFIRMED',
-            operationId: collect.operationId,
-            paymentId: payment.paymentId,
-          }),
-        );
+      const charge = gopayChargeOf(evidence, payment.paymentId, collect.operationId);
       const first = yield* charge('gopay:charge:1');
       expect(first).toMatchObject({ acceptanceOutcome: 'ACCEPTED_OBSERVATION' });
       const partial = yield* evidence.accept(
@@ -1539,6 +1543,52 @@ it.live('#1152 a carrier correction without the selected Delivery Offer never cl
           }),
         ),
       ).toBe('payment_reconciliation_obligation_unresolved');
+    }),
+  ),
+);
+
+it.live('#1151 a held second partial correction never removes the receipt from the distinct-charge check', () =>
+  native(
+    Effect.gen(function* heldPartialCorrectionKeepsIdentity() {
+      const evidence = yield* scenario();
+      const payment = yield* evidence.createPayment();
+      const collect = yield* evidence.startOperation({
+        amountMinor: 100_000,
+        operationKey: 'collect-1',
+        paymentId: payment.paymentId,
+      });
+      yield* configureGopay(evidence);
+      const charge = gopayChargeOf(evidence, payment.paymentId, collect.operationId);
+      const partialCorrection = (correctsObservationId: string, economicEffectKey: string) =>
+        evidence.accept(
+          gopayStatement({
+            amount: czk(10_000),
+            correctsObservationId,
+            economicEffectKey,
+            factKind: 'SOURCE_CORRECTION',
+            operationId: collect.operationId,
+            paymentId: payment.paymentId,
+          }),
+        );
+      const first = yield* charge('gopay:charge:1');
+      expect(yield* partialCorrection(first.observationId, 'gopay:charge:1:correction:a')).toMatchObject({
+        acceptanceOutcome: 'ACCEPTED_OBSERVATION',
+      });
+      // A further partial correction under another key overlaps the first: it is held, not applied.
+      expect(yield* partialCorrection(first.observationId, 'gopay:charge:1:correction:b')).toMatchObject({
+        acceptanceOutcome: 'HELD_UNRESOLVED',
+      });
+      const second = yield* charge('gopay:charge:2');
+      expect(second).toMatchObject({ acceptanceOutcome: 'HELD_UNRESOLVED' });
+      expect(
+        yield* failureCodeOf(
+          evidence.decide({
+            caseId: second.reconciliationCaseId ?? '',
+            decision: { _tag: 'ATTACH_EVIDENCE', observationId: second.observationId },
+            reason: 'Operator attaches the second charge to the collection',
+          }),
+        ),
+      ).toBe('payment_reconciliation_evidence_not_qualified');
     }),
   ),
 );

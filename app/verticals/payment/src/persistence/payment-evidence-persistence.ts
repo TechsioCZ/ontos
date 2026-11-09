@@ -738,12 +738,13 @@ export const paymentEvidencePersistenceForTransaction = (
         )
         .orderBy(asc(observations.verifiedAt), asc(observations.observationId))
         .pipe(Effect.mapError(readFailure));
-      // Only a full disproof removes a statement's effect identity; a partial reduction keeps it (#1151).
+      // Only an applied full disproof (the correction reopened the outcome) removes a statement's effect
+      // identity; partial, held or record-only corrections keep it (#1151).
       const corrected = new Set(
         rows.flatMap((row) =>
           row.factKind === 'SOURCE_CORRECTION' &&
           row.correctsObservationId !== null &&
-          row.correctionEffect !== 'REDUCE_ESTABLISHED_COLLECTION'
+          row.correctionEffect === 'REOPEN_TO_CONFLICT'
             ? [row.correctsObservationId]
             : [],
         ),
