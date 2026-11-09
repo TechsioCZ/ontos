@@ -11,6 +11,7 @@ import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { CORE_MIGRATION_MANIFEST } from '../packages/core-runtime/scripts/migration-equivalence.mts';
 import { PARTY_MIGRATION_MANIFESTS } from '../verticals/party-registry/scripts/migration-equivalence.mts';
 import { prepareContactsMigration } from '../verticals/party-registry/scripts/prepare-contacts-migration.mts';
+import { preparePartyStructuredNames } from '../verticals/party-registry/scripts/prepare-party-structured-names.mts';
 import {
   convergeMigrationHistories,
   loadConvergentMigrationSource,
@@ -58,16 +59,28 @@ export const runOwnerMigrationConvergence = Effect.fn('MigrationConvergence.owne
       });
     }
   }
-  const prepare =
-    owner === 'core'
-      ? Effect.void
-      : PgClient.PgClient.pipe(
-          Effect.flatMap(prepareContactsMigration),
-          Effect.asVoid,
-          Effect.mapError(
-            () => new MigrationEquivalenceError({ history: 'contacts', reason: 'Contacts journal preparation failed' }),
-          ),
-        );
+  // Both Party preparations run inside the same advisory-serialized convergence transaction, before any
+  // plan is read or native migration applied.
+  const preparePartyOwners = Effect.gen(function* preparePartyOwnersEffect() {
+    const client = yield* PgClient.PgClient;
+    yield* prepareContactsMigration(client).pipe(
+      Effect.mapError(
+        () => new MigrationEquivalenceError({ history: 'contacts', reason: 'Contacts journal preparation failed' }),
+      ),
+    );
+    const structuredNames = yield* preparePartyStructuredNames(client).pipe(
+      Effect.mapError(
+        () =>
+          new MigrationEquivalenceError({
+            history: 'party',
+            reason: 'Party structured names preparation failed',
+          }),
+      ),
+    );
+    // Fixed state only; it distinguishes a silent row-level no-op from a real preparation.
+    yield* Effect.logInfo(`Party structured names preparation: ${structuredNames}`);
+  });
+  const prepare = owner === 'core' ? Effect.void : preparePartyOwners;
   yield* convergeMigrationHistories(sources, prepare);
   return yield* Effect.logInfo('Owner migration histories converged through native Drizzle');
 });

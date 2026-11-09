@@ -171,7 +171,10 @@ export const describeMigrationFailure = (
   return new MigrationEquivalenceError(migration === undefined ? details : { ...details, migration });
 };
 
-/** Native Drizzle owns DDL, savepoints and real journal inserts; existing rows are never rewritten. */
+/**
+ * Native Drizzle owns DDL, savepoints and real journal inserts; convergence itself never rewrites rows,
+ * though an owner preparation may additively extend them inside the same transaction before any plan runs.
+ */
 export const convergeMigrationHistories = Effect.fn('MigrationConvergence.run')(function* converge(
   sources: readonly ConvergentMigrationSource[],
   preparation: Effect.Effect<void, MigrationEquivalenceError, PgClient.PgClient> = Effect.void,
