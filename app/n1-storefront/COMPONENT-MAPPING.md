@@ -888,3 +888,37 @@ Během quote/place je Zpět nativní `Button disabled type="button"` se stejnou
 secondary/solid/md rolí jako předtím; po dokončení zůstává skutečný NextLink
 přes LinkButton. Tím se uplatní i knihovní disabled vzhled. Ověřování, zápis,
 obnova objednávky, skutečné možnosti dopravy ani dostupnost plateb se nemění.
+
+## 9. 11. — samostatné odkazy mobilního menu
+
+Aktuální Code Connect pro 418:2487 (Novinky) a 418:2606 (samostatná kořenová
+položka) mapuje přímo `@techsio/ui-kit/atoms/link`. Mobilní menu proto pro
+tyto navigační odkazy používá `Link as={NextLink}`. Tlačítkové props a
+wrapper role `n1-mobile-category-heading` z těchto dvou míst odstraněny.
+Accordion.Header si ponechává svou samostatnou roli. Žádné CSS ani tokeny se
+kvůli změně odkazu neupravují. Kontrola knihovny 0.57.0 potvrzuje, že Link
+nemá tlačítkovou typografii; runtime Novinky má weight 400.
+
+Data zůstávají skutečná: nynější kořeny, pořadí a počty nejsou nahrazeny
+Figma fixture. Zavíraní v headeru, native focus a disclosure zůstávají zachované.
+
+## 9. 11. — oddělovače kořenů mobilního menu
+
+Figma `418:2489`, `418:2517` a další obsahují samostatný oddělovač za
+celým kořenovým řádkem, mimo mapovanou instanci Accordion. Aplikace jej
+skládá na existujícím obalu pomocí `border-b border-border-secondary`.
+U větve obal zahrnuje celý Accordion.Item včetně rozbalených potomků.
+U Novinek a samostatného kořenového odkazu je stejný oddělovač na jejich
+obalu. Vnořené řádky jej nedostávají. Accordion zůstává md/borderless/none;
+žádná komponentová CSS ani tokenové override nebyly přidány.
+
+## 9. 11. — samostatné odkazy desktopového megamenu
+
+Aktuální Figma `418:2368` mapuje obrázek kategorie a textový Link odděleně.
+Stejná skladba je nyní v desktopovém menu; odstraněný bold span již
+nepřebíjí typografii Link atomu. Obrázek zůstává přístupným odkazem se jménem
+kategorie a oba odkazy navigují stejnou cestou a zavírají popup.
+Auditované lokální ilustrace mají přednost, ostatní kategorie mohou použít
+skutečné owner imageSrc. Nevznikají ilustrace odvozené z názvu ani fixture.
+Stávající modeless popup, šest sloupců, mezera 8 a panelový padding 18
+zůstávají beze změny; používají zavedené tokeny a app kompozici.
