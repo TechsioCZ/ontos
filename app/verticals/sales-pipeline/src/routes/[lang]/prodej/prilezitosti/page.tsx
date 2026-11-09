@@ -1,4 +1,11 @@
-import { BulkActionBar, foldSearchText, PageHeader, Toaster } from '@app/admin-ui';
+import {
+  BulkActionBar,
+  DetailViewModeToggle,
+  foldSearchText,
+  PageHeader,
+  Toaster,
+  useDetailViewMode,
+} from '@app/admin-ui';
 import { modulePagePreload, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, ModulePageProps } from '@app/shared-contracts/page-data';
 import { useTagsFor } from '@app/tagging/components/tag-controls';
@@ -228,7 +235,7 @@ const PipelineTable = ({
     {
       icon: 'icon-[mdi--open-in-new]',
       id: 'detail',
-      label: 'Otevřít detail',
+      label: t(`${K}.actions.openDetail`),
       onAction: (row) => onOpen(row.original),
     },
     ...writeActions,
@@ -467,6 +474,7 @@ const RecordsPageContent = ({
   const [selection, setSelection] = useState<Selection>({});
   const [dialog, setDialog] = useState<DialogState>();
   const [detailId, setDetailId] = useState<string | undefined>(initialOpportunityId);
+  const [viewMode, setViewMode] = useDetailViewMode();
   const { loadError, pending, reload, response } = usePipelineRecords(
     { context, customer: customerFilter, legalEntityId, owner: ownerFilter, stage: stageFilter },
     !invalidFilter,
@@ -567,6 +575,7 @@ const RecordsPageContent = ({
     reload();
   };
 
+  // The full-page detail route is not generated yet, so both view modes open the quick-view panel for now.
   const openCreate = () => openDialog({ kind: 'form' });
   const openStage = (target: Target) => openDialog({ kind: 'stage', target });
   const openOwner = (target: Target) => openDialog({ kind: 'owner', target });
@@ -581,28 +590,37 @@ const RecordsPageContent = ({
       <Toaster />
       <PageHeader
         actions={
-          canWrite ? (
-            <>
-              <Button
-                disabled={response === undefined}
-                onClick={() => openDialog({ kind: 'bulkByTag' })}
-                size="sm"
-                theme="outlined"
-                variant="secondary"
-              >
-                {t(`${K}.bulkByTag.title`)}
-              </Button>
-              <Button
-                disabled={response === undefined}
-                icon="icon-[mdi--plus]"
-                onClick={openCreate}
-                size="sm"
-                variant="primary"
-              >
-                {t(`${K}.newOpportunity`)}
-              </Button>
-            </>
-          ) : undefined
+          <>
+            <DetailViewModeToggle
+              groupLabel={t('sales-pipeline.detailView.group')}
+              onChange={setViewMode}
+              pageLabel={t('sales-pipeline.detailView.page')}
+              panelLabel={t('sales-pipeline.detailView.panel')}
+              value={viewMode}
+            />
+            {canWrite && (
+              <>
+                <Button
+                  disabled={response === undefined}
+                  onClick={() => openDialog({ kind: 'bulkByTag' })}
+                  size="sm"
+                  theme="outlined"
+                  variant="secondary"
+                >
+                  {t(`${K}.bulkByTag.title`)}
+                </Button>
+                <Button
+                  disabled={response === undefined}
+                  icon="icon-[mdi--plus]"
+                  onClick={openCreate}
+                  size="sm"
+                  variant="primary"
+                >
+                  {t(`${K}.newOpportunity`)}
+                </Button>
+              </>
+            )}
+          </>
         }
         description={t(`${K}.description`)}
         title={t(`${K}.title`)}
@@ -688,6 +706,7 @@ const RecordsPageContent = ({
           setDetailId(undefined);
           openStage({ mode: 'row', opportunity });
         }}
+        peek
         pending={pending}
         requestedId={detailId}
         revision={revision}
