@@ -20,7 +20,7 @@ const revisionSelect =
   'select "core"."access_scope_fences"."revision", "core"."access_scopes"."scope_id", "core"."access_scope_fences"."state" from "core"."access_scopes" inner join "core"."access_scope_fences" on (("core"."access_scope_fences"."tenant_id" = "core"."access_scopes"."tenant_id") and ("core"."access_scope_fences"."scope_id" = "core"."access_scopes"."scope_id")) where ';
 const readScopeTenant = `${scopeSelect}(${tenantCondition} and (${tenantScope}))`;
 const readScopeCompany = `${scopeSelect}(${tenantCondition} and ${companyScope})`;
-const readRevisionTenant = `${revisionSelect}(${tenantCondition} and ((${tenantScope})))`;
+const readRevisionTenant = `${revisionSelect}(${tenantCondition} and (${tenantScope}))`;
 const readRevisionCompany = `${revisionSelect}(${tenantCondition} and (((${tenantScope}) or ${companyScope})))`;
 const lockFence = 'select trust.lock_access_scope_fence($1::uuid, $2::uuid) as state';
 const supported = new Set([readScopeTenant, readScopeCompany, readRevisionTenant, readRevisionCompany, lockFence]);

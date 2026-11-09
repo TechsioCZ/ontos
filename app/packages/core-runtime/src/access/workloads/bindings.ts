@@ -5,12 +5,14 @@ import { CoreDatabase } from '../../db/client.ts';
 import { DatabaseIdentityEnrollmentContext } from '../../db/database-identities.ts';
 import type { DatabaseIdentityEnrollment } from '../../db/database-identities.ts';
 import { installOperationalScope } from '../../db/scoped-transaction.ts';
-import { accessWorkloadBindings } from '../../db/schema.ts';
+import { accessWorkloadBindings, accessWorkloadCompanyBindings, legalEntities } from '../../db/schema.ts';
 import type { CoreTransaction } from '../../db/types.ts';
 import { accessDecisionUnavailable } from '../decision/errors.ts';
 import type { AccessDecisionUnavailable } from '../decision/errors.ts';
 import { AccessWorkloadBindingSource } from '../enforcement/workload-port.ts';
 import type { AccessWorkloadBindings, WorkloadBindingQuery } from '../enforcement/workload-port.ts';
+import { LegalEntityIdSchema } from '../ids.ts';
+import type { LegalEntityId } from '../ids.ts';
 import type { AccessIntentDatabase } from '../intent/persistence.ts';
 
 /*
@@ -23,6 +25,10 @@ import type { AccessIntentDatabase } from '../intent/persistence.ts';
  * PostgreSQL holds the registry as Core-owned intent. The reader answers only the scoped tenant's
  * rows through row-level security (O66); the write side is `binding-store.ts`, and Core is its only
  * writer.
+ *
+ * The same reader answers the companies a binding is explicitly registered for (D6): a standalone
+ * workload that holds no verified module actor selects exactly these, and the write side of that
+ * owner-declared fact is `company-bindings.ts`.
  */
 
 /** The Core executor the registry is built over; the caller owns the pool and its deadlines. */
@@ -59,6 +65,58 @@ export const makeDrizzleAccessWorkloadBindings = (database: AccessWorkloadBindin
         Effect.mapError(readUnavailable),
       );
       return new Set(keys.map(({ workloadKey }) => workloadKey));
+    },
+  ),
+  readCompanyDeclaration: Effect.fn('AccessWorkloadBindings.readCompanyDeclaration')(
+    function* readCompanyDeclarationEffect(query: WorkloadBindingQuery, transaction?: CoreTransaction) {
+      const read = (opened: CoreTransaction) =>
+        installOperationalScope(opened, query.scope, database.enrollment).pipe(
+          Effect.andThen(() =>
+            opened
+              .select({
+                companyStatus: legalEntities.status,
+                legalEntityId: accessWorkloadCompanyBindings.legalEntityId,
+                registrationStatus: accessWorkloadCompanyBindings.status,
+              })
+              .from(accessWorkloadCompanyBindings)
+              // A registration counts only while the binding it was written for is still active and
+              // still belongs to this principal: a revoked binding takes its company with it (D6).
+              .innerJoin(
+                accessWorkloadBindings,
+                and(
+                  eq(accessWorkloadBindings.tenantId, accessWorkloadCompanyBindings.tenantId),
+                  eq(accessWorkloadBindings.bindingId, accessWorkloadCompanyBindings.workloadBindingId),
+                ),
+              )
+              // The registered company is a company of this tenant, so a suspended or archived one is
+              // never selectable even though its registration is untouched. The join is outer because a
+              // revoked or suspended company still proves that the owner declared a company at all.
+              .leftJoin(
+                legalEntities,
+                and(
+                  eq(legalEntities.tenantId, accessWorkloadCompanyBindings.tenantId),
+                  eq(legalEntities.legalEntityId, accessWorkloadCompanyBindings.legalEntityId),
+                ),
+              )
+              .where(
+                and(
+                  eq(accessWorkloadCompanyBindings.tenantId, query.tenantId),
+                  eq(accessWorkloadBindings.principalId, query.principalId),
+                  eq(accessWorkloadBindings.status, 'active'),
+                ),
+              ),
+          ),
+        );
+      const rows = yield* (transaction === undefined ? database.executor.transaction(read) : read(transaction)).pipe(
+        Effect.mapError(readUnavailable),
+      );
+      const activeCompanyIds = new Set<LegalEntityId>();
+      for (const row of rows) {
+        if (row.registrationStatus === 'active' && row.companyStatus === 'active') {
+          activeCompanyIds.add(LegalEntityIdSchema.make(row.legalEntityId));
+        }
+      }
+      return { activeCompanyIds, pinned: rows.length > 0 };
     },
   ),
 });

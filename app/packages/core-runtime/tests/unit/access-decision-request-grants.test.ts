@@ -14,6 +14,8 @@ import { ACCESS_DECISION_REQUEST_GRANTS } from '../../src/db/database-identity-m
  *   access/enforcement/legal-entities.ts   `core.legal_entities` (legal_entity_id, tenant_id)
  *   access/enforcement/decision-log.ts     `core.access_decision_logs` (insert)
  *   access/workloads/bindings.ts           `core.access_workload_bindings` (the actor's active keys)
+ *                                          and `core.access_workload_company_bindings` (the companies a
+ *                                          standalone workload is registered for, D6)
  *   access/intent/tenant-intent-loader.ts  the ten `core.access_*` read tables below, each with the
  *                                          columns its scope, membership, cell, connection and team
  *                                          queries name (`loadScope`, `loadAuthorityCells`,
@@ -36,7 +38,7 @@ const EXPECTED: readonly ExpectedGrant[] = [
     table: 'core.access_scope_fences',
   },
   { columns: ['kind', 'principal_id', 'tenant_id'], privilege: 'select', table: 'core.principals' },
-  { columns: ['legal_entity_id', 'tenant_id'], privilege: 'select', table: 'core.legal_entities' },
+  { columns: ['legal_entity_id', 'status', 'tenant_id'], privilege: 'select', table: 'core.legal_entities' },
   {
     columns: ['legal_entity_id', 'scope_id', 'tenant_context_id', 'tenant_id'],
     privilege: 'select',
@@ -161,6 +163,11 @@ const EXPECTED: readonly ExpectedGrant[] = [
     columns: ['binding_id', 'incarnation', 'principal_id', 'status', 'tenant_id', 'workload_key'],
     privilege: 'select',
     table: 'core.access_workload_bindings',
+  },
+  {
+    columns: ['legal_entity_id', 'status', 'tenant_id', 'workload_binding_id'],
+    privilege: 'select',
+    table: 'core.access_workload_company_bindings',
   },
   {
     columns: [

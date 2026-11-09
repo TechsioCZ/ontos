@@ -10,7 +10,10 @@ import { expect, it } from 'effect-rstest';
 import { parseSync } from 'oxc-parser';
 
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../apps/shell-super-app/api/database-identity-enrollment.ts';
-import { BEARER_ASSERTION_ROLE_SETTINGS } from '../../packages/core-runtime/src/db/database-identities.ts';
+import {
+  BEARER_ASSERTION_ROLE_SETTINGS,
+  SHARED_RUNTIME_IDENTITY,
+} from '../../packages/core-runtime/src/db/database-identities.ts';
 import {
   DATABASE_ROLE_GRANT_MANIFEST,
   DatabaseRoleGrantManifestConfigurationError,
@@ -22,6 +25,11 @@ import {
 const explicitEntries = DATABASE_ROLE_GRANT_MANIFEST.flatMap((entry) => (entry.kind === 'explicit' ? [entry] : []));
 const FIXTURE_OWNER_MODULE_KEY = 'fixture.owner';
 const schemaOf = (qualifiedName: string): string => qualifiedName.slice(0, qualifiedName.indexOf('.'));
+const rolesWhere = (matches: (identity: (typeof DATABASE_IDENTITIES)[number]) => boolean): readonly string[] =>
+  EffectArray.sort(
+    DATABASE_IDENTITIES.filter(matches).map(({ role }) => role),
+    Order.String,
+  );
 
 it('keeps Shell runtime composition inside its declaration root and uses package contracts for other owners', () => {
   const shellRoot = fileURLToPath(new URL('../../apps/shell-super-app/', import.meta.url));
@@ -205,37 +213,53 @@ it('grants trust routines only to their executors and owner routines only inside
   for (const routine of TRUST_ROUTINES) {
     for (const role of routine.executableBy) {
       const entry = manifestEntryForRole(role);
-      expect(entry?.kind, `${role} executes ${routine.signature}`).toBe('explicit');
       if (entry?.kind === 'explicit') {
-        expect(entry.grants.routines).toContain(routine.signature);
+        expect(entry.grants.routines, `${role} executes ${routine.signature}`).toContain(routine.signature);
+        continue;
+      }
+      // Only the legacy shared runtime executes a trust routine without a declared routine grant, and its
+      // broad pre-pilot authority is recorded as an accepted finding rather than left unaccounted for.
+      expect(entry?.kind, `${role} executes ${routine.signature}`).toBe('legacy_shared');
+      expect(role, `${role} executes ${routine.signature}`).toBe(SHARED_RUNTIME_IDENTITY.role);
+      if (entry?.kind === 'legacy_shared') {
+        expect(entry.acceptedFindings, `${role} executes ${routine.signature}`).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ code: 'runtime_role_can_execute_security_definer', objects: 'all' }),
+          ]),
+        );
       }
     }
   }
 });
 
 it('derives trust routine executors from the identity flags', () => {
-  const registrars = EffectArray.sort(
-    DATABASE_IDENTITIES.filter(({ registersGatewayScopeGrants }) => registersGatewayScopeGrants).map(
-      ({ role }) => role,
-    ),
-    Order.String,
-  );
-  const gatewayGrantRoles = EffectArray.sort(
-    DATABASE_IDENTITIES.filter(({ scopeAuthority }) => scopeAuthority === 'gateway_grant').map(({ role }) => role),
-    Order.String,
-  );
+  const registrars = rolesWhere(({ registersGatewayScopeGrants }) => registersGatewayScopeGrants);
+  const gatewayGrantRoles = rolesWhere(({ scopeAuthority }) => scopeAuthority === 'gateway_grant');
+  const actionRunners = rolesWhere(({ runsActions }) => runsActions);
+  const readOnlyHelpers = [
+    'trust.verified_scope()',
+    'trust.scope_payload(xid8,timestamptz,uuid,uuid)',
+    'trust.scope_mac(text)',
+  ];
+  // Each routine names exactly the flag that admits it: the registrar, the gateway-scoped requests, the action
+  // runners that fence a scope, and the read-only helpers no runtime executes.
+  const expectedExecutors = new Map<string, readonly string[]>([
+    ['trust.register_gateway_scope_grant(text,text,uuid,uuid,uuid,uuid,timestamptz)', registrars],
+    ['trust.establish_gateway_scope(text)', gatewayGrantRoles],
+    ['trust.current_tenant_id()', gatewayGrantRoles],
+    ['trust.current_legal_entity_id()', gatewayGrantRoles],
+    ['trust.auth_binding_issuing_legal_entity(uuid,uuid)', gatewayGrantRoles],
+    ['trust.lock_access_scope_fence(uuid,uuid)', actionRunners],
+    ...readOnlyHelpers.map((signature): readonly [string, readonly string[]] => [signature, []]),
+  ]);
   for (const routine of TRUST_ROUTINES) {
-    const executors = EffectArray.sort(routine.executableBy, Order.String);
-    if (routine.signature.startsWith('trust.register_gateway_scope_grant(')) {
-      expect(executors).toEqual(registrars);
-      expect(routine.securityDefiner).toBe(true);
-    } else if (routine.securityDefiner) {
-      expect(executors, routine.signature).toEqual(gatewayGrantRoles);
-    } else {
-      expect(executors, routine.signature).toEqual([]);
-    }
+    const expected = expectedExecutors.get(routine.signature);
+    expect(expected, routine.signature).toBeDefined();
+    expect(EffectArray.sort(routine.executableBy, Order.String), routine.signature).toEqual(expected);
+    expect(routine.securityDefiner, routine.signature).toBe(!readOnlyHelpers.includes(routine.signature));
   }
-  expect(TRUST_ROUTINES).toHaveLength(8);
+  expect(TRUST_ROUTINES).toHaveLength(expectedExecutors.size);
+  expect(new Set(TRUST_ROUTINES.map(({ signature }) => signature))).toEqual(new Set(expectedExecutors.keys()));
   expect(new Set(TRUST_ROUTINES.map(({ signature }) => signature)).size).toBe(TRUST_ROUTINES.length);
 });
 

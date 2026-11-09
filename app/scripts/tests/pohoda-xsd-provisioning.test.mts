@@ -10,6 +10,7 @@ const manifestPath = 'verticals/finance-billing/tests/fixtures/pohoda-xsd/versio
 const scriptPath = 'scripts/provision-pohoda-xsd.sh';
 const supportPath = 'verticals/finance-billing/tests/support/pohoda-xsd.ts';
 const gatesWorkflowPath = '../.github/workflows/ultramodern-workspace-gates.yml';
+const matricesPath = 'scripts/ci-matrices.json';
 const financeShard = 'Unit and Component Tests (every other package)';
 const provisionStep = 'Provision the POHODA XML schemas for the finance-billing shard';
 const sourceBase = 'https://www.stormware.cz/schema/version_2';
@@ -29,11 +30,15 @@ const pinsOf = (manifest: string): readonly (typeof PinSchema.Type)[] =>
 
 const StepSchema = Schema.Struct({
   if: Schema.optional(Schema.String),
-  name: Schema.String,
+  // A grouped or reusable step may legitimately carry no name.
+  name: Schema.optional(Schema.String),
   run: Schema.optional(Schema.String),
 });
 const WorkflowSchema = Schema.Struct({
   jobs: Schema.Record(Schema.String, Schema.Struct({ steps: Schema.Array(StepSchema) })),
+});
+const MatricesSchema = Schema.Struct({
+  unit: Schema.Array(Schema.Struct({ commands: Schema.String, name: Schema.String })),
 });
 
 it.effect('pins every STORMWARE dataPack 2.0 schema the POHODA export tests validate against', () =>
@@ -73,10 +78,26 @@ it.effect('provisions the pinned schemas in the shard that runs the finance-bill
     const fs = yield* FileSystem.FileSystem;
     const source = yield* fs.readFileString(path.join(root, gatesWorkflowPath));
     const workflow = Schema.decodeUnknownSync(WorkflowSchema)(parse(source));
-    const steps = workflow.jobs['workspace-gate']?.steps ?? [];
+    const steps = workflow.jobs['workspace-unit']?.steps ?? [];
     const step = steps.find(({ name }) => name === provisionStep);
     expect(step?.if).toBe(`matrix.name == '${financeShard}'`);
     expect(step?.run).toContain('mise exec -- pnpm provision:pohoda-xsd');
     expect(step?.run).toContain('xmllint');
+    // The shard that step selects is the matrix entry that runs finance-billing's unit tests, so the pinned
+    // schemas reach the tests that compile them instead of a shard that never runs them.
+    const matrices = Schema.decodeUnknownSync(MatricesSchema)(
+      JSON.parse(yield* fs.readFileString(path.join(root, matricesPath))),
+    );
+    const shard = matrices.unit.find(({ name }) => name === financeShard);
+    expect(shard, financeShard).toBeDefined();
+    const commands = shard?.commands ?? '';
+    expect(commands, financeShard).toContain('run test:unit');
+    for (const filter of commands.matchAll(/--filter\s+'(?<value>[^']+)'/gu)) {
+      const value = filter.groups?.value ?? '';
+      // Every filter is an exclusion, so a shard that never names finance-billing still runs its tests; a
+      // positive filter list would silently drop them while the step still looked provisioned.
+      expect(value.startsWith('!'), `${financeShard} filter ${value}`).toBe(true);
+      expect(value, financeShard).not.toContain('finance-billing');
+    }
   }).pipe(Effect.provide(NodeServices.layer)),
 );

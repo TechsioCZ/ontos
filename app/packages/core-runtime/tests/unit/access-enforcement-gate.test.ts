@@ -128,6 +128,12 @@ interface RunOptions {
   readonly authority?: AuthoritySpec;
   /** A scripted engine port, for the suites that answer `select` themselves. */
   readonly check?: DecisionCheckPort;
+  /** The declaration cannot be read: the gate must answer UNAVAILABLE, never "no declaration" (O48, D6). */
+  readonly companyDeclarationReadFails?: boolean;
+  /** The companies this workload is pinned to; absent means its owner declared none (D6). */
+  readonly declaredCompanies?: readonly LegalEntityId[];
+  /** The owner declared a company and then revoked it: the workload is pinned to none (D6). */
+  readonly declaredCompaniesRevoked?: boolean;
   readonly engineFailure?: boolean;
   readonly kinds?: AccessPrincipalKinds;
   readonly logFails?: boolean;
@@ -162,6 +168,13 @@ const harness = (options: RunOptions = {}) => {
       options.workloadReadFails === true
         ? Effect.fail(accessDecisionUnavailable('the workload registry is unavailable'))
         : Effect.succeed(new Set(options.workloadKeys)),
+    readCompanyDeclaration: () =>
+      options.companyDeclarationReadFails === true
+        ? Effect.fail(accessDecisionUnavailable('the workload registry is unavailable'))
+        : Effect.succeed({
+            activeCompanyIds: new Set(options.declaredCompanies),
+            pinned: options.declaredCompaniesRevoked === true || options.declaredCompanies !== undefined,
+          }),
   };
   const gate = makeAccessDecisionService({
     authorityFor: () => port,
@@ -609,7 +622,10 @@ it.effect('answers a 20-entry navigation from one engine snapshot, identically t
       decisionLog: log,
       legalEntities: legalEntityCandidates([]),
       principalKinds: countingKinds,
-      workloadBindings: { readActiveWorkloadKeys: () => Effect.succeed(new Set()) },
+      workloadBindings: {
+        readActiveWorkloadKeys: () => Effect.succeed(new Set()),
+        readCompanyDeclaration: () => Effect.succeed({ activeCompanyIds: new Set(), pinned: false }),
+      },
     });
     const inputs = navigationKeys.map((key) => gateOf({ carrier: { accessDeclaration: navigationDeclaration(key) } }));
     const measure = () => {

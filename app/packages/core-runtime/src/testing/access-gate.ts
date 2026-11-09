@@ -81,7 +81,10 @@ export const inertAccessEnforcementPorts = (): AccessEnforcementPorts =>
         }),
     }),
     principalKinds: Object.freeze({ readKind: inertPortAnswer }),
-    workloadBindings: Object.freeze({ readActiveWorkloadKeys: inertPortAnswer }),
+    workloadBindings: Object.freeze({
+      readActiveWorkloadKeys: inertPortAnswer,
+      readCompanyDeclaration: inertPortAnswer,
+    }),
   });
 
 /** A bound gate plus the double's own record of what it was asked, for the runner suites. */

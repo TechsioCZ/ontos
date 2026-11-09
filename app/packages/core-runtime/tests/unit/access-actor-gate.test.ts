@@ -87,10 +87,13 @@ const workloadActorDeclaration = (overrides: Partial<AccessActorInput> = {}) =>
 const workloadRegistry = (keys: readonly string[], principal: string = workloadPrincipal): AccessWorkloadBindings => ({
   readActiveWorkloadKeys: (query) =>
     Effect.succeed(new Set(query.principalId === principal && query.tenantId === tenant ? keys : [])),
+  // This registry declares no company, so a standalone workload keeps the tenant-wide rule (D6).
+  readCompanyDeclaration: () => Effect.succeed({ activeCompanyIds: new Set(), pinned: false }),
 });
 
 const unreadableRegistry: AccessWorkloadBindings = {
   readActiveWorkloadKeys: () => Effect.fail(accessDecisionUnavailable('the workload registry is unreadable')),
+  readCompanyDeclaration: () => Effect.fail(accessDecisionUnavailable('the workload registry is unreadable')),
 };
 
 /**

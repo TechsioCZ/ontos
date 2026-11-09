@@ -172,6 +172,8 @@ export const joinAccessEnforcementPorts = (
           workloadBindings: Object.freeze({
             readActiveWorkloadKeys: (query: WorkloadBindingQuery) =>
               workloadBindings.readActiveWorkloadKeys(query, transaction),
+            readCompanyDeclaration: (query: WorkloadBindingQuery) =>
+              workloadBindings.readCompanyDeclaration(query, transaction),
           }),
         },
   );

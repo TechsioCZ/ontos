@@ -2733,6 +2733,82 @@ it.live(
 );
 
 it.live(
+  'accepts a local const route path and rejects unresolved, mutable and mismatched path constants',
+  Effect.fn(function* governanceScenario22() {
+    const descriptor = yield* Schema.decodeUnknownEffect(DescriptorModuleSchema)(
+      yield* Effect.promise(() => import(pathToFileURL(generatorModulePath('descriptors')).href)),
+    );
+    const shared = yield* Schema.decodeUnknownEffect(SharedApiGeneratorSchema)(
+      yield* Effect.promise(() => import(pathToFileURL(generatorModulePath(generatedSharedApiModule)).href)),
+    );
+    const contract = shared.createSharedApi(
+      {
+        ...descriptor.createVerticalDescriptor(inventoryStockId, 4103),
+        api: { prefix: generatedApiPrefix, stem: inventoryStockId },
+        exposes: {},
+      },
+      { scope: 'app' },
+    );
+    const routePathLiteral = "HttpApiEndpoint.get('list', '/inventory-stock', {";
+    const routePathReference = "HttpApiEndpoint.get('list', INVENTORY_STOCK_LIST_PATH, {";
+    const foundationAnchor = 'export const inventoryStockFoundationApi';
+    const referenced = contract.replace(routePathLiteral, routePathReference);
+    expect(referenced).not.toBe(contract);
+    const withDeclaration = (declaration: string): string =>
+      referenced.replace(foundationAnchor, `${declaration}\n${foundationAnchor}`);
+    expect(withDeclaration("const INVENTORY_STOCK_LIST_PATH = '/inventory-stock';")).not.toBe(referenced);
+
+    expect(yield* microVerticalApiBaselineViolation(inventoryStockId, contract)).toBe(undefined);
+    // The endpoint's own module may name its route path with a top-level const string.
+    expect(
+      yield* microVerticalApiBaselineViolation(
+        inventoryStockId,
+        withDeclaration("const INVENTORY_STOCK_LIST_PATH = '/inventory-stock';"),
+      ),
+    ).toBe(undefined);
+    for (const [label, source, expected] of [
+      [
+        'mutable binding',
+        withDeclaration("let INVENTORY_STOCK_LIST_PATH = '/inventory-stock';"),
+        /ambiguous identities/u,
+      ],
+      ['unresolved reference', referenced, /ambiguous identities/u],
+      [
+        'call expression',
+        withDeclaration('const INVENTORY_STOCK_LIST_PATH = inventoryStockListPath();'),
+        /ambiguous identities/u,
+      ],
+      [
+        'template literal',
+        withDeclaration('const INVENTORY_STOCK_LIST_PATH = `/inventory-stock`;'),
+        /ambiguous identities/u,
+      ],
+      [
+        'member lookup',
+        withDeclaration('const INVENTORY_STOCK_LIST_PATH = inventoryStockRoutes.list;'),
+        /ambiguous identities/u,
+      ],
+      [
+        'cyclic constants',
+        withDeclaration(
+          'const INVENTORY_STOCK_LIST_PATH = INVENTORY_STOCK_LIST_ALIAS;\nconst INVENTORY_STOCK_LIST_ALIAS = INVENTORY_STOCK_LIST_PATH;',
+        ),
+        /ambiguous identities/u,
+      ],
+      [
+        'mismatched value',
+        withDeclaration("const INVENTORY_STOCK_LIST_PATH = '/inventory-stock-other';"),
+        /operation map must construct every operation/u,
+      ],
+    ] as const) {
+      expect(violationText(yield* microVerticalApiBaselineViolation(inventoryStockId, source)), label).toMatch(
+        expected,
+      );
+    }
+  }),
+);
+
+it.live(
   'static validation rejects a MicroVertical root contract without readiness baseline',
   Effect.fn(function* mergedScenario1() {
     const contract = yield* Effect.promise(() =>
