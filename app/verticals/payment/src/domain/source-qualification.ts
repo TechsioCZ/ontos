@@ -280,6 +280,15 @@ export const PaymentSourceQualification = Data.taggedEnum<PaymentSourceQualifica
 
 const unauthorized = (reason: string) => PaymentSourceQualification.Unauthorized({ reason });
 
+/**
+ * The one refusal for a submitter that is not bound to an ACTIVE authority of the exact source binding
+ * and fact family. Unknown, revoked and configured-but-unbound bindings refuse identically, so a refusal
+ * never tells an unbound principal which source bindings are configured (#1153).
+ */
+const NOT_A_BOUND_AUTHORITY = unauthorized(
+  'The submitting principal is not bound to an active configured authority for this source binding and fact family',
+);
+
 const sameInstant = (left: DateTime.Utc | undefined, right: DateTime.Utc | undefined): boolean =>
   left === undefined || right === undefined ? left === right : DateTime.Equivalence(left, right);
 
@@ -491,12 +500,9 @@ export const qualifyPaymentSourceStatement = (
       authority.accountRef === statement.source.accountRef &&
       authority.environment === statement.source.environment,
   );
-  if (active.length === 0) {
-    return unauthorized('No active configured authority exists for this source binding and fact family');
-  }
   const bound = active.filter((authority) => authority.boundToSubmitter);
   if (bound.length === 0) {
-    return unauthorized('The submitting principal is not bound to the configured source authority');
+    return NOT_A_BOUND_AUTHORITY;
   }
   const rule = authorityRule(statement.factFamily, statement.source.sourceKind);
   if (rule === undefined || !rule.facts.includes(statement.factKind)) {
@@ -524,9 +530,7 @@ export const qualifyPaymentSourceStatement = (
   }
   if (input.target === undefined) {
     const authority = unassignedAuthority(bound);
-    return authority === undefined
-      ? unauthorized('No active configured authority exists for this source binding and fact family')
-      : PaymentSourceQualification.HeldUnassigned({ authority });
+    return authority === undefined ? NOT_A_BOUND_AUTHORITY : PaymentSourceQualification.HeldUnassigned({ authority });
   }
   return qualifyAgainstPayment(input, bound, input.target);
 };

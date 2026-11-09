@@ -16,6 +16,7 @@ import type { PaymentPickupCollectionCapability } from '../ports/pickup-capabili
 import { MethodConditionCheck } from './authorization-currentness.ts';
 import type { MethodConditionCheckCase } from './authorization-currentness.ts';
 import type { PaymentCodDeliveryOfferBinding } from './cod-carrier.ts';
+import { isPaymentTermSnapshotRetiredAt } from './payment-term-retirement.ts';
 
 /**
  * Current method-condition evidence (#1149 "Accepted Launch behavior"). Deferred invoice, Cash on
@@ -72,8 +73,7 @@ export const deferredTermCondition = (
         ) {
           return notMet('The Payment Term semantic meaning differs from the meaning retained by the Payment');
         }
-        const { effectiveTo } = semanticSnapshot.lifecycle;
-        if (effectiveTo !== null && DateTime.isLessThanOrEqualTo(DateTime.makeUnsafe(effectiveTo), at)) {
+        if (isPaymentTermSnapshotRetiredAt(semanticSnapshot, at)) {
           return notMet('The Payment Term snapshot was already retired');
         }
         const { semantics } = semanticSnapshot;

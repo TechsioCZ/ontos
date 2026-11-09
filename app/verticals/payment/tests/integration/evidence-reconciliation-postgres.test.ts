@@ -40,6 +40,7 @@ import type {
 import { PaymentRefundBasisSchema } from '../../shared/domain/payment-refund-basis.ts';
 import { PaymentRefundExecutionRouteSchema } from '../../shared/domain/refund-contract.ts';
 import { paymentFundsSnapshotOf } from '../../src/persistence/payment-aggregate-persistence.ts';
+import { refundExecutionRouteOf } from '../support/refund-execution-route.fixture.ts';
 import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
 import { expectSqlFailure, failureCodeOf, makeTestScope } from './database-fixture.ts';
 import {
@@ -244,6 +245,7 @@ it.live('#1151 Late refund does not erase collection or preserve a stale proof',
           _tag: 'REFUNDABLE_ITEMS',
           items: [{ amountMinor: 40_000, currency: 'CZK', itemRef: 'line-1', sourceEvidenceRef: 'order-line-1' }],
         },
+        refundExecutionRoute: yield* evidence.refundRouteOf(authority),
         targetOperationId: collect.operationId,
       });
       yield* evidence.recordObservation({
@@ -852,6 +854,7 @@ it.live('#1151 One refund observation confirms at most one REFUND through govern
         paymentId: payment.paymentId,
       });
       yield* evidence.settle(payment.paymentId, collect.operationId, 1, 'EFFECT_CONFIRMED');
+      const refundExecutionRoute = yield* refundExecutionRouteOf(yield* configureGopay(evidence));
       const refund = (key: string) =>
         evidence.startOperation({
           amountMinor: 50_000,
@@ -859,11 +862,11 @@ it.live('#1151 One refund observation confirms at most one REFUND through govern
           operationKey: key,
           paymentId: payment.paymentId,
           refundBasis: itemsBasis(key, 50_000),
+          refundExecutionRoute,
           targetOperationId: collect.operationId,
         });
       const refundA = yield* refund('refund-a');
       const refundB = yield* refund('refund-b');
-      yield* configureGopay(evidence);
       // ONE provider statement (500 CZK returned) that names no operation: held debt.
       const singleReturn = () =>
         evidence.accept(
@@ -919,7 +922,7 @@ it.live(
           operationKey: 'collect-1',
           paymentId: payment.paymentId,
         });
-        yield* configureGopay(evidence);
+        const gopay = yield* configureGopay(evidence);
         yield* evidence.accept(
           gopayStatement({
             amount: czk(100_000),
@@ -935,6 +938,7 @@ it.live(
           operationKey: 'refund-1',
           paymentId: payment.paymentId,
           refundBasis: itemsBasis('item-1', 40_000),
+          refundExecutionRoute: yield* refundExecutionRouteOf(gopay),
           targetOperationId: collect.operationId,
         });
         const returned = (economicEffectKey: string) =>

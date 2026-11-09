@@ -152,9 +152,14 @@ describe('#1152 exact source qualification', () => {
     const decision = qualify({ authorities: [unbound] });
     expect(decision).toEqual(
       PaymentSourceQualification.Unauthorized({
-        reason: 'The submitting principal is not bound to the configured source authority',
+        reason:
+          'The submitting principal is not bound to an active configured authority for this source binding and fact family',
       }),
     );
+    // The refusal reveals nothing about configuration: an unknown or revoked binding refuses identically.
+    expect(qualify({ authorities: [] })).toEqual(decision);
+    expect(qualify({ authorities: [authority({ status: 'REVOKED' })] })).toEqual(decision);
+    expect(qualify({ authorities: [authority({ boundToSubmitter: false, status: 'REVOKED' })] })).toEqual(decision);
     // Not even a redelivery of a recorded occurrence or unassigned evidence is acknowledged.
     expect(tagOf(qualify({ authorities: [unbound], existingOccurrence: recorded() }))).toBe('Unauthorized');
     expect(tagOf(qualify({ authorities: [unbound], target: absent() }))).toBe('Unauthorized');

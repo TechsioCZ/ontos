@@ -47,8 +47,7 @@ it.live('#1149 #1151 #1153 Payment evidence the rules depend on is required by t
              term_semantic_evidence
            from payment.payments where tenant_id = $1`,
         ),
-        '23514',
-        'payment_payments_purchasing_context_ck',
+        '23502',
       );
 
       const authorityValues = `$1, $2, gen_random_uuid(), $3, '${COMPOSITION_REVISION}', 'gopay-account-1', now(),
@@ -72,7 +71,7 @@ it.live('#1149 #1151 #1153 Payment evidence the rules depend on is required by t
           [scope.legalEntityId, scope.principalId],
         );
       // A source authority revision that binds no submitting principal.
-      yield* expectSqlFailure(revisionOf('null'), '23514', 'payment_source_authority_revisions_submitters_ck');
+      yield* expectSqlFailure(revisionOf('null'), '23502');
       yield* expectSqlFailure(revisionOf(`'{}'::uuid[]`), '23514', 'payment_source_authority_revisions_submitters_ck');
       yield* expectSqlFailure(
         revisionOf(`array[$3::uuid, null]`),

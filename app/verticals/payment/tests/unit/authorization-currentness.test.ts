@@ -450,6 +450,27 @@ describe('#1149 method conditions', () => {
       ),
     ).toBe(true);
   });
+  it('#1149 a COD proof stops being Current when the bound offer is now served by another carrier', () => {
+    // The proof condition names the offer; the carrier is compared against the Payment's retained binding,
+    // so the same offer under another carrier fails Current validation.
+    const issued = codDeliveryCondition(COD_OFFER_1, {
+      _tag: 'SUPPORTED',
+      capabilityEvidenceRef: 'cap-1',
+      carrier: COD_CARRIER,
+      deliveryOfferRef: 'offer-1',
+    });
+    expect(MethodConditionCheck.$is('Met')(issued)).toBe(true);
+    if (MethodConditionCheck.$is('Met')(issued)) {
+      const now = codDeliveryCondition(COD_OFFER_1, {
+        _tag: 'SUPPORTED',
+        capabilityEvidenceRef: 'cap-1',
+        carrier: { ...COD_CARRIER, sourceSystem: 'carrier-ppl' },
+        deliveryOfferRef: 'offer-1',
+      });
+      expect(methodConditionReasons(issued.condition, now)).toEqual(['METHOD_CONDITION_NOT_MET']);
+      expect(methodConditionReasons(issued.condition, issued)).toEqual([]);
+    }
+  });
   it('#1149 pickup requires the exact authorized capability', () => {
     const supported = pickupCondition('store-1', {
       _tag: 'SUPPORTED',

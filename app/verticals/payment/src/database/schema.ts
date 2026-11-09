@@ -241,9 +241,8 @@ export const sourceAuthorityRevisions = paymentSchema.table.withRLS(
      * The principals allowed to submit statements as this source at this revision (#1152/#1153): the
      * configured integration/provider or operator principals. The authority's Current binding is the
      * set of its current revision; a revoked binding is a later revision without that principal.
-     * Not null for every revision written after the binding existed (NOT VALID over older rows).
      */
-    submitterPrincipalIds: uuid('submitter_principal_ids').array(),
+    submitterPrincipalIds: uuid('submitter_principal_ids').array().notNull(),
   },
   (table) => [
     unique('payment_source_authority_revisions_number_uk').on(
@@ -268,7 +267,7 @@ export const sourceAuthorityRevisions = paymentSchema.table.withRLS(
     check('payment_source_authority_revisions_revision_ck', sql`${table.revision} > 0`),
     check(
       'payment_source_authority_revisions_submitters_ck',
-      sql`${table.submitterPrincipalIds} is not null and cardinality(${table.submitterPrincipalIds}) between 1 and 100 and array_ndims(${table.submitterPrincipalIds}) = 1 and array_position(${table.submitterPrincipalIds}, null) is null`,
+      sql`cardinality(${table.submitterPrincipalIds}) between 1 and 100 and array_ndims(${table.submitterPrincipalIds}) = 1 and array_position(${table.submitterPrincipalIds}, null) is null`,
     ),
     reasonCheck('payment_source_authority_revisions_reason_ck', table.reason),
     compositionRevisionCheck('payment_source_authority_revisions_composition_ck', table.compositionRevision),
@@ -302,10 +301,9 @@ export const payments = paymentSchema.table.withRLS(
     /**
      * The trusted Commerce Purchasing Context the intent was created for (#1147/#1149): buyer subject,
      * Channel, Commerce Market and context revision. Immutable; every later entitlement/policy question
-     * about this Payment is scoped to exactly this purchase. Not null for every Payment created after
-     * the column existed (NOT VALID over older rows).
+     * about this Payment is scoped to exactly this purchase.
      */
-    purchasingContext: jsonb('purchasing_context').$type<Schema.Json>(),
+    purchasingContext: jsonb('purchasing_context').$type<Schema.Json>().notNull(),
     termSemanticEvidence: jsonb('term_semantic_evidence').$type<Schema.Json>().notNull(),
   },
   (table) => [
@@ -333,10 +331,7 @@ export const payments = paymentSchema.table.withRLS(
       sql`jsonb_typeof(${table.executionBinding}) = 'object' and jsonb_typeof(${table.paymentTermRef}) = 'object' and jsonb_typeof(${table.termSemanticEvidence}) = 'object'`,
     ),
     opaqueCheck('payment_payments_purchase_ck', table.purchaseCorrelationId),
-    check(
-      'payment_payments_purchasing_context_ck',
-      sql`${table.purchasingContext} is not null and jsonb_typeof(${table.purchasingContext}) = 'object'`,
-    ),
+    check('payment_payments_purchasing_context_ck', sql`jsonb_typeof(${table.purchasingContext}) = 'object'`),
     opaqueCheck('payment_payments_configuration_ck', table.customerConfigurationId),
     check('payment_payments_intent_key_ck', sql`${table.intentKey} ~ '^[!-~]{1,200}$'`),
     compositionRevisionCheck('payment_payments_composition_ck', table.compositionRevision),
@@ -368,8 +363,9 @@ export const paymentOperations = paymentSchema.table.withRLS(
     refundBasis: jsonb('refund_basis').$type<Schema.Json>(),
     refundBasisKind: text('refund_basis_kind').$type<PaymentRefundBasisKind>(),
     /**
-     * The configured refund executor a REFUND was requested through (#1150/#1152): immutable, so a
-     * later configuration change never reroutes it and evidence/recovery qualify against it.
+     * The configured refund executor a REFUND was requested through (#1150/#1152): required on every
+     * REFUND and absent otherwise; immutable, so a later configuration change never reroutes it and
+     * evidence/recovery qualify against it.
      */
     refundExecutionRoute: jsonb('refund_execution_route').$type<Schema.Json>(),
     targetOperationId: uuid('target_operation_id'),
@@ -413,7 +409,7 @@ export const paymentOperations = paymentSchema.table.withRLS(
     ),
     check(
       'payment_operations_refund_route_ck',
-      sql`${table.refundExecutionRoute} is null or (${table.kind} = 'REFUND' and jsonb_typeof(${table.refundExecutionRoute}) = 'object')`,
+      sql`(${table.kind} = 'REFUND') = (${table.refundExecutionRoute} is not null) and (${table.refundExecutionRoute} is null or jsonb_typeof(${table.refundExecutionRoute}) = 'object')`,
     ),
     check('payment_operations_outcome_revision_ck', sql`${table.outcomeRevision} > 0`),
     check('payment_operations_material_hash_ck', sql`${table.materialHash} ~ '^[a-f0-9]{64}$'`),

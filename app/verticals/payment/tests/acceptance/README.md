@@ -123,7 +123,7 @@ These limits are still true:
   Core composition fixture. Phases there are set by the clone's admin connection, except the drain scenario,
   which uses Core's close-admission, drain, seal and Outbox matcher.
 - An INDETERMINATE Payment Operation (unknown monetary effect) is Core durable work of `payment.core` under the
-  revision of the invocation that made it unknown (migration `payment-indeterminate-operation-durable-work`). While
+  revision of the invocation that made it unknown (custom migration `enforce-payment-ledgers`). While
   it exists Core refuses to drain or seal that release; a proven outcome or governed decision clears it. Business
   waiting (PENDING) and the operation-requested Outbox handoff are not tracked: with no consumer of
   `payment.core.operation-requested.v1` in the composition, Core's matcher records those rows as matched with zero
