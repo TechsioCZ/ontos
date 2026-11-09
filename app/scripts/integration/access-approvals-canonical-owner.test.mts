@@ -19,12 +19,19 @@ import {
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
+import {
+  ActionApprovalLifecycleV2Ports,
+  makeActionApprovalLifecycleV2,
+} from '../../packages/core-runtime/src/access/approvals/action-lifecycle-v2.ts';
 import type { ActionMandateDispatch } from '../../packages/core-runtime/src/access/approvals/action-mandate-dispatch.ts';
 import {
   MandateDispatchPorts,
   makeDrizzleActionMandateDispatch,
 } from '../../packages/core-runtime/src/access/approvals/action-mandate-dispatch.ts';
-import { freezeCommand } from '../../packages/core-runtime/src/access/approvals/command.ts';
+import {
+  freezeActionCommandV2,
+  makeActionCommandV2,
+} from '../../packages/core-runtime/src/access/approvals/action-command-v2.ts';
 import {
   ApprovalStore,
   ApprovalStoreLive,
@@ -36,6 +43,7 @@ import { FrozenCommands } from '../../packages/core-runtime/src/access/approvals
 import type { LiveApprovalServices } from '../../packages/core-runtime/src/access/approvals/live-composition.ts';
 import { liveMandateDispatchPorts } from '../../packages/core-runtime/src/access/approvals/live-composition.ts';
 import type { BoundWitness } from '../../packages/core-runtime/src/access/approvals/proposal.ts';
+import type { RegisteredActionOwnerV2 } from '../../packages/core-runtime/src/access/approvals/registered-action-source-v2.ts';
 import { liveApprovalsService } from '../../packages/core-runtime/src/access/approvals/service.ts';
 import { makeAccessChangesDrizzleStore } from '../../packages/core-runtime/src/access/changes/persistence/drizzle-store.ts';
 import type { GrantedAuthorityEvidence } from '../../packages/core-runtime/src/access/decision/contract.ts';
@@ -48,6 +56,7 @@ import {
   AccessPrincipalKindSourceLive,
   makeDrizzleAccessPrincipalKinds,
 } from '../../packages/core-runtime/src/access/enforcement/actor.ts';
+import type { AccessDecisionService } from '../../packages/core-runtime/src/access/enforcement/contract.ts';
 import { AccessDecisionGate } from '../../packages/core-runtime/src/access/enforcement/contract.ts';
 import {
   AccessDecisionLog,
@@ -64,7 +73,6 @@ import {
   AccessScopeIdSchema,
   AssignmentIncarnationIdSchema,
   CapabilityKeySchema,
-  CommandDigestSchema,
   GrantIncarnationIdSchema,
   ModuleKeySchema,
   PrincipalIdSchema,
@@ -128,6 +136,7 @@ import { makeTestDatabaseFromClient, makeTestPgClient } from '../../packages/cor
 import { testOperationalScopeResolver } from '../../packages/core-runtime/tests/fixtures/operational-scope.ts';
 import { createBrandAction } from '../../verticals/catalog/src/actions/create-brand.action.ts';
 import { catalogRegistration } from '../../verticals/catalog/vertical.registration.ts';
+import { publishActualCatalogOwnerComposition } from './support/actual-catalog-owner-composition.ts';
 
 /*
  * The CANONICAL owner-mandate proof (O75, O80, O81, O85, O90). The preceding candidate proved the
@@ -147,7 +156,14 @@ import { catalogRegistration } from '../../verticals/catalog/vertical.registrati
  *   the intent rows this fixture seeded, so the ALLOWED/NEEDS_APPROVAL/DENIED answers rest on the
  *   same projection a real writer would have left behind;
  * - the proposal, frozen command, mandate and execution are the shipped approvals composition and
- *   `makeDrizzleActionMandateDispatch` over the real stores and the real `createBrand` handler.
+ *   `makeDrizzleActionMandateDispatch` over the real stores and the real `createBrand` handler. The
+ *   mandate's own authority is the shipped `makeActionApprovalLifecycleV2`, built over this same
+ *   canonical seam and ports, so parking, approving and executing run the native current lifecycle
+ *   rather than a scalar shortcut;
+ * - the `owners` that lifecycle admits registrations through are the ACTUAL Catalog owner release:
+ *   `deriveActualCatalogCompositionSnapshot`'s SOURCE projection of the shipped `catalogRegistration`
+ *   is published as this disposable database's active Application Composition, so the lifecycle's
+ *   composition-authority lock fences the very revision the runner admitted.
  *
  * What is deliberately NOT claimed:
  *
@@ -210,8 +226,6 @@ const PAYLOAD = {
   name: 'Canonical Proof Brand',
   reason: 'Proves the canonical gate over live intent and a real SpiceDB projection',
 } as const;
-const COMMAND = { capabilityKey: CAPABILITY, payload: PAYLOAD } as const;
-const COMMAND_DIGEST = CommandDigestSchema.make(Result.getOrThrow(freezeCommand(COMMAND)));
 
 const GRANTS = {
   approve: GrantIncarnationIdSchema.make(uid(20)),
@@ -428,7 +442,9 @@ const disposableDatabase = Effect.gen(function* disposableDatabaseEffect() {
    */
   const runtime = yield* makeTestPgClient(replaceDatabase(connections.runtime, name), { maxConnections: 8 });
   const executor = yield* makeTestDatabaseFromClient(runtime, coreRelations);
-  return { admin, executor };
+  // Publishing an Application Composition is administrative: the runtime role holds SELECT only.
+  const adminExecutor = yield* makeTestDatabaseFromClient(admin, coreRelations);
+  return { admin, adminExecutor, executor };
 });
 
 type LiveDatabase = Effect.Success<typeof disposableDatabase>['executor'];
@@ -500,11 +516,39 @@ const liveApprovals = Effect.fn('CanonicalOwnerFixture.liveApprovals')(function*
 
 const approvalsFor = (live: LiveApprovalServices, scope: OperationalScope) => liveApprovalsService(live, scope);
 
+/**
+ * The native Action approval lifecycle over the SAME real gate, stores and owner release as the
+ * runner. `makeActionApprovalLifecycleV2` is the shipped constructor: its `owners` are the actual
+ * Catalog owner release published for this disposable database, so ordinary module-operation
+ * admission admits the real `createBrandAction` and the lifecycle's own composition-authority lock
+ * fences the same revision the runner admitted. The result adds `actionCommands`, which both the
+ * approvals service and the mandate adapter refuse to work without.
+ */
+const nativeApprovalServices = (input: {
+  readonly enforcement: AccessEnforcementPorts;
+  readonly executor: LiveDatabase;
+  readonly live: LiveApprovalServices & LiveMandateStores;
+  readonly owners: readonly RegisteredActionOwnerV2[];
+  readonly seam: AccessDecisionService;
+}) =>
+  makeActionApprovalLifecycleV2().pipe(
+    Effect.provideService(ActionApprovalLifecycleV2Ports, {
+      database: { enrollment: APP_DATABASE_IDENTITY_ENROLLMENT, executor: input.executor },
+      enforcement: input.enforcement,
+      frozenCommands: input.live.frozenCommands,
+      live: input.live,
+      owners: input.owners,
+    }),
+    Effect.provideService(AccessDecisionGate, input.seam),
+    Effect.map((actionCommands) => ({ ...input.live, actionCommands })),
+  );
+
 const mandateDispatchFor = (live: LiveApprovalServices & LiveMandateStores, executor: LiveDatabase) =>
   makeDrizzleActionMandateDispatch().pipe(
     Effect.provideService(
       MandateDispatchPorts,
       liveMandateDispatchPorts({
+        actionCommands: live.actionCommands,
         approvalsFor: (scope) => approvalsFor(live, scope),
         database: { executor },
         enrollment: APP_DATABASE_IDENTITY_ENROLLMENT,
@@ -519,6 +563,7 @@ const makeRuntime = (
   crypto: Crypto.Crypto,
   dispatch: ActionMandateDispatch,
   accessDecision: BoundAccessGate,
+  owner: RegisteredActionOwnerV2,
 ): ActionRuntimeService =>
   makeActionRuntime(
     { executor },
@@ -528,8 +573,12 @@ const makeRuntime = (
     testOperationalScopeResolver,
     {
       accessDecision,
-      ...openActionRuntimeOptions,
+      applicationComposition: owner.applicationComposition,
+      databaseIdentities: APP_DATABASE_IDENTITY_ENROLLMENT,
+      expectedDeployment: owner.expectedDeployment,
       mandateDispatch: dispatch,
+      moduleEntrypointGateway: openActionRuntimeOptions.moduleEntrypointGateway,
+      moduleStateGate: openActionRuntimeOptions.moduleStateGate,
       // Module-operation admission refuses a non-Core Action whose owner registration is unbound.
       ownerRegistration: catalogRegistration,
     },
@@ -540,6 +589,10 @@ const makeRuntime = (
  * injected port is the engine check itself — a real `makeSpiceDbDecisionCheckPort` over a real gRPC
  * SpiceDB, never a hardcoded `DecisionCheck`. `bindAccessGate` (not `bindLiveAccessGate`) is used so
  * the check port stays this suite's real transport instead of `DecisionCheckLive`'s ambient config.
+ *
+ * The raw seam and its five enforcement ports are returned beside the bound gate: the native Action
+ * approval lifecycle binds the SAME seam with the SAME ports, so the mandate's authority is the one
+ * canonical gate. Nothing unwraps the bound gate; the composition keeps the ports it really built.
  */
 const canonicalGate = (executor: LiveDatabase, checkPort: DecisionCheckPort) =>
   Effect.gen(function* canonicalGateEffect() {
@@ -564,7 +617,8 @@ const canonicalGate = (executor: LiveDatabase, checkPort: DecisionCheckPort) =>
       intent: Context.get(built, AccessIntent),
       principalKinds: Context.get(built, AccessPrincipalKindSource),
     };
-    return bindAccessGate(Context.get(built, AccessDecisionGate), portsOfComposition);
+    const seam = Context.get(built, AccessDecisionGate);
+    return { bound: bindAccessGate(seam, portsOfComposition), ports: portsOfComposition, seam };
   });
 
 /** The production projection writer over the seeded intent: the graph the canonical gate checks. */
@@ -590,7 +644,7 @@ const projectionWriter = (executor: LiveDatabase, compiler: ReturnType<typeof ma
  * after the suite, including its projected tuples. Do not run these fixtures concurrently.
  */
 const withCanonical = Effect.gen(function* canonicalScenario() {
-  const { admin, executor } = yield* disposableDatabase;
+  const { admin, adminExecutor, executor } = yield* disposableDatabase;
   const spiceConfig = yield* loadSpiceDbConfig({ envPath: NO_ENVIRONMENT_FILE });
   // The suite owns the engine's schema, so it starts from exactly the v2 definitions Core serves.
   yield* Effect.acquireUseRelease(
@@ -615,8 +669,8 @@ const withCanonical = Effect.gen(function* canonicalScenario() {
   // The graph the gate reads is the production writer's, verified against intent.
   expect(report.verified).toBe(true);
   expect(report.units.length).toBeGreaterThan(0);
-  const gate = yield* canonicalGate(executor, makeSpiceDbDecisionCheckPort(rpc));
-  return { admin, executor, gate, spiceConfig };
+  const { bound: gate, ports, seam } = yield* canonicalGate(executor, makeSpiceDbDecisionCheckPort(rpc));
+  return { admin, adminExecutor, executor, gate, ports, seam, spiceConfig };
 });
 
 /** The real declaration carrier of the production Action, asked the way an entrypoint asks it. */
@@ -841,7 +895,7 @@ it.layer(
           Effect.sync(() => openSpiceDbGrpcRpc({ ...spiceConfig, preSharedKey: 'canonical-owner-invalid-key' }, 2000)),
           (current) => Effect.sync(() => current.close()),
         );
-        const unavailableGate = yield* canonicalGate(executor, makeSpiceDbDecisionCheckPort(refusedRpc));
+        const { bound: unavailableGate } = yield* canonicalGate(executor, makeSpiceDbDecisionCheckPort(refusedRpc));
         const decision = yield* decide(unavailableGate, EVA, 'run');
         expect(decision.outcome).toBe('UNAVAILABLE');
         expect(decision.evidence).toEqual([]);
@@ -858,14 +912,22 @@ it.layer(
   suite.effect('parks on the canonical NEEDS_APPROVAL, then approves and executes exactly once', () =>
     onLiveClock(
       Effect.gen(function* canonicalParkApproveExecute() {
-        const { admin, executor, gate } = yield* withCanonical;
-        const live = yield* liveApprovals(executor);
+        const { admin, adminExecutor, executor, gate, ports, seam } = yield* withCanonical;
+        const { owner, owners } = yield* publishActualCatalogOwnerComposition(adminExecutor);
+        const base = yield* liveApprovals(executor);
+        const live = yield* nativeApprovalServices({ enforcement: ports, executor, live: base, owners, seam });
         const jana = yield* scopeFor(JANA);
         const eva = yield* scopeFor(EVA);
         const mirek = yield* scopeFor(MIREK);
         const crypto = yield* Crypto.Crypto;
         const dispatch = yield* mandateDispatchFor(live, executor);
-        const runtime = makeRuntime(executor, crypto, dispatch, gate);
+        const runtime = makeRuntime(executor, crypto, dispatch, gate, owner);
+        const expectedCommand = yield* makeActionCommandV2({
+          payload: PAYLOAD,
+          registration: createBrandAction,
+          scope: jana,
+        });
+        const expectedDigest = Result.getOrThrow(freezeActionCommandV2(expectedCommand));
 
         // No matching authority is refused by the canonical gate before any proposal exists.
         expect(yield* refusalOf(runtime.runAction(proposeRequest(mirek, 'canonical-mirek')))).toBe(
@@ -887,7 +949,7 @@ it.layer(
         expect(receipt?.capability_key).toBe(CAPABILITY_TEXT);
         expect(receipt?.scope_id).toBe(TENANT_SCOPE);
         expect(receipt?.requester_principal_id).toBe(JANA);
-        expect(receipt?.command_digest).toBe(COMMAND_DIGEST);
+        expect(receipt?.command_digest).toBe(expectedDigest);
         // `createBrandAction` declares `selectors: []`, so the parked command is honestly targetless.
         expect(receipt?.target).toBeNull();
         expect(yield* proposalCount(admin)).toBe(1);
