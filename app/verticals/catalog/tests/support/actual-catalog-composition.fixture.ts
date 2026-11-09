@@ -111,6 +111,21 @@ const sourceContract = Effect.fn('ActualCatalogComposition.sourceContract')(func
   });
 });
 
+/** Stream source to Node so full owner contracts never become an OS-limited argv entry. */
+export const catalogSourceObservationProcess = (
+  program: string,
+  appRoot: string,
+  environment: Readonly<Record<string, string>>,
+) =>
+  ChildProcess.make(process.execPath, ['--experimental-strip-types', '--input-type=module', '-'], {
+    cwd: appRoot,
+    env: environment,
+    extendEnv: false,
+    stderr: 'pipe',
+    stdin: Stream.make(new TextEncoder().encode(program)),
+    stdout: 'pipe',
+  });
+
 /** Actual owner SOURCE identity and observed MF bytes; no deployed backend/browser receipt is claimed. */
 export const deriveActualCatalogCompositionSnapshot = Effect.fn('ActualCatalogComposition.make')(function* make(
   appRoot: string,
@@ -228,23 +243,12 @@ export const deriveActualCatalogCompositionSnapshot = Effect.fn('ActualCatalogCo
       });
       return yield* Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(composition);
     })); process.stdout.write(text); } finally { await runtime.dispose(); }`;
-  const child = yield* ChildProcess.make(
-    process.execPath,
-    ['--experimental-strip-types', '--input-type=module', '--eval', program],
-    {
-      cwd: appRoot,
-      env: {
-        APP_ENV_PATH: '/dev/null',
-        HOME: yield* Config.String('HOME'),
-        PATH: yield* Config.String('PATH'),
-        TMPDIR: yield* Config.String('TMPDIR').pipe(Config.withDefault('/tmp')),
-      },
-      extendEnv: false,
-      stderr: 'pipe',
-      stdin: 'ignore',
-      stdout: 'pipe',
-    },
-  );
+  const child = yield* catalogSourceObservationProcess(program, appRoot, {
+    APP_ENV_PATH: '/dev/null',
+    HOME: yield* Config.String('HOME'),
+    PATH: yield* Config.String('PATH'),
+    TMPDIR: yield* Config.String('TMPDIR').pipe(Config.withDefault('/tmp')),
+  });
   const [output, code] = yield* Effect.all(
     [child.stdout.pipe(Stream.decodeText(), Stream.runCollect), child.exitCode, Stream.runDrain(child.stderr)],
     { concurrency: 3 },
