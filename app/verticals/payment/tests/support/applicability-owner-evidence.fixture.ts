@@ -4,7 +4,7 @@ import type { PaymentTermRef } from '@app/payment-term-catalog-contracts/resourc
 import { Effect, Layer, Schema } from 'effect';
 
 import type { PaymentPurchasingContext } from '../../shared/domain/applicability-purchasing-context.ts';
-import type { PaymentGatewayAccountBinding } from '../../shared/domain/payment-execution-binding.ts';
+import type { PaymentCodCarrier, PaymentGatewayAccountBinding } from '../../shared/domain/payment-execution-binding.ts';
 import type { PaymentMethod } from '../../shared/domain/payment-vocabulary.ts';
 import { DeliveryCapabilityPort } from '../../src/ports/delivery-capability-port.ts';
 import type {
@@ -238,9 +238,20 @@ export const STRIPE_PRODUCTION: PaymentGatewayAccountBinding = {
   providerFamily: 'STRIPE',
 };
 
-export const codSupported = (deliveryOfferRef: string): PaymentCodCapability => ({
+/** The carrier/shipping-service binding a fixture Delivery owner confirms for a COD-capable offer. */
+export const PPL_COD_CARRIER: PaymentCodCarrier = {
+  accountRef: 'ppl-cod-contract-1',
+  environment: 'production',
+  sourceSystem: 'ppl',
+};
+
+export const codSupported = (
+  deliveryOfferRef: string,
+  carrier: PaymentCodCarrier = PPL_COD_CARRIER,
+): PaymentCodCapability => ({
   _tag: 'SUPPORTED',
   capabilityEvidenceRef: `cod-capability:${deliveryOfferRef}`,
+  carrier,
   deliveryOfferRef,
 });
 export const pickupSupported = (pickupCapabilityRef: string): PaymentPickupCollectionCapability => ({

@@ -2,6 +2,7 @@ import { PaymentTermRefSchema } from '@app/payment-term-catalog-contracts/resour
 import { Schema } from 'effect';
 
 import { PaymentMethodBranchSelectionSchema } from '../domain/applicability-contract.ts';
+import { PaymentPurchasingContextSchema } from '../domain/applicability-purchasing-context.ts';
 import {
   PaymentCustomerConfigurationIdSchema,
   PaymentIdSchema,
@@ -18,6 +19,9 @@ import { PaymentIntentViewSchema } from '../domain/lifecycle-views.ts';
  * and exact term semantic evidence become immutable. `intentKey` is the business idempotency anchor:
  * the same key with the same meaning is the same Payment, a changed meaning is a conflict.
  * `predecessorPaymentId` names the intent this one replaces; the predecessor is never mutated.
+ * `purchasingContext` is the trusted Commerce Purchasing Context of the purchase (buyer, Channel,
+ * Commerce Market); the term owner decides the Current entitlement/policy for exactly that purchase,
+ * and the Payment keeps it immutably so every later question is scoped to the same purchase (#1149).
  */
 export const CreatePaymentPayloadSchema = Schema.Struct({
   customerConfigurationId: PaymentCustomerConfigurationIdSchema,
@@ -26,6 +30,7 @@ export const CreatePaymentPayloadSchema = Schema.Struct({
   paymentTermRef: PaymentTermRefSchema,
   predecessorPaymentId: Schema.optionalKey(PaymentIdSchema),
   purchaseCorrelationId: PaymentPurchaseCorrelationIdSchema,
+  purchasingContext: PaymentPurchasingContextSchema,
   selection: PaymentMethodBranchSelectionSchema,
 });
 export type CreatePaymentPayload = typeof CreatePaymentPayloadSchema.Type;

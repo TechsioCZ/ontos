@@ -32,7 +32,8 @@ import { OutboxPayloadSchema as OperationRequestedPayloadSchema } from '../../sh
 import { requestPaymentRefundAction } from '../../src/actions/request-payment-refund.action.ts';
 import { paymentFundsSnapshotOf } from '../../src/persistence/payment-aggregate-persistence.ts';
 import type { PaymentAggregateRecord } from '../../src/persistence/payment-aggregate-persistence.ts';
-import { failureCodeOf, paymentTestRelations } from './database-fixture.ts';
+import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
+import { COMPOSITION_REVISION, failureCodeOf, paymentTestRelations } from './database-fixture.ts';
 import {
   closedCommitment,
   compensationRefund,
@@ -187,6 +188,7 @@ it.live('#1150 Attempt to refund half of one item: 250 CZK of a 500 CZK item is 
 it.live('#1150 Two concurrent refunds overlap: a reserved item conflicts and no new key or basis evades it', () =>
   native(
     Effect.gen(function* overlappingRefundsConflict() {
+      yield* installPaymentTestCompositionAuthority(COMPOSITION_REVISION);
       const refundCase = yield* newRefundCase({ amountMinor: 100_000, collected: true });
       const owners = { commitment: closedCommitment, items: threeItems };
       const first = yield* requestRefund(refundCase, itemsRefund(refundCase, 'refund-b', [B]), owners);
@@ -227,6 +229,7 @@ it.live('#1150 Two concurrent refunds overlap: a reserved item conflicts and no 
 it.live('#1150 Refund response is lost: B stays reserved and the same REFUND keeps its original binding', () =>
   native(
     Effect.gen(function* lostRefundResponse() {
+      yield* installPaymentTestCompositionAuthority(COMPOSITION_REVISION);
       const refundCase = yield* newRefundCase({ amountMinor: 100_000, collected: true });
       const owners = { items: threeItems };
       const payload = itemsRefund(refundCase, 'refund-b', [B]);
@@ -487,6 +490,7 @@ it.live('#1150 A prior refund is not deducted twice: 1000 collected, 600 confirm
 it.live('#1150 Pending return cannot be carved out to create partial compensation', () =>
   native(
     Effect.gen(function* noCarvedOutCompensation() {
+      yield* installPaymentTestCompositionAuthority(COMPOSITION_REVISION);
       const refundCase = yield* newRefundCase({ amountMinor: 100_000, collected: true });
       const owners = { commitment: closedCommitment, items: threeItems };
       const uncertain = yield* requestRefund(refundCase, itemsRefund(refundCase, 'refund-a', [A]), owners);
@@ -616,6 +620,7 @@ it.live('#1150 Refund a COD purchase: the merchant bank route executes it, never
         binding: {
           _tag: 'COD_DELIVERY_OFFER',
           capabilityEvidenceRef: 'cod-capability-1',
+          carrier: { accountRef: 'carrier-cod-account', environment: 'production', sourceSystem: 'ppl' },
           deliveryOfferRef: 'delivery-offer-1',
         },
         collected: true,

@@ -22,7 +22,12 @@ import type {
   PaymentSourceFactFamily,
   PaymentSourceKind,
 } from '../../shared/domain/payment-vocabulary.ts';
-import { observations, reconciliationCases, sourceAuthorities } from '../../src/database/schema.ts';
+import {
+  observations,
+  reconciliationCases,
+  sourceAuthorities,
+  sourceAuthorityRevisions,
+} from '../../src/database/schema.ts';
 import { paymentAggregatePersistenceForTransaction } from '../../src/persistence/payment-aggregate-persistence.ts';
 import {
   COMPOSITION_REVISION,
@@ -282,7 +287,28 @@ export const seedSourceAuthority = Effect.fn('RefundNativeRuntime.seedSourceAuth
         status: options.status ?? 'ACTIVE',
         tenantId: scope.tenantId,
       })
-      .returning({ sourceAuthorityId: sourceAuthorities.sourceAuthorityId }),
+      .returning()
+      .pipe(
+        // Its first revision binds the scope principal: every statement of the suite is submitted as it.
+        Effect.tap((created) =>
+          transaction.insert(sourceAuthorityRevisions).values(
+            created.map((row) => ({
+              actionInvocationId: row.actionInvocationId,
+              actorPrincipalId: row.actorPrincipalId,
+              compositionRevision: row.compositionRevision,
+              legalEntityId: row.legalEntityId,
+              reason: row.reason,
+              recordedAt: row.configuredAt,
+              refundRoute: row.refundRoute,
+              revision: row.revision,
+              sourceAuthorityId: row.sourceAuthorityId,
+              status: row.status,
+              submitterPrincipalIds: [scope.principalId],
+              tenantId: row.tenantId,
+            })),
+          ),
+        ),
+      ),
   );
   return rows.map((row) => row.sourceAuthorityId).join('');
 });

@@ -237,6 +237,13 @@ export const sourceAuthorityRevisions = paymentSchema.table.withRLS(
     sourceAuthorityId: uuid('source_authority_id').notNull(),
     sourceAuthorityRevisionId: uuid('source_authority_revision_id').defaultRandom().primaryKey(),
     status: text('status').$type<PaymentSourceAuthorityStatus>().notNull(),
+    /**
+     * The principals allowed to submit statements as this source at this revision (#1152/#1153): the
+     * configured integration/provider or operator principals. The authority's Current binding is the
+     * set of its current revision; a revoked binding is a later revision without that principal.
+     * Not null for every revision written after the binding existed (NOT VALID over older rows).
+     */
+    submitterPrincipalIds: uuid('submitter_principal_ids').array(),
   },
   (table) => [
     unique('payment_source_authority_revisions_number_uk').on(
@@ -259,6 +266,10 @@ export const sourceAuthorityRevisions = paymentSchema.table.withRLS(
       sql`${table.status} in (${literalList(PAYMENT_SOURCE_AUTHORITY_STATUSES)})`,
     ),
     check('payment_source_authority_revisions_revision_ck', sql`${table.revision} > 0`),
+    check(
+      'payment_source_authority_revisions_submitters_ck',
+      sql`${table.submitterPrincipalIds} is not null and cardinality(${table.submitterPrincipalIds}) between 1 and 100 and array_ndims(${table.submitterPrincipalIds}) = 1 and array_position(${table.submitterPrincipalIds}, null) is null`,
+    ),
     reasonCheck('payment_source_authority_revisions_reason_ck', table.reason),
     compositionRevisionCheck('payment_source_authority_revisions_composition_ck', table.compositionRevision),
     ...tenantLegalEntityRlsPolicies('payment_source_authority_revisions', table.tenantId, table.legalEntityId),
@@ -288,6 +299,13 @@ export const payments = paymentSchema.table.withRLS(
     paymentTermRef: jsonb('payment_term_ref').$type<Schema.Json>().notNull(),
     predecessorPaymentId: uuid('predecessor_payment_id'),
     purchaseCorrelationId: text('purchase_correlation_id').notNull(),
+    /**
+     * The trusted Commerce Purchasing Context the intent was created for (#1147/#1149): buyer subject,
+     * Channel, Commerce Market and context revision. Immutable; every later entitlement/policy question
+     * about this Payment is scoped to exactly this purchase. Not null for every Payment created after
+     * the column existed (NOT VALID over older rows).
+     */
+    purchasingContext: jsonb('purchasing_context').$type<Schema.Json>(),
     termSemanticEvidence: jsonb('term_semantic_evidence').$type<Schema.Json>().notNull(),
   },
   (table) => [
@@ -315,6 +333,10 @@ export const payments = paymentSchema.table.withRLS(
       sql`jsonb_typeof(${table.executionBinding}) = 'object' and jsonb_typeof(${table.paymentTermRef}) = 'object' and jsonb_typeof(${table.termSemanticEvidence}) = 'object'`,
     ),
     opaqueCheck('payment_payments_purchase_ck', table.purchaseCorrelationId),
+    check(
+      'payment_payments_purchasing_context_ck',
+      sql`${table.purchasingContext} is not null and jsonb_typeof(${table.purchasingContext}) = 'object'`,
+    ),
     opaqueCheck('payment_payments_configuration_ck', table.customerConfigurationId),
     check('payment_payments_intent_key_ck', sql`${table.intentKey} ~ '^[!-~]{1,200}$'`),
     compositionRevisionCheck('payment_payments_composition_ck', table.compositionRevision),
@@ -512,7 +534,7 @@ export const observations = paymentSchema.table.withRLS(
     acceptanceOutcome: text('acceptance_outcome').$type<PaymentObservationAcceptanceOutcome>().notNull(),
     accountRef: text('account_ref').notNull(),
     amountMinor: bigint('amount_minor', { mode: 'number' }),
-    /** Set exactly for an accepted SOURCE_CORRECTION; only REDUCE_ESTABLISHED_COLLECTION reduces coverage. */
+    /** Required exactly for an accepted SOURCE_CORRECTION; only REDUCE_ESTABLISHED_COLLECTION reduces coverage. */
     correctionEffect: text('correction_effect').$type<PaymentCorrectionEffectKind>(),
     correctsObservationId: uuid('corrects_observation_id'),
     currency: text('currency'),
@@ -584,7 +606,7 @@ export const observations = paymentSchema.table.withRLS(
     ),
     check(
       'payment_observations_correction_effect_ck',
-      sql`${table.correctionEffect} is null or (${table.factKind} = 'SOURCE_CORRECTION' and ${table.acceptanceOutcome} = 'ACCEPTED_OBSERVATION' and ${table.correctionEffect} in (${literalList(PAYMENT_CORRECTION_EFFECTS)}))`,
+      sql`(${table.correctionEffect} is not null) = (${table.factKind} = 'SOURCE_CORRECTION' and ${table.acceptanceOutcome} = 'ACCEPTED_OBSERVATION') and (${table.correctionEffect} is null or ${table.correctionEffect} in (${literalList(PAYMENT_CORRECTION_EFFECTS)}))`,
     ),
     check(
       'payment_observations_vocabulary_ck',

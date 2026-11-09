@@ -27,8 +27,9 @@ const domainEvents = {} as const;
 
 /**
  * Configures one exact source authority (#1152). The fact family, source kind, method and refund route
- * must form an authorized combination; the current row advances by one revision with an append-only
- * history row, and an unchanged configuration is an idempotent no-op.
+ * must form an authorized combination; the principals bound to submit as the source are part of the
+ * configuration (#1153). The current row advances by one revision with an append-only history row that
+ * records the bound principals, and an unchanged configuration is an idempotent no-op.
  */
 export const handleConfigurePaymentSourceAuthority = Effect.fn('ConfigurePaymentSourceAuthority.handle')(
   function* configurePaymentSourceAuthority(
@@ -57,6 +58,7 @@ export const handleConfigurePaymentSourceAuthority = Effect.fn('ConfigurePayment
       refundRoute: payload.refundRoute,
       source: payload.source,
       status: payload.status,
+      submitterPrincipalIds: payload.submitterPrincipalIds,
     });
     yield* context.recordAuditEvidence({ reason: payload.reason });
     const { authority } = configured;
@@ -74,6 +76,7 @@ export const handleConfigurePaymentSourceAuthority = Effect.fn('ConfigurePayment
       },
       sourceAuthorityId: authority.sourceAuthorityId,
       status: authority.status,
+      submitterPrincipalIds: authority.submitterPrincipalIds,
     } satisfies ConfigurePaymentSourceAuthorityResult;
   },
 );

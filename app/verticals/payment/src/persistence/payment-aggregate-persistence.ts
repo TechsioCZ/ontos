@@ -10,6 +10,8 @@ import { and, asc, eq } from 'drizzle-orm';
 import { DateTime, Effect, Option, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
+import { PaymentPurchasingContextSchema } from '../../shared/domain/applicability-purchasing-context.ts';
+import type { PaymentPurchasingContext } from '../../shared/domain/applicability-purchasing-context.ts';
 import { paymentConflict } from '../../shared/domain/payment-conflict.ts';
 import type { PaymentConflict } from '../../shared/domain/payment-conflict.ts';
 import { PaymentExecutionBindingSchema } from '../../shared/domain/payment-execution-binding.ts';
@@ -73,6 +75,8 @@ export interface PaymentRecord {
   readonly predecessorPaymentId: string | undefined;
   readonly provenance: PaymentExecutionProvenance;
   readonly purchaseCorrelationId: string;
+  /** The exact trusted Commerce Purchasing Context the intent was created for; immutable. */
+  readonly purchasingContext: PaymentPurchasingContext;
   readonly tenantId: string;
   readonly termSemanticEvidence: PaymentTermDefinitionSnapshot;
 }
@@ -126,6 +130,8 @@ export interface NewPaymentInput {
   readonly predecessorPaymentId?: string;
   readonly provenance: PaymentExecutionProvenance;
   readonly purchaseCorrelationId: string;
+  /** The trusted Commerce Purchasing Context of the purchase (#1147/#1149); part of the material. */
+  readonly purchasingContext: PaymentPurchasingContext;
   readonly termSemanticEvidence: PaymentTermDefinitionSnapshot;
 }
 
@@ -285,13 +291,17 @@ const amountOf = (amountMinor: number, currency: string) =>
 const paymentRecordOf = Effect.fn('PaymentAggregatePersistence.paymentRecordOf')(function* paymentRecordOf(
   row: PaymentRow,
 ) {
-  const [amount, executionBinding, paymentTermRef, termSemanticEvidence, method] = yield* Effect.all(
+  if (row.purchasingContext === null) {
+    return yield* paymentUnavailable('The stored Payment has no purchasing context');
+  }
+  const [amount, executionBinding, paymentTermRef, termSemanticEvidence, method, purchasingContext] = yield* Effect.all(
     [
       amountOf(row.amountMinor, row.currency),
       decodeStored(PaymentExecutionBindingSchema, row.executionBinding),
       decodeStored(PaymentTermRefSchema, row.paymentTermRef),
       decodeStored(PaymentTermDefinitionSnapshotSchema, row.termSemanticEvidence),
       decodeStored(PaymentMethodSchema, row.method),
+      decodeStored(PaymentPurchasingContextSchema, row.purchasingContext),
     ],
     { concurrency: 1 },
   );
@@ -311,6 +321,7 @@ const paymentRecordOf = Effect.fn('PaymentAggregatePersistence.paymentRecordOf')
     predecessorPaymentId: row.predecessorPaymentId ?? undefined,
     provenance: provenanceOf(row),
     purchaseCorrelationId: row.purchaseCorrelationId,
+    purchasingContext,
     tenantId: row.tenantId,
     termSemanticEvidence,
   } satisfies PaymentRecord;
@@ -579,11 +590,12 @@ export const paymentAggregatePersistenceForTransaction = (
     input: NewPaymentInput,
   ) {
     const scope = yield* ownerScope;
-    const [executionBinding, paymentTermRef, termSemanticEvidence] = yield* Effect.all(
+    const [executionBinding, paymentTermRef, termSemanticEvidence, purchasingContext] = yield* Effect.all(
       [
         encodeJson(PaymentExecutionBindingSchema, input.executionBinding),
         encodeJson(PaymentTermRefSchema, input.paymentTermRef),
         encodeJson(PaymentTermDefinitionSnapshotSchema, input.termSemanticEvidence),
+        encodeJson(PaymentPurchasingContextSchema, input.purchasingContext),
       ],
       { concurrency: 1 },
     );
@@ -598,6 +610,7 @@ export const paymentAggregatePersistenceForTransaction = (
           paymentTermRef,
           predecessorPaymentId: input.predecessorPaymentId ?? null,
           purchaseCorrelationId: input.purchaseCorrelationId,
+          purchasingContext,
           termSemanticEvidence,
         }),
         transaction
@@ -645,6 +658,7 @@ export const paymentAggregatePersistenceForTransaction = (
         paymentTermRef,
         predecessorPaymentId: input.predecessorPaymentId ?? null,
         purchaseCorrelationId: input.purchaseCorrelationId,
+        purchasingContext,
         termSemanticEvidence,
       })
       .returning()

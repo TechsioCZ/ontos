@@ -27,6 +27,7 @@ const snapshotOf = (operations: readonly PaymentFundsOperation[]): PaymentFundsS
 });
 interface StatementInput {
   readonly amountMinor?: number;
+  readonly economicEffectKey?: string;
   readonly observationId?: string;
   readonly operationId?: string;
   /** The source could not assign the return to an operation. */
@@ -36,7 +37,7 @@ interface StatementInput {
 }
 const statement = (input: StatementInput): PaymentReturnEvidence => ({
   amount: input.unmeasured === true ? undefined : czk(input.amountMinor ?? 40_000),
-  economicEffectKey: 'gopay:refund:1',
+  economicEffectKey: input.economicEffectKey ?? 'gopay:refund:1',
   observationId: input.observationId ?? 'observation-1',
   operationId: input.unassigned === true ? undefined : (input.operationId ?? 'collect-1'),
 });
@@ -65,6 +66,26 @@ describe('#1150 Prior return evidence reduces the remaining budget', () => {
     const evidence = [statement({ amountMinor: 30_000, operationId: 'refund-1' })];
     expect(remainingOf(snapshotOf([collect, refund('EFFECT_CONFIRMED')]), evidence)).toBe(70_000);
     expect(remainingOf(snapshotOf([collect, refund('PENDING')]), evidence)).toBe(70_000);
+  });
+
+  it('a second distinct return stated against an already counted REFUND is held, not folded into it', () => {
+    const evidence = [
+      statement({ amountMinor: 30_000, operationId: 'refund-1' }),
+      statement({
+        amountMinor: 30_000,
+        economicEffectKey: 'gopay:refund:2',
+        observationId: 'observation-2',
+        operationId: 'refund-1',
+      }),
+    ];
+    expect(heldReasonOf(snapshotOf([collect, refund('EFFECT_CONFIRMED')]), evidence)).toBe('UNRESOLVED_EVIDENCE');
+    // Re-exports of the one return still count once.
+    expect(
+      remainingOf(snapshotOf([collect, refund('EFFECT_CONFIRMED')]), [
+        statement({ amountMinor: 30_000, operationId: 'refund-1' }),
+        statement({ amountMinor: 30_000, observationId: 'observation-2', operationId: 'refund-1' }),
+      ]),
+    ).toBe(70_000);
   });
 
   it('unassignable, unmeasured or inconsistent return evidence is held', () => {

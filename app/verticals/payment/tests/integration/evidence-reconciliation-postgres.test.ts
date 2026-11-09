@@ -40,6 +40,7 @@ import type {
 import { PaymentRefundBasisSchema } from '../../shared/domain/payment-refund-basis.ts';
 import { PaymentRefundExecutionRouteSchema } from '../../shared/domain/refund-contract.ts';
 import { paymentFundsSnapshotOf } from '../../src/persistence/payment-aggregate-persistence.ts';
+import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
 import { expectSqlFailure, failureCodeOf, makeTestScope } from './database-fixture.ts';
 import {
   BANK_BINDING,
@@ -343,6 +344,7 @@ it.live('#1151 A source corrects a statement rather than reversing money; histor
       );
       expect(correctionEffectTag(decision)).toBe('REOPEN_TO_CONFLICT');
       const correction = yield* evidence.recordObservation({
+        correctionEffect: 'REOPEN_TO_CONFLICT',
         correctsObservationId: receipt,
         factKind: 'SOURCE_CORRECTION',
         operationId: collect.operationId,
@@ -626,6 +628,7 @@ const configureGopay = (evidence: EvidenceScenario) =>
     refundRoute: false,
     source: GOPAY_SOURCE,
     status: 'ACTIVE',
+    submitterPrincipalIds: [evidence.scope.principalId],
   });
 
 /** One GoPay callback; `fields` carries exactly the statement members the scenario names. */
@@ -710,6 +713,7 @@ it.live(
   () =>
     native(
       Effect.gen(function* correctionOfAttachedEvidence() {
+        yield* installPaymentTestCompositionAuthority(COMPOSITION_R1);
         const evidence = yield* scenario();
         const payment = yield* evidence.createPayment();
         const collect = yield* evidence.startOperation({
@@ -903,6 +907,80 @@ it.live('#1151 One refund observation confirms at most one REFUND through govern
   ),
 );
 
+it.live(
+  '#1151 A second distinct return held against a confirmed REFUND cannot be attached or closed into it, so its money stays held',
+  () =>
+    native(
+      Effect.gen(function* distinctReturnStaysHeld() {
+        const evidence = yield* scenario();
+        const payment = yield* evidence.createPayment();
+        const collect = yield* evidence.startOperation({
+          amountMinor: 100_000,
+          operationKey: 'collect-1',
+          paymentId: payment.paymentId,
+        });
+        yield* configureGopay(evidence);
+        yield* evidence.accept(
+          gopayStatement({
+            amount: czk(100_000),
+            economicEffectKey: 'gopay:payment:1',
+            factKind: 'COLLECTION_CONFIRMED',
+            operationId: collect.operationId,
+            paymentId: payment.paymentId,
+          }),
+        );
+        const refund = yield* evidence.startOperation({
+          amountMinor: 40_000,
+          kind: 'REFUND',
+          operationKey: 'refund-1',
+          paymentId: payment.paymentId,
+          refundBasis: itemsBasis('item-1', 40_000),
+          targetOperationId: collect.operationId,
+        });
+        const returned = (economicEffectKey: string) =>
+          evidence.accept(
+            gopayStatement({
+              amount: czk(40_000),
+              economicEffectKey,
+              factKind: 'REFUND_CONFIRMED',
+              operationId: refund.operationId,
+              paymentId: payment.paymentId,
+            }),
+          );
+        expect(yield* returned('gopay:refund:1')).toMatchObject({ acceptanceOutcome: 'ACCEPTED_OBSERVATION' });
+        expect(yield* evidence.coverage(payment.paymentId)).toBe(
+          'Established collected=100000 returned=40000 remaining=60000',
+        );
+        // The provider proves a second, distinct 400 CZK went back: it is held, not folded into refund-1.
+        const second = yield* returned('gopay:refund:2');
+        expect(second).toMatchObject({ acceptanceOutcome: 'HELD_UNRESOLVED', interpretation: 'HOLD' });
+        expect(yield* evidence.coverage(payment.paymentId)).toBe('Held UNRESOLVED_EVIDENCE');
+        const caseId = second.reconciliationCaseId ?? '';
+
+        // Attaching it to refund-1 would count two returns as one and free 400 CZK to be returned again.
+        expect(
+          yield* failureCodeOf(
+            evidence.decide({
+              caseId,
+              decision: { _tag: 'ATTACH_EVIDENCE', observationId: second.observationId },
+              reason: 'Operator attaches the second refund callback',
+            }),
+          ),
+        ).toBe('payment_reconciliation_evidence_not_qualified');
+        expect(
+          yield* failureCodeOf(
+            evidence.decide({
+              caseId,
+              decision: { _tag: 'CLOSE_CASE', evidenceRef: 'operator-note' },
+              reason: 'Close the second refund callback',
+            }),
+          ),
+        ).toBe('payment_reconciliation_obligation_unresolved');
+        expect(yield* evidence.coverage(payment.paymentId)).toBe('Held UNRESOLVED_EVIDENCE');
+      }),
+    ),
+);
+
 it.live('#1150/#1152 Refund evidence from another refund route never confirms the REFUND through attachment', () =>
   native(
     Effect.gen(function* foreignRouteAttach() {
@@ -996,6 +1074,7 @@ it.live('#1151 A re-issued correction of a re-exported receipt reduces the estab
         refundRoute: false,
         source,
         status: 'ACTIVE',
+        submitterPrincipalIds: [evidence.scope.principalId],
       });
       const statement = <
         Fields extends {

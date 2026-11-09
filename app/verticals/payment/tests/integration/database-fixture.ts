@@ -11,6 +11,7 @@ import { expect } from 'effect-rstest';
 import type { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
+import type { PaymentPurchasingContext } from '../../shared/domain/applicability-purchasing-context.ts';
 import type { PaymentExecutionProvenance } from '../../shared/domain/payment-provenance.ts';
 import { paymentAggregatePersistenceForTransaction } from '../../src/persistence/payment-aggregate-persistence.ts';
 import type {
@@ -128,6 +129,23 @@ const termSnapshotFor = (tenantId: string, resourceId: string): PaymentTermDefin
     semantics: { calculationRuleVersion: 2, calendarRule: 'NOT_APPLICABLE', kind: 'IMMEDIATE' },
   });
 
+/** The trusted Commerce Purchasing Context of one purchase: a Retail Customer profile of this Tenant. */
+export const purchasingContextFor = (scope: PaymentTestScope, purchaseRef: string): PaymentPurchasingContext => ({
+  channelId: 'web-cz',
+  contextRef: `purchasing-context-${purchaseRef}`,
+  contextRevision: '1',
+  marketId: 'market-cz',
+  subject: {
+    kind: 'PROFILE',
+    profileRef: {
+      moduleId: 'commerce.customer-context',
+      resourceId: `retail-customer-${purchaseRef}`,
+      resourceType: 'commerce.customer-context.retail-customer-profile',
+      tenantId: scope.tenantId,
+    },
+  },
+});
+
 export const newPaymentInput = Effect.fn('PaymentDatabaseFixture.newPaymentInput')(function* newPaymentInput(
   scope: PaymentTestScope,
   amountMinor = 100_000,
@@ -150,6 +168,7 @@ export const newPaymentInput = Effect.fn('PaymentDatabaseFixture.newPaymentInput
     paymentTermRef: termSemanticEvidence.paymentTermRef,
     provenance,
     purchaseCorrelationId: `purchase-${intentKey}`,
+    purchasingContext: purchasingContextFor(scope, intentKey),
     termSemanticEvidence,
   } satisfies NewPaymentInput;
 });

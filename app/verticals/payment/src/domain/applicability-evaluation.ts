@@ -175,16 +175,13 @@ const checkTermScope = (paymentTermRef: PaymentTermRef, scope: PaymentOwnerScope
     : failed('PAYMENT_TERM', 'CONFLICTING_CONFIGURATION', 'FOREIGN_TERM_REFERENCE');
 
 /** A buyer profile of another Tenant can never carry this Tenant's entitlement; the owner is not asked. */
-const checkPurchaseScope = (purchase: PaymentTermPurchase, scope: PaymentOwnerScope): CheckResult<true> =>
-  Match.value(purchase).pipe(
-    Match.tagsExhaustive({
-      PURCHASE_CORRELATION: (): CheckResult<true> => Result.succeed(true),
-      PURCHASING_CONTEXT: ({ purchasingContext: { subject } }): CheckResult<true> =>
-        subject.kind === 'PROFILE' && subject.profileRef.tenantId !== scope.tenantId
-          ? subjectMismatch('PAYMENT_TERM')
-          : Result.succeed(true),
-    }),
-  );
+const checkPurchaseScope = (
+  { purchasingContext: { subject } }: PaymentTermPurchase,
+  scope: PaymentOwnerScope,
+): CheckResult<true> =>
+  subject.kind === 'PROFILE' && subject.profileRef.tenantId !== scope.tenantId
+    ? subjectMismatch('PAYMENT_TERM')
+    : Result.succeed(true);
 
 /**
  * The C15 snapshot must itself be Current at evaluation time: an owner answer that calls a term
@@ -279,6 +276,7 @@ const interpretCodCapability = (
             Result.succeed({
               _tag: 'COD_DELIVERY_OFFER',
               capabilityEvidenceRef: supported.capabilityEvidenceRef,
+              carrier: supported.carrier,
               deliveryOfferRef: supported.deliveryOfferRef,
             }),
         }),

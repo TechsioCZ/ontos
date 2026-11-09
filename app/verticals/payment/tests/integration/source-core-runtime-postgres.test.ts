@@ -2,14 +2,19 @@ import { randomUUID } from 'node:crypto';
 
 import { NodeCrypto } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, Effect, Predicate } from 'effect';
+import { Crypto, Effect, Predicate, Schema } from 'effect';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/access/enforcement/owner-overlay.ts';
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
-import { coreRelations, outboxMessages } from '../../../../packages/core-runtime/src/db/schema.ts';
+import {
+  coreRelations,
+  outboxMessages,
+  principalAuthBindings,
+  principals,
+} from '../../../../packages/core-runtime/src/db/schema.ts';
 import { makeScriptedBoundAccessGate } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
 import { testOperationalScopeResolver } from '../../../../packages/core-runtime/tests/fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../../../../packages/core-runtime/tests/support/action-runtime-options.ts';
@@ -19,11 +24,13 @@ import {
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { AcceptPaymentObservationPayloadSchema } from '../../shared/actions/accept-payment-observation.ts';
 import type { PaymentExecutionBinding } from '../../shared/domain/payment-execution-binding.ts';
+import { PaymentSourceRejected } from '../../shared/domain/source-statement.ts';
 import { acceptPaymentObservationAction } from '../../src/actions/accept-payment-observation.action.ts';
 import { configurePaymentSourceAuthorityAction } from '../../src/actions/configure-payment-source-authority.action.ts';
 import { recordPaymentLocalEvidenceAction } from '../../src/actions/record-payment-local-evidence.action.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
 import { collectInput, makeTestScope, newPaymentInput, withPersistence } from './database-fixture.ts';
+import type { PaymentTestScope } from './database-fixture.ts';
 import {
   COMPOSITION_R1,
   COMPOSITION_R2,
@@ -57,6 +64,33 @@ const pickupBinding: PaymentExecutionBinding = {
   capabilityEvidenceRef: 'pickup-capability-evidence-1',
   pickupCapabilityRef: 'pickup-prague-1',
 };
+
+/** One more active principal of the scope's Tenant (an integration, provider or POS operator identity). */
+const seedPrincipal = Effect.fn('SourceCoreRuntime.seedPrincipal')(function* seedPrincipal(
+  database: EvidenceNativeDatabase,
+  scope: PaymentTestScope,
+  displayName: string,
+) {
+  const principalId = randomUUID();
+  yield* database.coreAdmin.insert(principals).values({
+    displayName,
+    kind: 'human',
+    principalId,
+    status: 'active',
+    tenantId: scope.tenantId,
+  });
+  yield* database.coreAdmin.insert(principalAuthBindings).values({
+    authenticationNamespaceId: 'test.payment-evidence.v1',
+    principalAuthBindingId: principalId,
+    principalId,
+    provider: 'better_auth',
+    providerSubjectId: `payment-source-${principalId}`,
+    status: 'active',
+    subjectType: 'user',
+    tenantId: scope.tenantId,
+  });
+  return { principal: principalOf({ ...scope, principalId }), principalId };
+});
 
 const runtimesFor = Effect.fn('SourceCoreRuntime.runtimes')(function* runtimesFor(
   database: EvidenceNativeDatabase,
@@ -102,6 +136,7 @@ it.live('#1152 #1151 Late bank evidence through the real Core runtime: ERP recei
           refundRoute: false,
           source: erpBank,
           status: 'ACTIVE',
+          submitterPrincipalIds: [scope.principalId],
         },
         principal,
         registration: configurePaymentSourceAuthorityAction,
@@ -255,6 +290,226 @@ it.live('#1152 Unauthorized manual mark paid through the real Core runtime: refu
         persistence.loadAggregate(payment.record.paymentId),
       );
       expect(after.payment.coverageRevision).toBe(payment.record.coverageRevision);
+    }),
+  ),
+);
+
+/** The refusal of a statement from a principal that is not bound to the claimed source authority. */
+const isSourceRejected = Schema.is(PaymentSourceRejected);
+const expectForbiddenSource = (failure: { readonly _tag: string }) =>
+  expect(isSourceRejected(failure) ? failure.code : undefined).toBe('payment_source_authority_forbidden');
+
+it.live(
+  '#1153 #1152 Only principals bound to a source authority speak as it: bound accepted, another permitted principal and a revoked binding refused',
+  () =>
+    native(
+      Effect.gen(function* boundSubmitters() {
+        const { admin, runtime } = yield* testDatabaseClients;
+        const database: EvidenceNativeDatabase = {
+          coreAdmin: yield* makeTestDatabaseFromClient(admin, coreRelations),
+          database: yield* makeTestDatabaseFromClient(runtime, coreRelations),
+          runtimeClient: runtime,
+        };
+        const scope = yield* makeTestScope;
+        yield* seedCoreScope(database, scope);
+        const staff = principalOf(scope);
+        const erp = yield* seedPrincipal(database, scope, 'ERP integration principal');
+        const carrier = yield* seedPrincipal(database, scope, 'Carrier integration principal');
+        // Every principal here holds payment.core.observation.accept: the permission alone is not the source.
+        const actions = yield* runtimesFor(database, COMPOSITION_R1);
+        const configure = (submitterPrincipalIds: readonly string[], expectedRevision?: number) => {
+          const binding = {
+            factFamily: 'BANK_ACCOUNTING_RECEIPT',
+            method: 'BANK_TRANSFER_ADVANCE',
+            reason: 'The customer ERP is the accounting System of Record',
+            refundRoute: false,
+            source: erpBank,
+            status: 'ACTIVE',
+            submitterPrincipalIds,
+          } as const;
+          return actions.runAction({
+            payload: expectedRevision === undefined ? binding : { ...binding, expectedRevision },
+            principal: staff,
+            registration: configurePaymentSourceAuthorityAction,
+            transport: { correlationId: 'payment-source-bind', idempotencyKey: randomUUID() },
+          });
+        };
+        const bound = yield* configure([erp.principalId]);
+        expect([bound.revision, bound.submitterPrincipalIds]).toEqual([1, [erp.principalId]]);
+
+        const paymentInput = yield* newPaymentInput(scope);
+        const payment = yield* withPersistence(database.database, scope, (persistence) =>
+          persistence.insertPayment({
+            ...paymentInput,
+            executionBinding: bankBinding,
+            method: 'BANK_TRANSFER_ADVANCE',
+          }),
+        );
+        const collectRequest = yield* collectInput(
+          scope,
+          { amountMinor: 100_000, paymentId: payment.record.paymentId },
+          'collect-1',
+        );
+        const collect = yield* withPersistence(database.database, scope, (persistence) =>
+          persistence.insertOperation({ ...collectRequest, binding: bankBinding }),
+        );
+        const receipt = (sourceOccurrenceId: string) =>
+          ({
+            amount: { amountMinor: 100_000, currency: 'CZK' },
+            evidenceRef: `voucher-${sourceOccurrenceId}`,
+            factFamily: 'BANK_ACCOUNTING_RECEIPT',
+            factKind: 'COLLECTION_CONFIRMED',
+            paymentId: payment.record.paymentId,
+            source: erpBank,
+            sourceOccurrenceId,
+            sourceRevision: 1,
+          }) satisfies typeof AcceptPaymentObservationPayloadSchema.Encoded;
+        const submit = (
+          principal: ReturnType<typeof principalOf>,
+          payload: typeof AcceptPaymentObservationPayloadSchema.Encoded,
+        ) =>
+          actions.runAction({
+            payload,
+            principal,
+            registration: acceptPaymentObservationAction,
+            transport: { correlationId: 'payment-source-bound-submit', idempotencyKey: randomUUID() },
+          });
+        const recorded = () =>
+          admin.unsafe<{ observations: number; outcome: string }>(
+            `select (select count(*)::integer from payment.observations where tenant_id = $1) as observations,
+                    (select outcome from payment.payment_operations where operation_id = $2) as outcome`,
+            [scope.tenantId, collect.record.operationId],
+          );
+
+        // Another principal holding the same permission names the ERP source: refused, nothing written.
+        expectForbiddenSource(yield* submit(carrier.principal, receipt('bank-line-forged')).pipe(Effect.flip));
+        // The configuring staff principal is not a submitter of the source either.
+        expectForbiddenSource(yield* submit(staff, receipt('bank-line-staff')).pipe(Effect.flip));
+        expect(yield* recorded()).toEqual([{ observations: 0, outcome: 'PENDING' }]);
+
+        // The bound ERP principal is the source: its receipt confirms the collection.
+        const accepted = yield* submit(erp.principal, receipt('bank-line-1'));
+        expect(accepted).toMatchObject({
+          acceptanceOutcome: 'ACCEPTED_OBSERVATION',
+          outcomeChange: { from: 'PENDING', to: 'EFFECT_CONFIRMED' },
+          sourceAuthorityId: bound.sourceAuthorityId,
+        });
+
+        // Revoking the binding is a new audited revision; the former submitter is then refused.
+        const rebound = yield* configure([carrier.principalId], 1);
+        expect([rebound.changed, rebound.revision, rebound.submitterPrincipalIds]).toEqual([
+          true,
+          2,
+          [carrier.principalId],
+        ]);
+        const correction = {
+          correctsObservationId: accepted.observationId,
+          factFamily: 'BANK_ACCOUNTING_RECEIPT',
+          factKind: 'SOURCE_CORRECTION',
+          paymentId: payment.record.paymentId,
+          source: erpBank,
+          sourceOccurrenceId: 'bank-line-1-storno',
+          sourceRevision: 1,
+        } satisfies typeof AcceptPaymentObservationPayloadSchema.Encoded;
+        expectForbiddenSource(yield* submit(erp.principal, correction).pipe(Effect.flip));
+        expect(yield* recorded()).toEqual([{ observations: 1, outcome: 'EFFECT_CONFIRMED' }]);
+
+        // The binding history is append-only: each revision keeps the submitters it bound.
+        const revisions = yield* admin.unsafe<{ revision: number; submitter_principal_ids: string[] }>(
+          `select revision, submitter_principal_ids from payment.source_authority_revisions
+            where source_authority_id = $1 order by revision`,
+          [bound.sourceAuthorityId],
+        );
+        expect(revisions).toEqual([
+          { revision: 1, submitter_principal_ids: [erp.principalId] },
+          { revision: 2, submitter_principal_ids: [carrier.principalId] },
+        ]);
+      }),
+    ),
+);
+
+it.live('#1153 #1152 Local POS evidence is accepted only from an operator bound to the configured POS source', () =>
+  native(
+    Effect.gen(function* boundOperator() {
+      const { admin, runtime } = yield* testDatabaseClients;
+      const database: EvidenceNativeDatabase = {
+        coreAdmin: yield* makeTestDatabaseFromClient(admin, coreRelations),
+        database: yield* makeTestDatabaseFromClient(runtime, coreRelations),
+        runtimeClient: runtime,
+      };
+      const scope = yield* makeTestScope;
+      yield* seedCoreScope(database, scope);
+      const staff = principalOf(scope);
+      const cashier = yield* seedPrincipal(database, scope, 'Prague store cashier');
+      const actions = yield* runtimesFor(database, COMPOSITION_R1);
+      const posSource = {
+        accountRef: 'pos-drawer-1',
+        environment: 'production',
+        sourceKind: 'LOCAL_POS_OPERATOR',
+        sourceSystem: 'store-pos',
+      } as const;
+      yield* actions.runAction({
+        payload: {
+          factFamily: 'LOCAL_POS_COLLECTION',
+          method: 'PAY_ON_PICKUP_OR_ON_SITE',
+          reason: 'The Prague store POS records pickup payments',
+          refundRoute: false,
+          source: posSource,
+          status: 'ACTIVE',
+          submitterPrincipalIds: [cashier.principalId],
+        },
+        principal: staff,
+        registration: configurePaymentSourceAuthorityAction,
+        transport: { correlationId: 'payment-source-pos', idempotencyKey: randomUUID() },
+      });
+      const paymentInput = yield* newPaymentInput(scope);
+      const payment = yield* withPersistence(database.database, scope, (persistence) =>
+        persistence.insertPayment({
+          ...paymentInput,
+          executionBinding: pickupBinding,
+          method: 'PAY_ON_PICKUP_OR_ON_SITE',
+        }),
+      );
+      const collectRequest = yield* collectInput(
+        scope,
+        { amountMinor: 100_000, paymentId: payment.record.paymentId },
+        'collect-1',
+      );
+      yield* withPersistence(database.database, scope, (persistence) =>
+        persistence.insertOperation({ ...collectRequest, binding: pickupBinding }),
+      );
+      const record = (principal: ReturnType<typeof principalOf>, sourceOccurrenceId: string) =>
+        actions.runAction({
+          payload: {
+            amount: { amountMinor: 100_000, currency: 'CZK' },
+            evidenceRef: sourceOccurrenceId,
+            factFamily: 'LOCAL_POS_COLLECTION',
+            factKind: 'COLLECTION_CONFIRMED',
+            paymentId: payment.record.paymentId,
+            pickupCapabilityRef: 'pickup-prague-1',
+            reason: 'Customer paid at pickup',
+            source: posSource,
+            sourceOccurrenceId,
+            sourceRevision: 1,
+          },
+          principal,
+          registration: recordPaymentLocalEvidenceAction,
+          transport: { correlationId: 'payment-source-pos-record', idempotencyKey: randomUUID() },
+        });
+
+      // Holding the local-evidence permission is not being the configured POS operator.
+      expectForbiddenSource(yield* record(staff, 'pos-receipt-staff').pipe(Effect.flip));
+      const [before] = yield* admin.unsafe<{ observations: number }>(
+        'select count(*)::integer as observations from payment.observations where tenant_id = $1',
+        [scope.tenantId],
+      );
+      expect(before).toEqual({ observations: 0 });
+
+      const accepted = yield* record(cashier.principal, 'pos-receipt-882');
+      expect(accepted).toMatchObject({
+        acceptanceOutcome: 'ACCEPTED_OBSERVATION',
+        outcomeChange: { from: 'PENDING', to: 'EFFECT_CONFIRMED' },
+      });
     }),
   ),
 );

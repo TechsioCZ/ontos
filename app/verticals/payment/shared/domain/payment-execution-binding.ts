@@ -6,6 +6,7 @@ import {
   PaymentPickupCapabilityRefSchema,
   PaymentProviderAccountRefSchema,
   PaymentSourceEnvironmentSchema,
+  PaymentSourceSystemSchema,
 } from './payment-identifiers.ts';
 import { PaymentGatewayProviderFamilySchema } from './payment-vocabulary.ts';
 
@@ -24,9 +25,21 @@ export type PaymentGatewayAccountBinding = typeof PaymentGatewayAccountBindingSc
 /** Bank transfer in advance and deferred invoice: receipt is evidenced by configured bank/accounting authority. */
 export const PaymentBankAccountingReceiptBindingSchema = Schema.TaggedStruct('BANK_ACCOUNTING_RECEIPT', {});
 
-/** Exact selected Delivery Offer and its owner-issued COD capability evidence. */
+/**
+ * The carrier/shipping-service source binding the Delivery owner confirmed for the selected offer. Only
+ * this exact CARRIER source may evidence the COD customer collection (#1152 "Authority by fact family").
+ */
+export const PaymentCodCarrierSchema = Schema.Struct({
+  accountRef: PaymentProviderAccountRefSchema,
+  environment: PaymentSourceEnvironmentSchema,
+  sourceSystem: PaymentSourceSystemSchema,
+});
+export type PaymentCodCarrier = typeof PaymentCodCarrierSchema.Type;
+
+/** Exact selected Delivery Offer, its confirmed carrier and its owner-issued COD capability evidence. */
 export const PaymentCodDeliveryOfferBindingSchema = Schema.TaggedStruct('COD_DELIVERY_OFFER', {
   capabilityEvidenceRef: PaymentEvidenceRefSchema,
+  carrier: PaymentCodCarrierSchema,
   deliveryOfferRef: PaymentDeliveryOfferRefSchema,
 });
 

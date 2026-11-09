@@ -6,6 +6,7 @@ import { OperationContextUnavailable, defineAction, defineTenantModuleEntrypoint
 import { DateTime, Effect, Option, Schema } from 'effect';
 
 import { CreatePaymentPayloadSchema, CreatePaymentResultSchema } from '../../shared/actions/create-payment.ts';
+import { PaymentPurchasingContextSchema } from '../../shared/domain/applicability-purchasing-context.ts';
 import type { CreatePaymentPayload, CreatePaymentResult } from '../../shared/actions/create-payment.ts';
 import { PaymentLifecycleConflict, paymentLifecycleConflict } from '../../shared/domain/lifecycle-conflict.ts';
 import {
@@ -50,6 +51,8 @@ const domainEvents = { [PAYMENT_CREATED]: PaymentCreatedPayloadSchema } as const
 
 type CreatePaymentContext = ActionHandlerContext<typeof domainEvents, PaymentLifecycleServices>;
 
+const samePurchasingContext = Schema.toEquivalence(PaymentPurchasingContextSchema);
+
 /**
  * An existing intent key recovers its Payment unchanged (a new invocation is not a new intent). Owner
  * evidence is not re-derived for it: the persisted meaning, binding and term snapshot are immutable.
@@ -61,7 +64,10 @@ const recoverExistingIntent = Effect.fn('CreatePaymentAction.recoverExistingInte
 ) {
   const existing = yield* services.aggregate.lockPayment(paymentId);
   const request = { ...payload, predecessorPaymentId: Option.fromNullishOr(payload.predecessorPaymentId) };
-  if (!isSameIntentMaterial(existing, request)) {
+  if (
+    !isSameIntentMaterial(existing, request) ||
+    !samePurchasingContext(existing.purchasingContext, payload.purchasingContext)
+  ) {
     return yield* paymentConflict(
       'payment_intent_material_conflict',
       'The intent key already identifies a materially different Payment; a changed meaning needs a new intent',
@@ -135,7 +141,7 @@ export const handleCreatePayment = Effect.fn('CreatePaymentAction.handle')(funct
     customerConfigurationId: payload.customerConfigurationId,
     enablements,
     paymentTermRef: payload.paymentTermRef,
-    purchase: { _tag: 'PURCHASE_CORRELATION', purchaseCorrelationId: payload.purchaseCorrelationId },
+    purchase: { _tag: 'PURCHASING_CONTEXT', purchasingContext: payload.purchasingContext },
     scope: { legalEntityId, tenantId },
     selections: [payload.selection],
   });
@@ -154,6 +160,7 @@ export const handleCreatePayment = Effect.fn('CreatePaymentAction.handle')(funct
     paymentTermRef: branch.term.paymentTermRef,
     provenance,
     purchaseCorrelationId: payload.purchaseCorrelationId,
+    purchasingContext: payload.purchasingContext,
     termSemanticEvidence: branch.term.semanticSnapshot,
   };
   const inserted = yield* services.aggregate.insertPayment(

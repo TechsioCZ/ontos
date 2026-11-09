@@ -6,7 +6,8 @@ import { sameAmount } from './money.ts';
  * Prior return evidence in the refund funds guard (#1150 "Prior return evidence reduces the remaining
  * budget"). A qualified REFUND_CONFIRMED statement proves money of this Payment already went back to
  * the customer. When it describes a Payment REFUND that the shared calculator already counts
- * (confirmed or reserved), it adds nothing. Otherwise it is a confirmed return of the collection it
+ * (confirmed or reserved), it adds nothing; a second, distinct proven effect stated against that same
+ * REFUND cannot be told apart from it and holds new returns. Otherwise it is a confirmed return of the collection it
  * names, counted once per proven economic effect, whether or not its reconciliation case is closed.
  * A statement that cannot be assigned or measured holds new returns instead of inventing funds.
  */
@@ -84,15 +85,23 @@ export const fundsSnapshotWithPriorReturns = (
 ): PaymentFundsSnapshot => {
   const operations = new Map(snapshot.operations.map((operation) => [operation.operationId, operation]));
   const priorReturns: PaymentFundsOperation[] = [];
+  /** The proven economic effect each counted REFUND already stands for. */
+  const refundEffects = new Map<string, string>();
   let ambiguous = false;
   for (const group of groupByEconomicEffect(evidence)) {
-    const counted = group.some((statement) =>
+    const countedRefund = group.find((statement) =>
       describesCountedRefund(
         statement,
         statement.operationId === undefined ? undefined : operations.get(statement.operationId),
       ),
     );
-    if (!counted) {
+    if (countedRefund?.operationId !== undefined && countedRefund.economicEffectKey !== undefined) {
+      // A second proven return stated against the same REFUND is not that REFUND: hold, never fold it in.
+      const prior = refundEffects.get(countedRefund.operationId);
+      ambiguous ||= prior !== undefined && prior !== countedRefund.economicEffectKey;
+      refundEffects.set(countedRefund.operationId, prior ?? countedRefund.economicEffectKey);
+    }
+    if (countedRefund === undefined) {
       const prior = collectionReturnOf(group, operations);
       if (prior === undefined) {
         ambiguous = true;

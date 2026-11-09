@@ -52,6 +52,7 @@ import {
   reconciliationDecisions,
   recoveryRequests,
   sourceAuthorities,
+  sourceAuthorityRevisions,
 } from '../../src/database/schema.ts';
 import { termSemanticOf } from '../../src/domain/authorization-currentness.ts';
 import { paymentAggregatePersistenceForTransaction } from '../../src/persistence/payment-aggregate-persistence.ts';
@@ -232,6 +233,21 @@ export interface ObservationSpec {
   readonly sourceAuthorityId: string | undefined;
 }
 
+/**
+ * Every accepted SOURCE_CORRECTION records what it did to the Current interpretation (database-enforced).
+ * A correction that names no amount disproves the whole statement, which reopens it to CONFLICT; a
+ * partial correction must name its effect explicitly.
+ */
+const correctionEffectOf = (spec: ObservationSpec): PaymentCorrectionEffectKind | null => {
+  if (spec.correctionEffect !== undefined) {
+    return spec.correctionEffect;
+  }
+  const acceptedCorrection =
+    spec.factKind === 'SOURCE_CORRECTION' &&
+    (spec.acceptanceOutcome ?? 'ACCEPTED_OBSERVATION') === 'ACCEPTED_OBSERVATION';
+  return acceptedCorrection && spec.amountMinor === undefined ? 'REOPEN_TO_CONFLICT' : null;
+};
+
 /** Built by each test file (which owns runtime construction) from the shared lifecycle harness. */
 export interface EvidenceScenarioInput {
   readonly native: EvidenceNativeDatabase;
@@ -319,6 +335,32 @@ export const evidenceScenarioOf = ({ native, r1, r2, scope }: EvidenceScenarioIn
       }),
     ).pipe(Effect.map((written) => written.record));
 
+  /**
+   * The authority's first revision, as the source-authority Action records it: the scope principal is
+   * the bound source principal, since every statement of these scenarios is submitted as that principal.
+   */
+  const bindSubmitter = (
+    transaction: Effect.Success<ReturnType<typeof installOperationalScope>>,
+    row: typeof sourceAuthorities.$inferSelect,
+  ) =>
+    transaction
+      .insert(sourceAuthorityRevisions)
+      .values({
+        actionInvocationId: row.actionInvocationId,
+        actorPrincipalId: row.actorPrincipalId,
+        compositionRevision: row.compositionRevision,
+        legalEntityId: row.legalEntityId,
+        reason: row.reason,
+        recordedAt: row.configuredAt,
+        refundRoute: row.refundRoute,
+        revision: row.revision,
+        sourceAuthorityId: row.sourceAuthorityId,
+        status: row.status,
+        submitterPrincipalIds: [scope.principalId],
+        tenantId: row.tenantId,
+      })
+      .pipe(Effect.as(row.sourceAuthorityId));
+
   const configureAuthority = (status: PaymentSourceAuthorityStatus = 'ACTIVE') =>
     inTransaction((_aggregate, _evidence, transaction) =>
       Effect.gen(function* insertAuthorityRow() {
@@ -343,8 +385,8 @@ export const evidenceScenarioOf = ({ native, r1, r2, scope }: EvidenceScenarioIn
             status,
             tenantId: scope.tenantId,
           })
-          .returning({ sourceAuthorityId: sourceAuthorities.sourceAuthorityId });
-        return row?.sourceAuthorityId ?? '';
+          .returning();
+        return row === undefined ? '' : yield* bindSubmitter(transaction, row);
       }),
     );
 
@@ -363,7 +405,7 @@ export const evidenceScenarioOf = ({ native, r1, r2, scope }: EvidenceScenarioIn
             actorPrincipalId: audit.actorPrincipalId,
             amountMinor: spec.amountMinor ?? null,
             compositionRevision: audit.compositionRevision,
-            correctionEffect: spec.correctionEffect ?? null,
+            correctionEffect: correctionEffectOf(spec),
             correctsObservationId: spec.correctsObservationId ?? null,
             currency: spec.amountMinor === undefined ? null : 'CZK',
             economicEffectKey: spec.economicEffectKey ?? null,
@@ -523,8 +565,8 @@ export const evidenceScenarioOf = ({ native, r1, r2, scope }: EvidenceScenarioIn
             status: 'ACTIVE',
             tenantId: scope.tenantId,
           })
-          .returning({ sourceAuthorityId: sourceAuthorities.sourceAuthorityId });
-        return row?.sourceAuthorityId ?? '';
+          .returning();
+        return row === undefined ? '' : yield* bindSubmitter(transaction, row);
       }),
     );
 

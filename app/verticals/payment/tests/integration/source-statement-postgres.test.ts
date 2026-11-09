@@ -82,6 +82,11 @@ const bankBinding: PaymentExecutionBinding = { _tag: 'BANK_ACCOUNTING_RECEIPT' }
 const codBinding: PaymentExecutionBinding = {
   _tag: 'COD_DELIVERY_OFFER',
   capabilityEvidenceRef: 'cod-capability-evidence-1',
+  carrier: {
+    accountRef: pplCarrier.accountRef,
+    environment: pplCarrier.environment,
+    sourceSystem: pplCarrier.sourceSystem,
+  },
   deliveryOfferRef: 'ppl-delivery-offer-1',
 };
 const pickupBinding: PaymentExecutionBinding = {
@@ -113,12 +118,19 @@ const inActionTransaction = <A, E>(
     }),
   );
 
+/**
+ * Configures one authority through the real handler. Unless the scenario names other submitters, the
+ * scope's own principal is the bound source principal, since every statement here runs as that principal.
+ */
 const configure = Effect.fn('SourceTest.configure')(function* configure(
   database: PaymentTestDatabase,
   scope: PaymentTestScope,
-  encoded: typeof ConfigurePaymentSourceAuthorityPayloadSchema.Encoded,
+  encoded: ConfigureWithoutSubmitters & Partial<Pick<ConfigureEncoded, 'submitterPrincipalIds'>>,
 ) {
-  const payload = yield* Schema.decodeUnknownEffect(ConfigurePaymentSourceAuthorityPayloadSchema)(encoded);
+  const payload = yield* Schema.decodeUnknownEffect(ConfigurePaymentSourceAuthorityPayloadSchema)({
+    ...encoded,
+    submitterPrincipalIds: encoded.submitterPrincipalIds ?? [scope.principalId],
+  });
   return yield* inActionTransaction(database, scope, COMPOSITION_REVISION, (services, base) => {
     const { descriptor } = configurePaymentSourceAuthorityAction;
     const collector = createActionCollector(
@@ -240,6 +252,7 @@ const outcomeOf = Effect.fn('SourceTest.outcomeOf')(function* outcomeOf(
 
 type AcceptEncoded = typeof AcceptPaymentObservationPayloadSchema.Encoded;
 type ConfigureEncoded = typeof ConfigurePaymentSourceAuthorityPayloadSchema.Encoded;
+type ConfigureWithoutSubmitters = Omit<ConfigureEncoded, 'submitterPrincipalIds'>;
 
 const bankReceipt = (paymentId: string, overrides: Partial<AcceptEncoded> = {}): AcceptEncoded => ({
   amount: { amountMinor: 100_000, currency: 'CZK' },
@@ -259,7 +272,7 @@ const authorityFor = (
   factFamily: ConfigureEncoded['factFamily'],
   method: PaymentMethod,
   refundRoute = false,
-): ConfigureEncoded => ({
+): ConfigureWithoutSubmitters => ({
   factFamily,
   method,
   reason: `Configured ${factFamily} authority`,

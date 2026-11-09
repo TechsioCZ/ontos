@@ -86,6 +86,13 @@ const payloadWith = (payableAmount: { readonly amountMinor: number; readonly cur
   payableAmount,
   paymentTermRef: termRef,
   purchaseCorrelationId: 'purchase-1',
+  purchasingContext: {
+    channelId: 'web-cz',
+    contextRef: 'purchasing-context-1',
+    contextRevision: '1',
+    marketId: 'market-cz',
+    subject: { guestEvidenceRef: 'guest-evidence-1', guestSessionRef: 'guest-session-1', kind: 'GUEST' },
+  },
   selection: { method: 'BANK_TRANSFER_ADVANCE' },
 });
 const blocked = (reason: PredecessorBlockReason, blockingOperationId = Option.none<string>()) =>
@@ -138,7 +145,12 @@ describe('#1148 lifecycle rules', () => {
       ),
     ).toBe(false);
     expect(selectionMatchesBinding({ method: 'ONLINE_GATEWAY' }, gateway)).toBe(false);
-    const cod = { _tag: 'COD_DELIVERY_OFFER' as const, capabilityEvidenceRef: 'cap-1', deliveryOfferRef: 'offer-1' };
+    const cod = {
+      _tag: 'COD_DELIVERY_OFFER' as const,
+      capabilityEvidenceRef: 'cap-1',
+      carrier: { accountRef: 'carrier-account-1', environment: 'production', sourceSystem: 'ppl' },
+      deliveryOfferRef: 'offer-1',
+    };
     expect(selectionMatchesBinding({ deliveryOfferRef: 'offer-1', method: 'CASH_ON_DELIVERY' }, cod)).toBe(true);
     expect(selectionMatchesBinding({ deliveryOfferRef: 'offer-2', method: 'CASH_ON_DELIVERY' }, cod)).toBe(false);
     const pickup = {

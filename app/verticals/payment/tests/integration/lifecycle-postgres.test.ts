@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { NodeCrypto } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, Deferred, Effect, Fiber, Option, Result, Schema } from 'effect';
+import { Crypto, Deferred, Effect, Fiber, Layer, Option, Result, Schema } from 'effect';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -36,6 +36,7 @@ import {
   PaymentCoverageNotCollectedSchema,
   PaymentCoverageZeroPayableSchema,
 } from '../../shared/domain/lifecycle-views.ts';
+import type { PaymentPurchasingContext } from '../../shared/domain/applicability-purchasing-context.ts';
 import { PaymentConflict } from '../../shared/domain/payment-conflict.ts';
 import type { PaymentMethod, PaymentOperationOutcome } from '../../shared/domain/payment-vocabulary.ts';
 import { createPaymentAction } from '../../src/actions/create-payment.action.ts';
@@ -48,6 +49,8 @@ import {
   refundItemClaims,
 } from '../../src/database/schema.ts';
 import type { PaymentAggregatePersistence } from '../../src/persistence/payment-aggregate-persistence.ts';
+import { PaymentTermEvidencePort } from '../../src/ports/payment-term-evidence-port.ts';
+import type { PaymentTermPurchase } from '../../src/ports/payment-term-evidence-port.ts';
 import { paymentApplicabilityPersistenceForTransaction } from '../../src/persistence/payment-applicability-persistence.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
 import {
@@ -56,11 +59,14 @@ import {
   makeLifecycleOwnerContractFixture,
 } from '../support/lifecycle-owner-contract.fixture.ts';
 import type { LifecycleOwnerContractState } from '../support/lifecycle-owner-contract.fixture.ts';
+import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
 import {
+  COMPOSITION_REVISION,
   failureCodeOf,
   makeTestScope,
   operationalScopeOf,
   provenanceFor,
+  purchasingContextFor,
   withPersistence,
 } from './database-fixture.ts';
 import type { PaymentTestScope } from './database-fixture.ts';
@@ -265,6 +271,7 @@ interface IntentOverrides {
   readonly payableAmount?: { readonly amountMinor: number; readonly currency: string };
   readonly predecessorPaymentId?: string;
   readonly purchaseCorrelationId?: string;
+  readonly purchasingContext?: PaymentPurchasingContext;
   readonly selection?: { readonly method: string; readonly selectedBinding?: typeof LIFECYCLE_GATEWAY_BINDING };
 }
 
@@ -299,12 +306,14 @@ const lifecycleScenario = Effect.fn('LifecycleScenario.make')(function* lifecycl
     tenantId: scope.tenantId,
   };
   const intent = (overrides: IntentOverrides = {}) => {
+    const purchaseCorrelationId = overrides.purchaseCorrelationId ?? `purchase-${randomUUID()}`;
     const base = {
       customerConfigurationId: CUSTOMER_CONFIGURATION,
       intentKey: overrides.intentKey ?? `intent-${randomUUID()}`,
       payableAmount: overrides.payableAmount ?? { amountMinor: 100_000, currency: 'CZK' },
       paymentTermRef,
-      purchaseCorrelationId: overrides.purchaseCorrelationId ?? `purchase-${randomUUID()}`,
+      purchaseCorrelationId,
+      purchasingContext: overrides.purchasingContext ?? purchasingContextFor(scope, purchaseCorrelationId),
       selection: overrides.selection ?? { method: 'ONLINE_GATEWAY', selectedBinding: LIFECYCLE_GATEWAY_BINDING },
     };
     const { predecessorPaymentId } = overrides;
@@ -458,6 +467,62 @@ it.live('#1148 the same intent key recovers the same Payment; a changed meaning 
   ),
 );
 
+it.live(
+  '#1147 #1149 create-payment scopes the term question to the exact trusted purchasing context and keeps it immutably',
+  () =>
+    runNative(
+      Effect.gen(function* purchaseScopedIntent() {
+        const scenario = yield* lifecycleScenario();
+        const asked: PaymentTermPurchase[] = [];
+        const recordingTerms = Layer.succeed(PaymentTermEvidencePort, {
+          verifyTermUse: ({ paymentTermRef, purchase }) =>
+            Effect.sync(() => {
+              asked.push(purchase);
+              return {
+                _tag: 'USABLE' as const,
+                entitlementEvidenceRef: `ccc-entitlement-${paymentTermRef.resourceId}`,
+                paymentTermRef,
+                semanticSnapshot: lifecycleTermSnapshot(paymentTermRef, 1),
+              };
+            }),
+        });
+        const create = (payload: ReturnType<typeof scenario.intent>) =>
+          scenario.r1.actions
+            .runAction({
+              payload,
+              principal: scenario.principal,
+              registration: createPaymentAction,
+              transport: { correlationId: 'payment-lifecycle-purchase-scope', idempotencyKey: randomUUID() },
+            })
+            .pipe(Effect.provide(recordingTerms), Effect.provide(scenario.owners.layer));
+        const purchaseCorrelationId = `purchase-${randomUUID()}`;
+        const buyer = purchasingContextFor(scenario.scope, 'buyer-anna');
+        const payload = scenario.intent({ purchaseCorrelationId, purchasingContext: buyer });
+        const created = yield* create(payload);
+
+        // The owner was asked about this buyer, Channel and Market, never about the merchant configuration.
+        expect(asked).toStrictEqual([{ _tag: 'PURCHASING_CONTEXT', purchasingContext: buyer }]);
+        const [stored] = yield* scenario.native.coreAdmin
+          .select({ purchasingContext: payments.purchasingContext })
+          .from(payments)
+          .where(eq(payments.paymentId, created.payment.paymentId));
+        expect(stored?.purchasingContext).toStrictEqual(buyer);
+
+        // The same intent for another buyer is a different meaning, never a silent replay.
+        const otherBuyer = purchasingContextFor(scenario.scope, 'buyer-bohdan');
+        expect(yield* failureCodeOf(create({ ...payload, purchasingContext: otherBuyer }))).toBe(
+          'payment_intent_material_conflict',
+        );
+        // A buyer profile of another Tenant never carries this Tenant's entitlement; the owner is not asked.
+        const foreign = purchasingContextFor({ ...scenario.scope, tenantId: randomUUID() }, 'buyer-foreign');
+        const refused = yield* Effect.flip(create(scenario.intent({ purchasingContext: foreign })));
+        expect(refused).toMatchObject({ outcome: 'CONFLICTING_CONFIGURATION' });
+        expect(asked).toHaveLength(1);
+        expect(yield* paymentRows(scenario)).toHaveLength(1);
+      }),
+    ),
+);
+
 it.live('#1148 money is exact CZK integer minor units: fractions, negatives and other currencies are refused', () =>
   runNative(
     Effect.gen(function* exactMoney() {
@@ -529,6 +594,7 @@ it.live(
   () =>
     runNative(
       Effect.gen(function* changingAmount() {
+        yield* installPaymentTestCompositionAuthority(COMPOSITION_REVISION);
         const scenario = yield* lifecycleScenario();
         const purchaseCorrelationId = `purchase-${randomUUID()}`;
         const original = yield* scenario.create(
@@ -716,6 +782,7 @@ it.live(
   () =>
     runNative(
       Effect.gen(function* samePurchaseUnresolved() {
+        yield* installPaymentTestCompositionAuthority(COMPOSITION_REVISION);
         const scenario = yield* lifecycleScenario();
         yield* enableMethod(scenario.native, scenario.scope, CUSTOMER_CONFIGURATION, 'BANK_TRANSFER_ADVANCE');
         const purchaseCorrelationId = `purchase-${randomUUID()}`;
@@ -1024,6 +1091,7 @@ it.live('#1149 start-payment-collection emits operation-requested with the origi
 it.live('#1148 Retrying a collection: an INDETERMINATE COLLECT replayed by a new invocation keeps its identity', () =>
   runNative(
     Effect.gen(function* retryIndeterminate() {
+      yield* installPaymentTestCompositionAuthority(COMPOSITION_REVISION);
       const scenario = yield* lifecycleScenario();
       const { paymentId, request } = yield* paymentWithCollection(scenario);
       const original = yield* scenario.collect(request('collect-retry'));

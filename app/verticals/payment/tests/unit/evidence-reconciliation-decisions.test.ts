@@ -8,6 +8,7 @@ import { decidePaymentReconciliation, PaymentReconciliationStep } from '../../sr
 import type {
   PaymentReconciliationCaseEvidence,
   PaymentReconciliationCaseSubject,
+  PaymentReconciliationEstablishedEffect,
   PaymentReconciliationEvidenceFacts,
   PaymentReconciliationOperationView,
 } from '../../src/domain/evidence-reconciliation.ts';
@@ -33,6 +34,8 @@ const facts = (overrides: Partial<PaymentReconciliationEvidenceFacts> = {}): Pay
   amount: czk(100_000),
   corrected: false,
   countedToward: [],
+  economicEffectKey: absent,
+  establishedEffects: [],
   factKind: 'COLLECTION_CONFIRMED',
   observationId: 'obs-1',
   operationId: COLLECT_ID,
@@ -81,6 +84,23 @@ const closeHeld = (held: Option.Option<PaymentReconciliationCaseEvidence>) =>
   rejectionCode(decide(close, 'EFFECT_CONFIRMED', Option.none(), openCase, held));
 const closeHeldCorrection = (overrides: Partial<PaymentReconciliationCaseEvidence>) =>
   closeHeld(caseEvidence({ factKind: 'SOURCE_CORRECTION', ...overrides }));
+
+/** A statement that already confirmed the collection, recorded under `economicEffectKey`. */
+const established = (
+  economicEffectKey: string | undefined,
+  observationId = 'obs-0',
+): PaymentReconciliationEstablishedEffect => ({
+  economicEffectKey,
+  factKind: 'COLLECTION_CONFIRMED',
+  observationId,
+  operationId: COLLECT_ID,
+});
+/** Attaches a held collection statement of `economicEffectKey` to the collection of the open case. */
+const attachWith = (
+  economicEffectKey: string | undefined,
+  establishedEffects: readonly PaymentReconciliationEstablishedEffect[],
+  outcome: PaymentOperationOutcome = 'EFFECT_CONFIRMED',
+) => rejectionCode(decide(attach, outcome, Option.some(facts({ economicEffectKey, establishedEffects }))));
 
 describe('#1151 governed reconciliation decisions', () => {
   it('#1151 attaching qualified configured evidence resolves a conflicting operation to the proven outcome', () => {
@@ -237,6 +257,28 @@ describe('#1151 governed reconciliation decisions', () => {
     expect(attachCounted([undefined])).toBe('payment_reconciliation_evidence_not_qualified');
     expect(attachCounted([COLLECT_ID])).toBe('applied');
     expect(attachCounted([])).toBe('applied');
+  });
+
+  it('#1151 a statement of a distinct economic effect never confirms an operation another effect established', () => {
+    // A second proven receipt (or return) is a separate monetary effect: it is not folded into this one.
+    expect(attachWith('gopay:payment:2', [established('gopay:payment:1')])).toBe(
+      'payment_reconciliation_evidence_not_qualified',
+    );
+    expect(attachWith('gopay:payment:2', [established('gopay:payment:1')], 'CONFLICT')).toBe(
+      'payment_reconciliation_evidence_not_qualified',
+    );
+    // The same effect, an unkeyed statement, its own earlier attachment or another operation's effect still attach.
+    expect(attachWith('gopay:payment:1', [established('gopay:payment:1')])).toBe('applied');
+    expect(attachWith(absent, [established('gopay:payment:1')])).toBe('applied');
+    expect(attachWith('gopay:payment:2', [established(absent)])).toBe('applied');
+    expect(attachWith('gopay:payment:2', [established('gopay:payment:1', 'obs-1')])).toBe('applied');
+    expect(attachWith('gopay:payment:2', [{ ...established('gopay:payment:1'), operationId: 'collect-2' }])).toBe(
+      'applied',
+    );
+    // Statements that claim no money are not effects to count.
+    expect(attachWith('gopay:payment:2', [{ ...established('gopay:payment:1'), factKind: 'COLLECTION_PENDING' }])).toBe(
+      'applied',
+    );
   });
 
   it('#1150/#1152 refund evidence attaches only from the refund route the REFUND was requested through', () => {

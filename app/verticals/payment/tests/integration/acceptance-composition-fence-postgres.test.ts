@@ -10,7 +10,7 @@ import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platf
 import { PgClient } from '@effect/sql-pg';
 import { and, count, eq, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
-import { ConfigProvider, Crypto, Effect, Exit, Layer, Schema } from 'effect';
+import { ConfigProvider, Crypto, DateTime, Effect, Exit, Layer, Schema } from 'effect';
 import type { Scope } from 'effect';
 import type { ChildProcessSpawner } from 'effect/process';
 import { expect, it } from 'effect-rstest';
@@ -29,10 +29,10 @@ import {
 } from '../../../../packages/core-runtime/src/db/schema.ts';
 import {
   isApplicationCompositionDurableWorkDrained,
-  isApplicationCompositionWorkDrained,
   lockApplicationCompositionAuthority,
 } from '../../../../packages/core-runtime/src/modules/application-composition-authority.ts';
 import { makeModuleEntrypointGateway } from '../../../../packages/core-runtime/src/modules/module-entrypoint-gateway.ts';
+import { makeOutboxRepository } from '../../../../packages/core-runtime/src/outbox/repository.ts';
 import { makeModuleStateGate } from '../../../../packages/core-runtime/src/modules/module-state-gate.ts';
 import { makeTenantModuleStateService } from '../../../../packages/core-runtime/src/modules/tenant-module-state-service.ts';
 import type { TenantModuleState } from '../../../../packages/core-runtime/src/modules/tenant-module-state-service.ts';
@@ -426,22 +426,21 @@ it.live(
               eq(applicationCompositionDurableWork.originalRevision, payment.revision),
             ),
           );
-        const tracked = (yield* trackedPaymentWork).length > 0;
+        // The unknown effect is Core durable work of payment.core under the revision that admitted it.
+        const unknownCollectWork = [`payment-operation:${payment.scope.tenantId}:${collect.operationId}`];
+        expect((yield* trackedPaymentWork).map((work) => work.workId)).toEqual(unknownCollectWork);
 
         // Publication closes new durable admission and asks for drain completion through Core.
         yield* payment.isolated.composition.closeAdmission();
         expect(yield* payment.authority).toMatchObject({ durableWorkAdmission: 'closed', phase: 'active' });
-        const drain = yield* Effect.exit(payment.isolated.composition.drain());
-        // Tracked Payment work holds the drain itself; otherwise Payment's undelivered Outbox work does.
-        expect(Exit.isSuccess(drain)).toBe(!tracked);
-        const drainComplete = yield* payment.database.coreAdmin.transaction((transaction) =>
-          Exit.isSuccess(drain)
-            ? isApplicationCompositionWorkDrained(transaction, payment.revision)
-            : isApplicationCompositionDurableWorkDrained(transaction, payment.revision),
+        const durableWorkDrained = payment.database.coreAdmin.transaction((transaction) =>
+          isApplicationCompositionDurableWorkDrained(transaction, payment.revision),
         );
-        expect(drainComplete).toBe(false);
-        // No release step can seal R1 over the unresolved work.
+        // The tracked unknown effect holds R1: drain cannot start, drain is not complete, R1 cannot seal.
+        expect(Exit.isFailure(yield* Effect.exit(payment.isolated.composition.drain()))).toBe(true);
+        expect(yield* durableWorkDrained).toBe(false);
         expect(Exit.isFailure(yield* Effect.exit(payment.isolated.composition.seal()))).toBe(true);
+        expect(yield* payment.authority).toMatchObject({ phase: 'active', revision: payment.revision });
 
         // The original debt stays explicit: no fake DONE, no deleted work, no R1-to-R2 relabelling.
         expect({
@@ -451,7 +450,7 @@ it.live(
         }).toEqual(debtBefore);
         expect((yield* paymentMessages).every((message) => message.matchedAt === null)).toBe(true);
         expect(openCase?.status).toBe('OPEN');
-        // No privileged bypass: closing the case is refused, by the fence or by the unresolved obligation.
+        // No privileged bypass: closing the case is refused while the obligation is unresolved.
         const closeCase = yield* failureCodeOf(
           evidence.decide({
             caseId: openCase?.caseId ?? '',
@@ -459,10 +458,29 @@ it.live(
             reason: 'Close the case so the release can drain',
           }),
         );
-        expect(closeCase).toBe(
-          Exit.isSuccess(drain) ? 'action_transaction_failed' : 'payment_reconciliation_obligation_unresolved',
-        );
+        expect(closeCase).toBe('payment_reconciliation_obligation_unresolved');
         expect(yield* evidence.rows.cases(created.paymentId)).toEqual(debtBefore.cases);
+
+        // Core's real Outbox matcher keeps running while admission is closed. No consumer of Payment's
+        // topics is in this composition, so it records the rows as matched with zero deliveries: that is
+        // delivery bookkeeping, never completion of the Payment work.
+        const matched = yield* makeOutboxRepository(payment.database.database, yield* Crypto.Crypto).matchUnmatched(
+          payment.revision,
+          yield* DateTime.nowAsDate,
+        );
+        expect(matched).toEqual({ deliveriesCreated: 0, messagesMatched: 2 });
+        expect((yield* paymentMessages).every((message) => message.matchedAt !== null)).toBe(true);
+        // Matched Outbox rows do not release R1: the unknown COLLECT is still tracked, so it neither
+        // drains nor seals.
+        expect(yield* durableWorkDrained).toBe(false);
+        expect(Exit.isFailure(yield* Effect.exit(payment.isolated.composition.drain()))).toBe(true);
+        expect(Exit.isFailure(yield* Effect.exit(payment.isolated.composition.seal()))).toBe(true);
+        expect((yield* trackedPaymentWork).map((work) => work.workId)).toEqual(unknownCollectWork);
+        expect({
+          cases: yield* evidence.rows.cases(created.paymentId),
+          operations: yield* evidence.rows.operations(created.paymentId),
+          transitions: yield* evidence.rows.transitions(collect.operationId),
+        }).toEqual(debtBefore);
       }),
     ),
   { timeout: 120_000 },
