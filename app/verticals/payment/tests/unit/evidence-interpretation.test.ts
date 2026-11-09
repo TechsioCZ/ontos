@@ -467,6 +467,16 @@ describe('#1151 Payment evidence interpretation', () => {
     expect(interpretPaymentObservation(keyed, observed({}))).toEqual(distinct);
     expect(interpretPaymentObservation(keyless, observed({}))).toEqual(corroborates);
     expect(interpretPaymentObservation(keyed, observed({ economicEffectKey: 'charge:1' }))).toEqual(corroborates);
+    // Keys are source-scoped: the same opaque key from another source binding is another receipt.
+    const otherBank = {
+      accountRef: 'bank-b',
+      environment: 'production',
+      sourceKind: 'BANK_ACCOUNTING',
+      sourceSystem: 'ERP',
+    } as const;
+    expect(interpretPaymentObservation(keyed, observed({ economicEffectKey: 'charge:1', source: otherBank }))).toEqual(
+      distinct,
+    );
   });
 
   it('#1150 a confirmed cancellation and a confirmed collection of one COLLECT open a conflict, never a silent hold', () => {

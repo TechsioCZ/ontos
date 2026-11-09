@@ -606,7 +606,7 @@ interface TwoPayments {
   readonly second: { readonly collectOperationId: string; readonly paymentId: string };
 }
 
-const configureSource = Effect.fn('ReviewE6Ledger.configureSource')(function* configureSource(
+const configureSource = Effect.fn('EffectLedger.configureSource')(function* configureSource(
   refundCase: RefundCase,
   source: typeof erpBank | typeof backupBank,
 ) {
@@ -628,7 +628,7 @@ const configureSource = Effect.fn('ReviewE6Ledger.configureSource')(function* co
 });
 
 /** Two pending bank-transfer Payments of one Tenant / Selling Legal Entity and the ERP receipt authority. */
-const twoBankTransferPayments = Effect.fn('ReviewE6Ledger.twoPayments')(function* twoPayments() {
+const twoBankTransferPayments = Effect.fn('EffectLedger.twoPayments')(function* twoPayments() {
   const refundCase = yield* refundCaseFor(yield* nativeLedgerRuntime, { ...bankTransferPayment, gatewayRoute: false });
   const second = yield* seedPayment(refundCase.native.database, refundCase.scope, bankTransferPayment);
   yield* configureSource(refundCase, erpBank);

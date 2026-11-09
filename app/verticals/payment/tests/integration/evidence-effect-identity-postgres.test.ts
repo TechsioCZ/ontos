@@ -20,7 +20,7 @@ import {
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
 import type { PaymentObservationFactKind } from '../../shared/domain/payment-vocabulary.ts';
-import { makeTestScope } from './database-fixture.ts';
+import { failureCodeOf, makeTestScope } from './database-fixture.ts';
 import {
   COMPOSITION_R1,
   COMPOSITION_R2,
@@ -231,6 +231,17 @@ it.live('#1151 keyed receipt then a keyless confirmation of the same amount is n
       );
       // A matching amount alone is insufficient deduplication (#1151).
       expect(keyless).toMatchObject({ acceptanceOutcome: 'HELD_UNRESOLVED', interpretation: 'HOLD' });
+      expect(yield* evidence.coverage(payment.paymentId)).toBe('Held UNRESOLVED_EVIDENCE');
+      // Governed attachment cannot erase the ambiguity either: the hold stays.
+      expect(
+        yield* failureCodeOf(
+          evidence.decide({
+            caseId: keyless.reconciliationCaseId ?? '',
+            decision: { _tag: 'ATTACH_EVIDENCE', observationId: keyless.observationId },
+            reason: 'Operator attaches the keyless confirmation to the keyed collection',
+          }),
+        ),
+      ).toBe('payment_reconciliation_evidence_not_qualified');
       expect(yield* evidence.coverage(payment.paymentId)).toBe('Held UNRESOLVED_EVIDENCE');
     }),
   ),
