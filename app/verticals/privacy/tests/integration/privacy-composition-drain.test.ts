@@ -647,6 +647,15 @@ const awaitChildReadiness = (
     ),
   );
 
+const ShellStartupFailureSchema = Schema.Literals([
+  'privacy-completion-shell:create-user',
+  'privacy-completion-shell:creator-bootstrap',
+  'privacy-completion-shell:fixture-runtime',
+  'privacy-completion-shell:module-credential',
+  'privacy-completion-shell:serve',
+]);
+const isShellStartupFailure = Schema.is(ShellStartupFailureSchema);
+
 const start = Effect.fn('PrivacyCompletionTest.start')(function* start(
   path: string,
   env: Readonly<Record<string, string>>,
@@ -712,7 +721,12 @@ const start = Effect.fn('PrivacyCompletionTest.start')(function* start(
       Effect.forkScoped,
     );
   }
-  yield* Stream.runDrain(child.stderr).pipe(Effect.forkScoped);
+  yield* child.stderr.pipe(
+    Stream.decodeText(),
+    Stream.splitLines,
+    Stream.runForEach((value) => (isShellStartupFailure(value) ? Effect.logError(value) : Effect.void)),
+    Effect.forkScoped,
+  );
   const response = retrySession === undefined ? Deferred.await(line) : Queue.take(retrySession.replies);
   // Shell is a persistent server. One-cycle workers may legitimately exit while their stdout is draining.
   const readiness = privateReply === true ? awaitChildReadiness(response, child.exitCode) : response;
@@ -1844,6 +1858,19 @@ it.effect('counts only the declared dispatch transaction failure and rejects unr
     ).toBe(false);
     expect(isDispatchTransactionRefusal(new TypeError('TEST transport failed'))).toBe(false);
     expect(isDispatchTransactionRefusal(null)).toBe(false);
+  }),
+);
+
+it.effect('admits only fixed Shell startup stage diagnostics, never private error details', () =>
+  Effect.sync(() => {
+    expect(isShellStartupFailure('privacy-completion-shell:module-credential')).toBe(true);
+    for (const value of [
+      'TEST:secret-child-diagnostic',
+      'privacy-completion-shell:serve:TEST-private-credential',
+      'privacy-completion-shell:unknown',
+    ]) {
+      expect(isShellStartupFailure(value)).toBe(false);
+    }
   }),
 );
 
