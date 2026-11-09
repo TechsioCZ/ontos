@@ -105,7 +105,7 @@ export const makeTestTenantRoleAccess = Effect.fn('TestTenantAccessRoles.make')(
   },
 ) {
   const databaseConfiguration = yield* parseDatabaseConfig({
-    DATABASE_URL: Redacted.value(input.adminConnectionString),
+    DATABASE_URL: Redacted.value(input.writerConnectionString),
   });
   const database = Context.make(CoreDatabase, yield* makeCoreDatabase(databaseConfiguration));
   const transport = yield* Effect.acquireRelease(

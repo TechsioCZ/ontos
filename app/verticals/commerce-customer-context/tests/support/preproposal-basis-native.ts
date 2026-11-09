@@ -939,20 +939,20 @@ const io = <Value>(stage: string, operation: () => Promise<Value>) =>
  * nothing: Core admits a module call by the carrier's `accessActor`, never by a grant.
  */
 const seedNativeTenantAccess = Effect.fn('PreproposalNative.seedTenantAccess')(function* seedNativeTenantAccess(input: {
-  readonly adminConnectionString: string;
   readonly core: NativeCoreFixture;
   readonly permissionEnvironment: NativePermissionEnvironment;
   readonly secondHuman: NativeCoreFixture['manager'];
+  readonly writerConnectionString: string;
 }) {
   const spiceDb = yield* parseSpiceDbConfig(input.permissionEnvironment).pipe(
     Effect.mapError(() => safeFailure('access-seed-permissions')),
   );
   return yield* grantTestTenantOwnerAccess({
-    adminConnectionString: Redacted.make(input.adminConnectionString),
     legalEntityIds: [input.core.legalEntityId],
     memberPrincipalIds: [input.secondHuman.principalId],
     owner: input.core.manager,
     spiceDb,
+    writerConnectionString: Redacted.make(input.writerConnectionString),
   });
 });
 
@@ -2174,10 +2174,10 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       'distinct-second-human-of-the-tenant',
     );
     yield* seedNativeTenantAccess({
-      adminConnectionString: owned.connections.admin.connectionString,
       core,
       permissionEnvironment,
       secondHuman,
+      writerConnectionString: owned.connections.runtime.connectionString,
     });
     const secondHumanIntent = `${intent}:second-human-cart`;
     const signBuyer = Effect.fn('PreproposalNative.TESTAuthenticationOnly')(function* signBuyer(

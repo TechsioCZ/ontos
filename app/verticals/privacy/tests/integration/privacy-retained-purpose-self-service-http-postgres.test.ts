@@ -1435,8 +1435,8 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
   );
   // Commerce decides with the production gate, so the manager owns the Tenant's v2 access.
   const accessTarget = {
-    adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
     spiceDb: yield* liveFixtureSpiceDb(fixture.permissionEnvironment),
+    writerConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
   };
   yield* grantTestTenantOwnerAccess({
     ...accessTarget,

@@ -411,9 +411,9 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
   // The denied scenario instead holds every catalog capability except the private retirement Manage one,
   // so public Retire stays granted while its independent Manage step is refused.
   const accessTarget = {
-    adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
     legalEntityIds: [fixture.legalEntityId] as const,
     spiceDb: yield* liveFixtureSpiceDb(fixture.permissionEnvironment),
+    writerConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
   };
   if (retirementManagementExecutor === 'denied') {
     const { modules } = yield* filesystem

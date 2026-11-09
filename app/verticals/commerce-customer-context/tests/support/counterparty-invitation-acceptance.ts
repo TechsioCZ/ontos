@@ -119,7 +119,7 @@ const recipientAccessWriters = Effect.fnUntraced(function* recipientAccessWriter
   const database = Context.make(
     CoreDatabase,
     yield* makeCoreDatabase(
-      yield* parseDatabaseConfig({ DATABASE_URL: Redacted.value(target.adminConnectionString) }).pipe(Effect.orDie),
+      yield* parseDatabaseConfig({ DATABASE_URL: Redacted.value(target.writerConnectionString) }).pipe(Effect.orDie),
     ),
   );
   const transport = yield* Effect.acquireRelease(

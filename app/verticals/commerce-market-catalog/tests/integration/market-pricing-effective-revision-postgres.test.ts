@@ -373,10 +373,10 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
   if (registry !== undefined) {
     // The native Registry receiver runs the real v2 gate: the manager owns the Tenant, nobody else holds access.
     yield* grantTestTenantOwnerAccess({
-      adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
       legalEntityIds: [fixture.legalEntityId],
       owner: fixture.manager,
       spiceDb: yield* liveFixtureSpiceDb(fixture.permissionEnvironment),
+      writerConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     });
   }
   const crypto = yield* Crypto.Crypto;

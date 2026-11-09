@@ -31,9 +31,13 @@ import { TenantIntentLoaderLive } from '../access/intent/tenant-intent-loader.ts
 import { AccessWriteJournalStoreLive } from '../access/lifecycle/persistence/journal-store.ts';
 import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
 import { CoreDatabase, makeCoreDatabase } from '../db/client.ts';
-import { DatabaseIdentityEnrollmentContext, defineDatabaseIdentityEnrollment } from '../db/database-identities.ts';
+import {
+  DatabaseIdentityEnrollmentContext,
+  defineDatabaseIdentityEnrollment,
+  SHARED_RUNTIME_IDENTITY,
+} from '../db/database-identities.ts';
 import type { DatabaseIdentityEnrollment } from '../db/database-identities.ts';
-import { loadDatabaseConnectionPair, parseDatabaseConfig } from '../db/config.ts';
+import { loadDatabaseConfig, parseDatabaseConfig } from '../db/config.ts';
 import type { CoreDatabaseExecutor } from '../db/types.ts';
 import { stageScopeOf } from '../install/stage-context-bootstrap.ts';
 import type { OperationalScope } from '../operations/context.ts';
@@ -44,8 +48,9 @@ const catalogUrl = new URL('../../../../topology/authorization-catalog.json', im
 
 /** The database a Tenant's access intent is written in (an isolated clone or the shared one) and its SpiceDB. */
 export interface TestTenantAccessTarget {
-  readonly adminConnectionString: Redacted.Redacted;
   readonly spiceDb: SpiceDbConfigValue;
+  /** The shared runtime login Core writes the Tenant's access intent through, never an administrative one. */
+  readonly writerConnectionString: Redacted.Redacted;
 }
 
 /** The persisted identity of a human Core already knows, as a live operation fixture carries it. */
@@ -81,12 +86,13 @@ export interface TestTenantRoleAccessInput extends TestTenantAccessTarget {
 
 /** The shared database and SpiceDB of the test environment, for a suite that runs against those. */
 export const environmentTestAccessTarget = Effect.gen(function* environmentTestAccessTarget() {
-  const [connections, spiceDb] = yield* Effect.all([loadDatabaseConnectionPair(), loadSpiceDbConfig()], {
-    concurrency: 2,
-  });
+  const [writer, spiceDb] = yield* Effect.all(
+    [loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY }), loadSpiceDbConfig()],
+    { concurrency: 2 },
+  );
   return {
-    adminConnectionString: Redacted.make(connections.admin.connectionString),
     spiceDb,
+    writerConnectionString: Redacted.make(writer.connectionString),
   } satisfies TestTenantAccessTarget;
 }).pipe(Effect.orDie);
 
@@ -154,7 +160,7 @@ const accessInstallation = Effect.fn('TestTenantAccess.installation')(function* 
   target: TestTenantAccessTarget,
 ) {
   const databaseConfiguration = yield* parseDatabaseConfig({
-    DATABASE_URL: Redacted.value(target.adminConnectionString),
+    DATABASE_URL: Redacted.value(target.writerConnectionString),
   });
   const database = Context.make(CoreDatabase, yield* makeCoreDatabase(databaseConfiguration));
   const transport = yield* Effect.acquireRelease(

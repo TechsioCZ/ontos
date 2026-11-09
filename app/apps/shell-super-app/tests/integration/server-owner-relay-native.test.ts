@@ -243,9 +243,9 @@ const makePackagedShellUserFixture = Effect.fn('ServerOwnerRelayNative.makePacka
     // administers identities. When a suite flips some capabilities itself, the owner's full role is
     // replaced by a role of every other capability of the catalog.
     const accessTarget = {
-      adminConnectionString: Redacted.make(connections.admin.connectionString),
       legalEntityIds: [core.legalEntityId] as const,
       spiceDb: yield* liveFixtureSpiceDb(core.permissionEnvironment),
+      writerConnectionString: Redacted.make(connections.runtime.connectionString),
     };
     yield* publishNativeCatalogRelease(database);
     yield* grantTestTenantOwnerAccess({ ...accessTarget, owner: core.manager });

@@ -848,13 +848,13 @@ const startQuantityPublicReceiver = Effect.fn('QuantityProfileAdmissionTests.pub
 ) {
   // The receiver decides with the production gate, so the Tenant holds the v2 access it reads.
   yield* grantTestTenantOwnerAccess({
-    adminConnectionString: Redacted.make(owner.isolated.connections.admin.connectionString),
     legalEntityIds: [
       owner.fixture.legalEntityId,
       ...(owner.fixture.secondaryLegalEntity === undefined ? [] : [owner.fixture.secondaryLegalEntity.legalEntityId]),
     ],
     owner: owner.fixture.manager,
     spiceDb: yield* liveFixtureSpiceDb(owner.fixture.permissionEnvironment),
+    writerConnectionString: Redacted.make(owner.isolated.connections.runtime.connectionString),
   });
   const pair = yield* Effect.promise(() => generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
   const publicJwk = yield* Effect.promise(() => exportJWK(pair.publicKey));
