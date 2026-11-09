@@ -435,13 +435,15 @@ test('contains a Contacts render-phase failure and rechecks revoked access acros
     await expect(page.getByRole('button', { exact: true, name: 'Reload page' })).toBeEnabled();
     await expect(page.locator('header[aria-label="Dashboard header"]')).toBeVisible();
     await expect(sidebar).toBeVisible();
-    await sidebar.getByRole('searchbox', { exact: true, name: 'Search' }).fill('still usable');
-    await expect(sidebar.getByRole('searchbox', { exact: true, name: 'Search' })).toHaveValue('still usable');
-    await sidebar.getByRole('searchbox', { exact: true, name: 'Search' }).clear();
+    await page.getByRole('searchbox', { exact: true, name: 'Search' }).fill('still usable');
+    await expect(page.getByRole('searchbox', { exact: true, name: 'Search' })).toHaveValue('still usable');
+    await page.getByRole('searchbox', { exact: true, name: 'Search' }).clear();
     await waitForInteractiveAccountMenu(page);
   } finally {
-    await restoreFault.evaluate((restore) => restore());
-    await restoreFault.dispose();
+    if (!page.isClosed()) {
+      await restoreFault.evaluate((restore) => restore());
+      await restoreFault.dispose();
+    }
   }
   // This is same-Composition browser evidence. A genuine R1 -> R2 browser publication
   // remains the separately isolated #1297 joint acceptance; observation renewal is not R2.
