@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, FileSystem, Schema } from 'effect';
+import { Config, Effect, FileSystem, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ChildProcess } from 'effect/process';
 import { parse } from 'yaml';
@@ -24,7 +24,8 @@ const Step = Schema.Struct({
 });
 const Workflow = Schema.Struct({
   jobs: Schema.Struct({
-    record: Schema.Struct({ if: Schema.String }),
+    deploy: Schema.Struct({ steps: Schema.Array(Step) }),
+    record: Schema.Struct({ if: Schema.String, steps: Schema.Array(Step) }),
     verify: Schema.Struct({
       if: Schema.String,
       steps: Schema.Array(Step),
@@ -84,6 +85,105 @@ it.effect('always validates both pinned clients and keeps OS dependency installa
     }
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+const retryHead = 'a'.repeat(40);
+const retryReceipt = {
+  lastAttempt: { runAttempt: 1, runId: 123, sourceRevision: retryHead },
+  runAttempt: 1,
+  runId: 123,
+  schemaVersion: 1,
+  services: { app: retryHead, storefront: 'b'.repeat(40) },
+  validatedHead: retryHead,
+};
+
+for (const scenario of [
+  { expectedStatus: 0, name: 'same-source job retry', remoteHead: retryHead, runId: '123', source: retryHead },
+  { expectedStatus: 1, name: 'superseded source', remoteHead: 'c'.repeat(40), runId: '123', source: retryHead },
+  { expectedStatus: 1, name: 'wrong planned source', remoteHead: retryHead, runId: '123', source: 'd'.repeat(40) },
+  { expectedStatus: 1, name: 'another run', remoteHead: retryHead, runId: '456', source: retryHead },
+]) {
+  it.effect(`checks real source identity for ${scenario.name} instead of requiring a matching attempt number`, () =>
+    Effect.gen(function* retrySourceAdmission() {
+      const fs = yield* FileSystem.FileSystem;
+      const { steps } = (yield* readWorkflow).jobs.deploy;
+      const command = steps.find((step) => step.name === 'Mark the actual deployment attempt')?.run;
+      if (command === undefined) {
+        return yield* Effect.die('The deploy must check the attempted source');
+      }
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const git = path.join(directory, 'git');
+      yield* fs.writeFileString(git, '#!/bin/bash\nprintf \'%s\\trefs/heads/demo/sales-crm\\n\' "$REMOTE_HEAD"\n');
+      yield* fs.chmod(git, 0o700);
+      const receipt = { ...retryReceipt, validatedHead: scenario.source };
+      const result = yield* collectToolingProcess(
+        ChildProcess.make('/bin/bash', ['-e', '-o', 'pipefail', '-c', command], {
+          env: {
+            GITHUB_RUN_ATTEMPT: '2',
+            GITHUB_RUN_ID: scenario.runId,
+            GITHUB_SHA: retryHead,
+            PATH: `${directory}:${yield* Config.String('PATH')}`,
+            PLANNED_RECEIPT: JSON.stringify(receipt),
+            REMOTE_HEAD: scenario.remoteHead,
+            RUNNER_TEMP: directory,
+          },
+        }),
+      );
+      expect(result.status).toBe(scenario.expectedStatus);
+      const marker = path.join(directory, 'zerops-delivery/last-attempt/attempt.json');
+      if (scenario.expectedStatus === 0) {
+        expect(
+          Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown))(yield* fs.readFileString(marker)),
+        ).toEqual({
+          runAttempt: 2,
+          runId: 123,
+          sourceRevision: retryHead,
+        });
+      } else {
+        expect(yield* fs.exists(marker)).toBe(false);
+      }
+      return yield* Effect.void;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+}
+
+it.effect('records the verified retry while preserving the actual per-service source pins', () =>
+  Effect.gen(function* recordVerifiedRetry() {
+    const fs = yield* FileSystem.FileSystem;
+    const { jobs } = yield* readWorkflow;
+    const command = jobs.record.steps.find((step) => step.name === 'Write the verified ledger')?.run;
+    if (command === undefined) {
+      return yield* Effect.die('The verified delivery must retain its source pins');
+    }
+    const directory = yield* fs.makeTempDirectoryScoped();
+    const result = yield* collectToolingProcess(
+      ChildProcess.make('/bin/bash', ['-e', '-o', 'pipefail', '-c', command], {
+        env: {
+          GITHUB_RUN_ATTEMPT: '2',
+          GITHUB_RUN_ID: '123',
+          GITHUB_SHA: retryHead,
+          PATH: yield* Config.String('PATH'),
+          RECEIPT: JSON.stringify(retryReceipt),
+          RUNNER_TEMP: directory,
+        },
+      }),
+    );
+    expect(result.status).toBe(0);
+    const recorded = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown))(
+      yield* fs.readFileString(path.join(directory, 'zerops-delivery/last-success/receipt.json')),
+    );
+    expect(recorded).toEqual({
+      ...retryReceipt,
+      lastAttempt: { runAttempt: 2, runId: 123, sourceRevision: retryHead },
+      runAttempt: 2,
+    });
+    const persistence = jobs.deploy.steps.find(
+      (step) => step.name === 'Persist the attempted delivery before any remote mutation',
+    );
+    expect(persistence?.['continue-on-error']).toBe(true);
+    expect(jobs.deploy.steps.some((step) => step.name.includes('durable attempt marker'))).toBe(false);
+    return yield* Effect.void;
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 const fakeMise = `#!/bin/bash
 printf '%s\\n' "$*" >>"$SETUP_CALLS"
 if [ "\${FAIL_SETUP:-}" = yes ]; then exit 31; fi

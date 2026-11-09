@@ -235,89 +235,27 @@ jobs:
           ls -lh app/.zerops-prebuilt.tar.zst
 
       - name: Mark the actual deployment attempt
-        # A partial job rerun must not reuse a selective plan made before some other deployment.
-        # Rerun all jobs to recover, so the planner re-reads the actual latest attempt.
+        # A retry may reuse this run's built artifacts, but must never deploy an older branch head.
         env:
           PLANNED_RECEIPT: ${{ needs.plan.outputs.receipt }}
         run: |
+          current_head="$(git ls-remote origin refs/heads/demo/sales-crm | cut -f1)"
+          test "$current_head" = "$GITHUB_SHA"
           printf '%s\n' "$PLANNED_RECEIPT" |
-            jq -e --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
-              '.runId==$runId and .runAttempt==$runAttempt' >/dev/null
+            jq -e --argjson runId "$GITHUB_RUN_ID" --arg sourceRevision "$GITHUB_SHA" \
+              '.runId==$runId and .validatedHead==$sourceRevision' >/dev/null
           mkdir -p "$RUNNER_TEMP/zerops-delivery/last-attempt"
           jq -n --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
             --arg sourceRevision "$GITHUB_SHA" '{runId:$runId,runAttempt:$runAttempt,sourceRevision:$sourceRevision}' \
             >"$RUNNER_TEMP/zerops-delivery/last-attempt/attempt.json"
 
+      # Future selective plans can use this hint; cache visibility never decides whether valid artifacts deploy.
       - name: Persist the attempted delivery before any remote mutation
+        continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/zerops-delivery/last-attempt
           key: zerops-stage-attempt-v1-${{ github.run_id }}-${{ github.run_attempt }}
-
-      # Cache save errors may warn rather than fail, so the marker is trusted only once it can be read
-      # back — and the read itself is the only proof, because the cache service's index and its restore
-      # lookup are different read surfaces with different lag. The index entry exists from the save's
-      # reservation; the restore lookup sees it later, by a variable amount. Observed on 2026-11-03, run
-      # 41649586684: the save reported success at 14:26:54.789, the index listed the marker (cache id
-      # 9943104190, 355 B, refs/heads/demo/sales-crm) at 14:26:55.227, and a restore at 14:26:55.513 still
-      # missed it — the lookup found nothing and failed in 0.23 s without attempting a download. So
-      # waiting for index visibility proves nothing. The same day, run 41633497832 missed its marker
-      # 0.049 s after the save while run 41636502860 restored its own 0.044 s after the save: the lag is
-      # a race, not a fixed delay. Every marker shares one cache version, so key, ref and version always
-      # match and only availability differs.
-      #
-      # The read is therefore retried, bounded, and fails closed: a marker that cannot be read within the
-      # bound stops the deploy before any remote mutation, exactly as before. The waits run only after a
-      # miss, so the common path pays nothing for them.
-      - name: Require the durable attempt marker
-        id: durable-attempt-1
-        continue-on-error: true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/zerops-delivery/last-attempt
-          key: zerops-stage-attempt-v1-${{ github.run_id }}-${{ github.run_attempt }}
-          fail-on-cache-miss: false
-
-      - name: Wait before retrying the durable attempt marker
-        if: steps.durable-attempt-1.outputs.cache-hit != 'true'
-        run: |
-          echo "The marker is not readable yet; waiting before the next read."
-          sleep 10
-
-      - name: Retry the durable attempt marker
-        id: durable-attempt-2
-        if: steps.durable-attempt-1.outputs.cache-hit != 'true'
-        continue-on-error: true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/zerops-delivery/last-attempt
-          key: zerops-stage-attempt-v1-${{ github.run_id }}-${{ github.run_attempt }}
-          fail-on-cache-miss: false
-
-      - name: Wait before the final durable attempt marker read
-        if: steps.durable-attempt-1.outputs.cache-hit != 'true' && steps.durable-attempt-2.outputs.cache-hit != 'true'
-        run: |
-          echo "The marker is still not readable; waiting before the read that decides the deploy."
-          sleep 20
-
-      # The authoritative read. It always runs, and a miss stops the deploy here.
-      - name: Require the durable attempt marker
-        id: durable-attempt
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/zerops-delivery/last-attempt
-          key: zerops-stage-attempt-v1-${{ github.run_id }}-${{ github.run_attempt }}
-          fail-on-cache-miss: true
-
-      - name: Check the actual attempted source
-        env:
-          CACHE_HIT: ${{ steps.durable-attempt.outputs.cache-hit }}
-        run: |
-          test "$CACHE_HIT" = true
-          jq -e --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
-            --arg sourceRevision "$GITHUB_SHA" \
-            '.runId==$runId and .runAttempt==$runAttempt and .sourceRevision==$sourceRevision' \
-            "$RUNNER_TEMP/zerops-delivery/last-attempt/attempt.json" >/dev/null
 
       # The owner secret bundle is the one GitHub copy of every owner's runtime secrets. The app host hands each owner
       # only its own entries; the bundle itself never leaves the supervisor.
@@ -536,11 +474,12 @@ jobs:
           RECEIPT: ${{ needs.plan.outputs.receipt }}
         run: |
           mkdir -p "$RUNNER_TEMP/zerops-delivery/last-success"
-          # A partial rerun must re-plan before publishing a new ledger.
+          # Record the attempt that passed the real deployment and live proofs, including a job-only retry.
           printf '%s\n' "$RECEIPT" |
             jq -e --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
-              '.runId==$runId and .runAttempt==$runAttempt' >/dev/null
-          printf '%s\n' "$RECEIPT" >"$RUNNER_TEMP/zerops-delivery/last-success/receipt.json"
+              --arg sourceRevision "$GITHUB_SHA" \
+              'select(.runId==$runId and .validatedHead==$sourceRevision) | .runAttempt=$runAttempt | .lastAttempt={runId:$runId,runAttempt:$runAttempt,sourceRevision:$sourceRevision}' \
+              >"$RUNNER_TEMP/zerops-delivery/last-success/receipt.json"
 
       - name: Save the verified source pins
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
