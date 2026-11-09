@@ -20,8 +20,7 @@ export const CatalogState = ({
   const d = getDictionary(params.locale);
   const message = kind === "product" ? d.loadingProduct : d.loadingCatalog;
   const unavailableTitle = kind === "product" ? d.productUnavailable : d.unavailable;
-  const unavailableDescription =
-    kind === "product" ? d.productLoadFailed : d.unavailableDescription;
+  const unavailableDescription = kind === "product" ? d.productLoadFailed : d.categoryLoadFailed;
   const loadingTitle = kind === "product" ? d.detail : d.catalog;
   const title = pending ? loadingTitle : unavailableTitle;
   return (
@@ -65,11 +64,17 @@ export const CatalogState = ({
       {pending && kind === "category" && (
         <div className="w-full">
           <Skeleton speed="slow">
-            <Skeleton.Rectangle>
-              <div className="h-n1-loading-image" />
-            </Skeleton.Rectangle>
-            <div className="mt-6">
-              <Skeleton.Text noOfLines={3} size="sm" />
+            <div className="h-n1-loading-image">
+              <div className="w-full max-w-80">
+                <Skeleton.Rectangle>
+                  <div className="h-20" />
+                </Skeleton.Rectangle>
+              </div>
+            </div>
+            <div className="mt-6 flex w-full max-w-80 flex-col gap-6">
+              <Skeleton.Text noOfLines={1} size="sm" />
+              <Skeleton.Text noOfLines={1} size="sm" />
+              <Skeleton.Text noOfLines={1} size="sm" />
             </div>
           </Skeleton>
         </div>

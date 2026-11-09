@@ -26,6 +26,22 @@
 Tyto změny mají dílčí vizuální review. Neznamenají schválení celých stránek,
 úspěšné živé přihlášení nebo podporu všech schopností z Figma fixtures.
 
+## Načítání a chyba kategorie — 2026-11-09
+
+Figma57:906/937 rezervuje220px pro média, ale samotný Skeleton.Rectangle
+má320×80px. Layout wrappery rezervaci zachovávají a omezují skutečný placeholder
+na dostupnou šířku, maximálně320px. Tři samostatné Skeleton.Text noOfLines1
+navazují s gap24px a plnou šířkou stejného slotu podle57:2892/2896/2900.
+Rychlost i barvu poskytuje původní Skeleton kontext a nativní default.
+Nepřidává se vlastní skeleton CSS ani vzhledová třída na kit komponenty.
+
+Figma57:2906 má samostatný kategoriový chybový text, proto používá nový CS/EN
+categoryLoadFailed. Globální unavailableDescription jiných čtení se nemění.
+Retry zůstává Button primary/solid/md podle57:2907/3031, kde je skutečně žlutý44px.
+Produktové PriceBlock/AvailabilityStatus pending a disabled loading Button
+zůstávají beze změny. Obecný pravdivý nadpis nenahrazuje fixture název kategorie
+nebo produktu, který loading/error kontrakt neposkytuje.
+
 Mobilní kategorie / Figma31:639: stávající Button secondary/outlined/md a kit
 TreeView zůstávají. Po otevření se zaměří jeho existující `[role=treeitem]`
 roving tab stop pouze uvnitř daného aside. Kit dále vlastní šipky a selekci;

@@ -1,5 +1,22 @@
 # Kontrola převodu N1 storefrontu
 
+## Navazující kategoriové stavy — 2026-11-09
+
+Čerstvé Figma57:906/2904/3009/3028 byly porovnány se skutečným CatalogState.
+Soukromý actual-renderer průchod před opravou i po ní pokrývá čtyři stavy ×
+pět šířek × CS/EN,40/40 layout PASS. After navíc měří Rectangle80px/max320px,
+tři čáry16px/plná šířka a mezery24px. Původní before snímky a report zůstávají.
+Existující6 regresí zachovává oddělené produktové/kategoriové chyby a pending
+semantiku; nové kategoriové copy nejprve2FAIL a po opravě6PASS.
+
+Nezávislý reviewer otevřel before CS390, after CS390/320/1440, EN320 a chybu CS390;
+GO platí pro skeleton a kategoriový text, ne pro skutečný owner failure/retry
+přechod nebo živý zápis. Žádná runtime fixture či backendový mock nevznikly.
+Prázdný CatalogView listing body samostatně10/10 CS/EN × pět šířek, včetně
+přirozené šířky CTA a správného lokalizovaného home odkazu. Reviewer otevřel
+CS390 a EN320; nadřazený CategoryView ani owner lookup tím nejsou schválené.
+Celá N1 regrese po kategoriové opravě znovu797/797 testů v75 souborech.
+
 ## Systematická matice a cílené opravy — 2026-11-09
 
 Soukromá matice zachycuje87 Figma rámců × šířky320/390/768/1024/1440.

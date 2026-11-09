@@ -149,6 +149,7 @@ const cs = {
   cart: "Košík",
   catalog: "Katalog",
   categories: "TOP kategorie",
+  categoryLoadFailed: "Produkty se nepodařilo načíst. Zkuste to prosím znovu.",
   categoryProductCount: { few: "produkty", one: "produkt", other: "produktů" },
   checkout: {
     address: "Fakturační a doručovací adresa",
@@ -578,6 +579,7 @@ const en: typeof cs = {
   cart: "Cart",
   catalog: "Catalogue",
   categories: "Top categories",
+  categoryLoadFailed: "The products could not be loaded. Please try again.",
   categoryProductCount: { few: "products", one: "product", other: "products" },
   checkout: {
     address: "Billing and delivery address",
