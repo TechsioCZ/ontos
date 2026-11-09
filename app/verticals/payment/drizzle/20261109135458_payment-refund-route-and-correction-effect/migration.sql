@@ -1,0 +1,4 @@
+ALTER TABLE "payment"."observations" ADD COLUMN "correction_effect" text;--> statement-breakpoint
+ALTER TABLE "payment"."payment_operations" ADD COLUMN "refund_execution_route" jsonb;--> statement-breakpoint
+ALTER TABLE "payment"."observations" ADD CONSTRAINT "payment_observations_correction_effect_ck" CHECK ("correction_effect" is null or ("fact_kind" = 'SOURCE_CORRECTION' and "acceptance_outcome" = 'ACCEPTED_OBSERVATION' and "correction_effect" in ('RECORD_ONLY', 'REDUCE_ESTABLISHED_COLLECTION', 'REOPEN_TO_CONFLICT')));--> statement-breakpoint
+ALTER TABLE "payment"."payment_operations" ADD CONSTRAINT "payment_operations_refund_route_ck" CHECK ("refund_execution_route" is null or ("kind" = 'REFUND' and jsonb_typeof("refund_execution_route") = 'object'));

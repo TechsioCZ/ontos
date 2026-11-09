@@ -26,6 +26,40 @@ type ProblemOf<Tag extends RecordPaymentLocalEvidenceActionProblem['_tag']> = Ex
   RecordPaymentLocalEvidenceActionProblem,
   { readonly _tag: Tag }
 >;
+type DomainProblemIdentity =
+  | {
+      readonly code:
+        | 'payment_aggregate_version_conflict'
+        | 'payment_collect_lineage_conflict'
+        | 'payment_held_for_reconciliation'
+        | 'payment_identity_conflict'
+        | 'payment_intent_material_conflict'
+        | 'payment_operation_material_conflict'
+        | 'payment_refund_item_reserved'
+        | 'payment_refundable_funds_exceeded'
+        | 'payment_source_authority_revision_conflict'
+        | 'payment_source_occurrence_conflict';
+      readonly kind: 'conflict';
+    }
+  | { readonly code: 'payment_source_authority_forbidden'; readonly kind: 'forbidden' }
+  | {
+      readonly code:
+        | 'payment_amount_invalid'
+        | 'payment_currency_mismatch'
+        | 'payment_method_binding_mismatch'
+        | 'payment_no_established_collection'
+        | 'payment_outcome_transition_illegal'
+        | 'payment_refund_amount_mismatch'
+        | 'payment_refund_basis_invalid'
+        | 'payment_refund_item_fractioned'
+        | 'payment_source_configuration_invalid'
+        | 'payment_source_currency_mismatch'
+        | 'payment_source_fact_unsupported'
+        | 'payment_source_received_time_invalid';
+      readonly kind: 'ineligible';
+    }
+  | { readonly code: 'payment_not_found' | 'payment_operation_not_found'; readonly kind: 'notFound' }
+  | { readonly code: 'payment_unavailable'; readonly kind: 'unavailable' };
 
 const problemStatus = {
   authentication: 401,
@@ -40,6 +74,43 @@ const problemStatus = {
   timeout: 504,
   unavailable: 503,
 } as const;
+
+const paymentConflictProblemByCode = {
+  payment_aggregate_version_conflict: { code: 'payment_aggregate_version_conflict', kind: 'conflict' },
+  payment_collect_lineage_conflict: { code: 'payment_collect_lineage_conflict', kind: 'conflict' },
+  payment_held_for_reconciliation: { code: 'payment_held_for_reconciliation', kind: 'conflict' },
+  payment_identity_conflict: { code: 'payment_identity_conflict', kind: 'conflict' },
+  payment_intent_material_conflict: { code: 'payment_intent_material_conflict', kind: 'conflict' },
+  payment_operation_material_conflict: { code: 'payment_operation_material_conflict', kind: 'conflict' },
+  payment_refund_item_reserved: { code: 'payment_refund_item_reserved', kind: 'conflict' },
+  payment_refundable_funds_exceeded: { code: 'payment_refundable_funds_exceeded', kind: 'conflict' },
+} as const satisfies Record<Extract<DomainError, { readonly _tag: 'PaymentConflict' }>['code'], DomainProblemIdentity>;
+
+const paymentRejectedProblemByCode = {
+  payment_amount_invalid: { code: 'payment_amount_invalid', kind: 'ineligible' },
+  payment_currency_mismatch: { code: 'payment_currency_mismatch', kind: 'ineligible' },
+  payment_method_binding_mismatch: { code: 'payment_method_binding_mismatch', kind: 'ineligible' },
+  payment_no_established_collection: { code: 'payment_no_established_collection', kind: 'ineligible' },
+  payment_not_found: { code: 'payment_not_found', kind: 'notFound' },
+  payment_operation_not_found: { code: 'payment_operation_not_found', kind: 'notFound' },
+  payment_outcome_transition_illegal: { code: 'payment_outcome_transition_illegal', kind: 'ineligible' },
+  payment_refund_amount_mismatch: { code: 'payment_refund_amount_mismatch', kind: 'ineligible' },
+  payment_refund_basis_invalid: { code: 'payment_refund_basis_invalid', kind: 'ineligible' },
+  payment_refund_item_fractioned: { code: 'payment_refund_item_fractioned', kind: 'ineligible' },
+} as const satisfies Record<Extract<DomainError, { readonly _tag: 'PaymentRejected' }>['code'], DomainProblemIdentity>;
+
+const paymentSourceRejectedProblemByCode = {
+  payment_source_authority_forbidden: { code: 'payment_source_authority_forbidden', kind: 'forbidden' },
+  payment_source_authority_revision_conflict: { code: 'payment_source_authority_revision_conflict', kind: 'conflict' },
+  payment_source_configuration_invalid: { code: 'payment_source_configuration_invalid', kind: 'ineligible' },
+  payment_source_currency_mismatch: { code: 'payment_source_currency_mismatch', kind: 'ineligible' },
+  payment_source_fact_unsupported: { code: 'payment_source_fact_unsupported', kind: 'ineligible' },
+  payment_source_occurrence_conflict: { code: 'payment_source_occurrence_conflict', kind: 'conflict' },
+  payment_source_received_time_invalid: { code: 'payment_source_received_time_invalid', kind: 'ineligible' },
+} as const satisfies Record<
+  Extract<DomainError, { readonly _tag: 'PaymentSourceRejected' }>['code'],
+  DomainProblemIdentity
+>;
 
 export const recordPaymentLocalEvidenceActionProblem = {
   authentication: (): ProblemOf<'RecordPaymentLocalEvidenceActionAuthenticationProblem'> =>
@@ -123,11 +194,33 @@ export const recordPaymentLocalEvidenceActionProblem = {
     }),
 } as const;
 
+const mapDomainIdentity = (identity: DomainProblemIdentity): RecordPaymentLocalEvidenceActionProblem =>
+  Match.value(identity).pipe(
+    Match.when({ kind: 'conflict' as const }, (matched) =>
+      recordPaymentLocalEvidenceActionProblem.conflict(matched.code),
+    ),
+    Match.when({ kind: 'forbidden' as const }, (matched) =>
+      recordPaymentLocalEvidenceActionProblem.forbidden(matched.code),
+    ),
+    Match.when({ kind: 'ineligible' as const }, (matched) =>
+      recordPaymentLocalEvidenceActionProblem.ineligible(matched.code),
+    ),
+    Match.when({ kind: 'notFound' as const }, (matched) =>
+      recordPaymentLocalEvidenceActionProblem.notFound(matched.code),
+    ),
+    Match.when({ kind: 'unavailable' as const }, (matched) =>
+      recordPaymentLocalEvidenceActionProblem.unavailable(matched.code),
+    ),
+    Match.exhaustive,
+  );
+
 const mapDomainProblem = (error: DomainError): RecordPaymentLocalEvidenceActionProblem =>
   Match.value(error).pipe(
     Match.tags({
-      RecordPaymentLocalEvidenceNotImplemented: () =>
-        recordPaymentLocalEvidenceActionProblem.ineligible('action_not_implemented'),
+      PaymentConflict: (failure) => mapDomainIdentity(paymentConflictProblemByCode[failure.code]),
+      PaymentRejected: (failure) => mapDomainIdentity(paymentRejectedProblemByCode[failure.code]),
+      PaymentSourceRejected: (failure) => mapDomainIdentity(paymentSourceRejectedProblemByCode[failure.code]),
+      PaymentUnavailable: () => recordPaymentLocalEvidenceActionProblem.unavailable('payment_unavailable'),
     }),
     Match.exhaustive,
   );

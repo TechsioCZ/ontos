@@ -21,6 +21,8 @@ import {
   PaymentRefundBasisSchema,
 } from '../../shared/domain/payment-refund-basis.ts';
 import type { PaymentRefundBasis } from '../../shared/domain/payment-refund-basis.ts';
+import { PaymentRefundExecutionRouteSchema } from '../../shared/domain/refund-contract.ts';
+import type { PaymentRefundExecutionRoute } from '../../shared/domain/refund-contract.ts';
 import { paymentRejected } from '../../shared/domain/payment-rejected.ts';
 import type { PaymentRejected } from '../../shared/domain/payment-rejected.ts';
 import { paymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
@@ -89,6 +91,8 @@ export interface PaymentOperationRecord {
   readonly paymentId: string;
   readonly provenance: PaymentExecutionProvenance;
   readonly refundBasis: PaymentRefundBasis | undefined;
+  /** The configured executor a REFUND was requested through; immutable, never rerouted. */
+  readonly refundExecutionRoute: PaymentRefundExecutionRoute | undefined;
   readonly targetOperationId: string | undefined;
 }
 
@@ -138,6 +142,8 @@ export interface NewPaymentOperationInput {
   readonly provenance: PaymentExecutionProvenance;
   /** Required exactly for REFUND (one immutable basis). */
   readonly refundBasis?: PaymentRefundBasis;
+  /** REFUND only: the configured executor chosen under the row lock (#1150); stored immutably. */
+  readonly refundExecutionRoute?: PaymentRefundExecutionRoute;
   /** The COLLECT a CANCEL_OR_VOID or REFUND targets; absent for COLLECT. */
   readonly targetOperationId?: string;
 }
@@ -313,7 +319,7 @@ const paymentRecordOf = Effect.fn('PaymentAggregatePersistence.paymentRecordOf')
 const operationRecordOf = Effect.fn('PaymentAggregatePersistence.operationRecordOf')(function* operationRecordOf(
   row: OperationRow,
 ) {
-  const [amount, binding, outcome, refundBasis] = yield* Effect.all(
+  const [amount, binding, outcome, refundBasis, refundExecutionRoute] = yield* Effect.all(
     [
       amountOf(row.amountMinor, row.currency),
       decodeStored(PaymentExecutionBindingSchema, row.binding),
@@ -321,6 +327,9 @@ const operationRecordOf = Effect.fn('PaymentAggregatePersistence.operationRecord
       row.refundBasis === null
         ? Effect.succeedNone
         : decodeStored(PaymentRefundBasisSchema, row.refundBasis).pipe(Effect.map(Option.some)),
+      row.refundExecutionRoute === null
+        ? Effect.succeedNone
+        : decodeStored(PaymentRefundExecutionRouteSchema, row.refundExecutionRoute).pipe(Effect.map(Option.some)),
     ],
     { concurrency: 1 },
   );
@@ -338,6 +347,7 @@ const operationRecordOf = Effect.fn('PaymentAggregatePersistence.operationRecord
     paymentId: row.paymentId,
     provenance: provenanceOf(row),
     refundBasis: Option.getOrUndefined(refundBasis),
+    refundExecutionRoute: Option.getOrUndefined(refundExecutionRoute),
     targetOperationId: row.targetOperationId ?? undefined,
   } satisfies PaymentOperationRecord;
 });
@@ -474,7 +484,10 @@ export const paymentAggregatePersistenceForTransaction = (
     );
   });
 
-  /** Accepted corrections recorded against an operation of this Payment, with their amounts. */
+  /**
+   * Accepted corrections that disprove part of an established collection. Other corrections keep their
+   * exact claimed amount as evidence but never reduce Current coverage (`correction_effect`).
+   */
   const selectCorrections = Effect.fn('PaymentAggregatePersistence.selectCorrections')(function* selectCorrections(
     paymentId: string,
   ) {
@@ -493,6 +506,7 @@ export const paymentAggregatePersistenceForTransaction = (
           eq(observations.paymentId, paymentId),
           eq(observations.factKind, 'SOURCE_CORRECTION'),
           eq(observations.acceptanceOutcome, 'ACCEPTED_OBSERVATION'),
+          eq(observations.correctionEffect, 'REDUCE_ESTABLISHED_COLLECTION'),
         ),
       )
       .pipe(Effect.mapError(readFailure));
@@ -700,12 +714,15 @@ export const paymentAggregatePersistenceForTransaction = (
         'Another collection lineage is live or proven for this Payment',
       );
     }
-    const [binding, refundBasis] = yield* Effect.all(
+    const [binding, refundBasis, refundExecutionRoute] = yield* Effect.all(
       [
         encodeJson(PaymentExecutionBindingSchema, input.binding),
         input.refundBasis === undefined
           ? Effect.succeed(null)
           : encodeJson(PaymentRefundBasisSchema, input.refundBasis),
+        input.refundExecutionRoute === undefined
+          ? Effect.succeed(null)
+          : encodeJson(PaymentRefundExecutionRouteSchema, input.refundExecutionRoute),
       ],
       { concurrency: 1 },
     );
@@ -730,6 +747,7 @@ export const paymentAggregatePersistenceForTransaction = (
         paymentId: input.paymentId,
         refundBasis,
         refundBasisKind: input.refundBasis?._tag ?? null,
+        refundExecutionRoute,
         targetOperationId: input.targetOperationId ?? null,
       })
       .returning()

@@ -35,17 +35,51 @@ export const CreatePaymentActionForbiddenProblemSchema = makeProblemDetailsSchem
 export const CreatePaymentActionNotFoundProblemSchema = makeProblemDetailsSchema(
   'CreatePaymentActionNotFoundProblem',
   404,
-  { code: Schema.Literal('action_invocation_not_found') },
+  { code: Schema.Literals(['action_invocation_not_found', 'payment_not_found', 'payment_operation_not_found']) },
 );
 export const CreatePaymentActionConflictProblemSchema = makeProblemDetailsSchema(
   'CreatePaymentActionConflictProblem',
   409,
-  { code: Schema.Literals(['action_request_hash_conflict', 'action_invocation_state_invalid']) },
+  {
+    code: Schema.Literals([
+      'action_request_hash_conflict',
+      'action_invocation_state_invalid',
+      'payment_aggregate_version_conflict',
+      'payment_collect_lineage_conflict',
+      'payment_held_for_reconciliation',
+      'payment_identity_conflict',
+      'payment_intent_material_conflict',
+      'payment_operation_material_conflict',
+      'payment_refund_item_reserved',
+      'payment_refundable_funds_exceeded',
+      'payment_collection_meaning_conflict',
+      'payment_predecessor_superseded_conflict',
+      'payment_predecessor_unresolved_conflict',
+      'payment_superseded_conflict',
+      'payment_method_configuration_conflict',
+    ]),
+  },
 );
 export const CreatePaymentActionIneligibleProblemSchema = makeProblemDetailsSchema(
   'CreatePaymentActionIneligibleProblem',
   422,
-  { code: Schema.Literals(['action_policy_denied', 'action_not_implemented']) },
+  {
+    code: Schema.Literals([
+      'action_policy_denied',
+      'payment_method_capability_unsupported',
+      'payment_method_input_required',
+      'payment_method_not_enabled',
+      'payment_method_term_incompatible',
+      'payment_amount_invalid',
+      'payment_currency_mismatch',
+      'payment_method_binding_mismatch',
+      'payment_no_established_collection',
+      'payment_outcome_transition_illegal',
+      'payment_refund_amount_mismatch',
+      'payment_refund_basis_invalid',
+      'payment_refund_item_fractioned',
+    ]),
+  },
 );
 export const CreatePaymentActionPreconditionProblemSchema = makeProblemDetailsSchema(
   'CreatePaymentActionPreconditionProblem',
@@ -62,6 +96,8 @@ export const CreatePaymentActionUnavailableProblemSchema = makeRetryableProblemD
       'action_transaction_failed',
       'module_state_check_unavailable',
       'operation_context_unavailable',
+      'payment_method_evidence_unavailable',
+      'payment_unavailable',
     ]),
   },
 );

@@ -20,6 +20,7 @@ import type { Schema } from 'effect';
 
 import {
   PAYMENT_AUTHORIZATION_PROOF_KINDS,
+  PAYMENT_CORRECTION_EFFECTS,
   PAYMENT_METHODS,
   PAYMENT_OBSERVATION_ACCEPTANCE_OUTCOMES,
   PAYMENT_OBSERVATION_FACT_KINDS,
@@ -37,6 +38,7 @@ import {
 } from '../../shared/domain/payment-vocabulary.ts';
 import type {
   PaymentAuthorizationProofKind,
+  PaymentCorrectionEffectKind,
   PaymentMethod,
   PaymentObservationAcceptanceOutcome,
   PaymentObservationFactKind,
@@ -343,6 +345,11 @@ export const paymentOperations = paymentSchema.table.withRLS(
     paymentId: uuid('payment_id').notNull(),
     refundBasis: jsonb('refund_basis').$type<Schema.Json>(),
     refundBasisKind: text('refund_basis_kind').$type<PaymentRefundBasisKind>(),
+    /**
+     * The configured refund executor a REFUND was requested through (#1150/#1152): immutable, so a
+     * later configuration change never reroutes it and evidence/recovery qualify against it.
+     */
+    refundExecutionRoute: jsonb('refund_execution_route').$type<Schema.Json>(),
     targetOperationId: uuid('target_operation_id'),
   },
   (table) => [
@@ -381,6 +388,10 @@ export const paymentOperations = paymentSchema.table.withRLS(
     check(
       'payment_operations_refund_basis_ck',
       sql`((${table.kind} = 'REFUND') = (${table.refundBasisKind} is not null)) and ((${table.refundBasisKind} is null) = (${table.refundBasis} is null)) and (${table.refundBasisKind} is null or (${table.refundBasisKind} in (${literalList(PAYMENT_REFUND_BASIS_KINDS)}) and ${table.refundBasis}->>'_tag' = ${table.refundBasisKind}))`,
+    ),
+    check(
+      'payment_operations_refund_route_ck',
+      sql`${table.refundExecutionRoute} is null or (${table.kind} = 'REFUND' and jsonb_typeof(${table.refundExecutionRoute}) = 'object')`,
     ),
     check('payment_operations_outcome_revision_ck', sql`${table.outcomeRevision} > 0`),
     check('payment_operations_material_hash_ck', sql`${table.materialHash} ~ '^[a-f0-9]{64}$'`),
@@ -501,6 +512,8 @@ export const observations = paymentSchema.table.withRLS(
     acceptanceOutcome: text('acceptance_outcome').$type<PaymentObservationAcceptanceOutcome>().notNull(),
     accountRef: text('account_ref').notNull(),
     amountMinor: bigint('amount_minor', { mode: 'number' }),
+    /** Set exactly for an accepted SOURCE_CORRECTION; only REDUCE_ESTABLISHED_COLLECTION reduces coverage. */
+    correctionEffect: text('correction_effect').$type<PaymentCorrectionEffectKind>(),
     correctsObservationId: uuid('corrects_observation_id'),
     currency: text('currency'),
     economicEffectKey: text('economic_effect_key'),
@@ -568,6 +581,10 @@ export const observations = paymentSchema.table.withRLS(
       table.legalEntityId,
       table.operationId,
       table.economicEffectKey,
+    ),
+    check(
+      'payment_observations_correction_effect_ck',
+      sql`${table.correctionEffect} is null or (${table.factKind} = 'SOURCE_CORRECTION' and ${table.acceptanceOutcome} = 'ACCEPTED_OBSERVATION' and ${table.correctionEffect} in (${literalList(PAYMENT_CORRECTION_EFFECTS)}))`,
     ),
     check(
       'payment_observations_vocabulary_ck',

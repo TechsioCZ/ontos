@@ -38,17 +38,56 @@ export const RecordPaymentReconciliationDecisionActionForbiddenProblemSchema = m
 export const RecordPaymentReconciliationDecisionActionNotFoundProblemSchema = makeProblemDetailsSchema(
   'RecordPaymentReconciliationDecisionActionNotFoundProblem',
   404,
-  { code: Schema.Literal('action_invocation_not_found') },
+  {
+    code: Schema.Literals([
+      'action_invocation_not_found',
+      'payment_reconciliation_case_not_found',
+      'payment_reconciliation_evidence_not_found',
+      'payment_not_found',
+      'payment_operation_not_found',
+    ]),
+  },
 );
 export const RecordPaymentReconciliationDecisionActionConflictProblemSchema = makeProblemDetailsSchema(
   'RecordPaymentReconciliationDecisionActionConflictProblem',
   409,
-  { code: Schema.Literals(['action_request_hash_conflict', 'action_invocation_state_invalid']) },
+  {
+    code: Schema.Literals([
+      'action_request_hash_conflict',
+      'action_invocation_state_invalid',
+      'payment_aggregate_version_conflict',
+      'payment_collect_lineage_conflict',
+      'payment_held_for_reconciliation',
+      'payment_identity_conflict',
+      'payment_intent_material_conflict',
+      'payment_operation_material_conflict',
+      'payment_refund_item_reserved',
+      'payment_refundable_funds_exceeded',
+      'payment_reconciliation_case_already_closed',
+      'payment_reconciliation_case_revision_conflict',
+      'payment_recovery_operation_already_resolved',
+    ]),
+  },
 );
 export const RecordPaymentReconciliationDecisionActionIneligibleProblemSchema = makeProblemDetailsSchema(
   'RecordPaymentReconciliationDecisionActionIneligibleProblem',
   422,
-  { code: Schema.Literals(['action_policy_denied', 'action_not_implemented']) },
+  {
+    code: Schema.Literals([
+      'action_policy_denied',
+      'payment_reconciliation_decision_not_applicable',
+      'payment_reconciliation_evidence_not_qualified',
+      'payment_reconciliation_obligation_unresolved',
+      'payment_amount_invalid',
+      'payment_currency_mismatch',
+      'payment_method_binding_mismatch',
+      'payment_no_established_collection',
+      'payment_outcome_transition_illegal',
+      'payment_refund_amount_mismatch',
+      'payment_refund_basis_invalid',
+      'payment_refund_item_fractioned',
+    ]),
+  },
 );
 export const RecordPaymentReconciliationDecisionActionPreconditionProblemSchema = makeProblemDetailsSchema(
   'RecordPaymentReconciliationDecisionActionPreconditionProblem',
@@ -65,6 +104,7 @@ export const RecordPaymentReconciliationDecisionActionUnavailableProblemSchema =
       'action_transaction_failed',
       'module_state_check_unavailable',
       'operation_context_unavailable',
+      'payment_unavailable',
     ]),
   },
 );

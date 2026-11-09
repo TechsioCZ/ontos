@@ -7,6 +7,7 @@ import type { PaymentRefundableItemsBasis } from '../../shared/domain/payment-re
 import { paymentRejected } from '../../shared/domain/payment-rejected.ts';
 import type { PaymentRejected } from '../../shared/domain/payment-rejected.ts';
 import type {
+  PaymentFundsHoldReason,
   PaymentOperationKind,
   PaymentOperationOutcome,
   PaymentRefundableItemAvailability,
@@ -40,15 +41,6 @@ export interface PaymentFundsSnapshot {
   /** Open reconciliation debt (held, ambiguous or conflicting evidence) affecting this Payment. */
   readonly unresolvedEvidence: boolean;
 }
-
-export const PAYMENT_FUNDS_HOLD_REASONS = [
-  'UNRESOLVED_EVIDENCE',
-  'COLLECTION_IN_CONFLICT',
-  'CANCELLATION_AGAINST_COLLECTION',
-  'INCONSISTENT_EVIDENCE',
-  'OVERLAPPING_UNRESOLVED_RETURN',
-] as const;
-export type PaymentFundsHoldReason = (typeof PAYMENT_FUNDS_HOLD_REASONS)[number];
 
 export type PaymentFundsLedgerCase = Data.TaggedEnum<{
   /** Proven collection with every confirmed return and live reservation counted once. */

@@ -26,6 +26,46 @@ type ProblemOf<Tag extends RecordPaymentReconciliationDecisionActionProblem['_ta
   RecordPaymentReconciliationDecisionActionProblem,
   { readonly _tag: Tag }
 >;
+type DomainProblemIdentity =
+  | {
+      readonly code:
+        | 'payment_aggregate_version_conflict'
+        | 'payment_collect_lineage_conflict'
+        | 'payment_held_for_reconciliation'
+        | 'payment_identity_conflict'
+        | 'payment_intent_material_conflict'
+        | 'payment_operation_material_conflict'
+        | 'payment_refund_item_reserved'
+        | 'payment_refundable_funds_exceeded'
+        | 'payment_reconciliation_case_already_closed'
+        | 'payment_reconciliation_case_revision_conflict'
+        | 'payment_recovery_operation_already_resolved';
+      readonly kind: 'conflict';
+    }
+  | {
+      readonly code:
+        | 'payment_reconciliation_decision_not_applicable'
+        | 'payment_reconciliation_evidence_not_qualified'
+        | 'payment_reconciliation_obligation_unresolved'
+        | 'payment_amount_invalid'
+        | 'payment_currency_mismatch'
+        | 'payment_method_binding_mismatch'
+        | 'payment_no_established_collection'
+        | 'payment_outcome_transition_illegal'
+        | 'payment_refund_amount_mismatch'
+        | 'payment_refund_basis_invalid'
+        | 'payment_refund_item_fractioned';
+      readonly kind: 'ineligible';
+    }
+  | {
+      readonly code:
+        | 'payment_reconciliation_case_not_found'
+        | 'payment_reconciliation_evidence_not_found'
+        | 'payment_not_found'
+        | 'payment_operation_not_found';
+      readonly kind: 'notFound';
+    }
+  | { readonly code: 'payment_unavailable'; readonly kind: 'unavailable' };
 
 const problemStatus = {
   authentication: 401,
@@ -40,6 +80,59 @@ const problemStatus = {
   timeout: 504,
   unavailable: 503,
 } as const;
+
+const paymentConflictProblemByCode = {
+  payment_aggregate_version_conflict: { code: 'payment_aggregate_version_conflict', kind: 'conflict' },
+  payment_collect_lineage_conflict: { code: 'payment_collect_lineage_conflict', kind: 'conflict' },
+  payment_held_for_reconciliation: { code: 'payment_held_for_reconciliation', kind: 'conflict' },
+  payment_identity_conflict: { code: 'payment_identity_conflict', kind: 'conflict' },
+  payment_intent_material_conflict: { code: 'payment_intent_material_conflict', kind: 'conflict' },
+  payment_operation_material_conflict: { code: 'payment_operation_material_conflict', kind: 'conflict' },
+  payment_refund_item_reserved: { code: 'payment_refund_item_reserved', kind: 'conflict' },
+  payment_refundable_funds_exceeded: { code: 'payment_refundable_funds_exceeded', kind: 'conflict' },
+} as const satisfies Record<Extract<DomainError, { readonly _tag: 'PaymentConflict' }>['code'], DomainProblemIdentity>;
+
+const paymentEvidenceRejectedProblemByCode = {
+  payment_reconciliation_case_already_closed: { code: 'payment_reconciliation_case_already_closed', kind: 'conflict' },
+  payment_reconciliation_case_not_found: { code: 'payment_reconciliation_case_not_found', kind: 'notFound' },
+  payment_reconciliation_case_revision_conflict: {
+    code: 'payment_reconciliation_case_revision_conflict',
+    kind: 'conflict',
+  },
+  payment_reconciliation_decision_not_applicable: {
+    code: 'payment_reconciliation_decision_not_applicable',
+    kind: 'ineligible',
+  },
+  payment_reconciliation_evidence_not_found: { code: 'payment_reconciliation_evidence_not_found', kind: 'notFound' },
+  payment_reconciliation_evidence_not_qualified: {
+    code: 'payment_reconciliation_evidence_not_qualified',
+    kind: 'ineligible',
+  },
+  payment_reconciliation_obligation_unresolved: {
+    code: 'payment_reconciliation_obligation_unresolved',
+    kind: 'ineligible',
+  },
+  payment_recovery_operation_already_resolved: {
+    code: 'payment_recovery_operation_already_resolved',
+    kind: 'conflict',
+  },
+} as const satisfies Record<
+  Extract<DomainError, { readonly _tag: 'PaymentEvidenceRejected' }>['code'],
+  DomainProblemIdentity
+>;
+
+const paymentRejectedProblemByCode = {
+  payment_amount_invalid: { code: 'payment_amount_invalid', kind: 'ineligible' },
+  payment_currency_mismatch: { code: 'payment_currency_mismatch', kind: 'ineligible' },
+  payment_method_binding_mismatch: { code: 'payment_method_binding_mismatch', kind: 'ineligible' },
+  payment_no_established_collection: { code: 'payment_no_established_collection', kind: 'ineligible' },
+  payment_not_found: { code: 'payment_not_found', kind: 'notFound' },
+  payment_operation_not_found: { code: 'payment_operation_not_found', kind: 'notFound' },
+  payment_outcome_transition_illegal: { code: 'payment_outcome_transition_illegal', kind: 'ineligible' },
+  payment_refund_amount_mismatch: { code: 'payment_refund_amount_mismatch', kind: 'ineligible' },
+  payment_refund_basis_invalid: { code: 'payment_refund_basis_invalid', kind: 'ineligible' },
+  payment_refund_item_fractioned: { code: 'payment_refund_item_fractioned', kind: 'ineligible' },
+} as const satisfies Record<Extract<DomainError, { readonly _tag: 'PaymentRejected' }>['code'], DomainProblemIdentity>;
 
 export const recordPaymentReconciliationDecisionActionProblem = {
   authentication: (): ProblemOf<'RecordPaymentReconciliationDecisionActionAuthenticationProblem'> =>
@@ -123,11 +216,30 @@ export const recordPaymentReconciliationDecisionActionProblem = {
     }),
 } as const;
 
+const mapDomainIdentity = (identity: DomainProblemIdentity): RecordPaymentReconciliationDecisionActionProblem =>
+  Match.value(identity).pipe(
+    Match.when({ kind: 'conflict' as const }, (matched) =>
+      recordPaymentReconciliationDecisionActionProblem.conflict(matched.code),
+    ),
+    Match.when({ kind: 'ineligible' as const }, (matched) =>
+      recordPaymentReconciliationDecisionActionProblem.ineligible(matched.code),
+    ),
+    Match.when({ kind: 'notFound' as const }, (matched) =>
+      recordPaymentReconciliationDecisionActionProblem.notFound(matched.code),
+    ),
+    Match.when({ kind: 'unavailable' as const }, (matched) =>
+      recordPaymentReconciliationDecisionActionProblem.unavailable(matched.code),
+    ),
+    Match.exhaustive,
+  );
+
 const mapDomainProblem = (error: DomainError): RecordPaymentReconciliationDecisionActionProblem =>
   Match.value(error).pipe(
     Match.tags({
-      RecordPaymentReconciliationDecisionNotImplemented: () =>
-        recordPaymentReconciliationDecisionActionProblem.ineligible('action_not_implemented'),
+      PaymentConflict: (failure) => mapDomainIdentity(paymentConflictProblemByCode[failure.code]),
+      PaymentEvidenceRejected: (failure) => mapDomainIdentity(paymentEvidenceRejectedProblemByCode[failure.code]),
+      PaymentRejected: (failure) => mapDomainIdentity(paymentRejectedProblemByCode[failure.code]),
+      PaymentUnavailable: () => recordPaymentReconciliationDecisionActionProblem.unavailable('payment_unavailable'),
     }),
     Match.exhaustive,
   );

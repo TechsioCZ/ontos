@@ -38,17 +38,42 @@ export const RequestPaymentRefundActionForbiddenProblemSchema = makeProblemDetai
 export const RequestPaymentRefundActionNotFoundProblemSchema = makeProblemDetailsSchema(
   'RequestPaymentRefundActionNotFoundProblem',
   404,
-  { code: Schema.Literal('action_invocation_not_found') },
+  { code: Schema.Literals(['action_invocation_not_found', 'payment_not_found']) },
 );
 export const RequestPaymentRefundActionConflictProblemSchema = makeProblemDetailsSchema(
   'RequestPaymentRefundActionConflictProblem',
   409,
-  { code: Schema.Literals(['action_request_hash_conflict', 'action_invocation_state_invalid']) },
+  {
+    code: Schema.Literals([
+      'action_request_hash_conflict',
+      'action_invocation_state_invalid',
+      'payment_aggregate_version_conflict',
+      'payment_held_for_reconciliation',
+      'payment_operation_material_conflict',
+      'payment_refund_item_refunded',
+      'payment_refund_item_reserved',
+      'payment_refund_route_conflict',
+      'payment_refundable_funds_exceeded',
+    ]),
+  },
 );
 export const RequestPaymentRefundActionIneligibleProblemSchema = makeProblemDetailsSchema(
   'RequestPaymentRefundActionIneligibleProblem',
   422,
-  { code: Schema.Literals(['action_policy_denied', 'action_not_implemented']) },
+  {
+    code: Schema.Literals([
+      'action_policy_denied',
+      'payment_amount_invalid',
+      'payment_compensation_not_established',
+      'payment_currency_mismatch',
+      'payment_no_established_collection',
+      'payment_refund_amount_mismatch',
+      'payment_refund_basis_invalid',
+      'payment_refund_item_fractioned',
+      'payment_refund_item_mismatch',
+      'payment_refund_item_not_refundable',
+    ]),
+  },
 );
 export const RequestPaymentRefundActionPreconditionProblemSchema = makeProblemDetailsSchema(
   'RequestPaymentRefundActionPreconditionProblem',
@@ -65,6 +90,9 @@ export const RequestPaymentRefundActionUnavailableProblemSchema = makeRetryableP
       'action_transaction_failed',
       'module_state_check_unavailable',
       'operation_context_unavailable',
+      'payment_owner_evidence_unavailable',
+      'payment_refund_route_unavailable',
+      'payment_unavailable',
     ]),
   },
 );

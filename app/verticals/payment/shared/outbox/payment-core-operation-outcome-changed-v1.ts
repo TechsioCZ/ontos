@@ -3,10 +3,40 @@
 // @ontos-outbox-topic payment.core.operation-outcome-changed.v1
 import { Schema } from 'effect';
 
+import {
+  PaymentActionInvocationIdSchema,
+  PaymentCompositionRevisionSchema,
+  PaymentIdSchema,
+  PaymentObservationIdSchema,
+  PaymentOperationIdSchema,
+  PaymentReconciliationDecisionIdSchema,
+  PaymentRevisionSchema,
+} from '../domain/payment-identifiers.ts';
+import { PaymentExecutionProvenanceSchema } from '../domain/payment-provenance.ts';
+import { PaymentOperationKindSchema, PaymentOperationOutcomeSchema } from '../domain/payment-vocabulary.ts';
+
+/**
+ * One applied Payment Operation outcome change (#1151). `provenance` is the invocation that applied
+ * the change (for a late callback: the new invocation under the then-active Composition R2); the
+ * `original*` fields keep the operation's admitted lineage (R1) unchanged.
+ */
 export const OutboxPayloadSchema = Schema.Struct({
-  data: Schema.Json,
+  cause: Schema.Union([
+    Schema.TaggedStruct('OBSERVATION', { observationId: PaymentObservationIdSchema }),
+    Schema.TaggedStruct('RECONCILIATION', { decisionId: PaymentReconciliationDecisionIdSchema }),
+  ]),
+  coverageRevision: PaymentRevisionSchema,
+  fromOutcome: PaymentOperationOutcomeSchema,
+  operationId: PaymentOperationIdSchema,
+  operationKind: PaymentOperationKindSchema,
+  originalActionInvocationId: PaymentActionInvocationIdSchema,
+  originalCompositionRevision: PaymentCompositionRevisionSchema,
+  outcomeRevision: PaymentRevisionSchema,
+  paymentId: PaymentIdSchema,
+  provenance: PaymentExecutionProvenanceSchema,
+  toOutcome: PaymentOperationOutcomeSchema,
 });
-export type OutboxPayload = Schema.Schema.Type<typeof OutboxPayloadSchema>;
+export type OutboxPayload = typeof OutboxPayloadSchema.Type;
 
 export const outboxTopic = 'payment.core.operation-outcome-changed.v1' as const;
 export const outboxProducerModuleKey = 'payment.core' as const;

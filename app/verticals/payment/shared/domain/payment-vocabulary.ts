@@ -130,6 +130,30 @@ export const PAYMENT_AUTHORIZATION_PROOF_KINDS = ['PREPAID_COVERAGE', 'METHOD_CO
 export const PaymentAuthorizationProofKindSchema = Schema.Literals(PAYMENT_AUTHORIZATION_PROOF_KINDS);
 export type PaymentAuthorizationProofKind = typeof PaymentAuthorizationProofKindSchema.Type;
 
+/**
+ * What an accepted SOURCE_CORRECTION did to the Current interpretation (#1151/#1152). Only
+ * `REDUCE_ESTABLISHED_COLLECTION` carries its amount into Current coverage; every correction keeps its
+ * exact claimed amount as evidence.
+ */
+export const PAYMENT_CORRECTION_EFFECTS = [
+  'RECORD_ONLY',
+  'REDUCE_ESTABLISHED_COLLECTION',
+  'REOPEN_TO_CONFLICT',
+] as const;
+export const PaymentCorrectionEffectKindSchema = Schema.Literals(PAYMENT_CORRECTION_EFFECTS);
+export type PaymentCorrectionEffectKind = typeof PaymentCorrectionEffectKindSchema.Type;
+
+/** Why the shared funds guard holds a Payment's funds for reconciliation instead of inventing them. */
+export const PAYMENT_FUNDS_HOLD_REASONS = [
+  'UNRESOLVED_EVIDENCE',
+  'COLLECTION_IN_CONFLICT',
+  'CANCELLATION_AGAINST_COLLECTION',
+  'INCONSISTENT_EVIDENCE',
+  'OVERLAPPING_UNRESOLVED_RETURN',
+] as const;
+export const PaymentFundsHoldReasonSchema = Schema.Literals(PAYMENT_FUNDS_HOLD_REASONS);
+export type PaymentFundsHoldReason = typeof PaymentFundsHoldReasonSchema.Type;
+
 /** Allowed recovery modes of one original operation (#1151). */
 export const PAYMENT_RECOVERY_MODES = [
   'PROVIDER_IDEMPOTENT_REPLAY',

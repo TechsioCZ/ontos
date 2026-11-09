@@ -32,6 +32,7 @@ export const ConfigurePaymentSourceAuthorityActionForbiddenProblemSchema = makeP
       'module_state_denied',
       'operation_context_denied',
       'operation_context_invalid',
+      'payment_source_authority_forbidden',
     ]),
   },
 );
@@ -43,12 +44,27 @@ export const ConfigurePaymentSourceAuthorityActionNotFoundProblemSchema = makePr
 export const ConfigurePaymentSourceAuthorityActionConflictProblemSchema = makeProblemDetailsSchema(
   'ConfigurePaymentSourceAuthorityActionConflictProblem',
   409,
-  { code: Schema.Literals(['action_request_hash_conflict', 'action_invocation_state_invalid']) },
+  {
+    code: Schema.Literals([
+      'action_request_hash_conflict',
+      'action_invocation_state_invalid',
+      'payment_source_authority_revision_conflict',
+      'payment_source_occurrence_conflict',
+    ]),
+  },
 );
 export const ConfigurePaymentSourceAuthorityActionIneligibleProblemSchema = makeProblemDetailsSchema(
   'ConfigurePaymentSourceAuthorityActionIneligibleProblem',
   422,
-  { code: Schema.Literals(['action_policy_denied', 'action_not_implemented']) },
+  {
+    code: Schema.Literals([
+      'action_policy_denied',
+      'payment_source_configuration_invalid',
+      'payment_source_currency_mismatch',
+      'payment_source_fact_unsupported',
+      'payment_source_received_time_invalid',
+    ]),
+  },
 );
 export const ConfigurePaymentSourceAuthorityActionPreconditionProblemSchema = makeProblemDetailsSchema(
   'ConfigurePaymentSourceAuthorityActionPreconditionProblem',
@@ -65,6 +81,7 @@ export const ConfigurePaymentSourceAuthorityActionUnavailableProblemSchema = mak
       'action_transaction_failed',
       'module_state_check_unavailable',
       'operation_context_unavailable',
+      'payment_unavailable',
     ]),
   },
 );

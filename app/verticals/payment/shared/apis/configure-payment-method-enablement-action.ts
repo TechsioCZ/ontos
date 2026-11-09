@@ -43,12 +43,18 @@ export const ConfigurePaymentMethodEnablementActionNotFoundProblemSchema = makeP
 export const ConfigurePaymentMethodEnablementActionConflictProblemSchema = makeProblemDetailsSchema(
   'ConfigurePaymentMethodEnablementActionConflictProblem',
   409,
-  { code: Schema.Literals(['action_request_hash_conflict', 'action_invocation_state_invalid']) },
+  {
+    code: Schema.Literals([
+      'action_request_hash_conflict',
+      'action_invocation_state_invalid',
+      'payment_method_enablement_revision_conflict',
+    ]),
+  },
 );
 export const ConfigurePaymentMethodEnablementActionIneligibleProblemSchema = makeProblemDetailsSchema(
   'ConfigurePaymentMethodEnablementActionIneligibleProblem',
   422,
-  { code: Schema.Literals(['action_policy_denied', 'action_not_implemented']) },
+  { code: Schema.Literal('action_policy_denied') },
 );
 export const ConfigurePaymentMethodEnablementActionPreconditionProblemSchema = makeProblemDetailsSchema(
   'ConfigurePaymentMethodEnablementActionPreconditionProblem',
@@ -65,6 +71,7 @@ export const ConfigurePaymentMethodEnablementActionUnavailableProblemSchema = ma
       'action_transaction_failed',
       'module_state_check_unavailable',
       'operation_context_unavailable',
+      'payment_unavailable',
     ]),
   },
 );
