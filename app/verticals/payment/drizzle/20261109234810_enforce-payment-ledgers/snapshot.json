@@ -1,10 +1,10 @@
 {
+  "id": "b0b21281-4e24-420d-87f3-55b920bcdd85",
+  "prevIds": [
+    "74ca3865-9db5-4acf-8e74-89272319118b"
+  ],
   "version": "8",
   "dialect": "postgres",
-  "id": "4ed23020-0979-44fb-bea3-f9089071a394",
-  "prevIds": [
-    "00000000-0000-0000-0000-000000000000"
-  ],
   "ddl": [
     {
       "name": "payment",
@@ -798,6 +798,19 @@
       "generated": null,
       "identity": null,
       "name": "capability_correlated",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "capability_ref",
       "entityType": "columns",
       "schema": "payment",
       "table": "observations"
@@ -4387,6 +4400,13 @@
     {
       "value": "\"capability_correlated\" is null or (\"payment_id\" is not null and \"source_kind\" in ('CARRIER', 'LOCAL_POS_OPERATOR'))",
       "name": "payment_observations_capability_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "value": "\"capability_ref\" is null or (\"source_kind\" in ('CARRIER', 'LOCAL_POS_OPERATOR') and \"capability_ref\" = btrim(\"capability_ref\") and length(\"capability_ref\") between 1 and 200)",
+      "name": "payment_observations_capability_ref_ck",
       "entityType": "checks",
       "schema": "payment",
       "table": "observations"

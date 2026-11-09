@@ -116,13 +116,18 @@ export const validatePaymentAuthorization = Effect.fn('PaymentAuthorizationValid
         validatedAt,
       } satisfies PaymentAuthorizationValidationResponse;
     }
-    const conditionReasons = methodConditionReasons(proof.condition, check.value);
+    // The owner answer may have taken time: the validity window is rechecked at the actual time of use.
+    const verifiedAt = yield* DateTime.now;
+    const reasons = [
+      ...methodConditionReasons(proof.condition, check.value),
+      ...validityWindowReasons(proof, verifiedAt),
+    ];
     return {
       ...coverage,
-      outcome: conditionReasons.length === 0 ? 'VALID' : 'NOT_VALID',
+      outcome: reasons.length === 0 ? 'VALID' : 'NOT_VALID',
       proof,
-      reasons: conditionReasons,
-      validatedAt,
+      reasons,
+      validatedAt: verifiedAt,
     } satisfies PaymentAuthorizationValidationResponse;
   },
 );

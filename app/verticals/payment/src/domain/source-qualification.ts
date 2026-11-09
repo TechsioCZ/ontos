@@ -178,6 +178,8 @@ export interface PaymentSourceAuthorityView {
 export interface PaymentRecordedObservationView {
   readonly acceptanceOutcome: PaymentObservationAcceptanceOutcome;
   readonly amount: PaymentMonetaryAmount | undefined;
+  /** The capability reference a selected-capability source claimed (see `claimedCapabilityRef`). */
+  readonly capabilityRef: string | undefined;
   readonly correctsObservationId: string | undefined;
   readonly economicEffectKey: string | undefined;
   readonly evidenceRef: string | undefined;
@@ -324,6 +326,15 @@ const sameInstant = (left: DateTime.Utc | undefined, right: DateTime.Utc | undef
   left === undefined || right === undefined ? left === right : DateTime.Equivalence(left, right);
 
 /**
+ * The Delivery Offer or pickup capability a selected-capability source (carrier, local POS) claims. It is
+ * part of the statement's content: a replay that changes it is never the same statement (#1152).
+ */
+export const claimedCapabilityRef = (statement: PaymentSourceStatement): string | undefined =>
+  PAYMENT_SELECTED_CAPABILITY_SOURCES.has(statement.source.sourceKind)
+    ? (statement.deliveryOfferRef ?? statement.pickupCapabilityRef)
+    : undefined;
+
+/**
  * An unassigned original recorded no Payment. A replay that names a Payment this scope resolves is changed
  * content (#1151: correlation is never silently dropped), while a replay whose Payment is outside the scope
  * stays as unresolved as its original, so an exact retry still replays.
@@ -355,6 +366,7 @@ const sameStatement = (
   recorded.evidenceRef === statement.evidenceRef &&
   sameInstant(recorded.sourceOccurredAt, statement.sourceOccurredAt) &&
   samePaymentCorrelation(recorded, claimedPaymentId, paymentResolved) &&
+  recorded.capabilityRef === claimedCapabilityRef(statement) &&
   (statement.operationId === undefined || recorded.operationId === statement.operationId) &&
   recorded.amount?.amountMinor === statement.amount?.amountMinor &&
   recorded.amount?.currency === statement.amount?.currency;

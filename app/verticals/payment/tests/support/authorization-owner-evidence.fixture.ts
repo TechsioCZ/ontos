@@ -2,7 +2,7 @@ import { PaymentTermDefinitionSnapshotSchema } from '@app/payment-term-catalog-c
 import type { PaymentTermDefinitionSnapshot } from '@app/payment-term-catalog-contracts/payment-term';
 import { PaymentTermRefSchema } from '@app/payment-term-catalog-contracts/resources/payment-term';
 import type { PaymentTermRef } from '@app/payment-term-catalog-contracts/resources/payment-term';
-import { Effect, Layer, Ref, Schema } from 'effect';
+import { Duration, Effect, Layer, Ref, Schema } from 'effect';
 
 import { PaymentPurchasingSubjectSchema } from '../../shared/domain/applicability-purchasing-context.ts';
 import type { PaymentPurchasingSubject } from '../../shared/domain/applicability-purchasing-context.ts';
@@ -114,6 +114,7 @@ const termUse = (
 export const makeAuthorizationOwnerEvidenceFixture = Effect.gen(function* makeAuthorizationOwnerEvidenceFixture() {
   const periods = yield* Ref.make<readonly AuthorizationEntitlementPeriodFixture[]>([]);
   const termEvidenceUnavailable = yield* Ref.make(false);
+  const termEvidenceDelay = yield* Ref.make(Duration.zero);
   const cod = yield* Ref.make<ReadonlyMap<string, CodAnswer>>(new Map());
   const pickup = yield* Ref.make<ReadonlyMap<string, PickupAnswer>>(new Map());
 
@@ -124,6 +125,8 @@ export const makeAuthorizationOwnerEvidenceFixture = Effect.gen(function* makeAu
           if (yield* Ref.get(termEvidenceUnavailable)) {
             return yield* ownerEvidenceUnavailable('PAYMENT_TERM_EVIDENCE', 'Customer Context fixture is down');
           }
+          // A slow owner: the answer arrives only after the configured delay.
+          yield* Effect.sleep(yield* Ref.get(termEvidenceDelay));
           return termUse(yield* Ref.get(periods), purchase, paymentTermRef);
         }),
     }),
@@ -180,6 +183,7 @@ export const makeAuthorizationOwnerEvidenceFixture = Effect.gen(function* makeAu
       Ref.update(cod, (current) => new Map([...current, [deliveryOfferRef, answer]])),
     setPickup: (pickupCapabilityRef: string, answer: PickupAnswer) =>
       Ref.update(pickup, (current) => new Map([...current, [pickupCapabilityRef, answer]])),
+    setTermEvidenceDelay: (delay: Duration.Duration) => Ref.set(termEvidenceDelay, delay),
     setTermEvidenceUnavailable: (unavailable: boolean) => Ref.set(termEvidenceUnavailable, unavailable),
   };
 });
