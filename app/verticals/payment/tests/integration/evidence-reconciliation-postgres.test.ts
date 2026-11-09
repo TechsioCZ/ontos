@@ -1051,6 +1051,28 @@ it.live(
             }),
           ),
         ).toBe('payment_reconciliation_obligation_unresolved');
+
+        // A correction of the held return that names another Payment is itself unresolved: it is no
+        // authoritative disproof, so the case still cannot be closed and the money stays held.
+        const otherPayment = yield* evidence.createPayment();
+        const misdirected = yield* evidence.accept(
+          gopayStatement({
+            correctsObservationId: second.observationId,
+            economicEffectKey: 'gopay:refund:2:correction',
+            factKind: 'SOURCE_CORRECTION',
+            paymentId: otherPayment.paymentId,
+          }),
+        );
+        expect(misdirected).toMatchObject({ acceptanceOutcome: 'HELD_UNRESOLVED' });
+        expect(
+          yield* failureCodeOf(
+            evidence.decide({
+              caseId,
+              decision: { _tag: 'CLOSE_CASE', evidenceRef: 'operator-note' },
+              reason: 'Close the second refund callback as corrected',
+            }),
+          ),
+        ).toBe('payment_reconciliation_obligation_unresolved');
         expect(yield* evidence.coverage(payment.paymentId)).toBe('Held UNRESOLVED_EVIDENCE');
       }),
     ),
