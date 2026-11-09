@@ -146,6 +146,13 @@ export const handleStartPaymentCollection = Effect.fn('StartPaymentCollectionAct
         `A ${admission.blockingOutcome} collection lineage already exists for this Payment`,
       );
     }
+    // Open reconciliation debt may prove an earlier attempt collected after all (#1151): no new COLLECT.
+    if (aggregate.openReconciliationCaseCount > 0) {
+      return yield* paymentConflict(
+        'payment_held_for_reconciliation',
+        'This Payment has unresolved reconciliation debt; no new collection is admitted',
+      );
+    }
     if (isZeroAmount(payment.amount)) {
       return yield* paymentCollectionRefused(
         'payment_zero_payable_no_collection',
