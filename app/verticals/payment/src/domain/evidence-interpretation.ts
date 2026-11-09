@@ -238,6 +238,30 @@ const standingObservations = (aggregate: PaymentEvidenceAggregate, operationId: 
     (observation) => observation.operationId === operationId,
   );
 
+/**
+ * Statements that still identify the operation's economic effect: standing statements plus receipts that
+ * only a partial correction (an amount below the operation's) reduced. A partial reduction keeps the
+ * receipt's effect identity; only a full disproof removes it (#1151).
+ */
+const effectIdentityStatements = (aggregate: PaymentEvidenceAggregate, operation: PaymentEvidenceOperationView) => {
+  const partiallyCorrectedIds = new Set<string>();
+  const fullyCorrectedIds = new Set<string>();
+  for (const correction of aggregate.acceptedObservations) {
+    if (correction.factKind === 'SOURCE_CORRECTION' && correction.correctsObservationId !== undefined) {
+      const partial = correction.amount !== undefined && correction.amount.amountMinor < operation.amount.amountMinor;
+      (partial ? partiallyCorrectedIds : fullyCorrectedIds).add(correction.correctsObservationId);
+    }
+  }
+  const partiallyCorrected = aggregate.acceptedObservations.filter(
+    (statement) =>
+      statement.factKind !== 'SOURCE_CORRECTION' &&
+      statement.operationId === operation.operationId &&
+      partiallyCorrectedIds.has(statement.observationId) &&
+      !fullyCorrectedIds.has(statement.observationId),
+  );
+  return [...standingObservations(aggregate, operation.operationId), ...partiallyCorrected];
+};
+
 /** One source identity: kind, system, account and environment, independent of authority records. */
 const sameSourceBinding = (left: PaymentSourceBinding, right: PaymentSourceBinding) =>
   left.sourceKind === right.sourceKind &&
@@ -285,7 +309,7 @@ const decideRestatement = (
   const distinct =
     economicEffectKey !== undefined &&
     operation.outcome === 'EFFECT_CONFIRMED' &&
-    standingObservations(aggregate, operation.operationId).some(
+    effectIdentityStatements(aggregate, operation).some(
       (prior) =>
         prior.economicEffectKey !== undefined &&
         prior.economicEffectKey !== economicEffectKey &&

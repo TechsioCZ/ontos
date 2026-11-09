@@ -403,6 +403,28 @@ describe('#1151 Payment evidence interpretation', () => {
     );
   });
 
+  it('#1151 a partially corrected receipt still identifies its economic effect: a second charge is held', () => {
+    const partiallyCorrected = aggregateOf(
+      [operation('EFFECT_CONFIRMED')],
+      [
+        accepted('obs-charge-1', { economicEffectKey: 'gopay:charge:1' }),
+        accepted('obs-partial-correction', {
+          amount: czk(30_000),
+          correctsObservationId: 'obs-charge-1',
+          economicEffectKey: 'gopay:charge:1:correction',
+          factKind: 'SOURCE_CORRECTION',
+        }),
+      ],
+    );
+    expect(interpretPaymentObservation(partiallyCorrected, observed({ economicEffectKey: 'gopay:charge:2' }))).toEqual(
+      PaymentEvidenceDecision.HOLD({ operationId: COLLECT_ID, reason: 'DISTINCT_ECONOMIC_EFFECT' }),
+    );
+    // Restating the partially corrected charge itself still corroborates.
+    expect(interpretPaymentObservation(partiallyCorrected, observed({ economicEffectKey: 'gopay:charge:1' }))).toEqual(
+      PaymentEvidenceDecision.NO_CHANGE({ operationId: COLLECT_ID, reason: 'CORROBORATES_ESTABLISHED_OUTCOME' }),
+    );
+  });
+
   it('#1151 a re-issued correction of a re-exported statement counts once; an overlapping one is held', () => {
     const correctedReceipt = aggregateOf(
       [operation('EFFECT_CONFIRMED')],
