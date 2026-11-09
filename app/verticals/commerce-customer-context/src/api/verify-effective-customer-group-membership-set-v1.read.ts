@@ -11,6 +11,7 @@ import { computeEffectiveCustomerGroupMembershipSetProof } from './effective-cus
 import {
   customerGroupReadServiceFactory,
   customerGroupReadUnavailable,
+  projectCustomerGroupMembershipRead,
   requireCustomerGroupReadLegalEntityId,
   requireCustomerGroupTenant,
   unwrapCustomerGroupLookup,
@@ -45,7 +46,7 @@ const handleVerifyEffectiveCustomerGroupMembershipSetV1 = Effect.fn(
   const observedProof = yield* computeEffectiveCustomerGroupMembershipSetProof({
     asOf: result.effectiveAt,
     legalEntityId,
-    memberships: result.items,
+    memberships: result.items.map(projectCustomerGroupMembershipRead),
     profile: result.profile,
   });
   const observedCount = observedProof.itemCount;

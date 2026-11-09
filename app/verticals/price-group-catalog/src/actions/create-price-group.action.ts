@@ -55,8 +55,12 @@ export const handleCreatePriceGroup = Effect.fn('CreatePriceGroupAction.handle')
     reason: payload.reason,
     trustedEffectiveAt,
   };
+  const correlatedInput =
+    payload.sourceCorrelation === undefined
+      ? persistenceInput
+      : { ...persistenceInput, sourceCorrelation: payload.sourceCorrelation };
   const persisted = yield* context.services.createPriceGroup(
-    payload.effectiveTo === null ? persistenceInput : { ...persistenceInput, effectiveTo: toDate(payload.effectiveTo) },
+    payload.effectiveTo === null ? correlatedInput : { ...correlatedInput, effectiveTo: toDate(payload.effectiveTo) },
   );
 
   yield* context.recordAuditEvidence({
@@ -72,6 +76,12 @@ export const handleCreatePriceGroup = Effect.fn('CreatePriceGroupAction.handle')
     targetResourceId: persisted.businessResult.identity.priceGroupRef.resourceId,
     targetResourceType: RESOURCE_TYPE,
   });
+  if (
+    persisted.businessResult.businessOriginalInvocationId !== undefined &&
+    persisted.businessResult.businessOriginalInvocationId !== context.actionInvocationId
+  ) {
+    return persisted.businessResult;
+  }
   const projectionRequest = {
     catalogVersion: '1' as const,
     mutationId: persisted.projection.mutationId,
@@ -113,6 +123,10 @@ export const createPriceGroupAction = defineAction(
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'pricing.price-group-catalog.create-price-group.access.v1',
+    },
+    accessWorkload: {
+      reason: 'Native Price Group source writes',
+      workloads: ['pricing.price-group-catalog.source-write'],
     },
     actionKey: 'pricing.price-group-catalog.create-price-group',
     auditEvidenceSchema: CreatePriceGroupAuditEvidenceSchema,

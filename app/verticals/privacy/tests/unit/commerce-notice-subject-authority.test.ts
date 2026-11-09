@@ -202,6 +202,7 @@ const run = (scenario: Scenario = {}) =>
       const attempt = (attempts.get(path) ?? 0) + 1;
       attempts.set(path, attempt);
       calls.push(path);
+      expect(wire.headers.get('x-correlation-id')).toBe(scope.correlationId);
       expect(wire.headers.get('x-ontos-composition-revision')).toBe('a'.repeat(64));
       const responses = new Map<string, unknown>([
         ['customer-profile-read', scenario.profile ?? profile],

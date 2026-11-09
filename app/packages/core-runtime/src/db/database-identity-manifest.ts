@@ -392,6 +392,23 @@ const actionRunnerRoles = DATABASE_IDENTITIES.flatMap((identity) => (identity.ru
 /** Every routine in schema trust with its hardening contract and the only roles allowed to execute it. */
 export const TRUST_ROUTINES: readonly TrustRoutine[] = [
   {
+    executableBy: [SHARED_RUNTIME_IDENTITY.role],
+    securityDefiner: true,
+    signature: 'trust.open_source_execution_fence(uuid,uuid)',
+  },
+  {
+    executableBy: [SHARED_RUNTIME_IDENTITY.role],
+    securityDefiner: true,
+    signature: 'trust.cancel_source_execution_fence(uuid,uuid)',
+  },
+  { executableBy: actionRunnerRoles, securityDefiner: true, signature: 'trust.lock_source_execution_fence(uuid,uuid)' },
+  { executableBy: actionRunnerRoles, securityDefiner: true, signature: 'trust.read_source_execution_fence(uuid,uuid)' },
+  {
+    executableBy: [SHARED_RUNTIME_IDENTITY.role, ...gatewayGrantRoles],
+    securityDefiner: true,
+    signature: 'trust.registered_workload_delivery_is_active(uuid,text,text,text,uuid)',
+  },
+  {
     executableBy: gatewayScopeGrantRegistrarRoles,
     securityDefiner: true,
     signature: REGISTER_GATEWAY_SCOPE_GRANT_SIGNATURE,

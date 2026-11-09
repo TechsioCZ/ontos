@@ -11,6 +11,9 @@ import { addProductCategoryAssignmentAction } from './src/actions/add-product-ca
 import { assertSizeEquivalenceAction } from './src/actions/assert-size-equivalence.action.ts';
 import { assignCatalogMediaAction } from './src/actions/assign-catalog-media.action.ts';
 import { assignSkuAction } from './src/actions/assign-sku.action.ts';
+import { bindInitialVariantSourceAction } from './src/actions/bind-initial-variant-source.action.ts';
+import { bindInitialVariantSourceRecoveryRead } from './src/api/bind-initial-variant-source-recovery.read.ts';
+import { catalogSourceProductsRead } from './src/api/catalog-source-products.read.ts';
 import { changeLocalOverrideAction } from './src/actions/change-local-override.action.ts';
 import { changeProductManufacturerAction } from './src/actions/change-product-manufacturer.action.ts';
 import { changeProductRelationshipAction } from './src/actions/change-product-relationship.action.ts';
@@ -37,10 +40,15 @@ import { governProductAttributeApplicabilityAction } from './src/actions/govern-
 import { governVariantAllowedValuesAction } from './src/actions/govern-variant-allowed-values.action.ts';
 import { governVariantAxesAction } from './src/actions/govern-variant-axes.action.ts';
 import { importSourceAssertionAction } from './src/actions/import-source-assertion.action.ts';
+import { manufacturerRelationCurrentRead } from './src/api/manufacturer-relation-current.read.ts';
 import { markGtinUnresolvedAction } from './src/actions/mark-gtin-unresolved.action.ts';
 import { moveProductCategoryAction } from './src/actions/move-product-category.action.ts';
+import { pricingPurposeEquivalenceRead } from './src/api/pricing-purpose-equivalence.read.ts';
+import { productVariantSnapshotRead } from './src/api/product-variant-snapshot.read.ts';
 import { promotePackageDefinitionAction } from './src/actions/promote-package-definition.action.ts';
 import { publishProductConfigurationAction } from './src/actions/publish-product-configuration.action.ts';
+import { quantityBasisCompatibilityRead } from './src/api/quantity-basis-compatibility.read.ts';
+import { quantityPreparationRead } from './src/api/quantity-preparation.read.ts';
 import { reactivateBrandAction } from './src/actions/reactivate-brand.action.ts';
 import { reactivateControlledAttributeValueAction } from './src/actions/reactivate-controlled-attribute-value.action.ts';
 import { reactivateProductAction } from './src/actions/reactivate-product.action.ts';
@@ -77,6 +85,7 @@ import { revisePackageDefinitionAction } from './src/actions/revise-package-defi
 import { reviseProductTypeAction } from './src/actions/revise-product-type.action.ts';
 import { reviseProductUnitAction } from './src/actions/revise-product-unit.action.ts';
 import { reviseSetCompositionAction } from './src/actions/revise-set-composition.action.ts';
+import { selectionEvidenceRead } from './src/api/selection-evidence.read.ts';
 import { setProductAttributeValuesAction } from './src/actions/set-product-attribute-values.action.ts';
 import { setProductBrandAction } from './src/actions/set-product-brand.action.ts';
 import { setProductLocalizedFactsAction } from './src/actions/set-product-localized-facts.action.ts';
@@ -86,12 +95,10 @@ import { setProductUnitTargetDivisibilityAction } from './src/actions/set-produc
 import { setVariantAttributeOverrideAction } from './src/actions/set-variant-attribute-override.action.ts';
 import { setVariantLocalizedFactsAction } from './src/actions/set-variant-localized-facts.action.ts';
 import { updateProductAction } from './src/actions/update-product.action.ts';
-import { selectionEvidenceRead } from './src/api/selection-evidence.read.ts';
-import { quantityPreparationRead } from './src/api/quantity-preparation.read.ts';
-import { quantityBasisCompatibilityRead } from './src/api/quantity-basis-compatibility.read.ts';
-import { pricingPurposeEquivalenceRead } from './src/api/pricing-purpose-equivalence.read.ts';
-import { productVariantSnapshotRead } from './src/api/product-variant-snapshot.read.ts';
-import { manufacturerRelationCurrentRead } from './src/api/manufacturer-relation-current.read.ts';
+import { createProductRecoveryRead } from './src/api/create-product-recovery.read.ts';
+import { createVariantRecoveryRead } from './src/api/create-variant-recovery.read.ts';
+import { updateProductRecoveryRead } from './src/api/update-product-recovery.read.ts';
+import { correctProductRecoveryRead } from './src/api/correct-product-recovery.read.ts';
 // </generated-module-registration-imports>
 
 export const catalogRegistration = defineVerticalRuntimeRegistration({
@@ -104,6 +111,7 @@ export const catalogRegistration = defineVerticalRuntimeRegistration({
     assertSizeEquivalenceAction,
     assignCatalogMediaAction,
     assignSkuAction,
+    bindInitialVariantSourceAction,
     changeLocalOverrideAction,
     changeProductManufacturerAction,
     changeProductRelationshipAction,
@@ -195,10 +203,12 @@ export const catalogRegistration = defineVerticalRuntimeRegistration({
       'assortment-product-classification-v1': () => import('./src/api/assortment-product-classification-v1-client.ts'),
       'assortment-selection-assessment-v1': () => import('./src/api/assortment-selection-assessment-v1-client.ts'),
       'assortment-set-composition-v1': () => import('./src/api/assortment-set-composition-v1-client.ts'),
+      'bind-initial-variant-source-recovery': () => import('./src/api/bind-initial-variant-source-recovery-client.ts'),
       'brand-current': () => import('./src/api/brand-current-client.ts'),
       'brand-history': () => import('./src/api/brand-history-client.ts'),
       'catalog-document-current': () => import('./src/api/catalog-document-current-client.ts'),
       'catalog-media-current': () => import('./src/api/catalog-media-current-client.ts'),
+      'catalog-source-products': () => import('./src/api/catalog-source-products-client.ts'),
       'catalog-source-resolution': () => import('./src/api/catalog-source-resolution-client.ts'),
       'change-local-override-recovery': () => import('./src/api/change-local-override-recovery-client.ts'),
       'change-product-manufacturer-recovery': () => import('./src/api/change-product-manufacturer-recovery-client.ts'),
@@ -347,12 +357,18 @@ export const catalogRegistration = defineVerticalRuntimeRegistration({
   ],
   reads: [
     // <generated-module-registration-reads>
-    selectionEvidenceRead,
-    quantityPreparationRead,
-    quantityBasisCompatibilityRead,
+    correctProductRecoveryRead,
+    updateProductRecoveryRead,
+    createVariantRecoveryRead,
+    createProductRecoveryRead,
+    bindInitialVariantSourceRecoveryRead,
+    catalogSourceProductsRead,
+    manufacturerRelationCurrentRead,
     pricingPurposeEquivalenceRead,
     productVariantSnapshotRead,
-    manufacturerRelationCurrentRead,
+    quantityBasisCompatibilityRead,
+    quantityPreparationRead,
+    selectionEvidenceRead,
     // </generated-module-registration-reads>
   ],
 });

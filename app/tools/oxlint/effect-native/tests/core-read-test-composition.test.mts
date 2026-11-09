@@ -1,6 +1,17 @@
+import { readFileSync } from 'node:fs';
+import nodePath from 'node:path';
+
 import { describe } from 'effect-rstest';
 
-import { collectCases, effectNativeRule, fixtureOptions, virtualFile, withOptions } from './rule-tester.mts';
+import {
+  appRoot,
+  collectCases,
+  effectNativeRule,
+  fixtureOptions,
+  ruleTester,
+  virtualFile,
+  withOptions,
+} from './rule-tester.mts';
 
 const provideRule = 'no-effect-provide-in-library';
 const rules = ['no-wide-factory-signature', provideRule, 'no-layer-provide-in-library'];
@@ -53,8 +64,49 @@ import { Effect, Layer } from 'effect';
 const main = Effect.void;
 NodeRuntime.runMain(main.pipe(Effect.provide(Layer.mergeAll(NodeServices.layer))));`;
   const runtimeCall = 'NodeRuntime.runMain';
+  const emptyMain = 'const main = Effect.void;';
   const cases = [
     { expected: 0, name: 'node-main', source: original },
+    {
+      expected: 0,
+      name: 'node-main-decoded-independent-artifact',
+      source: original
+        .replace(
+          "import { Effect, Layer } from 'effect';",
+          "import { Effect, Layer, Schema } from 'effect'; import { pathToFileURL } from 'node:url';",
+        )
+        .replace(
+          emptyMain,
+          'const main = Effect.scoped(Effect.gen(function* () { const owner = yield* Effect.tryPromise({ catch: unavailable, try: async () => await Schema.decodeUnknownPromise(ownerSchema)(await import(pathToFileURL(artifact).href)) }); return owner; }));',
+        ),
+    },
+    {
+      expected: 1,
+      name: 'node-main-dynamic-runtime-provider',
+      source: `${original} const injected = await import('@effect/platform-node'); injected.NodeRuntime.runMain = replacement;`,
+    },
+    {
+      expected: 1,
+      name: 'node-main-undecoded-artifact',
+      source: original.replace(
+        emptyMain,
+        'const main = Effect.tryPromise({ try: async () => await import(artifact), catch: unavailable });',
+      ),
+    },
+    {
+      expected: 1,
+      name: 'node-main-forged-artifact-loader',
+      source: original
+        .replace(
+          "import { Effect, Layer } from 'effect';",
+          "import { Effect, Layer, Schema } from 'effect'; import { pathToFileURL } from './forged-url.ts';",
+        )
+        .replace(
+          emptyMain,
+          'const main = Effect.scoped(Effect.gen(function* () { return yield* Effect.tryPromise({ catch: unavailable, try: async () => await Schema.decodeUnknownPromise(ownerSchema)(await import(pathToFileURL(artifact).href)) }); }));',
+        ),
+    },
+
     {
       expected: 0,
       name: 'node-main-renamed',
@@ -132,4 +184,16 @@ NodeRuntime.runMain(main.pipe(Effect.provide(Layer.mergeAll(NodeServices.layer))
     }
   }
   register();
+});
+
+const productOwnerChild = nodePath.join(appRoot, 'scripts/integration/support/symmy-c14-product-owner-child.mts');
+ruleTester.run('recognizes the actual independently loaded native owner process root', effectNativeRule(provideRule), {
+  invalid: [],
+  valid: [
+    {
+      code: readFileSync(productOwnerChild, 'utf-8'),
+      filename: productOwnerChild,
+      ...withOptions(fixtureOptions(provideRule)),
+    },
+  ],
 });

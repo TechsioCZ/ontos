@@ -288,6 +288,7 @@ it.effect(
       );
       const services = {
         ...assembled,
+        // This fixture isolates the Catalog requirement; native receiving tests exercise the Core carrier seal.
         catalog: {
           resolveCurrent: (...args: Parameters<typeof assembled.catalog.resolveCurrent>) =>
             assembled.catalog.resolveCurrent(...args).pipe(
@@ -312,6 +313,7 @@ it.effect(
             return Effect.die('Missing operation evidence must prevent persistence');
           },
         },
+        validateAssignmentSource: () => Effect.void,
       };
       const harness = yield* makeActionTestHarness({
         access: 'allowed',

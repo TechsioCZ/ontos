@@ -1,0 +1,2 @@
+ALTER TABLE "commerce_customer_context"."customer_profile_source_routes" ADD COLUMN "source_reader_principal_ids" uuid[] DEFAULT ARRAY[]::uuid[] NOT NULL;--> statement-breakpoint
+ALTER TABLE "commerce_customer_context"."customer_profile_source_routes" ADD CONSTRAINT "ccc_profile_source_readers_ck" CHECK (cardinality("source_reader_principal_ids") <= 32 and array_position("source_reader_principal_ids", null) is null);

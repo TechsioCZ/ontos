@@ -46,6 +46,7 @@ zerops:
         - 'app/verticals/commerce-order'
         - 'app/verticals/commerce-cart'
         - 'app/topology'
+        - 'app/verticals/symmy-integration'
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -771,6 +772,8 @@ zerops:
       envVariables:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
+        ONTOS_GATEWAY_MODULE_API_KEY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_PRIVACY}
+        ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
         PORT: '4113'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
         SPICEDB_ENDPOINT: 'spicedb:50051'
@@ -999,6 +1002,59 @@ zerops:
           port: 4116
           path: '/commerce-order-api/commerce-order/readiness'
       start: sh -c 'cd app/.zerops/runtime/commerce-order && PATH="$PWD/node/bin:$PATH" exec npm run serve'
+
+  - setup: 'symmy-integration'
+    build:
+      base: 'alpine@3.23'
+      envVariables:
+        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
+        ZE_FAIL_BUILD: 'true'
+      prepareCommands:
+        - sudo apk add --no-cache curl libstdc++ libatomic
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.0 12.16.1
+      buildCommands:
+        - cd app && PATH="$HOME/.local/node-26.13.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.13.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.13.0/bin:$PATH" pnpm --filter '@app/symmy-integration' run build
+        - cd app && PATH="$HOME/.local/node-26.13.0/bin:$PATH" pnpm run zerops:materialize --app 'symmy-integration' --package '@app/symmy-integration' --package-dir 'verticals/symmy-integration'
+        - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/symmy-integration/topology.json'
+        - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/symmy-integration/local-overlay.json'
+        - mkdir 'app/.zerops/runtime/symmy-integration/node' && cp -a "$HOME/.local/node-26.13.0/bin" "$HOME/.local/node-26.13.0/lib" 'app/.zerops/runtime/symmy-integration/node/'
+      deployFiles:
+        - 'app/.zerops/runtime/symmy-integration'
+    deploy:
+      temporaryShutdown: false
+      readinessCheck:
+        httpGet:
+          port: 4117
+          path: '/symmy-integration-api/symmy-integration/readiness'
+        failureTimeout: 3m
+        retryPeriod: 10s
+    run:
+      base: 'nodejs@24'
+      prepareCommands:
+        - sudo apk add --no-cache libatomic
+      ports:
+        - port: 4117
+          protocol: tcp
+          httpSupport: true
+      envVariables:
+        DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
+        NODE_ENV: production
+        ONTOS_GATEWAY_MODULE_API_KEY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_SYMMY_INTEGRATION}
+        ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
+        PORT: '4117'
+        SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
+        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
+        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+        ULTRAMODERN_ZEROPS_SERVICE: symmy-integration
+        VERTICAL_SYMMY_INTEGRATION_PORT: '4117'
+      healthCheck:
+        httpGet:
+          port: 4117
+          path: '/symmy-integration-api/symmy-integration/readiness'
+      start: sh -c 'cd app/.zerops/runtime/symmy-integration && PATH="$PWD/node/bin:$PATH" exec npm run serve'
   # </generated-vertical-provider-deployments>
 
   - setup: 'shellsuperapp'
@@ -1245,6 +1301,8 @@ zerops:
       envVariables:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
+        ONTOS_GATEWAY_MODULE_API_KEY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_PRIVACY}
+        ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
         PORT: '4113'
         OUTBOX_WORKER_HEALTH_PORT: '4113'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
@@ -1314,6 +1372,56 @@ zerops:
           path: '/live'
       start: sh -c 'cd app/.zerops/runtime/commerce-order-worker && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
 
+  - setup: 'symmy-integration-worker'
+    build:
+      base: 'alpine@3.23'
+      envVariables:
+        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
+        ZE_FAIL_BUILD: 'true'
+      prepareCommands:
+        - sudo apk add --no-cache curl libstdc++ libatomic
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.0 12.16.1
+      buildCommands:
+        - cd app && PATH="$HOME/.local/node-26.13.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.13.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.13.0/bin:$PATH" pnpm run zerops:materialize --app 'symmy-integration' --package '@app/symmy-integration' --package-dir 'verticals/symmy-integration' --worker
+        - mkdir 'app/.zerops/runtime/symmy-integration-worker/node' && cp -a "$HOME/.local/node-26.13.0/bin" "$HOME/.local/node-26.13.0/lib" 'app/.zerops/runtime/symmy-integration-worker/node/'
+      deployFiles:
+        - 'app/.zerops/runtime/symmy-integration-worker'
+    deploy:
+      temporaryShutdown: false
+      readinessCheck:
+        httpGet:
+          port: 4117
+          path: '/live'
+        failureTimeout: 3m
+        retryPeriod: 10s
+    run:
+      base: 'nodejs@24'
+      prepareCommands:
+        - sudo apk add --no-cache libatomic
+      ports:
+        - port: 4117
+          protocol: tcp
+          httpSupport: true
+      envVariables:
+        DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
+        NODE_ENV: production
+        ONTOS_GATEWAY_MODULE_API_KEY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_SYMMY_INTEGRATION}
+        ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
+        PORT: '4117'
+        OUTBOX_WORKER_HEALTH_PORT: '4117'
+        SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
+        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
+        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+        ULTRAMODERN_ZEROPS_SERVICE: symmy-integration-worker
+      healthCheck:
+        httpGet:
+          port: 4117
+          path: '/live'
+      start: sh -c 'cd app/.zerops/runtime/symmy-integration-worker && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
+
   - setup: 'outbox-worker-host'
     build:
       base: 'alpine@3.23'
@@ -1355,6 +1463,8 @@ zerops:
         ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CUSTOMER_CONTEXT: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CUSTOMER_CONTEXT}
         ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER}
         ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY}
+        ONTOS_GATEWAY_MODULE_API_KEY_PRIVACY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_PRIVACY}
+        ONTOS_GATEWAY_MODULE_API_KEY_SYMMY_INTEGRATION: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_SYMMY_INTEGRATION}
         ONTOS_ORDER_API_BASE_URL: 'http://commerceorder:4116/commerce-order-api'
         ONTOS_PARTY_REGISTRY_API_BASE_URL: 'http://partyregistry:4102/party-registry-api'
         ONTOS_PAYMENT_TERM_CATALOG_API_BASE_URL: 'http://paymenttermcatalog:4103/payment-term-catalog-api'

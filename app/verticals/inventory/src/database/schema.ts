@@ -2,6 +2,7 @@ import { defineRelations } from 'drizzle-orm';
 import type { EmptyRelations, ExtractTablesFromSchema, ExtractTablesWithRelations } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
 
+import { inventoryGatewayAssertionRedemptions } from '../persistence/gateway-assertion-redemption-table.ts';
 import { inventoryBackendConfigurations } from '../persistence/inventory-backend-configuration-table.ts';
 import { inventoryBindingCorrectionReconciliations } from '../persistence/binding-correction-impact-table.ts';
 import {
@@ -56,6 +57,7 @@ import {
   inventoryStockSharingEligibilityHistory,
 } from '../persistence/stock-sharing-eligibility-table.ts';
 
+export { inventoryGatewayAssertionRedemptions } from '../persistence/gateway-assertion-redemption-table.ts';
 export { INVENTORY_SCHEMA_NAME, inventorySchema } from './inventory-schema.ts';
 export { inventoryBackendConfigurations } from '../persistence/inventory-backend-configuration-table.ts';
 export { inventoryBindingCorrectionReconciliations } from '../persistence/binding-correction-impact-table.ts';
@@ -121,6 +123,7 @@ export const INVENTORY_TABLE_INVENTORY = [
   'effect_ledger',
   'effect_ledger_history',
   'external_stock_correlations',
+  'gateway_assertion_redemptions',
   'obligation_allocations',
   'obligation_requirements',
   'obligations',
@@ -149,7 +152,10 @@ export const INVENTORY_TABLE_INVENTORY = [
   'stock_sharing_eligibility_history',
 ] as const;
 
+export const INVENTORY_INGRESS_TABLE_INVENTORY = ['gateway_assertion_redemptions'] as const;
+
 export const INVENTORY_TABLES: readonly PgTable[] = [
+  inventoryGatewayAssertionRedemptions,
   inventoryBackendConfigurations,
   inventoryBindingCorrectionReconciliations,
   inventoryCatalogToStockBindingHistory,
@@ -186,6 +192,10 @@ export const INVENTORY_TABLES: readonly PgTable[] = [
   inventoryStockSharingEligibilities,
   inventoryStockSharingEligibilityHistory,
 ] as const;
+
+export const INVENTORY_GOVERNED_TABLES = INVENTORY_TABLES.filter(
+  (table) => table !== inventoryGatewayAssertionRedemptions,
+);
 
 const inventoryDatabaseSchemaIdentity = {
   inventoryBackendConfigurations,
@@ -225,6 +235,7 @@ const inventoryDatabaseSchemaEvidence = {
 } as const;
 
 const inventoryDatabaseSchemaStock = {
+  inventoryGatewayAssertionRedemptions,
   inventoryStockCorrectionSourceEvidenceCurrent,
   inventoryStockItems,
   inventoryStockLocationRevisions,

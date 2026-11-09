@@ -2,6 +2,7 @@ import { catalogRegistration } from '../../vertical.registration.ts';
 import { NodeCrypto } from '@effect/platform-node';
 import {
   OperationContextDenied,
+  extractVerticalRuntimeSafeDescriptors,
   ReadHandlerNotFound,
   ReadInputValidationError,
   ReadPermissionDenied,
@@ -136,7 +137,13 @@ import { setVariantLocalizedFactsRecoveryRead } from '../../src/api/set-variant-
 import { setCompositionCurrentRead } from '../../src/api/set-composition-current.read.ts';
 import { setCompositionHistoryRead } from '../../src/api/set-composition-history.read.ts';
 
+import { catalogSourceProductsRead } from '../../src/api/catalog-source-products.read.ts';
+
+import { bindInitialVariantSourceRecoveryRead } from '../../src/api/bind-initial-variant-source-recovery.read.ts';
+
 const reads = [
+  bindInitialVariantSourceRecoveryRead,
+  catalogSourceProductsRead,
   activateLocalOverrideRecoveryRead,
   activatePackageDefinitionRecoveryRead,
   activatePackageOptionRecoveryRead,
@@ -262,7 +269,16 @@ it('maps every published Action and governed read to one explicit atomic permiss
   const actionKeys = catalogManifest.publicSurface.actions.map((action) => action.descriptor.actionKey);
   const readKeys = reads.map((read) => read.descriptor.readKey);
   expect(new Set(readKeys)).toEqual(
-    new Set(Object.keys(catalogManifest.publicSurface.api).map((name) => `commerce.catalog.api.${name}`)),
+    new Set(
+      Object.keys(catalogManifest.publicSurface.api)
+        .filter(
+          (name) =>
+            !extractVerticalRuntimeSafeDescriptors(catalogRegistration).operationContracts.some(
+              (operation) => operation.apiKey === `commerce.catalog.${name}` && operation.entrypoint.role === 'action',
+            ),
+        )
+        .map((name) => `commerce.catalog.api.${name}`),
+    ),
   );
   const published = [...actionKeys, ...readKeys];
   expect(new Set(published).size).toBe(published.length);

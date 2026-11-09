@@ -4,7 +4,7 @@ import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { ConfigProvider, DateTime, Effect, Layer, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 import { TestClock } from 'effect/testing';
-import { FetchHttpClient } from 'effect/http';
+import { FetchHttpClient, HttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { ActiveApplicationCompositionSourceLive } from '../../src/modules/active-application-composition-source.node.ts';
@@ -59,15 +59,12 @@ const loadConfiguredSnapshot = (environment: Readonly<Record<string, string>>, b
       Effect.provide(
         ActiveApplicationCompositionConfigLive.pipe(
           Layer.provide(ActiveApplicationCompositionSourceLive),
+          Layer.provide(FetchHttpClient.layer),
           Layer.provide(
-            FetchHttpClient.layer.pipe(
-              Layer.provide(
-                Layer.succeed(FetchHttpClient.Fetch, () => {
-                  onRead();
-                  return Promise.resolve(new Response(body));
-                }),
-              ),
-            ),
+            Layer.succeed(FetchHttpClient.Fetch, () => {
+              onRead();
+              return Promise.resolve(new Response(body));
+            }),
           ),
           Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
         ),
@@ -83,11 +80,8 @@ it.effect('delivers one decoded, bounded active Application Composition snapshot
       Effect.provide(
         ActiveApplicationCompositionConfigLive.pipe(
           Layer.provide(ActiveApplicationCompositionSourceLive),
-          Layer.provide(
-            FetchHttpClient.layer.pipe(
-              Layer.provide(Layer.succeed(FetchHttpClient.Fetch, () => Promise.resolve(new Response(snapshotJson)))),
-            ),
-          ),
+          Layer.provide(FetchHttpClient.layer),
+          Layer.provide(Layer.succeed(FetchHttpClient.Fetch, () => Promise.resolve(new Response(snapshotJson)))),
           Layer.provide(
             ConfigProvider.layer(
               ConfigProvider.fromUnknown({
@@ -156,13 +150,12 @@ it.effect('the snapshot authority lease bounds source caching and cannot be exte
     const expires = yield* Schema.decodeEffect(Schema.DateTimeUtcFromString)('2026-09-22T10:00:00.500Z');
     const body = yield* Schema.encodeEffect(snapshotJsonSchema)({ ...snapshot, validUntil: expires });
     let requests = 0;
-    const nativeHttp = FetchHttpClient.layer.pipe(
-      Layer.provide(
-        Layer.succeed(FetchHttpClient.Fetch, () => {
-          requests += 1;
-          return Promise.resolve(new Response(body));
-        }),
-      ),
+    const nativeHttp = Layer.mergeAll(
+      FetchHttpClient.layer,
+      Layer.succeed(FetchHttpClient.Fetch, () => {
+        requests += 1;
+        return Promise.resolve(new Response(body));
+      }),
     );
     const authority = yield* ActiveApplicationCompositionService.pipe(
       Effect.provide(
@@ -189,6 +182,58 @@ it.effect('the snapshot authority lease bounds source caching and cannot be exte
     const failure = yield* Effect.flip(authority.load);
     expect(failure.cause).toBe('Application Composition authority is expired or not yet valid');
     expect(requests).toBe(2);
+  }),
+);
+
+it.effect('pins authoritative HTTP transport across caller overrides and cache refresh', () =>
+  Effect.gen(function* isolateAuthoritativeTransport() {
+    yield* TestClock.setTime(Date.parse('2026-09-22T10:00:00.000Z'));
+    let sourceRequests = 0;
+    let ownerRequests = 0;
+    const sourceFetch: typeof globalThis.fetch = (_input, options) => {
+      sourceRequests += 1;
+      expect(options?.cache).toBe('no-store');
+      expect(options?.redirect).toBe('manual');
+      return Promise.resolve(new Response(snapshotJson));
+    };
+    const rejectingOwnerFetch: typeof globalThis.fetch = () => {
+      ownerRequests += 1;
+      return Promise.reject(new Error('The composition URL is outside the owner relay'));
+    };
+    const sourceLayer = ActiveApplicationCompositionConfigLive.pipe(
+      Layer.provide(ActiveApplicationCompositionSourceLive),
+      Layer.provide(FetchHttpClient.layer),
+      Layer.provide(Layer.succeed(FetchHttpClient.Fetch, sourceFetch)),
+      Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+      Layer.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromUnknown({
+            ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: 'https://authority.example/active',
+          }),
+        ),
+      ),
+    );
+    const authority = yield* ActiveApplicationCompositionService.pipe(Effect.provide(sourceLayer));
+    const unrelatedOwnerCall = Effect.gen(function* rejectedOwnerTransport() {
+      const client = yield* HttpClient.HttpClient;
+      return yield* Effect.flip(client.get('https://authority.example/active'));
+    }).pipe(Effect.provide(FetchHttpClient.layer));
+    const underOwnerRelay = <Value, Failure>(effect: Effect.Effect<Value, Failure>) =>
+      effect.pipe(
+        Effect.provideService(FetchHttpClient.Fetch, rejectingOwnerFetch),
+        Effect.provideService(FetchHttpClient.RequestInit, { cache: 'force-cache', redirect: 'follow' }),
+      );
+    expect((yield* underOwnerRelay(authority.load)).composition.revision).toBe(revision);
+    expect(sourceRequests).toBe(1);
+    expect(ownerRequests).toBe(0);
+    expect((yield* underOwnerRelay(authority.load)).composition.revision).toBe(revision);
+    expect(sourceRequests).toBe(1);
+    yield* TestClock.adjust('31 seconds');
+    expect((yield* underOwnerRelay(authority.load)).composition.revision).toBe(revision);
+    expect(sourceRequests).toBe(2);
+    yield* underOwnerRelay(unrelatedOwnerCall);
+    expect(ownerRequests).toBe(1);
+    expect(sourceRequests).toBe(2);
   }),
 );
 

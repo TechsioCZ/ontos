@@ -183,6 +183,10 @@ export const correctProductAction = defineAction(
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.correct-product.access.v1',
     },
+    accessWorkload: {
+      reason: 'Native Product cosmetic correction for the registered source integration',
+      workloads: ['commerce.catalog.symmy-product-import'],
+    },
     actionKey: ACTION_KEY,
     auditEvidenceSchema: ProductAuditEvidenceSchema,
     auditProfile: 'standard',

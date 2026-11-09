@@ -1,7 +1,18 @@
 /* oxlint-disable perfectionist/sort-objects -- Drizzle declaration order is the physical owner contract; expires: 2027-03-31. */
 import { tenantRlsPolicies } from '@app/core-runtime';
 import { defineRelations, sql } from 'drizzle-orm';
-import { bigint, check, foreignKey, index, pgSchema, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import {
+  bigint,
+  check,
+  foreignKey,
+  index,
+  pgSchema,
+  text,
+  timestamp,
+  unique,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
 
 export const PRICE_GROUP_CATALOG_SCHEMA_NAME = 'price_group_catalog';
 
@@ -13,6 +24,8 @@ export const PRICE_GROUP_CATALOG_TABLE_INVENTORY = [
   'price_group_definition_effective_intervals',
   'price_group_definition_revisions',
   'price_group_retirements',
+  'price_group_source_correlations',
+  'price_group_source_operation_receipts',
   'price_groups',
 ] as const;
 
@@ -411,6 +424,94 @@ export const priceGroupContainmentProjectionIntents = priceGroupCatalogSchema.ta
   ],
 );
 
+/** External delivery identity remains separate from the Price Group's native business code. */
+export const priceGroupSourceCorrelations = priceGroupCatalogSchema.table.withRLS(
+  'price_group_source_correlations',
+  {
+    tenantId: uuid('tenant_id').notNull(),
+    issuer: text('issuer').notNull(),
+    routeId: text('route_id').notNull(),
+    namespace: text('namespace').notNull(),
+    recordKey: text('record_key').notNull(),
+    mappingVersion: text('mapping_version').notNull(),
+    priceGroupId: uuid('price_group_id').notNull(),
+    createdByActionInvocationId: uuid('created_by_action_invocation_id').notNull(),
+    recordedAt: recordedAt(),
+  },
+  (table) => [
+    unique('price_group_source_identity_uk').on(
+      table.tenantId,
+      table.issuer,
+      table.routeId,
+      table.namespace,
+      table.recordKey,
+    ),
+    foreignKey({
+      columns: [table.tenantId, table.priceGroupId],
+      foreignColumns: [priceGroups.tenantId, priceGroups.priceGroupId],
+      name: 'price_group_source_group_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.createdByActionInvocationId],
+      foreignColumns: [priceGroupCatalogLedger.tenantId, priceGroupCatalogLedger.actionInvocationId],
+      name: 'price_group_source_invocation_fk',
+    }).onDelete('restrict'),
+    check(
+      'price_group_source_qualifiers_ck',
+      sql`length(${table.issuer}) between 1 and 300 and ${table.issuer} = btrim(${table.issuer}) and length(${table.routeId}) between 1 and 300 and ${table.routeId} = btrim(${table.routeId}) and length(${table.namespace}) between 1 and 300 and ${table.namespace} = btrim(${table.namespace}) and length(${table.recordKey}) between 1 and 300 and ${table.recordKey} = btrim(${table.recordKey}) and length(${table.mappingVersion}) between 1 and 300 and ${table.mappingVersion} = btrim(${table.mappingVersion})`,
+    ),
+    ...tenantRlsPolicies('price_group_source_scope', table.tenantId),
+  ],
+);
+
+/** Immutable per-delivery receipt. Only safe source identity, hashes and existing native ledger refs. */
+export const priceGroupSourceOperationReceipts = priceGroupCatalogSchema.table.withRLS(
+  'price_group_source_operation_receipts',
+  {
+    tenantId: uuid('tenant_id').notNull(),
+    actionInvocationId: uuid('action_invocation_id').notNull(),
+    actingPrincipalId: uuid('acting_principal_id').notNull(),
+    businessOriginalInvocationId: uuid('business_original_invocation_id').notNull(),
+    operationKind: text('operation_kind').notNull(),
+    issuer: text('issuer').notNull(),
+    routeId: text('route_id').notNull(),
+    namespace: text('namespace').notNull(),
+    recordKey: text('record_key').notNull(),
+    sourceOccurrenceId: text('source_occurrence_id').notNull(),
+    intentHash: text('intent_hash').notNull(),
+    recordedAt: recordedAt(),
+  },
+  (table) => [
+    unique('price_group_source_receipt_invocation_uk').on(table.tenantId, table.actionInvocationId),
+    uniqueIndex('price_group_source_occurrence_uk')
+      .on(
+        table.tenantId,
+        table.issuer,
+        table.routeId,
+        table.namespace,
+        table.recordKey,
+        table.sourceOccurrenceId,
+        table.operationKind,
+      )
+      .where(sql`${table.actionInvocationId} = ${table.businessOriginalInvocationId}`),
+    foreignKey({
+      columns: [table.tenantId, table.businessOriginalInvocationId],
+      foreignColumns: [priceGroupCatalogLedger.tenantId, priceGroupCatalogLedger.actionInvocationId],
+      name: 'price_group_source_receipt_business_fk',
+    }).onDelete('restrict'),
+    check(
+      'price_group_source_receipt_kind_ck',
+      sql`${table.operationKind} in ('CREATE_PRICE_GROUP', 'CREATE_DEFINITION_REVISION')`,
+    ),
+    check('price_group_source_receipt_hash_ck', sql`${table.intentHash} ~ '^[0-9a-f]{64}$'`),
+    check(
+      'price_group_source_receipt_identity_ck',
+      sql`length(${table.issuer}) between 1 and 300 and ${table.issuer} = btrim(${table.issuer}) and length(${table.routeId}) between 1 and 300 and ${table.routeId} = btrim(${table.routeId}) and length(${table.namespace}) between 1 and 300 and ${table.namespace} = btrim(${table.namespace}) and length(${table.recordKey}) between 1 and 300 and ${table.recordKey} = btrim(${table.recordKey}) and length(${table.sourceOccurrenceId}) between 1 and 300 and ${table.sourceOccurrenceId} = btrim(${table.sourceOccurrenceId})`,
+    ),
+    ...tenantRlsPolicies('price_group_source_receipt_scope', table.tenantId),
+  ],
+);
+
 const priceGroupCatalogDatabaseSchema = {
   gatewayAssertionRedemptions,
   priceGroupCatalogLedger,
@@ -419,6 +520,8 @@ const priceGroupCatalogDatabaseSchema = {
   priceGroupDefinitionEffectiveIntervals,
   priceGroupDefinitionRevisions,
   priceGroupRetirements,
+  priceGroupSourceCorrelations,
+  priceGroupSourceOperationReceipts,
   priceGroups,
 } as const;
 
@@ -430,6 +533,8 @@ export const PRICE_GROUP_CATALOG_TABLES = [
   priceGroupDefinitionEffectiveIntervals,
   priceGroupDefinitionRevisions,
   priceGroupRetirements,
+  priceGroupSourceCorrelations,
+  priceGroupSourceOperationReceipts,
   priceGroups,
 ] as const;
 

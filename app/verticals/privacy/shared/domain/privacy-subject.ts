@@ -44,16 +44,54 @@ export const AnonymousPrivacyContextSchema = Schema.Struct({
   }),
 });
 
-export const PrivacySubjectSchema = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal('DATA_SUBJECT'), partyRef: PrivacyPartyRefSchema }),
-  Schema.Struct({ anonymousContext: AnonymousPrivacyContextSchema, kind: Schema.Literal('ANONYMOUS') }),
-]);
-export type PrivacySubject = typeof PrivacySubjectSchema.Type;
+/** Qualified source subject locator before Party identity exists. It supplies no identity proof,
+ * processing permission, legal basis or independently verified statement about the subject. */
+export const PrivacySourceRecordIdentitySchema = Schema.Struct({
+  issuer: NonEmptyText,
+  namespace: NonEmptyText,
+  recordId: NonEmptyText.pipe(Schema.brand('PrivacySourceSubjectRecordId'), Schema.decodeTo(Schema.String)),
+  recordType: NonEmptyText,
+  routeRef: NonEmptyText,
+});
+export type PrivacySourceRecordIdentity = typeof PrivacySourceRecordIdentitySchema.Type;
+
+/** Canonical length-prefixed key for the ordered tuple; punctuation inside an ID cannot collide. */
+export const privacySourceSubjectIdentityKey = (source: PrivacySourceRecordIdentity): string =>
+  [source.issuer, source.namespace, source.recordType, source.routeRef, source.recordId]
+    .map((value) => `${value.length}:${value}`)
+    .join('|');
+
+/** A locator for a real source admission attempt; the Party owner must validate its committed receipt. */
+export const PrivacySourceSubjectAdmissionSchema = Schema.Struct({
+  occurrenceId: NonEmptyText.pipe(Schema.brand('PrivacySourceAdmissionOccurrenceId'), Schema.decodeTo(Schema.String)),
+  sourceSubjectRef: PrivacySubjectRefSchema,
+});
+export type PrivacySourceSubjectAdmission = typeof PrivacySourceSubjectAdmissionSchema.Type;
+
+export const PrivacySourcePersonReferenceSchema = Schema.Struct({
+  occurrenceId: PrivacySourceSubjectAdmissionSchema.fields.occurrenceId,
+  recordId: PrivacySourceRecordIdentitySchema.fields.recordId,
+  source: Schema.Struct({
+    issuer: PrivacySourceRecordIdentitySchema.fields.issuer,
+    namespace: PrivacySourceRecordIdentitySchema.fields.namespace,
+    recordType: PrivacySourceRecordIdentitySchema.fields.recordType,
+    routeRef: PrivacySourceRecordIdentitySchema.fields.routeRef,
+  }),
+});
+export type PrivacySourcePersonReference = typeof PrivacySourcePersonReferenceSchema.Type;
 
 export const DataSubjectSchema = Schema.Struct({
   kind: Schema.Literal('DATA_SUBJECT'),
   partyRef: PrivacyPartyRefSchema,
+  sourceAdmission: Schema.optionalKey(PrivacySourceSubjectAdmissionSchema),
 });
+
+export const PrivacySubjectSchema = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal('SOURCE_ASSERTED'), source: PrivacySourceRecordIdentitySchema }),
+  DataSubjectSchema,
+  Schema.Struct({ anonymousContext: AnonymousPrivacyContextSchema, kind: Schema.Literal('ANONYMOUS') }),
+]);
+export type PrivacySubject = typeof PrivacySubjectSchema.Type;
 
 export const RequesterSchema = Schema.Struct({
   kind: Schema.Literals(['PRINCIPAL', 'ANONYMOUS']),
@@ -88,14 +126,37 @@ export const PrivacySubjectOwnerEvidenceSchema = Schema.Struct({
   observedAt: PrivacyIsoTimestampSchema,
   ownerRevision: Schema.Number.check(Schema.isInt(), Schema.isGreaterThan(0)),
   partyRef: PrivacyPartyRefSchema,
+  sourcePersonAdmission: Schema.optionalKey(
+    Schema.Struct({
+      sourceActionInvocationId: Schema.String.check(Schema.isUUID()).pipe(
+        Schema.brand('PrivacyPartySourceActionInvocationId'),
+        Schema.decodeTo(Schema.String),
+      ),
+      sourceDecisionRef: Schema.Struct({
+        moduleId: Schema.Literal('party.registry'),
+        resourceId: NonEmptyText.pipe(Schema.brand('PrivacyPartySourceDecisionId'), Schema.decodeTo(Schema.String)),
+        resourceType: Schema.Literal('party.registry.party-match-decision'),
+        tenantId: Schema.String.check(Schema.isUUID()).pipe(
+          Schema.brand('PrivacyPartySourceDecisionTenantId'),
+          Schema.decodeTo(Schema.String),
+        ),
+      }),
+    }),
+  ),
   typeAssertions: Schema.Array(
     Schema.Struct({
       assertionId: NonEmptyText.pipe(Schema.brand('PartyOwnerAssertionId')),
       validFrom: PrivacyIsoTimestampSchema,
       validTo: Schema.toEncoded(Schema.OptionFromNullOr(PrivacyIsoTimestampSchema)),
     }),
-  ).check(Schema.isMinLength(1)),
-});
+  ),
+}).check(
+  Schema.makeFilter((evidence) =>
+    evidence.typeAssertions.length > 0 || evidence.sourcePersonAdmission !== undefined
+      ? undefined
+      : 'Current Party subject evidence requires actual type assertions or a real source-person admission receipt',
+  ),
+);
 export type PrivacySubjectOwnerEvidence = typeof PrivacySubjectOwnerEvidenceSchema.Type;
 
 export const PrivacySubjectRecordSchema = Schema.Struct({

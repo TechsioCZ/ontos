@@ -160,6 +160,7 @@ const VERTICAL_HOSTS = [
   'tax',
   'privacy',
   'projects',
+  'symmyintegration',
 ];
 
 const SECRET_VALUES = {
@@ -457,7 +458,7 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
       ULTRAMODERN_PUBLIC_URL_PRICING: 'https://ontos-stage-pricing.stage.example.com',
       ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: SHELL_ORIGIN,
     });
-    expect(placement.units).toHaveLength(17);
+    expect(placement.units).toHaveLength(18);
     expect(stage.environments.has(STAGE_EDGE)).toBe(true);
     expect(stage.variables.get(STAGE_EDGE)?.get('CLOUDFLARE_ACCOUNT_ID')).toBe('account-1');
     expect(stage.inputs.find(({ command }) => command.startsWith('gh secret set CLOUDFLARE_API_TOKEN'))?.stdin).toBe(
@@ -466,7 +467,7 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
 
     // Every placed Worker receives its secrets through `wrangler secret bulk` on stdin.
     const bulk = stage.inputs.filter(({ command }) => command.includes('wrangler secret bulk'));
-    expect(bulk.map(({ command }) => command.split(' ').at(-1))).toHaveLength(17);
+    expect(bulk.map(({ command }) => command.split(' ').at(-1))).toHaveLength(18);
     const shell = bulk.find(({ command }) => command.endsWith('--name app-shell-super-app'));
     expect(Schema.decodeUnknownSync(StringRecord)(shell?.stdin)).toStrictEqual({
       BETTER_AUTH_SECRET: AUTH_SECRET,
@@ -980,6 +981,7 @@ const provisionedAccount = (
         'app-tax',
         'app-privacy',
         'app-projects',
+        'app-symmy-integration',
         'app-shell-super-app',
       ],
       secrets: Object.fromEntries(
@@ -1263,7 +1265,7 @@ it.effect('gives each module Worker its own redacted module credential and the n
     const reveal = (worker: string) =>
       Object.fromEntries(Object.entries(plan.get(worker) ?? {}).map(([key, value]) => [key, Redacted.value(value)]));
 
-    expect([...plan.keys()]).toHaveLength(17);
+    expect([...plan.keys()]).toHaveLength(18);
     expect(reveal(CUSTOMER_CONTEXT_WORKER)).toMatchObject({
       ONTOS_GATEWAY_MODULE_API_KEY: settingValue(CUSTOMER_CONTEXT_MODULE_CREDENTIAL),
       ONTOS_SHELL_GATEWAY_BASE_URL: SHELL_GATEWAY_BASE_URL,

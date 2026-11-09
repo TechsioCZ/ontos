@@ -1,0 +1,3 @@
+ALTER TABLE "privacy"."privacy_measure_dispatches" ADD COLUMN "dispatch_action_invocation_id" uuid;--> statement-breakpoint
+ALTER TABLE "privacy"."privacy_measure_dispatches" ADD COLUMN "dispatch_composition_revision" text;--> statement-breakpoint
+ALTER TABLE "privacy"."privacy_measure_dispatches" ADD CONSTRAINT "privacy_measure_dispatch_originator_ck" CHECK (("dispatch_action_invocation_id" is null and "dispatch_composition_revision" is null) or ("dispatch_action_invocation_id" is not null and "dispatch_composition_revision" is not null and "dispatch_composition_revision" ~ '^[0-9a-f]{64}$'));

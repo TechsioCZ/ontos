@@ -11,6 +11,8 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema, Schema } from '@
 import { CreatePriceGroupActionApi } from './apis/create-price-group-action.ts';
 import { CreatePriceGroupDefinitionRevisionActionApi } from './apis/create-price-group-definition-revision-action.ts';
 import { PriceGroupDefinitionApi } from './apis/price-group-definition.ts';
+import { PriceGroupResultLookupApi } from './apis/price-group-result-lookup.ts';
+import { PriceGroupSourceAssociationsApi } from './apis/price-group-source-associations.ts';
 import { RetirePriceGroupActionApi } from './apis/retire-price-group-action.ts';
 import { ValidatePriceGroupCompatibilityApi } from './apis/validate-price-group-compatibility.ts';
 // </generated-governed-http-api-imports>
@@ -69,6 +71,8 @@ export const priceGroupCatalogApi = HttpApi.make('PriceGroupCatalogApi')
   .addHttpApi(CreatePriceGroupActionApi)
   .addHttpApi(CreatePriceGroupDefinitionRevisionActionApi)
   .addHttpApi(PriceGroupDefinitionApi)
+  .addHttpApi(PriceGroupResultLookupApi)
+  .addHttpApi(PriceGroupSourceAssociationsApi)
   .addHttpApi(RetirePriceGroupActionApi)
   .addHttpApi(ValidatePriceGroupCompatibilityApi)
   // </generated-governed-http-api-additions>

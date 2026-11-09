@@ -32,6 +32,13 @@ const handleCreateCounterpartyPurchasingProfile = Effect.fn('CreateCounterpartyP
     payload: CreateCounterpartyPurchasingProfilePayload,
     context: ActionHandlerContext<DomainEvents, CreateCounterpartyPurchasingProfileServices>,
   ) {
+    if (context.scope.authMethod === 'system' && payload.source === undefined) {
+      return yield* new CreateCounterpartyPurchasingProfileRejected({
+        code: 'SOURCE_AUTHORITY_DENIED',
+        reason: 'System source workloads require an exact admitted source assertion',
+        retryable: false,
+      });
+    }
     if (payload.subject.counterpartyRef.tenantId !== context.scope.tenantId) {
       return yield* new CreateCounterpartyPurchasingProfileRejected({
         code: 'SUBJECT_NOT_RESOLVED_OR_INVALID',
@@ -62,9 +69,9 @@ const handleCreateCounterpartyPurchasingProfile = Effect.fn('CreateCounterpartyP
     yield* recordProfileResourceLookup(
       context,
       result.profileRef,
-      `counterparty-profile-current:${result.profileRef.resourceId}:${result.revision}`,
+      `counterparty-profile-${result.sourceEffect?.replayed === true ? 'source-receipt' : 'current'}:${result.profileRef.resourceId}:${result.revision}`,
     );
-    if (result.outcome === 'PROFILE_CREATED') {
+    if (result.outcome === 'PROFILE_CREATED' && result.sourceEffect?.replayed !== true) {
       const event = yield* context.addDomainEvent({
         eventType: 'commerce.customer-context.counterparty-purchasing-profile-created.v1',
         payloadJson: result,
@@ -101,6 +108,10 @@ export const createCounterpartyPurchasingProfileAction = defineAction(
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.create-counterparty-purchasing-profile.access.v1',
+    },
+    accessWorkload: {
+      reason: 'Registered Commerce source workloads create only qualified source Profiles',
+      workloads: ['commerce.customer-context.source-write'],
     },
     actionKey: 'commerce.customer-context.create-counterparty-purchasing-profile',
     auditProfile: 'standard',

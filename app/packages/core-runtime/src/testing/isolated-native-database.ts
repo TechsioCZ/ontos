@@ -31,6 +31,8 @@ import {
   publishApplicationCompositionAuthority,
   sealApplicationCompositionAuthority,
 } from '../modules/application-composition-authority.ts';
+import { attachOwnedNativeFixtureLease, verifyOwnedNativeFixtureLease } from './owned-native-fixture-lease.ts';
+import type { OwnedNativeDatabaseFixtureIdentity } from './owned-native-fixture-lease.ts';
 
 export class IsolatedNativeDatabaseError extends Schema.TaggedError<IsolatedNativeDatabaseError>()(
   'IsolatedNativeDatabaseError',
@@ -121,6 +123,16 @@ type IsolatedNativeDatabaseInput = (
       readonly mode: typeof schemaOnly;
       readonly purpose:
         | 'stabilization-1196-product-create'
+        | 'implementation-1126-group-definition'
+        | 'implementation-1134-inventory-source-import-receipt'
+        | 'implementation-1197-profile-ico'
+        | 'implementation-1096-registered-workload-gateway'
+        | 'implementation-1096-profile-source'
+        | 'implementation-1096-address-source'
+        | 'implementation-1096-privacy-ico-reads'
+        | 'implementation-1096-privacy-business-reads'
+        | 'implementation-1096-privacy-measure-native-helper'
+        | 'implementation-1131-price-group-assignment-receipt'
         | 'stabilization-1229-payment-entitlement'
         | 'stabilization-1232-current-access'
         | 'stabilization-1238-invitation-claim'
@@ -164,6 +176,7 @@ type IsolatedNativeDatabaseInput = (
   | {
       readonly mode: 'empty';
       readonly purpose:
+        | 'implementation-1118-symmy-job-admission'
         | 'stabilization-1287-core-operation-fence'
         | 'stabilization-1229-payment-entitlement'
         | 'stabilization-1234-outbox-clock'
@@ -185,11 +198,42 @@ type IsolatedNativeDatabaseInput = (
   /** Explicit test-runner configuration; validated again and still restricted to local isolated databases. */
   readonly sourceConnections?: DatabaseConnectionPair;
 };
+
+export type IsolatedNativeDatabasePurpose = IsolatedNativeDatabaseInput['purpose'];
+
+export interface OwnedNativeDatabaseExpectation {
+  readonly adminConnectionString: Redacted.Redacted;
+  readonly purpose?: IsolatedNativeDatabasePurpose;
+  readonly runtimeConnectionString?: Redacted.Redacted;
+}
+
+/** Proves this exact live test clone's ownership; it supplies no operational scope or business authority. */
+export const requireOwnedNativeDatabaseFixture = Effect.fn('IsolatedNativeDatabase.requireOwnedFixture')(
+  function* requireOwnedNativeDatabaseFixture(
+    fixture: OwnedNativeDatabaseFixtureIdentity,
+    expected: OwnedNativeDatabaseExpectation,
+  ) {
+    return yield* verifyOwnedNativeFixtureLease(fixture, expected, () =>
+      unavailable('An authentic live isolated database fixture is required'),
+    );
+  },
+);
+
 const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
   input.mode === schemaOnly
     ? [
         browserCompositionPurpose,
         'stabilization-1196-product-create',
+        'implementation-1126-group-definition',
+        'implementation-1134-inventory-source-import-receipt',
+        'implementation-1197-profile-ico',
+        'implementation-1096-registered-workload-gateway',
+        'implementation-1096-profile-source',
+        'implementation-1096-address-source',
+        'implementation-1096-privacy-ico-reads',
+        'implementation-1096-privacy-business-reads',
+        'implementation-1096-privacy-measure-native-helper',
+        'implementation-1131-price-group-assignment-receipt',
         'stabilization-1229-payment-entitlement',
         'stabilization-1232-current-access',
         'stabilization-1238-invitation-claim',
@@ -232,6 +276,7 @@ const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
       ].includes(input.purpose)
     : input.mode === 'empty' &&
       [
+        'implementation-1118-symmy-job-admission',
         'stabilization-1287-core-operation-fence',
         'stabilization-1229-payment-entitlement',
         'stabilization-1234-outbox-clock',
@@ -260,6 +305,7 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
     if (!supportsPurpose(input)) {
       return yield* unavailable('Unsupported isolated database test purpose');
     }
+    const ownedPurpose = input.purpose;
     const snapshot =
       input.mode === schemaOnly && input.purpose !== browserCompositionPurpose
         ? yield* validateActiveApplicationCompositionSnapshot(input.compositionSnapshot).pipe(
@@ -1063,12 +1109,48 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       seal: () => runCompositionOperation(sealApplicationCompositionAuthority),
     });
     // Only this scope's new database is reachable; no administrative executor escapes.
-    return {
+    const fixture = {
       composition,
       connections: connections satisfies DatabaseConnectionPair,
       migrateCoreSchema,
       prepareAssortmentAuthorizationRuntime,
       publishInitialComposition,
     };
+    const verifyOwnership = Effect.fn('IsolatedNativeDatabase.verifyOwnedFixture')(function* verifyOwnedFixture(
+      expected: OwnedNativeDatabaseExpectation,
+    ) {
+      if (
+        nativeOwnedIdentity === undefined ||
+        (yield* Ref.get(controllerClosed)) ||
+        Redacted.value(expected.adminConnectionString) !== connections.admin.connectionString ||
+        (expected.runtimeConnectionString !== undefined &&
+          Redacted.value(expected.runtimeConnectionString) !== connections.runtime.connectionString) ||
+        (expected.purpose !== undefined && expected.purpose !== ownedPurpose)
+      ) {
+        return yield* unavailable('The live isolated fixture does not match the expected owned database');
+      }
+      const [identity] = yield* clone.executor
+        .execute<{ readonly owned: boolean }>(
+          sql`select
+          current_database()=${ownedBoundary.database} and d.oid::text=${nativeOwnedIdentity.databaseOid}
+          and current_user=${ownedBoundary.adminUser} and session_user=${ownedBoundary.adminUser}
+          and pg_get_userbyid(d.datdba)=${ownedBoundary.adminUser}
+          and r.oid::text=${nativeOwnedIdentity.runtimeRoleOid} and not r.rolsuper and not r.rolbypassrls
+          and inet_server_addr()::text is not distinct from ${nativeOwnedIdentity.serverAddress}
+          and inet_server_port() is not distinct from ${nativeOwnedIdentity.serverPort} as owned
+          from pg_database d cross join pg_roles r
+          where d.datname=current_database() and r.rolname=${ownedBoundary.runtimeUser}`,
+          'objects',
+        )
+        .pipe(Effect.mapError((cause) => unavailable('Unable to verify the isolated database ownership', cause)));
+      if (identity?.owned !== true || (yield* Ref.get(controllerClosed))) {
+        return yield* unavailable('The isolated database identity or live ownership has changed');
+      }
+      return yield* Effect.void;
+    });
+    attachOwnedNativeFixtureLease(fixture, verifyOwnership);
+    return Object.freeze(fixture);
   },
 );
+
+export type OwnedNativeDatabaseFixture = Effect.Success<ReturnType<typeof makeIsolatedNativeDatabaseFixture>>;

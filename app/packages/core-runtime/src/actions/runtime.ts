@@ -1,4 +1,22 @@
 import {
+  isActionRegistration,
+  decodeActionPostAttemptResult,
+  getActionPostAttemptHook,
+  decodeActionPayload,
+  decodeActionResult,
+  getActionAccessAmountResolver,
+  getActionAccessTargetResolver,
+  getActionOwnerFactsResolver,
+  getActionReducesAuthorityResolver,
+  getActionDecodedSuccessHook,
+  getActionOwnerPermissionTargetResolver,
+  getActionHandler,
+  getActionResourcePermissionTargetResolver,
+  getActionServiceFactory,
+} from './definition.ts';
+import { lockRegisteredSourceExecutionFence } from '../access/workloads/source-execution-fence.ts';
+import { bindScopedWorkloadAdmission } from '../access/enforcement/workload-admission.ts';
+import {
   loadModuleOperationAdmission,
   operationCatalogLoader,
   prepareOperationIntrinsicState,
@@ -41,6 +59,12 @@ import { authorizeDeclaredFieldWrites } from './field-write-authorization.ts';
 
 import {
   decodeTrustedPrincipalContext,
+  readVerifiedGatewayRecovery,
+  readVerifiedGatewayPrivacyDispatch,
+  readVerifiedGatewayOrganizationGovernanceRead,
+  readVerifiedGatewayOrganizationProcessingRead,
+  privacyDispatchOperationContract,
+  readVerifiedGatewayWorkload,
   isTrustedSupportRecoveryPrincipalContext,
   preserveSystemPrincipalContextTrust,
   readVerifiedGatewayCompositionRevision,
@@ -94,21 +118,6 @@ import type {
   ActionRegistration,
   ActionResourcePermissionTarget,
   ActionTenantPermission,
-} from './definition.ts';
-import {
-  decodeActionPostAttemptResult,
-  getActionPostAttemptHook,
-  decodeActionPayload,
-  decodeActionResult,
-  getActionAccessAmountResolver,
-  getActionAccessTargetResolver,
-  getActionOwnerFactsResolver,
-  getActionReducesAuthorityResolver,
-  getActionDecodedSuccessHook,
-  getActionOwnerPermissionTargetResolver,
-  getActionHandler,
-  getActionResourcePermissionTargetResolver,
-  getActionServiceFactory,
 } from './definition.ts';
 import {
   ActionAlreadyCommitted,
@@ -767,6 +776,52 @@ const validatePrincipal = <Input, Registration extends object = object, Payload 
 ): Effect.Effect<TrustedPrincipalContext, ActionTrustedContextValidationError> =>
   decodeTrustedPrincipalContext(input).pipe(
     Effect.filterOrFail(
+      (principal) => readVerifiedGatewayOrganizationProcessingRead(principal) === undefined,
+      () =>
+        new ActionTrustedContextValidationError({
+          code: 'action_trusted_context_invalid',
+          reason: 'Organization processing read authority cannot execute an Action',
+        }),
+    ),
+    Effect.filterOrFail(
+      (principal) => readVerifiedGatewayOrganizationGovernanceRead(principal) === undefined,
+      () =>
+        new ActionTrustedContextValidationError({
+          code: 'action_trusted_context_invalid',
+          reason: 'Organization governance read authority cannot execute an Action',
+        }),
+    ),
+    Effect.filterOrFail(
+      (principal) => {
+        const dispatch = readVerifiedGatewayPrivacyDispatch(principal);
+        if (dispatch === undefined) {
+          return true;
+        }
+        if (!isActionRegistration(actionRegistration)) {
+          return false;
+        }
+        const expected = privacyDispatchOperationContract(dispatch.operation);
+        return (
+          expected.access === 'write' &&
+          actionRegistration.descriptor.entrypoint.entrypointKey === expected.entrypointKey &&
+          actionRegistration.descriptor.schemaVersion === expected.schemaVersion
+        );
+      },
+      () =>
+        new ActionTrustedContextValidationError({
+          code: 'action_trusted_context_invalid',
+          reason: 'Privacy dispatch authority does not match this exact Action',
+        }),
+    ),
+    Effect.filterOrFail(
+      (principal) => readVerifiedGatewayRecovery(principal) === undefined,
+      () =>
+        new ActionTrustedContextValidationError({
+          code: 'action_trusted_context_invalid',
+          reason: 'Receipt recovery authority cannot execute an Action',
+        }),
+    ),
+    Effect.filterOrFail(
       (principal) =>
         !isTrustedSupportRecoveryPrincipalContext(principal) ||
         (actionRegistration !== undefined &&
@@ -976,6 +1031,31 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         installScope(transaction, scope).pipe(Effect.andThen(() => body(transaction))),
       ),
   });
+  /** Holds the source admission lock through the complete lookup/result preparation, then restores its typed outcome. */
+  const withRegisteredSourceExecutionFence = <Value, Failure, Requirements>(
+    scope: OperationalScope,
+    program: Effect.Effect<Value, Failure, Requirements>,
+  ): Effect.Effect<Value, Failure | ActionTransactionError, Requirements> => {
+    if (readVerifiedGatewayWorkload(scope) === undefined) {
+      return program;
+    }
+    return invocationScopeExecutor(scope)
+      .transaction((transaction) =>
+        lockRegisteredSourceExecutionFence(transaction, scope).pipe(Effect.andThen(() => Effect.exit(program))),
+      )
+      .pipe(
+        Effect.mapError((cause) =>
+          createActionTransactionErrorWithCause(
+            {
+              code: 'action_transaction_failed',
+              reason: 'The original source admission no longer permits owner effects',
+            },
+            cause,
+          ),
+        ),
+        Effect.flatMap((exit) => exit),
+      );
+  };
   const loadRecordedRejectionInScope = (scope: OperationalScope, invocationId: string) =>
     invocationScopeExecutor(scope)
       .transaction((transaction) => repository.loadRecordedRejection(transaction, invocationId))
@@ -1220,6 +1300,21 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               {},
             ),
           );
+          const { legalEntityId: _authenticatedLegalEntityId, ...tenantPrincipal } = principal;
+          // Authentication keeps a system Principal tenant-local. Operation evidence records the company
+          // Core actually installed, so idempotency, audit and uncertain-commit recovery share that scope.
+          const operationPrincipal = preserveSystemPrincipalContextTrust(
+            scope,
+            Object.freeze(
+              withOptionalProperty(
+                tenantPrincipal,
+                scope.legalEntityId !== undefined,
+                'legalEntityId',
+                scope.legalEntityId,
+                {},
+              ),
+            ),
+          );
           let mandatePrepared: MandatePrepared | undefined;
           if (mandateId !== undefined) {
             if (mandateDispatch === undefined) {
@@ -1263,7 +1358,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             deniedAuditEvidenceDeclaration === undefined
               ? undefined
               : yield* resolveDeniedAuditEvidence(deniedAuditEvidenceDeclaration, payload, scope);
-          return { deniedAuditEvidence, mandatePrepared, payload, principal, scope, transport };
+          return { deniedAuditEvidence, mandatePrepared, payload, principal: operationPrincipal, scope, transport };
         },
       );
 
@@ -1476,7 +1571,32 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         return parked.pipe(Option.map(toActionProposalAccepted));
       });
 
-      const prepareInvocation = Effect.fn('ActionRuntime.prepareInvocation')(function* prepareInvocationEffect(
+      const requireCurrentPrivacyDispatch = Effect.fn('ActionRuntime.currentPrivacyDispatch')(
+        function* requireCurrentPrivacyDispatch(scope: OperationalScope) {
+          if (readVerifiedGatewayPrivacyDispatch(scope) === undefined) {
+            return yield* Effect.void;
+          }
+          if (accessDecision === undefined) {
+            return yield* permissionUnavailable();
+          }
+          const now = yield* DateTime.nowAsDate;
+          const decision = yield* accessDecision.decide({
+            carrier: declaredCarrier,
+            legalEntityScope: input.registration.descriptor.legalEntityScope,
+            now,
+            scope,
+          });
+          if (decision.outcome === 'UNAVAILABLE') {
+            return yield* permissionUnavailable();
+          }
+          if (decision.outcome !== 'ALLOWED') {
+            return yield* accessDeniedFailure(decision);
+          }
+          return yield* Effect.void;
+        },
+      );
+
+      const prepareInvocationInFence = Effect.fn('ActionRuntime.prepareInvocation')(function* prepareInvocationEffect(
         payload: PayloadSchema['Type'],
         principal: TrustedPrincipalContext,
         transport: ActionTransportMetadata,
@@ -1500,6 +1620,18 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               )(payload),
             ),
         });
+        const privacyDispatch = readVerifiedGatewayPrivacyDispatch(scope);
+        if (
+          privacyDispatch !== undefined &&
+          computeCanonicalValueHash(normalizedPayload) !== privacyDispatch.requestHash
+        ) {
+          return yield* new ActionPayloadValidationError({
+            code: 'action_payload_invalid',
+            reason: 'Privacy dispatch authority does not match the exact Action payload',
+          });
+        }
+        // Even a cached ordinary Action response requires this finite source's current authority.
+        yield* requireCurrentPrivacyDispatch(scope);
         const requestHash = yield* Effect.try({
           catch: (cause) =>
             attachFailureCause(
@@ -1568,6 +1700,9 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         );
         return { invocation, normalizedPayload, parked: Option.none<ActionProposalAccepted>(), requestHash };
       });
+
+      const prepareInvocation = (...invocationArguments: Parameters<typeof prepareInvocationInFence>) =>
+        withRegisteredSourceExecutionFence(invocationArguments[5], prepareInvocationInFence(...invocationArguments));
 
       const prepareInputAndContext = Effect.fn('ActionRuntime.prepareInputAndContext')(
         function* prepareInputAndContextEffect() {
@@ -2053,7 +2188,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       const recheckAccessInTransaction = Effect.fn('ActionRuntime.recheckAccessInTransaction')(
         function* recheckAccessInTransactionEffect(transaction: CoreTransaction, now: Date) {
           if (!usesAccessGate || reducesOwnAuthority) {
-            return yield* Effect.void;
+            return Option.none<AccessDecision>();
           }
           const current = yield* decideAccessInTransaction(transaction, now);
           if (current.outcome !== 'ALLOWED') {
@@ -2063,7 +2198,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           }
           const groups = declaredCarrier.accessFieldGroups ?? NO_ACCESS_FIELD_GROUPS;
           if (groups.length === 0) {
-            return yield* Effect.void;
+            return Option.some(current);
           }
           const declaration = declaredCarrier.accessDeclaration;
           if (accessDecision === undefined || declaration === undefined) {
@@ -2088,7 +2223,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           if (fieldWrites.failure !== undefined) {
             return yield* fieldWrites.failure;
           }
-          return yield* Effect.void;
+          return Option.some(current);
         },
       );
 
@@ -2233,6 +2368,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
 
       const executeTransactionAndHandleExit = Effect.fn('ActionRuntime.executeTransactionAndHandleExit')(
         function* executeTransactionAndHandleExitEffect() {
+          let closeWorkloadAdmission: (() => void) | undefined;
           const transactionBodyCompleted = yield* Ref.make(false);
           const transactionBodyExit = yield* Ref.make<Exit.Exit<unknown, unknown> | null>(null);
           const transactionProgram: (
@@ -2242,7 +2378,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             ActionCoreError | DomainErrorSchema['Type'],
             HandlerRequirements
           > = Effect.fn('ActionRuntime.transaction')(function* executeTransaction(drizzleTransaction: CoreTransaction) {
-            const scopedTransaction = yield* installScope(drizzleTransaction, scope);
+            let scopedTransaction = yield* installScope(drizzleTransaction, scope);
             notifyStage('database_scope_installed');
             yield* lockCompositionAuthority(drizzleTransaction, admittedCompositionRevision, 'write').pipe(
               Effect.mapError((cause) =>
@@ -2256,6 +2392,17 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               ),
             );
             notifyStage('composition_authority_locked');
+            yield* lockRegisteredSourceExecutionFence(drizzleTransaction, scope).pipe(
+              Effect.mapError((cause) =>
+                createActionTransactionErrorWithCause(
+                  {
+                    code: 'action_transaction_failed',
+                    reason: 'The original source admission no longer permits owner effects',
+                  },
+                  cause,
+                ),
+              ),
+            );
             const { lockedInvocation, parked } = yield* lockAndVerifyInvocation(drizzleTransaction);
             if (Option.isSome(parked)) {
               yield* Ref.set(transactionBodyCompleted, true);
@@ -2275,7 +2422,14 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             }
             // R5a-2: access writers cannot take Changing while this shared fence lock is held; a
             // stale preflight ALLOWED never becomes authority for a handler after revocation.
-            yield* recheckAccessInTransaction(drizzleTransaction, operationDate);
+            const mainAccessDecision = yield* recheckAccessInTransaction(drizzleTransaction, operationDate);
+            const workloadAdmission = bindScopedWorkloadAdmission(
+              scopedTransaction,
+              { actionInvocationId: lockedInvocation.actionInvocationId, carrier: declaredCarrier, scope },
+              Option.getOrUndefined(mainAccessDecision),
+            );
+            scopedTransaction = workloadAdmission.transaction;
+            closeWorkloadAdmission = workloadAdmission.close;
             yield* claimMandateInTransaction(drizzleTransaction, operationDate);
             const ownerAuthorizationDecision = yield* ownerAuthorizationOverlay.authorize(
               scopedTransaction,
@@ -2491,7 +2645,9 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
                           revision: admittedCompositionRevision,
                           scope,
                         },
-                        transactionProgram(transaction),
+                        transactionProgram(transaction).pipe(
+                          Effect.ensuring(Effect.sync(() => closeWorkloadAdmission?.())),
+                        ),
                       ).pipe(Effect.onExit((exit) => Ref.set(transactionBodyExit, exit))),
                     ),
                   ),
@@ -2713,46 +2869,51 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             revision = yield* resolveCompositionRevision(original.principal);
           }
         }
-        const settlementExit = yield* Effect.exit(
-          withModuleOperationExecution(
-            {
-              loadCatalog: operationCatalogLoader(operationAuthority, revision),
-              ownerRegistration: options.ownerRegistration,
-              phase: mode.phase,
-              registration: input.registration,
-              revision,
-              scope: original.scope,
-            },
-            Effect.suspend(() =>
-              postAttemptHook(
-                Object.freeze({
-                  actionInvocationId: original.invocationId,
-                  compositionRevision: revision,
-                  outcome,
-                  payload: original.payload,
-                  scope: original.scope,
-                }),
+        const settleAndConfirm = Effect.gen(function* settleAndConfirmUnderSourceFence() {
+          const settlementExit = yield* Effect.exit(
+            withModuleOperationExecution(
+              {
+                loadCatalog: operationCatalogLoader(operationAuthority, revision),
+                ownerRegistration: options.ownerRegistration,
+                phase: mode.phase,
+                registration: input.registration,
+                revision,
+                scope: original.scope,
+              },
+              Effect.suspend(() =>
+                postAttemptHook(
+                  Object.freeze({
+                    actionInvocationId: original.invocationId,
+                    compositionRevision: revision,
+                    outcome,
+                    payload: original.payload,
+                    scope: original.scope,
+                  }),
+                ),
               ),
             ),
-          ),
-        );
-        if (mode.interrupted) {
-          return yield* executionExit;
-        }
-        if (Exit.isFailure(settlementExit)) {
-          return yield* failSettlement(settlementExit.cause);
-        }
-        const settlement = yield* decodeActionPostAttemptResult(
-          input.registration.descriptor.resultSchema,
-          settlementExit.value,
-        ).pipe(Effect.mapError((cause) => attachFailureCause(makeHandlerExecutionError(), cause)));
-        return yield* Match.value(settlement).pipe(
-          Match.tags({
-            Recovered: ({ result }) => confirmOriginalRecovery(result, original, mode.recoverable),
-            Settled: () => executionExit,
-          }),
-          Match.exhaustive,
-        );
+          );
+          if (mode.interrupted) {
+            return yield* executionExit;
+          }
+          if (Exit.isFailure(settlementExit)) {
+            return yield* failSettlement(settlementExit.cause);
+          }
+          const settlement = yield* decodeActionPostAttemptResult(
+            input.registration.descriptor.resultSchema,
+            settlementExit.value,
+          ).pipe(Effect.mapError((cause) => attachFailureCause(makeHandlerExecutionError(), cause)));
+          return yield* Match.value(settlement).pipe(
+            Match.tags({
+              Recovered: ({ result }) => confirmOriginalRecovery(result, original, mode.recoverable),
+              Settled: () => executionExit,
+            }),
+            Match.exhaustive,
+          );
+        });
+        return yield* mode.interrupted
+          ? settleAndConfirm
+          : withRegisteredSourceExecutionFence(original.scope, settleAndConfirm);
       }),
     );
   });
@@ -2768,8 +2929,27 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
   const resolveActionCommit: ActionRuntimeService['resolveActionCommit'] = Effect.fn(
     'ActionRuntime.resolveActionCommit',
   )(function* resolveActionCommitEffect(input: ResolveActionCommitInput) {
-    const principal = yield* validatePrincipal(input.principal);
+    const recovery = readVerifiedGatewayRecovery(input.principal);
+    const principal = yield* recovery === undefined
+      ? validatePrincipal(input.principal)
+      : decodeTrustedPrincipalContext(input.principal).pipe(
+          Effect.mapError((cause) =>
+            attachFailureCause(
+              new ActionTrustedContextValidationError({
+                code: 'action_trusted_context_invalid',
+                reason: 'The trusted recovery principal context is invalid',
+              }),
+              cause,
+            ),
+          ),
+        );
     const invocationId = yield* validateInvocationId(input.invocationId);
+    if (recovery !== undefined && invocationId !== recovery.originalActionInvocationId) {
+      return yield* new ActionInvocationNotFound({
+        code: 'action_invocation_not_found',
+        reason: 'The Action invocation does not match the exact recovery authority',
+      });
+    }
     const invocation = yield* repository
       .resolveInvocation(
         invocationScopeExecutor(preserveSystemPrincipalContextTrust(principal, { ...principal, correlationId: '' })),

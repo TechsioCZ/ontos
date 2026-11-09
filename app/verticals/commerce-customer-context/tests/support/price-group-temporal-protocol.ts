@@ -558,7 +558,8 @@ export const makePriceGroupTemporalComposition = Effect.fn('TemporalNative.actua
     const shellRuntime = yield* Schema.decodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
       shellRuntimeDocument,
     );
-    const shellFederationDocument = yield* fs.readFileString(path.join(shellDirectory, '.output/mf-manifest.json'));
+    // The isolated fixture consumes the real compiled Shell output, without claiming a promotable release.
+    const shellFederationDocument = yield* fs.readFileString(path.join(shellDirectory, 'dist/mf-manifest.json'));
     const shellFederation = yield* Schema.decodeEffect(
       Schema.fromJsonString(
         Schema.Struct({

@@ -4,6 +4,7 @@ import { NodeFileSystem } from '@effect/platform-node';
 import { FileSystem, Effect, Schema, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { FenceLegacyIcoAuthorityActionApi } from '../../shared/apis/fence-legacy-ico-authority-action.ts';
 import { partyRegistryCommandsApi, PartyCommandAliasWriteRejectedProblemSchema } from '../../shared/command-api.ts';
 
 const ref = (id: string) => ({
@@ -23,7 +24,10 @@ it.layer(NodeFileSystem.layer)('api-integration-command-contract', (suite) => {
         .filter((file) => file.endsWith('.action.ts'))
         .map((file) => file.replace('.action.ts', ''))
         .filter((slug) => !slug.includes('engagement') && slug !== 'execute-privacy-measure');
-      const endpoints = Object.values(partyRegistryCommandsApi.groups.partyCommands.endpoints);
+      const endpoints = [
+        ...Object.values(partyRegistryCommandsApi.groups.partyCommands.endpoints),
+        ...Object.values(FenceLegacyIcoAuthorityActionApi.groups.fenceLegacyIcoAuthorityAction.endpoints),
+      ];
       expect(endpoints.length).toBe(actions.length);
       expect(endpoints.map((endpoint) => endpoint.path).toSorted()).toEqual(
         actions.map((slug) => `/party-registry/actions/${slug}`).toSorted(),
@@ -33,7 +37,13 @@ it.layer(NodeFileSystem.layer)('api-integration-command-contract', (suite) => {
           .split('-')
           .map((part, index) => (index === 0 ? part : part.charAt(0).toUpperCase() + part.slice(1)))
           .join('');
-        expect(Object.hasOwn(partyRegistryCommandsApi.groups.partyCommands.endpoints, name)).toBe(true);
+        expect(
+          slug === 'fence-legacy-ico-authority'
+            ? FenceLegacyIcoAuthorityActionApi.groups.fenceLegacyIcoAuthorityAction.endpoints.execute.path.endsWith(
+                slug,
+              )
+            : Object.hasOwn(partyRegistryCommandsApi.groups.partyCommands.endpoints, name),
+        ).toBe(true);
       }
     }),
   );

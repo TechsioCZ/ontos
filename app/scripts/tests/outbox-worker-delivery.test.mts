@@ -43,7 +43,13 @@ const WORKER_ENTRY = 'src/worker-host/entry.ts';
 const WORKER_BUNDLE = 'worker.mjs';
 const WORKER_ARTIFACT = 'worker-artifact.json';
 const WORKER_RUNTIME_ROOT = '.zerops/runtime';
-const REVIEWED_HOST_OWNER_IDS = ['party-registry', 'commerce-customer-context', 'inventory', 'privacy'];
+const REVIEWED_HOST_OWNER_IDS = [
+  'party-registry',
+  'commerce-customer-context',
+  'inventory',
+  'privacy',
+  'symmy-integration',
+];
 const OWNER_MARKER_SOURCE = 'shared/ultramodern-build.ts';
 const ENV_COMMAND = '/usr/bin/env';
 const PACKAGE_MANIFEST = 'package.json';
@@ -711,6 +717,39 @@ it.live('compiles a custom reviewed intent without changing the generated host i
     const dedicated = yield* compileReleaseFixture(root, 'ledger', revision, true, customIntent);
     expect(dedicated.map(({ unitId }) => unitId)).toEqual(['app/ledger']);
   }),
+);
+
+it.live(
+  'keeps exact reviewed host membership through a symlinked workspace while dedicated owners stay independent',
+  () =>
+    Effect.gen(function* linkedWorkspaceMembership() {
+      const root = yield* makeReleaseMarkerFixture();
+      const linkedRoot = path.join(root, 'workspace-alias');
+      yield* Effect.tryPromise(() => symlink(root, linkedRoot, 'dir'));
+      const customIntent = 'topology/linked-workspace-release.json';
+      yield* Effect.tryPromise(() =>
+        writeFile(path.join(root, customIntent), JSON.stringify({ modules: [{ appId: 'balance' }] })),
+      );
+      const generated = yield* Effect.tryPromise(() => readFile(path.join(root, OUTBOX_WORKER_HOST.entry), 'utf-8'));
+      const revision = 'e'.repeat(40);
+      const hosted = yield* compileReleaseFixture(linkedRoot, OUTBOX_WORKER_HOST.id, revision, true, customIntent);
+      expect(hosted.map(({ unitId }) => unitId)).toEqual(['app/balance']);
+      const artifact = decodeWorkerArtifact(
+        yield* Effect.tryPromise(() =>
+          readFile(
+            path.join(linkedRoot, WORKER_RUNTIME_ROOT, revision, OUTBOX_WORKER_HOST.id, WORKER_ARTIFACT),
+            'utf-8',
+          ),
+        ),
+      );
+      expect(artifact.ownerBuildIdentities.map(({ appId }) => appId)).toEqual(['balance']);
+      expect(artifact.sourceInputs.some((source) => source.startsWith(`${LEDGER_PATH}/`))).toBe(false);
+      expect(yield* Effect.tryPromise(() => readFile(path.join(root, OUTBOX_WORKER_HOST.entry), 'utf-8'))).toBe(
+        generated,
+      );
+      const dedicated = yield* compileReleaseFixture(linkedRoot, 'ledger', revision, true, customIntent);
+      expect(dedicated.map(({ unitId }) => unitId)).toEqual(['app/ledger']);
+    }),
 );
 
 it.live('rejects invalid reviewed host membership and intent paths instead of falling back to inventory', () =>

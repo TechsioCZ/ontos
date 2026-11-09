@@ -1,6 +1,8 @@
 import { Schema } from 'effect';
+import { CatalogProductSourceCorrelationSchema } from '../domain/catalog-source-correlation.ts';
 
 import {
+  ProductActionInvocationIdSchema,
   ProductDescriptionSchema,
   ProductNameSchema,
   ProductReasonSchema,
@@ -16,6 +18,7 @@ import {
 const createProductFields = {
   description: Schema.optionalKey(ProductDescriptionSchema),
   name: Schema.optionalKey(ProductNameSchema),
+  sourceCorrelation: Schema.optionalKey(CatalogProductSourceCorrelationSchema),
   variantId: Schema.optionalKey(ProductUuidSchema),
 };
 export const CreateProductPayloadSchema = Schema.Union([
@@ -41,6 +44,7 @@ export const CreateProductPayloadSchema = Schema.Union([
 export type CreateProductPayload = typeof CreateProductPayloadSchema.Type;
 
 export const CreateProductResultSchema = Schema.Struct({
+  businessOriginalCreateInvocationId: Schema.optionalKey(ProductActionInvocationIdSchema),
   classification: Schema.optionalKey(CompletedProductCreationClassificationSchema),
   product: ProductSchema,
   variantId: ProductUuidSchema,

@@ -90,6 +90,9 @@
     },
     {
       "path": "verticals/commerce-order"
+    },
+    {
+      "path": "verticals/symmy-integration"
     }
   ]
 }

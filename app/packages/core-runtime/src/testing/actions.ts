@@ -335,6 +335,8 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
         }
       } else if (sql === 'rollback') {
         pendingCommit = [];
+      } else if (sql === 'select current_user::text as role') {
+        return { rows: [{ role: scope.role }] };
       } else if (sql.includes('set_config')) {
         [scope.tenantId, scope.legalEntityId] = yield* Schema.decodeUnknownEffect(scopeValuesSchema)(values);
       } else if (sql === ESTABLISH_GATEWAY_SCOPE_SQL) {

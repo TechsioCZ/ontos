@@ -38,6 +38,10 @@ type DatabaseJsonValue =
 type DatabaseJsonObject = Readonly<Record<string, DatabaseJsonValue>>;
 
 export const COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY = [
+  'customer_profile_ico_migration_history',
+  'saved_address_source_routes',
+  'saved_address_source_bindings',
+  'saved_address_source_receipts',
   'purchase_proposal_bases',
   'gateway_assertion_redemptions',
   'access_mutation_journal',
@@ -55,8 +59,14 @@ export const COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY = [
   'customer_address_defaults',
   'customer_commerce_policy_completeness_generations',
   'customer_group_memberships',
+  'customer_group_membership_snapshot_proofs',
+  'customer_group_membership_source_routes',
+  'customer_group_membership_source_receipts',
   'customer_group_lifecycle_periods',
   'customer_group_revisions',
+  'customer_group_definition_source_routes',
+  'customer_group_definition_source_bindings',
+  'customer_group_definition_source_receipts',
   'customer_groups',
   'customer_payment_term_entitlements',
   'customer_payment_term_preferences',
@@ -65,7 +75,14 @@ export const COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY = [
   'customer_price_group_assignments',
   'customer_profile_aliases',
   'customer_profile_lifecycle_history',
+  'customer_profile_source_routes',
+  'customer_profile_source_bindings',
+  'customer_profile_source_receipts',
+  'customer_price_group_assignment_receipts',
   'customer_profiles',
+  'customer_profile_ico_assertions',
+  'customer_profile_ico_authority',
+  'customer_profile_ico_target_inventory',
   'customer_setting_revisions',
   'guest_retail_attributions',
   'market_bootstrap_policy_candidate_generations',
@@ -1212,6 +1229,7 @@ export const customerGroupMemberships = commerceCustomerContextSchema.table.with
     effectiveFrom: effectiveFrom(),
     effectiveTo: effectiveTo(),
     lifecycle: text('lifecycle').default('ACTIVE').notNull(),
+    management: jsonb('management').$type<DatabaseJsonObject>().default({ kind: 'LEGACY_UNATTRIBUTED' }).notNull(),
     revision: integer('revision').default(1).notNull(),
     ...operationAttribution(),
   },
@@ -1240,9 +1258,126 @@ export const customerGroupMemberships = commerceCustomerContextSchema.table.with
       sql`${table.lifecycle} in ('ACTIVE', 'ENDED', 'CANCELLED') and (${table.lifecycle} <> 'ENDED' or ${table.effectiveTo} is not null)`,
     ),
     positiveRevision('ccc_memberships_revision_ck', table.revision),
+    check(
+      'ccc_memberships_management_ck',
+      sql`jsonb_typeof(${table.management}) = 'object' and coalesce(
+        ${table.management}->>'kind' in ('MANUAL', 'LEGACY_UNATTRIBUTED')
+        or (${table.management}->>'kind' = 'EXTERNAL_SOURCE'
+          and ${table.management} #>> '{manager,tenantId}' = ${table.tenantId}::text
+          and ${table.management} #>> '{manager,factFamily}' = 'CUSTOMER_GROUP_MEMBERSHIP'
+          and length(${table.management} #>> '{manager,issuer}') > 0
+          and length(${table.management} #>> '{manager,sourceNamespace}') > 0
+          and jsonb_typeof(${table.management}->'source') = 'object'), false)`,
+    ),
     optionalTrimmed('ccc_memberships_reason_ck', table.reason),
     ...scopedPolicies('ccc_memberships_scope', table),
   ],
+);
+
+/** Owner-verified, route-scoped completeness. The Action caller cannot register this evidence. */
+export const customerGroupMembershipSnapshotProofs = commerceCustomerContextSchema.table.withRLS(
+  'customer_group_membership_snapshot_proofs',
+  {
+    ...scopeColumns(),
+    completenessContractCoverage: text('completeness_contract_coverage'),
+    completenessContractRef: text('completeness_contract_ref'),
+    completenessContractRevision: text('completeness_contract_revision'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    processingKind: text('processing_kind').default('PERSON').notNull(),
+    proofDigest: text('proof_digest').notNull(),
+    proofRef: text('proof_ref').notNull(),
+    qualifiedAt: timestamp('qualified_at', { withTimezone: true }),
+    qualifiedByActionInvocationId: uuid('qualified_by_action_invocation_id'),
+    qualifiedByPrincipalId: uuid('qualified_by_principal_id'),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.legalEntityId, table.proofRef],
+      name: 'ccc_membership_snapshot_proofs_pk',
+    }),
+    check(
+      'ccc_membership_snapshot_proof_processing_kind_ck',
+      sql`${table.processingKind} in ('PERSON', 'ORG_BUSINESS_REFERENCE')`,
+    ),
+    trimmed('ccc_membership_snapshot_proof_ref_ck', table.proofRef),
+    check('ccc_membership_snapshot_proof_digest_ck', sql`${table.proofDigest} ~ '^[a-f0-9]{64}$'`),
+    ...scopedPolicies('ccc_membership_snapshot_proofs', table),
+  ],
+);
+
+/** Owner-side binding of a qualified source to an exact governed caller and current route. */
+export const customerGroupMembershipSourceRoutes = commerceCustomerContextSchema.table.withRLS(
+  'customer_group_membership_source_routes',
+  {
+    ...scopeColumns(),
+    active: boolean('active').default(false).notNull(),
+    allowComplete: boolean('allow_complete').default(false).notNull(),
+    completenessContractCoverage: text('completeness_contract_coverage'),
+    completenessContractRef: text('completeness_contract_ref'),
+    completenessContractRevision: text('completeness_contract_revision'),
+    issuer: text('issuer').notNull(),
+    principalId: uuid('principal_id').notNull(),
+    routeId: text('route_id').notNull(),
+    routeRevision: text('route_revision').notNull(),
+    sourceNamespace: text('source_namespace').notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.legalEntityId, table.routeId],
+      name: 'ccc_membership_source_routes_pk',
+    }),
+    trimmed('ccc_membership_source_route_id_ck', table.routeId),
+    trimmed('ccc_membership_source_route_revision_ck', table.routeRevision),
+    trimmed('ccc_membership_source_route_issuer_ck', table.issuer),
+    trimmed('ccc_membership_source_route_namespace_ck', table.sourceNamespace),
+    ...scopedPolicies('ccc_membership_source_routes', table),
+  ],
+);
+
+/** The latest accepted order for this scope is the highest retained receipt order. */
+export const customerGroupMembershipSourceReceipts = commerceCustomerContextSchema.table.withRLS(
+  'customer_group_membership_source_receipts',
+  {
+    ...scopeColumns(),
+    assertionId: text('assertion_id').notNull(),
+    customerProfileId: uuid('customer_profile_id').notNull(),
+    effectId: text('effect_id').notNull(),
+    effectiveAt: timestamp('effective_at', { withTimezone: true }).notNull(),
+    fingerprint: text('fingerprint').notNull(),
+    issuer: text('issuer').notNull(),
+    processingKind: text('processing_kind').default('PERSON').notNull(),
+    result: jsonb('result').$type<DatabaseJsonObject>().notNull(),
+    sourceNamespace: text('source_namespace').notNull(),
+    sourceOrder: integer('source_order').notNull(),
+    ...operationAttribution(),
+  },
+  (table) => {
+    const scope = [
+      table.tenantId,
+      table.legalEntityId,
+      table.customerProfileId,
+      table.issuer,
+      table.sourceNamespace,
+    ] as const;
+    return [
+      primaryKey({ columns: [...scope, table.sourceOrder], name: 'ccc_membership_source_receipts_pk' }),
+      unique('ccc_membership_source_receipts_effect_uk').on(...scope, table.effectId),
+      unique('ccc_membership_source_receipts_assertion_uk').on(...scope, table.assertionId),
+      foreignKey({
+        columns: [table.tenantId, table.legalEntityId, table.customerProfileId],
+        foreignColumns: [customerProfiles.tenantId, customerProfiles.legalEntityId, customerProfiles.customerProfileId],
+        name: 'ccc_membership_source_receipts_profile_fk',
+      }).onDelete('restrict'),
+      positiveRevision('ccc_membership_source_receipts_order_ck', table.sourceOrder),
+      check('ccc_membership_source_receipts_fingerprint_ck', sql`${table.fingerprint} ~ '^[a-f0-9]{64}$'`),
+      check(
+        'ccc_membership_source_receipt_processing_kind_ck',
+        sql`${table.processingKind} in ('PERSON', 'ORG_BUSINESS_REFERENCE')`,
+      ),
+      check('ccc_membership_source_receipts_result_ck', sql`jsonb_typeof(${table.result}) = 'object'`),
+      ...scopedPolicies('ccc_membership_source_receipts', table),
+    ];
+  },
 );
 
 export const customerPriceGroupAssignments = commerceCustomerContextSchema.table.withRLS(
@@ -2676,6 +2811,434 @@ export const purchaseProposalBases = commerceCustomerContextSchema.table.withRLS
   ],
 );
 
+export const customerGroupDefinitionSourceRoutes = commerceCustomerContextSchema.table.withRLS(
+  'customer_group_definition_source_routes',
+  {
+    ...scopeColumns(),
+    active: boolean('active').default(false).notNull(),
+    issuer: text('issuer').notNull(),
+    mappingRevision: text('mapping_revision'),
+    namespace: text('namespace').notNull(),
+    principalId: uuid('principal_id').notNull(),
+    routeId: text('route_id').notNull(),
+    routeRevision: text('route_revision').notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.legalEntityId, table.routeId],
+      name: 'ccc_group_def_source_routes_pk',
+    }),
+    optionalTrimmed('ccc_group_def_source_route_mapping_ck', table.mappingRevision),
+    trimmed('ccc_group_def_source_route_id_ck', table.routeId),
+    trimmed('ccc_group_def_source_route_revision_ck', table.routeRevision),
+    trimmed('ccc_group_def_source_route_issuer_ck', table.issuer),
+    trimmed('ccc_group_def_source_route_namespace_ck', table.namespace),
+    ...scopedPolicies('ccc_group_def_source_routes_scope', table),
+  ],
+);
+export const customerGroupDefinitionSourceBindings = commerceCustomerContextSchema.table.withRLS(
+  'customer_group_definition_source_bindings',
+  {
+    ...scopeColumns(),
+    customerGroupId: uuid('customer_group_id').notNull(),
+    issuer: text('issuer').notNull(),
+    namespace: text('namespace').notNull(),
+    recordId: text('record_id').notNull(),
+    sourceCode: text('source_code').notNull(),
+    sourceIntent: jsonb('source_intent').$type<DatabaseJsonObject>().notNull(),
+    sourceOrder: integer('source_order').notNull(),
+    sourceRevision: text('source_revision').notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.legalEntityId, table.issuer, table.namespace, table.recordId],
+      name: 'ccc_group_def_source_bindings_pk',
+    }),
+    unique('ccc_group_def_source_binding_group_uk').on(table.tenantId, table.legalEntityId, table.customerGroupId),
+    unique('ccc_group_def_source_binding_code_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.issuer,
+      table.namespace,
+      table.sourceCode,
+    ),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.customerGroupId],
+      foreignColumns: [customerGroups.tenantId, customerGroups.legalEntityId, customerGroups.customerGroupId],
+      name: 'ccc_group_def_source_binding_group_fk',
+    }).onDelete('restrict'),
+    check('ccc_group_def_source_order_ck', sql`${table.sourceOrder} >= 0`),
+    trimmed('ccc_group_def_source_binding_issuer_ck', table.issuer),
+    trimmed('ccc_group_def_source_binding_namespace_ck', table.namespace),
+    trimmed('ccc_group_def_source_binding_record_ck', table.recordId),
+    trimmed('ccc_group_def_source_binding_code_ck', table.sourceCode),
+    trimmed('ccc_group_def_source_binding_revision_ck', table.sourceRevision),
+    ...scopedPolicies('ccc_group_def_source_bindings_scope', table),
+  ],
+);
+export const customerGroupDefinitionSourceReceipts = commerceCustomerContextSchema.table.withRLS(
+  'customer_group_definition_source_receipts',
+  {
+    ...scopeColumns(),
+    actionInvocationId: uuid('action_invocation_id').notNull(),
+    actorPrincipalId: uuid('actor_principal_id').notNull(),
+    effectId: text('effect_id').notNull(),
+    intent: jsonb('intent').$type<DatabaseJsonObject>().notNull(),
+    issuer: text('issuer').notNull(),
+    namespace: text('namespace').notNull(),
+    recordedAt: recordedAt(),
+    result: jsonb('result').$type<DatabaseJsonObject>().notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.legalEntityId, table.issuer, table.namespace, table.effectId],
+      name: 'ccc_group_def_source_receipts_pk',
+    }),
+    trimmed('ccc_group_def_source_receipt_issuer_ck', table.issuer),
+    trimmed('ccc_group_def_source_receipt_namespace_ck', table.namespace),
+    trimmed('ccc_group_def_source_receipt_effect_ck', table.effectId),
+    ...scopedPolicies('ccc_group_def_source_receipts_scope', table),
+  ],
+);
+
+export const customerProfileSourceRoutes = commerceCustomerContextSchema.table.withRLS(
+  'customer_profile_source_routes',
+  {
+    ...scopeColumns(),
+    active: boolean('active').default(false).notNull(),
+    issuer: text('issuer').notNull(),
+    mappingRevision: text('mapping_revision').notNull(),
+    namespace: text('namespace').notNull(),
+    principalId: uuid('principal_id').notNull(),
+    recordType: text('record_type').notNull(),
+    routeId: text('route_id').notNull(),
+    routeRevision: text('route_revision').notNull(),
+    sourceReaderPrincipalIds: uuid('source_reader_principal_ids')
+      .array()
+      .default(sql`ARRAY[]::uuid[]`)
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.tenantId, table.legalEntityId, table.routeId], name: 'ccc_profile_source_routes_pk' }),
+    check(
+      'ccc_profile_source_readers_ck',
+      sql`cardinality(${table.sourceReaderPrincipalIds}) <= 32 and array_position(${table.sourceReaderPrincipalIds}, null) is null`,
+    ),
+    trimmed('ccc_profile_source_route_id_ck', table.routeId),
+    trimmed('ccc_profile_source_route_revision_ck', table.routeRevision),
+    trimmed('ccc_profile_source_mapping_revision_ck', table.mappingRevision),
+    trimmed('ccc_profile_source_route_issuer_ck', table.issuer),
+    trimmed('ccc_profile_source_route_namespace_ck', table.namespace),
+    trimmed('ccc_profile_source_record_type_ck', table.recordType),
+    ...scopedPolicies('ccc_profile_source_routes_scope', table),
+  ],
+);
+export const customerProfileSourceBindings = commerceCustomerContextSchema.table.withRLS(
+  'customer_profile_source_bindings',
+  {
+    customerProfileId: uuid('customer_profile_id').notNull(),
+    issuer: text('issuer').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    namespace: text('namespace').notNull(),
+    partyResourceId: text('party_resource_id').notNull(),
+    partyResourceRevision: text('party_resource_revision'),
+    profileKind: text('profile_kind').notNull(),
+    recordedAt: recordedAt(),
+    recordId: text('record_id').notNull(),
+    recordType: text('record_type').notNull(),
+    sourceIntent: jsonb('source_intent').$type<DatabaseJsonObject>().notNull(),
+    sourceOccurrenceId: text('source_occurrence_id').notNull(),
+    sourceOrder: integer('source_order').notNull(),
+    sourceRevision: text('source_revision').notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.issuer, table.namespace, table.recordType, table.recordId],
+      name: 'ccc_profile_source_bindings_pk',
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.customerProfileId],
+      foreignColumns: [customerProfiles.tenantId, customerProfiles.customerProfileId],
+      name: 'ccc_profile_source_binding_profile_fk',
+    }).onDelete('restrict'),
+    check('ccc_profile_source_binding_kind_ck', sql`${table.profileKind} in ('RETAIL','COUNTERPARTY')`),
+    check('ccc_profile_source_binding_order_ck', sql`${table.sourceOrder} >= 0`),
+    trimmed('ccc_profile_source_binding_issuer_ck', table.issuer),
+    trimmed('ccc_profile_source_binding_namespace_ck', table.namespace),
+    trimmed('ccc_profile_source_binding_type_ck', table.recordType),
+    trimmed('ccc_profile_source_binding_record_ck', table.recordId),
+    ...tenantScopedPolicies('ccc_profile_source_bindings_scope', table),
+  ],
+);
+export const customerProfileSourceReceipts = commerceCustomerContextSchema.table.withRLS(
+  'customer_profile_source_receipts',
+  {
+    actionInvocationId: uuid('action_invocation_id').notNull(),
+    actorPrincipalId: uuid('actor_principal_id').notNull(),
+    customerProfileId: uuid('customer_profile_id').notNull(),
+    effectId: text('effect_id').notNull(),
+    intent: jsonb('intent').$type<DatabaseJsonObject>().notNull(),
+    issuer: text('issuer').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    namespace: text('namespace').notNull(),
+    ownerEvidence: jsonb('owner_evidence').$type<DatabaseJsonObject>(),
+    profileKind: text('profile_kind').notNull(),
+    recordedAt: recordedAt(),
+    recordId: text('record_id').notNull(),
+    recordType: text('record_type').notNull(),
+    result: jsonb('result').$type<DatabaseJsonObject>().notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.issuer, table.namespace, table.recordType, table.effectId],
+      name: 'ccc_profile_source_receipts_pk',
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.customerProfileId],
+      foreignColumns: [customerProfiles.tenantId, customerProfiles.customerProfileId],
+      name: 'ccc_profile_source_receipt_profile_fk',
+    }).onDelete('restrict'),
+    ...tenantScopedPolicies('ccc_profile_source_receipts_scope', table),
+  ],
+);
+
+export const customerPriceGroupAssignmentReceipts = commerceCustomerContextSchema.table.withRLS(
+  'customer_price_group_assignment_receipts',
+  {
+    ...scopeColumns(),
+    actionInvocationId: uuid('action_invocation_id').notNull(),
+    actionKey: text('action_key').notNull(),
+    principalId: uuid('principal_id').notNull(),
+    receipt: jsonb('receipt').$type<DatabaseJsonObject>().notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.legalEntityId, table.actionInvocationId],
+      name: 'ccc_price_assignment_receipts_pk',
+    }),
+    check(
+      'ccc_price_assignment_receipts_action_ck',
+      sql`${table.actionKey} in ('commerce.customer-context.assign-customer-price-group','commerce.customer-context.assign-counterparty-price-group')`,
+    ),
+    check('ccc_price_assignment_receipts_json_ck', sql`jsonb_typeof(${table.receipt})='object'`),
+    ...scopedPolicies('ccc_price_assignment_receipts_scope', table),
+  ],
+);
+
+/** IČO belongs to the exact profile; Counterparty identity remains Tenant-global. */
+export const customerProfileIcoTargetInventory = commerceCustomerContextSchema.table.withRLS(
+  'customer_profile_ico_target_inventory',
+  {
+    customerProfileId: uuid('customer_profile_id').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    lifecycle: text('lifecycle').notNull(),
+    profileKind: text('profile_kind').notNull(),
+    revision: integer('revision').notNull(),
+    subjectResourceId: text('subject_resource_id').notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.tenantId, table.customerProfileId], name: 'ccc_profile_ico_target_inventory_pk' }),
+    foreignKey({
+      columns: [table.tenantId, table.customerProfileId],
+      foreignColumns: [customerProfiles.tenantId, customerProfiles.customerProfileId],
+      name: 'ccc_profile_ico_target_inventory_fk',
+    }).onDelete('cascade'),
+    ...tenantScopedPolicies('ccc_profile_ico_target_inventory', table),
+  ],
+);
+
+export const customerProfileIcoAssertions = commerceCustomerContextSchema.table.withRLS(
+  'customer_profile_ico_assertions',
+  {
+    actionInvocationId: uuid('action_invocation_id').notNull(),
+    actorPrincipalId: uuid('actor_principal_id').notNull(),
+    assertion: jsonb('assertion').$type<DatabaseJsonObject>().notNull(),
+    customerProfileId: uuid('customer_profile_id').notNull(),
+    effectId: text('effect_id').notNull(),
+    effectiveAt: timestamp('effective_at', { withTimezone: true }).notNull(),
+    effectiveTo: timestamp('effective_to', { withTimezone: true }),
+    intent: jsonb('intent').$type<DatabaseJsonObject>().notNull(),
+    isCurrent: boolean('is_current').notNull(),
+    normalizedValue: text('normalized_value'),
+    recordedAt: recordedAt(),
+    revision: integer('revision').notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.customerProfileId, table.revision],
+      name: 'ccc_profile_ico_assertions_pk',
+    }),
+    unique('ccc_profile_ico_effect_uk').on(table.tenantId, table.effectId),
+    uniqueIndex('ccc_profile_ico_current_uk')
+      .on(table.tenantId, table.customerProfileId)
+      .where(sql`${table.isCurrent}`),
+    foreignKey({
+      columns: [table.tenantId, table.customerProfileId],
+      foreignColumns: [customerProfiles.tenantId, customerProfiles.customerProfileId],
+      name: 'ccc_profile_ico_profile_fk',
+    }).onDelete('restrict'),
+    check('ccc_profile_ico_value_ck', sql`${table.normalizedValue} is null or ${table.normalizedValue} ~ '^[0-9]{8}$'`),
+    check(
+      'ccc_profile_ico_current_ck',
+      sql`not ${table.isCurrent} or (${table.normalizedValue} is not null and ${table.effectiveTo} is null)`,
+    ),
+    positiveRevision('ccc_profile_ico_revision_ck', table.revision),
+    ...tenantScopedPolicies('ccc_profile_ico', table),
+  ],
+);
+
+export const customerProfileIcoAuthority = commerceCustomerContextSchema.table.withRLS(
+  'customer_profile_ico_authority',
+  {
+    actionInvocationId: uuid('action_invocation_id').notNull(),
+    actorPrincipalId: uuid('actor_principal_id').notNull(),
+    inventoryVersion: text('inventory_version').notNull(),
+    partyFenceId: text('party_fence_id').notNull(),
+    phase: text('phase').notNull(),
+    plan: jsonb('plan').$type<DatabaseJsonObject>().notNull(),
+    planId: text('plan_id').notNull(),
+    recordedAt: recordedAt(),
+    revision: integer('revision').default(1).notNull(),
+    tenantId: uuid('tenant_id').primaryKey(),
+  },
+  (table) => [
+    positiveRevision('ccc_profile_ico_authority_revision_ck', table.revision),
+    check('ccc_profile_ico_authority_phase_ck', sql`${table.phase} in ('STAGING', 'COMMERCE')`),
+    ...tenantScopedPolicies('ccc_profile_ico_authority', table),
+  ],
+);
+
+export const savedAddressSourceRoutes = commerceCustomerContextSchema.table.withRLS(
+  'saved_address_source_routes',
+  {
+    ...scopeColumns(),
+    active: boolean('active').default(false).notNull(),
+    issuer: text('issuer').notNull(),
+    mappingRevision: text('mapping_revision').notNull(),
+    namespace: text('namespace').notNull(),
+    principalId: uuid('principal_id').notNull(),
+    recordType: text('record_type').notNull(),
+    routeRef: text('route_ref').notNull(),
+    routeRevision: text('route_revision').notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.legalEntityId, table.routeRef],
+      name: 'ccc_saved_address_source_routes_pk',
+    }),
+    trimmed('ccc_saved_address_source_route_ref_ck', table.routeRef),
+    trimmed('ccc_saved_address_source_route_revision_ck', table.routeRevision),
+    trimmed('ccc_saved_address_source_route_mapping_ck', table.mappingRevision),
+    trimmed('ccc_saved_address_source_route_issuer_ck', table.issuer),
+    trimmed('ccc_saved_address_source_route_namespace_ck', table.namespace),
+    trimmed('ccc_saved_address_source_route_type_ck', table.recordType),
+    ...scopedPolicies('ccc_saved_address_source_routes_scope', table),
+  ],
+);
+export const savedAddressSourceBindings = commerceCustomerContextSchema.table.withRLS(
+  'saved_address_source_bindings',
+  {
+    ...scopeColumns(),
+    customerProfileId: uuid('customer_profile_id').notNull(),
+    issuer: text('issuer').notNull(),
+    namespace: text('namespace').notNull(),
+    recordId: text('record_id').notNull(),
+    recordType: text('record_type').notNull(),
+    savedAddressId: uuid('saved_address_id').notNull(),
+    sourceOrder: integer('source_order').notNull(),
+    sourceRevision: text('source_revision').notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [
+        table.tenantId,
+        table.legalEntityId,
+        table.issuer,
+        table.namespace,
+        table.recordType,
+        table.recordId,
+        table.customerProfileId,
+      ],
+      name: 'ccc_saved_address_source_bindings_pk',
+    }),
+    unique('ccc_saved_address_source_binding_native_uk').on(table.tenantId, table.legalEntityId, table.savedAddressId),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.savedAddressId],
+      foreignColumns: [savedAddresses.tenantId, savedAddresses.legalEntityId, savedAddresses.savedAddressId],
+      name: 'ccc_saved_address_source_binding_native_fk',
+    }).onDelete('restrict'),
+    check('ccc_saved_address_source_binding_order_ck', sql`${table.sourceOrder} >= 0`),
+    trimmed('ccc_saved_address_source_binding_issuer_ck', table.issuer),
+    trimmed('ccc_saved_address_source_binding_namespace_ck', table.namespace),
+    trimmed('ccc_saved_address_source_binding_type_ck', table.recordType),
+    trimmed('ccc_saved_address_source_binding_record_ck', table.recordId),
+    trimmed('ccc_saved_address_source_binding_revision_ck', table.sourceRevision),
+    ...scopedPolicies('ccc_saved_address_source_bindings_scope', table),
+  ],
+);
+export const savedAddressSourceReceipts = commerceCustomerContextSchema.table.withRLS(
+  'saved_address_source_receipts',
+  {
+    ...scopeColumns(),
+    actionInvocationId: uuid('action_invocation_id').notNull(),
+    actionKey: text('action_key').notNull(),
+    actorPrincipalId: uuid('actor_principal_id').notNull(),
+    effectId: text('effect_id').notNull(),
+    issuer: text('issuer').notNull(),
+    namespace: text('namespace').notNull(),
+    recordedAt: recordedAt(),
+    recordedAuthContextRef: text('recorded_auth_context_ref').notNull(),
+    requestHash: text('request_hash').notNull(),
+    result: jsonb('result').$type<DatabaseJsonObject>().notNull(),
+    source: jsonb('source').$type<DatabaseJsonObject>().notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.legalEntityId, table.issuer, table.namespace, table.effectId],
+      name: 'ccc_saved_address_source_receipts_pk',
+    }),
+    unique('ccc_saved_address_source_receipt_invocation_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.actionInvocationId,
+    ),
+    check('ccc_saved_address_source_receipt_hash_ck', sql`${table.requestHash} ~ '^[0-9a-f]{64}$'`),
+    trimmed('ccc_saved_address_source_receipt_issuer_ck', table.issuer),
+    trimmed('ccc_saved_address_source_receipt_namespace_ck', table.namespace),
+    trimmed('ccc_saved_address_source_receipt_effect_ck', table.effectId),
+    trimmed('ccc_saved_address_source_receipt_action_ck', table.actionKey),
+    trimmed('ccc_saved_address_source_receipt_context_ck', table.recordedAuthContextRef),
+    ...scopedPolicies('ccc_saved_address_source_receipts_scope', table),
+  ],
+);
+
+export const customerProfileIcoMigrationHistory = commerceCustomerContextSchema.table.withRLS(
+  'customer_profile_ico_migration_history',
+  {
+    actionInvocationId: uuid('action_invocation_id').notNull(),
+    actorPrincipalId: uuid('actor_principal_id').notNull(),
+    archivedAt: timestamp('archived_at', { withTimezone: true }).defaultNow().notNull(),
+    inventoryVersion: text('inventory_version').notNull(),
+    partyFenceId: text('party_fence_id').notNull(),
+    phase: text('phase').notNull(),
+    plan: jsonb('plan').$type<DatabaseJsonObject>().notNull(),
+    planId: text('plan_id').notNull(),
+    recordedAt: recordedAt(),
+    revision: integer('revision').notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.tenantId, table.revision], name: 'ccc_profile_ico_migration_history_pk' }),
+    positiveRevision('ccc_profile_ico_migration_history_revision_ck', table.revision),
+    check('ccc_profile_ico_migration_history_phase_ck', sql`${table.phase} in ('STAGING','COMMERCE')`),
+    ...tenantScopedPolicies('ccc_profile_ico_migration_history_scope', table),
+  ],
+);
+
 const commerceCustomerContextDatabaseSchema = {
   accessMutationJournal,
   addressBookReconciliationReceipts,
@@ -2693,16 +3256,30 @@ const commerceCustomerContextDatabaseSchema = {
   counterpartyPurchasingProfiles,
   customerAddressDefaults,
   customerCommercePolicyCompletenessGenerations,
+  customerGroupDefinitionSourceBindings,
+  customerGroupDefinitionSourceReceipts,
+  customerGroupDefinitionSourceRoutes,
   customerGroupLifecyclePeriods,
   customerGroupMemberships,
+  customerGroupMembershipSnapshotProofs,
+  customerGroupMembershipSourceReceipts,
+  customerGroupMembershipSourceRoutes,
   customerGroupRevisions,
   customerGroups,
   customerPaymentTermEntitlements,
   customerPaymentTermPreferences,
+  customerPriceGroupAssignmentReceipts,
   customerPriceGroupAssignments,
   customerProfileAliases,
+  customerProfileIcoAssertions,
+  customerProfileIcoAuthority,
+  customerProfileIcoMigrationHistory,
+  customerProfileIcoTargetInventory,
   customerProfileLifecycleHistory,
   customerProfiles,
+  customerProfileSourceBindings,
+  customerProfileSourceReceipts,
+  customerProfileSourceRoutes,
   customerSettingRevisions,
   gatewayAssertionRedemptions,
   guestRetailAttributions,
@@ -2728,9 +3305,26 @@ const commerceCustomerContextDatabaseSchema = {
   retailPortalProfileBindingHistory,
   retailPortalProfileBindings,
   savedAddresses,
+  savedAddressSourceBindings,
+  savedAddressSourceReceipts,
+  savedAddressSourceRoutes,
 } as const;
 
 export const COMMERCE_CUSTOMER_CONTEXT_TABLES = [
+  customerProfileIcoMigrationHistory,
+  savedAddressSourceRoutes,
+  savedAddressSourceBindings,
+  savedAddressSourceReceipts,
+  customerPriceGroupAssignmentReceipts,
+  customerProfileSourceReceipts,
+  customerProfileSourceBindings,
+  customerProfileSourceRoutes,
+  customerProfileIcoTargetInventory,
+  customerGroupDefinitionSourceReceipts,
+  customerGroupDefinitionSourceBindings,
+  customerGroupDefinitionSourceRoutes,
+  customerProfileIcoAssertions,
+  customerProfileIcoAuthority,
   purchaseProposalBases,
   gatewayAssertionRedemptions,
   accessMutationJournal,
@@ -2748,6 +3342,9 @@ export const COMMERCE_CUSTOMER_CONTEXT_TABLES = [
   customerAddressDefaults,
   customerCommercePolicyCompletenessGenerations,
   customerGroupMemberships,
+  customerGroupMembershipSnapshotProofs,
+  customerGroupMembershipSourceRoutes,
+  customerGroupMembershipSourceReceipts,
   customerGroupLifecyclePeriods,
   customerGroupRevisions,
   customerGroups,

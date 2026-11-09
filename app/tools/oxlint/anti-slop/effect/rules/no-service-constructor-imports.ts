@@ -7,6 +7,7 @@ import { defineRule } from "@oxlint/plugins";
 import type { Context, ESTree } from "@oxlint/plugins";
 
 import { provesDataFactoryImport } from "./data-factory-proof.ts";
+import { registeredToolingRoot } from "./registered-tooling-root-proof.ts";
 import { lookupVariable } from "../../../effect-native/shared/bindings.ts";
 import { isInsideNativeServiceFactoryCallback, isNativeServiceFactoryAcquisition } from "../../../effect-native/shared/native-service-factory.ts";
 
@@ -631,8 +632,8 @@ const REFLECTIVE_MEMBERS = new Set([
 const OBJECT_DATA_CALLS = new Set(["assign", "freeze", "keys", "values", "entries", "fromEntries", "is", "hasOwn"]);
 const EFFECT_PROCESS_CALLS = new Set([
   "acquireRelease", "addFinalizer", "all", "andThen", "catch", "catchCause", "catchTag", "context", "fail", "filterOrFail", "forEach",
-  "flatMap", "fn", "gen", "map", "mapError", "promise", "provide", "provideContext", "provideService",
-  "runPromise", "runPromiseWith", "scoped", "succeed", "suspend", "sync", "tap", "tapCause", "tapError", "tapErrorTag", "timeoutOrElse", "try", "tryPromise",
+  "flatMap", "fn", "gen", "map", "mapError", "orElseSucceed", "promise", "provide", "provideContext", "provideService",
+  "runPromise", "runPromiseWith", "scoped", "succeed", "suspend", "sync", "tap", "tapCause", "tapDefect", "tapError", "tapErrorTag", "timeoutOrElse", "try", "tryPromise",
 ]);
 const EFFECT_PROCESS_VALUES = new Set(["void", "never"]);
 const EFFECT_PIPE_TRANSFORMS = new Set(["asVoid", "orDie", "result"]);
@@ -1365,8 +1366,17 @@ function bffOriginClosed(program: ESTree.Program, source: ProcessSource, capabil
     if (capability === "effect") {
       const member = processMember(reference, source);
       // Assembly classification permits direct public calls, not capability aliases or mutation.
+      const observedSpan = member !== null && staticProcessMember(member) === "currentSpan" && (() => {
+        const observed = liftedProcessNode(member, source);
+        const call = source.parents.get(observed);
+        const callee = call?.type === "CallExpression" ? asNode(call.callee) : null;
+        const effect = callee?.type === "MemberExpression" ? bffBinding(callee.object, source) : null;
+        return call?.type === "CallExpression" && !call.optional && call.arguments.length === 1 && call.arguments[0] === observed &&
+          callee?.type === "MemberExpression" && !callee.computed && !callee.optional && callee.property.name === "option" &&
+          effect !== null && capabilities.bindings.get(effect) === "effect";
+      })();
       if (member === null || writtenProcessNode(member, source) ||
-        (directProcessCall(member, source) === null && !effectProcessUse(reference, source))) return false;
+        (directProcessCall(member, source) === null && !effectProcessUse(reference, source) && !observedSpan)) return false;
     }
   }
   return true;
@@ -1427,6 +1437,14 @@ function bffLayerExpression(node: Syntax, source: ProcessSource, imports: readon
     const binding = object === null ? null : bffBinding(object, source);
     return value.type === "MemberExpression" && !value.computed && !value.optional && value.property.name === name && binding !== null && layers.has(binding);
   };
+  const closedLocalPipelineUse = (reference: Syntax): boolean => {
+    const member = processMember(reference, source);
+    const call = member === null ? null : directProcessCall(member, source);
+    return member !== null && staticProcessMember(member) === "pipe" && call !== null &&
+      !call.optional && call.arguments.length > 0 &&
+      call.arguments.every((argument: Syntax) => transform(unwrap(argument))) &&
+      bffLayerValueUse(call, source, layers);
+  };
   const immutableArgument = (argument: Syntax, depth = 0): boolean => {
     if (depth > 32) return false;
     const value = unwrap(argument);
@@ -1439,10 +1457,27 @@ function bffLayerExpression(node: Syntax, source: ProcessSource, imports: readon
       const handler = bffBinding(callee.object, source);
       const origin = imports.find((entry) => entry.binding === handler && !entry.typeOnly && entry.source.startsWith("."));
       const resolved = origin === undefined ? null : resolveModule(filename, origin.source);
-      try {
-        if (handler === null || resolved === null || !bffImmutable(handler, source, imports) ||
-          nodePath.relative(realpathSync(owner), realpathSync(resolved)).startsWith("..")) return false;
-      } catch { return false; }
+      if (handler === null || !bffImmutable(handler, source, imports)) return false;
+      if (origin !== undefined) {
+        try {
+          if (resolved === null || nodePath.relative(realpathSync(owner), realpathSync(resolved)).startsWith("..")) return false;
+        } catch { return false; }
+      } else {
+        // A local pipeline must begin at a genuine immutable native Layer constructor, not an
+        // arbitrary make* call or an injected capability. Its only use is this composition edge.
+        const initializer = bffConst(handler, source);
+        const declaration = source.parents.get(handler);
+        const statement = declaration === undefined ? undefined : source.parents.get(declaration);
+        const wrapper = statement === undefined ? undefined : source.parents.get(statement);
+        if (wrapper?.type.startsWith("Export")) return false;
+        const native = initializer === null ? null : unwrap(initializer);
+        const constructor = native?.type === "CallExpression" ? asNode(native.callee) : null;
+        if (native?.type !== "CallExpression" || native.optional || constructor === null ||
+          !["effect", "succeed", "merge", "mergeAll"].some((method) => layerMember(constructor, method)) ||
+          (!layerMember(constructor, "mergeAll") && native.arguments.length !== 2) ||
+          native.arguments.some((entry: Syntax) => entry.type === "SpreadElement") ||
+          bffReferences(handler, source).some((reference) => !closedLocalPipelineUse(reference))) return false;
+      }
       return value.arguments.length > 0 && value.arguments.every((entry: Syntax) => transform(unwrap(entry), depth + 1));
     }
     const merge = layerMember(callee, "merge");
@@ -1464,9 +1499,47 @@ function bffLayerExpression(node: Syntax, source: ProcessSource, imports: readon
     base = unwrap(base.callee.object);
   }
   if (mode === "transport") {
-    const binding = bffBinding(base, source);
-    const origin = imports.find((entry) => entry.binding === binding && !entry.typeOnly && entry.source.startsWith("."));
-    return origin !== undefined && bffImmutable(origin.binding, source, imports);
+    const transportTree = (node: Syntax, seen = new Set<Syntax>(), depth = 0): boolean => {
+      if (depth > 32) return false;
+      const value = unwrap(node);
+      if (value.type === "CallExpression") {
+        if (value.optional || value.arguments.some((entry: Syntax) => entry.type === "SpreadElement")) return false;
+        const callee = asNode(value.callee);
+        if (callee === null) return false;
+        if (callee.type === "MemberExpression" && !callee.computed && !callee.optional && callee.property.name === "pipe") {
+          return value.arguments.every((entry: Syntax) => transform(unwrap(entry), depth + 1)) &&
+            transportTree(callee.object, seen, depth + 1);
+        }
+        return ((layerMember(callee, "mergeAll") && value.arguments.length > 0) ||
+          (layerMember(callee, "merge") && value.arguments.length === 2)) &&
+          value.arguments.every((entry: Syntax) => transportTree(entry, seen, depth + 1));
+      }
+      const binding = bffBinding(value, source);
+      if (binding === null || seen.has(binding) || !bffImmutable(binding, source, imports) ||
+        bffReferences(binding, source).some((reference) => reference !== value)) return false;
+      const origin = imports.find((entry) => entry.binding === binding && !entry.typeOnly && entry.source.startsWith("."));
+      if (origin === undefined) {
+        const initializer = bffConst(binding, source);
+        const declaration = source.parents.get(binding);
+        const statement = declaration === undefined ? undefined : source.parents.get(declaration);
+        const wrapper = statement === undefined ? undefined : source.parents.get(statement);
+        return initializer !== null && !wrapper?.type.startsWith("Export") &&
+          transportTree(initializer, new Set(seen).add(binding), depth + 1);
+      }
+      if (["default", "*"].includes(origin.imported)) return false;
+      const resolved = resolveModule(filename, origin.source);
+      try {
+        if (resolved === null || nodePath.relative(realpathSync(owner), realpathSync(resolved)).startsWith("..")) return false;
+        // Every alias of an imported transport retains the original single-use custody proof.
+        return imports.filter((entry) => !entry.typeOnly && entry.source.startsWith(".")).every((entry) => {
+          const alternative = resolveModule(filename, entry.source);
+          if (alternative === null || realpathSync(alternative) !== realpathSync(resolved)) return true;
+          return !["default", "*"].includes(entry.imported) && (entry.imported !== origin.imported ||
+            bffReferences(entry.binding, source).every((reference) => reference === value));
+        });
+      } catch { return false; }
+    };
+    return transportTree(base);
   }
   const callee = asNode(base.callee);
   return base.type === "CallExpression" && !base.optional && callee !== null && layerMember(callee, "mergeAll") &&
@@ -1587,21 +1660,7 @@ function ownsGovernedBff(program: ESTree.Program, importedName: string, filename
   const transport = properties.get("transport");
   if (transport !== undefined) {
     if (!bffLayerExpression(transport, source, imports, layers, "transport", filename, owner)) return false;
-    const inspectTransport = unwrap(transport);
-    const base = inspectTransport.type === "CallExpression" ? unwrap(inspectTransport.callee.object) : inspectTransport;
-    const binding = bffBinding(base, source);
-    const origin = imports.find((entry) => entry.binding === binding);
-    const resolved = origin === undefined ? null : resolveModule(filename, origin.source);
-    try {
-      if (resolved === null || nodePath.relative(realpathSync(owner), realpathSync(resolved)).startsWith("..") ||
-        binding === null || bffReferences(binding, source).some((reference) => reference !== base)) return false;
-      for (const candidate of imports.filter((entry) => !entry.typeOnly && entry.source.startsWith("."))) {
-        const alternative = resolveModule(filename, candidate.source);
-        if (alternative === null || realpathSync(alternative) !== realpathSync(resolved)) continue;
-        if (["default", "*"].includes(candidate.imported)) return false;
-        if (candidate.imported === origin!.imported && bffReferences(candidate.binding, source).some((reference) => reference !== base)) return false;
-      }
-    } catch { return false; }
+
   }
   return true;
 }
@@ -1636,9 +1695,9 @@ export const noServiceConstructorImportsRule = defineRule({
     const pending: { readonly node: ESTree.ImportSpecifier; readonly source: string; readonly name: string }[] = [];
     return {
       ImportDeclaration(node) {
-        if (isTestFile || (!node.source.value.startsWith("./") && !node.source.value.startsWith("../"))) return;
+        if (isTestFile || node.importKind === "type" || (!node.source.value.startsWith("./") && !node.source.value.startsWith("../"))) return;
         for (const specifier of node.specifiers) {
-          if (specifier.type !== "ImportSpecifier") continue;
+          if (specifier.type !== "ImportSpecifier" || specifier.importKind === "type") continue;
           const importedName = getImportedName(specifier);
           if (!SERVICE_CONSTRUCTOR_NAME.test(importedName)) continue;
           const variable = lookupVariable(context, specifier.local);
@@ -1656,8 +1715,10 @@ export const noServiceConstructorImportsRule = defineRule({
       },
       "Program:exit"(program) {
         const owner = testProcessOwner(context, program);
+        const tooling = pending.length === 0 ? null : registeredToolingRoot(context, program);
         for (const entry of pending) {
           if (owner !== null && isOwnerLocalConstructor(context.filename, entry.source, owner, entry.name)) continue;
+          if (tooling?.ownsImport(entry.node, entry.source, entry.name)) continue;
           context.report({ node: entry.node, messageId: "serviceConstructorImport", data: { name: entry.name } });
         }
       },

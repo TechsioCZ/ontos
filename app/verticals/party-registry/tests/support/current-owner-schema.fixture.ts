@@ -25,18 +25,25 @@ const runOwnerCommand = Effect.fn('CurrentPartySchema.runOwnerCommand')(function
   command: 'db:migrate' | 'db:verify',
   environment: Readonly<Record<string, string>>,
 ) {
-  const child = yield* ChildProcess.make('mise', ['exec', '--', 'pnpm', command], {
+  const child = yield* ChildProcess.make('pnpm', [command], {
     cwd: ownerDirectory,
     env: environment,
     extendEnv: false,
     stderr: 'pipe',
     stdout: 'pipe',
   });
-  const [exitCode] = yield* Effect.all([child.exitCode, Stream.runDrain(child.stdout), Stream.runDrain(child.stderr)], {
-    concurrency: 3,
-  });
+  const [exitCode, stdout, stderr] = yield* Effect.all(
+    [
+      child.exitCode,
+      child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+      child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+    ],
+    {
+      concurrency: 3,
+    },
+  );
   if (exitCode !== 0) {
-    return yield* failed(`The actual Party ${command} command failed`);
+    return yield* failed(`The actual Party ${command} command failed: ${stderr.slice(-4000)} ${stdout.slice(-4000)}`);
   }
 });
 

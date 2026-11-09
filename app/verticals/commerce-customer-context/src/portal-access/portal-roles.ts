@@ -99,6 +99,7 @@ export const COUNTERPARTY_CUSTOMER_PORTAL_ROLE = defineAccessPortalRole({
     'commerce.customer-context.customer-payment-term-entitlement.read',
     'commerce.customer-context.customer-payment-term.remove',
     'commerce.customer-context.customer-payment-terms.change',
+    'commerce.customer-context.customer-price-group-assignment-receipt.read',
     'commerce.customer-context.customer-price-group-assignment.read',
     'commerce.customer-context.customer-price-group.resolve',
     'commerce.customer-context.customer-profile.check-trading',

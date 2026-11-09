@@ -183,6 +183,7 @@ const scheduleServices = () => {
     readonly trustedOperationAt: PriceGroupCompatibilityEvidence['trustedOperationAt'];
   }[] = [];
   const services: AssignCounterpartyPriceGroupServices = {
+    captureAssignmentReceipt: () => Effect.void,
     catalog: priceGroupCatalogPort('b2-schedule', (request) => {
       requests.push(request);
       return Schema.decodeUnknownEffect(PriceGroupCompatibilityDecisionSchema)({
@@ -238,6 +239,7 @@ const scheduleServices = () => {
       remove: () => Effect.die('Unexpected removal'),
       resolve: () => Effect.die('Unexpected resolution'),
     },
+    validateAssignmentSource: () => Effect.void,
   };
   return { requests, services, stored };
 };

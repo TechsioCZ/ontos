@@ -22,7 +22,11 @@ import {
   AccessCatalogSnapshotWriter,
   AccessCatalogSnapshotWriterLive,
 } from '../access/intent/catalog-snapshot-writer.ts';
-import { AccessMembershipIdSchema, AccessMembershipStoreLive } from '../access/intent/memberships.ts';
+import {
+  AccessMembershipIdSchema,
+  AccessMembershipStore,
+  AccessMembershipStoreLive,
+} from '../access/intent/memberships.ts';
 import { AccessPeopleStore, AccessPeopleStoreLive } from '../access/intent/people-store.ts';
 import { AccessProjectionCompiler } from '../access/intent/projection-compiler.ts';
 import { AccessProjectionWriter, AccessProjectionWriterLive } from '../access/intent/projection-writer.ts';
@@ -70,6 +74,8 @@ export interface TestTenantOwnerAccessInput extends TestTenantAccessTarget {
 }
 
 export interface TestTenantRoleAccessInput extends TestTenantAccessTarget {
+  /** Assign roles in every scope by default, or only in the companies while retaining every membership. */
+  readonly assignmentScope?: 'all' | 'companies';
   readonly holders: readonly [TestTenantAccessHolder, ...TestTenantAccessHolder[]];
   /** The companies of the Tenant; each gets its own scope, as production bootstrap gives it. */
   readonly legalEntityIds: readonly [string, ...string[]];
@@ -174,6 +180,7 @@ const accessInstallation = Effect.fn('TestTenantAccess.installation')(function* 
     catalog: Context.get(writers, AccessCatalogSnapshotWriter),
     changes: Context.get(writers, AccessChangesStore),
     database: Context.get(writers, CoreDatabase),
+    memberships: Context.get(writers, AccessMembershipStore),
     people: Context.get(writers, AccessPeopleStore),
     writer: Context.get(writers, AccessProjectionWriter),
   };
@@ -307,9 +314,10 @@ export const grantTestTenantOwnerAccess = Effect.fn('TestTenantAccess.owner')(
 
 /**
  * The v2 access a production gate decides with, narrowed to named capabilities: each holder joins the tenant
- * context and every company, and holds a role of exactly its capabilities in each of those scopes, then one
- * reconcile through the single Core writer. The scopes and fences are written the way production bootstrap writes
- * them. The release names every module of the checked-in catalog, so whichever suite of a shared database
+ * context and every company, and holds a role of exactly its capabilities in all scopes by default, or only in
+ * company scopes when requested, then one reconcile through the single Core writer. The scopes and fences are
+ * written the way production bootstrap writes them. The release names every module of the checked-in catalog,
+ * so whichever suite of a shared database
  * publishes it first, every Tenant pins the same complete release.
  *
  * Core retains access intent (D27), so the Tenant, its companies and these principals stay with it: a fixture
@@ -333,6 +341,7 @@ export const grantTestTenantRoleAccess = Effect.fn('TestTenantAccess.roles')(
       input.legalEntityIds.map((legalEntityId) => LegalEntityIdSchema.make(legalEntityId)),
     );
     const scopeIds = scopes.map(({ scopeId }) => scopeId);
+    const assignedScopeIds = input.assignmentScope === 'companies' ? companyScopeIdsOf(scopes) : scopeIds;
     const at = DateTime.toDateUtc(yield* DateTime.now);
     const crypto = yield* Crypto.Crypto;
     yield* writeBootstrapScopes(installation.database, firstScope, { scopes, tenantId });
@@ -345,6 +354,21 @@ export const grantTestTenantRoleAccess = Effect.fn('TestTenantAccess.roles')(
       );
       const roleId = RoleIdSchema.make(roleUuid);
       const roleRevisionId = RoleRevisionIdSchema.make(roleRevisionUuid);
+      const memberships = yield* installation.memberships.loadTenantMemberships(scope);
+      // Adding a role preserves existing membership facts, including suspension or revocation.
+      const existingMembershipScopes = new Set(
+        memberships
+          .filter(
+            (membership) =>
+              membership.kind === 'member' &&
+              Match.value(membership.holder).pipe(
+                Match.tag('Principal', (member) => member.principalId === principalId),
+                Match.tag('Agent', () => false),
+                Match.exhaustive,
+              ),
+          )
+          .map(({ scopeId }) => scopeId),
+      );
       const cells = releaseCells.filter((cell) => holder.capabilityKeys.includes(cell.capabilityKey));
       yield* installation.changes.recordRole({
         revision: {
@@ -362,13 +386,13 @@ export const grantTestTenantRoleAccess = Effect.fn('TestTenantAccess.roles')(
         scope,
       });
       const writes = yield* holderWrites({
-        assignedScopeIds: scopeIds,
+        assignedScopeIds,
         at,
         principalId,
         recordedBy: principalId,
         roleId,
         roleRevisionId,
-        scopeIds,
+        scopeIds: scopeIds.filter((scopeId) => !existingMembershipScopes.has(scopeId)),
         tenantId,
       });
       yield* installation.people.applyPeopleChange(scope, { writes });

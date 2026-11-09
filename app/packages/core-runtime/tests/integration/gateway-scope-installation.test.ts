@@ -97,6 +97,7 @@ const gatewayScopeClients = Effect.gen(function* acquireGatewayScopeClients() {
     admin: yield* makeTestPgClient(party.admin.connectionString),
     issuer: yield* makeTestPgClient(identities.runtime.shell_gateway_issuer.connectionString),
     party: yield* makeTestPgClient(party.runtime.connectionString),
+    shared: yield* makeTestPgClient(identities.runtime.shared_runtime.connectionString),
     worker: yield* makeTestPgClient(identities.runtime.party_registry_worker.connectionString),
   };
 });
@@ -173,6 +174,35 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('gateway scope install
       // The Party login is a gateway-grant identity: a scope without a redeemed assertion is refused.
       const untrusted = yield* Effect.flip(readTrustedTenant(sessionScope(principalId, tenantId)));
       expect(Predicate.isTagged(untrusted, 'OperationContextUnavailable')).toBe(true);
+    }),
+  );
+
+  suite.effect('installs an authentic dedicated-audience bearer under the actual shared runtime authority', () =>
+    Effect.gen(function* sharedRoleUsesItsOwnAuthority() {
+      const { admin, issuer, party, shared } = yield* gatewayScopeClients;
+      const crypto = yield* Crypto.Crypto;
+      const tenantId = yield* crypto.randomUUIDv4();
+      const otherTenantId = yield* crypto.randomUUIDv4();
+      const principalId = yield* crypto.randomUUIDv4();
+      yield* insertGrantFixture(admin, tenantId, otherTenantId, principalId);
+      const scope = yield* grantScope(issuer, principalId, tenantId);
+      const database = yield* makeTestDatabaseFromClient(shared, coreRelations);
+      const installed = yield* database.transaction((transaction) =>
+        Effect.gen(function* installSharedScope() {
+          const executor = yield* installOperationalScope(transaction, scope);
+          const [row] = yield* transaction.execute<{ role: string; tenant_id: string }>(
+            sql`select current_user::text as role, current_setting('ontos.tenant_id',true) as tenant_id`,
+            'objects',
+          );
+          return { role: row?.role, scope: executor.scope, tenantId: row?.tenant_id };
+        }),
+      );
+      expect(installed).toEqual({ role: 'ontos_runtime', scope: { tenantId }, tenantId });
+      // The shared installation never consumes the dedicated role's grant or changes its audience.
+      const partyDatabase = yield* makeTestDatabaseFromClient(party, coreRelations);
+      expect(
+        yield* partyDatabase.transaction((transaction) => installAndReadTrustedTenant(transaction, scope)),
+      ).toEqual({ executorScope: { tenantId }, trustedTenantId: tenantId });
     }),
   );
 

@@ -11,7 +11,7 @@ import {
   accessCatalogGapReason,
   buildAccessCatalogReport,
   buildAccessCatalogSnapshot,
-  isAccessCatalogSourcePath,
+  isAccessCatalogContextSourcePath,
   renderAccessCatalogReportText,
 } from './authorization-catalog.mts';
 import type { AccessCatalogSource } from './authorization-catalog.mts';
@@ -71,14 +71,10 @@ const readCatalogSources = (root: string) =>
     const sources: AccessCatalogSource[] = [];
     for (const file of files) {
       const relative = path.relative(root, file).replaceAll('\\', '/');
-      if (isAccessCatalogSourcePath(relative)) {
+      if (isAccessCatalogContextSourcePath(relative)) {
         const source = yield* fileSystem.readFileString(file, 'utf-8');
-        // A cheap prefilter keeps the scan off the bulk of the repository sources.
-        const canDeclare =
-          source.includes('entrypoint') || source.includes('accessDeclaration') || source.includes('accessActor');
-        if (canDeclare) {
-          sources.push({ file: relative, source });
-        }
+        // A declaration's mutation-only importer must remain visible to the custody proof.
+        sources.push({ file: relative, source });
       }
     }
     return sources;

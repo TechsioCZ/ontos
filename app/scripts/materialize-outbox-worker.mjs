@@ -203,15 +203,15 @@ const makeOwnerBuildIdentityPlugin = ({ compiledMarkers, markers, path }) => ({
 /**
  * Compile only the reviewed host entries without rewriting the source-owned delivery inventory.
  * @param {{ entryPoint: string, hostEntrySource: string | null }} delivery Resolved worker.
+ * @param {string} hostEntryPath Canonical path of the exact reviewed host entry.
  * @param {string} workspaceRoot Workspace root.
- * @param {import('effect/Path').Path} path Platform paths.
  * @returns {import('esbuild').Plugin} Reviewed membership projection.
  */
-const makeHostReleaseEntryPlugin = (delivery, workspaceRoot, path) => ({
+const makeHostReleaseEntryPlugin = (delivery, hostEntryPath, workspaceRoot) => ({
   name: 'worker-host-reviewed-membership',
   setup(builder) {
     builder.onLoad({ filter: esbuildFilter(/[/\\]outbox-worker-host\.generated\.mts$/u) }, (args) =>
-      delivery.hostEntrySource === null || args.path !== path.resolve(workspaceRoot, delivery.entryPoint)
+      delivery.hostEntrySource === null || args.path !== hostEntryPath
         ? null
         : { contents: delivery.hostEntrySource, loader: 'ts', resolveDir: workspaceRoot },
     );
@@ -396,6 +396,8 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const delivery = yield* resolveOutboxWorkerEffect({ appId, packageDir, packageName, workspaceRoot });
+    const hostEntryPath =
+      delivery.hostEntrySource === null ? null : yield* fs.realPath(path.resolve(workspaceRoot, delivery.entryPoint));
     const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(
       yield* fs.readFileString(path.join(workspaceRoot, TOPOLOGY_PATH)),
     );
@@ -489,7 +491,7 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
             outfile: path.join(runtimeDir, WORKER_ENTRY),
             platform: 'node',
             plugins: [
-              makeHostReleaseEntryPlugin(delivery, workspaceRoot, path),
+              ...(hostEntryPath === null ? [] : [makeHostReleaseEntryPlugin(delivery, hostEntryPath, workspaceRoot)]),
               makeOwnerBuildIdentityPlugin({ compiledMarkers, markers, path }),
               makeProductionDependenciesPlugin({
                 packages,

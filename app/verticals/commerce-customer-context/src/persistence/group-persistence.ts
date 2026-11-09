@@ -1,12 +1,24 @@
-import { defineScopedRoutine } from '@app/core-runtime';
+import {
+  defineScopedRoutine,
+  ReadPermissionDenied,
+  ReadPolicyDenied,
+  ReadHandlerNotFound,
+  ReadHandlerUnavailable,
+} from '@app/core-runtime';
 import type {
   OperationalScope,
   ScopedRoutineDefinition,
   ScopedRoutineInputValues,
   ScopedRoutineInvocationError,
   ScopedRoutineParameter,
+  ReadServiceFactory,
 } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
+import { CustomerGroupDefinitionSourceResponseSchema } from '../../shared/apis/customer-group-definition-source.ts';
+import type {
+  CustomerGroupDefinitionSourceRequest,
+  CustomerGroupDefinitionSourceResponse,
+} from '../../shared/apis/customer-group-definition-source.ts';
 
 import {
   CommerceCustomerGroupMembershipSchema,
@@ -112,6 +124,97 @@ const createRoutine = defineScopedRoutine({
   routineKey: 'customer-group.create',
   schema: 'commerce_customer_context',
 });
+
+const definitionSourceRoutine = defineScopedRoutine({
+  name: 'apply_customer_group_definition_source',
+  ownerModuleKey: MODULE_KEY,
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'legalEntityId', type: 'uuid' },
+    { source: 'input', type: 'text' },
+    { source: 'input', type: 'jsonb' },
+    { source: 'input', type: 'timestamptz' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+  ],
+  resultSchema: GroupRowSchema,
+  routineKey: 'customer-group.apply-definition-source',
+  schema: 'commerce_customer_context',
+});
+
+const definitionSourceReadRoutine = defineScopedRoutine({
+  name: 'read_customer_group_definition_source',
+  ownerModuleKey: MODULE_KEY,
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'legalEntityId', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'jsonb' },
+  ],
+  resultSchema: Schema.Struct({
+    outcome: Schema.Literals(['FOUND', 'NOT_FOUND', 'SOURCE_AUTHORITY_DENIED', 'SOURCE_CONFLICT']),
+    result: Schema.toEncoded(Schema.OptionFromNullOr(JsonObjectSchema)),
+  }),
+  routineKey: 'customer-group.read-definition-source',
+  schema: 'commerce_customer_context',
+});
+
+export interface CustomerGroupDefinitionSourceReadServices {
+  readonly readDefinitionSource: (
+    input: CustomerGroupDefinitionSourceRequest,
+  ) => Effect.Effect<
+    CustomerGroupDefinitionSourceResponse,
+    ReadPermissionDenied | ReadHandlerNotFound | ReadHandlerUnavailable | ReadPolicyDenied
+  >;
+}
+
+const definitionSourceReadUnavailable = (cause?: unknown): ReadHandlerUnavailable => {
+  const failure = new ReadHandlerUnavailable({
+    code: 'read_handler_unavailable',
+    reason: 'Customer Group source correlation is unavailable',
+  });
+  if (cause !== undefined) {
+    Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
+  }
+  return failure;
+};
+
+export const customerGroupDefinitionSourceServiceFactory: ReadServiceFactory<
+  CustomerGroupDefinitionSourceReadServices
+> = (transaction, scope) =>
+  Effect.succeed({
+    readDefinitionSource: Effect.fn('CustomerGroupDefinitionSource.read')(function* readDefinitionSource(input) {
+      const [row] = yield* transaction
+        .invoke(definitionSourceReadRoutine, [scope.principalId, input])
+        .pipe(Effect.mapError(definitionSourceReadUnavailable));
+      if (row === undefined) {
+        return yield* definitionSourceReadUnavailable();
+      }
+      if (row.outcome === 'SOURCE_AUTHORITY_DENIED') {
+        return yield* new ReadPermissionDenied({
+          code: 'read_permission_denied',
+          reason: 'The current source route does not authorize this Group definition read',
+        });
+      }
+      if (row.outcome === 'NOT_FOUND') {
+        return yield* new ReadHandlerNotFound({
+          code: 'read_handler_not_found',
+          reason: 'The exact Group definition source receipt is absent',
+        });
+      }
+      if (row.outcome === 'SOURCE_CONFLICT') {
+        return yield* new ReadPolicyDenied({
+          code: 'read_policy_denied',
+          httpStatus: 409,
+          policyReasonCode: 'customer_group_source_conflict',
+          reason: 'The original source effect has a different immutable native intent',
+        });
+      }
+      return yield* Schema.decodeUnknownEffect(CustomerGroupDefinitionSourceResponseSchema, {
+        onExcessProperty: 'error',
+      })(row.result).pipe(Effect.mapError(definitionSourceReadUnavailable));
+    }),
+  });
 
 const updateRoutine = defineScopedRoutine({
   name: 'update_customer_group',
@@ -306,12 +409,12 @@ const requireGroup = (row: GroupRow) =>
 const profileKind = (command: AssignCustomerGroupCommand | RemoveCustomerGroupCommand) => command.profile.profileKind;
 
 const scopeMatches = (
-  scope: OperationalScope & { readonly legalEntityId: string },
+  scope: OperationalScope,
   input: Readonly<{ readonly legalEntityId: string; readonly tenantId: string }>,
 ): boolean => scope.tenantId === input.tenantId && scope.legalEntityId === input.legalEntityId;
 
 const commandScopeMatches = (
-  scope: OperationalScope & { readonly legalEntityId: string },
+  scope: OperationalScope,
   input: Readonly<{
     readonly legalEntityId: string;
     readonly principalId: string;
@@ -349,6 +452,9 @@ const mapArchiveRow = (
 const mapAssignRow = (
   row: typeof MembershipRowSchema.Type,
 ): Effect.Effect<AssignCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError> => {
+  if (row.outcome === 'SOURCE_AUTHORITY_DENIED') {
+    return Effect.succeed({ _tag: 'source_authority_denied' });
+  }
   if (row.outcome === 'NOT_FOUND') {
     return Effect.succeed({ _tag: 'not_found' });
   }
@@ -396,9 +502,22 @@ const mapAssignRow = (
   );
 };
 
+const sourceRejectionCodes = {
+  SOURCE_AUTHORITY_DENIED: 'customer_group_source_authority_denied',
+  SOURCE_CONFLICT: 'customer_group_source_conflict',
+  SOURCE_STALE: 'customer_group_source_stale',
+} as const;
+
 const mapCreateRow = (
   row: GroupRow,
 ): Effect.Effect<CreateCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError> => {
+  if (
+    row.outcome === 'SOURCE_AUTHORITY_DENIED' ||
+    row.outcome === 'SOURCE_CONFLICT' ||
+    row.outcome === 'SOURCE_STALE'
+  ) {
+    return Effect.succeed({ _tag: 'definition_source_rejected', code: sourceRejectionCodes[row.outcome] });
+  }
   if (row.outcome === 'BUSINESS_CODE_CONFLICT') {
     return Effect.succeed({ _tag: 'business_code_conflict' });
   }
@@ -436,6 +555,9 @@ const mapReactivateRow = (
 const mapRemoveRow = (
   row: typeof MembershipRowSchema.Type,
 ): Effect.Effect<RemoveCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError> => {
+  if (row.outcome === 'SOURCE_AUTHORITY_DENIED') {
+    return Effect.succeed({ _tag: 'source_authority_denied' });
+  }
   if (row.outcome === 'NOT_FOUND') {
     return Effect.succeed({ _tag: 'not_found' });
   }
@@ -471,6 +593,13 @@ const mapRemoveRow = (
 const mapUpdateRow = (
   row: GroupRow,
 ): Effect.Effect<UpdateCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError> => {
+  if (
+    row.outcome === 'SOURCE_AUTHORITY_DENIED' ||
+    row.outcome === 'SOURCE_CONFLICT' ||
+    row.outcome === 'SOURCE_STALE'
+  ) {
+    return Effect.succeed({ _tag: 'definition_source_rejected', code: sourceRejectionCodes[row.outcome] });
+  }
   if (row.outcome === 'NOT_FOUND') {
     return Effect.succeed({ _tag: 'not_found' });
   }
@@ -491,7 +620,7 @@ const mapUpdateRow = (
 
 export const customerGroupPersistenceForTransaction = (
   transaction: CustomerGroupScopedRoutineInvoker,
-  scope: OperationalScope & { readonly legalEntityId: string },
+  scope: OperationalScope,
 ): CustomerGroupPersistence => ({
   archive: (
     command,
@@ -544,6 +673,31 @@ export const customerGroupPersistenceForTransaction = (
   create: (command): Effect.Effect<CreateCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError> => {
     if (!commandScopeMatches(scope, command)) {
       return Effect.fail(unavailable('The Customer Group creation scope is inconsistent'));
+    }
+    if (command.source !== undefined) {
+      return transaction
+        .invoke(definitionSourceRoutine, [
+          'CREATE',
+          {
+            businessCode: command.businessCode,
+            description: command.description,
+            initialState: 'ACTIVE',
+            meaningKey: command.meaningKey,
+            membershipCriteria: command.membershipCriteria,
+            name: command.name,
+            purpose: command.purpose,
+            reason: command.reason,
+            source: command.source,
+          },
+          command.recordedAt,
+          scope.principalId,
+          command.actionInvocationId,
+        ])
+        .pipe(
+          Effect.mapError(unavailable),
+          Effect.flatMap((rows) => requireRow(rows, definitionSourceRoutine.routineKey)),
+          Effect.flatMap(mapCreateRow),
+        );
     }
     return transaction
       .invoke(createRoutine, [
@@ -718,6 +872,30 @@ export const customerGroupPersistenceForTransaction = (
     if (!commandScopeMatches(scope, command) || command.groupRef.tenantId !== scope.tenantId) {
       return Effect.fail(unavailable('The Customer Group update scope is inconsistent'));
     }
+    if (command.source !== undefined) {
+      return transaction
+        .invoke(definitionSourceRoutine, [
+          'UPDATE',
+          {
+            description: command.description,
+            expectedRevision: command.expectedRevision,
+            groupRef: command.groupRef,
+            membershipCriteria: command.membershipCriteria,
+            name: command.name,
+            purpose: command.purpose,
+            reason: command.reason,
+            source: command.source,
+          },
+          command.recordedAt,
+          scope.principalId,
+          command.actionInvocationId,
+        ])
+        .pipe(
+          Effect.mapError(unavailable),
+          Effect.flatMap((rows) => requireRow(rows, definitionSourceRoutine.routineKey)),
+          Effect.flatMap(mapUpdateRow),
+        );
+    }
     return transaction
       .invoke(updateRoutine, [
         command.groupRef.resourceId,
@@ -740,6 +918,8 @@ export const customerGroupPersistenceForTransaction = (
 });
 
 export const customerGroupRoutineAllowlist = Object.freeze([
+  definitionSourceReadRoutine,
+  definitionSourceRoutine,
   detailRoutine,
   createRoutine,
   updateRoutine,

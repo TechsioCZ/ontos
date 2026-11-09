@@ -31,12 +31,17 @@ import { AssortmentProductClassificationV1Api } from './shared/apis/assortment-p
 import { AssortmentSelectionAssessmentV1Api } from './shared/apis/assortment-selection-assessment-v1.ts';
 import { AssortmentSetCompositionV1Api } from './shared/apis/assortment-set-composition-v1.ts';
 import { attributeDefinitionResourceDescriptor } from './shared/resources/attribute-definition.ts';
+import { bindInitialVariantSourceAction } from './src/actions/bind-initial-variant-source.action.ts';
+import { BindInitialVariantSourceRecoveryApi } from './shared/apis/bind-initial-variant-source-recovery.ts';
+import { bindInitialVariantSourceRecoveryRead } from './src/api/bind-initial-variant-source-recovery.read.ts';
 import { BrandCurrentApi } from './shared/apis/brand-current.ts';
 import { BrandHistoryApi } from './shared/apis/brand-history.ts';
 import { brandResourceDescriptor } from './shared/resources/brand.ts';
 import { CatalogDocumentCurrentApi } from './shared/apis/catalog-document-current.ts';
 import { CatalogMediaCurrentApi } from './shared/apis/catalog-media-current.ts';
 import { catalogRootResourceDescriptor } from './shared/resources/catalog-root.ts';
+import { CatalogSourceProductsApi } from './shared/apis/catalog-source-products.ts';
+import { catalogSourceProductsRead } from './src/api/catalog-source-products.read.ts';
 import { CatalogSourceResolutionApi } from './shared/apis/catalog-source-resolution.ts';
 import { CatalogWidget } from './src/components/catalog-widget.tsx';
 import { changeLocalOverrideAction } from './src/actions/change-local-override.action.ts';
@@ -101,6 +106,7 @@ import { importSourceAssertionAction } from './src/actions/import-source-asserti
 import { ImportSourceAssertionRecoveryApi } from './shared/apis/import-source-assertion-recovery.ts';
 import { ListRecordedVariantsApi } from './shared/apis/list-recorded-variants.ts';
 import { ManufacturerRelationCurrentApi } from './shared/apis/manufacturer-relation-current.ts';
+import { manufacturerRelationCurrentRead } from './src/api/manufacturer-relation-current.read.ts';
 import { ManufacturerRelationHistoryApi } from './shared/apis/manufacturer-relation-history.ts';
 import { markGtinUnresolvedAction } from './src/actions/mark-gtin-unresolved.action.ts';
 import { MarkGtinUnresolvedRecoveryApi } from './shared/apis/mark-gtin-unresolved-recovery.ts';
@@ -110,6 +116,7 @@ import { PackageDefinitionHistoryApi } from './shared/apis/package-definition-hi
 import { packageDefinitionResourceDescriptor } from './shared/resources/package-definition.ts';
 import { PackageOptionHistoryApi } from './shared/apis/package-option-history.ts';
 import { PricingPurposeEquivalenceApi } from './shared/apis/pricing-purpose-equivalence.ts';
+import { pricingPurposeEquivalenceRead } from './src/api/pricing-purpose-equivalence.read.ts';
 import { ProductBrandCurrentApi } from './shared/apis/product-brand-current.ts';
 import { ProductBrandHistoryApi } from './shared/apis/product-brand-history.ts';
 import { ProductCategoryClassificationApi } from './shared/apis/product-category-classification.ts';
@@ -124,12 +131,15 @@ import { ProductSizeCurrentApi } from './shared/apis/product-size-current.ts';
 import { productTypeResourceDescriptor } from './shared/resources/product-type.ts';
 import { productUnitResourceDescriptor } from './shared/resources/product-unit.ts';
 import { ProductVariantSnapshotApi } from './shared/apis/product-variant-snapshot.ts';
+import { productVariantSnapshotRead } from './src/api/product-variant-snapshot.read.ts';
 import { promotePackageDefinitionAction } from './src/actions/promote-package-definition.action.ts';
 import { PromotePackageDefinitionRecoveryApi } from './shared/apis/promote-package-definition-recovery.ts';
 import { publishProductConfigurationAction } from './src/actions/publish-product-configuration.action.ts';
 import { PublishProductConfigurationRecoveryApi } from './shared/apis/publish-product-configuration-recovery.ts';
 import { QuantityBasisCompatibilityApi } from './shared/apis/quantity-basis-compatibility.ts';
+import { quantityBasisCompatibilityRead } from './src/api/quantity-basis-compatibility.read.ts';
 import { QuantityPreparationApi } from './shared/apis/quantity-preparation.ts';
+import { quantityPreparationRead } from './src/api/quantity-preparation.read.ts';
 import { reactivateBrandAction } from './src/actions/reactivate-brand.action.ts';
 import { ReactivateBrandRecoveryApi } from './shared/apis/reactivate-brand-recovery.ts';
 import { reactivateControlledAttributeValueAction } from './src/actions/reactivate-controlled-attribute-value.action.ts';
@@ -203,6 +213,7 @@ import { ReviseProductUnitRecoveryApi } from './shared/apis/revise-product-unit-
 import { reviseSetCompositionAction } from './src/actions/revise-set-composition.action.ts';
 import { ReviseSetCompositionRecoveryApi } from './shared/apis/revise-set-composition-recovery.ts';
 import { SelectionEvidenceApi } from './shared/apis/selection-evidence.ts';
+import { selectionEvidenceRead } from './src/api/selection-evidence.read.ts';
 import { SetCompositionCurrentApi } from './shared/apis/set-composition-current.ts';
 import { SetCompositionHistoryApi } from './shared/apis/set-composition-history.ts';
 import { setProductAttributeValuesAction } from './src/actions/set-product-attribute-values.action.ts';
@@ -226,12 +237,15 @@ import { updateProductAction } from './src/actions/update-product.action.ts';
 import { UpdateProductRecoveryApi } from './shared/apis/update-product-recovery.ts';
 import { VariantHistoryApi } from './shared/apis/variant-history.ts';
 import { variantResourceDescriptor } from './shared/resources/variant.ts';
-import { selectionEvidenceRead } from './src/api/selection-evidence.read.ts';
-import { quantityPreparationRead } from './src/api/quantity-preparation.read.ts';
-import { quantityBasisCompatibilityRead } from './src/api/quantity-basis-compatibility.read.ts';
-import { pricingPurposeEquivalenceRead } from './src/api/pricing-purpose-equivalence.read.ts';
-import { productVariantSnapshotRead } from './src/api/product-variant-snapshot.read.ts';
-import { manufacturerRelationCurrentRead } from './src/api/manufacturer-relation-current.read.ts';
+import { createProductRecoveryRead } from './src/api/create-product-recovery.read.ts';
+import { createVariantRecoveryRead } from './src/api/create-variant-recovery.read.ts';
+import { updateProductRecoveryRead } from './src/api/update-product-recovery.read.ts';
+import { correctProductRecoveryRead } from './src/api/correct-product-recovery.read.ts';
+import { CreateProductActionApi } from './shared/apis/create-product-action.ts';
+import { CreateVariantActionApi } from './shared/apis/create-variant-action.ts';
+import { UpdateProductActionApi } from './shared/apis/update-product-action.ts';
+import { CorrectProductActionApi } from './shared/apis/correct-product-action.ts';
+import { BindInitialVariantSourceActionApi } from './shared/apis/bind-initial-variant-source-action.ts';
 // </generated-module-manifest-imports>
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
@@ -280,6 +294,7 @@ export const catalogManifest: OntosModuleManifestInput = defineOntosModuleManife
       assertSizeEquivalenceAction,
       assignCatalogMediaAction,
       assignSkuAction,
+      bindInitialVariantSourceAction,
       changeLocalOverrideAction,
       changeProductManufacturerAction,
       changeProductRelationshipAction,
@@ -369,10 +384,13 @@ export const catalogManifest: OntosModuleManifestInput = defineOntosModuleManife
       'assortment-product-classification-v1': AssortmentProductClassificationV1Api,
       'assortment-selection-assessment-v1': AssortmentSelectionAssessmentV1Api,
       'assortment-set-composition-v1': AssortmentSetCompositionV1Api,
+      'bind-initial-variant-source-action': BindInitialVariantSourceActionApi,
+      'bind-initial-variant-source-recovery': BindInitialVariantSourceRecoveryApi,
       'brand-current': BrandCurrentApi,
       'brand-history': BrandHistoryApi,
       'catalog-document-current': CatalogDocumentCurrentApi,
       'catalog-media-current': CatalogMediaCurrentApi,
+      'catalog-source-products': CatalogSourceProductsApi,
       'catalog-source-resolution': CatalogSourceResolutionApi,
       'change-local-override-recovery': ChangeLocalOverrideRecoveryApi,
       'change-product-manufacturer-recovery': ChangeProductManufacturerRecoveryApi,
@@ -383,6 +401,7 @@ export const catalogManifest: OntosModuleManifestInput = defineOntosModuleManife
       'confirm-gtin-recovery': ConfirmGtinRecoveryApi,
       'confirm-variant-combination-recovery': ConfirmVariantCombinationRecoveryApi,
       'correct-gtin-recovery': CorrectGtinRecoveryApi,
+      'correct-product-action': CorrectProductActionApi,
       'correct-product-recovery': CorrectProductRecoveryApi,
       'correct-sku-recovery': CorrectSkuRecoveryApi,
       'create-attribute-definition-recovery': CreateAttributeDefinitionRecoveryApi,
@@ -390,12 +409,14 @@ export const catalogManifest: OntosModuleManifestInput = defineOntosModuleManife
       'create-configuration-unit-recovery': CreateConfigurationUnitRecoveryApi,
       'create-controlled-attribute-value-recovery': CreateControlledAttributeValueRecoveryApi,
       'create-package-definition-recovery': CreatePackageDefinitionRecoveryApi,
+      'create-product-action': CreateProductActionApi,
       'create-product-category-recovery': CreateProductCategoryRecoveryApi,
       'create-product-recovery': CreateProductRecoveryApi,
       'create-product-relationship-recovery': CreateProductRelationshipRecoveryApi,
       'create-product-type-recovery': CreateProductTypeRecoveryApi,
       'create-product-unit-recovery': CreateProductUnitRecoveryApi,
       'create-set-composition-recovery': CreateSetCompositionRecoveryApi,
+      'create-variant-action': CreateVariantActionApi,
       'create-variant-recovery': CreateVariantRecoveryApi,
       'decide-product-type-unnecessary-recovery': DecideProductTypeUnnecessaryRecoveryApi,
       'effective-attribute-values-current': EffectiveAttributeValuesCurrentApi,
@@ -476,6 +497,7 @@ export const catalogManifest: OntosModuleManifestInput = defineOntosModuleManife
       'set-variant-attribute-override-recovery': SetVariantAttributeOverrideRecoveryApi,
       'set-variant-localized-facts-recovery': SetVariantLocalizedFactsRecoveryApi,
       'sku-lookup': SkuLookupApi,
+      'update-product-action': UpdateProductActionApi,
       'update-product-recovery': UpdateProductRecoveryApi,
       'variant-history': VariantHistoryApi,
       // </generated-module-manifest-apis>
@@ -492,16 +514,60 @@ export const catalogManifest: OntosModuleManifestInput = defineOntosModuleManife
     events: [],
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
-      { apiKey: 'selection-evidence', operationKey: 'selectionEvidence.execute', registration: selectionEvidenceRead },
       {
-        apiKey: 'quantity-preparation',
-        operationKey: 'quantityPreparation.execute',
-        registration: quantityPreparationRead,
+        apiKey: 'bind-initial-variant-source-action',
+        operationKey: 'bindInitialVariantSourceAction.execute',
+        registration: bindInitialVariantSourceAction,
       },
       {
-        apiKey: 'quantity-basis-compatibility',
-        operationKey: 'quantityBasisCompatibility.execute',
-        registration: quantityBasisCompatibilityRead,
+        apiKey: 'correct-product-action',
+        operationKey: 'correctProductAction.execute',
+        registration: correctProductAction,
+      },
+      {
+        apiKey: 'update-product-action',
+        operationKey: 'updateProductAction.execute',
+        registration: updateProductAction,
+      },
+      {
+        apiKey: 'create-variant-action',
+        operationKey: 'createVariantAction.execute',
+        registration: createVariantAction,
+      },
+      {
+        apiKey: 'create-product-action',
+        operationKey: 'createProductAction.execute',
+        registration: createProductAction,
+      },
+      {
+        apiKey: 'correct-product-recovery',
+        operationKey: 'correctProductRecovery.execute',
+        registration: correctProductRecoveryRead,
+      },
+      {
+        apiKey: 'update-product-recovery',
+        operationKey: 'updateProductRecovery.execute',
+        registration: updateProductRecoveryRead,
+      },
+      {
+        apiKey: 'create-variant-recovery',
+        operationKey: 'createVariantRecovery.execute',
+        registration: createVariantRecoveryRead,
+      },
+      {
+        apiKey: 'create-product-recovery',
+        operationKey: 'createProductRecovery.execute',
+        registration: createProductRecoveryRead,
+      },
+      {
+        apiKey: 'bind-initial-variant-source-recovery',
+        operationKey: 'bindInitialVariantSourceRecovery.execute',
+        registration: bindInitialVariantSourceRecoveryRead,
+      },
+      {
+        apiKey: 'catalog-source-products',
+        operationKey: 'catalogSourceProducts.execute',
+        registration: catalogSourceProductsRead,
       },
       {
         apiKey: 'pricing-purpose-equivalence',
@@ -513,6 +579,17 @@ export const catalogManifest: OntosModuleManifestInput = defineOntosModuleManife
         operationKey: 'productVariantSnapshot.execute',
         registration: productVariantSnapshotRead,
       },
+      {
+        apiKey: 'quantity-basis-compatibility',
+        operationKey: 'quantityBasisCompatibility.execute',
+        registration: quantityBasisCompatibilityRead,
+      },
+      {
+        apiKey: 'quantity-preparation',
+        operationKey: 'quantityPreparation.execute',
+        registration: quantityPreparationRead,
+      },
+      { apiKey: 'selection-evidence', operationKey: 'selectionEvidence.execute', registration: selectionEvidenceRead },
       // </generated-module-manifest-operation-contracts>
     ],
     reports: [

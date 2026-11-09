@@ -1,4 +1,5 @@
-import { and, eq } from 'drizzle-orm';
+import { readVerifiedGatewayWorkload } from '../../auth/system-principal-context-provenance.ts';
+import { and, eq, sql } from 'drizzle-orm';
 import { Effect, Layer } from 'effect';
 
 import { CoreDatabase } from '../../db/client.ts';
@@ -34,6 +35,19 @@ const readUnavailable = (cause?: unknown): AccessDecisionUnavailable =>
 export const makeDrizzleAccessWorkloadBindings = (database: AccessWorkloadBindingDatabase): AccessWorkloadBindings => ({
   readActiveWorkloadKeys: Effect.fn('AccessWorkloadBindings.readActiveWorkloadKeys')(
     function* readActiveWorkloadKeysEffect(query: WorkloadBindingQuery, transaction?: CoreTransaction) {
+      const workload = readVerifiedGatewayWorkload(query.scope);
+      if (workload?.sourceMode === 'historical_delivery' && workload.recovery === undefined) {
+        return new Set<string>();
+      }
+      if (
+        workload !== undefined &&
+        workload.recovery === undefined &&
+        (workload.originalWorkloadKey === undefined ||
+          workload.originalWorkloadBindingIncarnation === undefined ||
+          workload.originalOwnerBindingIncarnation === undefined)
+      ) {
+        return new Set<string>();
+      }
       const read = (opened: CoreTransaction) =>
         // The registry forces tenant row security on `ontos_runtime`, so the request's own scope is
         // installed before the read: a principal id from another tenant answers nothing (O66).
@@ -47,6 +61,23 @@ export const makeDrizzleAccessWorkloadBindings = (database: AccessWorkloadBindin
                   eq(accessWorkloadBindings.tenantId, query.tenantId),
                   eq(accessWorkloadBindings.principalId, query.principalId),
                   eq(accessWorkloadBindings.status, 'active'),
+                  ...(workload === undefined
+                    ? []
+                    : [
+                        eq(accessWorkloadBindings.incarnation, workload.bindingIncarnation),
+                        eq(accessWorkloadBindings.workloadKey, workload.workloadKey),
+                        ...(workload.sourceMode === 'worker'
+                          ? [
+                              sql`trust.registered_workload_delivery_is_active(${workload.runReference}::uuid, ${workload.claimId ?? ''}, ${workload.workerKey ?? ''}, ${workload.workerModuleKey ?? ''}, ${query.tenantId}::uuid)`,
+                            ]
+                          : []),
+                        sql`exists (select 1 from core.principals s where s.tenant_id = ${query.tenantId}::uuid and s.principal_id = ${query.principalId}::uuid and s.kind = 'system' and s.status = 'active')`,
+                        ...(workload.recovery === undefined
+                          ? [
+                              sql`exists (select 1 from core.principals p join core.access_workload_bindings b on b.tenant_id = p.tenant_id and b.principal_id = p.principal_id join core.access_workload_bindings ob on ob.tenant_id = p.tenant_id and ob.principal_id = p.principal_id and ob.workload_key = ${workload.workloadKey} and ob.incarnation = ${workload.originalOwnerBindingIncarnation}::uuid and ob.status = 'active' where p.tenant_id = ${query.tenantId}::uuid and p.principal_id = ${workload.originalPrincipalId}::uuid and p.status = 'active' and p.kind = 'integration' and b.workload_key = ${workload.originalWorkloadKey} and b.incarnation = ${workload.originalWorkloadBindingIncarnation}::uuid and b.status = 'active')`,
+                            ]
+                          : []),
+                      ]),
                 ),
               ),
           ),

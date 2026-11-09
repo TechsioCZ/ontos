@@ -26,7 +26,7 @@ import {
 
 export interface RecordAntiResurrectionProtectionServices extends Pick<
   PrivacyOperationRepositoryService,
-  'getPrivacyMeasureHandoff' | 'recordAntiResurrectionProtection'
+  'getPrivacyMeasureHandoff' | 'getPrivacyMeasureDispatchOriginator' | 'recordAntiResurrectionProtection'
 > {
   readonly authority: OwnerExecutionAuthorityService;
   readonly enforcementAuthority: AntiResurrectionEnforcementAuthorityService;
@@ -111,6 +111,7 @@ export const recordAntiResurrectionProtectionAction = defineAction(
       Effect.map(({ authority, enforcementAuthority, repository }) => ({
         authority,
         enforcementAuthority,
+        getPrivacyMeasureDispatchOriginator: repository.getPrivacyMeasureDispatchOriginator,
         getPrivacyMeasureHandoff: repository.getPrivacyMeasureHandoff,
         recordAntiResurrectionProtection: repository.recordAntiResurrectionProtection,
       })),

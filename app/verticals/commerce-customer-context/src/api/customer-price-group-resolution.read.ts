@@ -201,6 +201,7 @@ export const customerPriceGroupResolutionServicesForTransaction = (
   const trustedScope = { ...scope, legalEntityId };
   return Effect.gen(function* makeCustomerPriceGroupResolutionServices() {
     const catalog = yield* priceGroupCatalogPortFromEnvironment({
+      operationRequirementKey: 'commerce.customer-context.requirement.price-group-single-assignment',
       requestCorrelation: scope.correlationId,
       subject: { _tag: 'Assertion', scope },
     });

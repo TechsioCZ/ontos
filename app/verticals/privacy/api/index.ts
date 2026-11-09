@@ -1,5 +1,10 @@
+import { PrivacySubjectPartyCredentialsLive } from '../src/persistence/privacy-subject-party-credentials.ts';
 import { privacyRegistration } from '../vertical.registration.ts';
-import { PrivacySubjectPartyOwnerUnavailableLive } from '../src/persistence/privacy-subject-party-owner.ts';
+import { PrivacySubjectPartyOwnerLive } from '../src/persistence/privacy-subject-party-owner.ts';
+import {
+  GatewayAssertionRedemptionDatabaseLive,
+  gatewayAssertionRedemptionPgClient,
+} from '../src/auth/gateway-assertion-redemption-runtime.ts';
 import {
   makeActionRuntimeLive,
   ActionAuthorizationPreflightDatabaseLive,
@@ -26,6 +31,8 @@ import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-erro
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { FetchHttpClient } from 'effect/http';
+import { PgClient } from '@effect/sql-pg';
+import { Reactivity } from 'effect/reactivity';
 import { ultramodernDeliveryUnit, ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { Effect, HttpApiBuilder, Layer, Schema } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
@@ -56,8 +63,12 @@ import { enqueueRetentionEvaluationActionApiLive } from './enqueue-retention-eva
 import { evaluateProcessingEligibilityActionApiLive } from './evaluate-processing-eligibility-action-server.ts';
 import { issueDsrDeliveryAccessActionApiLive } from './issue-dsr-delivery-access-action-server.ts';
 import { legalBasisAssignmentsReadApiLive } from './legal-basis-assignments-read-server.ts';
+import { measureExecutionEligibilityReadApiLive } from './measure-execution-eligibility-read-server.ts';
 import { noticePresentationReadApiLive } from './notice-presentation-read-server.ts';
 import { noticeVersionsReadApiLive } from './notice-versions-read-server.ts';
+import { organizationBusinessApplicabilityReadApiLive } from './organization-business-applicability-read-server.ts';
+import { organizationIcoApplicabilityReadApiLive } from './organization-ico-applicability-read-server.ts';
+import { organizationProfileIcoApplicabilityReadApiLive } from './organization-profile-ico-applicability-read-server.ts';
 import { ownerInventoryReadApiLive } from './owner-inventory-read-server.ts';
 import { privacySubjectsReadApiLive } from './privacy-subjects-read-server.ts';
 import { processingActivitiesReadApiLive } from './processing-activities-read-server.ts';
@@ -83,6 +94,7 @@ import { recordProcessingInterventionActionApiLive } from './record-processing-i
 import { recordRetentionExceptionActionApiLive } from './record-retention-exception-action-server.ts';
 import { responsibilityAssignmentsReadApiLive } from './responsibility-assignments-read-server.ts';
 import { retentionRulesReadApiLive } from './retention-rules-read-server.ts';
+import { sourceProcessingEligibilityReadApiLive } from './source-processing-eligibility-read-server.ts';
 import { transitionProcessingActivityActionApiLive } from './transition-processing-activity-action-server.ts';
 import { updateDsrCaseActionApiLive } from './update-dsr-case-action-server.ts';
 import { upsertDsrOwnerTaskActionApiLive } from './upsert-dsr-owner-task-action-server.ts';
@@ -93,14 +105,14 @@ import { upsertTemporaryDsrExportActionApiLive } from './upsert-temporary-dsr-ex
 import { privacyApi, privacyMarkerSchema, privacyOperationContexts } from '../shared/api.ts';
 import type { OperationContext } from '../shared/api.ts';
 import { ConsentSelfServiceAuthorityUnavailableLive } from '../src/actions/consent-self-service.action.ts';
-import { PrivacyApplicabilityBusinessFactAuthorityUnavailableLive } from '../src/actions/privacy-applicability-business-fact-authority-service.ts';
+import { PrivacyApplicabilityBusinessFactAuthorityLive } from '../src/actions/privacy-applicability-business-fact-authority-service.ts';
 import { DsrIntakeReceiptAuthorityUnavailableLive } from '../src/actions/create-dsr-case.action.ts';
 import { DsrOwnerTaskAuthorityUnavailableLive } from '../src/actions/privacy-dsr-owner-task-authority.ts';
 import { DsrOwnerInventoryAuthorityUnavailableLive } from '../src/actions/privacy-dsr-owner-inventory-authority.ts';
 import { DsrSubstantiveDecisionAuthorityUnavailableLive } from '../src/actions/privacy-dsr-substantive-decision-authority.ts';
 import { ProcessingActivityCoverageAuthorityUnavailableLive } from '../src/actions/processing-activity-coverage-authority.ts';
 import { RetentionRuleGovernanceAuthorityUnavailableLive } from '../src/actions/retention-rule-governance-authority.ts';
-import { OwnerExecutionAuthorityUnavailableLive } from '../src/actions/privacy-owner-execution-authority.ts';
+import { SymmyOwnerExecutionAuthorityLive } from '../src/integrations/symmy-owner-execution-authority.ts';
 import { AntiResurrectionEnforcementAuthorityUnavailableLive } from '../src/actions/privacy-anti-resurrection-enforcement-authority.ts';
 import { RetentionDispositionAuthorityUnavailableLive } from '../src/actions/privacy-retention-disposition-authority.ts';
 import { DsrDeadlineAuthorityUnavailableLive } from '../src/actions/record-dsr-deadline.action.ts';
@@ -179,6 +191,9 @@ const operationalScopeResolverLive = Layer.provide(
   Layer.mergeAll(CorePersistenceLive, ContextAccessLive, accessEnforcementLive),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
+const privacySubjectPartyOwnerLive = PrivacySubjectPartyOwnerLive.pipe(
+  Layer.provide(PrivacySubjectPartyCredentialsLive.pipe(Layer.provide(nodeCryptoLayer))),
+);
 const productionReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, privacyRegistration).pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -192,7 +207,8 @@ const productionReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, p
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
   Layer.provideMerge(
     Layer.mergeAll(
-      PrivacyApplicabilityBusinessFactAuthorityUnavailableLive,
+      PrivacyApplicabilityBusinessFactAuthorityLive.pipe(Layer.provide(nodeCryptoLayer)),
+      privacySubjectPartyOwnerLive,
       PrivacyNoticePresentationUnavailableLive,
       CommerceCustomerContextNoticeSubjectAuthorityUnavailableLive,
     ),
@@ -202,7 +218,7 @@ const productionReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, p
 
 const privacyActionAuthorityUnavailableLive = Layer.mergeAll(
   ConsentSelfServiceAuthorityUnavailableLive,
-  PrivacyApplicabilityBusinessFactAuthorityUnavailableLive,
+  PrivacyApplicabilityBusinessFactAuthorityLive.pipe(Layer.provide(nodeCryptoLayer)),
   DsrDeadlineAuthorityUnavailableLive,
   DsrDeliveryAuthorityUnavailableLive,
   DsrDeliveryAccessAuthorityUnavailableLive,
@@ -210,7 +226,7 @@ const privacyActionAuthorityUnavailableLive = Layer.mergeAll(
   DsrOwnerInventoryAuthorityUnavailableLive,
   DsrOwnerTaskAuthorityUnavailableLive,
   DsrSubstantiveDecisionAuthorityUnavailableLive,
-  OwnerExecutionAuthorityUnavailableLive,
+  SymmyOwnerExecutionAuthorityLive.pipe(Layer.provide(nodeCryptoLayer)),
   AntiResurrectionEnforcementAuthorityUnavailableLive,
   RetentionDispositionAuthorityUnavailableLive,
   ProcessingActivityCoverageAuthorityUnavailableLive,
@@ -220,7 +236,7 @@ const privacyActionAuthorityUnavailableLive = Layer.mergeAll(
   PrivacyNoticePresentationUnavailableLive,
   CommerceCustomerContextNoticeSubjectAuthorityUnavailableLive,
   ProcessingInterventionAuthorityUnavailableLive,
-  PrivacySubjectPartyOwnerUnavailableLive,
+  privacySubjectPartyOwnerLive,
 );
 
 const productionActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, privacyRegistration).pipe(
@@ -242,10 +258,21 @@ const productionActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUni
   Layer.provideMerge(privacyActionAuthorityUnavailableLive),
 );
 
+const redemptionDatabaseLive = GatewayAssertionRedemptionDatabaseLive.pipe(
+  Layer.provide(PgClient.layerFrom(gatewayAssertionRedemptionPgClient)),
+  Layer.provide(Reactivity.layer),
+  Layer.provide(DatabaseConfigLive),
+);
+const configuredGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
+  Layer.provide(redemptionDatabaseLive),
+);
 type PrivacyApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof productionReadRuntimeLive>>,
   actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof productionActionRuntimeLive>>,
-  gatewayAssertionRedemption: Layer.Layer<GatewayAssertionRedemptionService>,
+  gatewayAssertionRedemption: Layer.Layer<
+    GatewayAssertionRedemptionService,
+    Layer.Error<typeof configuredGatewayAssertionRedemptionLive>
+  >,
 ];
 
 export const makePrivacyApiRuntime = (
@@ -279,8 +306,12 @@ export const makePrivacyApiRuntime = (
     evaluateProcessingEligibilityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     issueDsrDeliveryAccessActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     legalBasisAssignmentsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    measureExecutionEligibilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     noticePresentationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     noticeVersionsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    organizationBusinessApplicabilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    organizationIcoApplicabilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    organizationProfileIcoApplicabilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     ownerInventoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     privacySubjectsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     processingActivitiesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
@@ -306,6 +337,7 @@ export const makePrivacyApiRuntime = (
     recordRetentionExceptionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     responsibilityAssignmentsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     retentionRulesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    sourceProcessingEligibilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     transitionProcessingActivityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     updateDsrCaseActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     upsertDsrOwnerTaskActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -326,7 +358,7 @@ export const makePrivacyApiRuntime = (
 const apiRuntime = makePrivacyApiRuntime(
   productionReadRuntimeLive,
   productionActionRuntimeLive,
-  GovernedGatewayAssertionRedemptionLive,
+  configuredGatewayAssertionRedemptionLive,
 );
 
 export default apiRuntime;

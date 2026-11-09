@@ -6,6 +6,7 @@ import {
   ORIGINATOR_EVIDENCE_MAX_AGE_DAYS,
   OriginatorEvidenceRowSchema,
   admitInvocationEvidence,
+  admitPrivacyDispatchHumanEvidence,
   decodeOriginatorEvidenceRows,
 } from '../../api/auth/gateway-originator-evidence.ts';
 
@@ -229,5 +230,66 @@ it.effect('decodes a row Core returned into the admission shape without changing
         tenantId,
       }),
     ).toMatchObject({ principal: { principalId, tenantId }, workload: false });
+  }),
+);
+
+it.effect(
+  'admits an aged fixed Privacy dispatch human while generic Originator evidence retains its seven-day limit',
+  () =>
+    Effect.gen(function* durableDispatchAge() {
+      const rows = decodeRecorded([recordedSessionRow({ startedAtEpochSeconds: nowSeconds - 400 * 86_400 })]);
+      const admitted = yield* admitPrivacyDispatchHumanEvidence(rows, { subjectUserBanned: false, tenantId });
+      expect(admitted.principal.principalId).toBe(principalId);
+      expect(admitted.principal.authContextRef).toBe('better-auth-session:original-session');
+      expect(admitted.workload).toBe(false);
+      expect(
+        failureCodeOf(
+          yield* Effect.exit(
+            admitInvocationEvidence(rows, {
+              nowSeconds,
+              originatorActions: [declaredAction],
+              subjectUserBanned: false,
+              tenantId,
+            }),
+          ),
+        ),
+      ).toBe('forbidden');
+    }),
+);
+
+it.effect('refuses nonhuman, other-action, ambiguous, revoked, impersonated and banned fixed dispatch evidence', () =>
+  Effect.gen(function* durableDispatchCurrentFacts() {
+    const invalidRows = [
+      [],
+      [recordedSessionRow(), recordedSessionRow()],
+      [recordedSessionRow({ actionKey: 'privacy.core.other-action' })],
+      [recordedSessionRow({ authMethod: 'system', principalKind: 'system' })],
+      [recordedSessionRow({ principalKind: 'agent' })],
+      [recordedSessionRow({ principalStatus: 'disabled' })],
+      [recordedSessionRow({ bindingRevoked: true })],
+      [recordedSessionRow({ bindingStatus: 'revoked' })],
+      [recordedSessionRow({ authBindingId: null })],
+      [recordedSessionRow({ impersonatedByPrincipalId: impersonator })],
+      [recordedSessionRow({ status: 'running' })],
+    ];
+    for (const rows of invalidRows) {
+      expect(
+        failureCodeOf(
+          yield* Effect.exit(
+            admitPrivacyDispatchHumanEvidence(decodeRecorded(rows), { subjectUserBanned: false, tenantId }),
+          ),
+        ),
+      ).toBe('forbidden');
+    }
+    expect(
+      failureCodeOf(
+        yield* Effect.exit(
+          admitPrivacyDispatchHumanEvidence(decodeRecorded([recordedSessionRow()]), {
+            subjectUserBanned: true,
+            tenantId,
+          }),
+        ),
+      ),
+    ).toBe('forbidden');
   }),
 );

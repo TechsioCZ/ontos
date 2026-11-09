@@ -1,0 +1,57 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": false,
+    "emitDeclarationOnly": true,
+    "incremental": true,
+    "noEmit": false,
+    "outDir": "../../node_modules/.cache/tsgo/declarations/verticals__symmy-integration",
+    "tsBuildInfoFile": "../../node_modules/.cache/tsgo/verticals__symmy-integration.tsbuildinfo"
+  },
+  "include": [
+    "src",
+    "tests/support/accepted-effect-native.fixture.ts",
+    "locales/**/*.json",
+    "package.json",
+    "shared",
+    "shared/ultramodern-build.json",
+    "server",
+    "api",
+    "vertical.manifest.ts",
+    "vertical.registration.ts"
+  ],
+  "references": [
+    {
+      "path": "../../packages/shared-contracts"
+    },
+    {
+      "path": "../../packages/core-runtime"
+    },
+    {
+      "path": "../../packages/gateway-principal-verifier"
+    },
+    {
+      "path": "../catalog"
+    },
+    {
+      "path": "../pricing"
+    },
+    {
+      "path": "../price-group-catalog"
+    },
+    {
+      "path": "../inventory"
+    },
+    {
+      "path": "../party-registry"
+    },
+    {
+      "path": "../commerce-customer-context"
+    },
+    {
+      "path": "../privacy"
+    }
+  ]
+}

@@ -176,6 +176,12 @@ const isAssertionSubject = (subject: (typeof GatewayDelegatedContextRequestSchem
   Match.value(subject).pipe(
     Match.tag('Assertion', () => true),
     Match.tag('Originator', () => false),
+    Match.tag('OrganizationGovernanceRead', () => false),
+    Match.tag('PrivacyDispatch', () => false),
+    Match.tag('RegisteredAssertion', () => false),
+    Match.tag('RegisteredAdmission', () => false),
+    Match.tag('RegisteredRecovery', () => false),
+    Match.tag('RegisteredWorkload', () => false),
     Match.exhaustive,
   );
 

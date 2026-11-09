@@ -4,8 +4,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./actions/create-price-group": "./shared/actions/create-price-group.ts",
+    "./actions/create-price-group-definition-revision": "./shared/actions/create-price-group-definition-revision.ts",
+    "./actions/retire-price-group": "./shared/actions/retire-price-group.ts",
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/price-group-catalog-client.ts",
+    "./apis/price-group-result-lookup": "./shared/apis/price-group-result-lookup.ts",
+    "./apis/price-group-source-associations": "./shared/apis/price-group-source-associations.ts",
+    "./domain/action-committed-retry-receipt": "./shared/domain/action-committed-retry-receipt.ts",
     "./outbox/pricing-price-group-containment-projection-requested": "./shared/outbox/pricing-price-group-containment-projection-requested.ts",
     "./outbox/pricing-price-group-created": "./shared/outbox/pricing-price-group-created.ts",
     "./outbox/pricing-price-group-definition-revision-created": "./shared/outbox/pricing-price-group-definition-revision-created.ts",
@@ -16,6 +22,7 @@
     "./permissions/pricing.price_group.revision.create": "./shared/permissions/pricing-price-group-revision-create.ts",
     "./resources/price-group": "./shared/resources/price-group.ts",
     "./resources/price-group-catalog-root": "./shared/resources/price-group-catalog-root.ts",
+    "./source-request-identity": "./shared/source-request-identity.ts",
     "./testing/price-group-current-receiver": "./tests/support/price-group-current-receiver.fixture.ts",
     "./testing/server-owner-native": "./tests/support/server-owner-native.fixture.ts"
   },
@@ -70,7 +77,7 @@
   },
   "modernjs": {
     "preset": "presetUltramodern",
-    "role": "module-federation-remote",
+    "role": "api-only",
     "appId": "price-group-catalog",
     "topology": "../../topology/reference-topology.json",
     "apiRuntime": "effect",

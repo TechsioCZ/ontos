@@ -11,9 +11,12 @@ import {
 } from '@app/core-runtime';
 import type { ResolvedPrincipalIdentity } from '@app/core-runtime';
 import { OperationalScopeResolver } from '@app/core-runtime/operations/context';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { readVerifiedGatewayActor } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
+import { CoreDatabase, testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
+import { scriptedPgClientLayer, testSqlConnection } from '@app/core-runtime/testing/scripted-pg-client';
 import { makeEffectDrizzleAuthAdapter } from '@app/better-auth-effect-drizzle/server';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
@@ -122,6 +125,7 @@ const originatorEvidenceDouble = (decision: NonNullable<DelegationCase['originat
     }
     return Effect.succeed({ principal: delegationUnitPrincipal, workload: false });
   },
+  loadPrivacyDispatchHuman: () => Effect.fail(delegationForbidden()),
 });
 
 /** What the scope resolver was asked: the principal it resolved, its company rule and its calling module. */
@@ -252,6 +256,24 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
     Effect.provideService(PgClient.PgClient, controlledPgClient(sql)),
   );
   const adapter = yield* makeEffectDrizzleAuthAdapter(executor, authDatabaseSchema);
+  let coreQueries = 0;
+  // These fixtures exercise live Assertion/Originator delegation. Registered-workload evidence
+  // must never be consulted or synthesized for either legacy mode.
+  const coreDatabase = Layer.effect(
+    CoreDatabase,
+    testCoreDatabase.pipe(Effect.map((coreExecutor) => ({ executor: coreExecutor }))),
+  ).pipe(
+    Layer.provide(
+      scriptedPgClientLayer(
+        Effect.succeed(
+          testSqlConnection(() => {
+            coreQueries += 1;
+            return Effect.die('Assertion/Originator delegation unexpectedly queried registered-workload evidence');
+          }),
+        ),
+      ).pipe(Layer.provide(Reactivity.layer)),
+    ),
+  );
   let ledgerAttempts = 0;
   let ledgerClaims = 0;
   let signingAttempts = 0;
@@ -299,6 +321,12 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
       verifiedProviderKeyId: callerKeyId,
     }).pipe(
       Effect.provide(signer),
+      Effect.provide(coreDatabase),
+      Effect.provide(
+        Layer.mock(AccessDecisionGate, {
+          decide: () => Effect.die('Legacy delegation unexpectedly requested Privacy dispatch authority'),
+        }),
+      ),
       Effect.provide(GatewayDelegationVerificationLive),
       Effect.provideService(ConfigProvider.ConfigProvider, provider),
       Effect.provideService(ShellInstalledModuleCatalog, {
@@ -360,6 +388,7 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
     ),
   );
   return {
+    coreQueries,
     ledgerAttempts,
     ledgerClaims,
     publicKey,
@@ -385,6 +414,7 @@ const assertDenied = (
       expect(failure.code).toBe(code);
     }
   }
+  expect(result.coreQueries).toBe(0);
   expect(result.ledgerAttempts).toBe(ledgerAttempts);
   expect(result.ledgerClaims).toBe(0);
   expect(result.signingAttempts).toBe(0);
@@ -398,6 +428,7 @@ it.effect(
       const result = yield* delegationCase();
       const exit = result.result;
       expect(Exit.isSuccess(exit)).toBe(true);
+      expect(result.coreQueries).toBe(0);
       if (!Exit.isSuccess(exit)) {
         return;
       }

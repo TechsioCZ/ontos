@@ -13,6 +13,7 @@ import { parties, partyOfficialIdentifiers } from '../db/schema.ts';
 import type { PartyTransaction } from '../db/types.ts';
 import { requireCanonicalPartyWriteTarget } from '../merge/party-alias-resolution.service.ts';
 import { lockTenantIdentityWrites } from './party-identifier-claim.service.ts';
+import { requireLegacyIcoAuthority } from './legacy-ico-authority.service.ts';
 import { makePartyOfficialIdentifierRef } from './party-official-identifier-reference.ts';
 
 const unavailable = (cause?: unknown) => {
@@ -162,6 +163,10 @@ export const addOfficialIdentifierRecord = Effect.fn(
   identifier: NormalizedOfficialIdentifier,
   input: MatchingIdentifierAcceptanceInput,
 ) {
+  if (identifier.identifierType === 'ICO') {
+    yield* lockTenantIdentityWrites(transaction, tenantId);
+    yield* requireLegacyIcoAuthority(transaction, tenantId).pipe(Effect.mapError(unavailable));
+  }
   const existing = yield* findCurrentMatchingIdentifier(transaction, tenantId, partyId, identifier, false);
   if (existing !== undefined) {
     return existing;
@@ -214,6 +219,10 @@ export const acceptMatchingOfficialIdentifierRecord = Effect.fn(
   identifier: NormalizedOfficialIdentifier,
   input: MatchingIdentifierAcceptanceInput,
 ) {
+  if (identifier.identifierType === 'ICO') {
+    yield* lockTenantIdentityWrites(transaction, tenantId);
+    yield* requireLegacyIcoAuthority(transaction, tenantId).pipe(Effect.mapError(unavailable));
+  }
   const existing = yield* findCurrentMatchingIdentifier(transaction, tenantId, partyId, identifier, true);
 
   if (existing === undefined) {
@@ -237,6 +246,9 @@ export const endOfficialIdentifierRecord = Effect.fn(
     return matchedTarget.result;
   }
   const { current } = matchedTarget.result;
+  if (current.identifierTypeKey === 'ICO') {
+    yield* requireLegacyIcoAuthority(transaction, tenantId).pipe(Effect.mapError(unavailable));
+  }
   const now = yield* DateTime.nowAsDate;
   const effectiveEnd = instantAsDate(validTo);
   if (

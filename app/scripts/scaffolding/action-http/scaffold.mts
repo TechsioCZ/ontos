@@ -1,4 +1,5 @@
 import { ActionCoreErrorSchema } from '@app/core-runtime';
+import { hasOwnerBoundGovernedRuntime } from '../../generated-governed-http-boundary.mts';
 import { LanguageVariant, SyntaxKind, createScanner } from '@typescript/native/unstable/ast';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import { Effect, FileSystem, Option, Predicate, Schema, SchemaAST } from 'effect';
@@ -24,6 +25,7 @@ import {
   generatedSlotContainsExactEntry,
   insertSortedSlot,
   readGeneratedSlotEntries,
+  removeGeneratedSlotEntry,
   replaceGeneratedSlotEntry,
   requireCanonicalSlug,
   raiseScaffoldFailure,
@@ -1164,8 +1166,17 @@ const addCanonicalActionRuntime = (content: string, vertical: OntosVerticalMetad
     /^const governedReadRuntimeLive\s*=\s*GovernedMakeReadRuntimeLive\(\s*governedActionDeliveryUnit,\s*(?<registration>[A-Za-z_$][A-Za-z0-9_$]*),?\s*\)\.pipe\(/mu.exec(
       content,
     )?.groups?.['registration'];
-  if (readBinding !== 'governedOwnerRegistration' && readBinding !== registrationName) {
+  if (!hasOwnerBoundGovernedRuntime(content, 'read', registrationName)) {
     return raiseScaffoldFailure(`vertical ${vertical.slug} API root requires the canonical owner-bound Read runtime`);
+  }
+  if (hasOwnerBoundGovernedRuntime(content, 'action', registrationName)) {
+    return content;
+  }
+  if (
+    content.includes('const governedActionRuntimeLive =') ||
+    (readBinding !== 'governedOwnerRegistration' && readBinding !== registrationName)
+  ) {
+    return raiseScaffoldFailure(`vertical ${vertical.slug} API root requires a matching owner-bound Action runtime`);
   }
   let nextContent = content;
   if (!nextContent.includes('const governedActionRuntimeLive =')) {
@@ -1234,6 +1245,111 @@ ${handlersAnchor}`,
   return nextContent;
 };
 
+interface ActionRuntimeSupportImport {
+  readonly kind: 'principal' | 'redemption';
+}
+
+const actionRuntimeSupportBindings = (module: string): ReadonlyMap<string, string> | undefined => {
+  if (module === './auth/action-principal.ts') {
+    return new Map([['ActionPrincipalVerifierLive', 'GovernedActionPrincipalVerifierLive']]);
+  }
+  if (module === './auth/gateway-assertion-redemption.ts') {
+    return new Map([
+      ['GatewayAssertionRedemptionLive', 'GovernedGatewayAssertionRedemptionLive'],
+      ['gatewayAssertionRedemptionPgClient', 'gatewayAssertionRedemptionPgClient'],
+    ]);
+  }
+  return undefined;
+};
+
+const actionRuntimeSupportMembers = (
+  tokens: readonly ClientExportToken[],
+): readonly (readonly ClientExportToken[])[] => {
+  const entries: ClientExportToken[][] = [[]];
+  for (const token of tokens) {
+    if (token.kind === SyntaxKind.CommaToken) {
+      entries.push([]);
+    } else {
+      entries.at(-1)?.push(token);
+    }
+  }
+  if (entries.at(-1)?.length === 0) {
+    entries.pop();
+  }
+  return entries;
+};
+
+const actionRuntimeSupportSpecifier = (
+  tokens: readonly ClientExportToken[],
+): { readonly binding: string; readonly imported: string } | undefined => {
+  const [imported] = tokens;
+  const binding = tokens.length === 1 ? imported : tokens[2];
+  return imported?.kind === SyntaxKind.Identifier &&
+    binding?.kind === SyntaxKind.Identifier &&
+    (tokens.length === 1 || (tokens.length === 3 && tokens[1]?.kind === SyntaxKind.AsKeyword))
+    ? { binding: binding.text, imported: imported.text }
+    : undefined;
+};
+
+const decodeActionRuntimeSupportImport = (entry: string): Option.Option<ActionRuntimeSupportImport> => {
+  const tokens = scanClientExport(entry);
+  const module = tokens.at(-2);
+  if (
+    clientTokenKind(tokens, 0) !== SyntaxKind.ImportKeyword ||
+    clientTokenKind(tokens, 1) !== SyntaxKind.OpenBraceToken ||
+    clientTokenKind(tokens, -4) !== SyntaxKind.CloseBraceToken ||
+    clientTokenKind(tokens, -3) !== SyntaxKind.FromKeyword ||
+    clientTokenKind(tokens, -1) !== SyntaxKind.SemicolonToken ||
+    module?.kind !== SyntaxKind.StringLiteral ||
+    module.text.slice(1, -1) !== module.value
+  ) {
+    return Option.none();
+  }
+  const allowed = actionRuntimeSupportBindings(module.value);
+  if (allowed === undefined) {
+    return Option.none();
+  }
+  const seen = new Set<string>();
+  for (const member of actionRuntimeSupportMembers(tokens.slice(2, -4))) {
+    const specifier = actionRuntimeSupportSpecifier(member);
+    if (
+      specifier === undefined ||
+      allowed.get(specifier.imported) !== specifier.binding ||
+      seen.has(specifier.imported)
+    ) {
+      return Option.none();
+    }
+    seen.add(specifier.imported);
+  }
+  const principal = module.value === './auth/action-principal.ts';
+  return seen.has(principal ? 'ActionPrincipalVerifierLive' : 'GatewayAssertionRedemptionLive')
+    ? Option.some({ kind: principal ? 'principal' : 'redemption' })
+    : Option.none();
+};
+
+const actionRuntimeSupportTokens = (source: string): readonly ClientExportToken[] =>
+  scanClientExport(source).filter(
+    (token, index, tokens) =>
+      token.kind !== SyntaxKind.CommaToken ||
+      ![SyntaxKind.CloseParenToken, SyntaxKind.CloseBraceToken, SyntaxKind.CloseBracketToken].includes(
+        tokens[index + 1]?.kind ?? SyntaxKind.Unknown,
+      ),
+  );
+
+const sameActionRuntimeSupport = (entry: string, canonical: string): boolean => {
+  const actual = actionRuntimeSupportTokens(entry);
+  const expected = actionRuntimeSupportTokens(canonical);
+  return (
+    actual.length === expected.length &&
+    actual.every(
+      (token, index) =>
+        token.kind === expected[index]?.kind &&
+        token.value === expected[index]?.value &&
+        token.text === expected[index]?.text,
+    )
+  );
+};
+
 const patchCanonicalActionRuntime = (content: string, vertical: OntosVerticalMetadata): string => {
   let nextContent = content;
   // module-contract roots assemble governed Reads directly, rather than exposing the legacy runtime argument tuple.
@@ -1251,41 +1367,29 @@ const patchCanonicalActionRuntime = (content: string, vertical: OntosVerticalMet
       GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
       GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
     );
-    const recognizedImports = supportImports.filter((entry) =>
-      generatedSlotContainsExactEntry(
-        nextContent,
-        GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
-        GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
-        entry,
-      ),
-    );
+    const recognizedImports = importEntries.map(decodeActionRuntimeSupportImport);
+    const recognizedKinds = recognizedImports.flatMap((entry) => (Option.isSome(entry) ? [entry.value.kind] : []));
     const layerEntries = readGeneratedSlotEntries(
       nextContent,
       GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
       GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
     );
-    const hasOldSupport = generatedSlotContainsExactEntry(
-      nextContent,
-      GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
-      GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
-      oldSupport,
-    );
-    const hasActionSupport = generatedSlotContainsExactEntry(
-      nextContent,
-      GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
-      GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
-      actionSupport,
-    );
+    const oldEntries = layerEntries.filter((entry) => sameActionRuntimeSupport(entry, oldSupport));
+    const actionEntries = layerEntries.filter((entry) => sameActionRuntimeSupport(entry, actionSupport));
     if (
-      importEntries.length !== recognizedImports.length ||
-      (layerEntries.length > 0 && (layerEntries.length !== 1 || (!hasOldSupport && !hasActionSupport)))
+      recognizedImports.some(Option.isNone) ||
+      new Set(recognizedKinds).size !== recognizedKinds.length ||
+      layerEntries.length !== oldEntries.length + actionEntries.length ||
+      oldEntries.length > 1 ||
+      actionEntries.length > 1
     ) {
       return raiseScaffoldFailure(`vertical ${vertical.slug} API root has unsupported Action runtime support content`);
     }
     nextContent = addCanonicalActionRuntime(nextContent, vertical);
     // The complete parsed slots were validated above; every addition below is a fixed canonical owner entry.
-    for (const supportImport of supportImports) {
-      if (!recognizedImports.includes(supportImport)) {
+    for (const [index, supportImport] of supportImports.entries()) {
+      const kind = index === 0 ? 'principal' : 'redemption';
+      if (!recognizedKinds.includes(kind)) {
         nextContent = insertSortedSlot(
           nextContent,
           GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
@@ -1295,12 +1399,21 @@ const patchCanonicalActionRuntime = (content: string, vertical: OntosVerticalMet
         );
       }
     }
-    if (hasOldSupport && layerEntries[0] !== undefined) {
+    const [oldEntry] = oldEntries;
+    if (oldEntry !== undefined && actionEntries.length > 0) {
+      nextContent = removeGeneratedSlotEntry(
+        nextContent,
+        GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
+        GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
+        (entry) => entry === oldEntry,
+        'legacy Action runtime support',
+      );
+    } else if (oldEntry !== undefined) {
       nextContent = replaceGeneratedSlotEntry(
         nextContent,
         GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
         GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
-        layerEntries[0],
+        oldEntry,
         actionSupport,
       );
     } else if (layerEntries.length === 0) {

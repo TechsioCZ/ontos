@@ -64,6 +64,7 @@ export const priceDefinitionRead = defineRead(
     },
 
     accessKind: 'detail',
+    accessWorkload: { reason: 'Native Price source and recovery reads', workloads: ['commerce.pricing.source-read'] },
     entrypoint: priceDefinitionEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',

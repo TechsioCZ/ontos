@@ -26,12 +26,18 @@ import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import type { EffectBffRuntimeAssembly } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime, HttpRouter } from '@modern-js/bff-effect/effect-edge';
+import { PgClient } from '@effect/sql-pg';
+import { Reactivity } from 'effect/reactivity';
 import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
-import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
+import {
+  GatewayAssertionRedemptionDatabaseLive,
+  gatewayAssertionRedemptionPgClient,
+  GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
+} from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
@@ -58,6 +64,7 @@ import { inventoryEffectOutcomeReadApiLive } from './inventory-effect-outcome-re
 import { inventoryReconciliationEvidenceReadApiLive } from './inventory-reconciliation-evidence-read-server.ts';
 import { inventoryReservationDetailReadApiLive } from './inventory-reservation-detail-read-server.ts';
 import { inventorySourceConflictDetailReadApiLive } from './inventory-source-conflict-detail-read-server.ts';
+import { inventorySourceImportReceiptReadApiLive } from './inventory-source-import-receipt-read-server.ts';
 import { recoverInventoryEffectActionApiLive } from './recover-inventory-effect-action-server.ts';
 import { releaseInventoryReservationActionApiLive } from './release-inventory-reservation-action-server.ts';
 import { reservationConfirmationVerificationReadApiLive } from './reservation-confirmation-verification-read-server.ts';
@@ -159,10 +166,22 @@ const inventoryActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit
   Layer.provide(nodeCryptoLayer),
 );
 
+const redemptionDatabaseLive = GatewayAssertionRedemptionDatabaseLive.pipe(
+  Layer.provide(PgClient.layerFrom(gatewayAssertionRedemptionPgClient)),
+  Layer.provide(Reactivity.layer),
+  Layer.provide(DatabaseConfigLive),
+);
+const configuredGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
+  Layer.provide(redemptionDatabaseLive),
+);
+
 type InventoryApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof inventoryReadRuntimeLive>>,
   actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof inventoryActionRuntimeLive>>,
-  gatewayAssertionRedemption: Layer.Layer<GatewayAssertionRedemptionService>,
+  gatewayAssertionRedemption: Layer.Layer<
+    GatewayAssertionRedemptionService,
+    Layer.Error<typeof configuredGatewayAssertionRedemptionLive>
+  >,
 ];
 
 type InventoryApiGroups = (typeof inventoryApi.groups)[keyof typeof inventoryApi.groups];
@@ -200,6 +219,7 @@ export const makeInventoryApiRuntime = (
     inventoryReconciliationEvidenceReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     inventoryReservationDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     inventorySourceConflictDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    inventorySourceImportReceiptReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     recoverInventoryEffectActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     releaseInventoryReservationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     reservationConfirmationVerificationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
@@ -234,6 +254,10 @@ export const makeInventoryApiRuntime = (
 };
 
 const apiRuntime: EffectBffDefinition<typeof inventoryApi> & EffectBffRuntime<typeof inventoryApi> =
-  makeInventoryApiRuntime(inventoryReadRuntimeLive, inventoryActionRuntimeLive, GovernedGatewayAssertionRedemptionLive);
+  makeInventoryApiRuntime(
+    inventoryReadRuntimeLive,
+    inventoryActionRuntimeLive,
+    configuredGatewayAssertionRedemptionLive,
+  );
 
 export default apiRuntime;

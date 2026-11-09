@@ -9,6 +9,9 @@ import {
   isVerifiedGatewayPrincipalContext,
   isTrustedSupportRecoveryPrincipalContext,
   readVerifiedGatewayActor,
+  readVerifiedGatewayWorkload,
+  VerifiedGatewayPrincipalContextSchema,
+  isTrustedSystemPrincipalContext,
   readVerifiedGatewayCompositionRevision,
   trustVerifiedGatewayPrincipalContext,
 } from '../../src/auth/system-principal-context-provenance.ts';
@@ -277,6 +280,67 @@ it.layer(NodeCrypto.layer)('operation context', (suite) => {
       expect(isTrustedSupportRecoveryPrincipalContext(scope, recordSupportImpersonationAction)).toBe(true);
       expect(isTrustedSupportRecoveryPrincipalContext(scope, {})).toBe(false);
       expect(isTrustedSupportRecoveryPrincipalContext({ ...scope })).toBe(false);
+    }),
+  );
+});
+
+it.layer(NodeCrypto.layer)('registered workload operation context', (suite) => {
+  suite.effect('derives a registered workload company scope while retaining a tenant-local system Principal', () =>
+    Effect.gen(function* registeredWorkloadScope() {
+      const runReference = '60000000-0000-4000-8000-000000000002';
+      const company = '00000000-0000-4000-8000-000000000002';
+      const system = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
+        authContextRef: `job:source-import:run:${runReference}`,
+        authMethod: 'system',
+        principalId: principal.principalId,
+        tenantId: principal.tenantId,
+      });
+      const verified = trustVerifiedGatewayPrincipalContext(system, 'a'.repeat(64), undefined, undefined, {
+        admissionInvocationId: runReference,
+        bindingIncarnation: runReference,
+        declarationKey: 'inventory.position.write',
+        entrypointKey: 'test.operation.read',
+        jobKey: 'source-import',
+        legalEntityId: company,
+        legalEntityScope: 'required',
+        originalOwnerBindingIncarnation: '60000000-0000-4000-8000-000000000005',
+        originalPrincipalId: principal.principalId,
+        originalWorkloadBindingIncarnation: runReference,
+        originalWorkloadKey: 'integration.source-admit',
+        runReference,
+        schemaVersion: '1',
+        sourceAppId: 'source-import',
+        sourceBuildMarker: 'source-build',
+        sourceMode: 'worker',
+        workloadKey: 'inventory.position.source-import',
+      });
+      const resolver = yield* makeOperationalScopeResolver({ load: () => Effect.succeed(active) }, access('denied'));
+      const scope = yield* resolver.resolve({
+        correlationId: 'registered-workload-scope',
+        legalEntityScope: 'required',
+        principal: verified,
+      });
+      expect(system.legalEntityId).toBeUndefined();
+      expect(verified.legalEntityId).toBeUndefined();
+      expect(scope.legalEntityId).toBe(company);
+      expect(isTrustedSystemPrincipalContext(scope)).toBe(true);
+      expect(readVerifiedGatewayWorkload(scope)?.legalEntityId).toBe(company);
+      expect(Schema.is(VerifiedGatewayPrincipalContextSchema)(scope)).toBe(true);
+      expect(yield* decodeTrustedPrincipalContext(scope)).toBe(scope);
+      expect(yield* Effect.flip(decodeTrustedPrincipalContext({ ...scope }))).toBeDefined();
+      expect(Schema.is(VerifiedGatewayPrincipalContextSchema)({ ...scope })).toBe(false);
+      expect(isTrustedSystemPrincipalContext({ ...scope })).toBe(false);
+      const other = yield* makeOperationalScopeResolver(
+        { load: () => Effect.succeed({ ...active, legalEntityTenantId: 'another-tenant' }) },
+        access('allowed'),
+      );
+      expect(
+        Exit.isFailure(
+          yield* Effect.exit(
+            other.resolve({ correlationId: 'foreign-company', legalEntityScope: 'required', principal: verified }),
+          ),
+        ),
+      ).toBe(true);
     }),
   );
 });

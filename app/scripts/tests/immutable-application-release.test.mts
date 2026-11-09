@@ -3525,7 +3525,8 @@ for (const scenario of [
     () =>
       Effect.gen(function* guardedNodePush() {
         const fs = yield* FileSystem.FileSystem;
-        const directory = yield* fs.makeTempDirectoryScoped();
+        const temporaryDirectory = yield* fs.makeTempDirectoryScoped();
+        const directory = yield* fs.realPath(temporaryDirectory);
         const plan = yield* nodePlanFor();
         const commands: OpsCommand[] = [];
         const events: string[] = [];

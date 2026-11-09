@@ -51,6 +51,28 @@ const StageAccountSchema = Schema.Struct({
 export const STAGE_DECLARED_WORKLOAD_KEYS: ReadonlySet<string> = new Set([
   'commerce.storefront-client',
   'core.identity-provider',
+  'integration.symmy-admit',
+  'integration.symmy-poll',
+  'commerce.catalog.symmy-product-import',
+  'commerce.catalog.symmy-product-read',
+  'commerce.inventory.source-write',
+  'commerce.inventory.source-read',
+  'commerce.pricing.source-write',
+  'commerce.pricing.source-read',
+  'pricing.price-group-catalog.source-write',
+  'pricing.price-group-catalog.source-read',
+  'privacy.core.source-processing-check',
+  'privacy.core.measure-execution-check',
+  'privacy.core.organization-ico-check',
+  'privacy.core.organization-profile-ico-check',
+  'privacy.core.organization-business-check',
+  'commerce.market-catalog.source-read',
+  'party.registry.source-write',
+  'party.registry.source-read',
+  'commerce.customer-context.source-write',
+  'commerce.customer-context.source-read',
+  'commerce.customer-context.organization-ico-facts.read',
+  'integration.symmy.source-organization-facts.read',
 ]);
 const StageWorkloadKeySchema = WorkloadKeySchema.check(
   Schema.makeFilter((key) =>

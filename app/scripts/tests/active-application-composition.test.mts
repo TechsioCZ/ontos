@@ -463,6 +463,7 @@ it.effect('resolves exactly the Outbox Worker mode setup definitions', () =>
       'inventory-worker',
       'privacy-worker',
       'commerce-order-worker',
+      'symmy-integration-worker',
     ]);
     expect(yield* modeWorkerSetups(zeropsYaml, topology, 'host', members)).toEqual([OUTBOX_WORKER_HOST_SETUP]);
     expect(yield* modeWorkerSetups(zeropsYaml, topology, 'dedicated', members)).toEqual([
@@ -470,6 +471,7 @@ it.effect('resolves exactly the Outbox Worker mode setup definitions', () =>
       CUSTOMER_CONTEXT_WORKER,
       'inventory-worker',
       'privacy-worker',
+      'symmy-integration-worker',
     ]);
     expect(serviceIdVariable(OUTBOX_WORKER_HOST_SETUP)).toBe('ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID');
     expect(serviceIdVariable(CUSTOMER_CONTEXT_WORKER)).toBe('ZEROPS_COMMERCE_CUSTOMER_CONTEXT_WORKER_SERVICE_ID');

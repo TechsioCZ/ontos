@@ -1,6 +1,12 @@
 import { Schema } from 'effect';
+import { CatalogSourceCorrelationSchema } from '../domain/catalog-source-correlation.ts';
 
-import { ProductEvidenceReferenceSchema, ProductReasonSchema, ProductVariantSchema } from '../domain/product.ts';
+import {
+  ProductActionInvocationIdSchema,
+  ProductEvidenceReferenceSchema,
+  ProductReasonSchema,
+  ProductVariantSchema,
+} from '../domain/product.ts';
 import { VariantCreationClassificationSchema } from '../domain/product-change-classification.ts';
 import { ProductRefSchema } from '../resources/product.ts';
 import { VariantRefSchema } from '../resources/variant.ts';
@@ -12,6 +18,7 @@ export const CreateVariantPayloadSchema = Schema.Struct({
   expectedProductRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   productRef: ProductRefSchema,
   reason: ProductReasonSchema,
+  sourceCorrelation: Schema.optionalKey(CatalogSourceCorrelationSchema),
   variantRef: VariantRefSchema,
 }).check(
   Schema.makeFilter(({ productRef, variantRef }) =>
@@ -21,6 +28,7 @@ export const CreateVariantPayloadSchema = Schema.Struct({
 export type CreateVariantPayload = typeof CreateVariantPayloadSchema.Type;
 
 export const CreateVariantResultSchema = Schema.Struct({
+  businessOriginalCreateInvocationId: Schema.optionalKey(ProductActionInvocationIdSchema),
   classification: Schema.optionalKey(VariantCreationClassificationSchema),
   variant: ProductVariantSchema,
 });

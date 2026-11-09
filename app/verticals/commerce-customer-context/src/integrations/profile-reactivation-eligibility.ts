@@ -109,25 +109,23 @@ export const makeProfileReactivationEligibilityEvaluator = (
     readonly transaction: ProfileScopedRoutineInvoker;
   }>,
 ): ReactivationEligibilityEvaluator => {
-  const { scope, transaction } = options;
+  const { evaluateReconfirmation, resolveCounterpartyRole, scope, transaction } = options;
   return (payload) =>
     readExactProfileFacts(transaction, scope, payload).pipe(
       Effect.flatMap((facts) => {
         const dependenciesSatisfied =
           facts.subject.kind === 'RETAIL'
             ? Effect.succeed(true)
-            : options
-                .resolveCounterpartyRole({
-                  counterpartyResourceId: facts.subject.counterpartyResourceId,
-                  tenantId: scope.tenantId,
-                })
-                .pipe(
-                  Effect.mapError((cause) =>
-                    dependencyFailure('Current Counterparty customer-role eligibility is unavailable', cause),
-                  ),
-                  Effect.flatMap((eligibility) => counterpartyDependenciesSatisfied(eligibility, scope)),
-                );
-        const reconfirmationSatisfied = options.evaluateReconfirmation(facts);
+            : resolveCounterpartyRole({
+                counterpartyResourceId: facts.subject.counterpartyResourceId,
+                tenantId: scope.tenantId,
+              }).pipe(
+                Effect.mapError((cause) =>
+                  dependencyFailure('Current Counterparty customer-role eligibility is unavailable', cause),
+                ),
+                Effect.flatMap((eligibility) => counterpartyDependenciesSatisfied(eligibility, scope)),
+              );
+        const reconfirmationSatisfied = evaluateReconfirmation(facts);
 
         return Effect.all({ dependenciesSatisfied, reconfirmationSatisfied }, { concurrency: 2 });
       }),
