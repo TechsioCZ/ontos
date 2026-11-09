@@ -12,7 +12,6 @@ import {
 } from '../actions/start-payment-collection.ts';
 
 export { StartPaymentCollectionPayloadSchema } from '../actions/start-payment-collection.ts';
-export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const StartPaymentCollectionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'StartPaymentCollectionActionInvalidProblem',

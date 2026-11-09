@@ -121,7 +121,6 @@ export const PaymentRecoveryRequestViewSchema = Schema.Struct({
   /** True when the request opened explicit reconciliation debt (held). */
   heldForReconciliation: Schema.Boolean,
 });
-export type PaymentRecoveryRequestView = typeof PaymentRecoveryRequestViewSchema.Type;
 
 /** Governed reconciliation decision bodies (#1151 "Operator reconciliation cannot fabricate money"). */
 export const PaymentReconciliationAttachEvidenceSchema = Schema.TaggedStruct('ATTACH_EVIDENCE', {
@@ -173,7 +172,6 @@ export const PaymentReconciliationDecisionViewSchema = Schema.Struct({
   reason: PaymentReasonSchema,
   resultingOutcome: Schema.OptionFromNullOr(PaymentOperationOutcomeSchema),
 });
-export type PaymentReconciliationDecisionView = typeof PaymentReconciliationDecisionViewSchema.Type;
 
 /** One operation that still carries an unresolved effect (debt) or legitimate business waiting. */
 export const PaymentOpenOperationViewSchema = Schema.Struct({

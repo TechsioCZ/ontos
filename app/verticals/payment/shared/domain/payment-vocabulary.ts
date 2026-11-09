@@ -18,7 +18,6 @@ export type PaymentMethod = typeof PaymentMethodSchema.Type;
 
 /** Methods whose commitment proof requires Current proven collection coverage (#1149). */
 export const PREPAID_PAYMENT_METHODS = ['ONLINE_GATEWAY', 'BANK_TRANSFER_ADVANCE'] as const;
-export const PrepaidPaymentMethodSchema = Schema.Literals(PREPAID_PAYMENT_METHODS);
 
 /** One logical monetary operation kind (#1148). Settlement is evidence, never an operation. */
 export const PAYMENT_OPERATION_KINDS = ['COLLECT', 'CANCEL_OR_VOID', 'REFUND'] as const;
@@ -38,7 +37,6 @@ export type PaymentOperationOutcome = typeof PaymentOperationOutcomeSchema.Type;
 
 /** Outcomes that still hold an unresolved monetary effect and its reservations (#1150). */
 export const UNRESOLVED_PAYMENT_OPERATION_OUTCOMES = ['PENDING', 'INDETERMINATE', 'CONFLICT'] as const;
-export const UnresolvedPaymentOperationOutcomeSchema = Schema.Literals(UNRESOLVED_PAYMENT_OPERATION_OUTCOMES);
 
 /** Why an operation outcome row was appended. */
 export const PAYMENT_OUTCOME_TRANSITION_CAUSES = ['CREATION', 'OBSERVATION', 'RECONCILIATION', 'RECOVERY'] as const;
@@ -185,14 +183,3 @@ export type PaymentReconciliationDecisionKind = typeof PaymentReconciliationDeci
 /** Gateway families supported at Launch (#1146/#1155); routing identity, never a Payment Method. */
 export const PAYMENT_GATEWAY_PROVIDER_FAMILIES = ['GOPAY', 'STRIPE', 'COMGATE'] as const;
 export const PaymentGatewayProviderFamilySchema = Schema.Literals(PAYMENT_GATEWAY_PROVIDER_FAMILIES);
-export type PaymentGatewayProviderFamily = typeof PaymentGatewayProviderFamilySchema.Type;
-
-/** Immutable execution binding kinds stored on a Payment and its operations. */
-export const PAYMENT_EXECUTION_BINDING_KINDS = [
-  'GATEWAY_ACCOUNT',
-  'BANK_ACCOUNTING_RECEIPT',
-  'COD_DELIVERY_OFFER',
-  'PICKUP_CAPABILITY',
-] as const;
-export const PaymentExecutionBindingKindSchema = Schema.Literals(PAYMENT_EXECUTION_BINDING_KINDS);
-export type PaymentExecutionBindingKind = typeof PaymentExecutionBindingKindSchema.Type;

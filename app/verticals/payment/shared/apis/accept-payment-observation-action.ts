@@ -12,7 +12,6 @@ import {
 } from '../actions/accept-payment-observation.ts';
 
 export { AcceptPaymentObservationPayloadSchema } from '../actions/accept-payment-observation.ts';
-export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const AcceptPaymentObservationActionInvalidProblemSchema = makeProblemDetailsSchema(
   'AcceptPaymentObservationActionInvalidProblem',

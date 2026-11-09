@@ -12,7 +12,6 @@ import {
 } from '../actions/record-payment-reconciliation-decision.ts';
 
 export { RecordPaymentReconciliationDecisionPayloadSchema } from '../actions/record-payment-reconciliation-decision.ts';
-export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const RecordPaymentReconciliationDecisionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RecordPaymentReconciliationDecisionActionInvalidProblem',

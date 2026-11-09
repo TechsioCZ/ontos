@@ -52,7 +52,6 @@ export const PaymentPurchasingProfileRefSchema = Schema.Struct({
   ]),
   tenantId: PaymentPurchasingTenantIdSchema,
 });
-export type PaymentPurchasingProfileRef = typeof PaymentPurchasingProfileRefSchema.Type;
 
 /** The buyer whose Current entitlement/policy the owner decides; a guest is a distinct subject. */
 export const PaymentPurchasingSubjectSchema = Schema.Union([

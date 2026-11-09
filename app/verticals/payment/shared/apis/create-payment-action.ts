@@ -9,7 +9,6 @@ import { HttpApiMiddleware } from 'effect/http-api';
 import { CreatePaymentPayloadSchema, CreatePaymentResultSchema } from '../actions/create-payment.ts';
 
 export { CreatePaymentPayloadSchema } from '../actions/create-payment.ts';
-export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const CreatePaymentActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreatePaymentActionInvalidProblem',

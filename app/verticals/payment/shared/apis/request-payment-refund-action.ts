@@ -12,7 +12,6 @@ import {
 } from '../actions/request-payment-refund.ts';
 
 export { RequestPaymentRefundPayloadSchema } from '../actions/request-payment-refund.ts';
-export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const RequestPaymentRefundActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RequestPaymentRefundActionInvalidProblem',

@@ -33,7 +33,6 @@
   },
   "dependencies": {
     "@app/core-runtime": "workspace:*",
-    "@app/customer-payment-term-contracts": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/payment-term-catalog-contracts": "workspace:*",
     "@app/shared-contracts": "workspace:*",

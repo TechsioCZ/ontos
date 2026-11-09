@@ -1,7 +1,6 @@
 import { Schema } from 'effect';
 
 import {
-  PaymentSourceStatementResultSchema,
   paymentLocalEvidenceFields,
   paymentSourcePaymentIdField,
   paymentSourceStatementFields,
@@ -22,5 +21,4 @@ export const RecordPaymentLocalEvidencePayloadSchema = Schema.Struct({
 });
 export type RecordPaymentLocalEvidencePayload = typeof RecordPaymentLocalEvidencePayloadSchema.Type;
 
-export const RecordPaymentLocalEvidenceResultSchema = PaymentSourceStatementResultSchema;
-export type RecordPaymentLocalEvidenceResult = typeof RecordPaymentLocalEvidenceResultSchema.Type;
+export { PaymentSourceStatementResultSchema as RecordPaymentLocalEvidenceResultSchema } from '../domain/source-statement.ts';

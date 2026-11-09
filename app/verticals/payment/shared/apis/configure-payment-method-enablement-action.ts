@@ -12,7 +12,6 @@ import {
 } from '../actions/configure-payment-method-enablement.ts';
 
 export { ConfigurePaymentMethodEnablementPayloadSchema } from '../actions/configure-payment-method-enablement.ts';
-export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const ConfigurePaymentMethodEnablementActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ConfigurePaymentMethodEnablementActionInvalidProblem',

@@ -12,7 +12,6 @@ import {
 } from '../actions/request-payment-cancellation.ts';
 
 export { RequestPaymentCancellationPayloadSchema } from '../actions/request-payment-cancellation.ts';
-export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const RequestPaymentCancellationActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RequestPaymentCancellationActionInvalidProblem',

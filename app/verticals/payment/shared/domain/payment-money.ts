@@ -7,7 +7,6 @@ import { Schema } from 'effect';
  */
 export const PAYMENT_LAUNCH_CURRENCY = 'CZK' as const;
 export const PaymentCurrencySchema = Schema.Literal(PAYMENT_LAUNCH_CURRENCY);
-export type PaymentCurrency = typeof PaymentCurrencySchema.Type;
 
 export const PAYMENT_MAXIMUM_AMOUNT_MINOR = Number.MAX_SAFE_INTEGER;
 

@@ -139,14 +139,12 @@ export const PaymentAvailableBranchSchema = Schema.Struct({
   outcome: Schema.Literal('AVAILABLE'),
   term: PaymentApplicabilityTermEvidenceSchema,
 });
-export type PaymentAvailableBranch = typeof PaymentAvailableBranchSchema.Type;
 
 export const PaymentNotAvailableBranchSchema = Schema.Struct({
   findings: Schema.NonEmptyArray(PaymentApplicabilityFindingSchema),
   method: PaymentMethodSchema,
   outcome: PaymentNotAvailableApplicabilityOutcomeSchema,
 });
-export type PaymentNotAvailableBranch = typeof PaymentNotAvailableBranchSchema.Type;
 
 /** One typed outcome per evaluated branch (#1147 "Typed outcomes remain"). */
 export const PaymentMethodBranchApplicabilitySchema = Schema.Union([
