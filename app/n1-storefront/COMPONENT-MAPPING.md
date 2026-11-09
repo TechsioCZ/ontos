@@ -1,5 +1,12 @@
 # N1 — aktuální komponentové a tokenové mapování
 
+Košík/minikošík: jediný stávající CartQuoteFeedback skládá aktuální obecné a
+owner globální chyby, deduplikuje podle výsledného překladu a zachovává chyby
+položek v jejich řádcích. Nedostupný checkout používá již existující CS/EN
+checkout text. Nativní output má jen layoutové block; žádné kit appearance,
+CSS/token, cena, API ani guard se nepřepisují. Error fixtures jsou pouze QA,
+nikoli runtime implementace nebo živý důkaz objednávky.
+
 Auth chyby / Figma56:883: stávající FormInput validateStatus/helpText zachované,
 focus jde na první neplatné pole pouze vlastního formuláře. Při pointer přechodu
 na jeho submit se chybový obsah nevloží před dokončením kliknutí; nativní

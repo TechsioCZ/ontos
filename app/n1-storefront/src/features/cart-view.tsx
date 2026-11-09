@@ -25,7 +25,6 @@ import { useCartQuote } from "./use-cart-quote";
 
 import {
   cartIssueText,
-  globalCartIssues,
   hasInvalidCartDraft,
   issuesForCartEntry,
   quantityDraftForEntry,
@@ -249,11 +248,6 @@ const CartContent = ({
         <Button onClick={() => router.refresh()} size="md" theme="outlined" variant="secondary">
           {d.contact.retry}
         </Button>
-      )}
-      {[...new Set(globalCartIssues(quote.result?.issues ?? []).map((issue) => issue.code))].map(
-        (code) => (
-          <p key={code}>{issueText(code, d)}</p>
-        ),
       )}
       <div className="grid min-w-0 gap-8 md:grid-cols-2">
         <div className="flex min-w-0 flex-col gap-4">

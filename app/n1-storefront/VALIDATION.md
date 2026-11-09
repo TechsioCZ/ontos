@@ -1,5 +1,24 @@
 # Kontrola převodu N1 storefrontu
 
+## Přesné a neopakované chyby košíku — 2026-11-09
+
+- Nedostupné ověření používá existující `checkout.unavailable`, nikoli tvrzení,
+  že se košík nepodařilo aktualizovat. Úspěšné lokální přidání a nedostupný
+  checkout jsou oddělené výsledky; stará zavádějící CS/EN copy odstraněná.
+- Stávající `CartQuoteFeedback` vykresluje obecné a globální owner důvody jednou
+  podle výsledného textu. Globální issues jen pro ready a platný draft; různé
+  důvody zachované, produktové chyby dál u řádků. Paralelní mapy v košíku a mini
+  košíku odstraněné. Nezměnil se quote request, cena, backend ani checkout guard.
+- RED5, focused GREEN15/2soubory, konečná N1 sada780/74PASS. Lint, typy,
+  formát a447tokenů PASS. Globální i18n gate dál hlásí28 chyb mimoN1, bez suppression.
+- Tři izolované browser případy PASS: CS1440 unavailable + duplicitní global
+  REJECTED, EN390 unavailable. Skutečný katalog GET a lokální quantity1→2;
+  řízené testovací odpovědi quote, všechny reálné zápisy blokované. Zpráva je
+  jednou na každé ploše, odlišné důvody zůstávají; checkout disabled, bez overflow.
+- Root a reviewer otevřeli aktuální PNG, bounded source/UI review GO. Původní
+  předčasné2/3 čtení zachované odděleně; finální test čeká na konkrétní výsledek.
+  Tohle není pozitivní živý nákup ani potvrzení opraveného backendu.
+
 ## Fokus neplatných auth formulářů — 2026-11-09
 
 - `AuthForm` při neplatném odeslání zaměří první nativně neplatný input vlastního

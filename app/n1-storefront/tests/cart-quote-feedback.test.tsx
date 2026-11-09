@@ -48,9 +48,89 @@ describe("cart feedback without technical captions", () => {
       <CartQuoteFeedback dictionary={d} invalid={false} quote={{ result: null, state }} />,
     );
     expect(html).toContain(
-      state === "unavailable" ? d.shopping.unavailable : d.shopping.marketChanged,
+      state === "unavailable" ? d.checkout.unavailable : d.shopping.marketChanged,
     );
     expect(html).toContain('aria-live="polite"');
+  });
+
+  it.each(["cs", "en"] as const)(
+    "describes blocked checkout instead of a failed cart edit in %s",
+    (locale) => {
+      const dictionary = getDictionary(locale);
+      const quote: CartQuoteFeedbackState = { result: null, state: "unavailable" };
+      const html = renderToStaticMarkup(
+        <CartQuoteFeedback dictionary={dictionary} invalid={false} quote={quote} />,
+      );
+      expect(html).toContain(dictionary.checkout.unavailable);
+      expect(html).not.toContain(dictionary.shopping.addFailed);
+      expect(verifiedCartQuote(quote, false)).toBeNull();
+    },
+  );
+
+  it("announces duplicate global issues and repeated unknown fallbacks only once", () => {
+    const html = renderToStaticMarkup(
+      <CartQuoteFeedback
+        dictionary={d}
+        invalid={false}
+        quote={{
+          result: {
+            ...result,
+            issues: [
+              { code: "MARKET_UNAVAILABLE" },
+              { code: "MARKET_UNAVAILABLE" },
+              { code: "FUTURE_OWNER_REASON_A" },
+              { code: "FUTURE_OWNER_REASON_B" },
+              { code: "OUT_OF_STOCK", productId: "p1" },
+            ],
+            outcome: "REJECTED",
+          },
+          state: "ready",
+        }}
+      />,
+    );
+    expect(html.split(d.shopping.issues.MARKET_UNAVAILABLE)).toHaveLength(2);
+    expect(html.split(d.shopping.rejected)).toHaveLength(2);
+    expect(html).not.toContain(d.shopping.issues.OUT_OF_STOCK);
+  });
+
+  it("preserves different actionable global issues", () => {
+    const html = renderToStaticMarkup(
+      <CartQuoteFeedback
+        dictionary={d}
+        invalid={false}
+        quote={{
+          result: {
+            ...result,
+            issues: [{ code: "MARKET_UNAVAILABLE" }, { code: "PRICE_UNAVAILABLE" }],
+            outcome: "REJECTED",
+          },
+          state: "ready",
+        }}
+      />,
+    );
+    expect(html).toContain(d.shopping.issues.MARKET_UNAVAILABLE);
+    expect(html).toContain(d.shopping.issues.PRICE_UNAVAILABLE);
+  });
+
+  it("does not announce stale global issues while a selection is invalid or unavailable", () => {
+    for (const [state, invalid] of [
+      ["pending", false],
+      ["unavailable", false],
+      ["ready", true],
+    ] as const) {
+      const html = renderToStaticMarkup(
+        <CartQuoteFeedback
+          dictionary={d}
+          invalid={invalid}
+          quote={{
+            result: { ...result, issues: [{ code: "MARKET_UNAVAILABLE" }] },
+            state,
+          }}
+        />,
+      );
+      expect(html).not.toContain(d.shopping.issues.MARKET_UNAVAILABLE);
+      expect(verifiedCartQuote({ result, state }, invalid)).toBeNull();
+    }
   });
 
   it("shows quantity corrections without a warning about internal draft prices", () => {

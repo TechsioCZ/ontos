@@ -23,7 +23,6 @@ import { cartLineKey, cartQuantityStep } from "./cart-state";
 import type { CartEntry } from "./cart-state";
 import {
   cartIssueText,
-  globalCartIssues,
   hasInvalidCartDraft,
   issuesForCartEntry,
   quantityDraftForEntry,
@@ -395,11 +394,6 @@ export const MiniCart = ({
                 ))}
                 <CartQuoteFeedback dictionary={d} invalid={invalid} quote={quote} />
                 {mutationError && <p role="alert">{d.shopping.addFailed}</p>}
-                {globalCartIssues(quote.result?.issues ?? []).map((issue) => (
-                  <p key={issue.code}>
-                    {cartIssueText(issue.code, d.shopping.issues, d.shopping.rejected)}
-                  </p>
-                ))}
                 {quote.state === "scope-mismatch" && (
                   <Button
                     onClick={() => router.refresh()}

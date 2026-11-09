@@ -2,6 +2,7 @@
 
 import type { Dictionary } from "@/i18n";
 import type { CartQuoteFeedbackState } from "./cart-quote-state";
+import { cartIssueText, globalCartIssues } from "./cart-validation";
 
 const quoteNotice = (quote: CartQuoteFeedbackState, invalid: boolean, d: Dictionary) => {
   if (invalid) {
@@ -11,7 +12,7 @@ const quoteNotice = (quote: CartQuoteFeedbackState, invalid: boolean, d: Diction
     return d.shopping.marketChanged;
   }
   if (quote.state === "unavailable") {
-    return d.shopping.unavailable;
+    return d.checkout.unavailable;
   }
   if (quote.state === "ready" && quote.result?.outcome === "REJECTED") {
     return d.shopping.rejected;
@@ -29,5 +30,16 @@ export const CartQuoteFeedback = ({
   quote: CartQuoteFeedbackState;
 }) => {
   const notice = quoteNotice(quote, invalid, dictionary);
-  return notice === null ? null : <output aria-live="polite">{notice}</output>;
+  const issues =
+    !invalid && quote.state === "ready"
+      ? globalCartIssues(quote.result?.issues ?? []).map((issue) =>
+          cartIssueText(issue.code, dictionary.shopping.issues, dictionary.shopping.rejected),
+        )
+      : [];
+  const messages = [...new Set([...(notice === null ? [] : [notice]), ...issues])];
+  return messages.map((message) => (
+    <output aria-live="polite" className="block" key={message}>
+      {message}
+    </output>
+  ));
 };
