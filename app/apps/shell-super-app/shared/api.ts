@@ -1,5 +1,4 @@
 import { GatewayContextApiGroup } from '@app/shared-contracts';
-import { SymmyIngressGroup } from './symmy/contract.ts';
 import {
   accessAdminApprovalsGroup,
   accessAdminChangesGroup,
@@ -891,8 +890,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   .add(accessAdminPeopleGroup)
   .add(accessAdminChangesGroup)
   .add(accessAdminApprovalsGroup)
-  .add(accessAdminExplainGroup)
-  .add(SymmyIngressGroup);
+  .add(accessAdminExplainGroup);
 
 const authenticationEndpointPath = (endpoint: { readonly path: string }) =>
   `/shell-super-app-api${endpoint.path}` as const;

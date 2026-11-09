@@ -12,7 +12,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import type { HttpMethod } from 'effect/http';
 import { HttpApiMiddleware } from 'effect/http-api';
 
-import { ShellAuthenticationApi } from '../../shared/api.ts';
+import { ShellServerApi } from './server-api.ts';
 
 import {
   symmyInvalidProblem,
@@ -26,7 +26,7 @@ import {
   symmyIdempotencyRequiredProblem,
   SymmyInternalPlanPayloadSchema,
   SymmyInternalReadQuerySchema,
-} from '../../shared/symmy/contract.ts';
+} from './contract.ts';
 import type {
   SymmyClientIdempotencyKeySchema,
   symmyFixtureIntentConflictProblem,
@@ -34,15 +34,15 @@ import type {
   SymmyFixtureJobIdSchema,
   SymmyIngressProblem,
   SymmyInternalWritePayloadSchema,
-} from '../../shared/symmy/contract.ts';
-import { SymmyInternalRegionsProjectionSchema } from '../../shared/symmy/regions-projection-contract.ts';
+} from './contract.ts';
+import { SymmyInternalRegionsProjectionSchema } from './regions-projection-contract.ts';
 import {
   SymmyInternalProductsProjectionSchema,
   SymmyInternalPriceListsProjectionSchema,
   SymmyInternalCustomersProjectionSchema,
-} from '../../shared/symmy/read-projection-contracts.ts';
+} from './read-projection-contracts.ts';
 
-import { SymmyRouteNotFoundProblemSchema, symmyRouteNotFoundProblem } from '../../shared/symmy/defect-boundary.ts';
+import { SymmyRouteNotFoundProblemSchema, symmyRouteNotFoundProblem } from './defect-boundary.ts';
 
 export const SymmyHostMount = Context.Reference<boolean>('@app/shell-super-app/api/symmy/transport/SymmyHostMount', {
   defaultValue: () => false,
@@ -383,7 +383,7 @@ const syncRequest = (
   idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type | undefined,
 ): FixtureApply => (idempotencyKey === undefined ? { ...payload, route } : { ...payload, idempotencyKey, route });
 
-export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthenticationApi, 'symmy', (group) =>
+export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellServerApi, 'symmy', (group) =>
   group
     .handle('adminCustomers', ({ headers, query, request }) =>
       handleCustomersRead(headers['x-api-key'], { query, route: 'adminCustomers' }, request),
