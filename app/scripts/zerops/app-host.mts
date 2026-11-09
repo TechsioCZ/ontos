@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
 import { makeDatabaseIdentityEnrollmentLive } from '../../packages/core-runtime/src/db/database-identities.ts';
-import { TenantIntentLoaderLive } from '../../packages/core-runtime/src/access/intent/tenant-intent-loader.ts';
+import { DatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
+import {
+  TenantIntentLoader,
+  TenantIntentLoaderLive,
+} from '../../packages/core-runtime/src/access/intent/tenant-intent-loader.ts';
 import { startProcessObservability } from './process-observability.mts';
 import { observeRuntimeJob } from '../../packages/core-runtime/src/observability/runtime-jobs.ts';
 import { ProcessDatabasePoolsLive } from './process-database-pools.mts';
@@ -37,6 +41,7 @@ import {
   Array as EffectArray,
   Config,
   ConfigProvider,
+  Context,
   Console,
   DateTime,
   Duration,
@@ -61,7 +66,7 @@ import {
   validateActiveApplicationCompositionSnapshot,
 } from '../../packages/core-runtime/src/index.ts';
 import type { ActiveApplicationCompositionSnapshot } from '../../packages/core-runtime/src/index.ts';
-import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
+import { CoreDatabase, CoreDatabaseLive } from '../../packages/core-runtime/src/db/client.ts';
 import { isLoopbackHostname } from '../../packages/core-runtime/src/modules/application-composition-backend.ts';
 import {
   ACTIVE_APPLICATION_COMPOSITION_POLICY,
@@ -85,13 +90,15 @@ import type { HostedUnit } from './hosted-units.mts';
 import { STAGE_CIMD_FIXTURE_PATH, stageCimdFixtureResponse } from './stage-cimd-fixture.mts';
 import { listDeadOutboxDeliveries } from '../../packages/core-runtime/src/outbox/dead-delivery-resolution.ts';
 import { startupDeadOutboxInventory, withOutboxDeadStartupGate } from './outbox-dead-startup-gate.mts';
+import { ReleaseAccessIntentReader } from './release-access-intent-reader.mts';
 import {
+  ReleaseAccessVerificationError,
+  loadReleaseAccessDatabaseConfiguration,
   recordReleaseAccessVerification,
   releaseAccessVerificationFailure,
   releaseAccessVerificationStatus,
   verifyReleaseAccess,
 } from './release-access-verification.mts';
-import type { ReleaseAccessVerificationError } from './release-access-verification.mts';
 
 const OUTBOX_HOST_ID = 'outbox-worker-host';
 const OUTBOX_HEALTH_PORT = 4100;
@@ -883,11 +890,36 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   return yield* Effect.raceFirst(Effect.raceAllFirst(exits), takesAuthority ? startup : observeOnly);
 });
 
+/** The runtime reader and publication administrator must never share a Layer memo entry. */
+export const ReleaseAccessIntentReaderLive = Layer.effect(
+  ReleaseAccessIntentReader,
+  Effect.gen(function* releaseAccessRuntimeReader() {
+    const provider = yield* ConfigProvider.ConfigProvider;
+    const configuration = yield* loadReleaseAccessDatabaseConfiguration(provider);
+    const reader = TenantIntentLoaderLive.pipe(
+      Layer.provide(CoreDatabaseLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, configuration)))),
+    );
+    const memoMap = yield* Layer.makeMemoMap;
+    const scope = yield* Effect.scope;
+    const context = yield* Layer.buildWithMemoMap(reader, memoMap, scope);
+    return Context.get(context, TenantIntentLoader);
+  }).pipe(
+    Effect.mapError(
+      () =>
+        new ReleaseAccessVerificationError({
+          reason: 'The release access runtime reader could not be opened',
+          remediation:
+            'Configure DATABASE_URL for the enrolled shared runtime role, separately from DATABASE_ADMIN_URL.',
+        }),
+    ),
+  ),
+);
+
 if (import.meta.main) {
   const program = runAppHost.pipe(
     Effect.scoped,
     Effect.provide(NodeHttpServer.layer(createServer, { host: '127.0.0.1', port: CONTROL_PORT })),
-    Effect.provide(TenantIntentLoaderLive),
+    Effect.provide(ReleaseAccessIntentReaderLive),
     // Every authority transition re-observes legacy owner completion, as the operator publisher does.
     Effect.provide(
       Layer.merge(ApplicationCompositionAuthorityAdminDatabaseLive, ApplicationCompositionLegacyOwnersLive),

@@ -39,14 +39,17 @@ import {
   makeAccessProjectionTransport,
 } from '../../packages/core-runtime/src/access/compiler/spice-db-compiler.ts';
 import type { AccessProjectionCompiler } from '../../packages/core-runtime/src/access/intent/projection-compiler.ts';
-import { TenantIntentLoader } from '../../packages/core-runtime/src/access/intent/tenant-intent-loader.ts';
+import type { TenantIntentLoader } from '../../packages/core-runtime/src/access/intent/tenant-intent-loader.ts';
 import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
+import { loadDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
+import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
 import { accessMemberships, tenants } from '../../packages/core-runtime/src/db/schema.ts';
 import { stageScopeOf } from '../../packages/core-runtime/src/install/stage-context-bootstrap.ts';
 import { parseSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
 import type { SpiceDbConfigValue } from '../../packages/core-runtime/src/permissions/config.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../packages/core-runtime/src/permissions/schema.ts';
 import { openSpiceDbGrpcRpc } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
+import { ReleaseAccessIntentReader } from './release-access-intent-reader.mts';
 
 export class ReleaseAccessVerificationError extends Schema.TaggedError<ReleaseAccessVerificationError>()(
   'ReleaseAccessVerificationError',
@@ -297,10 +300,26 @@ const verifyOneTenant = (
     return { tuples: verification.tupleCount };
   });
 
+/** The scoped reader must connect as the enrolled runtime role, never the publication administrator. */
+export const loadReleaseAccessDatabaseConfiguration = (provider: ConfigProvider.ConfigProvider) =>
+  Config.Redacted('DATABASE_URL')
+    .parse(provider)
+    .pipe(
+      Effect.flatMap((url) =>
+        loadDatabaseConfig({
+          environment: { DATABASE_URL: Redacted.value(url) },
+          envPath: '/dev/null',
+          identity: SHARED_RUNTIME_IDENTITY,
+        }),
+      ),
+      Effect.mapError(() =>
+        refusal('Release access verification requires the configured shared runtime database identity'),
+      ),
+    );
+
 /**
- * The engine transport and the intent loader of this step. The transport belongs to this run and closes with it; the
- * loader reads the privileged pool app-host already holds. Both retry twice; a refusal is final and the caller does
- * not publish the release.
+ * The engine transport and scoped runtime reader belong to this step. Inventory and owner discovery still use the
+ * publication administrator. Verification retries twice; a final refusal prevents publication and writes no access.
  */
 export const verifyReleaseAccess = (provider: ConfigProvider.ConfigProvider) =>
   Effect.gen(function* verifyRelease() {
@@ -314,13 +333,12 @@ export const verifyReleaseAccess = (provider: ConfigProvider.ConfigProvider) =>
       Effect.sync(() => makeAccessProjectionTransport(configuration, SPICEDB_TIMEOUT_MILLISECONDS)),
       (engine) => Effect.sync(() => engine.close()),
     );
-    const loader = yield* TenantIntentLoader;
     const engine = makeAccessProjectionCompiler(transport);
-    const result = yield* verifyReleaseAccessWith({
+    const loader = yield* ReleaseAccessIntentReader;
+    return yield* verifyReleaseAccessWith({
       inventory,
       verifyTenant: (tenantId) => verifyOneTenant(tenantId, loader, engine),
     }).pipe(Effect.retry({ schedule: Schedule.spaced(Duration.seconds(5)), times: 2 }));
-    return result;
   }).pipe(
     Effect.scoped,
     Effect.timeoutOrElse({
