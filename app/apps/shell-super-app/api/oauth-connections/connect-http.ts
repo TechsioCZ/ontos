@@ -55,7 +55,7 @@ const noStore = HttpEffect.appendPreResponseHandler((_request, response) =>
 
 type ConnectError = ConnectionForbidden | ConnectionInvalid | ConnectionUnauthorized | ConnectionUnavailable;
 
-const toProblem = (error: ConnectError): Effect.Effect<OAuthConnectProblem> =>
+export const toProblem = (error: ConnectError): Effect.Effect<OAuthConnectProblem> =>
   Match.value(error).pipe(
     Match.tag('ConnectionInvalid', (invalid) =>
       Effect.succeed<OAuthConnectProblem>(

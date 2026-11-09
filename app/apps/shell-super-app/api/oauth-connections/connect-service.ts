@@ -37,7 +37,7 @@ import {
   ConnectionProfileIdSchema,
   OAUTH_DRAFT_TTL_SECONDS,
 } from '@app/shared-contracts/oauth-connections';
-import { Clock, Crypto, Duration, Effect, Option, Schema } from 'effect';
+import { Clock, Crypto, Duration, Effect, Exit, Option, Ref, Schema } from 'effect';
 
 import { finishRevocation, loadActingAuthority } from './connection-service.ts';
 import { effectiveAuthority, isModulesRequestWithin, isPolicyWithin, minWritePolicy } from './effective-authority.ts';
@@ -157,28 +157,154 @@ const verifiedClient = Effect.fn('OAuthConnectService.verifiedClient')(function*
   return { client, verified };
 });
 
+/** The SpiceDB reads of the options build: one bulk operate check, then one companies read per operable agent. */
+export interface AgentDirectory {
+  readonly canOperateMany: (
+    agentPrincipalIds: readonly string[],
+    operatorPrincipalId: string,
+  ) => Effect.Effect<ReadonlyMap<string, boolean>, ConnectionUnavailable>;
+  readonly companiesOf: (
+    agentPrincipalIds: readonly string[],
+  ) => Effect.Effect<ReadonlyMap<string, readonly string[]>, ConnectionUnavailable>;
+}
+
+/** Each call opens one SpiceDB client and closes it again; the build calls each at most once. */
+const liveAgentDirectory: AgentDirectory = {
+  canOperateMany: (agentPrincipalIds, operatorPrincipalId) =>
+    agentPrincipalIds.length === 0
+      ? Effect.succeed(new Map<string, boolean>())
+      : openPrincipalOperators.pipe(
+          Effect.flatMap((operators) => operators.canOperateMany(agentPrincipalIds, operatorPrincipalId)),
+          Effect.scoped,
+          Effect.mapError(toUnavailable),
+        ),
+  companiesOf: (agentPrincipalIds) =>
+    agentPrincipalIds.length === 0
+      ? Effect.succeed(new Map<string, readonly string[]>())
+      : openDemoAccountGrants.pipe(
+          Effect.flatMap((grants) =>
+            Effect.forEach(
+              agentPrincipalIds,
+              (agentPrincipalId) =>
+                grants
+                  .companiesOf(agentPrincipalId)
+                  .pipe(Effect.map((companies) => [agentPrincipalId, companies] as const)),
+              { concurrency: 4 },
+            ),
+          ),
+          Effect.map((entries) => new Map(entries)),
+          Effect.scoped,
+          Effect.mapError(toUnavailable),
+        ),
+};
+
+const OptionsPhaseSchema = Schema.Literals([
+  'agentCompanies',
+  'canOperate',
+  'companyAuthority',
+  'listAgents',
+  'verifyClient',
+]);
+type OptionsPhase = typeof OptionsPhaseSchema.Type;
+
+/** One options build's progress. Kept in a Ref so a build that stalls or is cut off still names its active phase. */
+interface OptionsTrace {
+  readonly active: OptionsPhase | null;
+  readonly agents: number;
+  readonly budgetExceeded: boolean;
+  readonly companies: number;
+  readonly durations: Partial<Record<OptionsPhase, number>>;
+  readonly operableAgents: number;
+}
+
+interface OptionsTiming {
+  readonly count: (update: Partial<Pick<OptionsTrace, 'agents' | 'operableAgents'>>) => Effect.Effect<void>;
+  readonly phase: <Value, Failure, Requirements>(
+    phase: OptionsPhase,
+    effect: Effect.Effect<Value, Failure, Requirements>,
+  ) => Effect.Effect<Value, Failure, Requirements>;
+}
+
+const makeTiming = (trace: Ref.Ref<OptionsTrace>): OptionsTiming => {
+  const phase = Effect.fn('OAuthConnectService.phase')(function* timedPhase<Value, Failure, Requirements>(
+    name: OptionsPhase,
+    effect: Effect.Effect<Value, Failure, Requirements>,
+  ) {
+    yield* Ref.update(trace, (current) => ({ ...current, active: name }));
+    const startedAt = yield* Clock.currentTimeMillis;
+    const value = yield* effect;
+    const finishedAt = yield* Clock.currentTimeMillis;
+    yield* Ref.update(trace, (current) => ({
+      ...current,
+      active: null,
+      durations: { ...current.durations, [name]: finishedAt - startedAt },
+    }));
+    return value;
+  });
+  return {
+    count: (update) => Ref.update(trace, (current) => ({ ...current, ...update })),
+    phase,
+  };
+};
+
 /** Active agents the session person may operate, with the companies each agent belongs to. */
 const operableAgents = Effect.fn('OAuthConnectService.operableAgents')(function* operableAgents(
   session: ConnectSession,
+  directory: AgentDirectory,
+  timing: OptionsTiming,
 ) {
-  const agents = yield* listAgentPrincipals(session.tenantId);
-  const checked = yield* Effect.forEach(
-    agents,
-    Effect.fn('OAuthConnectService.checkAgent')(function* checkAgent(agent) {
-      const operable = yield* canOperateAgent(agent.principalId, session.principalId);
-      const companies = operable ? yield* companiesOfAgent(agent.principalId) : [];
-      return { ...agent, companies, operable };
-    }),
-    { concurrency: 4 },
+  const agents = yield* timing.phase('listAgents', listAgentPrincipals(session.tenantId));
+  yield* timing.count({ agents: agents.length });
+  const operable = yield* timing.phase(
+    'canOperate',
+    directory.canOperateMany(
+      agents.map((agent) => agent.principalId),
+      session.principalId,
+    ),
   );
-  return checked.filter((agent) => agent.operable);
+  const candidates = agents.filter((agent) => operable.get(agent.principalId) === true);
+  yield* timing.count({ operableAgents: candidates.length });
+  const companies = yield* timing.phase(
+    'agentCompanies',
+    directory.companiesOf(candidates.map((agent) => agent.principalId)),
+  );
+  return candidates.map((agent) => ({ ...agent, companies: companies.get(agent.principalId) ?? [] }));
 });
 
-export const connectOptions = Effect.fn('OAuthConnectService.connectOptions')(function* connectOptions(
-  session: ConnectSession,
-  request: ConnectOptionsRequest,
-) {
-  const { client, verified } = yield* verifiedClient(request.oauthQuery);
+/** Longest a consent options build may run; below the 30 s request budget, so a stall ends as a retryable 503. */
+const CONNECT_OPTIONS_BUDGET = Duration.seconds(20);
+/** A build slower than this logs one line with every phase's duration. */
+const SLOW_OPTIONS_MILLIS = 3000;
+/** Cause of the budget failure; `toProblem` maps it to the same retryable 503 as any unavailable build. */
+export const OPTIONS_BUDGET_CAUSE = 'connect options exceeded budget';
+
+/** The acting-authority read of one company or agent: `loadActingAuthority` in production, a double in tests. */
+type ActingAuthority = Effect.Success<ReturnType<typeof loadActingAuthority>>;
+type ActingAuthorityInput = Parameters<typeof loadActingAuthority>[1];
+
+/** What an options build reads beyond the OAuth query and the session. Production wires the live ones. */
+export interface ConnectOptionsPorts<Requirements> {
+  readonly agents: AgentDirectory;
+  readonly authorityOf: (
+    asker: OperationalScope,
+    input: ActingAuthorityInput,
+  ) => Effect.Effect<ActingAuthority, ConnectionUnavailable, Requirements>;
+}
+
+interface OptionsBuild<Requirements> {
+  readonly ports: ConnectOptionsPorts<Requirements>;
+  readonly request: ConnectOptionsRequest;
+  readonly session: ConnectSession;
+  readonly timing: OptionsTiming;
+}
+
+const buildOptions = Effect.fn('OAuthConnectService.buildOptions')(function* buildOptions<Requirements>({
+  ports,
+  request,
+  session,
+  timing,
+}: OptionsBuild<Requirements>) {
+  const { client, verified } = yield* timing.phase('verifyClient', verifiedClient(request.oauthQuery));
   const user = { displayName: session.displayName, principalId: ConnectionPrincipalIdSchema.make(session.principalId) };
   if (session.companies.length === 0) {
     return {
@@ -189,12 +315,12 @@ export const connectOptions = Effect.fn('OAuthConnectService.connectOptions')(fu
       user,
     } satisfies ConnectOptions;
   }
-  const agents = yield* operableAgents(session);
+  const agents = yield* operableAgents(session, ports.agents, timing);
   const agentOption = Effect.fn('OAuthConnectService.agentOption')(function* agentOption(
     legalEntityId: string,
     agent: { readonly displayName: string; readonly principalId: string },
   ) {
-    const authority = yield* loadActingAuthority(session.scope, {
+    const authority = yield* ports.authorityOf(session.scope, {
       actingKind: 'agent',
       actingPrincipalId: agent.principalId,
       legalEntityId,
@@ -210,7 +336,7 @@ export const connectOptions = Effect.fn('OAuthConnectService.connectOptions')(fu
   const companyOption = Effect.fn('OAuthConnectService.companyOption')(function* companyOption(
     company: ConnectSession['companies'][number],
   ) {
-    const own = yield* loadActingAuthority(session.scope, {
+    const own = yield* ports.authorityOf(session.scope, {
       actingKind: 'human',
       actingPrincipalId: session.principalId,
       legalEntityId: company.legalEntityId,
@@ -228,7 +354,10 @@ export const connectOptions = Effect.fn('OAuthConnectService.connectOptions')(fu
       modules: own.offered,
     } satisfies ConnectCompanyOption;
   });
-  const companies = yield* Effect.forEach(session.companies, companyOption, { concurrency: 4 });
+  const companies = yield* timing.phase(
+    'companyAuthority',
+    Effect.forEach(session.companies, companyOption, { concurrency: 4 }),
+  );
   return {
     client,
     companies,
@@ -242,6 +371,70 @@ export const connectOptions = Effect.fn('OAuthConnectService.connectOptions')(fu
     user,
   } satisfies ConnectOptions;
 });
+
+const outcomeOf = (exit: Exit.Exit<unknown, unknown>, state: OptionsTrace): string => {
+  if (Exit.isSuccess(exit)) {
+    return 'ok';
+  }
+  return state.budgetExceeded ? 'budget_exceeded' : 'failed';
+};
+
+/** One warning with the phase durations and counts when the build was slow. Fixed names only: no identities or tokens. */
+const logSlowOptions = Effect.fn('OAuthConnectService.logSlowOptions')(function* logSlowOptions(input: {
+  readonly exit: Exit.Exit<unknown, unknown>;
+  readonly startedAt: number;
+  readonly trace: Ref.Ref<OptionsTrace>;
+}) {
+  const totalMs = (yield* Clock.currentTimeMillis) - input.startedAt;
+  if (totalMs <= SLOW_OPTIONS_MILLIS) {
+    return;
+  }
+  const state = yield* Ref.get(input.trace);
+  yield* Effect.logWarning('OAuth connect options slow').pipe(
+    Effect.annotateLogs({
+      activePhase: state.active ?? 'none',
+      agentCompaniesMs: state.durations.agentCompanies ?? null,
+      agents: state.agents,
+      canOperateMs: state.durations.canOperate ?? null,
+      companies: state.companies,
+      companyAuthorityMs: state.durations.companyAuthority ?? null,
+      listAgentsMs: state.durations.listAgents ?? null,
+      operableAgents: state.operableAgents,
+      outcome: outcomeOf(input.exit, state),
+      totalMs,
+      verifyClientMs: state.durations.verifyClient ?? null,
+    }),
+  );
+});
+
+/** The consent chooser's options with the given ports, bounded by the budget and timed per phase. */
+export const connectOptionsWith = <Requirements>(ports: ConnectOptionsPorts<Requirements>) =>
+  Effect.fn('OAuthConnectService.connectOptions')(function* connectOptions(
+    session: ConnectSession,
+    request: ConnectOptionsRequest,
+  ) {
+    const trace = yield* Ref.make<OptionsTrace>({
+      active: null,
+      agents: 0,
+      budgetExceeded: false,
+      companies: session.companies.length,
+      durations: {},
+      operableAgents: 0,
+    });
+    const startedAt = yield* Clock.currentTimeMillis;
+    return yield* buildOptions({ ports, request, session, timing: makeTiming(trace) }).pipe(
+      Effect.timeoutOrElse({
+        duration: CONNECT_OPTIONS_BUDGET,
+        orElse: () =>
+          Ref.update(trace, (current) => ({ ...current, budgetExceeded: true })).pipe(
+            Effect.andThen(Effect.fail(new ConnectionUnavailable({ cause: OPTIONS_BUDGET_CAUSE }))),
+          ),
+      }),
+      Effect.onExit((exit) => logSlowOptions({ exit, startedAt, trace })),
+    );
+  });
+
+export const connectOptions = connectOptionsWith({ agents: liveAgentDirectory, authorityOf: loadActingAuthority });
 
 export const createDraft = Effect.fn('OAuthConnectService.createDraft')(function* createDraft(
   session: ConnectSession,
