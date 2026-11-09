@@ -108,6 +108,7 @@ const qualify = (overrides: Partial<PaymentSourceQualificationInput> = {}): Paym
 const recorded = (overrides: Partial<PaymentRecordedObservationView> = {}): PaymentRecordedObservationView => ({
   acceptanceOutcome: 'ACCEPTED_OBSERVATION',
   amount: { amountMinor: 100_000, currency: 'CZK' },
+  capabilityRef: absent(),
   correctsObservationId: absent(),
   economicEffectKey: absent(),
   evidenceRef: absent(),
@@ -380,6 +381,15 @@ describe('#1152 exact source qualification', () => {
       );
     expect([correlation(), correlation('ppl-delivery-offer-1')]).toEqual([false, true]);
     expect(selectedCapabilityCorrelation(statement(), qualify())).toBeUndefined();
+    // The claimed Delivery Offer is part of the statement: a replay that changes or drops it conflicts.
+    const recordedCod = recorded({ capabilityRef: 'ppl-delivery-offer-1', factFamily: 'COD_CUSTOMER_COLLECTION' });
+    const replayOf = (deliveryOfferRef?: string) =>
+      tagOf(qualify({ ...input, existingOccurrence: recordedCod, statement: codStatement(deliveryOfferRef) }));
+    expect([replayOf('ppl-delivery-offer-1'), replayOf('ppl-delivery-offer-2'), replayOf()]).toEqual([
+      'Duplicate',
+      'OccurrenceConflict',
+      'OccurrenceConflict',
+    ]);
     // Another configured COD carrier naming the selected offer is not the carrier the Payment is bound to.
     const foreignCarrierSource = { ...carrierSource, accountRef: 'dpd-merchant-12', sourceSystem: 'dpd' } as const;
     const foreignCarrier = authority({

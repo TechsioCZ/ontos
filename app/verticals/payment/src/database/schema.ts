@@ -540,6 +540,8 @@ export const observations = paymentSchema.table.withRLS(
      * names the exact selected Delivery Offer / pickup capability. Null for other sources and unassigned evidence.
      */
     capabilityCorrelated: boolean('capability_correlated'),
+    /** The Delivery Offer or pickup capability a selected-capability source claimed, exactly as stated. */
+    capabilityRef: text('capability_ref'),
     /** Required exactly for an accepted SOURCE_CORRECTION; only REDUCE_ESTABLISHED_COLLECTION reduces coverage. */
     correctionEffect: text('correction_effect').$type<PaymentCorrectionEffectKind>(),
     correctsObservationId: uuid('corrects_observation_id'),
@@ -625,6 +627,10 @@ export const observations = paymentSchema.table.withRLS(
     check(
       'payment_observations_capability_ck',
       sql`${table.capabilityCorrelated} is null or (${table.paymentId} is not null and ${table.sourceKind} in (${literalList(SELECTED_CAPABILITY_SOURCE_KINDS)}))`,
+    ),
+    check(
+      'payment_observations_capability_ref_ck',
+      sql`${table.capabilityRef} is null or (${table.sourceKind} in (${literalList(SELECTED_CAPABILITY_SOURCE_KINDS)}) and ${table.capabilityRef} = btrim(${table.capabilityRef}) and length(${table.capabilityRef}) between 1 and 200)`,
     ),
     check(
       'payment_observations_correlation_ck',

@@ -70,6 +70,8 @@ export interface NewPaymentObservationInput {
   readonly authority: PaymentSourceAuthorityView;
   /** Selected-capability sources of a Payment only: qualification proved the selected capability (#1152). */
   readonly capabilityCorrelated: boolean | undefined;
+  /** The capability reference a selected-capability source claimed, stored exactly as stated. */
+  readonly capabilityRef: string | undefined;
   /**
    * Exactly for an accepted SOURCE_CORRECTION: what it did to the Current interpretation. An accepted
    * correction the interpretation left unchanged (NO_CHANGE) is recorded as RECORD_ONLY.
@@ -194,6 +196,7 @@ const recordedViewOf = (row: ObservationRow) =>
     Effect.map((amount): PaymentRecordedObservationView => ({
       acceptanceOutcome: row.acceptanceOutcome,
       amount: Option.getOrUndefined(amount),
+      capabilityRef: row.capabilityRef ?? undefined,
       correctsObservationId: row.correctsObservationId ?? undefined,
       economicEffectKey: row.economicEffectKey ?? undefined,
       evidenceRef: row.evidenceRef ?? undefined,
@@ -492,6 +495,7 @@ export const paymentSourcePersistenceForTransaction = (
         actorPrincipalId: input.provenance.actorPrincipalId,
         amountMinor: input.amount?.amountMinor ?? null,
         capabilityCorrelated: input.capabilityCorrelated ?? null,
+        capabilityRef: input.capabilityRef ?? null,
         compositionRevision: input.provenance.compositionRevision,
         correctionEffect: recordedCorrectionEffect(input),
         correctsObservationId: input.correctsObservationId ?? null,

@@ -24,6 +24,7 @@ import {
 import {
   PaymentSourceQualification,
   qualifyPaymentSourceStatement,
+  claimedCapabilityRef,
   selectedCapabilityCorrelation,
 } from './source-qualification.ts';
 import type {
@@ -141,6 +142,7 @@ const recordObservation = (run: StatementRun, row: RecordedRow) => {
     amount: row.amount,
     authority: row.authority,
     capabilityCorrelated: run.capabilityCorrelated,
+    capabilityRef: claimedCapabilityRef(statement),
     correctionEffect: row.correctionEffect,
     correctsObservationId: statement.correctsObservationId,
     economicEffectKey: statement.economicEffectKey,

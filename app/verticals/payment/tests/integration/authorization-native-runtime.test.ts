@@ -796,6 +796,37 @@ it.live('#1149 pickup capability denial refuses the proof; an owner outage is un
   ),
 );
 
+it.live('#1149 a deferred proof that expires while the term owner answers is not acknowledged as VALID', () =>
+  nativeRun(
+    Effect.gen(function* deferredExpiresDuringOwnerCheck() {
+      const harness = yield* makeHarness();
+      const termRef = authorizationTermRefFor(harness.scope.tenantId, yield* randomUuid);
+      const snapshot = authorizationNetDaysSnapshot(termRef, 14);
+      const payment = yield* createPayment(harness, {
+        buyer: 'buyer-a',
+        customerConfigurationId: 'ccc-a',
+        executionBinding: { _tag: 'BANK_ACCOUNTING_RECEIPT' },
+        method: 'DEFERRED_INVOICE',
+        termSnapshot: snapshot,
+      });
+      yield* harness.evidence.putEntitlementPeriod({
+        buyer: buyerOf(harness, 'buyer-a'),
+        entitlementEvidenceRef: 'entitlement-a',
+        semanticSnapshot: snapshot,
+        status: 'CURRENT',
+      });
+      const binding = bindingFor(payment, 'attempt-slow-owner', yield* frozenT(harness, 1));
+      const issued = yield* harness.issue(issuePayload(binding, 'slow-owner', 1));
+      const { authorizationId, expiresAt } = issued.proof;
+      // The owner answers only after the one-second proof has expired.
+      yield* harness.evidence.setTermEvidenceDelay(Duration.millis(1300));
+      const validation = yield* harness.validate({ authorizationId, binding });
+      expect(validation).toMatchObject({ outcome: 'NOT_VALID', reasons: ['EXPIRED'] });
+      expect(DateTime.isGreaterThanOrEqualTo(validation.validatedAt, expiresAt)).toBe(true);
+    }),
+  ),
+);
+
 it.live('#1149 Deferred term is supported without a concrete invoice', () =>
   nativeRun(
     Effect.gen(function* deferredWithoutInvoice() {
