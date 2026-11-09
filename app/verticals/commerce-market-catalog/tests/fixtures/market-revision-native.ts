@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices, NodeSocketServer } from '@effect/platform-node';
-import { Deferred, Duration, Effect, FileSystem, Layer, Path, Queue, Ref, Schema, Stream } from 'effect';
+import { Deferred, Duration, Effect, Exit, FileSystem, Layer, Path, Queue, Ref, Schema, Stream } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { Socket } from 'effect/socket';
 import { FetchHttpClient } from 'effect/http';
@@ -240,8 +240,23 @@ export const makeMarketRevisionNativeFixture = Effect.fn('MarketRevisionNativeLa
       stdout: 'pipe',
     });
     yield* Effect.addFinalizer(() => channel.beginClose);
-    yield* Stream.runDrain(child.stderr).pipe(Effect.forkScoped);
-    yield* Stream.runDrain(child.stdout).pipe(Effect.forkScoped);
+    const diagnostics = yield* Ref.make('');
+    const retainDiagnostics = Stream.runForEach((chunk: string) =>
+      Ref.update(diagnostics, (previous) => `${previous}${chunk}`.slice(-16_384)),
+    );
+    yield* child.stderr.pipe(Stream.decodeText(), retainDiagnostics, Effect.forkScoped);
+    yield* child.stdout.pipe(Stream.decodeText(), retainDiagnostics, Effect.forkScoped);
+    yield* Effect.addFinalizer((exit) =>
+      Exit.isFailure(exit)
+        ? Ref.get(diagnostics).pipe(
+            Effect.flatMap((tail) =>
+              tail.length > 0
+                ? Effect.logError({ diagnostics: tail, event: 'market-native-child-failure' })
+                : Effect.void,
+            ),
+          )
+        : Effect.void,
+    );
     const responseTimeout = Effect.timeoutOrElse({
       duration: Duration.seconds(60),
       orElse: () => Effect.fail(unavailable()),
