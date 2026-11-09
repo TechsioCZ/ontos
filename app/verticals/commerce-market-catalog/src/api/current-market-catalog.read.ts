@@ -54,6 +54,11 @@ export const currentMarketCatalogRead = defineRead(
       selectors: [],
     },
     accessKind: 'detail',
+    accessWorkload: {
+      reason:
+        'The registered Storefront BFF reads the current Market catalog for its own storefronts before any human session exists',
+      workloads: ['commerce.storefront-client'],
+    },
     entrypoint: currentMarketCatalogEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',
