@@ -1078,6 +1078,56 @@ it.live(
     ),
 );
 
+it.live('#1151 a second charge held after a partial correction cannot be attached into the same COLLECT', () =>
+  native(
+    Effect.gen(function* partiallyCorrectedChargeStaysDistinct() {
+      const evidence = yield* scenario();
+      const payment = yield* evidence.createPayment();
+      const collect = yield* evidence.startOperation({
+        amountMinor: 100_000,
+        operationKey: 'collect-1',
+        paymentId: payment.paymentId,
+      });
+      yield* configureGopay(evidence);
+      const charge = (economicEffectKey: string) =>
+        evidence.accept(
+          gopayStatement({
+            amount: czk(100_000),
+            economicEffectKey,
+            factKind: 'COLLECTION_CONFIRMED',
+            operationId: collect.operationId,
+            paymentId: payment.paymentId,
+          }),
+        );
+      const first = yield* charge('gopay:charge:1');
+      expect(first).toMatchObject({ acceptanceOutcome: 'ACCEPTED_OBSERVATION' });
+      const partial = yield* evidence.accept(
+        gopayStatement({
+          amount: czk(10_000),
+          correctsObservationId: first.observationId,
+          economicEffectKey: 'gopay:charge:1:correction',
+          factKind: 'SOURCE_CORRECTION',
+          operationId: collect.operationId,
+          paymentId: payment.paymentId,
+        }),
+      );
+      expect(partial).toMatchObject({ acceptanceOutcome: 'ACCEPTED_OBSERVATION' });
+      const second = yield* charge('gopay:charge:2');
+      expect(second).toMatchObject({ acceptanceOutcome: 'HELD_UNRESOLVED' });
+      expect(
+        yield* failureCodeOf(
+          evidence.decide({
+            caseId: second.reconciliationCaseId ?? '',
+            decision: { _tag: 'ATTACH_EVIDENCE', observationId: second.observationId },
+            reason: 'Operator attaches the second charge to the collection',
+          }),
+        ),
+      ).toBe('payment_reconciliation_evidence_not_qualified');
+      expect(yield* evidence.coverage(payment.paymentId)).toBe('Held UNRESOLVED_EVIDENCE');
+    }),
+  ),
+);
+
 it.live('#1150/#1152 Refund evidence from another refund route never confirms the REFUND through attachment', () =>
   native(
     Effect.gen(function* foreignRouteAttach() {
