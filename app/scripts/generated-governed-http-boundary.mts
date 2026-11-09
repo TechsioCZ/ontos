@@ -3217,7 +3217,10 @@ const NATIVE_READ_PHASE_EFFECT_VALUES: ReadonlySet<string> = new Set(['Effect.su
 /** Effect combinators a phase pipeline may apply by reference; each only reshapes the success. */
 const NATIVE_READ_PHASE_EFFECT_TRANSFORMS: ReadonlySet<string> = new Set(['Effect.asSome', 'Effect.asVoid']);
 
-const hasNativeReadPhaseReturn = (phaseSource: string): boolean => {
+const hasNativeReadPhaseReturn = (
+  phaseSource: string,
+  proveOwnerBase?: (phase: string, base: string) => boolean,
+): boolean => {
   if (isEffectFnCallback(phaseSource)) {
     return isReadHandlerCallback(phaseSource, '');
   }
@@ -3226,13 +3229,19 @@ const hasNativeReadPhaseReturn = (phaseSource: string): boolean => {
     return false;
   }
   const effectCall = /^Effect\.[A-Za-z_$][A-Za-z0-9_$]*\(/u;
-  const isEffectTransform = (transform: string): boolean =>
-    isWholeCallExpression(transform, effectCall) || NATIVE_READ_PHASE_EFFECT_TRANSFORMS.has(transform);
+  const isEffectTransform = (transform: string): boolean => {
+    // The generators interleave explanatory comments between pipeline stages; they are not code.
+    const code = maskComments(transform).trim();
+    return isWholeCallExpression(code, effectCall) || NATIVE_READ_PHASE_EFFECT_TRANSFORMS.has(code);
+  };
+  const isProvenOwnerBase = (base: string): boolean => proveOwnerBase?.(phaseSource, base) === true;
   const isNativeEffectPipeline = (expression: string): boolean => {
     const pipeline = outputPipeExpression(expression);
     return (
       pipeline !== undefined &&
-      (isWholeCallExpression(pipeline.base, effectCall) || NATIVE_READ_PHASE_EFFECT_VALUES.has(pipeline.base)) &&
+      (isWholeCallExpression(pipeline.base, effectCall) ||
+        NATIVE_READ_PHASE_EFFECT_VALUES.has(pipeline.base) ||
+        isProvenOwnerBase(pipeline.base)) &&
       pipeline.transforms.length > 0 &&
       pipeline.transforms.every(isEffectTransform)
     );
@@ -3308,11 +3317,16 @@ const hasNativePrepareScopeForwarder = (source: string, initializer: string): bo
   );
 };
 
-const hasLocalNativeReadPhase = (source: string, binding: string, phase: string): boolean => {
+const hasLocalNativeReadPhase = (
+  source: string,
+  binding: string,
+  phase: string,
+  proveOwnerBase?: (phase: string, base: string) => boolean,
+): boolean => {
   const initializer = constInitializer(source, binding);
   return (
     initializer !== undefined &&
-    ((isReadHandlerCallback(binding, source) && hasNativeReadPhaseReturn(initializer)) ||
+    ((isReadHandlerCallback(binding, source) && hasNativeReadPhaseReturn(initializer, proveOwnerBase)) ||
       (phase === 'prepare' && hasNativePrepareScopeForwarder(source, initializer))) &&
     hasStableReadFactoryBindings(
       source,
@@ -12832,9 +12846,15 @@ const hasScopedLoadHelperEscape = (
   );
 };
 
-const forwardedReadInvocation = (source: string, phase: string, parameters: readonly string[], expression: string) => {
+const forwardedReadInvocation = (
+  source: string,
+  phase: string,
+  parameters: readonly string[],
+  expression: string,
+  proveOwnerBase?: (phase: string, base: string) => boolean,
+) => {
   const binding = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(expression)?.groups?.name;
-  const local = binding !== undefined && hasLocalNativeReadPhase(source, binding, phase);
+  const local = binding !== undefined && hasLocalNativeReadPhase(source, binding, phase, proveOwnerBase);
   const service = hasReadPhaseServiceCall(source, phase, parameters, expression);
   const call = local
     ? new RegExp(`^${escapeRegExp(binding ?? '')}\\(`, 'u')
@@ -12884,10 +12904,17 @@ const hasForwardedReadCall = (
   returned: string,
   scopedServiceFactory: boolean,
   owner: ReadPhaseOwner,
+  proveOwnerBase?: (phase: string, base: string) => boolean,
 ): boolean => {
   const pipeline = outputPipeExpression(returned);
   const expression = pipeline?.base ?? returned;
-  const { argumentsList, local, service } = forwardedReadInvocation(source, phase, parameters, expression);
+  const { argumentsList, local, service } = forwardedReadInvocation(
+    source,
+    phase,
+    parameters,
+    expression,
+    proveOwnerBase,
+  );
   if (service && hasReadonlyServiceInvocation(owner, source, parameters, expression, argumentsList, pipeline)) {
     return true;
   }
@@ -12919,6 +12946,7 @@ const hasForwardedNativeReadPhase = (
   phase: string,
   scopedServiceFactory: boolean,
   owner: ReadPhaseOwner,
+  proveOwnerBase?: (phase: string, base: string) => boolean,
 ): boolean => {
   if (!hasBalancedArrowCallback(phaseSource) || !phaseSource.startsWith('(')) {
     return false;
@@ -12929,7 +12957,16 @@ const hasForwardedNativeReadPhase = (
     parameters !== undefined &&
     returned !== undefined &&
     (hasOriginalBoundReadPhase(source, phaseSource, parameters, phase, scopedServiceFactory, owner) ||
-      hasForwardedReadCall(source, phaseSource, parameters, phase, returned, scopedServiceFactory, owner))
+      hasForwardedReadCall(
+        source,
+        phaseSource,
+        parameters,
+        phase,
+        returned,
+        scopedServiceFactory,
+        owner,
+        proveOwnerBase,
+      ))
   );
 };
 
@@ -12962,6 +12999,176 @@ const originalNativePhaseDependency = (
     )
     ? { binding: name, initializer, source: target }
     : undefined;
+};
+
+/** The declared type of a parameter, or nothing when it carries no annotation. */
+const readParameterAnnotation = (parameter: string): string | undefined => {
+  const index = parameter.indexOf(':');
+  const annotation = index === -1 ? '' : maskComments(parameter.slice(index + 1)).trim();
+  return annotation.length === 0 ? undefined : annotation;
+};
+
+/** The plain names of a callable's declared parameters, or nothing when any of them is not a plain name. */
+const readDeclaredParameterNames = (parameters: readonly string[]): readonly string[] | undefined => {
+  const names = parameters.map(
+    (parameter) => /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\??(?:\s*:[\s\S]+)?$/u.exec(parameter)?.groups?.name,
+  );
+  return names.length > 0 && names.every((name) => name !== undefined) && new Set(names).size === names.length
+    ? names.filter((name) => name !== undefined)
+    : undefined;
+};
+
+/** The services type a `ReadLoadContext<T>` phase declares, whatever `T` spells. */
+const readLoadContextServicesType = (parameter: string): string | undefined => {
+  const annotation = readParameterAnnotation(parameter);
+  const services =
+    annotation === undefined
+      ? undefined
+      : /^ReadLoadContext<(?<services>[\s\S]+)>$/u.exec(annotation)?.groups?.services;
+  return services === undefined ? undefined : maskComments(services).trim();
+};
+
+const hasOwnerServiceEffectSignature = (source: string, definition: string | undefined, method: string): boolean => {
+  const effect = namedSourceImport(source, 'Effect', true);
+  const signature =
+    definition === undefined
+      ? undefined
+      : new RegExp(`\\breadonly\\s+${escapeRegExp(method)}\\s*:\\s*\\(`, 'u').exec(maskComments(definition));
+  const opening = signature === undefined || signature === null ? undefined : signature.index + signature[0].length - 1;
+  const closing =
+    opening === undefined || definition === undefined ? undefined : matchingDelimiterEnd(definition, opening, '(', ')');
+  return (
+    definition !== undefined &&
+    closing !== undefined &&
+    effect?.modulePath === 'effect' &&
+    effect.imported === 'Effect' &&
+    /^\s*=>\s*Effect\.Effect</u.test(maskComments(definition.slice(closing + 1))) &&
+    hasStableReadFactoryBindings(source, new Map([['Effect', 0]]), '')
+  );
+};
+
+const hasOwnerServiceInterfaceMethod = (
+  owner: ReadPhaseOwner,
+  source: string,
+  contract: string,
+  member: string,
+  method: string,
+): boolean => {
+  const type = new RegExp(
+    `\\breadonly\\s+${escapeRegExp(member)}\\s*:\\s*(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\\s*;`,
+    'u',
+  ).exec(maskComments(contract))?.groups?.name;
+  const imported = type === undefined ? undefined : namedSourceImport(source, type, true);
+  const file =
+    imported?.modulePath.startsWith('.') === true
+      ? path.posix.normalize(path.posix.join(path.posix.dirname(owner.readFile), imported.modulePath))
+      : undefined;
+  const target = file?.startsWith(`${owner.ownerPath}/`) === true ? owner.sources.get(file) : undefined;
+  if (target === undefined || imported === undefined) {
+    return false;
+  }
+  const alias = new RegExp(
+    `\\bexport\\s+type\\s+${escapeRegExp(imported.imported)}\\s*=\\s*(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\\s*;`,
+    'u',
+  ).exec(maskComments(target))?.groups?.name;
+  return hasOwnerServiceEffectSignature(target, ownerInterface(target, alias ?? imported.imported), method);
+};
+
+const hasNativeReturnedServiceMethod = (
+  factory: NonNullable<ReturnType<typeof originalNativePhaseDependency>>,
+  name: string,
+): boolean => {
+  const returned = callbackReturnedExpression(factory.initializer);
+  const method = returned === undefined ? undefined : objectPropertyValue(returned, name);
+  if (returned === undefined || method === undefined || !hasClosedUniqueObjectKeys(returned)) {
+    return false;
+  }
+  const block = readCallableBlock(factory.initializer);
+  const definition = /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(method)
+    ? assignedExpression(block?.slice(1, -1) ?? '', new RegExp(`\\bconst ${escapeRegExp(method)}\\s*=\\s*`, 'u'))
+    : method;
+  return (
+    definition !== undefined &&
+    isEffectFnCallback(definition) &&
+    hasRuntimeNamedSourceImport(factory.source, 'Effect', 'Effect', 'effect')
+  );
+};
+
+const hasOriginalTypedServiceReadBase = (
+  owner: ReadPhaseOwner,
+  source: string,
+  parameter: string,
+  base: string,
+): boolean => {
+  const projection =
+    /^[A-Za-z_$][A-Za-z0-9_$]*\.services\.(?<member>[A-Za-z_$][A-Za-z0-9_$]*)\.(?<method>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(
+      base,
+    )?.groups;
+  const services = readLoadContextServicesType(parameter);
+  const contract = services === undefined ? undefined : localReadServiceContract(source, services);
+  if (contract === undefined || projection === undefined) {
+    return false;
+  }
+  const factoryBinding = new RegExp(
+    `\\breadonly\\s+${escapeRegExp(projection.member ?? '')}\\s*:\\s*ReturnType<typeof\\s+(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\\s*>\\s*;`,
+    'u',
+  ).exec(maskComments(contract))?.groups?.name;
+  if (factoryBinding === undefined) {
+    return hasOwnerServiceInterfaceMethod(owner, source, contract, projection.member ?? '', projection.method ?? '');
+  }
+  const factory = originalNativePhaseDependency(owner, source, factoryBinding);
+  if (factory === undefined) {
+    return false;
+  }
+  return hasNativeReturnedServiceMethod(factory, projection.method ?? '');
+};
+
+/**
+ * A native read phase may start from a proven owner read call rather than a literal Effect value:
+ * the read's own typed services projection, or an owner-local exported read dependency, invoked
+ * with nothing but the phase's input and its trusted scope projections.
+ */
+const hasProvenOwnerReadCallBase = (
+  owner: ReadPhaseOwner,
+  source: string,
+  parameters: readonly string[],
+  base: string,
+): boolean => {
+  const names = readDeclaredParameterNames(parameters);
+  const argumentsList = wholeCallArguments(base, /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*\(/u, true);
+  const [input] = names ?? [];
+  if (names === undefined || input === undefined || argumentsList === undefined || argumentsList.length === 0) {
+    return false;
+  }
+  const context = parameters.find((parameter) => readLoadContextServicesType(parameter) !== undefined);
+  const contextName = context === undefined ? undefined : names[parameters.indexOf(context)];
+  const trusted = (argument: string): boolean =>
+    names.includes(argument) ||
+    new RegExp(`^${escapeRegExp(input)}\\.[A-Za-z_$][A-Za-z0-9_$]*$`, 'u').test(argument) ||
+    (contextName !== undefined &&
+      (argument === `${contextName}.scope` ||
+        argument === `${contextName}.services` ||
+        new RegExp(`^${escapeRegExp(contextName)}\\.scope\\.(?:legalEntityId|tenantId)$`, 'u').test(argument) ||
+        new RegExp(`^${escapeRegExp(contextName)}\\.services(?:\\.[A-Za-z_$][A-Za-z0-9_$]*)*$`, 'u').test(argument)));
+  const firstIsInput =
+    argumentsList[0] === input ||
+    new RegExp(`^${escapeRegExp(input)}\\.[A-Za-z_$][A-Za-z0-9_$]*$`, 'u').test(argumentsList[0] ?? '');
+  if (!firstIsInput || !argumentsList.every(trusted)) {
+    return false;
+  }
+  if (
+    contextName !== undefined &&
+    new RegExp(`^${escapeRegExp(contextName)}\\.services(?:\\.[A-Za-z_$][A-Za-z0-9_$]*)*\\(`, 'u').test(base)
+  ) {
+    return context !== undefined && hasOriginalTypedServiceReadBase(owner, source, context, base);
+  }
+  // An owner-local read dependency still has to be told which Tenant it reads for.
+  const binding = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*\(/u.exec(base)?.groups?.name;
+  return (
+    binding !== undefined &&
+    argumentsList.some((argument) => argument !== input && !argument.startsWith(`${input}.`)) &&
+    originalNativePhaseDependency(owner, source, binding) !== undefined
+  );
 };
 
 const nativePhaseFactoryDefaults = (
@@ -13338,7 +13545,12 @@ const hasIdentifierNativeReadPhase = (
   phaseProof: (expression: string) => boolean,
 ): boolean => {
   const nativeEffect = hasExactValueImport(source, 'Effect', 'effect');
-  if (nativeEffect && hasLocalNativeReadPhase(source, phaseSource, phase)) {
+  if (
+    nativeEffect &&
+    hasLocalNativeReadPhase(source, phaseSource, phase, (callback, base) =>
+      hasProvenOwnerReadCallBase(owner, source, readCallableParameters(callback) ?? [], base),
+    )
+  ) {
     return true;
   }
   if (phase === 'load' && hasOriginalConfiguredReadPhase(owner, source, phaseSource)) {
@@ -13365,7 +13577,9 @@ const hasIdentifierNativeReadPhase = (
     isEffectFnCallback(initializer) &&
     callback !== undefined &&
     hasStableReadFactoryBindings(source, new Map([[phaseSource, 1]]), '') &&
-    hasForwardedNativeReadPhase(source, callback, phase, scopedServiceFactory, owner)
+    hasForwardedNativeReadPhase(source, callback, phase, scopedServiceFactory, owner, (expression, base) =>
+      hasProvenOwnerReadCallBase(owner, source, readCallableParameters(expression) ?? [], base),
+    )
   );
 };
 
@@ -13419,7 +13633,9 @@ const hasNativeReadPhase = (
   return (
     (isEffectFnCallback(phaseSource) && isReadHandlerCallback(phaseSource, source)) ||
     hasNativeSucceedReadPhase(owner, source, phaseSource) ||
-    hasForwardedNativeReadPhase(source, phaseSource, phase, scopedServiceFactory, owner) ||
+    hasForwardedNativeReadPhase(source, phaseSource, phase, scopedServiceFactory, owner, (expression, base) =>
+      hasProvenOwnerReadCallBase(owner, source, readCallableParameters(expression) ?? [], base),
+    ) ||
     hasNativeReadPhaseFactory(owner, source, phaseSource, phase)
   );
 };
