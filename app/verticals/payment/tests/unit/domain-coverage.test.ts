@@ -69,6 +69,35 @@ describe('#1150 Current funds ledger', () => {
     );
   });
 
+  it('ignores a definitively failed refund of an earlier attempt when a retry established the funds', () => {
+    // Attempt A was refunded-not-effected and later reconciled not effected; retry B collected.
+    const funds = computePaymentFunds(
+      snapshot([
+        operation('attempt-a', 'COLLECT', 'NOT_EFFECTED_CONFIRMED', 1000),
+        operation('refund-of-a', 'REFUND', 'NOT_EFFECTED_CONFIRMED', 400, 'attempt-a'),
+        operation('collect', 'COLLECT', 'EFFECT_CONFIRMED', 1000),
+      ]),
+    );
+    expect(funds).toEqual(
+      PaymentFundsLedger.Established({
+        collected: czk(1000),
+        collectOperationId: 'collect',
+        confirmedReturned: czk(0),
+        remaining: czk(1000),
+        reserved: czk(0),
+      }),
+    );
+    // A live or effected refund of another collection still holds the funds.
+    const contradictory = computePaymentFunds(
+      snapshot([
+        operation('attempt-a', 'COLLECT', 'NOT_EFFECTED_CONFIRMED', 1000),
+        operation('refund-of-a', 'REFUND', 'PENDING', 400, 'attempt-a'),
+        operation('collect', 'COLLECT', 'EFFECT_CONFIRMED', 1000),
+      ]),
+    );
+    expect(PaymentFundsLedger.$is('Held')(contradictory)).toBe(true);
+  });
+
   it('reports no established collection before any confirmed COLLECT', () => {
     expect(computePaymentFunds(snapshot([]))).toEqual(
       PaymentFundsLedger.NotCollected({ liveCollectOperationId: Option.none() }),
