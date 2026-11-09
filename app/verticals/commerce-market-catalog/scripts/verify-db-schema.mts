@@ -172,7 +172,7 @@ const verification = Effect.gen(function* verifyDatabase() {
     infrastructure.force_rls_count !== 8 ||
     infrastructure.wrong_owner_count !== 0 ||
     infrastructure.policy_count !== 32 ||
-    infrastructure.foreign_key_count !== 7 ||
+    infrastructure.foreign_key_count !== 8 ||
     infrastructure.append_only_trigger_count !== 2 ||
     infrastructure.identity_trigger_count !== 2 ||
     infrastructure.journal_count !== 1 ||

@@ -277,6 +277,20 @@ describe('Commerce Market Catalog database contract', () => {
     expect(migration).not.toMatch(/grant\s+(?:select|insert|update|delete)\s+on/iu);
   });
 
+  it('verifies all metadata foreign keys plus the deferred current-definition back-reference', () => {
+    const declared = COMMERCE_MARKET_CATALOG_TABLES.flatMap((table) => getTableConfig(table).foreignKeys);
+    expect(declared).toHaveLength(7);
+    const migration = readFileSync(
+      new URL('../../drizzle/20260921152048_governed-market-administration/migration.sql', import.meta.url),
+      'utf-8',
+    );
+    const deferred = migration.match(/foreign key\s*\(tenant_id, current_definition_revision_id\)/giu) ?? [];
+    expect(deferred).toHaveLength(1);
+    expect(migration).toContain('deferrable initially deferred');
+    const verifier = readFileSync(new URL('../../scripts/verify-db-schema.mts', import.meta.url), 'utf-8');
+    expect(verifier).toContain(`infrastructure.foreign_key_count !== ${declared.length + deferred.length}`);
+  });
+
   it('verifies the search snapshot routine in every governed allowlist without permitting raw runtime reads', () => {
     const verifier = readFileSync(new URL('../../scripts/verify-db-schema.mts', import.meta.url), 'utf-8');
     const migration = readFileSync(
