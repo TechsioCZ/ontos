@@ -322,6 +322,29 @@ describe('#1152 exact source qualification', () => {
     ).toBe('OccurrenceConflict');
   });
 
+  it('#1151 a correction recorded with its inferred Payment replays when resent without a Payment', () => {
+    const correction = {
+      correctsObservationId: '40000000-0000-4000-8000-000000000009',
+      factKind: 'SOURCE_CORRECTION',
+    } as const;
+    // The original named no Payment; it was recorded with the Payment of the receipt it corrects.
+    const original = recorded({ ...correction, amount: absent() });
+    const replay = statement({ ...correction, amount: absent(), paymentId: absent() });
+    expect(tagOf(qualify({ correctedObservation: recorded(), existingOccurrence: original, statement: replay }))).toBe(
+      'Duplicate',
+    );
+    // A replay whose correction target belongs to another Payment is changed correlation.
+    expect(
+      tagOf(
+        qualify({
+          correctedObservation: recorded({ paymentId: '10000000-0000-4000-8000-0000000000ff' }),
+          existingOccurrence: original,
+          statement: replay,
+        }),
+      ),
+    ).toBe('OccurrenceConflict');
+  });
+
   it('#1152 operator evidence cannot enter through the integration Action and vice versa', () => {
     const localSource = { ...bankSource, sourceKind: 'LOCAL_POS_OPERATOR' as const, sourceSystem: 'pos-1' };
     expect(tagOf(qualify({ statement: statement({ source: localSource }) }))).toBe('Unauthorized');

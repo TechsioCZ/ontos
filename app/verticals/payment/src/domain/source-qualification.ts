@@ -330,12 +330,12 @@ const sameInstant = (left: DateTime.Utc | undefined, right: DateTime.Utc | undef
  */
 const samePaymentCorrelation = (
   recorded: PaymentRecordedObservationView,
-  statement: PaymentSourceStatement,
+  claimedPaymentId: string | undefined,
   paymentResolved: boolean,
 ): boolean =>
   recorded.paymentId === undefined
-    ? statement.paymentId === undefined || !paymentResolved
-    : recorded.paymentId === statement.paymentId;
+    ? claimedPaymentId === undefined || !paymentResolved
+    : recorded.paymentId === claimedPaymentId;
 
 /**
  * Exact duplicate: the stable statement content equals what the original occurrence recorded. A recorded
@@ -345,6 +345,7 @@ const samePaymentCorrelation = (
 const sameStatement = (
   recorded: PaymentRecordedObservationView,
   statement: PaymentSourceStatement,
+  claimedPaymentId: string | undefined,
   paymentResolved: boolean,
 ): boolean =>
   recorded.factFamily === statement.factFamily &&
@@ -353,7 +354,7 @@ const sameStatement = (
   recorded.economicEffectKey === statement.economicEffectKey &&
   recorded.evidenceRef === statement.evidenceRef &&
   sameInstant(recorded.sourceOccurredAt, statement.sourceOccurredAt) &&
-  samePaymentCorrelation(recorded, statement, paymentResolved) &&
+  samePaymentCorrelation(recorded, claimedPaymentId, paymentResolved) &&
   (statement.operationId === undefined || recorded.operationId === statement.operationId) &&
   recorded.amount?.amountMinor === statement.amount?.amountMinor &&
   recorded.amount?.currency === statement.amount?.currency;
@@ -595,7 +596,12 @@ export const qualifyPaymentSourceStatement = (
   }
   const { existingOccurrence } = input;
   if (existingOccurrence !== undefined) {
-    return sameStatement(existingOccurrence, statement, input.target !== undefined)
+    // A correction that names no Payment is correlated through the statement it corrects, exactly as
+    // its original was recorded, so an exact retry still replays (#1151/#1152).
+    const claimedPaymentId =
+      statement.paymentId ??
+      (statement.factKind === 'SOURCE_CORRECTION' ? input.correctedObservation?.paymentId : undefined);
+    return sameStatement(existingOccurrence, statement, claimedPaymentId, input.target !== undefined)
       ? PaymentSourceQualification.Duplicate({ original: existingOccurrence })
       : PaymentSourceQualification.OccurrenceConflict({ original: existingOccurrence });
   }
