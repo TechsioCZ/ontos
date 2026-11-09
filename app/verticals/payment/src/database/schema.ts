@@ -63,6 +63,11 @@ export const paymentSchema = pgSchema(PAYMENT_SCHEMA_NAME);
 const literalList = (values: readonly string[]) => sql.raw(values.map((value) => `'${value}'`).join(', '));
 const maximumAmountMinor = sql.raw(String(Number.MAX_SAFE_INTEGER));
 const launchCurrency = sql.raw(`'${PAYMENT_LAUNCH_CURRENCY}'`);
+/** Sources that speak for a Payment only through its exact selected capability (#1152). */
+const SELECTED_CAPABILITY_SOURCE_KINDS = [
+  'CARRIER',
+  'LOCAL_POS_OPERATOR',
+] as const satisfies readonly PaymentSourceKind[];
 
 const scopeColumns = () => ({
   legalEntityId: uuid('legal_entity_id').notNull(),
@@ -530,6 +535,11 @@ export const observations = paymentSchema.table.withRLS(
     acceptanceOutcome: text('acceptance_outcome').$type<PaymentObservationAcceptanceOutcome>().notNull(),
     accountRef: text('account_ref').notNull(),
     amountMinor: bigint('amount_minor', { mode: 'number' }),
+    /**
+     * Selected-capability sources of a Payment only (#1152): whether qualification proved the statement
+     * names the exact selected Delivery Offer / pickup capability. Null for other sources and unassigned evidence.
+     */
+    capabilityCorrelated: boolean('capability_correlated'),
     /** Required exactly for an accepted SOURCE_CORRECTION; only REDUCE_ESTABLISHED_COLLECTION reduces coverage. */
     correctionEffect: text('correction_effect').$type<PaymentCorrectionEffectKind>(),
     correctsObservationId: uuid('corrects_observation_id'),
@@ -611,6 +621,10 @@ export const observations = paymentSchema.table.withRLS(
     check(
       'payment_observations_money_ck',
       sql`(${table.amountMinor} is null) = (${table.currency} is null) and (${table.amountMinor} is null or (${table.amountMinor} between 0 and ${maximumAmountMinor} and ${table.currency} = ${launchCurrency}))`,
+    ),
+    check(
+      'payment_observations_capability_ck',
+      sql`${table.capabilityCorrelated} is null or (${table.paymentId} is not null and ${table.sourceKind} in (${literalList(SELECTED_CAPABILITY_SOURCE_KINDS)}))`,
     ),
     check(
       'payment_observations_correlation_ck',

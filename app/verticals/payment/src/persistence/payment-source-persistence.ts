@@ -68,6 +68,8 @@ export interface NewPaymentObservationInput {
   readonly acceptanceOutcome: Exclude<PaymentObservationAcceptanceOutcome, 'DUPLICATE' | 'UNAUTHORIZED_SOURCE'>;
   readonly amount: PaymentMonetaryAmount | undefined;
   readonly authority: PaymentSourceAuthorityView;
+  /** Selected-capability sources of a Payment only: qualification proved the selected capability (#1152). */
+  readonly capabilityCorrelated: boolean | undefined;
   /**
    * Exactly for an accepted SOURCE_CORRECTION: what it did to the Current interpretation. An accepted
    * correction the interpretation left unchanged (NO_CHANGE) is recorded as RECORD_ONLY.
@@ -489,6 +491,7 @@ export const paymentSourcePersistenceForTransaction = (
         actionInvocationId: input.provenance.actionInvocationId,
         actorPrincipalId: input.provenance.actorPrincipalId,
         amountMinor: input.amount?.amountMinor ?? null,
+        capabilityCorrelated: input.capabilityCorrelated ?? null,
         compositionRevision: input.provenance.compositionRevision,
         correctionEffect: recordedCorrectionEffect(input),
         correctsObservationId: input.correctsObservationId ?? null,

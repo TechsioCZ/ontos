@@ -278,6 +278,37 @@ export type PaymentSourceQualificationCase = Data.TaggedEnum<{
 }>;
 export const PaymentSourceQualification = Data.taggedEnum<PaymentSourceQualificationCase>();
 
+/**
+ * Sources that speak for a Payment only through its exact selected capability (#1152): the COD carrier
+ * must name the selected Delivery Offer, the local POS operator the selected pickup capability.
+ */
+export const PAYMENT_SELECTED_CAPABILITY_SOURCES: ReadonlySet<PaymentSourceKind> = new Set([
+  'CARRIER',
+  'LOCAL_POS_OPERATOR',
+] as const);
+
+/**
+ * Whether qualification proved that a selected-capability statement names the selected capability of
+ * its Payment, recorded with the observation so governed attachment can rely on it later. Only
+ * CAPABILITY_NOT_CORRELATED leaves it unproven; every other Payment-correlated outcome passed the exact
+ * binding check. `undefined` for other sources and for evidence without a Payment.
+ */
+export const selectedCapabilityCorrelation = (
+  statement: PaymentSourceStatement,
+  qualification: PaymentSourceQualificationCase,
+): boolean | undefined => {
+  if (!PAYMENT_SELECTED_CAPABILITY_SOURCES.has(statement.source.sourceKind)) {
+    return undefined;
+  }
+  if (PaymentSourceQualification.$is('Qualified')(qualification)) {
+    return true;
+  }
+  // Only Held and Qualified record Payment-correlated evidence; HeldUnassigned names no Payment.
+  return PaymentSourceQualification.$is('Held')(qualification)
+    ? qualification.reason !== 'CAPABILITY_NOT_CORRELATED'
+    : undefined;
+};
+
 const unauthorized = (reason: string) => PaymentSourceQualification.Unauthorized({ reason });
 
 /**

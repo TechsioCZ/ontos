@@ -609,6 +609,18 @@ export const paymentAggregatePersistenceForTransaction = (
       ],
       { concurrency: 1 },
     );
+    const lockIntent = transaction
+      .select()
+      .from(payments)
+      .where(
+        and(
+          eq(payments.tenantId, scope.tenantId),
+          eq(payments.legalEntityId, scope.legalEntityId),
+          eq(payments.intentKey, input.intentKey),
+        ),
+      )
+      .for('update')
+      .pipe(Effect.mapError(readFailure));
     const [materialHash, [existing]] = yield* Effect.all(
       [
         computePaymentMaterialHash({
@@ -623,31 +635,24 @@ export const paymentAggregatePersistenceForTransaction = (
           purchasingContext,
           termSemanticEvidence,
         }),
-        transaction
-          .select()
-          .from(payments)
-          .where(
-            and(
-              eq(payments.tenantId, scope.tenantId),
-              eq(payments.legalEntityId, scope.legalEntityId),
-              eq(payments.intentKey, input.intentKey),
-            ),
-          )
-          .for('update')
-          .pipe(Effect.mapError(readFailure)),
+        lockIntent,
       ],
       { concurrency: 1 },
     );
+    /** The stored intent is the replay only when its meaning is identical; otherwise the key conflicts. */
+    const replayOf = (stored: PaymentRow) =>
+      stored.materialHash === materialHash
+        ? paymentRecordOf(stored).pipe(Effect.map(unchanged))
+        : paymentConflict(
+            'payment_intent_material_conflict',
+            'The intent key already identifies a materially different Payment',
+          );
     if (existing !== undefined) {
-      if (existing.materialHash !== materialHash) {
-        return yield* paymentConflict(
-          'payment_intent_material_conflict',
-          'The intent key already identifies a materially different Payment',
-        );
-      }
-      return unchanged(yield* paymentRecordOf(existing));
+      return yield* replayOf(existing);
     }
     const createdAt = yield* now;
+    // A concurrent invocation may create the same new intent after the absence check (no purchase row
+    // serializes a brand-new purchase): the insert then yields to the committed winner and replays it.
     const [row] = yield* transaction
       .insert(payments)
       .values({
@@ -671,12 +676,17 @@ export const paymentAggregatePersistenceForTransaction = (
         purchasingContext,
         termSemanticEvidence,
       })
+      .onConflictDoNothing({ target: [payments.tenantId, payments.legalEntityId, payments.intentKey] })
       .returning()
       .pipe(Effect.mapError(paymentWriteFailure));
-    if (row === undefined) {
+    if (row !== undefined) {
+      return written(yield* paymentRecordOf(row));
+    }
+    const [winner] = yield* lockIntent;
+    if (winner === undefined) {
       return yield* paymentUnavailable('The Payment was not persisted');
     }
-    return written(yield* paymentRecordOf(row));
+    return yield* replayOf(winner);
   });
 
   const insertClaims = Effect.fn('PaymentAggregatePersistence.insertClaims')(function* insertClaims(

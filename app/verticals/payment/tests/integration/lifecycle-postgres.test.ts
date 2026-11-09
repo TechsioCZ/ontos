@@ -65,6 +65,7 @@ import {
   COMPOSITION_REVISION,
   failureCodeOf,
   makeTestScope,
+  newPaymentInput,
   operationalScopeOf,
   provenanceFor,
   purchasingContextFor,
@@ -705,6 +706,35 @@ it.live('#1148 a proven unreturned predecessor collection blocks a successor; a 
 );
 
 /**
+ * Polls until at least two sessions are (transitively) blocked behind the holder backend; the second
+ * racer may queue behind the first rather than the holder itself.
+ */
+const awaitBlockedBehind = (adminClient: LifecycleNativeDatabase['adminClient'], holderPid: number) => {
+  const waiters = adminClient
+    .unsafe<{ readonly waiting: number }>(
+      `with recursive blocked(pid) as (
+         select activity.pid from pg_catalog.pg_stat_activity activity
+         where $1 = any(pg_catalog.pg_blocking_pids(activity.pid))
+         union
+         select activity.pid from pg_catalog.pg_stat_activity activity
+         join blocked on blocked.pid = any(pg_catalog.pg_blocking_pids(activity.pid))
+       )
+       select count(*)::integer as waiting from blocked`,
+      [holderPid],
+    )
+    .pipe(Effect.map((rows) => rows[0]?.waiting ?? 0));
+  const awaitBothBlocked = (remaining: number): Effect.Effect<number, Effect.Error<typeof waiters>> =>
+    waiters.pipe(
+      Effect.flatMap((waiting) =>
+        waiting >= 2 || remaining === 0
+          ? Effect.succeed(waiting)
+          : Effect.suspend(() => awaitBothBlocked(remaining - 1)),
+      ),
+    );
+  return awaitBothBlocked(2000);
+};
+
+/**
  * Races two Actions behind an external holder of the given Payment row locks: both queue behind it
  * (observed in pg_stat_activity), then the holder releases and both outcomes are returned. The holder is
  * always released, so a failed observation can never leave locks behind.
@@ -733,32 +763,120 @@ const raceBehindPaymentLocks = Effect.fn('LifecycleConcurrencyTest.raceBehindPay
   const holderPid = yield* Deferred.await(locked);
   const first = yield* Effect.result(racers[0]).pipe(Effect.forkChild);
   const second = yield* Effect.result(racers[1]).pipe(Effect.forkChild);
-  // Both Actions are transitively blocked behind the holder (the second one queues behind the first).
-  const waiters = adminClient
-    .unsafe<{ readonly waiting: number }>(
-      `with recursive blocked(pid) as (
-         select activity.pid from pg_catalog.pg_stat_activity activity
-         where $1 = any(pg_catalog.pg_blocking_pids(activity.pid))
-         union
-         select activity.pid from pg_catalog.pg_stat_activity activity
-         join blocked on blocked.pid = any(pg_catalog.pg_blocking_pids(activity.pid))
-       )
-       select count(*)::integer as waiting from blocked`,
-      [holderPid],
-    )
-    .pipe(Effect.map((rows) => rows[0]?.waiting ?? 0));
-  const awaitBothBlocked = (remaining: number): Effect.Effect<number, Effect.Error<typeof waiters>> =>
-    waiters.pipe(
-      Effect.flatMap((waiting) =>
-        waiting >= 2 || remaining === 0
-          ? Effect.succeed(waiting)
-          : Effect.suspend(() => awaitBothBlocked(remaining - 1)),
-      ),
-    );
-  const blockedCount = yield* awaitBothBlocked(2000).pipe(Effect.ensuring(Deferred.succeed(release, true)));
+  const blockedCount = yield* awaitBlockedBehind(adminClient, holderPid).pipe(
+    Effect.ensuring(Deferred.succeed(release, true)),
+  );
   yield* Fiber.join(holder);
   return { blockedCount, outcomes: [yield* Fiber.join(first), yield* Fiber.join(second)] };
 });
+
+/** The holder's uncommitted intent-key row is rolled back with this marker once both racers queue. */
+class HolderRolledBack extends Schema.TaggedError<HolderRolledBack>()('HolderRolledBack', {}) {}
+
+/**
+ * Races two create-payment Actions for one brand-new intent key. Nothing exists yet, so no Payment row
+ * lock serializes them: an external transaction holds an uncommitted Payment under the same intent key,
+ * which both Actions pass (invisible to their absence checks) and then queue behind on the intent-key
+ * unique index. The holder then rolls back, so the two Actions themselves decide the insert.
+ */
+const raceOnNewIntentKey = Effect.fn('LifecycleConcurrencyTest.raceOnNewIntentKey')(function* race<A, E>(
+  scenario: Scenario,
+  intentKey: string,
+  racers: readonly [Effect.Effect<A, E>, Effect.Effect<A, E>],
+) {
+  const locked = yield* Deferred.make<number>();
+  const release = yield* Deferred.make<boolean>();
+  const holder = yield* scenario
+    .persist((persistence) =>
+      Effect.gen(function* holdIntentKey() {
+        const input = yield* newPaymentInput(scenario.scope);
+        yield* persistence.insertPayment({ ...input, intentKey });
+        const [backend] = yield* scenario.native.runtimeClient.unsafe<{ readonly pid: number }>(
+          'select pg_backend_pid() as pid',
+        );
+        yield* Deferred.succeed(locked, backend?.pid ?? 0);
+        yield* Deferred.await(release);
+        return yield* new HolderRolledBack();
+      }),
+    )
+    .pipe(Effect.flip, Effect.forkChild);
+  const holderPid = yield* Deferred.await(locked);
+  const first = yield* Effect.result(racers[0]).pipe(Effect.forkChild);
+  const second = yield* Effect.result(racers[1]).pipe(Effect.forkChild);
+  const blockedCount = yield* awaitBlockedBehind(scenario.native.adminClient, holderPid).pipe(
+    Effect.ensuring(Deferred.succeed(release, true)),
+  );
+  const holderFailure = yield* Fiber.join(holder);
+  return { blockedCount, holderFailure, outcomes: [yield* Fiber.join(first), yield* Fiber.join(second)] };
+});
+
+/** Payments carrying one intent key in this scope. */
+const intentKeyRows = (scenario: Scenario, intentKey: string) =>
+  scenario.native.coreAdmin
+    .select({ paymentId: payments.paymentId })
+    .from(payments)
+    .where(
+      and(
+        eq(payments.tenantId, scenario.scope.tenantId),
+        eq(payments.legalEntityId, scenario.scope.legalEntityId),
+        eq(payments.intentKey, intentKey),
+      ),
+    );
+
+it.live(
+  '#1148 two concurrent create-payment invocations of one new identical intent race on PostgreSQL: one creates, one replays it',
+  () =>
+    runNative(
+      Effect.gen(function* concurrentIdenticalIntents() {
+        const scenario = yield* lifecycleScenario();
+        const payload = scenario.intent();
+        const { blockedCount, holderFailure, outcomes } = yield* raceOnNewIntentKey(scenario, payload.intentKey, [
+          scenario.create(payload),
+          scenario.create(payload),
+        ]);
+        expect(blockedCount).toBeGreaterThanOrEqual(2);
+        expect(holderFailure).toStrictEqual(new HolderRolledBack());
+
+        const results = outcomes.flatMap((outcome) => (Result.isSuccess(outcome) ? [outcome.success] : []));
+        expect(results).toHaveLength(2);
+        const created = results.find((result) => !result.replayed);
+        const replayed = results.find((result) => result.replayed);
+        expect(created).toBeDefined();
+        expect(replayed?.payment).toStrictEqual(created?.payment);
+        expect(yield* intentKeyRows(scenario, payload.intentKey)).toStrictEqual([
+          { paymentId: created?.payment.paymentId },
+        ]);
+        expect(yield* outboxPayloads(scenario.native, scenario.scope.tenantId, PAYMENT_CREATED)).toHaveLength(1);
+      }),
+    ),
+);
+
+it.live(
+  '#1148 two concurrent create-payment invocations of one new intent key with different meaning: one creates, one conflicts',
+  () =>
+    runNative(
+      Effect.gen(function* concurrentDivergentIntents() {
+        const scenario = yield* lifecycleScenario();
+        const payload = scenario.intent();
+        const changed = { ...payload, payableAmount: { amountMinor: 120_000, currency: 'CZK' } };
+        const { blockedCount, outcomes } = yield* raceOnNewIntentKey(scenario, payload.intentKey, [
+          scenario.create(payload),
+          scenario.create(changed),
+        ]);
+        expect(blockedCount).toBeGreaterThanOrEqual(2);
+
+        const [created] = outcomes.flatMap((outcome) => (Result.isSuccess(outcome) ? [outcome.success] : []));
+        const losers = outcomes.flatMap((outcome) => (Result.isFailure(outcome) ? [outcome.failure] : []));
+        expect(created?.replayed).toBe(false);
+        expect(losers).toHaveLength(1);
+        expect(losers[0]).toMatchObject({ code: 'payment_intent_material_conflict' });
+        expect(yield* intentKeyRows(scenario, payload.intentKey)).toStrictEqual([
+          { paymentId: created?.payment.paymentId },
+        ]);
+        expect(yield* outboxPayloads(scenario.native, scenario.scope.tenantId, PAYMENT_CREATED)).toHaveLength(1);
+      }),
+    ),
+);
 
 /** The exact collection request of a 1000 CZK ONLINE_GATEWAY Payment under one operation key. */
 const exactCollectRequest = (paymentId: string, operationKey: string) => ({

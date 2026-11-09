@@ -124,6 +124,8 @@ export interface PaymentObservationRecord {
   readonly acceptanceOutcome: PaymentObservationAcceptanceOutcome;
   readonly accountRef: string;
   readonly amount: PaymentMonetaryAmount | undefined;
+  /** Selected-capability sources of a Payment only: qualification proved the selected capability (#1152). */
+  readonly capabilityCorrelated: boolean | undefined;
   readonly correctsObservationId: string | undefined;
   readonly economicEffectKey: string | undefined;
   readonly environment: string;
@@ -301,6 +303,7 @@ const observationRecordOf = Effect.fn('PaymentEvidencePersistence.observationRec
     acceptanceOutcome: row.acceptanceOutcome,
     accountRef: row.accountRef,
     amount: Option.getOrUndefined(amount),
+    capabilityCorrelated: row.capabilityCorrelated ?? undefined,
     correctsObservationId: row.correctsObservationId ?? undefined,
     economicEffectKey: row.economicEffectKey ?? undefined,
     environment: row.environment,

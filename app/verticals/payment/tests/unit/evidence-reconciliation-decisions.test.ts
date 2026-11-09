@@ -32,6 +32,7 @@ const openCase: PaymentReconciliationCaseSubject = { operationId: COLLECT_ID, pa
 const facts = (overrides: Partial<PaymentReconciliationEvidenceFacts> = {}): PaymentReconciliationEvidenceFacts => ({
   acceptanceOutcome: 'HELD_UNRESOLVED',
   amount: czk(100_000),
+  capabilityCorrelated: Option.getOrUndefined(Option.none<boolean>()),
   corrected: false,
   countedToward: [],
   economicEffectKey: absent,
@@ -116,11 +117,15 @@ const pos = {
   sourceKind: 'LOCAL_POS_OPERATOR',
   sourceSystem: 'store-pos',
 } as const;
-/** Attaches a collection statement of `source` recorded with `acceptanceOutcome` to the pending collection. */
+/**
+ * Attaches a collection statement of `source` recorded with `acceptanceOutcome` and the capability
+ * correlation its qualification proved to the pending collection.
+ */
 const attachHeldCapability = (
   source: PaymentReconciliationEvidenceFacts['source'],
   acceptanceOutcome: PaymentReconciliationEvidenceFacts['acceptanceOutcome'],
-) => rejectionCode(decide(attach, 'PENDING', Option.some(facts({ acceptanceOutcome, source }))));
+  capabilityCorrelated: boolean,
+) => rejectionCode(decide(attach, 'PENDING', Option.some(facts({ acceptanceOutcome, capabilityCorrelated, source }))));
 
 describe('#1151 governed reconciliation decisions', () => {
   it('#1151 attaching qualified configured evidence resolves a conflicting operation to the proven outcome', () => {
@@ -140,15 +145,21 @@ describe('#1151 governed reconciliation decisions', () => {
     );
   });
 
-  it('#1152 a held COD carrier or POS statement never proves the selected capability through attachment', () => {
+  it('#1152 a COD carrier or POS statement proves its effect through attachment only when it proved the selected capability', () => {
     expect([
-      attachHeldCapability(carrier, 'HELD_UNRESOLVED'),
-      attachHeldCapability(pos, 'HELD_UNRESOLVED'),
-      attachHeldCapability(carrier, 'CONFLICT'),
-      attachHeldCapability(pos, 'CONFLICT'),
+      attachHeldCapability(carrier, 'HELD_UNRESOLVED', false),
+      attachHeldCapability(pos, 'HELD_UNRESOLVED', false),
+      rejectionCode(decide(attach, 'PENDING', Option.some(facts({ source: carrier })))),
+      attachHeldCapability(carrier, 'HELD_UNRESOLVED', true),
+      attachHeldCapability(pos, 'HELD_UNRESOLVED', true),
+      attachHeldCapability(carrier, 'CONFLICT', true),
+      attachHeldCapability(pos, 'CONFLICT', true),
     ]).toEqual([
       'payment_reconciliation_evidence_not_qualified',
       'payment_reconciliation_evidence_not_qualified',
+      'payment_reconciliation_evidence_not_qualified',
+      'applied',
+      'applied',
       'applied',
       'applied',
     ]);

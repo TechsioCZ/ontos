@@ -1,7 +1,7 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "ba73d35d-1c09-45dc-a3d6-4f0cac457a9e",
+  "id": "452cfcca-4d48-4dd7-a334-5e9762a64f3e",
   "prevIds": [
     "00000000-0000-0000-0000-000000000000"
   ],
@@ -785,6 +785,19 @@
       "generated": null,
       "identity": null,
       "name": "amount_minor",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "capability_correlated",
       "entityType": "columns",
       "schema": "payment",
       "table": "observations"
@@ -4354,6 +4367,13 @@
     {
       "value": "(\"amount_minor\" is null) = (\"currency\" is null) and (\"amount_minor\" is null or (\"amount_minor\" between 0 and 9007199254740991 and \"currency\" = 'CZK'))",
       "name": "payment_observations_money_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "value": "\"capability_correlated\" is null or (\"payment_id\" is not null and \"source_kind\" in ('CARRIER', 'LOCAL_POS_OPERATOR'))",
+      "name": "payment_observations_capability_ck",
       "entityType": "checks",
       "schema": "payment",
       "table": "observations"

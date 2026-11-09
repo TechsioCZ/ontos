@@ -1427,3 +1427,62 @@ it.live('#1152 a POS statement held without the selected pickup capability never
     }),
   ),
 );
+
+it.live(
+  '#1152 a COD carrier confirmation naming the selected Delivery Offer, held only because its COLLECT is in conflict, resolves it by attachment',
+  () =>
+    native(
+      Effect.gen(function* codConflictHeldAttach() {
+        const evidence = yield* scenario();
+        yield* evidence.configureSource({
+          factFamily: 'COD_CUSTOMER_COLLECTION',
+          method: 'CASH_ON_DELIVERY',
+          reason: 'Configured COD carrier',
+          refundRoute: false,
+          source: codCarrier,
+          status: 'ACTIVE',
+          submitterPrincipalIds: [evidence.scope.principalId],
+        });
+        const { collect, payment } = yield* capabilityCollect(evidence, codOfferBinding, 'CASH_ON_DELIVERY');
+        const handover = {
+          amount: czk(100_000),
+          deliveryOfferRef: 'dpd-home-delivery-offer-1',
+          factFamily: 'COD_CUSTOMER_COLLECTION',
+          factKind: 'COLLECTION_CONFIRMED',
+          paymentId: payment.paymentId,
+          source: codCarrier,
+          sourceRevision: 1,
+        } as const;
+        const receipt = yield* evidence.accept({ ...handover, sourceOccurrenceId: 'dpd-shipment-1' });
+        expect(receipt.outcomeChange).toEqual({
+          from: 'PENDING',
+          operationId: collect.operationId,
+          to: 'EFFECT_CONFIRMED',
+        });
+        // The carrier retracts the original receipt: the COLLECT reopens to CONFLICT.
+        const retraction = yield* evidence.accept({
+          correctsObservationId: receipt.observationId,
+          deliveryOfferRef: 'dpd-home-delivery-offer-1',
+          factFamily: 'COD_CUSTOMER_COLLECTION',
+          factKind: 'SOURCE_CORRECTION',
+          paymentId: payment.paymentId,
+          source: codCarrier,
+          sourceOccurrenceId: 'dpd-shipment-1-retraction',
+          sourceRevision: 1,
+        });
+        expect(retraction.outcomeChange?.to).toBe('CONFLICT');
+        // A fresh confirmation for the selected Delivery Offer waits only for governed reconciliation.
+        const fresh = yield* evidence.accept({ ...handover, sourceOccurrenceId: 'dpd-shipment-1-redelivered' });
+        expect(fresh).toMatchObject({ acceptanceOutcome: 'HELD_UNRESOLVED', interpretation: 'HOLD' });
+        yield* evidence.decide({
+          caseId: fresh.reconciliationCaseId ?? '',
+          decision: { _tag: 'ATTACH_EVIDENCE', observationId: fresh.observationId, operationId: collect.operationId },
+          reason: 'The redelivered carrier confirmation proves the collection',
+        });
+        const after = yield* evidence.inTransaction((aggregate) => aggregate.loadAggregate(payment.paymentId));
+        expect(after.operations.find((operation) => operation.operationId === collect.operationId)?.outcome).toBe(
+          'EFFECT_CONFIRMED',
+        );
+      }),
+    ),
+);
