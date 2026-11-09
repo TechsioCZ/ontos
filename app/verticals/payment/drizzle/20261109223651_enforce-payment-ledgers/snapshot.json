@@ -1,10 +1,10 @@
 {
+  "id": "c316ffc8-bb5f-4df6-9565-07a1757c0005",
+  "prevIds": [
+    "4ed23020-0979-44fb-bea3-f9089071a394"
+  ],
   "version": "8",
   "dialect": "postgres",
-  "id": "452cfcca-4d48-4dd7-a334-5e9762a64f3e",
-  "prevIds": [
-    "00000000-0000-0000-0000-000000000000"
-  ],
   "ddl": [
     {
       "name": "payment",
@@ -2345,6 +2345,19 @@
       "generated": null,
       "identity": null,
       "name": "evidence_ref",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_decisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "operation_id",
       "entityType": "columns",
       "schema": "payment",
       "table": "reconciliation_decisions"

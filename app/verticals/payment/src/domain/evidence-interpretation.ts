@@ -117,6 +117,8 @@ export const PAYMENT_EVIDENCE_HOLD_REASONS = [
   'CORRECTION_CONTRADICTS_CORROBORATING_EVIDENCE',
   /** A statement of an already corrected economic effect is corrected again under another correction key. */
   'CORRECTION_OVERLAPS_PRIOR_CORRECTION',
+  /** A partial correction would leave less proven collection than its confirmed and reserved returns. */
+  'CORRECTION_EXCEEDS_REMAINING_FUNDS',
 ] as const;
 export type PaymentEvidenceHoldReason = (typeof PAYMENT_EVIDENCE_HOLD_REASONS)[number];
 
@@ -306,21 +308,57 @@ const decideRestatement = (
   observation: QualifiedPaymentObservation,
 ): PaymentEvidenceDecisionCase => {
   const { economicEffectKey } = observation;
-  const distinct =
-    economicEffectKey !== undefined &&
-    operation.outcome === 'EFFECT_CONFIRMED' &&
-    effectIdentityStatements(aggregate, operation).some(
-      (prior) =>
-        prior.economicEffectKey !== undefined &&
-        prior.economicEffectKey !== economicEffectKey &&
-        paymentFactMeaning(prior.factKind)?.outcome === 'EFFECT_CONFIRMED',
-    );
-  return distinct
+  const confirmedPriors =
+    operation.outcome === 'EFFECT_CONFIRMED'
+      ? effectIdentityStatements(aggregate, operation).filter(
+          (prior) => paymentFactMeaning(prior.factKind)?.outcome === 'EFFECT_CONFIRMED',
+        )
+      : [];
+  // The same effect is proven only by an equal key; keyless statements corroborate only keyless ones.
+  // A keyed statement beside a keyless one (either way round) cannot be proven the same money (#1151
+  // "a matching amount or reference alone is insufficient deduplication").
+  const sameEffect =
+    economicEffectKey === undefined
+      ? confirmedPriors.every((prior) => prior.economicEffectKey === undefined)
+      : confirmedPriors.some((prior) => prior.economicEffectKey === economicEffectKey);
+  return confirmedPriors.length > 0 && !sameEffect
     ? hold('DISTINCT_ECONOMIC_EFFECT', operation.operationId)
     : PaymentEvidenceDecision.NO_CHANGE({
         operationId: operation.operationId,
         reason: 'CORROBORATES_ESTABLISHED_OUTCOME',
       });
+};
+
+/**
+ * A confirmed cancellation and a confirmed collection of the same COLLECT contradict each other. The
+ * statement that would complete the contradiction never applies silently: its operation goes to
+ * CONFLICT with an open case (#1150/#1151).
+ */
+const contradictsCancellationPair = (
+  aggregate: PaymentEvidenceAggregate,
+  operation: PaymentEvidenceOperationView,
+  meaning: FactMeaning,
+) => {
+  if (meaning.outcome !== 'EFFECT_CONFIRMED') {
+    return false;
+  }
+  if (operation.kind === 'COLLECT') {
+    return aggregate.operations.some(
+      (other) =>
+        other.kind === 'CANCEL_OR_VOID' &&
+        other.targetOperationId === operation.operationId &&
+        other.outcome === 'EFFECT_CONFIRMED',
+    );
+  }
+  return (
+    operation.kind === 'CANCEL_OR_VOID' &&
+    aggregate.operations.some(
+      (other) =>
+        other.kind === 'COLLECT' &&
+        other.operationId === operation.targetOperationId &&
+        other.outcome === 'EFFECT_CONFIRMED',
+    )
+  );
 };
 
 const decideOutcomeFact = (
@@ -350,6 +388,9 @@ const decideOutcomeFact = (
     // Arrival order never resolves a conflict: the evidence waits for governed reconciliation.
     return hold('OPERATION_IN_CONFLICT', operation.operationId);
   }
+  if (operation.outcome !== meaning.outcome && contradictsCancellationPair(aggregate, operation, meaning)) {
+    return conflictTo(operation, 'CONTRADICTS_DEFINITIVE_OUTCOME');
+  }
   return OutcomeTransitionDecision.$match(decideOutcomeTransition(operation.outcome, meaning.outcome), {
     Apply: ({ from, to }) =>
       PaymentEvidenceDecision.TRANSITION({
@@ -363,6 +404,43 @@ const decideOutcomeFact = (
       PaymentEvidenceDecision.NO_CHANGE({ operationId: operation.operationId, reason: 'STALE_WEAKER_EVIDENCE' }),
     Unchanged: () => decideRestatement(aggregate, operation, observation),
   });
+};
+
+/** Exact amount equality where both sides may be absent (a full, amount-less statement). */
+const sameOptionalAmount = (left: PaymentMonetaryAmount | undefined, right: PaymentMonetaryAmount | undefined) =>
+  left === undefined || right === undefined ? left === right : sameAmount(left, right);
+
+/**
+ * True when reducing the proven collection by `reduction` (on top of the partial corrections already
+ * accepted for it) would leave less than the returns confirmed or still reserved against it.
+ */
+const reductionExceedsRemainingFunds = (
+  aggregate: PaymentEvidenceAggregate,
+  operation: PaymentEvidenceOperationView,
+  reduction: PaymentMonetaryAmount,
+) => {
+  let reduced = reduction.amountMinor;
+  for (const prior of aggregate.acceptedObservations) {
+    if (
+      prior.factKind === 'SOURCE_CORRECTION' &&
+      prior.operationId === operation.operationId &&
+      prior.amount !== undefined &&
+      prior.amount.amountMinor < operation.amount.amountMinor
+    ) {
+      reduced += prior.amount.amountMinor;
+    }
+  }
+  let returns = 0;
+  for (const other of aggregate.operations) {
+    if (
+      other.kind === 'REFUND' &&
+      other.targetOperationId === operation.operationId &&
+      other.outcome !== 'NOT_EFFECTED_CONFIRMED'
+    ) {
+      returns += other.amount.amountMinor;
+    }
+  }
+  return operation.amount.amountMinor - reduced < returns;
 };
 
 const correctionEffectFor = (
@@ -399,6 +477,10 @@ const correctionEffectFor = (
     correction.amount.amountMinor > 0 &&
     correction.amount.amountMinor < operation.amount.amountMinor;
   if (partial && correction.amount !== undefined) {
+    if (reductionExceedsRemainingFunds(aggregate, operation, correction.amount)) {
+      // Applying it would make the ledger inconsistent with no case to settle it: hold it as debt.
+      return hold('CORRECTION_EXCEEDS_REMAINING_FUNDS', operation.operationId);
+    }
     return PaymentEvidenceDecision.CORRECTION({
       ...lineage,
       effect: PaymentCorrectionEffect.REDUCE_ESTABLISHED_COLLECTION({ amount: correction.amount }),
@@ -441,15 +523,13 @@ const decideCorrection = (
   aggregate: PaymentEvidenceAggregate,
   correction: QualifiedPaymentObservation,
 ): PaymentEvidenceDecisionCase => {
-  const corrected = aggregate.acceptedObservations.find(
+  // A statement establishes Current state the same way whether it was accepted directly or counted by a
+  // governed ATTACH_EVIDENCE, so its correction is applied the same way (#1151).
+  const corrected = [...aggregate.acceptedObservations, ...aggregate.attachedStatements].find(
     (observation) => observation.observationId === correction.correctsObservationId,
   );
   if (corrected === undefined || corrected.operationId === undefined) {
-    // A governed-attached target keeps its operation, so the hold stays resolvable by reconciliation.
-    const attachedTarget = aggregate.attachedStatements.find(
-      (observation) => observation.observationId === correction.correctsObservationId,
-    );
-    return hold('CORRECTION_TARGET_UNKNOWN', correction.operationId ?? attachedTarget?.operationId);
+    return hold('CORRECTION_TARGET_UNKNOWN', correction.operationId);
   }
   if (correction.operationId !== undefined && correction.operationId !== corrected.operationId) {
     return PaymentEvidenceDecision.CONFLICT({
@@ -474,7 +554,9 @@ const decideCorrection = (
     correction.economicEffectKey !== undefined &&
     priorCorrections.some(
       (prior) =>
-        sameSourceBinding(prior.source, correction.source) && prior.economicEffectKey === correction.economicEffectKey,
+        sameSourceBinding(prior.source, correction.source) &&
+        prior.economicEffectKey === correction.economicEffectKey &&
+        sameOptionalAmount(prior.amount, correction.amount),
     );
   if (sameCorrectionEffect) {
     return PaymentEvidenceDecision.NO_CHANGE({ operationId: corrected.operationId, reason: 'ALREADY_CORRECTED' });

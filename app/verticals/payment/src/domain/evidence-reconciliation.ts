@@ -99,6 +99,11 @@ export interface PaymentReconciliationCaseEvidence {
   readonly corrected: boolean;
   /** SOURCE_CORRECTION only: the disproven statement was accepted or resolved an operation by attachment. */
   readonly correctionTargetEstablished: boolean;
+  /**
+   * EFFECT_CONFIRMED statements only: the same economic effect (source binding, fact kind, key) already
+   * counts toward an operation of this Payment (any Payment when unassigned), so the held copy is accounted for.
+   */
+  readonly economicEffectCounted?: boolean;
   readonly factKind: PaymentObservationFactKind;
 }
 
@@ -176,8 +181,8 @@ const targetOperation = (
 };
 
 /**
- * A REFUND keeps the executor it was requested through: another system or account of the same
- * executor kind never evidences it, whichever entry path the evidence took (#1150/#1152).
+ * A REFUND keeps the executor it was requested through: any other executor binding (another source kind,
+ * system, account or environment) never evidences it, whichever entry path the evidence took (#1150/#1152).
  */
 const bypassesRefundRoute = (
   source: PaymentReconciliationEvidenceSource,
@@ -186,8 +191,8 @@ const bypassesRefundRoute = (
   const route = operation.refundExecutionRoute;
   return (
     route !== undefined &&
-    route.sourceKind === source.sourceKind &&
-    (route.sourceSystem !== source.sourceSystem ||
+    (route.sourceKind !== source.sourceKind ||
+      route.sourceSystem !== source.sourceSystem ||
       route.accountRef !== source.accountRef ||
       route.environment !== source.environment)
   );
@@ -357,7 +362,9 @@ const unresolvedObligation = (evidence: PaymentReconciliationCaseEvidence): stri
       : undefined;
   }
   const meaning = paymentFactMeaning(evidence.factKind);
-  return meaning?.outcome === 'EFFECT_CONFIRMED' && !evidence.attachedOutcomes.includes(meaning.outcome)
+  return meaning?.outcome === 'EFFECT_CONFIRMED' &&
+    !evidence.attachedOutcomes.includes(meaning.outcome) &&
+    evidence.economicEffectCounted !== true
     ? 'The held evidence states a monetary effect that no operation accounts for'
     : undefined;
 };

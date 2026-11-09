@@ -281,6 +281,47 @@ describe('#1152 exact source qualification', () => {
     );
   });
 
+  it('#1151 an unassigned original replayed naming a resolved Payment is changed content; an unresolved Payment still replays', () => {
+    const unassigned = recorded({ paymentId: absent() });
+    expect(tagOf(qualify({ existingOccurrence: unassigned, statement: statement() }))).toBe('OccurrenceConflict');
+    expect(tagOf(qualify({ existingOccurrence: unassigned, statement: statement({ paymentId: absent() }) }))).toBe(
+      'Duplicate',
+    );
+    // A Payment outside the trusted scope resolves to nothing, so the exact retry matches its unresolved original.
+    expect(
+      tagOf(
+        qualify({
+          existingOccurrence: unassigned,
+          statement: statement({ paymentId: '10000000-0000-4000-8000-0000000000ff' }),
+          target: absent(),
+        }),
+      ),
+    ).toBe('Duplicate');
+  });
+
+  it('#1151 an absent amount is not a wildcard: an exact no-amount replay is a duplicate, an added amount conflicts', () => {
+    const correction = {
+      correctsObservationId: '40000000-0000-4000-8000-000000000009',
+      factKind: 'SOURCE_CORRECTION',
+    } as const;
+    expect(
+      tagOf(
+        qualify({
+          existingOccurrence: recorded({ ...correction, amount: absent() }),
+          statement: statement({ ...correction, amount: absent() }),
+        }),
+      ),
+    ).toBe('Duplicate');
+    expect(
+      tagOf(
+        qualify({
+          existingOccurrence: recorded({ ...correction, amount: absent() }),
+          statement: statement({ ...correction }),
+        }),
+      ),
+    ).toBe('OccurrenceConflict');
+  });
+
   it('#1152 operator evidence cannot enter through the integration Action and vice versa', () => {
     const localSource = { ...bankSource, sourceKind: 'LOCAL_POS_OPERATOR' as const, sourceSystem: 'pos-1' };
     expect(tagOf(qualify({ statement: statement({ source: localSource }) }))).toBe('Unauthorized');

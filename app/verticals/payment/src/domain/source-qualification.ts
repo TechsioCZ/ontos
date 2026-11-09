@@ -323,19 +323,40 @@ const NOT_A_BOUND_AUTHORITY = unauthorized(
 const sameInstant = (left: DateTime.Utc | undefined, right: DateTime.Utc | undefined): boolean =>
   left === undefined || right === undefined ? left === right : DateTime.Equivalence(left, right);
 
-/** Exact duplicate: the stable statement content equals what the original occurrence recorded. */
-const sameStatement = (recorded: PaymentRecordedObservationView, statement: PaymentSourceStatement): boolean =>
+/**
+ * An unassigned original recorded no Payment. A replay that names a Payment this scope resolves is changed
+ * content (#1151: correlation is never silently dropped), while a replay whose Payment is outside the scope
+ * stays as unresolved as its original, so an exact retry still replays.
+ */
+const samePaymentCorrelation = (
+  recorded: PaymentRecordedObservationView,
+  statement: PaymentSourceStatement,
+  paymentResolved: boolean,
+): boolean =>
+  recorded.paymentId === undefined
+    ? statement.paymentId === undefined || !paymentResolved
+    : recorded.paymentId === statement.paymentId;
+
+/**
+ * Exact duplicate: the stable statement content equals what the original occurrence recorded. A recorded
+ * amount is always the claimed amount of its original (absent when the statement claimed none), so an
+ * absent amount matches only an absent amount: adding or changing one is changed content (#1151).
+ */
+const sameStatement = (
+  recorded: PaymentRecordedObservationView,
+  statement: PaymentSourceStatement,
+  paymentResolved: boolean,
+): boolean =>
   recorded.factFamily === statement.factFamily &&
   recorded.factKind === statement.factKind &&
   recorded.correctsObservationId === statement.correctsObservationId &&
   recorded.economicEffectKey === statement.economicEffectKey &&
   recorded.evidenceRef === statement.evidenceRef &&
   sameInstant(recorded.sourceOccurredAt, statement.sourceOccurredAt) &&
-  (recorded.paymentId === undefined || recorded.paymentId === statement.paymentId) &&
+  samePaymentCorrelation(recorded, statement, paymentResolved) &&
   (statement.operationId === undefined || recorded.operationId === statement.operationId) &&
-  (recorded.amount === undefined ||
-    (recorded.amount.amountMinor === statement.amount?.amountMinor &&
-      recorded.amount.currency === statement.amount.currency));
+  recorded.amount?.amountMinor === statement.amount?.amountMinor &&
+  recorded.amount?.currency === statement.amount?.currency;
 
 /** Unassigned held evidence names the configured authority of its source binding (method-neutral first). */
 const unassignedAuthority = (active: readonly PaymentSourceAuthorityView[]): PaymentSourceAuthorityView | undefined =>
@@ -428,8 +449,9 @@ const exactAmount = (claimed: PaymentSourceClaimedAmount | undefined): PaymentMo
   claimed === undefined ? undefined : { amountMinor: claimed.amountMinor, currency: PAYMENT_LAUNCH_CURRENCY };
 
 /**
- * A REFUND keeps the executor it was requested through: another account or system of the same executor
- * kind never evidences it, and a revoked original route is explicit, never replaced (#1150/#1152).
+ * A REFUND keeps the executor it was requested through: no other executor evidences it, whatever its kind,
+ * account or system, and a revoked original route is explicit, never replaced (#1150/#1152). `active` is
+ * already narrowed to the statement's own source binding, so an executor of another kind is never in it.
  */
 const bypassesOriginalRefundRoute = (
   statement: PaymentSourceStatement,
@@ -437,11 +459,21 @@ const bypassesOriginalRefundRoute = (
   operation: PaymentSourceTargetView['operations'][number] | undefined,
 ): boolean => {
   const route = statement.factFamily === 'REFUND_EXECUTION' ? operation?.refundExecutionRoute : undefined;
-  return (
-    route !== undefined &&
-    route.sourceKind === statement.source.sourceKind &&
-    !active.some((candidate) => candidate.sourceAuthorityId === route.sourceAuthorityId)
-  );
+  return route !== undefined && !active.some((candidate) => candidate.sourceAuthorityId === route.sourceAuthorityId);
+};
+
+/** The bound ACTIVE authority that issued the observation a correction names on this Payment, if still configured. */
+const issuingAuthorityOf = (
+  input: PaymentSourceQualificationInput,
+  paymentId: string,
+  active: readonly PaymentSourceAuthorityView[],
+): PaymentSourceAuthorityView | undefined => {
+  const corrected = input.correctedObservation;
+  if (corrected === undefined || corrected.paymentId !== paymentId || corrected.sourceAuthorityId === undefined) {
+    return undefined;
+  }
+  const issuerId = corrected.sourceAuthorityId;
+  return active.find((candidate) => candidate.sourceAuthorityId === issuerId);
 };
 
 const qualifyAgainstPayment = (
@@ -451,7 +483,12 @@ const qualifyAgainstPayment = (
 ): PaymentSourceQualificationCase => {
   const { statement } = input;
   const { payment } = target;
+  // A correction is decided by the authority that issued the statement it corrects, while that authority
+  // is still bound and ACTIVE: a more specific row added for the same binding must not block it.
+  const issuer =
+    statement.factKind === 'SOURCE_CORRECTION' ? issuingAuthorityOf(input, payment.paymentId, active) : undefined;
   const authority =
+    issuer ??
     active.find((candidate) => candidate.method === payment.method) ??
     active.find((candidate) => candidate.method === undefined);
   if (authority === undefined) {
@@ -558,7 +595,7 @@ export const qualifyPaymentSourceStatement = (
   }
   const { existingOccurrence } = input;
   if (existingOccurrence !== undefined) {
-    return sameStatement(existingOccurrence, statement)
+    return sameStatement(existingOccurrence, statement, input.target !== undefined)
       ? PaymentSourceQualification.Duplicate({ original: existingOccurrence })
       : PaymentSourceQualification.OccurrenceConflict({ original: existingOccurrence });
   }

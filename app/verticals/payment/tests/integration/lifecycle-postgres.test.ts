@@ -643,7 +643,11 @@ it.live(
         expect(
           yield* failureCodeOf(
             scenario.create(
-              scenario.intent({ payableAmount: { amountMinor: 130_000, currency: 'CZK' }, predecessorPaymentId }),
+              scenario.intent({
+                payableAmount: { amountMinor: 130_000, currency: 'CZK' },
+                predecessorPaymentId,
+                purchaseCorrelationId,
+              }),
             ),
           ),
         ).toBe('payment_predecessor_superseded_conflict');
@@ -666,7 +670,10 @@ it.live('#1148 a proven unreturned predecessor collection blocks a successor; a 
         paymentId: predecessorPaymentId,
       });
       yield* scenario.settle(predecessorPaymentId, collection.operation.operationId, 1, 'EFFECT_CONFIRMED');
-      const successorIntent = scenario.intent({ predecessorPaymentId });
+      const successorIntent = scenario.intent({
+        predecessorPaymentId,
+        purchaseCorrelationId: original.payment.purchaseCorrelationId,
+      });
       expect(yield* failureCodeOf(scenario.create(successorIntent))).toBe('payment_predecessor_unresolved_conflict');
 
       const [provenance, refundExecutionRoute] = yield* Effect.all(

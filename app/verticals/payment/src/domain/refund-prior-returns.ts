@@ -1,6 +1,8 @@
+import { Result } from 'effect';
+
 import type { PaymentMonetaryAmount } from '../../shared/domain/payment-money.ts';
 import type { PaymentFundsOperation, PaymentFundsSnapshot } from './coverage.ts';
-import { sameAmount } from './money.ts';
+import { compareAmounts, sameAmount, subtractAmounts, sumAmounts } from './money.ts';
 
 /**
  * Prior return evidence in the refund funds guard (#1150 "Prior return evidence reduces the remaining
@@ -12,14 +14,70 @@ import { sameAmount } from './money.ts';
  * A statement that cannot be assigned or measured holds new returns instead of inventing funds.
  */
 
-/** One qualified, uncorrected REFUND_CONFIRMED observation of this Payment, read under the row lock. */
+/** One qualified, not fully corrected REFUND_CONFIRMED observation of this Payment, read under the row lock. */
 export interface PaymentReturnEvidence {
+  /** The money the statement states; undefined when the source stated none. Identifies a counted REFUND. */
   readonly amount: PaymentMonetaryAmount | undefined;
+  /** Money accepted corrections took away from the statement; what remains is what it still proves (#1150). */
+  readonly correctedAmount?: PaymentMonetaryAmount | undefined;
   /** Observations proven to describe the same economic effect share this key and count once. */
   readonly economicEffectKey: string | undefined;
   readonly observationId: string;
   readonly operationId: string | undefined;
 }
+
+/** How the accepted corrections of one return statement reach it (#1150). */
+export interface CorrectionReach {
+  /** The money a partial correction took away; absent when no measured correction reduces the statement. */
+  readonly correctedAmount?: PaymentMonetaryAmount;
+  /** True when the corrections cover all of the stated money: the statement no longer counts. */
+  readonly covered: boolean;
+}
+
+const NOT_REDUCED: CorrectionReach = { covered: false };
+const COVERED: CorrectionReach = { covered: true };
+
+/**
+ * What the accepted corrections of one return statement do to it (#1150). Only corrections stating
+ * money in the statement's currency reduce it, and only all of them together: a correction that
+ * cannot be measured reduces nothing, so the statement keeps counting. The statement is removed only
+ * when the corrections cover all of its stated money; a partial correction keeps the remainder.
+ */
+export const correctionReachOf = (
+  stated: PaymentMonetaryAmount | undefined,
+  corrections: readonly (PaymentMonetaryAmount | undefined)[],
+): CorrectionReach => {
+  if (stated === undefined || corrections.length === 0) {
+    return NOT_REDUCED;
+  }
+  const measured = corrections.flatMap((correction) =>
+    correction === undefined || correction.currency !== stated.currency ? [] : [correction],
+  );
+  if (measured.length !== corrections.length) {
+    return NOT_REDUCED;
+  }
+  const total = sumAmounts(measured, stated.currency);
+  if (Result.isFailure(total)) {
+    return NOT_REDUCED;
+  }
+  const order = compareAmounts(total.success, stated);
+  if (Result.isFailure(order)) {
+    return NOT_REDUCED;
+  }
+  return order.success >= 0 ? COVERED : { correctedAmount: total.success, covered: false };
+};
+
+/** What a statement still proves: its stated money less the accepted partial corrections. */
+const provenAmountOf = (statement: PaymentReturnEvidence): PaymentMonetaryAmount | undefined => {
+  if (statement.amount === undefined) {
+    return undefined;
+  }
+  if (statement.correctedAmount === undefined) {
+    return statement.amount;
+  }
+  const remaining = subtractAmounts(statement.amount, statement.correctedAmount);
+  return Result.getOrUndefined(remaining);
+};
 
 type EffectGroup = readonly [PaymentReturnEvidence, ...PaymentReturnEvidence[]];
 
@@ -53,15 +111,18 @@ const collectionReturnOf = (
   operations: ReadonlyMap<string, PaymentFundsOperation>,
 ): PaymentFundsOperation | undefined => {
   const [first] = group;
-  const { amount, observationId, operationId } = first;
+  const { observationId, operationId } = first;
+  const amount = provenAmountOf(first);
   const collect = operationId === undefined ? undefined : operations.get(operationId);
-  const consistent = group.every(
-    (statement) =>
+  const consistent = group.every((statement) => {
+    const proven = provenAmountOf(statement);
+    return (
       statement.operationId === operationId &&
-      statement.amount !== undefined &&
+      proven !== undefined &&
       amount !== undefined &&
-      sameAmount(statement.amount, amount),
-  );
+      sameAmount(proven, amount)
+    );
+  });
   if (collect?.kind !== 'COLLECT' || amount === undefined || !consistent) {
     return undefined;
   }

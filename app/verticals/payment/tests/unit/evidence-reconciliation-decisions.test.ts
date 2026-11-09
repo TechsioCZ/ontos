@@ -369,4 +369,52 @@ describe('#1151 governed reconciliation decisions', () => {
     expect(attachFrom('erp-primary', 'refund-account-b')).toBe('payment_reconciliation_evidence_not_qualified');
     expect(attachFrom('erp-primary', 'refund-account-a')).toBe('applied');
   });
+
+  it('#1150/#1152 refund evidence from another executor kind never attaches to the REFUND', () => {
+    const refund: PaymentReconciliationOperationView = {
+      amount: czk(50_000),
+      kind: 'REFUND',
+      operationId: 'refund-1',
+      outcome: 'PENDING',
+      outcomeRevision: 1,
+      refundExecutionRoute: {
+        accountRef: 'refund-account-a',
+        environment: 'production',
+        sourceKind: 'BANK_ACCOUNTING',
+        sourceSystem: 'erp-primary',
+      },
+      targetOperationId: COLLECT_ID,
+    };
+    const crossKind = decidePaymentReconciliation({
+      body: { _tag: 'ATTACH_EVIDENCE', observationId: 'obs-1', operationId: 'refund-1' },
+      caseEvidence: Option.none(),
+      evidence: Option.some(
+        facts({
+          amount: czk(50_000),
+          capabilityCorrelated: true,
+          factKind: 'REFUND_CONFIRMED',
+          operationId: absent,
+          source: {
+            accountRef: 'refund-account-a',
+            environment: 'production',
+            factFamily: 'REFUND_EXECUTION',
+            sourceKind: 'LOCAL_POS_OPERATOR',
+            sourceSystem: 'erp-primary',
+          },
+        }),
+      ),
+      operations: [collect('EFFECT_CONFIRMED'), refund],
+      subject: { operationId: absent, paymentId: PAYMENT_ID, status: 'OPEN' },
+    });
+    expect(rejectionCode(crossKind)).toBe('payment_reconciliation_evidence_not_qualified');
+  });
+
+  it('#1151 a held confirmation whose economic effect already counts for its Payment may close', () => {
+    expect(closeHeld(caseEvidence({ economicEffectCounted: true }))).toBe('applied');
+    expect(closeHeld(caseEvidence({ economicEffectCounted: false }))).toBe(
+      'payment_reconciliation_obligation_unresolved',
+    );
+    // The same fact kind and key already counts toward an operation: a refund held copy is accounted for too.
+    expect(closeHeld(caseEvidence({ economicEffectCounted: true, factKind: 'REFUND_CONFIRMED' }))).toBe('applied');
+  });
 });

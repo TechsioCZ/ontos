@@ -268,7 +268,22 @@ const evidenceFactsFor = Effect.fn('RecordPaymentReconciliationDecisionAction.ev
   });
 });
 
-/** Whether a statement established Current state: accepted, or resolved an operation by attachment. */
+/** Whether an applied full correction already reopened the observation, with its bounded read evidence. */
+const isObservationReopened = (context: DecisionContext, observationId: string) =>
+  context.services.evidence.isObservationReopened(observationId).pipe(
+    Effect.tap((reopened) =>
+      recordPaymentLookup(context, {
+        query: 'observation-correction',
+        recordId: observationId,
+        resultCount: reopened ? 1 : 0,
+      }),
+    ),
+  );
+
+/**
+ * Whether a statement established Current state: accepted, or resolved an operation by attachment, and
+ * no applied full correction has reopened it since (a reopened statement's effect no longer stands).
+ */
 const establishedCurrentState = Effect.fn('RecordPaymentReconciliationDecisionAction.establishedCurrentState')(
   function* establishedCurrentState(context: DecisionContext, observationId: string | undefined) {
     if (observationId === undefined) {
@@ -278,11 +293,46 @@ const establishedCurrentState = Effect.fn('RecordPaymentReconciliationDecisionAc
     if (Option.isNone(found)) {
       return false;
     }
+    if (yield* isObservationReopened(context, observationId)) {
+      return false;
+    }
     if (found.value.acceptanceOutcome === 'ACCEPTED_OBSERVATION') {
       return true;
     }
     const attachments = yield* listObservationAttachments(context, [observationId]);
     return attachments.some((attachment) => attachment.resultingOutcome !== undefined);
+  },
+);
+
+/**
+ * Whether the held statement's economic effect already counts toward an operation of its Payment (any
+ * Payment when the statement is unassigned): closing its case then discards no monetary obligation.
+ */
+const economicEffectCountedOf = Effect.fn('RecordPaymentReconciliationDecisionAction.economicEffectCounted')(
+  function* economicEffectCounted(context: DecisionContext, observation: PaymentObservationRecord) {
+    const { economicEffectKey, observationId, paymentId } = observation;
+    if (economicEffectKey === undefined || paymentFactMeaning(observation.factKind)?.outcome !== 'EFFECT_CONFIRMED') {
+      return false;
+    }
+    const counted = yield* context.services.evidence.isEconomicEffectCounted({
+      economicEffectKey,
+      excludeObservationId: observationId,
+      factKind: observation.factKind,
+      paymentId,
+      source: {
+        accountRef: observation.accountRef,
+        environment: observation.environment,
+        sourceKind: observation.sourceKind,
+        sourceSystem: observation.sourceSystem,
+      },
+    });
+    yield* recordPaymentLookup(context, {
+      paymentId,
+      query: 'same-effect-observations',
+      recordId: observationId,
+      resultCount: counted ? 1 : 0,
+    });
+    return counted;
   },
 );
 
@@ -310,6 +360,7 @@ const caseEvidenceFor = Effect.fn('RecordPaymentReconciliationDecisionAction.cas
     correctionTargetEstablished:
       observation.factKind === 'SOURCE_CORRECTION' &&
       (yield* establishedCurrentState(context, observation.correctsObservationId)),
+    economicEffectCounted: yield* economicEffectCountedOf(context, observation),
     factKind: observation.factKind,
   });
 });
@@ -526,6 +577,9 @@ export const handleRecordPaymentReconciliationDecision = Effect.fn('RecordPaymen
       decidedAt,
       decisionKind: step.decisionKind,
       evidenceRef: step.evidenceRef,
+      operationId: Option.orElse(attachedOperationId(payload.decision), () =>
+        Option.fromUndefinedOr(locked.operationId),
+      ),
       provenance,
       reason: payload.reason,
       resultingOutcome: step.resultingOutcome,

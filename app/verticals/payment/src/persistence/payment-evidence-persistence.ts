@@ -241,6 +241,8 @@ export interface NewReconciliationDecisionInput {
   readonly decidedAt: DateTime.Utc;
   readonly decisionKind: PaymentReconciliationDecisionKind;
   readonly evidenceRef: Option.Option<string>;
+  /** The operation the decision counted its evidence toward (ATTACH_EVIDENCE). */
+  readonly operationId: Option.Option<string>;
   readonly provenance: PaymentExecutionProvenance;
   readonly reason: string;
   readonly resultingOutcome: Option.Option<PaymentOperationOutcome>;
@@ -410,8 +412,19 @@ export interface PaymentEvidencePersistence {
   readonly insertRecoveryRequest: (
     input: NewRecoveryRequestInput,
   ) => Effect.Effect<PaymentRecoveryRequestRecord, PaymentUnavailable>;
+  /** Whether an uncorrected statement of the same source binding, fact kind and economic effect key already counts toward an operation (see implementation). */
+  readonly isEconomicEffectCounted: (input: {
+    readonly economicEffectKey: string;
+    readonly excludeObservationId: string;
+    readonly factKind: PaymentObservationFactKind;
+    /** A Payment-bound statement counts only for its own Payment; an unassigned one for any Payment of the scope. */
+    readonly paymentId: string | undefined;
+    readonly source: PaymentSourceBinding;
+  }) => Effect.Effect<boolean, PaymentUnavailable>;
   /** Whether a qualified SOURCE_CORRECTION (accepted, held or conflicting) names this observation. */
   readonly isObservationCorrected: (observationId: string) => Effect.Effect<boolean, PaymentUnavailable>;
+  /** Whether an applied full SOURCE_CORRECTION already reopened this observation, so its effect no longer stands. */
+  readonly isObservationReopened: (observationId: string) => Effect.Effect<boolean, PaymentUnavailable>;
   /**
    * Uncorrected statements of one Payment whose effect already counts toward an operation: accepted
    * interpretations naming the operation and governed attachments that resolved one.
@@ -587,11 +600,13 @@ export const paymentEvidencePersistenceForTransaction = (
         return [];
       }
       const scope = yield* ownerScope;
+      // The decision itself records the operation it counted the evidence toward, so an attachment to
+      // an already confirmed operation (no transition) of an operationless case keeps its target.
       const decisionRows = yield* transaction
         .select({
-          caseId: reconciliationDecisions.caseId,
           decisionId: reconciliationDecisions.decisionId,
           evidenceRef: reconciliationDecisions.evidenceRef,
+          operationId: reconciliationDecisions.operationId,
           resultingOutcome: reconciliationDecisions.resultingOutcome,
         })
         .from(reconciliationDecisions)
@@ -605,48 +620,6 @@ export const paymentEvidencePersistenceForTransaction = (
         )
         .orderBy(asc(reconciliationDecisions.decidedAt), asc(reconciliationDecisions.decisionId))
         .pipe(Effect.mapError(readFailure));
-      if (decisionRows.length === 0) {
-        return [];
-      }
-      const [caseRows, transitionRows] = yield* Effect.all(
-        [
-          transaction
-            .select({ caseId: reconciliationCases.caseId, operationId: reconciliationCases.operationId })
-            .from(reconciliationCases)
-            .where(
-              and(
-                eq(reconciliationCases.tenantId, scope.tenantId),
-                eq(reconciliationCases.legalEntityId, scope.legalEntityId),
-                inArray(
-                  reconciliationCases.caseId,
-                  decisionRows.map((row) => row.caseId),
-                ),
-              ),
-            )
-            .pipe(Effect.mapError(readFailure)),
-          transaction
-            .select({
-              causeId: operationOutcomeTransitions.causeId,
-              operationId: operationOutcomeTransitions.operationId,
-            })
-            .from(operationOutcomeTransitions)
-            .where(
-              and(
-                eq(operationOutcomeTransitions.tenantId, scope.tenantId),
-                eq(operationOutcomeTransitions.legalEntityId, scope.legalEntityId),
-                eq(operationOutcomeTransitions.causeKind, 'RECONCILIATION'),
-                inArray(
-                  operationOutcomeTransitions.causeId,
-                  decisionRows.map((row) => row.decisionId),
-                ),
-              ),
-            )
-            .pipe(Effect.mapError(readFailure)),
-        ],
-        { concurrency: 1 },
-      );
-      const caseOperation = new Map(caseRows.map((row) => [row.caseId, row.operationId ?? undefined]));
-      const changedOperation = new Map(transitionRows.map((row) => [row.causeId, row.operationId]));
       return decisionRows.flatMap((row): PaymentObservationAttachmentRecord[] =>
         row.evidenceRef === null
           ? []
@@ -654,7 +627,7 @@ export const paymentEvidencePersistenceForTransaction = (
               {
                 decisionId: row.decisionId,
                 observationId: row.evidenceRef,
-                operationId: changedOperation.get(row.decisionId) ?? caseOperation.get(row.caseId),
+                operationId: row.operationId ?? undefined,
                 resultingOutcome: row.resultingOutcome ?? undefined,
               },
             ],
@@ -717,6 +690,89 @@ export const paymentEvidencePersistenceForTransaction = (
         { concurrency: 1 },
       );
       return { acceptedObservations, attachedStatements } satisfies PaymentInterpretedEvidence;
+    },
+  );
+
+  /** Observations among these ids that an applied full correction already reopened (REOPEN_TO_CONFLICT). */
+  const reopenedAmong = Effect.fn('PaymentEvidencePersistence.reopenedAmong')(function* reopenedAmong(
+    observationIds: readonly string[],
+  ) {
+    if (observationIds.length === 0) {
+      return new Set<string>();
+    }
+    const scope = yield* ownerScope;
+    const rows = yield* transaction
+      .select({ correctsObservationId: observations.correctsObservationId })
+      .from(observations)
+      .where(
+        and(
+          eq(observations.tenantId, scope.tenantId),
+          eq(observations.legalEntityId, scope.legalEntityId),
+          eq(observations.factKind, 'SOURCE_CORRECTION'),
+          eq(observations.correctionEffect, 'REOPEN_TO_CONFLICT'),
+          inArray(observations.correctsObservationId, [...observationIds]),
+        ),
+      )
+      .pipe(Effect.mapError(readFailure));
+    return new Set(rows.flatMap((row) => (row.correctsObservationId === null ? [] : [row.correctsObservationId])));
+  });
+
+  const isObservationReopened = Effect.fn('PaymentEvidencePersistence.isObservationReopened')(
+    function* isObservationReopened(observationId: string) {
+      return (yield* reopenedAmong([observationId])).has(observationId);
+    },
+  );
+
+  /**
+   * Whether the economic effect of a held statement already counts toward an operation: an uncorrected
+   * statement of the same source binding, fact kind and key that an accepted interpretation or a governed
+   * attachment resolved for the Payment (any Payment when unassigned). The attribution ledger is not
+   * consulted: it outlives a full disproof of the statement that claimed the effect.
+   */
+  const isEconomicEffectCounted = Effect.fn('PaymentEvidencePersistence.isEconomicEffectCounted')(
+    function* isEconomicEffectCounted(input: {
+      readonly economicEffectKey: string;
+      readonly excludeObservationId: string;
+      readonly factKind: PaymentObservationFactKind;
+      readonly paymentId: string | undefined;
+      readonly source: PaymentSourceBinding;
+    }) {
+      const scope = yield* ownerScope;
+      const rows = yield* transaction
+        .select({
+          acceptanceOutcome: observations.acceptanceOutcome,
+          observationId: observations.observationId,
+          operationId: observations.operationId,
+        })
+        .from(observations)
+        .where(
+          and(
+            eq(observations.tenantId, scope.tenantId),
+            eq(observations.legalEntityId, scope.legalEntityId),
+            input.paymentId === undefined
+              ? isNotNull(observations.paymentId)
+              : eq(observations.paymentId, input.paymentId),
+            isNotNull(observations.sourceAuthorityId),
+            eq(observations.sourceKind, input.source.sourceKind),
+            eq(observations.sourceSystem, input.source.sourceSystem),
+            eq(observations.accountRef, input.source.accountRef),
+            eq(observations.environment, input.source.environment),
+            eq(observations.economicEffectKey, input.economicEffectKey),
+            eq(observations.factKind, input.factKind),
+            inArray(observations.acceptanceOutcome, [...QUALIFIED_STATEMENT_OUTCOMES]),
+          ),
+        )
+        .pipe(Effect.mapError(readFailure));
+      const candidates = rows.filter((row) => row.observationId !== input.excludeObservationId);
+      const reopened = yield* reopenedAmong(candidates.map((row) => row.observationId));
+      const uncorrected = candidates.filter((row) => !reopened.has(row.observationId));
+      if (uncorrected.some((row) => row.acceptanceOutcome === 'ACCEPTED_OBSERVATION' && row.operationId !== null)) {
+        return true;
+      }
+      const attachments = yield* listObservationAttachments(uncorrected.map((row) => row.observationId));
+      return attachments.some(
+        (attachment) => attachment.operationId !== undefined && attachment.resultingOutcome !== undefined,
+      );
     },
   );
 
@@ -1046,6 +1102,7 @@ export const paymentEvidencePersistenceForTransaction = (
         decidedAt: DateTime.toDateUtc(input.decidedAt),
         decisionKind: input.decisionKind,
         evidenceRef: Option.getOrNull(input.evidenceRef),
+        operationId: Option.getOrNull(input.operationId),
         reason: input.reason,
         resultingOutcome: Option.getOrNull(input.resultingOutcome),
       })
@@ -1382,7 +1439,9 @@ export const paymentEvidencePersistenceForTransaction = (
     hasCaseDecision,
     insertDecision,
     insertRecoveryRequest,
+    isEconomicEffectCounted,
     isObservationCorrected,
+    isObservationReopened,
     listEstablishedEffects,
     listInterpretedEvidence,
     listObservationAttachments,
