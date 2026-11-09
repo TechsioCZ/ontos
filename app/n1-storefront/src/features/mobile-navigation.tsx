@@ -141,21 +141,25 @@ export const MobileNavigation = ({
   }, [headerRef, open]);
   return (
     <div
-      className="n1-mobile-navigation pointer-events-none fixed inset-x-0 bottom-0 z-(--z-dialog-positioner) md:hidden"
+      className={`n1-mobile-navigation fixed inset-x-0 bottom-0 z-(--z-dialog-positioner) md:hidden ${open ? "pointer-events-auto" : "pointer-events-none"}`}
       id="n1-mobile-navigation"
       style={{ top: navigationTop }}
     >
       <Dialog
         closeLabel={d.closeMenu}
         customTrigger
+        hideCloseButton
         id="n1-mobile-navigation"
+        modal={false}
         onOpenChange={({ open: next }) => onOpenChange(next)}
         open={open}
         placement="left"
         portal={false}
         position="absolute"
+        preventScroll
         size="xs"
         title={<span className="sr-only">{d.menu}</span>}
+        trapFocus={false}
       >
         <nav aria-label={d.menu}>
           <div className="n1-mobile-category-heading px-4 py-2">

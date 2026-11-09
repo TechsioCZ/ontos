@@ -1933,3 +1933,34 @@ souborech, typy, lint, formát a 447 kanonických tokenů PASS. TraceDecay
 package diagnostika bez chyb. Globální i18n nadále obsahuje stejných 28
 diagnostik ve stejných souborech mimo N1; porovnáno s předchozím logem,
 bez potlačení. Nejde o celorepozitářový zelený výsledek.
+
+## 9. 11. 2026 — mobilní zavírání navigace podle Figmy
+
+Čerstvé Figma podklady 59:1595, 418:2412/2620 potvrzují X v headeru při otevření
+a nepřítomnost druhého close uvnitř draweru. Desktop 418:2368 byl zároveň
+načtený jako reference šesti sloupců; tato změna desktop neupravuje.
+
+Actual browser RED před opravou: CS 320/390 a EN 390 — všechny tři případy
+ukázaly stále menu glyph a původní název; druhý klik na trigger selhal kvůli
+modal inert headeru. Regrese je interakční, proto se neřeší SSR mockováním
+useState ani testem kopírujícím nový ternární výraz.
+
+Po opravě prošly CS 390 a EN 390. První cold CS 320 pokus skončil na timeoutu
+odpovědi vzdáleného account endpointu ještě před UI kontrolami a zůstává
+zaznamenaný jako neúspěšná precondition. Samostatný CS 320 recheck čeká na
+skutečné zahájení klientského account requestu a dva animační framy, nikoli
+na jeho vzdálenou odpověď; proběhl bez mockování a prošel.
+
+Tyto tři kombinace dokládají header X, opětovné zavření triggerem, Escape,
+návrat focusu na trigger, body scroll lock, outside close bez navigace na
+podklad, přepnutí z menu do košíku a absenci overflow i page errors. Všechny
+tři after screenshoty a Figma PNG otevřel také nezávislý reviewer; v této
+úpravě nenašel blokující připomínku. Přesný první focus target není doložen.
+
+Návrh používá veřejné Button props, podporované Dialog flags a nativní Zag
+trigger anatomii. Nezavádí component CSS override ani nové tokeny. Kvůli
+nedostupnému živému katalogu tato kontrola neschvaluje naplněný strom ani
+celý storefront jako vizuálně dokončený. Při testu nevznikly business zápisy.
+
+Automatická sada: 801 testů v 76 souborech PASS, bez skipů. Typy, lint,
+formát a kontrola 447 kanonických tokenů PASS.

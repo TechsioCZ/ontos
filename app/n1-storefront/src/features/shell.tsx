@@ -123,8 +123,12 @@ export const StorefrontShell = ({ categories, children, dictionary: d, locale }:
                 <Button
                   aria-controls="n1-mobile-navigation"
                   aria-expanded={mobileMenuOpen}
-                  aria-label={d.menu}
-                  icon="token-icon-menu"
+                  aria-haspopup="dialog"
+                  aria-label={mobileMenuOpen ? d.closeMenu : d.menu}
+                  data-ownedby="n1-mobile-navigation"
+                  data-part="trigger"
+                  data-scope="dialog"
+                  icon={mobileMenuOpen ? "token-icon-close" : "token-icon-menu"}
                   iconSize="xl"
                   onClick={() =>
                     setHeaderPanel((current) =>

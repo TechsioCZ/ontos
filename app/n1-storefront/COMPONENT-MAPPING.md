@@ -166,7 +166,7 @@ Mobilní navigace59:1595/418:2491: existující Dialog left/xs s Accordion
 md/borderless a VerticalNavigation.Link pro skutečné větve ownera. Drawer se
 kotví podle skutečného spodního okraje Headeru přes veřejný ref; počáteční
 useLayoutEffect a ResizeObserver hlavičky i body mají cleanup; body zachytí
-také změnu výšky oznámení nad shellem. Modal nadále zamyká scroll pozadí.
+také změnu výšky oznámení nad shellem. Dialog nadále zamyká scroll pozadí.
 Dynamický top je pouze geometrie existujícího aplikačního wrapperu, nikoli
 inline vzhled knihovní komponenty. Statický součet nezahrnoval demo lištu
 ani zalomení utility odkazu a překrýval logo. Vzhled používá doložené role:
@@ -180,9 +180,24 @@ Native Button font role je skutečně spotřebovaná i u Accordion.Header:
 root nav scope400, existující heading scope600; původní accordion weight
 v shipped cascade přebíjí font-button, proto se neuvádí neúčinný override.
 
-Nativní Dialog close zůstává dostupný uvnitř focus trapu. Figma close v headeru
-nelze jen vizuálně nahradit za vnější inertní tlačítko. Root řádek zůstává40px
-proti Figma38, child36 proti34 kvůli kanonické24px lince. Separátory borderless
+Figma59:1595 /418:2412/2620 má zavírání v headeru. Tentýž Button proto při
+otevření používá existující `token-icon-close` (mdi:close) a `closeMenu`, při
+zavření `token-icon-menu` a základní název kategorií. Nativní Dialog dostává
+`modal=false`, `trapFocus=false`, `preventScroll=true` a `hideCloseButton`:
+header zůstává dostupný a nepřibývá druhé nepodložené X uvnitř draweru.
+Shipped `behavior` vybírá pouze vzhledové varianty; zůstává jeho dosavadní
+výchozí N1 backdrop. Nativní machine samostatně řídí modalitu, scroll a focus.
+
+Kit0.57 nabízí jen `customTrigger`, nikoli compound Dialog.Trigger nebo
+onInteractOutside/persistentElements. Externí řízený Button proto zachovává
+stejnou veřejnou Zag anatomii jako getTriggerProps: data-scope=dialog,
+data-part=trigger a data-ownedby se stejným Dialog id. Native dismissable
+layer tak trigger vyloučí z outside-close a native return-focus jej dohledá.
+Nepoužívá se hádané vnitřní DOM id ani vlastní document listener. Při otevření
+je geometrický wrapper pointer-active pro nativní backdrop; při zavření
+pointer-transparent. Knihovní content/positioner pointer chování se nepřepisuje.
+
+Root řádek zůstává40px proti Figma38, child36 proti34 kvůli kanonické24px lince. Separátory borderless
 Accordionu nemají přímou slot roli; nový CSS border se nevyrábí. Skutečný strom,
 child destinations a další původní demo větve zůstávají, počet není Figma fixture.
 
