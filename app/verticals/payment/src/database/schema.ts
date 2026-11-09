@@ -635,6 +635,65 @@ export const observations = paymentSchema.table.withRLS(
   ],
 );
 
+/**
+ * Append-only attribution of one confirmed source economic effect to the one Payment Operation it
+ * established (#1151 "Several observations proven to describe the same economic effect count once"),
+ * across every Payment of the trusted Tenant / Selling Legal Entity. The key is the source binding
+ * (whichever of its authority records qualified the statement), the fact and the source's own effect
+ * key. The first statement or governed attachment that establishes the effect appends the row inside
+ * its Action transaction; the unique key serializes concurrent first attributions, and the provenance
+ * names the establishing invocation (its observation or reconciliation decision row).
+ */
+export const economicEffectAttributions = paymentSchema.table.withRLS(
+  'economic_effect_attributions',
+  {
+    ...scopeColumns(),
+    ...provenanceColumns(),
+    accountRef: text('account_ref').notNull(),
+    attributedAt: timestamp('attributed_at', { withTimezone: true }).notNull(),
+    attributionId: uuid('attribution_id').defaultRandom().primaryKey(),
+    economicEffectKey: text('economic_effect_key').notNull(),
+    environment: text('environment').notNull(),
+    factKind: text('fact_kind').$type<PaymentObservationFactKind>().notNull(),
+    operationId: uuid('operation_id').notNull(),
+    paymentId: uuid('payment_id').notNull(),
+    sourceKind: text('source_kind').$type<PaymentSourceKind>().notNull(),
+    sourceSystem: text('source_system').notNull(),
+  },
+  (table) => [
+    unique('payment_economic_effect_attributions_effect_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.sourceKind,
+      table.sourceSystem,
+      table.accountRef,
+      table.environment,
+      table.factKind,
+      table.economicEffectKey,
+    ),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.paymentId, table.operationId],
+      foreignColumns: [
+        paymentOperations.tenantId,
+        paymentOperations.legalEntityId,
+        paymentOperations.paymentId,
+        paymentOperations.operationId,
+      ],
+      name: 'payment_economic_effect_attributions_operation_fk',
+    }).onDelete('restrict'),
+    check(
+      'payment_economic_effect_attributions_vocabulary_ck',
+      sql`${table.factKind} in (${literalList(PAYMENT_OBSERVATION_FACT_KINDS)}) and ${table.sourceKind} in (${literalList(PAYMENT_SOURCE_KINDS)})`,
+    ),
+    opaqueCheck('payment_economic_effect_attributions_system_ck', table.sourceSystem),
+    opaqueCheck('payment_economic_effect_attributions_account_ck', table.accountRef),
+    opaqueCheck('payment_economic_effect_attributions_environment_ck', table.environment),
+    opaqueCheck('payment_economic_effect_attributions_effect_ck', table.economicEffectKey),
+    compositionRevisionCheck('payment_economic_effect_attributions_composition_ck', table.compositionRevision),
+    ...tenantLegalEntityRlsPolicies('payment_economic_effect_attributions', table.tenantId, table.legalEntityId),
+  ],
+);
+
 /** Immutable Payment Authorization proof for one exact Order Commitment Attempt (#1149). */
 export const paymentAuthorizations = paymentSchema.table.withRLS(
   'payment_authorizations',
@@ -835,6 +894,7 @@ export const PAYMENT_TABLES = [
   operationOutcomeTransitions,
   refundItemClaims,
   observations,
+  economicEffectAttributions,
   paymentAuthorizations,
   recoveryRequests,
   reconciliationCases,
@@ -842,6 +902,7 @@ export const PAYMENT_TABLES = [
 ] as const;
 
 export const PAYMENT_TABLE_INVENTORY = [
+  'economic_effect_attributions',
   'gateway_assertion_redemptions',
   'method_enablement_revisions',
   'method_enablements',
@@ -860,6 +921,7 @@ export const PAYMENT_TABLE_INVENTORY = [
 
 /** Relational Queries v2 entry point for this owner. */
 export const paymentRelations = defineRelations({
+  economicEffectAttributions,
   gatewayAssertionRedemptions,
   methodEnablementRevisions,
   methodEnablements,

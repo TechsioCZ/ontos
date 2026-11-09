@@ -229,9 +229,14 @@ const uncorrectedStatements = (aggregate: PaymentEvidenceAggregate) => {
   );
 };
 
-/** Uncorrected accepted statements of the operation. */
+/**
+ * Uncorrected statements that stand behind the operation's outcome: its accepted statements and the held
+ * statements a governed ATTACH_EVIDENCE counted toward it.
+ */
 const standingObservations = (aggregate: PaymentEvidenceAggregate, operationId: string) =>
-  uncorrectedStatements(aggregate).filter((observation) => observation.operationId === operationId);
+  [...uncorrectedStatements(aggregate), ...aggregate.attachedStatements].filter(
+    (observation) => observation.operationId === operationId,
+  );
 
 /** One source identity: kind, system, account and environment, independent of authority records. */
 const sameSourceBinding = (left: PaymentSourceBinding, right: PaymentSourceBinding) =>
@@ -277,14 +282,10 @@ const decideRestatement = (
   observation: QualifiedPaymentObservation,
 ): PaymentEvidenceDecisionCase => {
   const { economicEffectKey } = observation;
-  const establishing = [
-    ...standingObservations(aggregate, operation.operationId),
-    ...aggregate.attachedStatements.filter((attached) => attached.operationId === operation.operationId),
-  ];
   const distinct =
     economicEffectKey !== undefined &&
     operation.outcome === 'EFFECT_CONFIRMED' &&
-    establishing.some(
+    standingObservations(aggregate, operation.operationId).some(
       (prior) =>
         prior.economicEffectKey !== undefined &&
         prior.economicEffectKey !== economicEffectKey &&
@@ -362,7 +363,8 @@ const correctionEffectFor = (
       paymentFactMeaning(other.factKind)?.outcome === operation.outcome,
   );
   if (otherSupport) {
-    // Other standing evidence still states the outcome: neither "still proven" nor "disproven" is safe.
+    // Other standing evidence, accepted or governed-attached, still states the outcome: neither
+    // "still proven" nor "disproven" is safe.
     return hold('CORRECTION_CONTRADICTS_CORROBORATING_EVIDENCE', operation.operationId);
   }
   const partial =

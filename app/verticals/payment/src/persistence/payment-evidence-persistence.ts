@@ -32,6 +32,7 @@ import type {
 import type { PaymentAcceptedObservationView, PaymentInterpretedEvidence } from '../domain/evidence-interpretation.ts';
 import type { PaymentReconciliationEstablishedEffect } from '../domain/evidence-reconciliation.ts';
 import {
+  economicEffectAttributions,
   observations,
   operationOutcomeTransitions,
   paymentAuthorizations,
@@ -356,7 +357,30 @@ const truncate = <Row>(rows: readonly Row[]) => ({
   truncated: rows.length > PAYMENT_EVIDENCE_PROJECTION_LIMIT,
 });
 
+/** One confirmed source economic effect claimed for the operation a statement establishes (#1151). */
+export interface PaymentEconomicEffectAttributionInput {
+  readonly economicEffectKey: string;
+  readonly factKind: PaymentObservationFactKind;
+  readonly operationId: string;
+  readonly paymentId: string;
+  readonly provenance: PaymentExecutionProvenance;
+  readonly source: PaymentSourceBinding;
+}
+
+/** `ATTRIBUTED_ELSEWHERE`: the effect already established another operation, of this or another Payment. */
+export const PaymentEconomicEffectAttributionSchema = Schema.Literals(['ATTRIBUTED', 'ATTRIBUTED_ELSEWHERE']);
+export type PaymentEconomicEffectAttribution = typeof PaymentEconomicEffectAttributionSchema.Type;
+
 export interface PaymentEvidencePersistence {
+  /**
+   * Claims the source economic effect for one operation across every Payment of the trusted scope: the
+   * first claim appends the attribution; a later or concurrent claim of the same operation is the same
+   * attribution, any other operation is `ATTRIBUTED_ELSEWHERE`. A concurrent first claim waits on the
+   * unique key and then reads the committed winner, so exactly one operation is ever attributed.
+   */
+  readonly attributeEconomicEffect: (
+    input: PaymentEconomicEffectAttributionInput,
+  ) => Effect.Effect<PaymentEconomicEffectAttribution, PaymentUnavailable>;
   readonly closeCase: (input: {
     readonly caseId: string;
     readonly closedAt: DateTime.Utc;
@@ -750,6 +774,77 @@ export const paymentEvidencePersistenceForTransaction = (
         .orderBy(asc(observations.verifiedAt), asc(observations.observationId))
         .pipe(Effect.mapError(readFailure));
       return yield* Effect.forEach(rows, observationRecordOf, { concurrency: 1 });
+    },
+  );
+
+  const attributeEconomicEffect = Effect.fn('PaymentEvidencePersistence.attributeEconomicEffect')(
+    function* attributeEconomicEffect(input: PaymentEconomicEffectAttributionInput) {
+      const scope = yield* ownerScope;
+      const attributedAt = DateTime.toDateUtc(yield* DateTime.now);
+      const effect = {
+        accountRef: input.source.accountRef,
+        economicEffectKey: input.economicEffectKey,
+        environment: input.source.environment,
+        factKind: input.factKind,
+        sourceKind: input.source.sourceKind,
+        sourceSystem: input.source.sourceSystem,
+      };
+      const claimed = yield* transaction
+        .insert(economicEffectAttributions)
+        .values({
+          ...scope,
+          ...effect,
+          actionInvocationId: input.provenance.actionInvocationId,
+          actorPrincipalId: input.provenance.actorPrincipalId,
+          attributedAt,
+          compositionRevision: input.provenance.compositionRevision,
+          operationId: input.operationId,
+          paymentId: input.paymentId,
+        })
+        .onConflictDoNothing({
+          target: [
+            economicEffectAttributions.tenantId,
+            economicEffectAttributions.legalEntityId,
+            economicEffectAttributions.sourceKind,
+            economicEffectAttributions.sourceSystem,
+            economicEffectAttributions.accountRef,
+            economicEffectAttributions.environment,
+            economicEffectAttributions.factKind,
+            economicEffectAttributions.economicEffectKey,
+          ],
+        })
+        .returning({ attributionId: economicEffectAttributions.attributionId })
+        .pipe(Effect.mapError(writeFailure));
+      if (claimed.length > 0) {
+        return 'ATTRIBUTED' satisfies PaymentEconomicEffectAttribution;
+      }
+      const [existing] = yield* transaction
+        .select({
+          operationId: economicEffectAttributions.operationId,
+          paymentId: economicEffectAttributions.paymentId,
+        })
+        .from(economicEffectAttributions)
+        .where(
+          and(
+            eq(economicEffectAttributions.tenantId, scope.tenantId),
+            eq(economicEffectAttributions.legalEntityId, scope.legalEntityId),
+            eq(economicEffectAttributions.sourceKind, effect.sourceKind),
+            eq(economicEffectAttributions.sourceSystem, effect.sourceSystem),
+            eq(economicEffectAttributions.accountRef, effect.accountRef),
+            eq(economicEffectAttributions.environment, effect.environment),
+            eq(economicEffectAttributions.factKind, effect.factKind),
+            eq(economicEffectAttributions.economicEffectKey, effect.economicEffectKey),
+          ),
+        )
+        .pipe(Effect.mapError(readFailure));
+      if (existing === undefined) {
+        return yield* paymentUnavailable('The conflicting economic effect attribution is unreadable');
+      }
+      return (
+        existing.paymentId === input.paymentId && existing.operationId === input.operationId
+          ? 'ATTRIBUTED'
+          : 'ATTRIBUTED_ELSEWHERE'
+      ) satisfies PaymentEconomicEffectAttribution;
     },
   );
 
@@ -1234,6 +1329,7 @@ export const paymentEvidencePersistenceForTransaction = (
   });
 
   return Object.freeze({
+    attributeEconomicEffect,
     closeCase,
     findCase,
     findObservation,

@@ -23,7 +23,11 @@ import { observations, reconciliationCases, sourceAuthorities, sourceAuthorityRe
 import { paymentAggregatePersistenceForTransaction } from './payment-aggregate-persistence.ts';
 import type { PaymentAggregatePersistence } from './payment-aggregate-persistence.ts';
 import { paymentEvidencePersistenceForTransaction } from './payment-evidence-persistence.ts';
-import type { PaymentEvidencePersistence } from './payment-evidence-persistence.ts';
+import type {
+  PaymentEconomicEffectAttribution,
+  PaymentEconomicEffectAttributionInput,
+  PaymentEvidencePersistence,
+} from './payment-evidence-persistence.ts';
 import type { PaymentInterpretedEvidence } from '../domain/evidence-interpretation.ts';
 import type { PaymentRecordedObservationView, PaymentSourceAuthorityView } from '../domain/source-qualification.ts';
 
@@ -101,6 +105,10 @@ export interface PaymentSourceConfigurationWrite {
 export type PaymentSourceFailure = PaymentSourceRejected | PaymentUnavailable;
 
 export interface PaymentSourcePersistence {
+  /** Claims a confirmed source economic effect for the operation a statement establishes (#1151). */
+  readonly attributeEconomicEffect: (
+    input: PaymentEconomicEffectAttributionInput,
+  ) => Effect.Effect<PaymentEconomicEffectAttribution, PaymentUnavailable>;
   readonly configureAuthority: (
     input: ConfigurePaymentSourceAuthorityInput,
   ) => Effect.Effect<PaymentSourceConfigurationWrite, PaymentSourceFailure>;
@@ -233,7 +241,7 @@ const observationWriteFailure = (cause: unknown) =>
 export const paymentSourcePersistenceForTransaction = (
   transaction: ScopedTransactionExecutor,
   submitter: PaymentSourceSubmitter,
-  evidence: Pick<PaymentEvidencePersistence, 'listInterpretedEvidence'>,
+  evidence: Pick<PaymentEvidencePersistence, 'attributeEconomicEffect' | 'listInterpretedEvidence'>,
 ): PaymentSourcePersistence => {
   const ownerScope = Effect.suspend(() => {
     const { legalEntityId, tenantId } = transaction.scope;
@@ -540,6 +548,7 @@ export const paymentSourcePersistenceForTransaction = (
   );
 
   return Object.freeze({
+    attributeEconomicEffect: evidence.attributeEconomicEffect,
     configureAuthority,
     findObservation,
     findOccurrence,

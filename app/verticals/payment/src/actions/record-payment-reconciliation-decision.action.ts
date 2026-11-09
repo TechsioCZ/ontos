@@ -144,6 +144,14 @@ const attachedObservationId = (body: PaymentReconciliationDecisionBody) =>
     CLOSE_CASE: () => Option.none<string>(),
   });
 
+/** ATTACH_EVIDENCE only: the operation the decision names, if any. */
+const attachedOperationId = (body: PaymentReconciliationDecisionBody) =>
+  Match.valueTags(body, {
+    ATTACH_EVIDENCE: ({ operationId }) => Option.fromUndefinedOr(operationId),
+    CLASSIFY_CONFLICT: () => Option.none<string>(),
+    CLOSE_CASE: () => Option.none<string>(),
+  });
+
 /** CLOSE_CASE only: the observation the closing case holds, if any. */
 const closingCaseObservationId = (body: PaymentReconciliationDecisionBody, locked: PaymentReconciliationCaseRecord) =>
   Match.valueTags(body, {
@@ -344,6 +352,51 @@ const findOperation = (current: Option.Option<PaymentAggregateRecord>, operation
     ),
   );
 
+/**
+ * A governed attachment that confirms an operation claims the observation's source economic effect
+ * across every Payment of the trusted scope (#1151 "count once"): an effect that already established
+ * another operation, of this or another Payment, is never attached again (`true`: refuse the decision).
+ */
+const attachedEffectCountedElsewhere = Effect.fn(
+  'RecordPaymentReconciliationDecisionAction.attachedEffectCountedElsewhere',
+)(function* attachedEffectCountedElsewhere(
+  context: DecisionContext,
+  current: Option.Option<PaymentAggregateRecord>,
+  step: AppliedStep,
+  facts: Option.Option<PaymentReconciliationEvidenceFacts>,
+  targetOperationId: string | undefined,
+  provenance: PaymentExecutionProvenance,
+) {
+  if (step.decisionKind !== 'ATTACH_EVIDENCE' || !Option.contains(step.resultingOutcome, 'EFFECT_CONFIRMED')) {
+    return false;
+  }
+  const evidence = Option.getOrUndefined(facts);
+  const operation =
+    targetOperationId === undefined ? undefined : Option.getOrUndefined(findOperation(current, targetOperationId));
+  if (evidence?.economicEffectKey === undefined || operation === undefined) {
+    return false;
+  }
+  const attribution = yield* context.services.evidence.attributeEconomicEffect({
+    economicEffectKey: evidence.economicEffectKey,
+    factKind: evidence.factKind,
+    operationId: operation.operationId,
+    paymentId: operation.paymentId,
+    provenance,
+    source: {
+      accountRef: evidence.source.accountRef,
+      environment: evidence.source.environment,
+      sourceKind: evidence.source.sourceKind,
+      sourceSystem: evidence.source.sourceSystem,
+    },
+  });
+  yield* recordPaymentLookup(context, {
+    paymentId: operation.paymentId,
+    query: 'economic-effect-attribution',
+    resultCount: 1,
+  });
+  return attribution === 'ATTRIBUTED_ELSEWHERE';
+});
+
 interface AppliedOutcome {
   readonly before: PaymentOperationRecord;
   readonly coverageRevision: number;
@@ -452,6 +505,20 @@ export const handleRecordPaymentReconciliationDecision = Effect.fn('RecordPaymen
         subject: { operationId: locked.operationId, paymentId: locked.paymentId, status: locked.status },
       }),
     );
+    const countedElsewhere = yield* attachedEffectCountedElsewhere(
+      context,
+      current,
+      step,
+      facts,
+      locked.operationId ?? Option.getOrUndefined(attachedOperationId(payload.decision)),
+      provenance,
+    );
+    if (countedElsewhere) {
+      return yield* paymentEvidenceRejected(
+        'payment_reconciliation_evidence_not_qualified',
+        'The economic effect already counts toward another Payment operation',
+      );
+    }
     const decidedAt = yield* DateTime.now;
     const decision = yield* evidence.insertDecision({
       caseId: locked.caseId,

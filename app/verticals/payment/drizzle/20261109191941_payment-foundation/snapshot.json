@@ -1,7 +1,7 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "198d4fa1-bc49-453d-9538-657eb77894d8",
+  "id": "ba73d35d-1c09-45dc-a3d6-4f0cac457a9e",
   "prevIds": [
     "00000000-0000-0000-0000-000000000000"
   ],
@@ -9,6 +9,12 @@
     {
       "name": "payment",
       "entityType": "schemas"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "economic_effect_attributions",
+      "entityType": "tables",
+      "schema": "payment"
     },
     {
       "isRlsEnabled": false,
@@ -93,6 +99,201 @@
       "name": "source_authority_revisions",
       "entityType": "tables",
       "schema": "payment"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "composition_revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "account_ref",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "attributed_at",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "attribution_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "economic_effect_key",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "environment",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "fact_kind",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "operation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "payment_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_kind",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_system",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
     },
     {
       "type": "text",
@@ -3168,6 +3369,29 @@
       "columns": [
         "tenant_id",
         "legal_entity_id",
+        "payment_id",
+        "operation_id"
+      ],
+      "schemaTo": "payment",
+      "tableTo": "payment_operations",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id",
+        "operation_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "payment_economic_effect_attributions_operation_fk",
+      "entityType": "fks",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
         "method_enablement_id"
       ],
       "schemaTo": "payment",
@@ -3534,6 +3758,16 @@
     },
     {
       "columns": [
+        "attribution_id"
+      ],
+      "nameExplicit": false,
+      "name": "economic_effect_attributions_pkey",
+      "schema": "payment",
+      "table": "economic_effect_attributions",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
         "method_enablement_revision_id"
       ],
       "nameExplicit": false,
@@ -3661,6 +3895,24 @@
       "schema": "payment",
       "table": "source_authority_revisions",
       "entityType": "pks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "source_kind",
+        "source_system",
+        "account_ref",
+        "environment",
+        "fact_kind",
+        "economic_effect_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "payment_economic_effect_attributions_effect_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
     },
     {
       "nameExplicit": true,
@@ -3979,6 +4231,48 @@
       "entityType": "uniques",
       "schema": "payment",
       "table": "source_authority_revisions"
+    },
+    {
+      "value": "\"fact_kind\" in ('COLLECTION_PENDING', 'COLLECTION_CONFIRMED', 'COLLECTION_NOT_EFFECTED', 'CANCEL_CONFIRMED', 'CANCEL_NOT_EFFECTED', 'REFUND_PENDING', 'REFUND_CONFIRMED', 'REFUND_NOT_EFFECTED', 'SETTLEMENT_OBSERVED', 'SOURCE_CORRECTION', 'UNRECOGNIZED') and \"source_kind\" in ('BANK_ACCOUNTING', 'CARRIER', 'LOCAL_POS_OPERATOR', 'PAYMENT_GATEWAY', 'MANUAL_EXTERNAL_REFUND')",
+      "name": "payment_economic_effect_attributions_vocabulary_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
+    },
+    {
+      "value": "\"source_system\" = btrim(\"source_system\") and length(\"source_system\") between 1 and 200",
+      "name": "payment_economic_effect_attributions_system_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
+    },
+    {
+      "value": "\"account_ref\" = btrim(\"account_ref\") and length(\"account_ref\") between 1 and 200",
+      "name": "payment_economic_effect_attributions_account_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
+    },
+    {
+      "value": "\"environment\" = btrim(\"environment\") and length(\"environment\") between 1 and 200",
+      "name": "payment_economic_effect_attributions_environment_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
+    },
+    {
+      "value": "\"economic_effect_key\" = btrim(\"economic_effect_key\") and length(\"economic_effect_key\") between 1 and 200",
+      "name": "payment_economic_effect_attributions_effect_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
+    },
+    {
+      "value": "\"composition_revision\" ~ '^[a-f0-9]{64}$'",
+      "name": "payment_economic_effect_attributions_composition_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
     },
     {
       "value": "\"method\" in ('ONLINE_GATEWAY', 'BANK_TRANSFER_ADVANCE', 'CASH_ON_DELIVERY', 'DEFERRED_INVOICE', 'PAY_ON_PICKUP_OR_ON_SITE')",
@@ -4581,6 +4875,58 @@
       "entityType": "checks",
       "schema": "payment",
       "table": "source_authority_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"economic_effect_attributions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"economic_effect_attributions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_economic_effect_attributions_select",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"payment\".\"economic_effect_attributions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"economic_effect_attributions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_economic_effect_attributions_insert",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"economic_effect_attributions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"economic_effect_attributions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"payment\".\"economic_effect_attributions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"economic_effect_attributions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_economic_effect_attributions_update",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"economic_effect_attributions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"economic_effect_attributions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_economic_effect_attributions_delete",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "economic_effect_attributions"
     },
     {
       "as": "PERMISSIVE",

@@ -19,6 +19,7 @@ import {
   interpretPaymentObservation,
   PaymentCorrectionEffect,
   PaymentEvidenceDecision,
+  paymentFactMeaning,
 } from './evidence-interpretation.ts';
 import { PaymentSourceQualification, qualifyPaymentSourceStatement } from './source-qualification.ts';
 import type {
@@ -378,12 +379,48 @@ const applyHold = Effect.fn('PaymentSource.applyHold')(function* applyHold(
   });
 });
 
+/**
+ * One economic effect counts once across every Payment of the trusted scope (#1151): a confirmed
+ * statement claims its source economic effect for the operation it establishes or corroborates before
+ * anything is recorded. When the effect already established another operation (of this or another
+ * Payment, including one concurrently committing first), the statement must not count again.
+ */
+const effectAttributedElsewhere = Effect.fn('PaymentSource.effectAttributedElsewhere')(
+  function* effectAttributedElsewhere(run: StatementRun, paymentId: string, operationId: string) {
+    const { provenance, statement } = run.input;
+    const { economicEffectKey, factKind, source } = statement;
+    if (economicEffectKey === undefined || paymentFactMeaning(factKind)?.outcome !== 'EFFECT_CONFIRMED') {
+      return false;
+    }
+    const attribution = yield* run.services.source.attributeEconomicEffect({
+      economicEffectKey,
+      factKind,
+      operationId,
+      paymentId,
+      provenance,
+      source,
+    });
+    return attribution === 'ATTRIBUTED_ELSEWHERE';
+  },
+);
+
+/** The confirmed effect already counts toward another operation: held debt, no outcome change. */
+const holdEffectCountedElsewhere = (run: StatementRun, qualified: QualifiedStatement, operationId: string) =>
+  applyHold(
+    run,
+    qualified,
+    PaymentEvidenceDecision.HOLD({ operationId, reason: 'ECONOMIC_EFFECT_ESTABLISHED_ANOTHER_OPERATION' }),
+  );
+
 const applyNoChange = Effect.fn('PaymentSource.applyNoChange')(function* applyNoChange(
   run: StatementRun,
   qualified: QualifiedStatement,
   decision: DecisionOf<'NO_CHANGE'>,
 ) {
   const operationId = operationInTarget(run, decision.operationId);
+  if (operationId !== undefined && (yield* effectAttributedElsewhere(run, qualified.paymentId, operationId))) {
+    return yield* holdEffectCountedElsewhere(run, qualified, operationId);
+  }
   const observationId = yield* recordObservation(run, {
     acceptanceOutcome: 'ACCEPTED_OBSERVATION',
     amount: claimedAmountOf(run.input.statement),
@@ -406,6 +443,9 @@ const applyTransition = Effect.fn('PaymentSource.applyTransition')(function* app
   qualified: QualifiedStatement,
   decision: DecisionOf<'TRANSITION'>,
 ) {
+  if (yield* effectAttributedElsewhere(run, qualified.paymentId, decision.operationId)) {
+    return yield* holdEffectCountedElsewhere(run, qualified, decision.operationId);
+  }
   const observationId = yield* recordObservation(run, {
     acceptanceOutcome: 'ACCEPTED_OBSERVATION',
     amount: claimedAmountOf(run.input.statement),

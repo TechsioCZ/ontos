@@ -17,6 +17,7 @@ const PAYMENT_RESOURCE_TYPE = 'payment.core.payment' as const;
 const PAYMENT_QUERY_ACCESS = {
   'authorization-issuance': 'read',
   'case-decisions': 'list',
+  'economic-effect-attribution': 'read',
   'established-effects': 'list',
   'intent-key': 'read',
   'interpreted-evidence': 'list',
@@ -40,6 +41,8 @@ const PAYMENT_QUERY_ACCESS = {
 } as const;
 
 export type PaymentOwnerQuery = keyof typeof PAYMENT_QUERY_ACCESS;
+
+const PAYMENT_AGGREGATE_QUERY: PaymentOwnerQuery = 'payment-aggregate';
 
 type DataAccessRecorder = Pick<ActionHandlerContext<DomainEventContractMap>, 'recordDataAccess'>;
 
@@ -77,13 +80,14 @@ export const recordPaymentLookup = (context: DataAccessRecorder, lookup: Payment
 export const recordPaymentAggregateReads = (context: DataAccessRecorder, paymentIds: Iterable<string>) =>
   Effect.forEach(
     new Set(paymentIds),
-    (paymentId) => recordPaymentLookup(context, { paymentId, query: 'payment-aggregate', resultCount: 1 }),
+    (paymentId) => recordPaymentLookup(context, { paymentId, query: PAYMENT_AGGREGATE_QUERY, resultCount: 1 }),
     { concurrency: 1, discard: true },
   );
 
 /**
  * Source statement acceptance decides inside the domain on owner reads the handler does not see. The
- * handler passes these observed services instead: each successful read notes its bounded lookup, and
+ * handler passes these observed services instead: each read the domain can decide on (including a
+ * Payment lookup that found nothing) notes its bounded lookup, and
  * `recordReads` records them once the decision returned (a failed invocation persists none anyway).
  */
 export const observedPaymentSourceServices = (services: PaymentSourceServices) => {
@@ -95,17 +99,31 @@ export const observedPaymentSourceServices = (services: PaymentSourceServices) =
   const observed: PaymentSourceServices = {
     aggregate: {
       ...services.aggregate,
+      // A missing or out-of-scope Payment is a zero-result lookup keyed on the named id, not a read of a
+      // Payment resource; acceptance may still succeed on it (held unresolved).
       loadAggregate: (paymentId, options) =>
-        services.aggregate
-          .loadAggregate(paymentId, options)
-          .pipe(
-            Effect.tap((loaded) =>
-              note({ paymentId: loaded.payment.paymentId, query: 'payment-aggregate', resultCount: 1 }),
-            ),
+        services.aggregate.loadAggregate(paymentId, options).pipe(
+          Effect.tap((loaded) =>
+            note({ paymentId: loaded.payment.paymentId, query: PAYMENT_AGGREGATE_QUERY, resultCount: 1 }),
           ),
+          Effect.tapErrorTag('PaymentRejected', (failure) =>
+            failure.code === 'payment_not_found'
+              ? note({ query: PAYMENT_AGGREGATE_QUERY, recordId: paymentId, resultCount: 0 })
+              : Effect.void,
+          ),
+        ),
     },
     source: {
       ...services.source,
+      // The claim reads the committed attribution of the source economic effect the decision rests on.
+      attributeEconomicEffect: (input) =>
+        services.source
+          .attributeEconomicEffect(input)
+          .pipe(
+            Effect.tap(() =>
+              note({ paymentId: input.paymentId, query: 'economic-effect-attribution', resultCount: 1 }),
+            ),
+          ),
       findObservation: (observationId) =>
         services.source
           .findObservation(observationId)
