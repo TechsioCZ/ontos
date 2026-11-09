@@ -116,6 +116,7 @@ export const ConnectionSummarySchema = Schema.Struct({
   lastUsedAt: Schema.OptionFromNullOr(Schema.DateTimeUtcFromString),
   legalEntityId: AgentLegalEntityIdSchema,
   legalName: Schema.String,
+  /** The acting principal's ceiling right now. A placeholder (nothing permitted) when `live` is false. */
   limits: ConnectionLimitsSchema,
   /**
    * What the connection may use at most, as approved on the consent screen and narrowed since. "Upravit přístup"
@@ -126,7 +127,7 @@ export const ConnectionSummarySchema = Schema.Struct({
     modules: Schema.Array(AgentModuleGrantSchema),
     writePolicy: AgentWritePolicySchema,
   }),
-  /** Effective modules: the grant intersected with the acting principal's live rights. */
+  /** Effective modules: the grant intersected with the acting principal's live rights. Empty when `live` is false. */
   modules: Schema.Array(ConnectionModuleSchema),
   profileId: AgentAccessProfileIdSchema,
   revokedAt: Schema.OptionFromNullOr(Schema.DateTimeUtcFromString),
@@ -135,10 +136,15 @@ export const ConnectionSummarySchema = Schema.Struct({
   /** Free-text reason an administrator gave when revoking (from the `oauth.connection.revoked` audit row). */
   revokeNote: Schema.OptionFromNullOr(Schema.String),
   status: ConnectionStatusSchema,
+  /**
+   * True only while the grant is active and passed today's live check, so `modules`, `writePolicy` and `limits` are its
+   * current rights. False means not usable right now: those fields are empty or placeholders, never a live ceiling.
+   */
+  live: Schema.Boolean,
   tenantId: AgentAccessTenantIdSchema,
   /** Person who approved the connection. */
   user: PrincipalRefSchema,
-  /** Effective write policy: the stricter of the grant and the agent profile. */
+  /** Effective write policy: the stricter of the grant and the agent profile. Placeholder when `live` is false. */
   writePolicy: AgentWritePolicySchema,
 });
 export type ConnectionSummary = typeof ConnectionSummarySchema.Type;

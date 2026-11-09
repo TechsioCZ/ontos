@@ -17,7 +17,6 @@ import {
 } from '@app/shared-contracts/agent-access';
 import type { ConnectionLimits, ConnectionSummary } from '@app/shared-contracts/agent-access';
 import { AgentModuleKeySchema, AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
-import type { ConnectionSummary as ServiceConnectionSummary } from '@app/shared-contracts/oauth-connections';
 import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 
 import { OAuthCredentials } from '../auth/db/oauth-credentials.ts';
@@ -28,6 +27,7 @@ import {
   revokeConnection,
   updateConnection,
 } from '../oauth-connections/connection-service.ts';
+import type { ConnectionSummaryRead } from '../oauth-connections/connection-service.ts';
 import { toGrantRow } from '../oauth-connections/grant-store.ts';
 import { OAuthFlow } from '../oauth-connections/oauth-flow.ts';
 import type { GrantRow } from '../oauth-connections/types.ts';
@@ -81,18 +81,22 @@ const limitsOf = (asker: OperationalScope, rows: readonly GrantRow[]) =>
 
 const toAdminSummary = Effect.fn('GrantAdmin.toAdminSummary')(
   (
-    summary: ServiceConnectionSummary,
+    read: ConnectionSummaryRead,
     row: GrantRow,
     limits: Option.Option<ConnectionLimits>,
     revokeNote: string | null,
   ): Effect.Effect<Option.Option<ConnectionSummary>> =>
     Effect.sync(() => {
+      const { summary } = read;
       const { status } = summary;
       if (!isListed(status)) {
         return Option.none();
       }
-      // Without a loadable authority the effective modules and write policy are nothing, not the granted ones.
-      const loaded = Option.isSome(limits);
+      // Usable now only when the live check passed and the ceiling loaded. Any other grant lists with no effective
+      // module or write policy and a placeholder ceiling: a stored grant never reads as a live right, and an outage never
+      // reads as a read-only ceiling. `live` says which of the two a row is.
+      const current = read.live ? limits : Option.none<ConnectionLimits>();
+      const live = Option.isSome(current);
       return Option.some(
         AdminConnectionSummarySchema.make({
           acting: summary.acting,
@@ -111,8 +115,9 @@ const toAdminSummary = Effect.fn('GrantAdmin.toAdminSummary')(
           lastUsedAt: summary.lastUsedAt,
           legalEntityId: summary.legalEntityId,
           legalName: summary.legalName,
-          limits: Option.getOrElse(limits, () => NO_LIVE_LIMITS),
-          modules: loaded ? summary.modules : [],
+          limits: Option.getOrElse(current, () => NO_LIVE_LIMITS),
+          live,
+          modules: live ? summary.modules : [],
           profileId: summary.profileId,
           revokedAt: Option.map(Option.fromNullOr(row.revokedAt), (instant) => DateTime.makeUnsafe(instant)),
           revokeNote: Option.fromNullOr(revokeNote),
@@ -120,7 +125,7 @@ const toAdminSummary = Effect.fn('GrantAdmin.toAdminSummary')(
           status,
           tenantId: summary.tenantId,
           user: { displayName: summary.userDisplayName, principalId: AgentPrincipalIdSchema.make(row.userPrincipalId) },
-          writePolicy: loaded ? summary.writePolicy : NO_LIVE_LIMITS.maxWritePolicy,
+          writePolicy: live ? summary.writePolicy : NO_LIVE_LIMITS.maxWritePolicy,
         }),
       );
     }),
@@ -192,7 +197,7 @@ export const GrantAdminLive = (request: GrantAdminRequest) =>
 
       const joinSummaries = Effect.fn('GrantAdmin.joinSummaries')(function* joinSummaries(
         rows: readonly GrantRow[],
-        summaries: readonly ServiceConnectionSummary[],
+        summaries: readonly ConnectionSummaryRead[],
       ) {
         const rowsById = new Map(rows.map((row) => [row.grantId, row]));
         const listed = rows.filter((row) => isListed(row.status));
@@ -200,12 +205,12 @@ export const GrantAdminLive = (request: GrantAdminRequest) =>
         const notes = yield* revokeNotesOf(listed);
         const joined = yield* Effect.forEach(
           summaries,
-          (summary): Effect.Effect<Option.Option<ConnectionSummary>, ConnectionsUnavailable> => {
-            const row = rowsById.get(summary.grantId);
+          (read): Effect.Effect<Option.Option<ConnectionSummary>, ConnectionsUnavailable> => {
+            const row = rowsById.get(read.summary.grantId);
             const rowLimits = row === undefined ? undefined : limits.get(actingKey(row));
             return row === undefined || rowLimits === undefined
               ? Effect.succeed(Option.none<ConnectionSummary>())
-              : toAdminSummary(summary, row, rowLimits, notes.get(row.grantId) ?? null);
+              : toAdminSummary(read, row, rowLimits, notes.get(row.grantId) ?? null);
           },
           { concurrency: 1 },
         );

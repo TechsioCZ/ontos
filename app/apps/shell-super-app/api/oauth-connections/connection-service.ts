@@ -438,6 +438,15 @@ const summaryOf = (
   };
 };
 
+/**
+ * One grant's summary as read now. `live` only when its live check passed in this read: only then are its modules and
+ * write policy its current rights. A summary that is not live carries the stored grant, which is not a usable right.
+ */
+export interface ConnectionSummaryRead {
+  readonly live: boolean;
+  readonly summary: ConnectionSummary;
+}
+
 /** Summarizes retained grant rows without querying the same management selection twice. */
 export const connectionSummariesOf = Effect.fn('OAuthConnectionService.connectionSummariesOf')(
   function* connectionSummariesOf(tenantId: string, rows: readonly GrantRow[], asker?: OperationalScope) {
@@ -459,9 +468,12 @@ export const connectionSummariesOf = Effect.fn('OAuthConnectionService.connectio
         row.status === 'active'
           ? loadLiveConnection(row.grantId, asker).pipe(
               Effect.option,
-              Effect.map((live) => summaryOf(row, names, legalNames, Option.getOrUndefined(live), labelOf)),
+              Effect.map((live) => ({
+                live: Option.isSome(live),
+                summary: summaryOf(row, names, legalNames, Option.getOrUndefined(live), labelOf),
+              })),
             )
-          : Effect.succeed(summaryOf(row, names, legalNames, undefined, labelOf)),
+          : Effect.succeed({ live: false, summary: summaryOf(row, names, legalNames, undefined, labelOf) }),
       // loadLiveConnection eventually opens two authority reads; keep room for the PostgreSQL connection.
       { concurrency: 2 },
     );
@@ -531,9 +543,9 @@ export const updateConnection = Effect.fn('OAuthConnectionService.updateConnecti
       principalId: input.actorPrincipalId,
     })
     .pipe(Effect.mapError(toUnavailable));
-  const [summary] = yield* connectionSummariesOf(grant.tenantId, [updated], asker);
-  if (summary === undefined) {
+  const [read] = yield* connectionSummariesOf(grant.tenantId, [updated], asker);
+  if (read === undefined) {
     return yield* new ConnectionInvalid({ code: 'grant_not_found' });
   }
-  return summary;
+  return read.summary;
 });

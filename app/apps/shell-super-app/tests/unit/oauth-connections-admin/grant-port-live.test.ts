@@ -57,6 +57,7 @@ const foreignTenantId = '00000000-0000-4000-8000-000000000099';
 
 interface FixtureOptions {
   readonly auditFails?: boolean;
+  readonly emailVerified?: boolean;
   readonly notesFail?: boolean;
   readonly readableModules?: readonly string[];
   readonly request?: GrantAdminRequest;
@@ -218,7 +219,8 @@ const fixture = (options: FixtureOptions = {}) =>
       }),
       Layer.succeed(OAuthCredentials, {
         loadRefresh: () => Effect.die('Unexpected refresh lookup'),
-        loadUserAccount: () => Effect.succeed(Option.some({ banned: false, emailVerified: true, name: 'Person' })),
+        loadUserAccount: () =>
+          Effect.succeed(Option.some({ banned: false, emailVerified: options.emailVerified ?? true, name: 'Person' })),
         revokeFamily: () => Effect.die('Unexpected refresh revocation'),
       }),
       Layer.succeed(OAuthFlow, {
@@ -307,6 +309,7 @@ it.effect('retains granted authority separately from effective modules and fresh
     expect(Option.isSome(result)).toBe(true);
     if (Option.isSome(result)) {
       expect(result.value.granted).toEqual({ modules: requested.modules, writePolicy: 'direct' });
+      expect(result.value.live).toBe(true);
       expect(result.value.modules).toEqual([]);
       expect(result.value.limits).toEqual({ maxWritePolicy: 'direct', modules: [] });
       expect(result.value.allModules).toBe(false);
@@ -329,12 +332,32 @@ it.effect('lists a grant whose authority cannot be loaded with no live limits in
     const listed = yield* test.grants.list(filter);
     expect(listed).toHaveLength(1);
     expect(listed[0]?.status).toBe('superseded');
+    expect(listed[0]?.live).toBe(false);
     expect(listed[0]?.limits).toStrictEqual({ maxWritePolicy: 'read_only', modules: [] });
     expect(listed[0]?.modules).toStrictEqual([]);
     expect(listed[0]?.writePolicy).toBe('read_only');
     expect(listed[0]?.granted.writePolicy).toBe('direct');
     expect(listed[0]?.allModules).toBe(true);
     expect(test.authorityReads).toStrictEqual([]);
+  }),
+);
+
+it.effect('shows an active grant that fails its live check as not live, even when its ceiling loads', () =>
+  Effect.gen(function* notLiveWithLoadableCeiling() {
+    // An unverified e-mail fails the live check without revoking the grant, while the acting ceiling still loads.
+    const test = yield* fixture({ emailVerified: false, readableModules: ['work.tasks'] });
+    const [listed] = yield* test.grants.list(filter);
+    expect(listed?.status).toBe('active');
+    expect(listed?.live).toBe(false);
+    // Nothing the stored grant asked for is shown as a live right: no module, no write policy, nothing permitted.
+    expect(listed?.modules).toStrictEqual([]);
+    expect(listed?.writePolicy).toBe('read_only');
+    expect(listed?.limits).toStrictEqual({ maxWritePolicy: 'read_only', modules: [] });
+    expect(listed?.granted.writePolicy).toBe('direct');
+    expect(listed?.allModules).toBe(true);
+    // The ceiling was read (so the outcome is the live check, not a missing ceiling) and the grant was not revoked.
+    expect(test.authorityReads).toContain(retainedGrant.actingPrincipalId);
+    expect(test.events).toEqual([]);
   }),
 );
 

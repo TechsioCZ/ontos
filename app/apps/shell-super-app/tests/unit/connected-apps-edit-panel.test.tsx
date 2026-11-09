@@ -62,6 +62,7 @@ const connection: ConnectionSummary = Schema.decodeUnknownSync(ConnectionSummary
   legalEntityId: 'company-a',
   legalName: 'Firma A',
   limits,
+  live: true,
   modules: [{ label: 'Sklad', moduleId: warehouse, read: true, write: true }],
   profileId: 'profile-1',
   revokedAt: null,
