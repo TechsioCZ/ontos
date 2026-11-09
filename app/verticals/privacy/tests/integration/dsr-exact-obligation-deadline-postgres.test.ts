@@ -11,6 +11,7 @@ import {
   ModuleEntrypointGateway,
   ModuleStateGate,
   OperationalScopeResolver,
+  OwnerAuthorizationOverlay,
   CorePersistenceLive,
   DatabaseConfig,
   InstalledModuleCatalogService,
@@ -296,6 +297,7 @@ const makeDsrNative = Effect.fn('DsrExactDeadline.makeNative')(function* makeDsr
           expectedDeployment: owner.deployment,
           moduleEntrypointGateway: yield* ModuleEntrypointGateway,
           moduleStateGate: yield* ModuleStateGate,
+          ownerAuthorizationOverlay: yield* OwnerAuthorizationOverlay,
           ownerRegistration: privacyRegistration,
         },
       );
