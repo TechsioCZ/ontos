@@ -287,7 +287,7 @@ it.live('#1151 Open conflict debt blocks a further collection even when every CO
       ]);
 
       // The unresolved evidence says attempt 1 may already have collected: no third COLLECT is admitted.
-      const third = yield* Effect.result(
+      const refusal = yield* Effect.flip(
         r1.actions
           .runAction({
             payload: {
@@ -302,7 +302,7 @@ it.live('#1151 Open conflict debt blocks a further collection even when every CO
           })
           .pipe(Effect.provide(paymentUnavailableOwnerPortsLive)),
       );
-      expect(third).toMatchObject({ _tag: 'Failure', failure: { code: 'payment_held_for_reconciliation' } });
+      expect(refusal).toMatchObject({ code: 'payment_held_for_reconciliation' });
       expect((yield* outcomesOf(evidence, payment.paymentId)).map(([operationKey]) => operationKey)).toEqual([
         'collect-attempt-1',
         'collect-attempt-2',
