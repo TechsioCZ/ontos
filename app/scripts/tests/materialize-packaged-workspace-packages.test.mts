@@ -445,6 +445,47 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect('completes omitted native CommonJS inputs and follows their own TypeScript dependencies', () =>
+  Effect.gen(function* completesNativeJavaScriptInputs() {
+    const root = yield* temporaryRoot;
+    const unit = unitUnder(root);
+    const packaged = path.join(unit, PACKAGED_DIRECTORY);
+    const manifest = manifestOf(TRACED_CONTRACTS, { '.': ENTRY_SUBPATH });
+    const entry = "import bootstrap from './bootstrap.cjs'; export const origin = bootstrap.origin;\n";
+    const installed = yield* Effect.promise(() =>
+      writeWorkspacePackage(path.join(unit, 'node_modules'), manifest, {
+        [ENTRY_SOURCE]: entry,
+        'src/bootstrap.cjs': "module.exports = require('./nested/runtime.cjs');\n",
+        'src/nested/runtime.cjs': "module.exports = require('../value.cts');\n",
+        'src/value.cts': "module.exports = { origin: 'completed-native-commonjs' };\n",
+      }),
+    );
+    const before = yield* Effect.promise(() => snapshotTree(installed));
+    const traced = yield* Effect.promise(() =>
+      writeWorkspacePackage(packagedNodeModules(unit), manifest, { [ENTRY_SOURCE]: entry }),
+    );
+    yield* Effect.promise(() => writeProbe(packaged, originProbe(TRACED_CONTRACTS)));
+    yield* compilePackagedWorkspacePackages(unit);
+    expect(yield* Effect.promise(() => snapshotTree(installed))).toEqual(before);
+    expect(yield* Effect.promise(() => readFile(path.join(traced, 'src/bootstrap.cjs'), ENCODING))).toBe(
+      "module.exports = require('./nested/runtime.cjs');\n",
+    );
+    expect(yield* Effect.promise(() => readFile(path.join(traced, 'src/nested/runtime.cjs'), ENCODING))).toBe(
+      "module.exports = require('./../value.cjs');\n",
+    );
+    yield* Effect.promise(() => rename(installed, `${installed}-retired-build-input`));
+    const after = runProbe(packaged);
+    expect(after.stderr).toBe('');
+    expect(after.status).toBe(0);
+    expect(Result.getOrThrow(Schema.decodeUnknownResult(OriginObservation)(after.stdout)).origin).toBe(
+      'completed-native-commonjs',
+    );
+    const snapshot = yield* Effect.promise(() => snapshotTree(traced));
+    yield* compilePackagedWorkspacePackages(unit);
+    expect(yield* Effect.promise(() => snapshotTree(traced))).toEqual(snapshot);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect('refuses a private import map that differs from the declared build input', () =>
   Effect.gen(function* refusesDifferentPrivateImportMap() {
     const root = yield* temporaryRoot;

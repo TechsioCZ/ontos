@@ -71,6 +71,8 @@ const TYPESCRIPT_EXTENSIONS = new Set([
 ]);
 
 const isTypeScriptModule = (extension: string): boolean => TYPESCRIPT_EXTENSIONS.has(extension);
+const isJavaScriptModule = (extension: string): boolean => ['.js', '.mjs', '.cjs'].includes(extension);
+const isRuntimeModule = (extension: string): boolean => isTypeScriptModule(extension) || isJavaScriptModule(extension);
 
 export class PackagedWorkspaceError extends Schema.TaggedError<PackagedWorkspaceError>()('PackagedWorkspaceError', {
   message: Schema.String,
@@ -118,6 +120,8 @@ interface TracedModule {
   readonly outputRelativePath: string;
   /** The traced source, and the file this step reads. */
   readonly sourcePath: string;
+  /** JavaScript inputs already run natively; only their TypeScript import specifiers need rewriting. */
+  readonly typescript: boolean;
 }
 
 /** What one packaged workspace package became. */
@@ -315,10 +319,11 @@ const collectTracedModules = (packageDirectory: string, packageIsModule: boolean
     const modules: TracedModule[] = [];
     const recordFile = (absolute: string) => {
       const extension = path.extname(absolute);
-      if (!isTypeScriptModule(extension) || DECLARATION_FILE.test(absolute)) {
+      if (!isRuntimeModule(extension) || DECLARATION_FILE.test(absolute)) {
         return;
       }
-      const outputExtension = outputExtensionFor(extension, packageIsModule);
+      const typescript = isTypeScriptModule(extension);
+      const outputExtension = typescript ? outputExtensionFor(extension, packageIsModule) : extension;
       const sourceRelativePath = path.relative(packageDirectory, absolute);
       const outputRelativePath = `${sourceRelativePath.slice(0, -extension.length)}${outputExtension}`;
       modules.push({
@@ -327,6 +332,7 @@ const collectTracedModules = (packageDirectory: string, packageIsModule: boolean
         outputPath: path.join(packageDirectory, outputRelativePath),
         outputRelativePath,
         sourcePath: absolute,
+        typescript,
       });
     };
     const visit = (directory: string): Effect.Effect<void, PlatformError> =>
@@ -348,7 +354,8 @@ const collectTracedModules = (packageDirectory: string, packageIsModule: boolean
         }
       });
     yield* visit(packageDirectory);
-    return modules;
+    const generated = new Set(modules.filter((module) => module.typescript).map((module) => module.outputPath));
+    return modules.filter((module) => module.typescript || !generated.has(module.sourcePath));
   });
 
 /** Transforms one module without bundling it or changing its module identity. */
@@ -356,6 +363,9 @@ const transpileTracedModule = (module: TracedModule) =>
   Effect.gen(function* transpilePackagedModule() {
     const fs = yield* FileSystem.FileSystem;
     const source = yield* fs.readFileString(module.sourcePath);
+    if (!module.typescript) {
+      return source;
+    }
     const transformed = yield* Effect.tryPromise({
       catch: (cause) => failed(`${module.sourcePath}: ${String(cause)}`),
       try: async () =>
@@ -385,6 +395,12 @@ const compileTracedModule = (module: TracedModule, resolve: (specifier: string) 
     const fs = yield* FileSystem.FileSystem;
     const code = yield* transpileTracedModule(module);
     const compiled = yield* rewriteModuleSpecifiers(code, module.sourcePath, resolve);
+    if (!module.typescript) {
+      if (compiled !== code) {
+        yield* fs.writeFileString(module.outputPath, compiled);
+      }
+      return;
+    }
     const existing = (yield* fs.exists(module.outputPath)) ? yield* fs.readFileString(module.outputPath) : undefined;
     if (existing !== undefined && existing !== compiled) {
       yield* Effect.fail(
@@ -531,7 +547,7 @@ const completeTracedModuleGraph = (
     const examined = new Set<string>();
     let sourceDirectory: string | undefined;
     while (true) {
-      const carried = new Set(modules.map((module) => module.sourcePath));
+      const carried = new Set(modules.flatMap((module) => [module.sourcePath, module.outputPath]));
       const missing = new Set<string>();
       for (const module of modules) {
         if (examined.has(module.sourcePath)) {
@@ -547,7 +563,7 @@ const completeTracedModuleGraph = (
               return privateTarget;
             }
             const input = privateTarget ?? specifier;
-            if (!RELATIVE_SPECIFIER.test(input) || !isTypeScriptModule(path.extname(input))) {
+            if (!RELATIVE_SPECIFIER.test(input) || !isRuntimeModule(path.extname(input))) {
               return undefined;
             }
             const target = path.resolve(
@@ -643,8 +659,11 @@ const compilePackagedWorkspacePackage = Effect.fn(
       ),
     { concurrency: 1, discard: true },
   );
+  const compiledTypeScriptPaths = new Set(
+    modules.filter((module) => module.typescript).map((module) => module.outputPath),
+  );
   const repoint = (specifier: string) =>
-    compiledExportTarget(packageDirectory, packageIsModule, compiledPaths, specifier);
+    compiledExportTarget(packageDirectory, packageIsModule, compiledTypeScriptPaths, specifier);
   const exportsRewrite = rewriteManifestTargets(manifest[MANIFEST_EXPORTS], repoint);
   const importsRewrite = rewriteManifestTargets(manifest[MANIFEST_IMPORTS], repoint);
   const repointed = [...exportsRewrite.repointed, ...importsRewrite.repointed];
@@ -663,7 +682,7 @@ const compilePackagedWorkspacePackage = Effect.fn(
     yield* fs.writeFileString(manifestPath, `${encoded}\n`);
   }
   return {
-    compiled: modules.map((module) => module.outputRelativePath),
+    compiled: modules.filter((module) => module.typescript).map((module) => module.outputRelativePath),
     name,
     repointed,
     untraced,
