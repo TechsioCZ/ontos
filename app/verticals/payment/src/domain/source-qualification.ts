@@ -18,6 +18,7 @@ import type {
   PaymentSourceClaimedAmount,
   PaymentSourceEntry,
 } from '../../shared/domain/source-statement.ts';
+import { codCarrierBindingProblem } from './cod-carrier.ts';
 import type { QualifiedPaymentObservation } from './evidence-interpretation.ts';
 import { paymentFactMeaning } from './evidence-interpretation.ts';
 
@@ -28,6 +29,9 @@ import { paymentFactMeaning } from './evidence-interpretation.ts';
  *
  * - Authority is per exact fact family and configured source binding; there is no global precedence
  *   ("ERP wins") and a transport, a credential or a gateway assertion is never authority by itself.
+ * - Only a principal bound to the authority (#1153 "Integration/provider principals submit only their
+ *   configured fact families/source bindings") speaks as it. The submitting principal is the trusted
+ *   Core invocation principal, never a payload claim; holding the Action permission is not enough.
  * - Tenant and Selling Legal Entity come only from the trusted operation scope: a statement from a
  *   foreign scope finds neither the authority nor the Payment, and never mutates it.
  * - Same amount, variable symbol or reference never correlate; only the exact Payment identity, the
@@ -152,6 +156,11 @@ export const sourceAuthorityConfigurationProblem = (configuration: {
 /** One configured authority row as qualification reads it. */
 export interface PaymentSourceAuthorityView {
   readonly accountRef: string;
+  /**
+   * Whether the trusted principal of the current invocation is one of `submitterPrincipalIds`: decided
+   * by the owner persistence from the Core operation scope, never from the statement.
+   */
+  readonly boundToSubmitter: boolean;
   readonly environment: string;
   readonly factFamily: PaymentSourceFactFamily;
   readonly method: PaymentMethod | undefined;
@@ -161,6 +170,8 @@ export interface PaymentSourceAuthorityView {
   readonly sourceKind: PaymentSourceKind;
   readonly sourceSystem: string;
   readonly status: PaymentSourceAuthorityStatus;
+  /** The principals bound to submit as this authority at its current revision. */
+  readonly submitterPrincipalIds: readonly string[];
 }
 
 /** One recorded observation (immutable evidence) as qualification compares it. */
@@ -304,7 +315,8 @@ const capabilityProblem = (claimed: string | undefined, selected: string) => {
 
 /**
  * The original binding check: the source must be the exact provider account/environment, the exact
- * selected Delivery Offer or the exact pickup capability of the Payment. None means it matches.
+ * selected COD carrier naming the selected Delivery Offer, or the exact pickup capability of the
+ * Payment. None means it matches.
  */
 const bindingProblem = (statement: PaymentSourceStatement, binding: PaymentExecutionBinding) => {
   const { source } = statement;
@@ -323,9 +335,7 @@ const bindingProblem = (statement: PaymentSourceStatement, binding: PaymentExecu
     ),
     Match.when('CARRIER', () =>
       Match.value(binding).pipe(
-        Match.tag('COD_DELIVERY_OFFER', (offer) =>
-          capabilityProblem(statement.deliveryOfferRef, offer.deliveryOfferRef),
-        ),
+        Match.tag('COD_DELIVERY_OFFER', (offer) => codCarrierBindingProblem(statement, offer)),
         Match.orElse(() => MISMATCHED),
       ),
     ),
@@ -484,6 +494,10 @@ export const qualifyPaymentSourceStatement = (
   if (active.length === 0) {
     return unauthorized('No active configured authority exists for this source binding and fact family');
   }
+  const bound = active.filter((authority) => authority.boundToSubmitter);
+  if (bound.length === 0) {
+    return unauthorized('The submitting principal is not bound to the configured source authority');
+  }
   const rule = authorityRule(statement.factFamily, statement.source.sourceKind);
   if (rule === undefined || !rule.facts.includes(statement.factKind)) {
     return PaymentSourceQualification.Unsupported({
@@ -509,10 +523,10 @@ export const qualifyPaymentSourceStatement = (
       : PaymentSourceQualification.OccurrenceConflict({ original: existingOccurrence });
   }
   if (input.target === undefined) {
-    const authority = unassignedAuthority(active);
+    const authority = unassignedAuthority(bound);
     return authority === undefined
       ? unauthorized('No active configured authority exists for this source binding and fact family')
       : PaymentSourceQualification.HeldUnassigned({ authority });
   }
-  return qualifyAgainstPayment(input, active, input.target);
+  return qualifyAgainstPayment(input, bound, input.target);
 };

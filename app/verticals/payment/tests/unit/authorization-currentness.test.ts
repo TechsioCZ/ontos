@@ -1,7 +1,7 @@
 import type { PaymentTermDefinitionSnapshot } from '@app/payment-term-catalog-contracts/payment-term';
 import { PaymentTermDefinitionSnapshotSchema } from '@app/payment-term-catalog-contracts/payment-term';
 import type { PaymentTermRef } from '@app/payment-term-catalog-contracts/resources/payment-term';
-import { DateTime, Duration, Effect, Schema } from 'effect';
+import { DateTime, Duration, Effect, Layer, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { IssuePaymentAuthorizationPayloadSchema } from '../../shared/actions/issue-payment-authorization.ts';
@@ -16,6 +16,8 @@ import type {
   PaymentAuthorizationBinding,
   PaymentAuthorizationCondition,
 } from '../../shared/domain/authorization-proof.ts';
+import type { PaymentPurchasingContext } from '../../shared/domain/applicability-purchasing-context.ts';
+import type { PaymentCodCarrier } from '../../shared/domain/payment-execution-binding.ts';
 import type { PaymentMonetaryAmount } from '../../shared/domain/payment-money.ts';
 import type { PaymentOperationKind, PaymentOperationOutcome } from '../../shared/domain/payment-vocabulary.ts';
 import {
@@ -34,8 +36,14 @@ import {
   codDeliveryCondition,
   deferredTermCondition,
   pickupCondition,
+  verifyMethodCondition,
 } from '../../src/domain/authorization-method-condition.ts';
+import type { PaymentMethodConditionSubject } from '../../src/domain/authorization-method-condition.ts';
 import type { PaymentFundsOperation, PaymentFundsSnapshot } from '../../src/domain/coverage.ts';
+import { DeliveryCapabilityPort } from '../../src/ports/delivery-capability-port.ts';
+import { PaymentTermEvidencePort } from '../../src/ports/payment-term-evidence-port.ts';
+import type { PaymentTermPurchase } from '../../src/ports/payment-term-evidence-port.ts';
+import { PickupCapabilityPort } from '../../src/ports/pickup-capability-port.ts';
 
 const czk = (amountMinor: number): PaymentMonetaryAmount => ({ amountMinor, currency: 'CZK' });
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -312,16 +320,39 @@ describe('#1149 prepaid Current validation', () => {
   });
 });
 
+const retiredOn = (snapshot: PaymentTermDefinitionSnapshot, effectiveTo: string): PaymentTermDefinitionSnapshot => ({
+  ...snapshot,
+  lifecycle: { effectiveFrom: snapshot.lifecycle.effectiveFrom, effectiveTo, state: 'RETIRED' },
+});
+const usableTermA = (semanticSnapshot: PaymentTermDefinitionSnapshot) => ({
+  _tag: 'USABLE' as const,
+  entitlementEvidenceRef: 'ent-a',
+  paymentTermRef: TERM_A,
+  semanticSnapshot,
+});
+
+const COD_CARRIER = { accountRef: 'carrier-account-1', environment: 'production', sourceSystem: 'carrier-dpd' };
+const COD_OFFER_1 = {
+  _tag: 'COD_DELIVERY_OFFER',
+  capabilityEvidenceRef: 'cap-1',
+  carrier: COD_CARRIER,
+  deliveryOfferRef: 'offer-1',
+} as const;
+
 describe('#1149 method conditions', () => {
   const retained = snapshotOf(TERM_A, { days: 14, kind: 'NET_DAYS' });
   const payment = { paymentTermRef: TERM_A, termSemanticEvidence: retained };
   it('#1149 usable NET_DAYS with the retained meaning and Current entitlement is met', () => {
-    const check = deferredTermCondition(payment, {
-      _tag: 'USABLE',
-      entitlementEvidenceRef: 'ent-a',
-      paymentTermRef: TERM_A,
-      semanticSnapshot: retained,
-    });
+    const check = deferredTermCondition(
+      payment,
+      {
+        _tag: 'USABLE',
+        entitlementEvidenceRef: 'ent-a',
+        paymentTermRef: TERM_A,
+        semanticSnapshot: retained,
+      },
+      T,
+    );
     expect(MethodConditionCheck.$is('Met')(check)).toBe(true);
     if (MethodConditionCheck.$is('Met')(check)) {
       expect(Schema.is(PaymentAuthorizationDeferredNetDaysSchema)(check.condition)).toBe(true);
@@ -330,19 +361,31 @@ describe('#1149 method conditions', () => {
   });
   it('#1149 not-current entitlement, another Ref, changed semantics or IMMEDIATE are not met', () => {
     const notMet = [
-      deferredTermCondition(payment, { _tag: 'NOT_USABLE', paymentTermRef: TERM_A, reason: 'ENTITLEMENT_NOT_CURRENT' }),
-      deferredTermCondition(payment, {
-        _tag: 'USABLE',
-        entitlementEvidenceRef: 'ent-a',
-        paymentTermRef: TERM_B,
-        semanticSnapshot: snapshotOf(TERM_B, { kind: 'NET_DAYS' }),
-      }),
-      deferredTermCondition(payment, {
-        _tag: 'USABLE',
-        entitlementEvidenceRef: 'ent-a',
-        paymentTermRef: TERM_A,
-        semanticSnapshot: snapshotOf(TERM_A, { days: 30, kind: 'NET_DAYS' }, 'b'.repeat(64)),
-      }),
+      deferredTermCondition(
+        payment,
+        { _tag: 'NOT_USABLE', paymentTermRef: TERM_A, reason: 'ENTITLEMENT_NOT_CURRENT' },
+        T,
+      ),
+      deferredTermCondition(
+        payment,
+        {
+          _tag: 'USABLE',
+          entitlementEvidenceRef: 'ent-a',
+          paymentTermRef: TERM_B,
+          semanticSnapshot: snapshotOf(TERM_B, { kind: 'NET_DAYS' }),
+        },
+        T,
+      ),
+      deferredTermCondition(
+        payment,
+        {
+          _tag: 'USABLE',
+          entitlementEvidenceRef: 'ent-a',
+          paymentTermRef: TERM_A,
+          semanticSnapshot: snapshotOf(TERM_A, { days: 30, kind: 'NET_DAYS' }, 'b'.repeat(64)),
+        },
+        T,
+      ),
       deferredTermCondition(
         { paymentTermRef: TERM_A, termSemanticEvidence: snapshotOf(TERM_A, { kind: 'IMMEDIATE' }) },
         {
@@ -351,14 +394,36 @@ describe('#1149 method conditions', () => {
           paymentTermRef: TERM_A,
           semanticSnapshot: snapshotOf(TERM_A, { kind: 'IMMEDIATE' }),
         },
+        T,
       ),
     ];
     expect(notMet.map((check) => MethodConditionCheck.$is('NotMet')(check))).toEqual([true, true, true, true]);
   });
+  it('#1149 a USABLE answer carrying an already retired C15 snapshot is not met; a scheduled retirement still is', () => {
+    const retiredBefore = deferredTermCondition(
+      payment,
+      usableTermA(retiredOn(retained, '2026-11-01T00:00:00.000Z')),
+      T,
+    );
+    const retiredExactlyAtT = deferredTermCondition(
+      payment,
+      usableTermA(retiredOn(retained, '2026-11-09T10:00:00.000Z')),
+      T,
+    );
+    const scheduledAfter = deferredTermCondition(
+      payment,
+      usableTermA(retiredOn(retained, '2026-12-01T00:00:00.000Z')),
+      T,
+    );
+    expect(MethodConditionCheck.$is('NotMet')(retiredBefore)).toBe(true);
+    expect(MethodConditionCheck.$is('NotMet')(retiredExactlyAtT)).toBe(true);
+    expect(MethodConditionCheck.$is('Met')(scheduledAfter)).toBe(true);
+  });
   it('#1149 COD requires the exact COD-capable Delivery Offer', () => {
-    const supported = codDeliveryCondition('offer-1', {
+    const supported = codDeliveryCondition(COD_OFFER_1, {
       _tag: 'SUPPORTED',
       capabilityEvidenceRef: 'cap-1',
+      carrier: COD_CARRIER,
       deliveryOfferRef: 'offer-1',
     });
     expect(MethodConditionCheck.$is('Met')(supported)).toBe(true);
@@ -367,16 +432,17 @@ describe('#1149 method conditions', () => {
     }
     expect(
       MethodConditionCheck.$is('NotMet')(
-        codDeliveryCondition('offer-1', {
+        codDeliveryCondition(COD_OFFER_1, {
           _tag: 'SUPPORTED',
           capabilityEvidenceRef: 'cap',
+          carrier: COD_CARRIER,
           deliveryOfferRef: 'offer-2',
         }),
       ),
     ).toBe(true);
     expect(
       MethodConditionCheck.$is('NotMet')(
-        codDeliveryCondition('offer-1', {
+        codDeliveryCondition(COD_OFFER_1, {
           _tag: 'NOT_SUPPORTED',
           deliveryOfferRef: 'offer-1',
           reason: 'OFFER_NOT_COD_CAPABLE',
@@ -424,4 +490,109 @@ describe('#1149 method conditions', () => {
       'METHOD_CONDITION_NOT_MET',
     ]);
   });
+});
+
+describe('#1149 method-condition owner questions concern the exact stored purchase and carrier', () => {
+  const retained = snapshotOf(TERM_A, { days: 14, kind: 'NET_DAYS' });
+  const guestBuyer: PaymentPurchasingContext = {
+    channelId: 'web-cz',
+    contextRef: 'purchasing-context-1',
+    contextRevision: '1',
+    marketId: 'market-cz',
+    subject: { guestEvidenceRef: 'guest-evidence-1', guestSessionRef: 'guest-session-1', kind: 'GUEST' },
+  };
+  const dpdCarrier: PaymentCodCarrier = {
+    accountRef: 'dpd-merchant-12',
+    environment: 'production',
+    sourceSystem: 'dpd',
+  };
+  const storedPayment: PaymentMethodConditionSubject = {
+    amount: czk(100_000),
+    customerConfigurationId: 'ccc-1',
+    executionBinding: { _tag: 'BANK_ACCOUNTING_RECEIPT' },
+    method: 'DEFERRED_INVOICE',
+    paymentTermRef: TERM_A,
+    purchasingContext: guestBuyer,
+    termSemanticEvidence: retained,
+  };
+
+  const ownerScope = { legalEntityId: '33333333-3333-4333-8333-333333333333', tenantId };
+  const notConsulted = Layer.mergeAll(
+    Layer.succeed(PaymentTermEvidencePort, { verifyTermUse: () => Effect.die('the term owner is not consulted') }),
+    Layer.succeed(DeliveryCapabilityPort, {
+      verifyCashOnDelivery: () => Effect.die('the Delivery owner is not consulted'),
+    }),
+    Layer.succeed(PickupCapabilityPort, {
+      verifyPickupCollection: () => Effect.die('the pickup owner is not consulted'),
+    }),
+  );
+
+  const deliveryOwnerNaming = (carrier: PaymentCodCarrier) =>
+    Layer.merge(
+      notConsulted,
+      Layer.succeed(DeliveryCapabilityPort, {
+        verifyCashOnDelivery: ({ deliveryOfferRef }) =>
+          Effect.succeed({
+            _tag: 'SUPPORTED' as const,
+            capabilityEvidenceRef: `cod-capability-${carrier.sourceSystem}`,
+            carrier,
+            deliveryOfferRef,
+          }),
+      }),
+    );
+
+  it.effect('#1149 a deferred proof asks the term owner about the Payment stored trusted Purchasing Context', () =>
+    Effect.gen(function* deferredPurchaseScope() {
+      const asked: PaymentTermPurchase[] = [];
+      const recordingTermOwner = Layer.succeed(PaymentTermEvidencePort, {
+        verifyTermUse: ({ purchase }) =>
+          Effect.sync(() => {
+            asked.push(purchase);
+            return {
+              _tag: 'USABLE' as const,
+              entitlementEvidenceRef: 'entitlement-1',
+              paymentTermRef: TERM_A,
+              semanticSnapshot: retained,
+            };
+          }),
+      });
+      const check = yield* verifyMethodCondition(
+        storedPayment,
+        [{ enabled: true, method: 'DEFERRED_INVOICE', revision: 1 }],
+        ownerScope,
+      ).pipe(Effect.provide(Layer.merge(notConsulted, recordingTermOwner)));
+      expect(MethodConditionCheck.$is('Met')(check)).toBe(true);
+      expect(asked).toStrictEqual([{ _tag: 'PURCHASING_CONTEXT', purchasingContext: guestBuyer }]);
+    }),
+  );
+
+  it.effect('#1149 COD is not met when the Delivery owner names another carrier for the bound offer', () =>
+    Effect.gen(function* codCarrierCurrentness() {
+      const codPayment: PaymentMethodConditionSubject = {
+        ...storedPayment,
+        executionBinding: {
+          _tag: 'COD_DELIVERY_OFFER',
+          capabilityEvidenceRef: 'cod-capability-dpd',
+          carrier: dpdCarrier,
+          deliveryOfferRef: 'offer-1',
+        },
+        method: 'CASH_ON_DELIVERY',
+      };
+      const check = (carrier: PaymentCodCarrier) =>
+        verifyMethodCondition(
+          codPayment,
+          [{ enabled: true, method: 'CASH_ON_DELIVERY', revision: 1 }],
+          ownerScope,
+        ).pipe(
+          Effect.provide(deliveryOwnerNaming(carrier)),
+          Effect.map((result) => result._tag),
+        );
+      expect(yield* check(dpdCarrier)).toBe('Met');
+      expect(yield* check({ accountRef: 'ppl-merchant-77', environment: 'production', sourceSystem: 'ppl' })).toBe(
+        'NotMet',
+      );
+      expect(yield* check({ ...dpdCarrier, accountRef: 'dpd-merchant-99' })).toBe('NotMet');
+      expect(yield* check({ ...dpdCarrier, environment: 'sandbox' })).toBe('NotMet');
+    }),
+  );
 });

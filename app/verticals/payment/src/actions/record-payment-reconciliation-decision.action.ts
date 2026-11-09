@@ -166,6 +166,9 @@ const evidenceFactsFor = Effect.fn('RecordPaymentReconciliationDecisionAction.ev
     amount: observation.amount,
     corrected: yield* evidence.isObservationCorrected(observation.observationId),
     countedToward: yield* countedTowardOf(context, observation),
+    economicEffectKey: observation.economicEffectKey,
+    establishedEffects:
+      observation.paymentId === undefined ? [] : yield* evidence.listEstablishedEffects(observation.paymentId),
     factKind: observation.factKind,
     observationId: observation.observationId,
     operationId: observation.operationId,

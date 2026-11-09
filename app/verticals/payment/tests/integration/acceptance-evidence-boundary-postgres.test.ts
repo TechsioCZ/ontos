@@ -30,6 +30,7 @@ import { paymentAuthorizationValidationRead } from '../../src/api/payment-author
 import type { PaymentRecord } from '../../src/persistence/payment-aggregate-persistence.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
 import { makeAuthorizationOwnerEvidenceFixture } from '../support/authorization-owner-evidence.fixture.ts';
+import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
 import { failureCodeOf, makeTestScope } from './database-fixture.ts';
 import {
   COMPOSITION_R1,
@@ -136,6 +137,7 @@ const boundaryScenario = Effect.fn('AcceptanceEvidenceBoundary.scenario')(functi
       refundRoute: false,
       source: GOPAY_SOURCE,
       status: 'ACTIVE',
+      submitterPrincipalIds: [scope.principalId],
     },
     principal,
     registration: configurePaymentSourceAuthorityAction,
@@ -465,6 +467,8 @@ it.live(
   () =>
     native(
       Effect.gen(function* lateCallbackUnderR2() {
+        // The unknown effect arises under the compatible R2, so R2 is the release that tracks it.
+        yield* installPaymentTestCompositionAuthority(COMPOSITION_R2);
         const scenario = yield* boundaryScenario();
         const { evidence } = scenario;
         const payment = yield* evidence.createPayment();

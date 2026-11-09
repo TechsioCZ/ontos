@@ -44,6 +44,17 @@ export interface PaymentReconciliationEvidenceSource {
   readonly sourceSystem: string;
 }
 
+/**
+ * One uncorrected statement whose effect already counts toward an operation: its own accepted
+ * interpretation, or a governed attachment that resolved the operation.
+ */
+export interface PaymentReconciliationEstablishedEffect {
+  readonly economicEffectKey: string | undefined;
+  readonly factKind: PaymentObservationFactKind;
+  readonly observationId: string;
+  readonly operationId: string;
+}
+
 /** What the Action established about the observation an ATTACH_EVIDENCE decision names. */
 export interface PaymentReconciliationEvidenceFacts {
   readonly acceptanceOutcome: PaymentObservationAcceptanceOutcome;
@@ -56,6 +67,9 @@ export interface PaymentReconciliationEvidenceFacts {
    * and economic effect. `undefined` stands for an attachment whose operation is not identifiable.
    */
   readonly countedToward: readonly (string | undefined)[];
+  readonly economicEffectKey: string | undefined;
+  /** Uncorrected statements that already establish an operation of this Payment (accepted or attached). */
+  readonly establishedEffects: readonly PaymentReconciliationEstablishedEffect[];
   readonly factKind: PaymentObservationFactKind;
   readonly observationId: string;
   readonly operationId: string | undefined;
@@ -199,6 +213,31 @@ const qualificationRefusal = (
   return undefined;
 };
 
+/**
+ * The attached statement and another uncorrected statement confirming this operation's effect carry
+ * different economic effect keys: two proven monetary effects (e.g. two returns), not one
+ * (#1151 "Several observations proven to describe the same economic effect count once").
+ */
+const statesDistinctEffect = (
+  facts: PaymentReconciliationEvidenceFacts,
+  operation: PaymentReconciliationOperationView,
+  outcome: PaymentOperationOutcome,
+): boolean => {
+  const key = facts.economicEffectKey;
+  return (
+    outcome === 'EFFECT_CONFIRMED' &&
+    key !== undefined &&
+    facts.establishedEffects.some(
+      (established) =>
+        established.operationId === operation.operationId &&
+        established.observationId !== facts.observationId &&
+        established.economicEffectKey !== undefined &&
+        established.economicEffectKey !== key &&
+        paymentFactMeaning(established.factKind)?.outcome === outcome,
+    )
+  );
+};
+
 const decideAttach = (
   input: PaymentReconciliationDecisionInput,
   requestedOperationId: string | undefined,
@@ -233,6 +272,13 @@ const decideAttach = (
     return reject(
       'payment_reconciliation_evidence_not_qualified',
       'The evidence already counts toward another operation of this Payment',
+    );
+  }
+  if (statesDistinctEffect(facts, operation, meaning.outcome)) {
+    // One operation is one monetary effect: a second proven effect is never folded into it.
+    return reject(
+      'payment_reconciliation_evidence_not_qualified',
+      'The evidence proves an economic effect distinct from the one that already established this operation',
     );
   }
   if (facts.amount !== undefined && !sameAmount(facts.amount, operation.amount)) {

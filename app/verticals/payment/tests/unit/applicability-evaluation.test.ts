@@ -9,7 +9,10 @@ import type {
   PaymentMethodBranchSelection,
   PaymentMethodEnablementState,
 } from '../../shared/domain/applicability-contract.ts';
-import { PaymentBankAccountingReceiptBindingSchema } from '../../shared/domain/payment-execution-binding.ts';
+import {
+  PaymentBankAccountingReceiptBindingSchema,
+  PaymentCodDeliveryOfferBindingSchema,
+} from '../../shared/domain/payment-execution-binding.ts';
 import type { PaymentMethod } from '../../shared/domain/payment-vocabulary.ts';
 import { PAYMENT_METHODS } from '../../shared/domain/payment-vocabulary.ts';
 import { evaluatePaymentMethodApplicability } from '../../src/domain/applicability-evaluation.ts';
@@ -24,6 +27,7 @@ import {
   notUsableTerm,
   OWNER_EVIDENCE_UNAVAILABLE,
   pickupSupported,
+  PPL_COD_CARRIER,
   purchasingContextFor,
   STRIPE_PRODUCTION,
   termRefFor,
@@ -377,6 +381,7 @@ describe('#1147 Payment method applicability — branch rules', () => {
         {
           _tag: 'COD_DELIVERY_OFFER',
           capabilityEvidenceRef: 'cod-capability:offer-ppl-parcel',
+          carrier: PPL_COD_CARRIER,
           deliveryOfferRef: 'offer-ppl-parcel',
         },
         {
@@ -385,6 +390,26 @@ describe('#1147 Payment method applicability — branch rules', () => {
           pickupCapabilityRef: 'pickup-prague',
         },
       ]);
+    }),
+  );
+
+  it.effect('#1147 COD binding records the carrier the Delivery owner confirmed for the selected offer', () =>
+    Effect.gen(function* codBindingCarrier() {
+      const dpd = { accountRef: 'dpd-merchant-12', environment: 'production', sourceSystem: 'dpd' };
+      const branch = only(
+        (yield* evaluate(
+          [{ deliveryOfferRef: 'offer-dpd-home', method: 'CASH_ON_DELIVERY' }],
+          script({ codCapability: (deliveryOfferRef) => codSupported(deliveryOfferRef, dpd) }),
+        )).branches,
+      );
+      const binding = branch.outcome === 'AVAILABLE' ? branch.executionBinding : undefined;
+      expect(
+        Schema.is(PaymentCodDeliveryOfferBindingSchema)(binding) && [
+          binding.capabilityEvidenceRef,
+          binding.carrier,
+          binding.deliveryOfferRef,
+        ],
+      ).toEqual(['cod-capability:offer-dpd-home', dpd, 'offer-dpd-home']);
     }),
   );
 

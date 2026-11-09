@@ -4,10 +4,7 @@ import type { PaymentTermRef } from '@app/payment-term-catalog-contracts/resourc
 import { Context, Effect, Schema } from 'effect';
 
 import { PaymentPurchasingContextSchema } from '../../shared/domain/applicability-purchasing-context.ts';
-import {
-  PaymentEvidenceRefSchema,
-  PaymentPurchaseCorrelationIdSchema,
-} from '../../shared/domain/payment-identifiers.ts';
+import { PaymentEvidenceRefSchema } from '../../shared/domain/payment-identifiers.ts';
 import type { PaymentMethod } from '../../shared/domain/payment-vocabulary.ts';
 import { ownerEvidenceUnavailable } from './owner-evidence-unavailable.ts';
 import type { PaymentOwnerEvidenceUnavailable, PaymentOwnerScope } from './owner-evidence-unavailable.ts';
@@ -41,14 +38,13 @@ export type PaymentTermUseEvidence = typeof PaymentTermUseEvidenceSchema.Type;
 
 /**
  * The exact purchase whose Current Customer Context entitlement/policy the owner decides; the merchant
- * `customerConfigurationId` never identifies the buyer. Before a Payment intent exists (#1147) it is
- * the trusted Commerce Purchasing Context (buyer, Channel, Commerce Market); a recorded intent is
- * scoped by the stable purchase correlation it bound from the purchasing flow (#1148, #1149).
+ * `customerConfigurationId` never identifies the buyer. It is always the trusted Commerce Purchasing
+ * Context (buyer, Channel, Commerce Market): the request's own before an intent exists (#1147), and the
+ * one the Payment stored immutably at creation afterwards (#1148, #1149).
  */
-export const PaymentTermPurchaseSchema = Schema.Union([
-  Schema.TaggedStruct('PURCHASING_CONTEXT', { purchasingContext: PaymentPurchasingContextSchema }),
-  Schema.TaggedStruct('PURCHASE_CORRELATION', { purchaseCorrelationId: PaymentPurchaseCorrelationIdSchema }),
-]);
+export const PaymentTermPurchaseSchema = Schema.TaggedStruct('PURCHASING_CONTEXT', {
+  purchasingContext: PaymentPurchasingContextSchema,
+});
 export type PaymentTermPurchase = typeof PaymentTermPurchaseSchema.Type;
 
 export interface PaymentTermEvidenceService {

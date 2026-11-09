@@ -39,14 +39,19 @@ const bankSource = {
   sourceSystem: 'erp-helios',
 } as const;
 
+const ERP_PRINCIPAL_ID = '60000000-0000-4000-8000-000000000001';
+
+/** A configured authority as the owner persistence presents it to the bound ERP integration principal. */
 const authority = (overrides: Partial<PaymentSourceAuthorityView> = {}): PaymentSourceAuthorityView => ({
   ...bankSource,
+  boundToSubmitter: true,
   factFamily: 'BANK_ACCOUNTING_RECEIPT',
   method: 'BANK_TRANSFER_ADVANCE',
   refundRoute: false,
   revision: 1,
   sourceAuthorityId: BANK_AUTHORITY_ID,
   status: 'ACTIVE',
+  submitterPrincipalIds: [ERP_PRINCIPAL_ID],
   ...overrides,
 });
 
@@ -78,6 +83,7 @@ const bankTarget = target('BANK_TRANSFER_ADVANCE', { _tag: 'BANK_ACCOUNTING_RECE
 const codBinding: PaymentExecutionBinding = {
   _tag: 'COD_DELIVERY_OFFER',
   capabilityEvidenceRef: 'cod-capability-evidence-1',
+  carrier: { accountRef: 'ppl-cod-contract-1', environment: 'production', sourceSystem: 'ppl' },
   deliveryOfferRef: 'ppl-delivery-offer-1',
 };
 const gatewayBinding: PaymentExecutionBinding = {
@@ -139,6 +145,27 @@ describe('#1152 exact source qualification', () => {
       authorities: [authority({ factFamily: 'DEFERRED_INVOICE_RECEIPT', method: absent() })],
     });
     expect(tagOf(decision)).toBe('Unauthorized');
+  });
+
+  it('#1153 a principal not bound to the configured authority never speaks as it, whatever it claims', () => {
+    const unbound = authority({ boundToSubmitter: false });
+    const decision = qualify({ authorities: [unbound] });
+    expect(decision).toEqual(
+      PaymentSourceQualification.Unauthorized({
+        reason: 'The submitting principal is not bound to the configured source authority',
+      }),
+    );
+    // Not even a redelivery of a recorded occurrence or unassigned evidence is acknowledged.
+    expect(tagOf(qualify({ authorities: [unbound], existingOccurrence: recorded() }))).toBe('Unauthorized');
+    expect(tagOf(qualify({ authorities: [unbound], target: absent() }))).toBe('Unauthorized');
+    // A principal bound to a different authority of the same source binding is bound only there.
+    const deferred = authority({
+      boundToSubmitter: true,
+      factFamily: 'DEFERRED_INVOICE_RECEIPT',
+      method: 'DEFERRED_INVOICE',
+      sourceAuthorityId: '20000000-0000-4000-8000-000000000099',
+    });
+    expect(tagOf(qualify({ authorities: [unbound, deferred] }))).toBe('Unauthorized');
   });
 
   it('#1152 a revoked authority is not authority', () => {
@@ -263,6 +290,22 @@ describe('#1152 exact source qualification', () => {
     expect(tagOf(qualify({ ...input, statement: codStatement() }))).toBe('Held');
     expect(tagOf(qualify({ ...input, statement: codStatement('ppl-delivery-offer-2') }))).toBe('Unauthorized');
     expect(tagOf(qualify({ ...input, statement: codStatement('ppl-delivery-offer-1') }))).toBe('Qualified');
+    // Another configured COD carrier naming the selected offer is not the carrier the Payment is bound to.
+    const foreignCarrierSource = { ...carrierSource, accountRef: 'dpd-merchant-12', sourceSystem: 'dpd' } as const;
+    const foreignCarrier = authority({
+      ...foreignCarrierSource,
+      factFamily: 'COD_CUSTOMER_COLLECTION',
+      method: 'CASH_ON_DELIVERY',
+    });
+    expect(
+      tagOf(
+        qualify({
+          authorities: [carrier, foreignCarrier],
+          statement: { ...codStatement('ppl-delivery-offer-1'), source: foreignCarrierSource },
+          target: input.target,
+        }),
+      ),
+    ).toBe('Unauthorized');
     // Delivery does not prove collection: a generic DELIVERED signal is not a COD collection fact.
     expect(
       tagOf(qualify({ ...input, statement: { ...codStatement('ppl-delivery-offer-1'), factKind: 'UNRECOGNIZED' } })),

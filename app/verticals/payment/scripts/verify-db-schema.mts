@@ -31,6 +31,7 @@ const expectedTriggers = EffectArray.sort(
     'payment_operations_no_delete',
     'payment_operations_transition',
     'payment_outcome_transitions_append_only',
+    'payment_outcome_transitions_durable_work',
     'payment_payments_no_delete',
     'payment_payments_transition',
     'payment_reconciliation_cases_no_delete',

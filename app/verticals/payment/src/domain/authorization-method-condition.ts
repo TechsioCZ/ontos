@@ -1,8 +1,9 @@
 import { PaymentTermRefSchema } from '@app/payment-term-catalog-contracts/resources/payment-term';
-import { Effect, Match, Option, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Schema } from 'effect';
 
 import type { PaymentMethodEnablementState } from '../../shared/domain/applicability-contract.ts';
 import type { PaymentAuthorizationCondition } from '../../shared/domain/authorization-proof.ts';
+import { PaymentCodCarrierSchema } from '../../shared/domain/payment-execution-binding.ts';
 import type { PaymentMethod } from '../../shared/domain/payment-vocabulary.ts';
 import type { PaymentRecord } from '../persistence/payment-aggregate-persistence.ts';
 import { DeliveryCapabilityPort } from '../ports/delivery-capability-port.ts';
@@ -14,6 +15,7 @@ import { PickupCapabilityPort } from '../ports/pickup-capability-port.ts';
 import type { PaymentPickupCollectionCapability } from '../ports/pickup-capability-port.ts';
 import { MethodConditionCheck } from './authorization-currentness.ts';
 import type { MethodConditionCheckCase } from './authorization-currentness.ts';
+import type { PaymentCodDeliveryOfferBinding } from './cod-carrier.ts';
 
 /**
  * Current method-condition evidence (#1149 "Accepted Launch behavior"). Deferred invoice, Cash on
@@ -26,6 +28,18 @@ const sameTermRef = Schema.toEquivalence(PaymentTermRefSchema);
 const met = (condition: PaymentAuthorizationCondition) => MethodConditionCheck.Met({ condition });
 const notMet = (reason: string) => MethodConditionCheck.NotMet({ reason });
 
+/** The retained Payment facts a method condition is decided from. */
+export type PaymentMethodConditionSubject = Pick<
+  PaymentRecord,
+  | 'amount'
+  | 'customerConfigurationId'
+  | 'executionBinding'
+  | 'method'
+  | 'paymentTermRef'
+  | 'purchasingContext'
+  | 'termSemanticEvidence'
+>;
+
 type MethodConditionRequirements = DeliveryCapabilityPort | PaymentTermEvidencePort | PickupCapabilityPort;
 type MethodConditionVerification = Effect.Effect<
   MethodConditionCheckCase,
@@ -35,12 +49,15 @@ type MethodConditionVerification = Effect.Effect<
 
 /**
  * DEFERRED_INVOICE: the exact resolved term must still be NET_DAYS with the same C15 semantic
- * snapshot the Payment retained, and the CCC entitlement/policy must be Current. A semantic change
- * produces a new Payment Term Ref; it never re-qualifies an old Payment or proof.
+ * snapshot the Payment retained, that snapshot must itself still be Current at `at` (an owner answer
+ * calling a term usable while its own snapshot says it was retired is contradictory evidence; a
+ * scheduled retirement keeps it Current until reached), and the CCC entitlement/policy must be
+ * Current. A semantic change produces a new Payment Term Ref; it never re-qualifies an old Payment or proof.
  */
 export const deferredTermCondition = (
   payment: Pick<PaymentRecord, 'paymentTermRef' | 'termSemanticEvidence'>,
   evidence: PaymentTermUseEvidence,
+  at: DateTime.Utc,
 ): MethodConditionCheckCase =>
   Match.value(evidence).pipe(
     Match.tagsExhaustive({
@@ -55,6 +72,10 @@ export const deferredTermCondition = (
         ) {
           return notMet('The Payment Term semantic meaning differs from the meaning retained by the Payment');
         }
+        const { effectiveTo } = semanticSnapshot.lifecycle;
+        if (effectiveTo !== null && DateTime.isLessThanOrEqualTo(DateTime.makeUnsafe(effectiveTo), at)) {
+          return notMet('The Payment Term snapshot was already retired');
+        }
         const { semantics } = semanticSnapshot;
         return semantics.kind === 'NET_DAYS'
           ? met({ _tag: 'DEFERRED_NET_DAYS', entitlementEvidenceRef, netDays: semantics.days })
@@ -63,19 +84,31 @@ export const deferredTermCondition = (
     }),
   );
 
-/** CASH_ON_DELIVERY: the exact selected Delivery Offer must be Currently COD-capable for the exact amount. */
-export const codDeliveryCondition = (deliveryOfferRef: string, capability: PaymentCodCapability) =>
+const sameCarrier = Schema.toEquivalence(PaymentCodCarrierSchema);
+
+/**
+ * CASH_ON_DELIVERY: the exact selected Delivery Offer must be Currently COD-capable for the exact amount,
+ * collected by the exact carrier binding the Payment retained. That carrier is the only authority whose
+ * collection evidence Payment accepts, so an offer the Delivery owner now serves through another carrier
+ * no longer satisfies the condition.
+ */
+export const codDeliveryCondition = (binding: PaymentCodDeliveryOfferBinding, capability: PaymentCodCapability) =>
   Match.value(capability).pipe(
     Match.tagsExhaustive({
       NOT_SUPPORTED: ({ reason }) => notMet(`The exact Delivery Offer does not support Cash on Delivery: ${reason}`),
-      SUPPORTED: (supported) =>
-        supported.deliveryOfferRef === deliveryOfferRef
-          ? met({
-              _tag: 'COD_DELIVERY_OFFER',
-              capabilityEvidenceRef: supported.capabilityEvidenceRef,
-              deliveryOfferRef: supported.deliveryOfferRef,
-            })
-          : notMet('The COD capability evidence concerns a different Delivery Offer'),
+      SUPPORTED: (supported) => {
+        if (supported.deliveryOfferRef !== binding.deliveryOfferRef) {
+          return notMet('The COD capability evidence concerns a different Delivery Offer');
+        }
+        if (!sameCarrier(supported.carrier, binding.carrier)) {
+          return notMet('The COD capability names a different carrier than the one the Payment is bound to');
+        }
+        return met({
+          _tag: 'COD_DELIVERY_OFFER',
+          capabilityEvidenceRef: supported.capabilityEvidenceRef,
+          deliveryOfferRef: supported.deliveryOfferRef,
+        });
+      },
     }),
   );
 
@@ -97,7 +130,7 @@ export const pickupCondition = (pickupCapabilityRef: string, capability: Payment
   );
 
 const verifyDeferredTerm = Effect.fn('PaymentAuthorization.verifyDeferredTerm')(function* verifyDeferredTerm(
-  payment: PaymentRecord,
+  payment: PaymentMethodConditionSubject,
   scope: PaymentOwnerScope,
 ) {
   const terms = yield* PaymentTermEvidencePort;
@@ -105,31 +138,39 @@ const verifyDeferredTerm = Effect.fn('PaymentAuthorization.verifyDeferredTerm')(
     customerConfigurationId: payment.customerConfigurationId,
     method: payment.method,
     paymentTermRef: payment.paymentTermRef,
-    purchase: { _tag: 'PURCHASE_CORRELATION', purchaseCorrelationId: payment.purchaseCorrelationId },
+    purchase: { _tag: 'PURCHASING_CONTEXT', purchasingContext: payment.purchasingContext },
     scope,
   });
-  return deferredTermCondition(payment, evidence);
+  return deferredTermCondition(payment, evidence, yield* DateTime.now);
 });
 
 const verifyCashOnDelivery = Effect.fn('PaymentAuthorization.verifyCashOnDelivery')(function* verifyCashOnDelivery(
-  payment: PaymentRecord,
-  deliveryOfferRef: string,
+  payment: PaymentMethodConditionSubject,
+  binding: PaymentCodDeliveryOfferBinding,
   scope: PaymentOwnerScope,
 ) {
   const delivery = yield* DeliveryCapabilityPort;
-  const capability = yield* delivery.verifyCashOnDelivery({ amount: payment.amount, deliveryOfferRef, scope });
-  return codDeliveryCondition(deliveryOfferRef, capability);
+  const capability = yield* delivery.verifyCashOnDelivery({
+    amount: payment.amount,
+    deliveryOfferRef: binding.deliveryOfferRef,
+    scope,
+  });
+  return codDeliveryCondition(binding, capability);
 });
 
 const verifyPickupCollection = Effect.fn('PaymentAuthorization.verifyPickupCollection')(
-  function* verifyPickupCollection(payment: PaymentRecord, pickupCapabilityRef: string, scope: PaymentOwnerScope) {
+  function* verifyPickupCollection(
+    payment: PaymentMethodConditionSubject,
+    pickupCapabilityRef: string,
+    scope: PaymentOwnerScope,
+  ) {
     const pickup = yield* PickupCapabilityPort;
     const capability = yield* pickup.verifyPickupCollection({ amount: payment.amount, pickupCapabilityRef, scope });
     return pickupCondition(pickupCapabilityRef, capability);
   },
 );
 
-const unmatchedBinding = (payment: PaymentRecord): MethodConditionVerification =>
+const unmatchedBinding = (payment: PaymentMethodConditionSubject): MethodConditionVerification =>
   Effect.succeed(notMet(`The ${payment.method} Payment has no method condition matching its execution binding`));
 
 /**
@@ -153,15 +194,18 @@ export const methodEnablementCondition = (
   return row.enabled ? Option.none() : Option.some(notMet(`${method} was withdrawn for the Customer Configuration`));
 };
 
-const verifyOwnerCondition = (payment: PaymentRecord, scope: PaymentOwnerScope): MethodConditionVerification =>
+const verifyOwnerCondition = (
+  payment: PaymentMethodConditionSubject,
+  scope: PaymentOwnerScope,
+): MethodConditionVerification =>
   payment.method === 'DEFERRED_INVOICE'
     ? verifyDeferredTerm(payment, scope)
     : Match.value(payment.executionBinding).pipe(
         Match.tagsExhaustive({
           BANK_ACCOUNTING_RECEIPT: () => unmatchedBinding(payment),
-          COD_DELIVERY_OFFER: ({ deliveryOfferRef }): MethodConditionVerification =>
+          COD_DELIVERY_OFFER: (binding): MethodConditionVerification =>
             payment.method === 'CASH_ON_DELIVERY'
-              ? verifyCashOnDelivery(payment, deliveryOfferRef, scope)
+              ? verifyCashOnDelivery(payment, binding, scope)
               : unmatchedBinding(payment),
           GATEWAY_ACCOUNT: () => unmatchedBinding(payment),
           PICKUP_CAPABILITY: ({ pickupCapabilityRef }): MethodConditionVerification =>
@@ -176,7 +220,7 @@ const verifyOwnerCondition = (payment: PaymentRecord, scope: PaymentOwnerScope):
  * applicable (merchant enablement, checked locally first), then its exact owner port must confirm it.
  */
 export const verifyMethodCondition = (
-  payment: PaymentRecord,
+  payment: PaymentMethodConditionSubject,
   enablements: readonly PaymentMethodEnablementState[],
   scope: PaymentOwnerScope,
 ): MethodConditionVerification =>

@@ -61,18 +61,22 @@ import type { PaymentRecord } from '../../src/persistence/payment-aggregate-pers
 import { paymentApplicabilityPersistenceForTransaction } from '../../src/persistence/payment-applicability-persistence.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
 import {
+  AUTHORIZATION_COD_CARRIER,
   authorizationNetDaysSnapshot,
   authorizationTermRefFor,
   makeAuthorizationOwnerEvidenceFixture,
 } from '../support/authorization-owner-evidence.fixture.ts';
+import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
 import {
   collectInput,
+  COMPOSITION_REVISION,
   inScope,
   makeTestScope,
   newPaymentInput,
   operationalScopeOf,
   paymentTestRelations,
   provenanceFor,
+  purchasingContextFor,
   randomUuid,
   withPersistence,
 } from './database-fixture.ts';
@@ -268,7 +272,11 @@ type Harness = Effect.Success<ReturnType<typeof makeHarness>>;
 
 interface PaymentMeaningOverrides {
   readonly amountMinor?: number;
+  /** The buyer of the trusted Purchasing Context the Payment is created for (`purchasingContextFor`). */
+  readonly buyer?: string;
   readonly customerConfigurationId?: string;
+  /** The merchant already enabled the method for this Customer Configuration in this test. */
+  readonly enablementConfigured?: boolean;
   readonly executionBinding?: PaymentExecutionBinding;
   readonly method?: PaymentMethod;
   readonly termSnapshot?: PaymentTermDefinitionSnapshot;
@@ -319,7 +327,7 @@ const createPayment = Effect.fn('AuthorizationNativeTests.createPayment')(functi
   const termSemanticEvidence = overrides.termSnapshot ?? base.termSemanticEvidence;
   const customerConfigurationId = overrides.customerConfigurationId ?? base.customerConfigurationId;
   const method = overrides.method ?? base.method;
-  if (proofKindForMethod(method) === 'METHOD_CONDITION') {
+  if (proofKindForMethod(method) === 'METHOD_CONDITION' && overrides.enablementConfigured !== true) {
     yield* configureEnablement(harness, { customerConfigurationId, enabled: true, method });
   }
   const created = yield* withPersistence(harness.database, harness.scope, (persistence) =>
@@ -329,11 +337,16 @@ const createPayment = Effect.fn('AuthorizationNativeTests.createPayment')(functi
       executionBinding: overrides.executionBinding ?? base.executionBinding,
       method,
       paymentTermRef: termSemanticEvidence.paymentTermRef,
+      purchasingContext:
+        overrides.buyer === undefined ? base.purchasingContext : purchasingContextFor(harness.scope, overrides.buyer),
       termSemanticEvidence,
     }),
   );
   return created.record;
 });
+
+/** The CCC buyer subject whose entitlement the term owner fixture keys its periods by. */
+const buyerOf = (harness: Harness, buyer: string) => purchasingContextFor(harness.scope, buyer).subject;
 
 /** Stands in for #1151's qualified collection evidence: the COLLECT reaches EFFECT_CONFIRMED. */
 const confirmCollect = Effect.fn('AuthorizationNativeTests.confirmCollect')(function* confirmCollect(
@@ -681,6 +694,7 @@ it.live('#1149 COD commitment before handover issues a method-condition proof an
         executionBinding: {
           _tag: 'COD_DELIVERY_OFFER',
           capabilityEvidenceRef: 'offer-evidence-1',
+          carrier: AUTHORIZATION_COD_CARRIER,
           deliveryOfferRef: 'offer-1',
         },
         method: 'CASH_ON_DELIVERY',
@@ -721,6 +735,7 @@ it.live(
           executionBinding: {
             _tag: 'COD_DELIVERY_OFFER',
             capabilityEvidenceRef: 'offer-evidence-2',
+            carrier: AUTHORIZATION_COD_CARRIER,
             deliveryOfferRef: 'offer-2',
           },
           method: 'CASH_ON_DELIVERY',
@@ -779,13 +794,14 @@ it.live('#1149 Deferred term is supported without a concrete invoice', () =>
       const termRef = authorizationTermRefFor(harness.scope.tenantId, yield* randomUuid);
       const snapshot = authorizationNetDaysSnapshot(termRef, 14);
       const payment = yield* createPayment(harness, {
+        buyer: 'buyer-a',
         customerConfigurationId: 'ccc-a',
         executionBinding: { _tag: 'BANK_ACCOUNTING_RECEIPT' },
         method: 'DEFERRED_INVOICE',
         termSnapshot: snapshot,
       });
       yield* harness.evidence.putEntitlementPeriod({
-        customerConfigurationId: 'ccc-a',
+        buyer: buyerOf(harness, 'buyer-a'),
         entitlementEvidenceRef: 'entitlement-a',
         semanticSnapshot: snapshot,
         status: 'CURRENT',
@@ -829,13 +845,14 @@ it.live(
         const termRef = authorizationTermRefFor(harness.scope.tenantId, yield* randomUuid);
         const snapshot = authorizationNetDaysSnapshot(termRef, 14);
         const payment = yield* createPayment(harness, {
+          buyer: 'buyer-withdrawn',
           customerConfigurationId: 'ccc-withdrawn',
           executionBinding: { _tag: 'BANK_ACCOUNTING_RECEIPT' },
           method: 'DEFERRED_INVOICE',
           termSnapshot: snapshot,
         });
         yield* harness.evidence.putEntitlementPeriod({
-          customerConfigurationId: 'ccc-withdrawn',
+          buyer: buyerOf(harness, 'buyer-withdrawn'),
           entitlementEvidenceRef: 'entitlement-withdrawn',
           semanticSnapshot: snapshot,
           status: 'CURRENT',
@@ -871,6 +888,7 @@ it.live('#1149 COD method withdrawn by the merchant: the COD proof is no longer 
         executionBinding: {
           _tag: 'COD_DELIVERY_OFFER',
           capabilityEvidenceRef: 'offer-evidence-withdrawn',
+          carrier: AUTHORIZATION_COD_CARRIER,
           deliveryOfferRef: 'offer-withdrawn',
         },
         method: 'CASH_ON_DELIVERY',
@@ -896,29 +914,33 @@ it.live('#1149 COD method withdrawn by the merchant: the COD proof is no longer 
 );
 
 it.live(
-  '#1149 cancelled and unaffected entitlement-period fixtures: only the exact Current entitlement authorizes',
+  "#1149 two buyers under one merchant configuration: only the exact buyer's Current entitlement authorizes its Payment",
   () =>
     nativeRun(
       Effect.gen(function* entitlementPeriods() {
         const harness = yield* makeHarness();
         const termRef = authorizationTermRefFor(harness.scope.tenantId, yield* randomUuid);
         const snapshot = authorizationNetDaysSnapshot(termRef, 30);
-        const deferred = (customerConfigurationId: string) =>
+        // Two buyers purchase under the SAME merchant Customer Configuration: the merchant configuration
+        // never identifies the buyer, so only each Payment's stored Purchasing Context scopes its entitlement.
+        const deferred = (buyer: string, enablementConfigured: boolean) =>
           createPayment(harness, {
-            customerConfigurationId,
+            buyer,
+            customerConfigurationId: 'ccc-shared',
+            enablementConfigured,
             executionBinding: { _tag: 'BANK_ACCOUNTING_RECEIPT' },
             method: 'DEFERRED_INVOICE',
             termSnapshot: snapshot,
           });
-        const paymentA = yield* deferred('ccc-a');
-        const paymentB = yield* deferred('ccc-b');
+        const paymentA = yield* deferred('buyer-a', false);
+        const paymentB = yield* deferred('buyer-b', true);
         const periodA = {
-          customerConfigurationId: 'ccc-a',
+          buyer: buyerOf(harness, 'buyer-a'),
           entitlementEvidenceRef: 'period-a',
           semanticSnapshot: snapshot,
         };
         const periodB = {
-          customerConfigurationId: 'ccc-b',
+          buyer: buyerOf(harness, 'buyer-b'),
           entitlementEvidenceRef: 'period-b',
           semanticSnapshot: snapshot,
         };
@@ -958,13 +980,14 @@ it.live('#1149 term semantic change produces a new Ref; neither the old Payment 
       const newRef = authorizationTermRefFor(harness.scope.tenantId, yield* randomUuid);
       const oldSnapshot = authorizationNetDaysSnapshot(oldRef, 14);
       const payment = yield* createPayment(harness, {
+        buyer: 'buyer-term',
         customerConfigurationId: 'ccc-term',
         executionBinding: { _tag: 'BANK_ACCOUNTING_RECEIPT' },
         method: 'DEFERRED_INVOICE',
         termSnapshot: oldSnapshot,
       });
       const period = {
-        customerConfigurationId: 'ccc-term',
+        buyer: buyerOf(harness, 'buyer-term'),
         entitlementEvidenceRef: 'period-term',
         status: 'CURRENT' as const,
       };
@@ -989,6 +1012,50 @@ it.live('#1149 term semantic change produces a new Ref; neither the old Payment 
       );
     }),
   ),
+);
+
+it.live(
+  '#1149 a USABLE owner answer carrying an already retired C15 snapshot neither issues nor keeps a deferred proof Current',
+  () =>
+    nativeRun(
+      Effect.gen(function* retiredTermSnapshot() {
+        const harness = yield* makeHarness();
+        const termRef = authorizationTermRefFor(harness.scope.tenantId, yield* randomUuid);
+        const active = authorizationNetDaysSnapshot(termRef, 14);
+        const payment = yield* createPayment(harness, {
+          buyer: 'buyer-retired',
+          customerConfigurationId: 'ccc-retired',
+          executionBinding: { _tag: 'BANK_ACCOUNTING_RECEIPT' },
+          method: 'DEFERRED_INVOICE',
+          termSnapshot: active,
+        });
+        const period = {
+          buyer: buyerOf(harness, 'buyer-retired'),
+          entitlementEvidenceRef: 'entitlement-retired',
+          status: 'CURRENT' as const,
+        };
+        yield* harness.evidence.putEntitlementPeriod({ ...period, semanticSnapshot: active });
+        const binding = bindingFor(payment, 'attempt-retired', yield* frozenT(harness, 1));
+        const issued = yield* harness.issue(issuePayload(binding, 'before-retirement'));
+        const validate = harness.validate({ authorizationId: issued.proof.authorizationId, binding });
+        expect((yield* validate).outcome).toBe('VALID');
+        // Same Ref, same semantic meaning, still "USABLE" with a Current entitlement, but the owner's own
+        // snapshot says the term was retired in the past: contradictory evidence, never a Current condition.
+        const retired: PaymentTermDefinitionSnapshot = {
+          ...active,
+          lifecycle: {
+            effectiveFrom: active.lifecycle.effectiveFrom,
+            effectiveTo: '2026-02-01T00:00:00.000Z',
+            state: 'RETIRED',
+          },
+        };
+        yield* harness.evidence.putEntitlementPeriod({ ...period, semanticSnapshot: retired });
+        expect(yield* failureCode(harness.issue(issuePayload(binding, 'after-retirement')))).toBe(
+          'payment_authorization_method_condition_not_met',
+        );
+        expect(yield* validate).toMatchObject({ outcome: 'NOT_VALID', reasons: ['METHOD_CONDITION_NOT_MET'] });
+      }),
+    ),
 );
 
 // ---------------------------------------------------------------------------------------------
@@ -1241,6 +1308,7 @@ it.live(
   () =>
     nativeRun(
       Effect.gen(function* coverageReduction() {
+        yield* installPaymentTestCompositionAuthority(COMPOSITION_REVISION);
         const harness = yield* makeHarness();
         const payment = yield* createPayment(harness);
         const collected = yield* confirmCollect(harness, payment);
@@ -1399,13 +1467,14 @@ it.live(
         const termRef = authorizationTermRefFor(harness.scope.tenantId, yield* randomUuid);
         const snapshot = authorizationNetDaysSnapshot(termRef, 14);
         const payment = yield* createPayment(harness, {
+          buyer: 'buyer-history',
           customerConfigurationId: 'ccc-history',
           executionBinding: { _tag: 'BANK_ACCOUNTING_RECEIPT' },
           method: 'DEFERRED_INVOICE',
           termSnapshot: snapshot,
         });
         yield* harness.evidence.putEntitlementPeriod({
-          customerConfigurationId: 'ccc-history',
+          buyer: buyerOf(harness, 'buyer-history'),
           entitlementEvidenceRef: 'entitlement-history',
           semanticSnapshot: snapshot,
           status: 'CURRENT',

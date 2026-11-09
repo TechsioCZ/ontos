@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { GatewayAssertionRedemptionService } from '@app/core-runtime';
 import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
+import { and, eq } from 'drizzle-orm';
 import { Clock, Crypto, Effect, Fiber, Layer, Option, Predicate, Schema } from 'effect';
 import type { Scope } from 'effect';
 import { TestClock } from 'effect/testing';
@@ -11,7 +12,7 @@ import { expect, it } from 'effect-rstest';
 import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/access/enforcement/owner-overlay.ts';
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
-import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
+import { applicationCompositionDurableWork, coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { makeScriptedBoundAccessGate } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
 import { testOperationalScopeResolver } from '../../../../packages/core-runtime/tests/fixtures/operational-scope.ts';
@@ -28,6 +29,7 @@ import {
   GatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive,
 } from '../../src/auth/gateway-assertion-redemption-runtime.ts';
+import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
 import { failureCodeOf, makeTestScope } from './database-fixture.ts';
 import {
   BANK_BINDING,
@@ -40,7 +42,7 @@ import {
   RECOVERY_REQUESTED,
   seedCoreScope,
 } from './evidence-native-support.ts';
-import type { EvidenceNativeDatabase } from './evidence-native-support.ts';
+import type { EvidenceNativeDatabase, EvidenceScenario } from './evidence-native-support.ts';
 
 const native = <A, E>(effect: Effect.Effect<A, E, Crypto.Crypto | Scope.Scope>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
@@ -87,6 +89,19 @@ const makeEvidenceRuntimes = Effect.fn('EvidenceNative.makeRuntimes')(function* 
   return { actions, reads };
 });
 
+/** The revisions under which Core tracks the operation's unknown effect as payment.core durable work. */
+const unknownEffectWork = (evidence: EvidenceScenario, operationId: string) =>
+  evidence.native.coreAdmin
+    .select({ originalRevision: applicationCompositionDurableWork.originalRevision })
+    .from(applicationCompositionDurableWork)
+    .where(
+      and(
+        eq(applicationCompositionDurableWork.ownerModuleKey, 'payment.core'),
+        eq(applicationCompositionDurableWork.workId, `payment-operation:${evidence.scope.tenantId}:${operationId}`),
+      ),
+    )
+    .pipe(Effect.map((rows) => rows.map((row) => row.originalRevision)));
+
 const scenario = Effect.fn('EvidenceRecoveryTest.scenario')(function* scenario() {
   const database = yield* nativeDatabase;
   const scope = yield* makeTestScope;
@@ -117,6 +132,7 @@ it.live(
   () =>
     native(
       Effect.gen(function* lostCreateResponse() {
+        yield* installPaymentTestCompositionAuthority(COMPOSITION_R1);
         const evidence = yield* scenario();
         const payment = yield* evidence.createPayment();
         const collect = yield* evidence.startOperation({
@@ -231,6 +247,7 @@ it.live('#1151 Provider idempotency window has expired: recovery falls back to l
 it.live('#1151 Financial replay uses new transport admission; the consumed assertion fails independently', () =>
   native(
     Effect.gen(function* replayWithFreshAssertion() {
+      yield* installPaymentTestCompositionAuthority(COMPOSITION_R1);
       const evidence = yield* scenario();
       const payment = yield* evidence.createPayment();
       const collect = yield* evidence.startOperation({
@@ -295,6 +312,8 @@ it.live('#1151 Financial replay uses new transport admission; the consumed asser
 it.live('#1151 Late callback is admitted by a compatible new runtime and preserves the original lineage', () =>
   native(
     Effect.gen(function* lateCallbackUnderR2() {
+      // The unknown effect arises under the compatible R2, so R2 is the release that tracks it.
+      yield* installPaymentTestCompositionAuthority(COMPOSITION_R2);
       const evidence = yield* scenario();
       const payment = yield* evidence.createPayment();
       const collect = yield* evidence.startOperation({
@@ -303,6 +322,8 @@ it.live('#1151 Late callback is admitted by a compatible new runtime and preserv
         paymentId: payment.paymentId,
       });
       expect(collect.provenance.compositionRevision).toBe(COMPOSITION_R1);
+      // Business waiting on the R1 handoff is not Core durable work.
+      expect(yield* unknownEffectWork(evidence, collect.operationId)).toEqual([]);
       // R2 records the recovery request of the R1 operation as its own invocation.
       const recovered = yield* evidence.recover(
         {
@@ -314,6 +335,8 @@ it.live('#1151 Late callback is admitted by a compatible new runtime and preserv
         { runtimes: evidence.r2 },
       );
       expect(recovered.originalCompositionRevision).toBe(COMPOSITION_R1);
+      // The unknown effect is tracked as Core durable work of the release that made it unknown.
+      expect(yield* unknownEffectWork(evidence, collect.operationId)).toEqual([COMPOSITION_R2]);
       // The independently authorized, qualified observation arrives under R2 and resolves O.
       const authority = yield* evidence.configureAuthority();
       const callback = yield* evidence.recordObservation(
@@ -337,6 +360,8 @@ it.live('#1151 Late callback is admitted by a compatible new runtime and preserv
         { runtimes: evidence.r2 },
       );
       expect(Option.isSome(decided.outcomeChange)).toBe(true);
+      // The proven outcome releases the tracked work, so R2 can drain again.
+      expect(yield* unknownEffectWork(evidence, collect.operationId)).toEqual([]);
 
       const [operation] = yield* evidence.rows.operations(payment.paymentId);
       expect(operation).toMatchObject({ compositionRevision: COMPOSITION_R1, outcome: 'EFFECT_CONFIRMED' });
@@ -389,8 +414,9 @@ it.live('#1151 Business waiting does not fabricate a perpetual execution lease o
         providerReplay: 'NOT_APPLICABLE',
         recoveryMode: 'AWAIT_QUALIFIED_EVIDENCE',
       });
-      // No executor task is fabricated for business waiting...
+      // No executor task is fabricated for business waiting, and no Core durable work holds the release...
       expect(yield* recoveryMessages(evidence)).toHaveLength(0);
+      expect(yield* unknownEffectWork(evidence, collect.operationId)).toEqual([]);
       // ...and the waiting state stays visible separately from debt.
       const debt = yield* evidence.debt({ paymentId: payment.paymentId });
       expect(debt.awaitingEvidence.map((operation) => operation.operationId)).toEqual([collect.operationId]);
@@ -403,6 +429,7 @@ it.live('#1151 Business waiting does not fabricate a perpetual execution lease o
 it.live('#1151 Closing admission retains unresolved accepted work: missing authority is held, never NOT_EFFECTED', () =>
   native(
     Effect.gen(function* missingAuthorityHeld() {
+      yield* installPaymentTestCompositionAuthority(COMPOSITION_R1);
       const evidence = yield* scenario();
       const payment = yield* evidence.createPayment();
       const collect = yield* evidence.startOperation({
@@ -479,6 +506,7 @@ it.live('#1151 recovery refuses resolved operations and foreign scopes', () =>
 it.live('#1151 concurrent recovery requests serialize on the Payment row lock and transition once', () =>
   native(
     Effect.gen(function* concurrentRecovery() {
+      yield* installPaymentTestCompositionAuthority(COMPOSITION_R1);
       const evidence = yield* scenario();
       const payment = yield* evidence.createPayment();
       const collect = yield* evidence.startOperation({

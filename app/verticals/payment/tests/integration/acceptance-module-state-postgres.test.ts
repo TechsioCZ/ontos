@@ -69,7 +69,7 @@ import {
   sourceAuthorities,
 } from '../../src/database/schema.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
-import { makeTestScope } from './database-fixture.ts';
+import { makeTestScope, purchasingContextFor } from './database-fixture.ts';
 import {
   evidenceAllowedPermission,
   evidenceContextAccess,
@@ -286,13 +286,16 @@ const invocations = (scenario: StateScenario): readonly Invocation[] => {
       sourceSystem: 'erp-acceptance',
     },
     status: 'ACTIVE',
+    submitterPrincipalIds: [scope.principalId],
   } satisfies typeof ConfigurePaymentSourceAuthorityPayloadSchema.Encoded;
+  const purchaseCorrelationId = `purchase-${randomUUID()}`;
   const intent = {
     customerConfigurationId: 'customer-configuration-1',
     intentKey: `intent-${randomUUID()}`,
     payableAmount: amount,
     paymentTermRef: payment.paymentTermRef,
-    purchaseCorrelationId: `purchase-${randomUUID()}`,
+    purchaseCorrelationId,
+    purchasingContext: purchasingContextFor(scope, purchaseCorrelationId),
     selection: { method: 'BANK_TRANSFER_ADVANCE' },
   } satisfies typeof CreatePaymentPayloadSchema.Encoded;
   const collection = {

@@ -1,5 +1,6 @@
 import { Context, Effect, Schema } from 'effect';
 
+import { PaymentCodCarrierSchema } from '../../shared/domain/payment-execution-binding.ts';
 import { PaymentDeliveryOfferRefSchema, PaymentEvidenceRefSchema } from '../../shared/domain/payment-identifiers.ts';
 import type { PaymentMonetaryAmount } from '../../shared/domain/payment-money.ts';
 import { ownerEvidenceUnavailable } from './owner-evidence-unavailable.ts';
@@ -12,10 +13,15 @@ export const PAYMENT_COD_NOT_SUPPORTED_REASONS = [
 ] as const;
 export const PaymentCodNotSupportedReasonSchema = Schema.Literals(PAYMENT_COD_NOT_SUPPORTED_REASONS);
 
-/** Exact Current COD capability of the exact selected Delivery Offer for the exact amount (#1147/#1149). */
+/**
+ * Exact Current COD capability of the exact selected Delivery Offer for the exact amount (#1147/#1149).
+ * A SUPPORTED answer names the carrier/shipping-service binding that collects the cash for that offer;
+ * Payment records it in the COD execution binding and accepts collection evidence only from it (#1152).
+ */
 export const PaymentCodCapabilitySchema = Schema.Union([
   Schema.TaggedStruct('SUPPORTED', {
     capabilityEvidenceRef: PaymentEvidenceRefSchema,
+    carrier: PaymentCodCarrierSchema,
     deliveryOfferRef: PaymentDeliveryOfferRefSchema,
   }),
   Schema.TaggedStruct('NOT_SUPPORTED', {

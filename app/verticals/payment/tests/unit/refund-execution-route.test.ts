@@ -17,6 +17,7 @@ const bank: PaymentExecutionBinding = { _tag: 'BANK_ACCOUNTING_RECEIPT' };
 const cod: PaymentExecutionBinding = {
   _tag: 'COD_DELIVERY_OFFER',
   capabilityEvidenceRef: 'cod-evidence',
+  carrier: { accountRef: 'carrier-cod-account', environment: 'production', sourceSystem: 'ppl' },
   deliveryOfferRef: 'offer-1',
 };
 const pickup: PaymentExecutionBinding = {

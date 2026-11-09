@@ -4,13 +4,16 @@ import { PaymentTermRefSchema } from '@app/payment-term-catalog-contracts/resour
 import type { PaymentTermRef } from '@app/payment-term-catalog-contracts/resources/payment-term';
 import { Effect, Layer, Ref, Schema } from 'effect';
 
+import { PaymentPurchasingSubjectSchema } from '../../shared/domain/applicability-purchasing-context.ts';
+import type { PaymentPurchasingSubject } from '../../shared/domain/applicability-purchasing-context.ts';
+import type { PaymentCodCarrier } from '../../shared/domain/payment-execution-binding.ts';
 import { CommitmentOutcomePort, unavailableCommitmentOutcome } from '../../src/ports/commitment-outcome-port.ts';
 import { DeliveryCapabilityPort } from '../../src/ports/delivery-capability-port.ts';
 import type { PaymentCodNotSupportedReasonSchema } from '../../src/ports/delivery-capability-port.ts';
 import { GatewayBindingPort, unavailableGatewayBinding } from '../../src/ports/gateway-binding-port.ts';
 import { ownerEvidenceUnavailable } from '../../src/ports/owner-evidence-unavailable.ts';
 import { PaymentTermEvidencePort } from '../../src/ports/payment-term-evidence-port.ts';
-import type { PaymentTermUseEvidence } from '../../src/ports/payment-term-evidence-port.ts';
+import type { PaymentTermPurchase, PaymentTermUseEvidence } from '../../src/ports/payment-term-evidence-port.ts';
 import { PickupCapabilityPort } from '../../src/ports/pickup-capability-port.ts';
 import type { PaymentPickupNotSupportedReasonSchema } from '../../src/ports/pickup-capability-port.ts';
 import { RefundableItemsPort, unavailableRefundableItems } from '../../src/ports/refundable-items-port.ts';
@@ -59,26 +62,35 @@ export const authorizationNetDaysSnapshot = (
     },
   });
 
-/** One CCC entitlement period of one Customer Configuration for one exact Payment Term Ref. */
+/** One CCC entitlement period of one buyer (the purchasing-context subject) for one exact Payment Term Ref. */
 export interface AuthorizationEntitlementPeriodFixture {
-  readonly customerConfigurationId: string;
+  readonly buyer: PaymentPurchasingSubject;
   readonly entitlementEvidenceRef: string;
   /** The C15 semantic snapshot the term owner Currently publishes for the Ref. */
   readonly semanticSnapshot: PaymentTermDefinitionSnapshot;
   readonly status: 'CURRENT' | 'CANCELLED';
 }
 
+/** The carrier the fixture Delivery owner names for every COD-capable offer; COD bindings must retain it. */
+export const AUTHORIZATION_COD_CARRIER = {
+  accountRef: 'ppl-cod-contract-1',
+  environment: 'production',
+  sourceSystem: 'ppl',
+} as const satisfies PaymentCodCarrier;
+
 type CodAnswer = 'SUPPORTED' | 'UNAVAILABLE' | typeof PaymentCodNotSupportedReasonSchema.Type;
 type PickupAnswer = 'SUPPORTED' | 'UNAVAILABLE' | typeof PaymentPickupNotSupportedReasonSchema.Type;
 
+const sameBuyer = Schema.toEquivalence(PaymentPurchasingSubjectSchema);
+
 const termUse = (
   periods: readonly AuthorizationEntitlementPeriodFixture[],
-  customerConfigurationId: string,
+  purchase: PaymentTermPurchase,
   paymentTermRef: PaymentTermRef,
 ): PaymentTermUseEvidence => {
   const period = periods.find(
     (candidate) =>
-      candidate.customerConfigurationId === customerConfigurationId &&
+      sameBuyer(candidate.buyer, purchase.purchasingContext.subject) &&
       sameTermRef(candidate.semanticSnapshot.paymentTermRef, paymentTermRef),
   );
   if (period === undefined) {
@@ -107,12 +119,12 @@ export const makeAuthorizationOwnerEvidenceFixture = Effect.gen(function* makeAu
 
   const layer = Layer.mergeAll(
     Layer.succeed(PaymentTermEvidencePort, {
-      verifyTermUse: ({ customerConfigurationId, paymentTermRef }) =>
+      verifyTermUse: ({ paymentTermRef, purchase }) =>
         Effect.gen(function* answerTermUse() {
           if (yield* Ref.get(termEvidenceUnavailable)) {
             return yield* ownerEvidenceUnavailable('PAYMENT_TERM_EVIDENCE', 'Customer Context fixture is down');
           }
-          return termUse(yield* Ref.get(periods), customerConfigurationId, paymentTermRef);
+          return termUse(yield* Ref.get(periods), purchase, paymentTermRef);
         }),
     }),
     Layer.succeed(DeliveryCapabilityPort, {
@@ -126,6 +138,7 @@ export const makeAuthorizationOwnerEvidenceFixture = Effect.gen(function* makeAu
             ? {
                 _tag: 'SUPPORTED' as const,
                 capabilityEvidenceRef: `cod-capability:${deliveryOfferRef}`,
+                carrier: AUTHORIZATION_COD_CARRIER,
                 deliveryOfferRef,
               }
             : { _tag: 'NOT_SUPPORTED' as const, deliveryOfferRef, reason: answer };
@@ -158,7 +171,7 @@ export const makeAuthorizationOwnerEvidenceFixture = Effect.gen(function* makeAu
       Ref.update(periods, (current) => [
         ...current.filter(
           (candidate) =>
-            candidate.customerConfigurationId !== period.customerConfigurationId ||
+            !sameBuyer(candidate.buyer, period.buyer) ||
             !sameTermRef(candidate.semanticSnapshot.paymentTermRef, period.semanticSnapshot.paymentTermRef),
         ),
         period,
