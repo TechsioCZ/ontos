@@ -19,6 +19,8 @@ import {
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
 import type { PaymentObservationFactKind } from '../../shared/domain/payment-vocabulary.ts';
+import { paymentUnavailableOwnerPortsLive } from '../../api/payment-production-layers.ts';
+import { startPaymentCollectionAction } from '../../src/actions/start-payment-collection.action.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
 import { makeTestScope } from './database-fixture.ts';
 import {
@@ -27,6 +29,7 @@ import {
   evidenceAllowedPermission,
   evidenceContextAccess,
   evidenceScenarioOf,
+  principalOf,
   seedCoreScope,
 } from './evidence-native-support.ts';
 import type { EvidenceNativeDatabase, EvidenceScenario } from './evidence-native-support.ts';
@@ -244,6 +247,66 @@ it.live('#1151 A correction disproving the not-effected attempt after a proven r
         ['collect-attempt-2', 'EFFECT_CONFIRMED'],
       ]);
       yield* expectConflictDebt(evidence, payment.paymentId, first.operationId, correction);
+    }),
+  ),
+);
+
+it.live('#1151 Open conflict debt blocks a further collection even when every COLLECT reads not effected', () =>
+  native(
+    Effect.gen(function* collectionBlockedByDebt() {
+      const database = yield* nativeDatabase;
+      const scope = yield* makeTestScope;
+      yield* seedCoreScope(database, scope);
+      const r1 = yield* makeRuntimes(database, COMPOSITION_R1);
+      const r2 = yield* makeRuntimes(database, COMPOSITION_R2);
+      const evidence = evidenceScenarioOf({ native: database, r1, r2, scope });
+      const { first, payment, retry } = yield* retriedCollection(evidence);
+
+      // Late success for attempt 1 is kept as conflict debt; attempt 2 is then proven not effected.
+      const late = yield* evidence.accept(
+        gopayStatement({
+          amount: czk(100_000),
+          economicEffectKey: 'gopay:payment:attempt-1',
+          factKind: 'COLLECTION_CONFIRMED',
+          operationId: first.operationId,
+          paymentId: payment.paymentId,
+        }),
+      );
+      expect(late).toMatchObject({ acceptanceOutcome: 'CONFLICT' });
+      yield* evidence.accept(
+        gopayStatement({
+          economicEffectKey: 'gopay:payment:attempt-2',
+          factKind: 'COLLECTION_NOT_EFFECTED',
+          operationId: retry.operationId,
+          paymentId: payment.paymentId,
+        }),
+      );
+      expect(yield* outcomesOf(evidence, payment.paymentId)).toEqual([
+        ['collect-attempt-1', 'NOT_EFFECTED_CONFIRMED'],
+        ['collect-attempt-2', 'NOT_EFFECTED_CONFIRMED'],
+      ]);
+
+      // The unresolved evidence says attempt 1 may already have collected: no third COLLECT is admitted.
+      const third = yield* Effect.result(
+        r1.actions
+          .runAction({
+            payload: {
+              amount: czk(100_000),
+              method: payment.method,
+              operationKey: 'collect-attempt-3',
+              paymentId: payment.paymentId,
+            },
+            principal: principalOf(scope),
+            registration: startPaymentCollectionAction,
+            transport: { correlationId: 'payment-collect-blocked-by-debt', idempotencyKey: randomUUID() },
+          })
+          .pipe(Effect.provide(paymentUnavailableOwnerPortsLive)),
+      );
+      expect(third).toMatchObject({ _tag: 'Failure', failure: { code: 'payment_held_for_reconciliation' } });
+      expect((yield* outcomesOf(evidence, payment.paymentId)).map(([operationKey]) => operationKey)).toEqual([
+        'collect-attempt-1',
+        'collect-attempt-2',
+      ]);
     }),
   ),
 );
