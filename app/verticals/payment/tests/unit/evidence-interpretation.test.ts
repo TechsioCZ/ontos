@@ -105,6 +105,26 @@ describe('#1151 Payment evidence interpretation', () => {
     );
   });
 
+  it('#1151 a proven different economic effect on a collection established by governed attachment is held, not counted once', () => {
+    const attachedCharge = accepted('obs-attached', { economicEffectKey: 'charge-a', operationId: COLLECT_ID });
+    const decision = interpretPaymentObservation(
+      aggregateOf([operation('EFFECT_CONFIRMED')], [], [attachedCharge]),
+      observed({ economicEffectKey: 'charge-b' }),
+    );
+    expect(decision).toEqual(
+      PaymentEvidenceDecision.HOLD({ operationId: COLLECT_ID, reason: 'DISTINCT_ECONOMIC_EFFECT' }),
+    );
+    // The attached charge itself, restated, still counts once.
+    expect(
+      interpretPaymentObservation(
+        aggregateOf([operation('EFFECT_CONFIRMED')], [], [attachedCharge]),
+        observed({ economicEffectKey: 'charge-a' }),
+      ),
+    ).toEqual(
+      PaymentEvidenceDecision.NO_CHANGE({ operationId: COLLECT_ID, reason: 'CORROBORATES_ESTABLISHED_OUTCOME' }),
+    );
+  });
+
   it('#1151 an economic effect that confirmed one refund is held when it is correlated to another refund', () => {
     const refund = (operationId: string, outcome: PaymentOperationOutcome) =>
       operation(outcome, { amount: czk(10_000), kind: 'REFUND', operationId });

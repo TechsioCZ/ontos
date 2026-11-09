@@ -17,6 +17,7 @@ import { PaymentMethodEnablementConflict } from '../../shared/domain/applicabili
 import { PaymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
 import { paymentApplicabilityPersistenceForTransaction } from '../persistence/payment-applicability-persistence.ts';
 import type { PaymentApplicabilityPersistence } from '../persistence/payment-applicability-persistence.ts';
+import { recordPaymentLookup } from './payment-data-access.ts';
 
 const domainEvents = {} as const;
 
@@ -44,6 +45,11 @@ export const handleConfigurePaymentMethodEnablement = Effect.fn('ConfigurePaymen
       reason: payload.reason,
     });
     const { record } = outcome;
+    // The Current enablement row was read under its lock; only a first configuration found none.
+    yield* recordPaymentLookup(context, {
+      query: 'method-enablement',
+      resultCount: outcome.changed && record.revision === 1 ? 0 : 1,
+    });
     return {
       changed: outcome.changed,
       configuredAt: record.configuredAt,

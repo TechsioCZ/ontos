@@ -19,6 +19,7 @@ import {
 } from '../domain/source-statement-acceptance.ts';
 import { paymentSourceServicesForTransaction } from '../persistence/payment-source-persistence.ts';
 import type { PaymentSourceServices } from '../persistence/payment-source-persistence.ts';
+import { observedPaymentSourceServices } from './payment-data-access.ts';
 import {
   createRecordPaymentLocalEvidencePaymentCoreOperationOutcomeChangedV1OutboxMessage,
   RecordPaymentLocalEvidencePaymentCoreOperationOutcomeChangedV1OutboxPayloadSchema,
@@ -49,12 +50,14 @@ export const handleRecordPaymentLocalEvidence = Effect.fn('RecordPaymentLocalEvi
       actorPrincipalId: context.scope.principalId,
       compositionRevision: context.compositionRevision,
     };
-    const acceptance = yield* acceptPaymentSourceStatement(context.services, {
+    const observed = observedPaymentSourceServices(context.services);
+    const acceptance = yield* acceptPaymentSourceStatement(observed.services, {
       entry: 'LOCAL_EVIDENCE',
       provenance,
       receivedAt: Option.none(),
       statement: payload,
     });
+    yield* observed.recordReads(context);
     yield* context.recordAuditEvidence({ reason: payload.reason });
     yield* Effect.forEach(
       acceptance.outcomeChanges,

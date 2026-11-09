@@ -36,6 +36,7 @@ import type {
   PaymentObservationRecord,
   PaymentReconciliationCaseRecord,
 } from '../persistence/payment-evidence-persistence.ts';
+import { recordPaymentAggregateReads, recordPaymentLookup } from './payment-data-access.ts';
 import { createRecordPaymentReconciliationDecisionPaymentCoreOperationOutcomeChangedV1OutboxMessage } from './record-payment-reconciliation-decision-payment-core-operation-outcome-changed-v1.outbox-message.ts';
 
 const MODULE_KEY = 'payment.core' as const;
@@ -82,6 +83,60 @@ const requireApplied = (step: PaymentReconciliationStepCase) =>
     Reject: ({ code, reason }) => Effect.fail(paymentEvidenceRejected(code, reason)),
   });
 
+/** One observation of this scope, with its bounded read evidence. */
+const findObservation = (context: DecisionContext, observationId: string) =>
+  context.services.evidence.findObservation(observationId).pipe(
+    Effect.tap((found) =>
+      recordPaymentLookup(context, {
+        query: 'observation',
+        recordId: observationId,
+        resultCount: Option.isSome(found) ? 1 : 0,
+      }),
+    ),
+  );
+
+/** Governed attachments of the observations, with their bounded read evidence. */
+const listObservationAttachments = (context: DecisionContext, observationIds: readonly string[]) =>
+  context.services.evidence
+    .listObservationAttachments(observationIds)
+    .pipe(
+      Effect.tap((attachments) =>
+        recordPaymentLookup(context, { query: 'observation-attachments', resultCount: attachments.length }),
+      ),
+    );
+
+/** Whether a later statement corrected the observation, with its bounded read evidence. */
+const isObservationCorrected = (context: DecisionContext, observationId: string) =>
+  context.services.evidence.isObservationCorrected(observationId).pipe(
+    Effect.tap((corrected) =>
+      recordPaymentLookup(context, {
+        query: 'observation-correction',
+        recordId: observationId,
+        resultCount: corrected ? 1 : 0,
+      }),
+    ),
+  );
+
+/** Whether the case already records a CLASSIFY_CONFLICT decision, with its bounded read evidence. */
+const hasClassifiedConflict = (context: DecisionContext, caseId: string) =>
+  context.services.evidence
+    .hasCaseDecision(caseId, 'CLASSIFY_CONFLICT')
+    .pipe(
+      Effect.tap((classified) =>
+        recordPaymentLookup(context, { query: 'case-decisions', recordId: caseId, resultCount: classified ? 1 : 0 }),
+      ),
+    );
+
+/** Effects of the Payment that already count toward an operation, with their bounded read evidence. */
+const listEstablishedEffects = (context: DecisionContext, paymentId: string) =>
+  context.services.evidence
+    .listEstablishedEffects(paymentId)
+    .pipe(
+      Effect.tap((effects) =>
+        recordPaymentLookup(context, { paymentId, query: 'established-effects', resultCount: effects.length }),
+      ),
+    );
+
 const attachedObservationId = (body: PaymentReconciliationDecisionBody) =>
   Match.valueTags(body, {
     ATTACH_EVIDENCE: ({ observationId }) => Option.some(observationId),
@@ -118,6 +173,7 @@ const sameEffectObservations = Effect.fn('RecordPaymentReconciliationDecisionAct
         sourceSystem: observation.sourceSystem,
       },
     });
+    yield* recordPaymentLookup(context, { paymentId, query: 'same-effect-observations', resultCount: siblings.length });
     return siblings.some((sibling) => sibling.observationId === observation.observationId)
       ? siblings
       : [observation, ...siblings];
@@ -134,7 +190,8 @@ const countedTowardOf = Effect.fn('RecordPaymentReconciliationDecisionAction.cou
   observation: PaymentObservationRecord,
 ) {
   const effect = yield* sameEffectObservations(context, observation);
-  const attachments = yield* context.services.evidence.listObservationAttachments(
+  const attachments = yield* listObservationAttachments(
+    context,
     effect.map((member) => member.observationId),
   );
   const accepted = effect.flatMap((member) =>
@@ -160,23 +217,33 @@ const evidenceFactsFor = Effect.fn('RecordPaymentReconciliationDecisionAction.ev
   if (Option.isNone(observationId)) {
     return Option.none<PaymentReconciliationEvidenceFacts>();
   }
-  const found = yield* evidence.findObservation(observationId.value);
+  const found = yield* findObservation(context, observationId.value);
   if (Option.isNone(found)) {
     return Option.none<PaymentReconciliationEvidenceFacts>();
   }
   const observation = found.value;
+  const { sourceAuthorityId } = observation;
   const authorityStatus =
-    observation.sourceAuthorityId === undefined
+    sourceAuthorityId === undefined
       ? Option.none()
-      : yield* evidence.findSourceAuthorityStatus(observation.sourceAuthorityId);
+      : yield* evidence.findSourceAuthorityStatus(sourceAuthorityId).pipe(
+          Effect.tap((status) =>
+            recordPaymentLookup(context, {
+              query: 'source-authority',
+              recordId: sourceAuthorityId,
+              resultCount: Option.isSome(status) ? 1 : 0,
+            }),
+          ),
+        );
+  const establishedEffects =
+    observation.paymentId === undefined ? [] : yield* listEstablishedEffects(context, observation.paymentId);
   return Option.some<PaymentReconciliationEvidenceFacts>({
     acceptanceOutcome: observation.acceptanceOutcome,
     amount: observation.amount,
-    corrected: yield* evidence.isObservationCorrected(observation.observationId),
+    corrected: yield* isObservationCorrected(context, observation.observationId),
     countedToward: yield* countedTowardOf(context, observation),
     economicEffectKey: observation.economicEffectKey,
-    establishedEffects:
-      observation.paymentId === undefined ? [] : yield* evidence.listEstablishedEffects(observation.paymentId),
+    establishedEffects,
     factKind: observation.factKind,
     observationId: observation.observationId,
     operationId: observation.operationId,
@@ -198,15 +265,14 @@ const establishedCurrentState = Effect.fn('RecordPaymentReconciliationDecisionAc
     if (observationId === undefined) {
       return false;
     }
-    const { evidence } = context.services;
-    const found = yield* evidence.findObservation(observationId);
+    const found = yield* findObservation(context, observationId);
     if (Option.isNone(found)) {
       return false;
     }
     if (found.value.acceptanceOutcome === 'ACCEPTED_OBSERVATION') {
       return true;
     }
-    const attachments = yield* evidence.listObservationAttachments([observationId]);
+    const attachments = yield* listObservationAttachments(context, [observationId]);
     return attachments.some((attachment) => attachment.resultingOutcome !== undefined);
   },
 );
@@ -221,18 +287,17 @@ const caseEvidenceFor = Effect.fn('RecordPaymentReconciliationDecisionAction.cas
   if (Option.isNone(observationId)) {
     return Option.none<PaymentReconciliationCaseEvidence>();
   }
-  const { evidence } = context.services;
-  const found = yield* evidence.findObservation(observationId.value);
+  const found = yield* findObservation(context, observationId.value);
   if (Option.isNone(found)) {
     return yield* paymentUnavailable('The observation of the reconciliation case is unreadable');
   }
   const observation = found.value;
-  const attachments = yield* evidence.listObservationAttachments([observation.observationId]);
+  const attachments = yield* listObservationAttachments(context, [observation.observationId]);
   return Option.some<PaymentReconciliationCaseEvidence>({
     acceptanceOutcome: observation.acceptanceOutcome,
     attachedOutcomes: attachments.map((attachment) => attachment.resultingOutcome),
-    conflictClassified: yield* evidence.hasCaseDecision(locked.caseId, 'CLASSIFY_CONFLICT'),
-    corrected: yield* evidence.isObservationCorrected(observation.observationId),
+    conflictClassified: yield* hasClassifiedConflict(context, locked.caseId),
+    corrected: yield* isObservationCorrected(context, observation.observationId),
     correctionTargetEstablished:
       observation.factKind === 'SOURCE_CORRECTION' &&
       (yield* establishedCurrentState(context, observation.correctsObservationId)),
@@ -259,6 +324,11 @@ const lockSubject = Effect.fn('RecordPaymentReconciliationDecisionAction.lockSub
       ? Option.none<PaymentAggregateRecord>()
       : Option.some(yield* aggregate.loadAggregate(paymentId, { lock: true }));
   const locked = yield* evidence.lockCase(caseId);
+  yield* recordPaymentLookup(context, { query: 'reconciliation-case', recordId: locked.caseId, resultCount: 1 });
+  yield* recordPaymentAggregateReads(
+    context,
+    Option.match(current, { onNone: () => [], onSome: (loaded) => [loaded.payment.paymentId] }),
+  );
   return { current, locked };
 });
 

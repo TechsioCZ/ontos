@@ -886,7 +886,9 @@ export const paymentAggregatePersistenceForTransaction = (
           toOutcome: input.to,
         })
         .pipe(Effect.mapError(paymentWriteFailure));
-      // Definitive non-execution releases the operation's item reservations atomically (#1150).
+      // Definitive non-execution releases the operation's item reservations atomically (#1150). Claims are
+      // never reactivated: if that outcome is later overturned, the refund's immutable basis protects its
+      // items again (`findUnavailableRefundItem`), and an item reclaimed in between is held overlap debt.
       if (input.to === 'NOT_EFFECTED_CONFIRMED') {
         yield* releaseClaims(input.operationId, input.paymentId, input.provenance);
       }

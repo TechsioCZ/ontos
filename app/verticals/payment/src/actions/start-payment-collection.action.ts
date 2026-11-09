@@ -39,6 +39,7 @@ import type { PaymentLifecycleServices } from '../persistence/payment-lifecycle-
 import { GatewayBindingPort } from '../ports/gateway-binding-port.ts';
 import type { PaymentGatewayAccountBinding } from '../../shared/domain/payment-execution-binding.ts';
 import { PaymentOwnerEvidenceUnavailable } from '../ports/owner-evidence-unavailable.ts';
+import { recordPaymentAggregateReads, recordPaymentLookup } from './payment-data-access.ts';
 import { createStartPaymentCollectionPaymentCoreOperationRequestedV1OutboxMessage } from './start-payment-collection-payment-core-operation-requested-v1.outbox-message.ts';
 
 const MODULE_KEY = 'payment.core' as const;
@@ -108,6 +109,13 @@ export const handleStartPaymentCollection = Effect.fn('StartPaymentCollectionAct
       : [];
     const aggregate = yield* persistence.loadAggregate(payload.paymentId, { lock: true });
     const { payment } = aggregate;
+    yield* recordPaymentLookup(context, {
+      paymentId: payment.paymentId,
+      query: 'purchase-correlation',
+      resultCount: Option.isSome(purchaseCorrelationId) ? 1 : 0,
+    });
+    yield* recordPaymentLookup(context, { query: 'purchase-intents', resultCount: purchasePaymentIds.length });
+    yield* recordPaymentAggregateReads(context, [payment.paymentId]);
     const materialRequest = collectionMaterialRequest(payment.paymentId, payload, payment.executionBinding);
     const materialHash = yield* computePaymentMaterialHash(materialRequest);
     const admission = decideOperationAdmission(aggregate.operations, {
@@ -156,8 +164,13 @@ export const handleStartPaymentCollection = Effect.fn('StartPaymentCollectionAct
         'This Payment intent was replaced by a successor; it cannot start a new collection',
       );
     }
+    yield* recordPaymentLookup(context, { paymentId: payment.paymentId, query: 'successor', resultCount: 0 });
     // A competing intent of the same purchase must not hold a live or proven collection lineage (#1145).
     yield* requireReleasedPurchase(purchasePaymentIds, persistence, payment.paymentId);
+    yield* recordPaymentAggregateReads(
+      context,
+      purchasePaymentIds.filter((paymentId) => paymentId !== payment.paymentId),
+    );
     // 4. Operation-specific owner evidence (H1094-01=A): only the gateway branch needs C17 here.
     yield* requireCurrentBinding(payment);
     // 5. Insert under the same lock; the partial unique index is the database backstop.

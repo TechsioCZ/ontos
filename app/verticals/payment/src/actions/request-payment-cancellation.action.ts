@@ -33,6 +33,7 @@ import {
   RequestPaymentCancellationPaymentCoreOperationRequestedV1OutboxProducerModuleKey,
   RequestPaymentCancellationPaymentCoreOperationRequestedV1OutboxTopic,
 } from './request-payment-cancellation-payment-core-operation-requested-v1.outbox-message.ts';
+import { recordPaymentAggregateReads } from './payment-data-access.ts';
 
 const PAYMENT_MODULE_KEY = 'payment.core';
 
@@ -72,6 +73,7 @@ const handleRequestPaymentCancellation = Effect.fn('RequestPaymentCancellation.h
   const aggregate = yield* persistence
     .loadAggregate(payload.paymentId, { lock: true })
     .pipe(Effect.mapError(cancellationFailureOf));
+  yield* recordPaymentAggregateReads(context, [aggregate.payment.paymentId]);
   const materialRequest = cancellationMaterialRequest(payload);
   const materialHash = yield* computePaymentMaterialHash(materialRequest).pipe(Effect.mapError(cancellationFailureOf));
   const admission = decideOperationAdmission(aggregate.operations, {

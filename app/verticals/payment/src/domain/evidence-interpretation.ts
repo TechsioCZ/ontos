@@ -267,17 +267,24 @@ const establishedAnotherOperation = (
   );
 };
 
-/** Same established outcome: corroboration unless both sides prove different economic effects. */
+/**
+ * Same established outcome: corroboration unless both sides prove different economic effects. The
+ * outcome may rest on accepted statements or on held statements a governed ATTACH_EVIDENCE counted.
+ */
 const decideRestatement = (
   aggregate: PaymentEvidenceAggregate,
   operation: PaymentEvidenceOperationView,
   observation: QualifiedPaymentObservation,
 ): PaymentEvidenceDecisionCase => {
   const { economicEffectKey } = observation;
+  const establishing = [
+    ...standingObservations(aggregate, operation.operationId),
+    ...aggregate.attachedStatements.filter((attached) => attached.operationId === operation.operationId),
+  ];
   const distinct =
     economicEffectKey !== undefined &&
     operation.outcome === 'EFFECT_CONFIRMED' &&
-    standingObservations(aggregate, operation.operationId).some(
+    establishing.some(
       (prior) =>
         prior.economicEffectKey !== undefined &&
         prior.economicEffectKey !== economicEffectKey &&
