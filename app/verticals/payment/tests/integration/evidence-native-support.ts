@@ -22,6 +22,7 @@ import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/t
 import type { PaymentCoverageSummary } from '../../shared/domain/lifecycle-views.ts';
 import type { PaymentExecutionBinding } from '../../shared/domain/payment-execution-binding.ts';
 import type { PaymentRefundBasis } from '../../shared/domain/payment-refund-basis.ts';
+import type { PaymentRefundExecutionRoute } from '../../shared/domain/refund-contract.ts';
 import type {
   PaymentCorrectionEffectKind,
   PaymentMethod,
@@ -60,6 +61,7 @@ import type { PaymentAggregatePersistence } from '../../src/persistence/payment-
 import { paymentAuthorizationPersistenceForTransaction } from '../../src/persistence/payment-authorization-persistence.ts';
 import { paymentEvidencePersistenceForTransaction } from '../../src/persistence/payment-evidence-persistence.ts';
 import type { PaymentEvidencePersistence } from '../../src/persistence/payment-evidence-persistence.ts';
+import { configuredRefundAuthorityOf, refundExecutionRouteOf } from '../support/refund-execution-route.fixture.ts';
 import { newPaymentInput, operationalScopeOf } from './database-fixture.ts';
 import type { PaymentTestScope } from './database-fixture.ts';
 
@@ -209,16 +211,28 @@ const currentCoverageSummary = (current: { readonly coverage: PaymentCoverageSum
   coverageSummaryOf(current.coverage);
 export const RECOVERY_REQUESTED = 'payment.core.operation-recovery-requested.v1';
 
-export interface OperationSpec {
+interface OperationSpecMaterial {
   readonly amountMinor: number;
   readonly binding?: PaymentExecutionBinding;
-  readonly kind?: PaymentOperationKind;
   readonly materialExtras?: Readonly<Record<string, Schema.Json>>;
   readonly operationKey: string;
   readonly paymentId: string;
-  readonly refundBasis?: PaymentRefundBasis;
-  readonly targetOperationId?: string;
 }
+
+/** A COLLECT (the default kind) or CANCEL_OR_VOID. */
+export interface CollectOrCancelOperationSpec extends OperationSpecMaterial {
+  readonly kind?: Exclude<PaymentOperationKind, 'REFUND'>;
+}
+
+/** A REFUND of a COLLECT, requested through the configured refund execution route it stores. */
+export interface RefundOperationSpec extends OperationSpecMaterial {
+  readonly kind: 'REFUND';
+  readonly refundBasis: PaymentRefundBasis;
+  readonly refundExecutionRoute: PaymentRefundExecutionRoute;
+  readonly targetOperationId: string;
+}
+
+export type OperationSpec = CollectOrCancelOperationSpec | RefundOperationSpec;
 
 export interface ObservationSpec {
   readonly acceptanceOutcome?: PaymentObservationAcceptanceOutcome;
@@ -302,7 +316,6 @@ export const evidenceScenarioOf = ({ native, r1, r2, scope }: EvidenceScenarioIn
       amount: { amountMinor: spec.amountMinor, currency: 'CZK' as const },
       binding: spec.binding ?? GATEWAY_BINDING,
       initialOutcome: 'PENDING' as const,
-      kind,
       materialRequest: { amountMinor: spec.amountMinor, currency: 'CZK', kind, ...spec.materialExtras },
       operationKey: spec.operationKey,
       paymentId: spec.paymentId,
@@ -310,13 +323,30 @@ export const evidenceScenarioOf = ({ native, r1, r2, scope }: EvidenceScenarioIn
     };
     const created = yield* inTransaction((aggregate) =>
       aggregate.insertOperation(
-        spec.refundBasis === undefined || spec.targetOperationId === undefined
-          ? base
-          : { ...base, refundBasis: spec.refundBasis, targetOperationId: spec.targetOperationId },
+        spec.kind === 'REFUND'
+          ? {
+              ...base,
+              kind: spec.kind,
+              refundBasis: spec.refundBasis,
+              refundExecutionRoute: spec.refundExecutionRoute,
+              targetOperationId: spec.targetOperationId,
+            }
+          : { ...base, kind: spec.kind ?? 'COLLECT' },
       ),
     );
     return created.record;
   });
+
+  /** The route of a REFUND requested through the source authority this scenario configured. */
+  const refundRouteOf = (sourceAuthorityId: string) =>
+    native.coreAdmin
+      .select()
+      .from(sourceAuthorities)
+      .where(eq(sourceAuthorities.sourceAuthorityId, sourceAuthorityId))
+      .pipe(
+        Effect.flatMap(([row]) => Effect.fromNullishOr(row)),
+        Effect.flatMap((row) => refundExecutionRouteOf(configuredRefundAuthorityOf(row))),
+      );
 
   const settle = (
     paymentId: string,
@@ -639,6 +669,7 @@ export const evidenceScenarioOf = ({ native, r1, r2, scope }: EvidenceScenarioIn
     r2,
     recordObservation,
     recover,
+    refundRouteOf,
     rows,
     scope,
     settle,

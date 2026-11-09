@@ -66,6 +66,7 @@ import {
   authorizationTermRefFor,
   makeAuthorizationOwnerEvidenceFixture,
 } from '../support/authorization-owner-evidence.fixture.ts';
+import { configuredRefundExecutionRouteFor } from '../support/refund-execution-route.fixture.ts';
 import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
 import {
   collectInput,
@@ -384,7 +385,14 @@ const startRefund = Effect.fn('AuthorizationNativeTests.startRefund')(function* 
   collectOperationId: string,
   initialOutcome: 'PENDING' | 'INDETERMINATE' = 'PENDING',
 ) {
-  const [provenance, key] = yield* Effect.all([provenanceFor(harness.scope), randomUuid], { concurrency: 1 });
+  const [provenance, key, refundExecutionRoute] = yield* Effect.all(
+    [
+      provenanceFor(harness.scope),
+      randomUuid,
+      configuredRefundExecutionRouteFor(harness.database, harness.scope, payment.executionBinding),
+    ],
+    { concurrency: 1 },
+  );
   const amount = { amountMinor: payment.amount.amountMinor, currency: 'CZK' as const };
   const created = yield* withPersistence(harness.database, harness.scope, (persistence) =>
     persistence.insertOperation({
@@ -400,6 +408,7 @@ const startRefund = Effect.fn('AuthorizationNativeTests.startRefund')(function* 
         _tag: 'REFUNDABLE_ITEMS',
         items: [{ ...amount, itemRef: 'item-1', sourceEvidenceRef: 'order-item-evidence-1' }],
       },
+      refundExecutionRoute,
       targetOperationId: collectOperationId,
     }),
   );

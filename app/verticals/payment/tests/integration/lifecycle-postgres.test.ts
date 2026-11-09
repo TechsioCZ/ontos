@@ -59,6 +59,7 @@ import {
   makeLifecycleOwnerContractFixture,
 } from '../support/lifecycle-owner-contract.fixture.ts';
 import type { LifecycleOwnerContractState } from '../support/lifecycle-owner-contract.fixture.ts';
+import { configuredRefundExecutionRouteFor } from '../support/refund-execution-route.fixture.ts';
 import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
 import {
   COMPOSITION_REVISION,
@@ -667,7 +668,13 @@ it.live('#1148 a proven unreturned predecessor collection blocks a successor; a 
       const successorIntent = scenario.intent({ predecessorPaymentId });
       expect(yield* failureCodeOf(scenario.create(successorIntent))).toBe('payment_predecessor_unresolved_conflict');
 
-      const provenance = yield* provenanceFor(scenario.scope);
+      const [provenance, refundExecutionRoute] = yield* Effect.all(
+        [
+          provenanceFor(scenario.scope),
+          configuredRefundExecutionRouteFor(scenario.native.database, scenario.scope, LIFECYCLE_GATEWAY_BINDING),
+        ],
+        { concurrency: 1 },
+      );
       const compensation = yield* scenario.persist((persistence) =>
         persistence.insertOperation({
           amount: { amountMinor: 100_000, currency: 'CZK' },
@@ -684,6 +691,7 @@ it.live('#1148 a proven unreturned predecessor collection blocks a successor; a 
             closedAgainstLateCommit: true,
             terminalNonCommitEvidenceRef: 'commitment-non-commit-1',
           },
+          refundExecutionRoute,
           targetOperationId: collection.operation.operationId,
         }),
       );
@@ -911,7 +919,13 @@ it.live('#1148 Failed commitment compensation has no refundable items: its sole 
         paymentId,
       });
       yield* scenario.settle(paymentId, collection.operation.operationId, 1, 'EFFECT_CONFIRMED');
-      const provenance = yield* provenanceFor(scenario.scope);
+      const [provenance, refundExecutionRoute] = yield* Effect.all(
+        [
+          provenanceFor(scenario.scope),
+          configuredRefundExecutionRouteFor(scenario.native.database, scenario.scope, LIFECYCLE_GATEWAY_BINDING),
+        ],
+        { concurrency: 1 },
+      );
       const compensation = yield* scenario.persist((persistence) =>
         persistence.insertOperation({
           amount: { amountMinor: 100_000, currency: 'CZK' },
@@ -928,6 +942,7 @@ it.live('#1148 Failed commitment compensation has no refundable items: its sole 
             closedAgainstLateCommit: true,
             terminalNonCommitEvidenceRef: 'commitment-non-commit-1',
           },
+          refundExecutionRoute,
           targetOperationId: collection.operation.operationId,
         }),
       );
@@ -1201,7 +1216,13 @@ it.live('#1148 Refund does not erase collection, and a later refund never reopen
       const collected = yield* scenario.collect(request('collect-refunded'));
       yield* scenario.settle(paymentId, collected.operation.operationId, 1, 'EFFECT_CONFIRMED');
       // The REFUND (lane L4 Action) is recorded through the shared aggregate primitive on the same lock.
-      const provenance = yield* provenanceFor(scenario.scope);
+      const [provenance, refundExecutionRoute] = yield* Effect.all(
+        [
+          provenanceFor(scenario.scope),
+          configuredRefundExecutionRouteFor(scenario.native.database, scenario.scope, LIFECYCLE_GATEWAY_BINDING),
+        ],
+        { concurrency: 1 },
+      );
       const refund = yield* scenario.persist((persistence) =>
         persistence.insertOperation({
           amount: { amountMinor: 100_000, currency: 'CZK' },
@@ -1216,6 +1237,7 @@ it.live('#1148 Refund does not erase collection, and a later refund never reopen
             _tag: 'REFUNDABLE_ITEMS',
             items: [{ amountMinor: 100_000, currency: 'CZK', itemRef: 'item-1', sourceEvidenceRef: 'order-item-1' }],
           },
+          refundExecutionRoute,
           targetOperationId: collected.operation.operationId,
         }),
       );

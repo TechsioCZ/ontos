@@ -171,6 +171,7 @@ const verify = Effect.gen(function* verifyPaymentSchema() {
       readonly public_routines: number;
       readonly safe_role: boolean;
       readonly safe_schema: boolean;
+      readonly unvalidated_constraints: number;
     }>(
       `
     select
@@ -183,7 +184,9 @@ const verify = Effect.gen(function* verifyPaymentSchema() {
         where n.nspname = $1 and i.indisunique and i.indpred is not null and c.relname = any($2::text[])) as partial_unique_indexes,
       (select count(*)::integer from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid = p.pronamespace
         where n.nspname = $1 and (has_function_privilege('ontos_runtime', p.oid, 'EXECUTE')
-          or exists (select 1 from pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) acl where acl.grantee = 0))) as public_routines
+          or exists (select 1 from pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) acl where acl.grantee = 0))) as public_routines,
+      (select count(*)::integer from pg_catalog.pg_constraint k join pg_catalog.pg_namespace n on n.oid = k.connamespace
+        where n.nspname = $1 and not k.convalidated) as unvalidated_constraints
     from pg_catalog.pg_roles r where r.rolname = 'ontos_runtime'`,
       [PAYMENT_SCHEMA_NAME, `{${requiredUniqueIndexes.join(',')}}`],
     )
@@ -194,9 +197,12 @@ const verify = Effect.gen(function* verifyPaymentSchema() {
     !infrastructure.safe_role ||
     !infrastructure.safe_schema ||
     infrastructure.partial_unique_indexes !== requiredUniqueIndexes.length ||
-    infrastructure.public_routines !== 0
+    infrastructure.public_routines !== 0 ||
+    infrastructure.unvalidated_constraints !== 0
   ) {
-    return yield* failure('Payment journal, role, schema, partial unique or routine privileges are unsafe');
+    return yield* failure(
+      'Payment journal, role, schema, partial unique, routine privileges or constraint validation are unsafe',
+    );
   }
   return PAYMENT_TABLES.length;
 });
@@ -214,5 +220,5 @@ const tableCount = await Effect.runPromise(
   verify.pipe(Effect.scoped, Effect.provide(Layer.mergeAll(Reactivity.layer, databaseLayer))),
 );
 process.stdout.write(
-  `Verified ${tableCount} payment tables: forced RLS, least privilege, append-only ledgers and collect lineage\n`,
+  `Verified ${tableCount} payment tables: forced RLS, least privilege, append-only ledgers, collect lineage and validated constraints\n`,
 );

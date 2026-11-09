@@ -28,6 +28,8 @@ import {
 import type { PaymentRecord } from '../../src/persistence/payment-aggregate-persistence.ts';
 import { paymentSourceServicesForTransaction } from '../../src/persistence/payment-source-persistence.ts';
 import type { PaymentSourceServices } from '../../src/persistence/payment-source-persistence.ts';
+import { refundExecutionRouteOf } from '../support/refund-execution-route.fixture.ts';
+import type { ConfiguredRefundAuthority } from '../support/refund-execution-route.fixture.ts';
 import type { PaymentTestDatabase, PaymentTestScope } from './database-fixture.ts';
 import {
   COMPOSITION_REVISION,
@@ -214,7 +216,9 @@ const startRefund = Effect.fn('SourceTest.startRefund')(function* startRefund(
   scope: PaymentTestScope,
   payment: PaymentRecord,
   collectOperationId: string,
+  refundAuthority: ConfiguredRefundAuthority,
 ) {
+  const refundExecutionRoute = yield* refundExecutionRouteOf(refundAuthority);
   const provenance = yield* provenanceFor(scope);
   const refundBasis = Schema.decodeUnknownSync(PaymentRefundBasisSchema)({
     _tag: 'REFUNDABLE_ITEMS',
@@ -231,6 +235,7 @@ const startRefund = Effect.fn('SourceTest.startRefund')(function* startRefund(
       paymentId: payment.paymentId,
       provenance,
       refundBasis,
+      refundExecutionRoute,
       targetOperationId: collectOperationId,
     }),
   );
@@ -607,7 +612,11 @@ describe('#1152 external/offline source boundary on native PostgreSQL', () => {
         Effect.gen(function* correctionVersusRefund() {
           const { database, scope } = yield* nativeDatabase;
           yield* configure(database, scope, authorityFor(erpBank, 'BANK_ACCOUNTING_RECEIPT', 'BANK_TRANSFER_ADVANCE'));
-          yield* configure(database, scope, authorityFor(erpBank, 'REFUND_EXECUTION', 'BANK_TRANSFER_ADVANCE', true));
+          const refundRoute = yield* configure(
+            database,
+            scope,
+            authorityFor(erpBank, 'REFUND_EXECUTION', 'BANK_TRANSFER_ADVANCE', true),
+          );
           const payment = yield* createPayment(database, scope, 'BANK_TRANSFER_ADVANCE', bankBinding);
           const collect = yield* startCollect(database, scope, payment);
           const receipt = yield* accept(database, scope, bankReceipt(payment.paymentId));
@@ -626,7 +635,7 @@ describe('#1152 external/offline source boundary on native PostgreSQL', () => {
           expect(reduced.collectionCorrections).toEqual([{ amountMinor: 40_000, currency: 'CZK' }]);
           expect(yield* outcomeOf(database, scope, payment.paymentId, collect.operationId)).toBe('EFFECT_CONFIRMED');
 
-          const refund = yield* startRefund(database, scope, payment, collect.operationId);
+          const refund = yield* startRefund(database, scope, payment, collect.operationId, refundRoute);
           const returned = yield* accept(database, scope, {
             amount: { amountMinor: 100_000, currency: 'CZK' },
             factFamily: 'REFUND_EXECUTION',
@@ -657,7 +666,11 @@ describe('#1152 external/offline source boundary on native PostgreSQL', () => {
           configure(database, scope, authorityFor(pplCarrier, 'REFUND_EXECUTION', 'CASH_ON_DELIVERY', true)),
         );
         expect(carrierRefund).toBe('payment_source_configuration_invalid');
-        yield* configure(database, scope, authorityFor(erpBank, 'REFUND_EXECUTION', 'CASH_ON_DELIVERY', true));
+        const refundRoute = yield* configure(
+          database,
+          scope,
+          authorityFor(erpBank, 'REFUND_EXECUTION', 'CASH_ON_DELIVERY', true),
+        );
         const payment = yield* createPayment(database, scope, 'CASH_ON_DELIVERY', codBinding);
         const collect = yield* startCollect(database, scope, payment);
         yield* accept(database, scope, {
@@ -670,7 +683,7 @@ describe('#1152 external/offline source boundary on native PostgreSQL', () => {
           sourceOccurrenceId: 'ppl-shipment-1-cod-collected',
           sourceRevision: 1,
         });
-        const refund = yield* startRefund(database, scope, payment, collect.operationId);
+        const refund = yield* startRefund(database, scope, payment, collect.operationId, refundRoute);
         const carrierClaim = yield* failureCodeOf(
           accept(database, scope, {
             amount: { amountMinor: 100_000, currency: 'CZK' },
@@ -726,7 +739,7 @@ describe('#1152 external/offline source boundary on native PostgreSQL', () => {
       Effect.gen(function* manualRefundRoute() {
         const { database, scope } = yield* nativeDatabase;
         yield* configure(database, scope, authorityFor(erpBank, 'BANK_ACCOUNTING_RECEIPT', 'BANK_TRANSFER_ADVANCE'));
-        yield* configure(
+        const refundRoute = yield* configure(
           database,
           scope,
           authorityFor(treasuryDesk, 'REFUND_EXECUTION', 'BANK_TRANSFER_ADVANCE', true),
@@ -734,7 +747,7 @@ describe('#1152 external/offline source boundary on native PostgreSQL', () => {
         const payment = yield* createPayment(database, scope, 'BANK_TRANSFER_ADVANCE', bankBinding);
         const collect = yield* startCollect(database, scope, payment);
         yield* accept(database, scope, bankReceipt(payment.paymentId));
-        const refund = yield* startRefund(database, scope, payment, collect.operationId);
+        const refund = yield* startRefund(database, scope, payment, collect.operationId, refundRoute);
         const manual = {
           amount: { amountMinor: 100_000, currency: 'CZK' },
           evidenceRef: 'treasury-transfer-order-12',

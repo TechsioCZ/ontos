@@ -7,6 +7,7 @@ import {
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { paymentWriteFailure } from '../../src/persistence/payment-aggregate-persistence.ts';
 import type { NewPaymentOperationInput } from '../../src/persistence/payment-aggregate-persistence.ts';
+import { configuredRefundExecutionRouteFor } from '../support/refund-execution-route.fixture.ts';
 import {
   COMPOSITION_REVISION,
   collectInput,
@@ -218,6 +219,11 @@ it.live(
             to: 'EFFECT_CONFIRMED',
           }),
         );
+        const refundExecutionRoute = yield* configuredRefundExecutionRouteFor(
+          runtime,
+          scope,
+          paymentInput.executionBinding,
+        );
         const refundOf = (operationKey: string) =>
           provenanceFor(scope).pipe(
             Effect.map((provenance): NewPaymentOperationInput => ({
@@ -233,6 +239,7 @@ it.live(
                 _tag: 'REFUNDABLE_ITEMS',
                 items: [{ amountMinor: 50_000, currency: 'CZK', itemRef: 'B', sourceEvidenceRef: 'order:item:B' }],
               },
+              refundExecutionRoute,
               targetOperationId: collected.record.operationId,
             })),
           );

@@ -1,4 +1,3 @@
-import type { PaymentTermDefinitionSnapshot } from '@app/payment-term-catalog-contracts/payment-term';
 import type { PaymentTermRef } from '@app/payment-term-catalog-contracts/resources/payment-term';
 import { DateTime, Effect, Match, Option, Result } from 'effect';
 
@@ -27,6 +26,7 @@ import { PaymentTermEvidencePort } from '../ports/payment-term-evidence-port.ts'
 import type { PaymentTermPurchase, PaymentTermUseEvidence } from '../ports/payment-term-evidence-port.ts';
 import { PickupCapabilityPort } from '../ports/pickup-capability-port.ts';
 import type { PaymentPickupCollectionCapability } from '../ports/pickup-capability-port.ts';
+import { isPaymentTermSnapshotRetiredAt } from './payment-term-retirement.ts';
 
 /**
  * Per-branch Payment Method applicability (#1147, H1094-01=A).
@@ -184,15 +184,6 @@ const checkPurchaseScope = (
     : Result.succeed(true);
 
 /**
- * The C15 snapshot must itself be Current at evaluation time: an owner answer that calls a term
- * usable while its own snapshot says the term was retired is contradictory evidence, never AVAILABLE.
- * A scheduled retirement (`effectiveTo` still in the future) keeps the term Current until it is reached.
- */
-const isRetiredAt = (snapshot: PaymentTermDefinitionSnapshot, at: DateTime.Utc) =>
-  snapshot.lifecycle.effectiveTo !== null &&
-  DateTime.toEpochMillis(DateTime.makeUnsafe(snapshot.lifecycle.effectiveTo)) <= DateTime.toEpochMillis(at);
-
-/**
  * Interprets the exact C15 semantic snapshot + CCC Current entitlement/policy decision. Only
  * `DEFERRED_INVOICE` needs `NET_DAYS`; any other method keeps a `NET_DAYS` term unchanged (early payment).
  * No invoice issue DATE or due DATE is derived: the reusable condition is all Payment evaluates.
@@ -213,7 +204,7 @@ export const interpretTermEvidence = (
         if (!sameTermRef(usable.semanticSnapshot.paymentTermRef, requested)) {
           return subjectMismatch('PAYMENT_TERM');
         }
-        if (isRetiredAt(usable.semanticSnapshot, at)) {
+        if (isPaymentTermSnapshotRetiredAt(usable.semanticSnapshot, at)) {
           return failed('PAYMENT_TERM', 'CONFLICTING_CONFIGURATION', 'TERM_RETIRED');
         }
         if (method === 'DEFERRED_INVOICE' && usable.semanticSnapshot.semantics.kind !== 'NET_DAYS') {

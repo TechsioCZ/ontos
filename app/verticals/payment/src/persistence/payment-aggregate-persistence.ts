@@ -135,24 +135,35 @@ export interface NewPaymentInput {
   readonly termSemanticEvidence: PaymentTermDefinitionSnapshot;
 }
 
-export interface NewPaymentOperationInput {
+interface NewPaymentOperationMaterial {
   readonly amount: PaymentMonetaryAmount;
   /** The immutable binding the operation executes under (the Payment's original binding). */
   readonly binding: PaymentExecutionBinding;
   readonly initialOutcome: 'PENDING' | 'INDETERMINATE';
-  readonly kind: PaymentOperationKind;
   /** Canonical material request; its SHA-256 is the business replay comparator (#1151). */
   readonly materialRequest: Schema.Json;
   readonly operationKey: string;
   readonly paymentId: string;
   readonly provenance: PaymentExecutionProvenance;
-  /** Required exactly for REFUND (one immutable basis). */
-  readonly refundBasis?: PaymentRefundBasis;
-  /** REFUND only: the configured executor chosen under the row lock (#1150); stored immutably. */
-  readonly refundExecutionRoute?: PaymentRefundExecutionRoute;
-  /** The COLLECT a CANCEL_OR_VOID or REFUND targets; absent for COLLECT. */
+}
+
+/** A COLLECT, or a CANCEL_OR_VOID of the COLLECT it targets. */
+export interface NewPaymentCollectOrCancelInput extends NewPaymentOperationMaterial {
+  readonly kind: Exclude<PaymentOperationKind, 'REFUND'>;
+  /** The COLLECT a CANCEL_OR_VOID targets; absent for COLLECT. */
   readonly targetOperationId?: string;
 }
+
+/** A REFUND of the COLLECT it targets, stored with its one immutable basis and execution route. */
+export interface NewPaymentRefundInput extends NewPaymentOperationMaterial {
+  readonly kind: 'REFUND';
+  readonly refundBasis: PaymentRefundBasis;
+  /** The configured executor chosen under the row lock (#1150); stored immutably, never rerouted. */
+  readonly refundExecutionRoute: PaymentRefundExecutionRoute;
+  readonly targetOperationId: string;
+}
+
+export type NewPaymentOperationInput = NewPaymentCollectOrCancelInput | NewPaymentRefundInput;
 
 export interface PaymentOutcomeTransitionInput {
   /** What caused the change: the accepted observation, reconciliation decision or recovery. */
@@ -291,9 +302,6 @@ const amountOf = (amountMinor: number, currency: string) =>
 const paymentRecordOf = Effect.fn('PaymentAggregatePersistence.paymentRecordOf')(function* paymentRecordOf(
   row: PaymentRow,
 ) {
-  if (row.purchasingContext === null) {
-    return yield* paymentUnavailable('The stored Payment has no purchasing context');
-  }
   const [amount, executionBinding, paymentTermRef, termSemanticEvidence, method, purchasingContext] = yield* Effect.all(
     [
       amountOf(row.amountMinor, row.currency),
@@ -728,15 +736,14 @@ export const paymentAggregatePersistenceForTransaction = (
         'Another collection lineage is live or proven for this Payment',
       );
     }
+    const refund = input.kind === 'REFUND' ? input : undefined;
     const [binding, refundBasis, refundExecutionRoute] = yield* Effect.all(
       [
         encodeJson(PaymentExecutionBindingSchema, input.binding),
-        input.refundBasis === undefined
+        refund === undefined ? Effect.succeed(null) : encodeJson(PaymentRefundBasisSchema, refund.refundBasis),
+        refund === undefined
           ? Effect.succeed(null)
-          : encodeJson(PaymentRefundBasisSchema, input.refundBasis),
-        input.refundExecutionRoute === undefined
-          ? Effect.succeed(null)
-          : encodeJson(PaymentRefundExecutionRouteSchema, input.refundExecutionRoute),
+          : encodeJson(PaymentRefundExecutionRouteSchema, refund.refundExecutionRoute),
       ],
       { concurrency: 1 },
     );
@@ -760,7 +767,7 @@ export const paymentAggregatePersistenceForTransaction = (
         outcomeRevision: 1,
         paymentId: input.paymentId,
         refundBasis,
-        refundBasisKind: input.refundBasis?._tag ?? null,
+        refundBasisKind: refund?.refundBasis._tag ?? null,
         refundExecutionRoute,
         targetOperationId: input.targetOperationId ?? null,
       })
@@ -786,7 +793,7 @@ export const paymentAggregatePersistenceForTransaction = (
         toOutcome: row.outcome,
       })
       .pipe(Effect.mapError(paymentWriteFailure));
-    yield* insertClaims(row, input.refundBasis, createdAt);
+    yield* insertClaims(row, refund?.refundBasis, createdAt);
     // Starting a cancellation or refund can reduce prepaid coverage: prior proofs become unusable.
     yield* advanceAggregate(paymentRow, input.kind !== 'COLLECT');
     return written(yield* operationRecordOf(row));

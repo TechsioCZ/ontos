@@ -327,7 +327,7 @@ it.live(
     native(
       Effect.gen(function* lateRefund() {
         const scenario = yield* boundaryScenario();
-        const { authorizationId, binding, collect, payment } = yield* provenCollection(scenario);
+        const { authorizationId, binding, collect, payment, receipt } = yield* provenCollection(scenario);
         const refund = yield* scenario.evidence.startOperation({
           amountMinor: 40_000,
           kind: 'REFUND',
@@ -337,6 +337,7 @@ it.live(
             _tag: 'REFUNDABLE_ITEMS',
             items: [{ amountMinor: 40_000, currency: 'CZK', itemRef: 'line-1', sourceEvidenceRef: 'order-line-1' }],
           },
+          refundExecutionRoute: yield* scenario.evidence.refundRouteOf(receipt.sourceAuthorityId),
           targetOperationId: collect.operationId,
         });
         const confirmedRefund = yield* scenario.accept({

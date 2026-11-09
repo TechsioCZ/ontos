@@ -1,7 +1,7 @@
 {
-  "id": "3f42b8a0-0d92-410b-a751-4474aaaf54f5",
+  "id": "044070e1-f452-489d-9ad7-c07043f8e658",
   "prevIds": [
-    "46f23873-2efd-4361-80e0-20bb43c2df2f"
+    "198d4fa1-bc49-453d-9538-657eb77894d8"
   ],
   "version": "8",
   "dialect": "postgres",
@@ -584,6 +584,19 @@
       "generated": null,
       "identity": null,
       "name": "amount_minor",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "correction_effect",
       "entityType": "columns",
       "schema": "payment",
       "table": "observations"
@@ -1512,6 +1525,19 @@
       "table": "payment_operations"
     },
     {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "refund_execution_route",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
       "type": "uuid",
       "typeSchema": null,
       "notNull": false,
@@ -1767,6 +1793,19 @@
       "generated": null,
       "identity": null,
       "name": "purchase_correlation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "purchasing_context",
       "entityType": "columns",
       "schema": "payment",
       "table": "payments"
@@ -2820,6 +2859,19 @@
       "generated": null,
       "identity": null,
       "name": "status",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authority_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 1,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "submitter_principal_ids",
       "entityType": "columns",
       "schema": "payment",
       "table": "source_authority_revisions"
@@ -3992,6 +4044,13 @@
       "table": "method_enablements"
     },
     {
+      "value": "(\"correction_effect\" is not null) = (\"fact_kind\" = 'SOURCE_CORRECTION' and \"acceptance_outcome\" = 'ACCEPTED_OBSERVATION') and (\"correction_effect\" is null or \"correction_effect\" in ('RECORD_ONLY', 'REDUCE_ESTABLISHED_COLLECTION', 'REOPEN_TO_CONFLICT'))",
+      "name": "payment_observations_correction_effect_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
       "value": "\"acceptance_outcome\" in ('ACCEPTED_OBSERVATION', 'DUPLICATE', 'HELD_UNRESOLVED', 'CONFLICT', 'UNAUTHORIZED_SOURCE', 'UNSUPPORTED_FACT') and \"fact_kind\" in ('COLLECTION_PENDING', 'COLLECTION_CONFIRMED', 'COLLECTION_NOT_EFFECTED', 'CANCEL_CONFIRMED', 'CANCEL_NOT_EFFECTED', 'REFUND_PENDING', 'REFUND_CONFIRMED', 'REFUND_NOT_EFFECTED', 'SETTLEMENT_OBSERVED', 'SOURCE_CORRECTION', 'UNRECOGNIZED') and \"fact_family\" in ('BANK_ACCOUNTING_RECEIPT', 'DEFERRED_INVOICE_RECEIPT', 'COD_CUSTOMER_COLLECTION', 'COD_REMITTANCE', 'LOCAL_POS_COLLECTION', 'GATEWAY_OUTCOME', 'REFUND_EXECUTION', 'SETTLEMENT_REMITTANCE') and \"source_kind\" in ('BANK_ACCOUNTING', 'CARRIER', 'LOCAL_POS_OPERATOR', 'PAYMENT_GATEWAY', 'MANUAL_EXTERNAL_REFUND')",
       "name": "payment_observations_vocabulary_ck",
       "entityType": "checks",
@@ -4195,6 +4254,13 @@
       "table": "payment_operations"
     },
     {
+      "value": "(\"kind\" = 'REFUND') = (\"refund_execution_route\" is not null) and (\"refund_execution_route\" is null or jsonb_typeof(\"refund_execution_route\") = 'object')",
+      "name": "payment_operations_refund_route_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
       "value": "\"outcome_revision\" > 0",
       "name": "payment_operations_outcome_revision_ck",
       "entityType": "checks",
@@ -4267,6 +4333,13 @@
     {
       "value": "\"purchase_correlation_id\" = btrim(\"purchase_correlation_id\") and length(\"purchase_correlation_id\") between 1 and 200",
       "name": "payment_payments_purchase_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "value": "jsonb_typeof(\"purchasing_context\") = 'object'",
+      "name": "payment_payments_purchasing_context_ck",
       "entityType": "checks",
       "schema": "payment",
       "table": "payments"
@@ -4484,6 +4557,13 @@
     {
       "value": "\"revision\" > 0",
       "name": "payment_source_authority_revisions_revision_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "source_authority_revisions"
+    },
+    {
+      "value": "cardinality(\"submitter_principal_ids\") between 1 and 100 and array_ndims(\"submitter_principal_ids\") = 1 and array_position(\"submitter_principal_ids\", null) is null",
+      "name": "payment_source_authority_revisions_submitters_ck",
       "entityType": "checks",
       "schema": "payment",
       "table": "source_authority_revisions"
