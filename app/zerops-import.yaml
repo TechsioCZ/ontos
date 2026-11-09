@@ -107,4 +107,7 @@ services:
   - hostname: commerceorder
     type: nodejs@24
     enableSubdomainAccess: true
+  - hostname: payment
+    type: nodejs@24
+    enableSubdomainAccess: true
   # </generated-vertical-provider-imports>

@@ -820,7 +820,7 @@ jobs:
               proof: none,
               units: verticals/commerce-customer-context verticals/storefront-registry verticals/commerce-order,
             }
-          - { shard: 3, proof: none, units: verticals/assortment apps/shell-super-app }
+          - { shard: 3, proof: none, units: verticals/assortment apps/shell-super-app verticals/payment }
           - { shard: 4, proof: none, units: verticals/party-registry verticals/inventory verticals/availability }
           - {
               shard: 5,
@@ -963,7 +963,7 @@ jobs:
           - {
               shard: 2,
               proof: none,
-              units: verticals/party-registry verticals/price-group-catalog verticals/availability verticals/commerce-order,
+              units: verticals/party-registry verticals/price-group-catalog verticals/availability verticals/commerce-order verticals/payment,
             }
           - { shard: 3, proof: outputs, units: verticals/catalog verticals/storefront-registry }
           - { shard: 4, proof: none, units: verticals/commerce-customer-context apps/shell-super-app verticals/tax }
@@ -1011,6 +1011,7 @@ jobs:
           ULTRAMODERN_PUBLIC_URL_COMMERCE_ORDER: https://commerce-order.invalid
           ULTRAMODERN_PUBLIC_URL_INVENTORY: https://inventory.invalid
           ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: https://party-registry.invalid
+          ULTRAMODERN_PUBLIC_URL_PAYMENT: https://payment.invalid
           ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG: https://payment-term-catalog.invalid
           ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG: https://price-group-catalog.invalid
           ULTRAMODERN_PUBLIC_URL_PRICING: https://pricing.invalid
@@ -1142,6 +1143,7 @@ jobs:
           ULTRAMODERN_PUBLIC_URL_COMMERCE_ORDER: https://commerce-order.invalid
           ULTRAMODERN_PUBLIC_URL_INVENTORY: https://inventory.invalid
           ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: https://party-registry.invalid
+          ULTRAMODERN_PUBLIC_URL_PAYMENT: https://payment.invalid
           ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG: https://payment-term-catalog.invalid
           ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG: https://price-group-catalog.invalid
           ULTRAMODERN_PUBLIC_URL_PRICING: https://pricing.invalid

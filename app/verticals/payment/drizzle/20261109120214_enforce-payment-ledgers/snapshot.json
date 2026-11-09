@@ -1,0 +1,5183 @@
+{
+  "id": "3f42b8a0-0d92-410b-a751-4474aaaf54f5",
+  "prevIds": [
+    "46f23873-2efd-4361-80e0-20bb43c2df2f"
+  ],
+  "version": "8",
+  "dialect": "postgres",
+  "ddl": [
+    {
+      "name": "payment",
+      "entityType": "schemas"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "gateway_assertion_redemptions",
+      "entityType": "tables",
+      "schema": "payment"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "method_enablement_revisions",
+      "entityType": "tables",
+      "schema": "payment"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "method_enablements",
+      "entityType": "tables",
+      "schema": "payment"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "observations",
+      "entityType": "tables",
+      "schema": "payment"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "operation_outcome_transitions",
+      "entityType": "tables",
+      "schema": "payment"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "payment_authorizations",
+      "entityType": "tables",
+      "schema": "payment"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "payment_operations",
+      "entityType": "tables",
+      "schema": "payment"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "payments",
+      "entityType": "tables",
+      "schema": "payment"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "reconciliation_cases",
+      "entityType": "tables",
+      "schema": "payment"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "reconciliation_decisions",
+      "entityType": "tables",
+      "schema": "payment"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "recovery_requests",
+      "entityType": "tables",
+      "schema": "payment"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "refund_item_claims",
+      "entityType": "tables",
+      "schema": "payment"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "source_authorities",
+      "entityType": "tables",
+      "schema": "payment"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "source_authority_revisions",
+      "entityType": "tables",
+      "schema": "payment"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "audience",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "expires_at",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "issuer",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "jti",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "redeemed_at",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablement_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablement_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablement_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablement_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "composition_revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablement_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "customer_configuration_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablement_revisions"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "enabled",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablement_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "method",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablement_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "method_enablement_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablement_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "method_enablement_revision_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablement_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablement_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablement_revisions"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablement_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablements"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablements"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablements"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablements"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "composition_revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablements"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "configured_at",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablements"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "customer_configuration_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablements"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "enabled",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablements"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "method",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablements"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "method_enablement_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablements"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablements"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "method_enablements"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "composition_revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "acceptance_outcome",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "account_ref",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "amount_minor",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "corrects_observation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "currency",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "economic_effect_key",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "environment",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "evidence_ref",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "fact_family",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "fact_kind",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "observation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "operation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "payment_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "received_at",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_authority_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_authority_revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_kind",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_occurred_at",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_occurrence_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_system",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "verified_at",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "operation_outcome_transitions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "operation_outcome_transitions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "operation_outcome_transitions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "operation_outcome_transitions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "composition_revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "operation_outcome_transitions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "cause_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "operation_outcome_transitions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "cause_kind",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "operation_outcome_transitions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "from_outcome",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "operation_outcome_transitions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "operation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "operation_outcome_transitions"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "outcome_revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "operation_outcome_transitions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "payment_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "operation_outcome_transitions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "operation_outcome_transitions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "to_outcome",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "operation_outcome_transitions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "transition_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "operation_outcome_transitions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "composition_revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "amount_minor",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "authorization_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "coverage_revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "currency",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "expires_at",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "issuance_key",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "issued_at",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "method",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "method_condition_evidence",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "order_commitment_attempt_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "payment_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "payment_term_ref",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "proof_kind",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "purchase_correlation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "composition_revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "amount_minor",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "binding",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "currency",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "kind",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "material_hash",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "material_request",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "operation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "operation_key",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "outcome",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "outcome_revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "payment_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "refund_basis",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "refund_basis_kind",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "target_operation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "composition_revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "aggregate_version",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "amount_minor",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "coverage_revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "currency",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "customer_configuration_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "execution_binding",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "intent_key",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "material_hash",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "method",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "payment_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "payment_term_ref",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "predecessor_payment_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "purchase_correlation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "term_semantic_evidence",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "composition_revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "case_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "case_kind",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "closed_at",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "observation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "opened_at",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "operation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "payment_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "status",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_decisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_decisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_decisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_decisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "composition_revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_decisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "case_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_decisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "decided_at",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_decisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "decision_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_decisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "decision_kind",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_decisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "evidence_ref",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_decisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_decisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "resulting_outcome",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "reconciliation_decisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "recovery_requests"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "recovery_requests"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "recovery_requests"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "recovery_requests"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "composition_revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "recovery_requests"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "binding_snapshot",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "recovery_requests"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "mode",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "recovery_requests"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "operation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "recovery_requests"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "payment_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "recovery_requests"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "recovery_requests"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "recovery_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "recovery_requests"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "requested_at",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "recovery_requests"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "refund_item_claims"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "refund_item_claims"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "active",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "refund_item_claims"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "amount_minor",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "refund_item_claims"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "claimed_at",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "refund_item_claims"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "claim_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "refund_item_claims"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "currency",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "refund_item_claims"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "item_ref",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "refund_item_claims"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "operation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "refund_item_claims"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "payment_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "refund_item_claims"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "released_at",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "refund_item_claims"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "released_by_action_invocation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "refund_item_claims"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_evidence_ref",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "refund_item_claims"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "composition_revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "account_ref",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "configured_at",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "environment",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "fact_family",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "method",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "refund_route",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "source_authority_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_kind",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_system",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "status",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authority_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authority_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authority_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authority_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "composition_revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authority_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authority_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authority_revisions"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "refund_route",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authority_revisions"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authority_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_authority_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authority_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "source_authority_revision_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authority_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "status",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "source_authority_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "expires_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "payment_gateway_assertion_redemptions_expiry_idx",
+      "entityType": "indexes",
+      "schema": "payment",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "payment_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "payment_observations_payment_idx",
+      "entityType": "indexes",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "operation_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "economic_effect_key",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "payment_observations_effect_idx",
+      "entityType": "indexes",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "payment_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": "\"kind\" = 'COLLECT' and \"outcome\" <> 'NOT_EFFECTED_CONFIRMED'",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "payment_operations_one_collect_lineage_uk",
+      "entityType": "indexes",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "target_operation_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "payment_operations_target_idx",
+      "entityType": "indexes",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "purchase_correlation_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "payment_payments_purchase_idx",
+      "entityType": "indexes",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "status",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "payment_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "payment_reconciliation_cases_open_idx",
+      "entityType": "indexes",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "payment_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "item_ref",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": "\"active\"",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "payment_refund_item_claims_active_item_uk",
+      "entityType": "indexes",
+      "schema": "payment",
+      "table": "refund_item_claims"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "method_enablement_id"
+      ],
+      "schemaTo": "payment",
+      "tableTo": "method_enablements",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "method_enablement_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "payment_method_enablement_revisions_current_fk",
+      "entityType": "fks",
+      "schema": "payment",
+      "table": "method_enablement_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "source_authority_id"
+      ],
+      "schemaTo": "payment",
+      "tableTo": "source_authorities",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "source_authority_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "payment_observations_authority_fk",
+      "entityType": "fks",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id"
+      ],
+      "schemaTo": "payment",
+      "tableTo": "payments",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "payment_observations_payment_fk",
+      "entityType": "fks",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id",
+        "operation_id"
+      ],
+      "schemaTo": "payment",
+      "tableTo": "payment_operations",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id",
+        "operation_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "payment_observations_operation_fk",
+      "entityType": "fks",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "corrects_observation_id"
+      ],
+      "schemaTo": "payment",
+      "tableTo": "observations",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "observation_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "payment_observations_corrects_fk",
+      "entityType": "fks",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id",
+        "operation_id"
+      ],
+      "schemaTo": "payment",
+      "tableTo": "payment_operations",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id",
+        "operation_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "payment_outcome_transitions_operation_fk",
+      "entityType": "fks",
+      "schema": "payment",
+      "table": "operation_outcome_transitions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id"
+      ],
+      "schemaTo": "payment",
+      "tableTo": "payments",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "payment_authorizations_payment_fk",
+      "entityType": "fks",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id"
+      ],
+      "schemaTo": "payment",
+      "tableTo": "payments",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "payment_operations_payment_fk",
+      "entityType": "fks",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id",
+        "target_operation_id"
+      ],
+      "schemaTo": "payment",
+      "tableTo": "payment_operations",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id",
+        "operation_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "payment_operations_target_fk",
+      "entityType": "fks",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "predecessor_payment_id"
+      ],
+      "schemaTo": "payment",
+      "tableTo": "payments",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "payment_payments_predecessor_fk",
+      "entityType": "fks",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id"
+      ],
+      "schemaTo": "payment",
+      "tableTo": "payments",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "payment_reconciliation_cases_payment_fk",
+      "entityType": "fks",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id",
+        "operation_id"
+      ],
+      "schemaTo": "payment",
+      "tableTo": "payment_operations",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id",
+        "operation_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "payment_reconciliation_cases_operation_fk",
+      "entityType": "fks",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "observation_id"
+      ],
+      "schemaTo": "payment",
+      "tableTo": "observations",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "observation_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "payment_reconciliation_cases_observation_fk",
+      "entityType": "fks",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "case_id"
+      ],
+      "schemaTo": "payment",
+      "tableTo": "reconciliation_cases",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "case_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "payment_reconciliation_decisions_case_fk",
+      "entityType": "fks",
+      "schema": "payment",
+      "table": "reconciliation_decisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id",
+        "operation_id"
+      ],
+      "schemaTo": "payment",
+      "tableTo": "payment_operations",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id",
+        "operation_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "payment_recovery_requests_operation_fk",
+      "entityType": "fks",
+      "schema": "payment",
+      "table": "recovery_requests"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id",
+        "operation_id"
+      ],
+      "schemaTo": "payment",
+      "tableTo": "payment_operations",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id",
+        "operation_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "payment_refund_item_claims_operation_fk",
+      "entityType": "fks",
+      "schema": "payment",
+      "table": "refund_item_claims"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "source_authority_id"
+      ],
+      "schemaTo": "payment",
+      "tableTo": "source_authorities",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "source_authority_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "payment_source_authority_revisions_current_fk",
+      "entityType": "fks",
+      "schema": "payment",
+      "table": "source_authority_revisions"
+    },
+    {
+      "columns": [
+        "method_enablement_revision_id"
+      ],
+      "nameExplicit": false,
+      "name": "method_enablement_revisions_pkey",
+      "schema": "payment",
+      "table": "method_enablement_revisions",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "method_enablement_id"
+      ],
+      "nameExplicit": false,
+      "name": "method_enablements_pkey",
+      "schema": "payment",
+      "table": "method_enablements",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "observation_id"
+      ],
+      "nameExplicit": false,
+      "name": "observations_pkey",
+      "schema": "payment",
+      "table": "observations",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "transition_id"
+      ],
+      "nameExplicit": false,
+      "name": "operation_outcome_transitions_pkey",
+      "schema": "payment",
+      "table": "operation_outcome_transitions",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "authorization_id"
+      ],
+      "nameExplicit": false,
+      "name": "payment_authorizations_pkey",
+      "schema": "payment",
+      "table": "payment_authorizations",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "operation_id"
+      ],
+      "nameExplicit": false,
+      "name": "payment_operations_pkey",
+      "schema": "payment",
+      "table": "payment_operations",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "payment_id"
+      ],
+      "nameExplicit": false,
+      "name": "payments_pkey",
+      "schema": "payment",
+      "table": "payments",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "case_id"
+      ],
+      "nameExplicit": false,
+      "name": "reconciliation_cases_pkey",
+      "schema": "payment",
+      "table": "reconciliation_cases",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "decision_id"
+      ],
+      "nameExplicit": false,
+      "name": "reconciliation_decisions_pkey",
+      "schema": "payment",
+      "table": "reconciliation_decisions",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "recovery_id"
+      ],
+      "nameExplicit": false,
+      "name": "recovery_requests_pkey",
+      "schema": "payment",
+      "table": "recovery_requests",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "claim_id"
+      ],
+      "nameExplicit": false,
+      "name": "refund_item_claims_pkey",
+      "schema": "payment",
+      "table": "refund_item_claims",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "source_authority_id"
+      ],
+      "nameExplicit": false,
+      "name": "source_authorities_pkey",
+      "schema": "payment",
+      "table": "source_authorities",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "source_authority_revision_id"
+      ],
+      "nameExplicit": false,
+      "name": "source_authority_revisions_pkey",
+      "schema": "payment",
+      "table": "source_authority_revisions",
+      "entityType": "pks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "issuer",
+        "audience",
+        "jti"
+      ],
+      "nullsNotDistinct": false,
+      "name": "payment_gateway_assertion_redemptions_identity_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "method_enablement_id",
+        "revision"
+      ],
+      "nullsNotDistinct": false,
+      "name": "payment_method_enablement_revisions_number_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "method_enablement_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "method_enablement_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "payment_method_enablements_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "method_enablements"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "customer_configuration_id",
+        "method"
+      ],
+      "nullsNotDistinct": false,
+      "name": "payment_method_enablements_identity_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "method_enablements"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "observation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "payment_observations_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "source_kind",
+        "source_system",
+        "account_ref",
+        "environment",
+        "source_occurrence_id",
+        "source_revision"
+      ],
+      "nullsNotDistinct": false,
+      "name": "payment_observations_occurrence_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "operation_id",
+        "outcome_revision"
+      ],
+      "nullsNotDistinct": false,
+      "name": "payment_outcome_transitions_revision_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "operation_outcome_transitions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "authorization_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "payment_authorizations_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id",
+        "order_commitment_attempt_id",
+        "issuance_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "payment_authorizations_issuance_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "operation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "payment_operations_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id",
+        "operation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "payment_operations_payment_id_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id",
+        "operation_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "payment_operations_key_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "payment_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "payment_payments_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "intent_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "payment_payments_intent_key_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "case_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "payment_reconciliation_cases_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "decision_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "payment_reconciliation_decisions_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "reconciliation_decisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "action_invocation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "payment_reconciliation_decisions_invocation_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "reconciliation_decisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "recovery_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "payment_recovery_requests_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "recovery_requests"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "action_invocation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "payment_recovery_requests_invocation_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "recovery_requests"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "operation_id",
+        "item_ref"
+      ],
+      "nullsNotDistinct": false,
+      "name": "payment_refund_item_claims_operation_item_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "refund_item_claims"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "source_authority_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "payment_source_authorities_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "fact_family",
+        "method",
+        "source_kind",
+        "source_system",
+        "account_ref",
+        "environment"
+      ],
+      "nullsNotDistinct": true,
+      "name": "payment_source_authorities_identity_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "source_authority_id",
+        "revision"
+      ],
+      "nullsNotDistinct": false,
+      "name": "payment_source_authority_revisions_number_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "source_authority_revisions"
+    },
+    {
+      "value": "\"method\" in ('ONLINE_GATEWAY', 'BANK_TRANSFER_ADVANCE', 'CASH_ON_DELIVERY', 'DEFERRED_INVOICE', 'PAY_ON_PICKUP_OR_ON_SITE')",
+      "name": "payment_method_enablement_revisions_method_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "method_enablement_revisions"
+    },
+    {
+      "value": "\"revision\" > 0",
+      "name": "payment_method_enablement_revisions_revision_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "method_enablement_revisions"
+    },
+    {
+      "value": "\"reason\" = btrim(\"reason\") and length(\"reason\") between 1 and 1000",
+      "name": "payment_method_enablement_revisions_reason_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "method_enablement_revisions"
+    },
+    {
+      "value": "\"composition_revision\" ~ '^[a-f0-9]{64}$'",
+      "name": "payment_method_enablement_revisions_composition_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "method_enablement_revisions"
+    },
+    {
+      "value": "\"method\" in ('ONLINE_GATEWAY', 'BANK_TRANSFER_ADVANCE', 'CASH_ON_DELIVERY', 'DEFERRED_INVOICE', 'PAY_ON_PICKUP_OR_ON_SITE')",
+      "name": "payment_method_enablements_method_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "method_enablements"
+    },
+    {
+      "value": "\"revision\" > 0",
+      "name": "payment_method_enablements_revision_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "method_enablements"
+    },
+    {
+      "value": "\"customer_configuration_id\" = btrim(\"customer_configuration_id\") and length(\"customer_configuration_id\") between 1 and 200",
+      "name": "payment_method_enablements_configuration_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "method_enablements"
+    },
+    {
+      "value": "\"reason\" = btrim(\"reason\") and length(\"reason\") between 1 and 1000",
+      "name": "payment_method_enablements_reason_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "method_enablements"
+    },
+    {
+      "value": "\"composition_revision\" ~ '^[a-f0-9]{64}$'",
+      "name": "payment_method_enablements_composition_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "method_enablements"
+    },
+    {
+      "value": "\"acceptance_outcome\" in ('ACCEPTED_OBSERVATION', 'DUPLICATE', 'HELD_UNRESOLVED', 'CONFLICT', 'UNAUTHORIZED_SOURCE', 'UNSUPPORTED_FACT') and \"fact_kind\" in ('COLLECTION_PENDING', 'COLLECTION_CONFIRMED', 'COLLECTION_NOT_EFFECTED', 'CANCEL_CONFIRMED', 'CANCEL_NOT_EFFECTED', 'REFUND_PENDING', 'REFUND_CONFIRMED', 'REFUND_NOT_EFFECTED', 'SETTLEMENT_OBSERVED', 'SOURCE_CORRECTION', 'UNRECOGNIZED') and \"fact_family\" in ('BANK_ACCOUNTING_RECEIPT', 'DEFERRED_INVOICE_RECEIPT', 'COD_CUSTOMER_COLLECTION', 'COD_REMITTANCE', 'LOCAL_POS_COLLECTION', 'GATEWAY_OUTCOME', 'REFUND_EXECUTION', 'SETTLEMENT_REMITTANCE') and \"source_kind\" in ('BANK_ACCOUNTING', 'CARRIER', 'LOCAL_POS_OPERATOR', 'PAYMENT_GATEWAY', 'MANUAL_EXTERNAL_REFUND')",
+      "name": "payment_observations_vocabulary_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "value": "(\"amount_minor\" is null) = (\"currency\" is null) and (\"amount_minor\" is null or (\"amount_minor\" between 0 and 9007199254740991 and \"currency\" = 'CZK'))",
+      "name": "payment_observations_money_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "value": "(\"operation_id\" is null or \"payment_id\" is not null) and (\"corrects_observation_id\" is null or \"corrects_observation_id\" <> \"observation_id\")",
+      "name": "payment_observations_correlation_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "value": "(\"source_authority_id\" is null) = (\"source_authority_revision\" is null) and (\"source_authority_revision\" is null or \"source_authority_revision\" > 0) and (\"acceptance_outcome\" = 'UNAUTHORIZED_SOURCE' or \"source_authority_id\" is not null)",
+      "name": "payment_observations_authority_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "value": "\"source_revision\" between 0 and 9007199254740991",
+      "name": "payment_observations_revision_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "value": "\"verified_at\" >= \"received_at\"",
+      "name": "payment_observations_times_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "value": "\"source_system\" = btrim(\"source_system\") and length(\"source_system\") between 1 and 200",
+      "name": "payment_observations_system_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "value": "\"account_ref\" = btrim(\"account_ref\") and length(\"account_ref\") between 1 and 200",
+      "name": "payment_observations_account_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "value": "\"environment\" = btrim(\"environment\") and length(\"environment\") between 1 and 200",
+      "name": "payment_observations_environment_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "value": "\"source_occurrence_id\" = btrim(\"source_occurrence_id\") and length(\"source_occurrence_id\") between 1 and 200",
+      "name": "payment_observations_occurrence_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "value": "(\"economic_effect_key\" is null or (\"economic_effect_key\" = btrim(\"economic_effect_key\") and length(\"economic_effect_key\") between 1 and 200)) and (\"evidence_ref\" is null or (\"evidence_ref\" = btrim(\"evidence_ref\") and length(\"evidence_ref\") between 1 and 200))",
+      "name": "payment_observations_refs_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "value": "\"composition_revision\" ~ '^[a-f0-9]{64}$'",
+      "name": "payment_observations_composition_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "value": "\"cause_kind\" in ('CREATION', 'OBSERVATION', 'RECONCILIATION', 'RECOVERY') and (\"cause_kind\" = 'CREATION') = (\"from_outcome\" is null) and (\"cause_kind\" = 'CREATION') = (\"outcome_revision\" = 1) and (\"cause_id\" is null or (\"cause_id\" = btrim(\"cause_id\") and length(\"cause_id\") between 1 and 200))",
+      "name": "payment_outcome_transitions_cause_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "operation_outcome_transitions"
+    },
+    {
+      "value": "\"to_outcome\" in ('PENDING', 'EFFECT_CONFIRMED', 'NOT_EFFECTED_CONFIRMED', 'INDETERMINATE', 'CONFLICT') and (\"from_outcome\" is null or (\"from_outcome\" in ('PENDING', 'EFFECT_CONFIRMED', 'NOT_EFFECTED_CONFIRMED', 'INDETERMINATE', 'CONFLICT') and \"from_outcome\" <> \"to_outcome\"))",
+      "name": "payment_outcome_transitions_outcome_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "operation_outcome_transitions"
+    },
+    {
+      "value": "\"outcome_revision\" > 0",
+      "name": "payment_outcome_transitions_revision_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "operation_outcome_transitions"
+    },
+    {
+      "value": "\"composition_revision\" ~ '^[a-f0-9]{64}$'",
+      "name": "payment_outcome_transitions_composition_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "operation_outcome_transitions"
+    },
+    {
+      "value": "\"proof_kind\" in ('PREPAID_COVERAGE', 'METHOD_CONDITION') and (\"proof_kind\" <> 'PREPAID_COVERAGE' or (\"coverage_revision\" is not null and \"coverage_revision\" > 0)) and (\"proof_kind\" <> 'METHOD_CONDITION' or jsonb_typeof(\"method_condition_evidence\") = 'object')",
+      "name": "payment_authorizations_proof_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "value": "\"amount_minor\" between 0 and 9007199254740991 and \"currency\" = 'CZK'",
+      "name": "payment_authorizations_amount_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "value": "\"method\" in ('ONLINE_GATEWAY', 'BANK_TRANSFER_ADVANCE', 'CASH_ON_DELIVERY', 'DEFERRED_INVOICE', 'PAY_ON_PICKUP_OR_ON_SITE')",
+      "name": "payment_authorizations_method_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "value": "\"expires_at\" > \"issued_at\"",
+      "name": "payment_authorizations_validity_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "value": "\"issuance_key\" ~ '^[!-~]{1,200}$'",
+      "name": "payment_authorizations_issuance_key_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "value": "\"order_commitment_attempt_id\" = btrim(\"order_commitment_attempt_id\") and length(\"order_commitment_attempt_id\") between 1 and 200",
+      "name": "payment_authorizations_attempt_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "value": "\"purchase_correlation_id\" = btrim(\"purchase_correlation_id\") and length(\"purchase_correlation_id\") between 1 and 200",
+      "name": "payment_authorizations_purchase_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "value": "\"composition_revision\" ~ '^[a-f0-9]{64}$'",
+      "name": "payment_authorizations_composition_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "value": "\"kind\" in ('COLLECT', 'CANCEL_OR_VOID', 'REFUND')",
+      "name": "payment_operations_kind_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "value": "\"outcome\" in ('PENDING', 'EFFECT_CONFIRMED', 'NOT_EFFECTED_CONFIRMED', 'INDETERMINATE', 'CONFLICT')",
+      "name": "payment_operations_outcome_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "value": "\"amount_minor\" between 0 and 9007199254740991 and \"currency\" = 'CZK' and (\"kind\" = 'CANCEL_OR_VOID' or \"amount_minor\" > 0)",
+      "name": "payment_operations_amount_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "value": "(\"kind\" = 'COLLECT') = (\"target_operation_id\" is null) and (\"target_operation_id\" is null or \"target_operation_id\" <> \"operation_id\")",
+      "name": "payment_operations_target_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "value": "((\"kind\" = 'REFUND') = (\"refund_basis_kind\" is not null)) and ((\"refund_basis_kind\" is null) = (\"refund_basis\" is null)) and (\"refund_basis_kind\" is null or (\"refund_basis_kind\" in ('REFUNDABLE_ITEMS', 'FAILED_COMMITMENT_COMPENSATION') and \"refund_basis\"->>'_tag' = \"refund_basis_kind\"))",
+      "name": "payment_operations_refund_basis_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "value": "\"outcome_revision\" > 0",
+      "name": "payment_operations_outcome_revision_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "value": "\"material_hash\" ~ '^[a-f0-9]{64}$'",
+      "name": "payment_operations_material_hash_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "value": "\"operation_key\" ~ '^[!-~]{1,200}$'",
+      "name": "payment_operations_key_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "value": "\"composition_revision\" ~ '^[a-f0-9]{64}$'",
+      "name": "payment_operations_composition_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "value": "\"amount_minor\" between 0 and 9007199254740991 and \"currency\" = 'CZK'",
+      "name": "payment_payments_amount_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "value": "\"method\" in ('ONLINE_GATEWAY', 'BANK_TRANSFER_ADVANCE', 'CASH_ON_DELIVERY', 'DEFERRED_INVOICE', 'PAY_ON_PICKUP_OR_ON_SITE')",
+      "name": "payment_payments_method_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "value": "\"coverage_revision\" > 0 and \"aggregate_version\" > 0",
+      "name": "payment_payments_revisions_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "value": "\"predecessor_payment_id\" is null or \"predecessor_payment_id\" <> \"payment_id\"",
+      "name": "payment_payments_predecessor_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "value": "\"material_hash\" ~ '^[a-f0-9]{64}$'",
+      "name": "payment_payments_material_hash_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "value": "jsonb_typeof(\"execution_binding\") = 'object' and jsonb_typeof(\"payment_term_ref\") = 'object' and jsonb_typeof(\"term_semantic_evidence\") = 'object'",
+      "name": "payment_payments_binding_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "value": "\"purchase_correlation_id\" = btrim(\"purchase_correlation_id\") and length(\"purchase_correlation_id\") between 1 and 200",
+      "name": "payment_payments_purchase_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "value": "\"customer_configuration_id\" = btrim(\"customer_configuration_id\") and length(\"customer_configuration_id\") between 1 and 200",
+      "name": "payment_payments_configuration_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "value": "\"intent_key\" ~ '^[!-~]{1,200}$'",
+      "name": "payment_payments_intent_key_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "value": "\"composition_revision\" ~ '^[a-f0-9]{64}$'",
+      "name": "payment_payments_composition_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "value": "\"case_kind\" in ('HELD_OBSERVATION', 'OPERATION_CONFLICT', 'AMBIGUOUS_FUNDS', 'UNRESOLVED_OPERATION') and \"status\" in ('OPEN', 'CLOSED')",
+      "name": "payment_reconciliation_cases_kind_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "value": "(\"payment_id\" is not null or \"observation_id\" is not null) and (\"operation_id\" is null or \"payment_id\" is not null)",
+      "name": "payment_reconciliation_cases_subject_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "value": "(\"status\" = 'CLOSED') = (\"closed_at\" is not null) and \"revision\" > 0",
+      "name": "payment_reconciliation_cases_status_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "value": "\"composition_revision\" ~ '^[a-f0-9]{64}$'",
+      "name": "payment_reconciliation_cases_composition_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "value": "\"decision_kind\" in ('ATTACH_EVIDENCE', 'CLASSIFY_CONFLICT', 'CLOSE_CASE') and (\"resulting_outcome\" is null or \"resulting_outcome\" in ('PENDING', 'EFFECT_CONFIRMED', 'NOT_EFFECTED_CONFIRMED', 'INDETERMINATE', 'CONFLICT'))",
+      "name": "payment_reconciliation_decisions_kind_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "reconciliation_decisions"
+    },
+    {
+      "value": "\"evidence_ref\" is null or (\"evidence_ref\" = btrim(\"evidence_ref\") and length(\"evidence_ref\") between 1 and 200)",
+      "name": "payment_reconciliation_decisions_evidence_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "reconciliation_decisions"
+    },
+    {
+      "value": "\"reason\" = btrim(\"reason\") and length(\"reason\") between 1 and 1000",
+      "name": "payment_reconciliation_decisions_reason_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "reconciliation_decisions"
+    },
+    {
+      "value": "\"composition_revision\" ~ '^[a-f0-9]{64}$'",
+      "name": "payment_reconciliation_decisions_composition_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "reconciliation_decisions"
+    },
+    {
+      "value": "\"mode\" in ('PROVIDER_IDEMPOTENT_REPLAY', 'AUTHORITATIVE_LOOKUP', 'AWAIT_QUALIFIED_EVIDENCE', 'GOVERNED_RECONCILIATION')",
+      "name": "payment_recovery_requests_mode_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "recovery_requests"
+    },
+    {
+      "value": "jsonb_typeof(\"binding_snapshot\") = 'object'",
+      "name": "payment_recovery_requests_binding_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "recovery_requests"
+    },
+    {
+      "value": "\"reason\" = btrim(\"reason\") and length(\"reason\") between 1 and 1000",
+      "name": "payment_recovery_requests_reason_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "recovery_requests"
+    },
+    {
+      "value": "\"composition_revision\" ~ '^[a-f0-9]{64}$'",
+      "name": "payment_recovery_requests_composition_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "recovery_requests"
+    },
+    {
+      "value": "\"amount_minor\" between 1 and 9007199254740991 and \"currency\" = 'CZK'",
+      "name": "payment_refund_item_claims_amount_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "refund_item_claims"
+    },
+    {
+      "value": "\"active\" = (\"released_at\" is null) and \"active\" = (\"released_by_action_invocation_id\" is null)",
+      "name": "payment_refund_item_claims_release_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "refund_item_claims"
+    },
+    {
+      "value": "\"item_ref\" = btrim(\"item_ref\") and length(\"item_ref\") between 1 and 200",
+      "name": "payment_refund_item_claims_item_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "refund_item_claims"
+    },
+    {
+      "value": "\"source_evidence_ref\" = btrim(\"source_evidence_ref\") and length(\"source_evidence_ref\") between 1 and 200",
+      "name": "payment_refund_item_claims_evidence_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "refund_item_claims"
+    },
+    {
+      "value": "\"fact_family\" in ('BANK_ACCOUNTING_RECEIPT', 'DEFERRED_INVOICE_RECEIPT', 'COD_CUSTOMER_COLLECTION', 'COD_REMITTANCE', 'LOCAL_POS_COLLECTION', 'GATEWAY_OUTCOME', 'REFUND_EXECUTION', 'SETTLEMENT_REMITTANCE')",
+      "name": "payment_source_authorities_family_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "value": "\"method\" is null or \"method\" in ('ONLINE_GATEWAY', 'BANK_TRANSFER_ADVANCE', 'CASH_ON_DELIVERY', 'DEFERRED_INVOICE', 'PAY_ON_PICKUP_OR_ON_SITE')",
+      "name": "payment_source_authorities_method_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "value": "\"source_kind\" in ('BANK_ACCOUNTING', 'CARRIER', 'LOCAL_POS_OPERATOR', 'PAYMENT_GATEWAY', 'MANUAL_EXTERNAL_REFUND')",
+      "name": "payment_source_authorities_kind_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "value": "\"status\" in ('ACTIVE', 'REVOKED')",
+      "name": "payment_source_authorities_status_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "value": "\"revision\" > 0",
+      "name": "payment_source_authorities_revision_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "value": "\"source_system\" = btrim(\"source_system\") and length(\"source_system\") between 1 and 200",
+      "name": "payment_source_authorities_system_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "value": "\"account_ref\" = btrim(\"account_ref\") and length(\"account_ref\") between 1 and 200",
+      "name": "payment_source_authorities_account_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "value": "\"environment\" = btrim(\"environment\") and length(\"environment\") between 1 and 200",
+      "name": "payment_source_authorities_environment_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "value": "\"reason\" = btrim(\"reason\") and length(\"reason\") between 1 and 1000",
+      "name": "payment_source_authorities_reason_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "value": "\"composition_revision\" ~ '^[a-f0-9]{64}$'",
+      "name": "payment_source_authorities_composition_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "value": "\"status\" in ('ACTIVE', 'REVOKED')",
+      "name": "payment_source_authority_revisions_status_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "source_authority_revisions"
+    },
+    {
+      "value": "\"revision\" > 0",
+      "name": "payment_source_authority_revisions_revision_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "source_authority_revisions"
+    },
+    {
+      "value": "\"reason\" = btrim(\"reason\") and length(\"reason\") between 1 and 1000",
+      "name": "payment_source_authority_revisions_reason_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "source_authority_revisions"
+    },
+    {
+      "value": "\"composition_revision\" ~ '^[a-f0-9]{64}$'",
+      "name": "payment_source_authority_revisions_composition_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "source_authority_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"method_enablement_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"method_enablement_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_method_enablement_revisions_select",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "method_enablement_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"payment\".\"method_enablement_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"method_enablement_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_method_enablement_revisions_insert",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "method_enablement_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"method_enablement_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"method_enablement_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"payment\".\"method_enablement_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"method_enablement_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_method_enablement_revisions_update",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "method_enablement_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"method_enablement_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"method_enablement_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_method_enablement_revisions_delete",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "method_enablement_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"method_enablements\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"method_enablements\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_method_enablements_select",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "method_enablements"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"payment\".\"method_enablements\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"method_enablements\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_method_enablements_insert",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "method_enablements"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"method_enablements\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"method_enablements\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"payment\".\"method_enablements\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"method_enablements\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_method_enablements_update",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "method_enablements"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"method_enablements\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"method_enablements\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_method_enablements_delete",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "method_enablements"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"observations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"observations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_observations_select",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"payment\".\"observations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"observations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_observations_insert",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"observations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"observations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"payment\".\"observations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"observations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_observations_update",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"observations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"observations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_observations_delete",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"operation_outcome_transitions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"operation_outcome_transitions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_outcome_transitions_select",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "operation_outcome_transitions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"payment\".\"operation_outcome_transitions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"operation_outcome_transitions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_outcome_transitions_insert",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "operation_outcome_transitions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"operation_outcome_transitions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"operation_outcome_transitions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"payment\".\"operation_outcome_transitions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"operation_outcome_transitions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_outcome_transitions_update",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "operation_outcome_transitions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"operation_outcome_transitions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"operation_outcome_transitions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_outcome_transitions_delete",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "operation_outcome_transitions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"payment_authorizations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"payment_authorizations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_authorizations_select",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"payment\".\"payment_authorizations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"payment_authorizations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_authorizations_insert",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"payment_authorizations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"payment_authorizations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"payment\".\"payment_authorizations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"payment_authorizations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_authorizations_update",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"payment_authorizations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"payment_authorizations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_authorizations_delete",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "payment_authorizations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"payment_operations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"payment_operations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_operations_select",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"payment\".\"payment_operations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"payment_operations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_operations_insert",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"payment_operations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"payment_operations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"payment\".\"payment_operations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"payment_operations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_operations_update",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"payment_operations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"payment_operations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_operations_delete",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "payment_operations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"payments\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"payments\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_payments_select",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"payment\".\"payments\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"payments\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_payments_insert",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"payments\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"payments\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"payment\".\"payments\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"payments\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_payments_update",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"payments\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"payments\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_payments_delete",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "payments"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"reconciliation_cases\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"reconciliation_cases\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_reconciliation_cases_select",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"payment\".\"reconciliation_cases\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"reconciliation_cases\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_reconciliation_cases_insert",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"reconciliation_cases\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"reconciliation_cases\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"payment\".\"reconciliation_cases\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"reconciliation_cases\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_reconciliation_cases_update",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"reconciliation_cases\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"reconciliation_cases\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_reconciliation_cases_delete",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "reconciliation_cases"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"reconciliation_decisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"reconciliation_decisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_reconciliation_decisions_select",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "reconciliation_decisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"payment\".\"reconciliation_decisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"reconciliation_decisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_reconciliation_decisions_insert",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "reconciliation_decisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"reconciliation_decisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"reconciliation_decisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"payment\".\"reconciliation_decisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"reconciliation_decisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_reconciliation_decisions_update",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "reconciliation_decisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"reconciliation_decisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"reconciliation_decisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_reconciliation_decisions_delete",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "reconciliation_decisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"recovery_requests\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"recovery_requests\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_recovery_requests_select",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "recovery_requests"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"payment\".\"recovery_requests\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"recovery_requests\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_recovery_requests_insert",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "recovery_requests"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"recovery_requests\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"recovery_requests\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"payment\".\"recovery_requests\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"recovery_requests\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_recovery_requests_update",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "recovery_requests"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"recovery_requests\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"recovery_requests\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_recovery_requests_delete",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "recovery_requests"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"refund_item_claims\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"refund_item_claims\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_refund_item_claims_select",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "refund_item_claims"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"payment\".\"refund_item_claims\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"refund_item_claims\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_refund_item_claims_insert",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "refund_item_claims"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"refund_item_claims\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"refund_item_claims\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"payment\".\"refund_item_claims\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"refund_item_claims\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_refund_item_claims_update",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "refund_item_claims"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"refund_item_claims\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"refund_item_claims\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_refund_item_claims_delete",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "refund_item_claims"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"source_authorities\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"source_authorities\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_source_authorities_select",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"payment\".\"source_authorities\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"source_authorities\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_source_authorities_insert",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"source_authorities\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"source_authorities\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"payment\".\"source_authorities\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"source_authorities\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_source_authorities_update",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"source_authorities\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"source_authorities\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_source_authorities_delete",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "source_authorities"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"source_authority_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"source_authority_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_source_authority_revisions_select",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "source_authority_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"payment\".\"source_authority_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"source_authority_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_source_authority_revisions_insert",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "source_authority_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"source_authority_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"source_authority_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"payment\".\"source_authority_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"source_authority_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "payment_source_authority_revisions_update",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "source_authority_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"payment\".\"source_authority_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"payment\".\"source_authority_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "payment_source_authority_revisions_delete",
+      "entityType": "policies",
+      "schema": "payment",
+      "table": "source_authority_revisions"
+    }
+  ],
+  "renames": []
+}
