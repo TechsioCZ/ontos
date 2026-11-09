@@ -4,20 +4,14 @@
 import "server-only";
 import { akros } from "./akros";
 import { sroubshop } from "./sroubshop";
-import { BRAND_IDS, type Brand, type BrandId, type BrandLocale, type ClientBrand } from "./types";
+import { getBrandId } from "./config";
+import type { Brand, BrandId, BrandLocale, ClientBrand } from "./types";
 
 const brands: Readonly<Record<BrandId, Brand>> = { akros, sroubshop };
-const isBrandId = (value: string): value is BrandId =>
-  (BRAND_IDS as readonly string[]).includes(value);
 
 /** The brand of this instance; unset means AKROS, an unknown value fails loudly instead of falling back. */
 export function getBrand(): Brand {
-  const configured = process.env.STOREFRONT_BRAND?.trim() || "akros";
-  if (!isBrandId(configured))
-    throw new Error(
-      `STOREFRONT_BRAND=${JSON.stringify(configured)} is not a storefront brand (${BRAND_IDS.join(", ")})`,
-    );
-  return brands[configured];
+  return brands[getBrandId()];
 }
 
 /** Brand copy language of a market locale (`cs`, `sk`); every other locale reads English. */

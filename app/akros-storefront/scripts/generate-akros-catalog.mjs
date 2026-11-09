@@ -269,6 +269,7 @@ for (const [groupId, items] of groups) {
   products.push({
     id: `product-${groupId}`,
     sourceGroupId: groupId,
+    sourceBaseProduct: base.baseProduct === "1",
     slug: uniqueSlug(base.slug, groupId),
     categoryId,
     name: itemName(base),

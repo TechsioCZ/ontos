@@ -491,6 +491,11 @@ const storefrontFilters = (
   eq(products.archived, false),
   eq(products.active, true),
   eq(products.published, true),
+  // Filtering belongs before count/limit/offset. Exact reads still resolve historical
+  // orphan items for saved links and carts; standalone main products remain listable.
+  catalog.mainSourceProductsOnly === true && catalog.slug === undefined && catalog.productIds === undefined
+    ? sql`coalesce((${products.document}->>'sourceBaseProduct')::boolean, true)`
+    : undefined,
   catalog.featured === true
     ? or(sql`${products.id} = any(${featuredIds})`, eq(products.isRecommended, true))
     : undefined,

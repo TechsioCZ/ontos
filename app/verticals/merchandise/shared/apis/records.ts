@@ -58,6 +58,8 @@ export const StorefrontCatalogQuerySchema = Schema.Struct({
   featured: Schema.optionalKey(Schema.Boolean),
   fields: Schema.optionalKey(Schema.Literals(['card', 'full'])),
   label: Schema.optionalKey(Schema.Literals(['action', 'recommended', 'sale', 'new'])),
+  /** Opt-in source import policy for listings only; absent/false preserves every published product. */
+  mainSourceProductsOnly: Schema.optionalKey(Schema.Boolean),
   marketId: Schema.optionalKey(MarketIdSchema),
   maxMinor: Schema.optionalKey(MinorAmountSchema),
   minMinor: Schema.optionalKey(MinorAmountSchema),
