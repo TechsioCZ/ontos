@@ -315,6 +315,29 @@ it.effect('retains granted authority separately from effective modules and fresh
   }),
 );
 
+it.effect('lists a grant whose authority cannot be loaded with no live limits instead of failing the whole list', () =>
+  Effect.gen(function* unloadableAuthority() {
+    // Superseded, so the list does not run the live check; its limits still come from the acting authority.
+    const agentGrant: OAuthGrantRecord = {
+      ...retainedGrant,
+      actingKind: 'agent',
+      actingPrincipalId: '00000000-0000-4000-8000-000000000041',
+      grantId: '00000000-0000-4000-8000-000000000042',
+      status: 'superseded',
+    };
+    const test = yield* fixture({ rows: [agentGrant] });
+    const listed = yield* test.grants.list(filter);
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.status).toBe('superseded');
+    expect(listed[0]?.limits).toStrictEqual({ maxWritePolicy: 'read_only', modules: [] });
+    expect(listed[0]?.modules).toStrictEqual([]);
+    expect(listed[0]?.writePolicy).toBe('read_only');
+    expect(listed[0]?.granted.writePolicy).toBe('direct');
+    expect(listed[0]?.allModules).toBe(true);
+    expect(test.authorityReads).toStrictEqual([]);
+  }),
+);
+
 it.effect(
   'passes the untouched original principal and full OperationalScopeRequest to the governed retained-owner read',
   () =>
@@ -351,14 +374,13 @@ it.effect('never labels a retained foreign-tenant grant with requester-tenant in
       tenantId: foreignTenantId,
     };
     const test = yield* fixture({ readableModules: ['work.tasks'], rows: [row] });
-    const failure = yield* test.grants.get(row.grantId).pipe(Effect.flip);
-    expect(failure).toMatchObject({
-      _tag: 'ConnectionsUnavailable',
-      cause: {
-        _tag: 'ConnectionUnavailable',
-        cause: { _tag: 'SubjectInspectionUnavailable' },
-      },
-    });
+    const listed = yield* test.grants.get(row.grantId);
+    expect(Option.isSome(listed)).toBe(true);
+    if (Option.isSome(listed)) {
+      expect(listed.value.limits).toStrictEqual({ maxWritePolicy: 'read_only', modules: [] });
+      expect(listed.value.modules).toStrictEqual([]);
+      expect(listed.value.writePolicy).toBe('read_only');
+    }
     expect(test.authorityReads).toEqual([]);
     expect(test.noteRequests).toEqual([]);
     expect(test.events).toEqual([]);

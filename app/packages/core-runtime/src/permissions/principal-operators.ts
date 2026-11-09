@@ -10,10 +10,7 @@ import {
   RelationshipUpdate_Operation,
   SubjectReference,
 } from '@authzed/authzed-node/v1/core';
-import type { CheckBulkPermissionsPair } from '@authzed/authzed-node/v1/permissions';
 import {
-  CheckBulkPermissionsRequest,
-  CheckBulkPermissionsRequestItem,
   CheckPermissionRequest,
   CheckPermissionResponse_Permissionship,
   Consistency,
@@ -22,7 +19,7 @@ import {
   WriteRelationshipsRequest,
 } from '@authzed/authzed-node/v1/permissions';
 import { openSpiceDbRpc } from './spicedb-transaction-guard.ts';
-import { Data, Effect, Option } from 'effect';
+import { Effect } from 'effect';
 
 import { IdentityPersistenceUnavailableError } from '../auth/principal-management-errors.ts';
 import { loadSpiceDbConfig } from './config.ts';
@@ -40,43 +37,6 @@ const unavailable = (cause: unknown) =>
 const fullyConsistent = Consistency.create({ requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } });
 const principalObject = (principalId: string) =>
   ObjectReference.create({ objectId: principalId, objectType: 'principal' });
-const operateItem = (agentPrincipalId: string, operatorPrincipalId: string) =>
-  CheckBulkPermissionsRequestItem.create({
-    permission: 'operate',
-    resource: principalObject(agentPrincipalId),
-    subject: SubjectReference.create({ object: principalObject(operatorPrincipalId) }),
-  });
-
-/** A bulk answer that does not line up one-to-one with the agents asked about. */
-export class OperateAnswerMismatch extends Data.TaggedError('OperateAnswerMismatch')<{
-  readonly cause: unknown;
-  readonly reason: string;
-}> {}
-
-/**
- * Pure: one `operate` answer per requested agent, read from the bulk pairs in request order. Only an explicit HAS is
- * true; NO, CONDITIONAL and unspecified answers are false. A per-item error, a missing pair or a pair for another
- * agent is no answer at all (`none`), so a failed check can never be read as allowed.
- */
-export const operateAnswers = (
-  agentPrincipalIds: readonly string[],
-  pairs: readonly CheckBulkPermissionsPair[],
-): Option.Option<ReadonlyMap<string, boolean>> => {
-  if (pairs.length !== agentPrincipalIds.length) {
-    return Option.none();
-  }
-  const answers = agentPrincipalIds.map((agentPrincipalId, index) => {
-    const pair = pairs[index];
-    if (pair?.request?.resource?.objectId !== agentPrincipalId || pair.response.oneofKind !== 'item') {
-      return Option.none<boolean>();
-    }
-    return Option.some(pair.response.item.permissionship === CheckPermissionResponse_Permissionship.HAS_PERMISSION);
-  });
-  return Option.map(
-    Option.all(answers),
-    (values) => new Map(agentPrincipalIds.map((agentPrincipalId, index) => [agentPrincipalId, values[index] === true])),
-  );
-};
 
 /** Pure: which operator relations to add and remove to reach `desired`. */
 export const operatorChanges = (current: readonly string[], desired: readonly string[]) => {
@@ -91,14 +51,6 @@ export interface PrincipalOperators {
     agentPrincipalId: string,
     operatorPrincipalId: string,
   ) => Effect.Effect<boolean, IdentityPersistenceUnavailableError>;
-  /**
-   * `canOperate` for many agents in one `CheckBulkPermissions` call. Each agent maps to whether the operator may
-   * operate it (`operateAnswers`); any failed or unmatched answer fails the whole call.
-   */
-  readonly canOperateMany: (
-    agentPrincipalIds: readonly string[],
-    operatorPrincipalId: string,
-  ) => Effect.Effect<ReadonlyMap<string, boolean>, IdentityPersistenceUnavailableError>;
   readonly operatorsOf: (
     agentPrincipalId: string,
   ) => Effect.Effect<readonly string[], IdentityPersistenceUnavailableError>;
@@ -147,26 +99,6 @@ const makeOperators = (rpc: SpiceDbRpc): PrincipalOperators => {
           Effect.map((response) => response.permissionship === CheckPermissionResponse_Permissionship.HAS_PERMISSION),
           Effect.mapError(unavailable),
         ),
-    canOperateMany: (agentPrincipalIds, operatorPrincipalId) =>
-      agentPrincipalIds.length === 0
-        ? Effect.succeed(new Map<string, boolean>())
-        : rpc
-            .checkBulkPermissions(
-              CheckBulkPermissionsRequest.create({
-                consistency: fullyConsistent,
-                items: agentPrincipalIds.map((agentPrincipalId) => operateItem(agentPrincipalId, operatorPrincipalId)),
-              }),
-            )
-            .pipe(
-              Effect.flatMap((response) =>
-                Effect.fromOption(operateAnswers(agentPrincipalIds, response.pairs)).pipe(
-                  Effect.mapError(
-                    (cause) => new OperateAnswerMismatch({ cause, reason: 'bulk answer does not match request' }),
-                  ),
-                ),
-              ),
-              Effect.mapError(unavailable),
-            ),
     operatorsOf,
     replaceOperators: Effect.fn('PrincipalOperators.replaceOperators')(function* replaceOperators(input) {
       const current = yield* operatorsOf(input.agentPrincipalId);

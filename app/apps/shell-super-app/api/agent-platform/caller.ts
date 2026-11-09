@@ -226,21 +226,30 @@ export const callerModuleAccess = Effect.fn('AgentPlatform.callerModuleAccess')(
   },
 );
 
-/** Read-only connection-ceiling hints. No subject scope, credential or execution authority is returned. */
+/**
+ * Carrier inspections are independent reads, each in its own transaction and writing its own decision row. Two keeps
+ * the pool share bounded: the administrator list nests this inside its own bounded fan-outs.
+ */
+const CARRIER_INSPECTION_CONCURRENCY = 2;
+
+/**
+ * Read-only connection-ceiling hints. No subject scope, credential or execution authority is returned; the installed
+ * catalog is returned only so the caller names the modules from the same load the hints were taken against.
+ */
 export const subjectModuleAccess = Effect.fn('AgentPlatform.subjectModuleAccess')(function* subjectModuleAccessEffect(
   input: SubjectInspectionInput,
 ) {
   const inspection = yield* SubjectAccessInspection;
+  const installed = yield* (yield* ShellInstalledModuleCatalog).load.pipe(
+    Effect.mapError((cause) => new AgentStoreUnavailable({ cause })),
+  );
   const selected = yield* inspection.scope(input);
   const access = new Set<string>();
   const propose = new Set<string>();
   const run = new Set<string>();
   if (selected.decision === 'denied') {
-    return { access, inspectionOnly: true as const, propose, run };
+    return { access, inspectionOnly: true as const, installed, propose, run };
   }
-  const installed = yield* (yield* ShellInstalledModuleCatalog).load.pipe(
-    Effect.mapError((cause) => new AgentStoreUnavailable({ cause })),
-  );
   const inspectedCarriers = yield* Effect.forEach(
     moduleCarriers(installed),
     Effect.fn('AgentPlatform.inspectModuleCarrier')(function* inspectModuleCarrier(carrier) {
@@ -259,7 +268,7 @@ export const subjectModuleAccess = Effect.fn('AgentPlatform.subjectModuleAccess'
       }
       return { carrier, outcome };
     }),
-    { concurrency: 1 },
+    { concurrency: CARRIER_INSPECTION_CONCURRENCY },
   );
   for (const { carrier, outcome } of inspectedCarriers) {
     if (outcome === 'ALLOWED' || outcome === 'NEEDS_APPROVAL') {
@@ -286,5 +295,5 @@ export const subjectModuleAccess = Effect.fn('AgentPlatform.subjectModuleAccess'
       access.add(action.owningModuleId);
     }
   }
-  return { access, inspectionOnly: true as const, propose, run };
+  return { access, inspectionOnly: true as const, installed, propose, run };
 });

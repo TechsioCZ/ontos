@@ -180,8 +180,7 @@ export const loadActingAuthority = Effect.fn('OAuthConnectionService.loadActingA
       requesterScope: asker,
       subject: { principalId: input.actingPrincipalId, tenantId: input.tenantId },
     });
-    const catalog = yield* (yield* ShellInstalledModuleCatalog).load;
-    const { labelOf } = composedModulesOf(mcpModulesOf(catalog.composition));
+    const { labelOf } = composedModulesOf(mcpModulesOf(sets.installed.composition));
     const live: LiveRights = { read: sets.access, write: new Set([...sets.run, ...sets.propose]) };
     const policyCap: ConnectionWritePolicy = 'direct';
     return { labelOf, live, offered: offeredModules(live, policyCap, labelOf), policyCap };

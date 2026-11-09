@@ -47,7 +47,14 @@ const isListed = Schema.is(ConnectionStatusSchema);
 const actingKey = (row: GrantRow): string =>
   `${row.tenantId}|${row.legalEntityId}|${row.actingKind}|${row.actingPrincipalId}`;
 
-/** Live limits of every distinct acting principal (per company) among the rows, in the asker's own scope. */
+/** Nothing is permitted: the most restrictive write policy and no module. */
+const NO_LIVE_LIMITS: ConnectionLimits = { maxWritePolicy: 'read_only', modules: [] };
+
+/**
+ * Live limits of every distinct acting principal (per company) among the rows, in the asker's own scope. `None` when
+ * the authority cannot be loaded: the row stays listed with nothing permitted, as `connectionSummariesOf` leaves it
+ * not live.
+ */
 const limitsOf = (asker: OperationalScope, rows: readonly GrantRow[]) =>
   Effect.forEach(
     [...new Map(rows.map((row) => [actingKey(row), row])).values()],
@@ -58,23 +65,22 @@ const limitsOf = (asker: OperationalScope, rows: readonly GrantRow[]) =>
         legalEntityId: row.legalEntityId,
         tenantId: row.tenantId,
       }).pipe(
-        Effect.map(
-          (authority) =>
-            [
-              actingKey(row),
-              { maxWritePolicy: authority.policyCap, modules: authority.offered },
-            ] as const satisfies readonly [string, ConnectionLimits],
-        ),
+        Effect.map((authority): ConnectionLimits => ({
+          maxWritePolicy: authority.policyCap,
+          modules: authority.offered,
+        })),
+        Effect.option,
+        Effect.map((limits) => [actingKey(row), limits] as const),
       ),
     // Each authority opens two SpiceDB reads; reserve a Worker connection for PostgreSQL.
     { concurrency: 2 },
-  ).pipe(Effect.map((entries) => new Map<string, ConnectionLimits>(entries)));
+  ).pipe(Effect.map((entries) => new Map<string, Option.Option<ConnectionLimits>>(entries)));
 
 const toAdminSummary = Effect.fn('GrantAdmin.toAdminSummary')(
   (
     summary: ServiceConnectionSummary,
     row: GrantRow,
-    limits: ConnectionLimits,
+    limits: Option.Option<ConnectionLimits>,
     revokeNote: string | null,
   ): Effect.Effect<Option.Option<ConnectionSummary>> =>
     Effect.sync(() => {
@@ -82,6 +88,8 @@ const toAdminSummary = Effect.fn('GrantAdmin.toAdminSummary')(
       if (!isListed(status)) {
         return Option.none();
       }
+      // Without a loadable authority the effective modules and write policy are nothing, not the granted ones.
+      const loaded = Option.isSome(limits);
       return Option.some(
         AdminConnectionSummarySchema.make({
           acting: summary.acting,
@@ -100,8 +108,8 @@ const toAdminSummary = Effect.fn('GrantAdmin.toAdminSummary')(
           lastUsedAt: summary.lastUsedAt,
           legalEntityId: summary.legalEntityId,
           legalName: summary.legalName,
-          limits,
-          modules: summary.modules,
+          limits: Option.getOrElse(limits, () => NO_LIVE_LIMITS),
+          modules: loaded ? summary.modules : [],
           profileId: summary.profileId,
           revokedAt: Option.map(Option.fromNullOr(row.revokedAt), (instant) => DateTime.makeUnsafe(instant)),
           revokeNote: Option.fromNullOr(revokeNote),
@@ -109,7 +117,7 @@ const toAdminSummary = Effect.fn('GrantAdmin.toAdminSummary')(
           status,
           tenantId: summary.tenantId,
           user: { displayName: summary.userDisplayName, principalId: AgentPrincipalIdSchema.make(row.userPrincipalId) },
-          writePolicy: summary.writePolicy,
+          writePolicy: loaded ? summary.writePolicy : NO_LIVE_LIMITS.maxWritePolicy,
         }),
       );
     }),
