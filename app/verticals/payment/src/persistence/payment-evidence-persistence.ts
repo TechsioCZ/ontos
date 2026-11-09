@@ -678,9 +678,15 @@ export const paymentEvidencePersistenceForTransaction = (
         )
         .orderBy(asc(observations.verifiedAt), asc(observations.observationId))
         .pipe(Effect.mapError(readFailure));
+      // Only an applied full disproof removes an attached statement's effect identity; a held or partial
+      // correction leaves it standing until governed reconciliation settles it (#1151).
       const corrected = new Set(
         rows.flatMap((row) =>
-          row.factKind === 'SOURCE_CORRECTION' && row.correctsObservationId !== null ? [row.correctsObservationId] : [],
+          row.factKind === 'SOURCE_CORRECTION' &&
+          row.correctsObservationId !== null &&
+          row.correctionEffect === 'REOPEN_TO_CONFLICT'
+            ? [row.correctsObservationId]
+            : [],
         ),
       );
       const held = rows.filter(

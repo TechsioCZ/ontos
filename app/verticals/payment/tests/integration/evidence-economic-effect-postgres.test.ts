@@ -365,6 +365,19 @@ it.live(
           reason: 'The settlement line is the collection',
         });
         expect(Option.getOrUndefined(attached.outcomeChange)).toMatchObject({ toOutcome: 'EFFECT_CONFIRMED' });
+        // A partial correction of the attached charge 1 is held; it must not erase charge 1's identity.
+        const heldCorrection = yield* acceptObservation(refundCase, {
+          amount: { amountMinor: 10_000, currency: 'CZK' },
+          correctsObservationId: heldCharge.observationId,
+          economicEffectKey: 'gopay:charge:1:correction',
+          factFamily: 'GATEWAY_OUTCOME',
+          factKind: 'SOURCE_CORRECTION',
+          paymentId: refundCase.payment.paymentId,
+          source: gopayRefundExecution,
+          sourceOccurrenceId: 'gopay-settlement-charge-1-correction',
+          sourceRevision: 0,
+        });
+        expect(heldCorrection.acceptanceOutcome).toBe('HELD_UNRESOLVED');
         // A different charge 2 confirmed for the same collection is evidence of a second charge: debt.
         const secondCharge = yield* acceptObservation(refundCase, {
           ...collectionStatement,
