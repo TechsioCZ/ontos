@@ -215,13 +215,13 @@ class MarketNativeDescription extends Context.Service<
   Effect.Success<typeof marketNativeDescription>
 >()('MarketNativeTransportTest/Description') {}
 
-// Bundling, child startup and scoped shutdown share the bounded preparation hook.
-// Receipt assertions retain the default 5-second test-body budget.
+// Four bundles and three native children exceeded the 30s setup budget on cold CI.
+// Assertions keep their 5s limit; fixture finalization interrupts setup and closes the owned process scope.
 const marketNativeDescriptionLayer = Layer.effect(MarketNativeDescription, marketNativeDescription).pipe(
   Layer.provideMerge(marketRevisionNativeServices),
 );
 
-it.layer(marketNativeDescriptionLayer, { timeout: '30 seconds' })(
+it.layer(marketNativeDescriptionLayer, { timeout: '120 seconds' })(
   'Market native bundle in the actual test runner',
   (suite) => {
     for (const specifier of [

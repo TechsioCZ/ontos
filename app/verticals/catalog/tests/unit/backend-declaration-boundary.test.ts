@@ -146,32 +146,37 @@ describe('Catalog backend declaration and full publication', () => {
   });
 });
 
-it.effect('imports the real backend declaration in native Node without a JSX loader', () =>
-  Effect.scoped(
-    Effect.gen(function* importNativeBackend() {
-      const path = yield* Path.Path;
-      const ownerUrl = pathToFileURL(path.join(process.cwd(), 'vertical.runtime-declaration.ts')).href;
-      const child = yield* ChildProcess.make(
-        process.execPath,
-        [
-          '--input-type=module',
-          '--eval',
-          "const owner = await import(process.argv[1]); const core = await import('@app/core-runtime'); console.log(JSON.stringify(core.extractVerticalRuntimeSafeDescriptors(owner.catalogBackendRegistration)));",
-          ownerUrl,
-        ],
-        { cwd: process.cwd(), stderr: 'pipe', stdin: 'ignore', stdout: 'pipe' },
-      );
-      const [code, stdout, stderr] = yield* Effect.all(
-        [
-          child.exitCode,
-          child.stdout.pipe(Stream.decodeText, Stream.mkString),
-          child.stderr.pipe(Stream.decodeText, Stream.mkString),
-        ],
-        { concurrency: 3 },
-      );
-      expect(code, `Native backend import exited with ${code}\nstdout:\n${stdout}\nstderr:\n${stderr}`).toBe(0);
-      expect(stderr).toBe('');
-      expect(stdout.trim()).toBe(JSON.stringify(extractVerticalRuntimeSafeDescriptors(registration)));
-    }),
-  ).pipe(Effect.provide(nativeServices)),
+// Cold CI imports exceeded the default 5s; bound this native child separately.
+// Interruption closes its scope and terminates the owned process.
+it.effect(
+  'imports the real backend declaration in native Node without a JSX loader',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* importNativeBackend() {
+        const path = yield* Path.Path;
+        const ownerUrl = pathToFileURL(path.join(process.cwd(), 'vertical.runtime-declaration.ts')).href;
+        const child = yield* ChildProcess.make(
+          process.execPath,
+          [
+            '--input-type=module',
+            '--eval',
+            "const owner = await import(process.argv[1]); const core = await import('@app/core-runtime'); console.log(JSON.stringify(core.extractVerticalRuntimeSafeDescriptors(owner.catalogBackendRegistration)));",
+            ownerUrl,
+          ],
+          { cwd: process.cwd(), stderr: 'pipe', stdin: 'ignore', stdout: 'pipe' },
+        );
+        const [code, stdout, stderr] = yield* Effect.all(
+          [
+            child.exitCode,
+            child.stdout.pipe(Stream.decodeText, Stream.mkString),
+            child.stderr.pipe(Stream.decodeText, Stream.mkString),
+          ],
+          { concurrency: 3 },
+        );
+        expect(code, `Native backend import exited with ${code}\nstdout:\n${stdout}\nstderr:\n${stderr}`).toBe(0);
+        expect(stderr).toBe('');
+        expect(stdout.trim()).toBe(JSON.stringify(extractVerticalRuntimeSafeDescriptors(registration)));
+      }),
+    ).pipe(Effect.provide(nativeServices)),
+  { timeout: 30_000 },
 );

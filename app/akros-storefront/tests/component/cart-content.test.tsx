@@ -1,12 +1,14 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { CartContent } from "@/features/cart/cart-content";
 import { CartProvider } from "@/features/cart/cart-provider";
 import { CheckoutProvider } from "@/features/checkout/checkout-provider";
 
 describe("CartContent", () => {
+  afterEach(cleanup);
+
   beforeEach(() => {
     window.localStorage.clear();
     window.sessionStorage.clear();

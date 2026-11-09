@@ -998,19 +998,24 @@ describe('MCP governed record search', () => {
     }),
   );
 
-  it.effect('does not truncate resource admission to typed-tool or selector caps', () =>
-    Effect.gen(function* completeAdmission() {
-      const types = Array.from({ length: 65 }, (_unused, index) => `${alphaModule}.type${index}`);
-      const { controls, description, installed, layer, search } = yield* setup(types);
-      expect(mcpRecordSearchResourceTypes(installed, description, controls.states)).toHaveLength(65);
-      expect((yield* invoke(search).pipe(Effect.provide(layer))).isError).toBe(true);
-      expect(controls.searches).toEqual([]);
-      const selected = types.slice(64);
-      expect(
-        (yield* invoke(search, { query: 'kotel', resourceTypes: selected }).pipe(Effect.provide(layer))).isError,
-      ).not.toBe(true);
-      expect(controls.searches[0]?.resourceTypes).toEqual(selected);
-    }),
+  // Both requests revalidate all 65 declarations. This real admission case exceeded 5s on CI;
+  // give it a bounded budget without reducing the resource inventory or changing project defaults.
+  it.effect(
+    'does not truncate resource admission to typed-tool or selector caps',
+    () =>
+      Effect.gen(function* completeAdmission() {
+        const types = Array.from({ length: 65 }, (_unused, index) => `${alphaModule}.type${index}`);
+        const { controls, description, installed, layer, search } = yield* setup(types);
+        expect(mcpRecordSearchResourceTypes(installed, description, controls.states)).toHaveLength(65);
+        expect((yield* invoke(search).pipe(Effect.provide(layer))).isError).toBe(true);
+        expect(controls.searches).toEqual([]);
+        const selected = types.slice(64);
+        expect(
+          (yield* invoke(search, { query: 'kotel', resourceTypes: selected }).pipe(Effect.provide(layer))).isError,
+        ).not.toBe(true);
+        expect(controls.searches[0]?.resourceTypes).toEqual(selected);
+      }),
+    { timeout: 30_000 },
   );
 
   it.effect('capability-description search and the typed cap remain separate; read-only writes stay absent', () =>
