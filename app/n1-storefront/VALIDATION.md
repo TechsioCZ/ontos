@@ -1605,3 +1605,38 @@ Lokální Next konzole při scrollu hlásila LCP doporučení loading=eager pro
 konkrétní produktový obrázek. Tento warning nebyl skrytý ani označený za
 čistou konzoli; není předmětem opravy stránkování. Odložené metriky UI kitu
 se touto změnou nemění a celý katalog nedostává plošné vizuální schválení.
+
+## 9. 11. 2026 — upstream, živé auth/checkout a konečná native diagnostika
+
+Fast-forward o 22 upstream commitů do f1ce6770a zachoval všech pět cizích
+tracked WIP byte-identical. Následně byly načtené další tři test-only upstream
+commity do c12d3213a, bez změny N1 runtime. Na aktualizovaném N1 prošlo
+770 testů, typy a lint.
+Živý browser login se stávajícím testovacím vstupem skončil HTTP401 credentials.
+Jeden nový UI registrační POST po skutečném souhlasu skončil HTTP403,
+PortalRefusedProblem / owner-enrollment-rejected. Ověřovací e-mail, přihlášený
+profil, vlastní objednávky a přihlášený nákup nemají pozitivní živý důkaz.
+Předchozí setupy s nulovým dispatch se nepočítají jako backend pokusy.
+
+Actual cart quote na localhostu i nasazeném N1 vrátila HTTP503; checkout CTA
+zůstalo disabled, nová objednávka nevznikla. Nová lokální serverová diagnostika
+před ztrátou native failure zachytila HttpClientError / StatusCodeError /404.
+To není důkaz chybějícího grantu ani špatného prefixu. Statické porovnání
+potvrdilo vydaný baseUrl a dedikovaný place-storefront-order endpoint podle
+aktuálního public SDK. Starší AKROS apply-command volání není kompatibilní
+alternativa: současný public ApplyCommandPayloadSchema přijímá CreateProduct.
+Žádný runtime fallback, nový grant ani obcházení owner kontraktu se nepřidává.
+
+Diagnostický patch mění jen serverový Effect log před dosavadním catch:
+pevný operation/tag, kód z uzavřených typed kontraktů, finite transport reason
+a HTTP status100–599. Žádný raw error/cause/body/header, URL či identifikátor.
+Veřejná API odpověď ani počet nativních požadavků se nemění. Pět nových regresí
+ověřuje známé kódy a redakci neznámého kódu, neplatného těla a transportu.
+42 cílených testů a nová celá sada **775/775 v 74 souborech PASS**, bez skip/todo;
+N1 lint a typecheck PASS. Nezávislé source review GO, skutečný bezpečný log
+ověřený v lokálním běhu. Nový produkční build se v tomto kroku neprováděl.
+
+Stage run pro f1ce6770a dokončil všech sedm build shardů a nasadil N1;
+společný app stack.build selhal s provider500/InternalServerError. Verify
+a source pins byly přeskočené, ověřený release není doložený. Konkrétní
+registrační korelace a Zerops proces zůstávají pouze v privátní .local evidenci.

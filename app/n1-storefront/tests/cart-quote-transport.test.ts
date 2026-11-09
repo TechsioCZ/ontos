@@ -1,8 +1,10 @@
 import { afterEach, rs } from "@rstest/core";
-import { Context, Effect } from "effect";
+import { Context, Effect, Logger, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { describe, expect, it } from "effect-rstest";
 import { cartQuoteHandler, cartQuoteWeb } from "../src/ontos/cart-quote-http";
+import { quoteCart } from "../src/ontos/cart-quote-server";
+import { CartQuoteRequestSchema } from "../src/ontos/cart-quote";
 
 rs.mock("server-only", () => ({}));
 afterEach(() => {
@@ -25,6 +27,7 @@ interface BackendOptions {
   readonly marketConfigured?: boolean;
   readonly mintStatus?: number;
   readonly nativeForbidden?: boolean;
+  readonly nativeUnavailableCode?: string;
   readonly outcome?: "VALID" | "REJECTED";
   readonly proposal?: boolean;
   readonly readStatus?: number;
@@ -136,6 +139,25 @@ const backend = (options: BackendOptions = {}) => {
               "x-private-upstream": upstreamMarker,
             },
             status: 403,
+          },
+        ),
+      );
+    }
+    if (options.nativeUnavailableCode !== undefined) {
+      return Promise.resolve(
+        Response.json(
+          {
+            _tag: "PlaceStorefrontOrderActionUnavailableProblem",
+            code: options.nativeUnavailableCode,
+            detail: upstreamMarker,
+            retryable: true,
+            status: 503,
+            title: upstreamMarker,
+            type: "urn:test:quote-unavailable",
+          },
+          {
+            headers: { "x-private-upstream": upstreamMarker },
+            status: 503,
           },
         ),
       );
@@ -606,3 +628,106 @@ it.effect("keeps a matching-market owner rejection when the offer becomes unavai
     });
   }),
 );
+
+type CapturedQuoteLog = ReturnType<typeof Logger.formatStructured.log>;
+const collectQuoteLogs = (logs: CapturedQuoteLog[]) =>
+  Logger.layer([
+    Logger.make((options) => {
+      logs.push(Logger.formatStructured.log(options));
+    }),
+  ]);
+const privateQuoteValues = [
+  "PRIVATE_QUOTE_PASSWORD",
+  "PRIVATE_QUOTE_COOKIE",
+  "PRIVATE_QUOTE_TOKEN",
+  "private-person@example.test",
+  "https://private.example/path?token=PRIVATE_QUOTE_TOKEN",
+] as const;
+for (const nativeCode of [
+  "action_permission_check_failed",
+  "merchandise_reference_unavailable",
+] as const) {
+  it.effect(`logs only the typed native ${nativeCode} before sanitizing the public failure`, () =>
+    Effect.gen(function* boundedNativeQuoteLog() {
+      const owner = backend({
+        nativeUnavailableCode: nativeCode,
+        secretMarker: JSON.stringify(privateQuoteValues),
+      });
+      const logs: CapturedQuoteLog[] = [];
+      const payload = yield* Schema.decodeUnknownEffect(CartQuoteRequestSchema)(input);
+      const failure = yield* quoteCart(payload).pipe(
+        Effect.flip,
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
+        Effect.provide(collectQuoteLogs(logs)),
+      );
+      expect(failure).toMatchObject({
+        diagnostic: "native-action-unavailable",
+        state: "unavailable",
+      });
+      expect(logs).toHaveLength(1);
+      expect(logs[0]?.annotations).toEqual({
+        nativeCode,
+        nativeTag: "PlaceStorefrontOrderActionUnavailableProblem",
+        operation: "cart-quote",
+        transportReason: "none",
+        upstreamStatus: "none",
+      });
+      expect(logs[0]?.cause).toBeUndefined();
+      const text = JSON.stringify(logs);
+      for (const value of [
+        ...privateQuoteValues,
+        "cart-test-key",
+        "fresh-quote-assertion",
+        tenantId,
+        legalEntityId,
+        marketId,
+      ]) {
+        expect(text).not.toContain(value);
+      }
+      expect(owner.calls.filter((call) => call.url.includes("/actions/"))).toHaveLength(1);
+    }),
+  );
+}
+for (const scenario of ["unknown-code", "malformed-body", "transport"] as const) {
+  it.effect(`does not log any private native detail from ${scenario}`, () =>
+    Effect.gen(function* unknownNativeQuoteLogRedaction() {
+      const privateText = JSON.stringify(privateQuoteValues);
+      const options = {
+        "malformed-body": { actionStatus: 503 },
+        transport: { actionTransportFailure: true },
+        "unknown-code": { nativeUnavailableCode: privateText },
+      };
+      const owner = backend({ ...options[scenario], secretMarker: privateText });
+      const logs: CapturedQuoteLog[] = [];
+      const payload = yield* Schema.decodeUnknownEffect(CartQuoteRequestSchema)(input);
+      const failure = yield* quoteCart(payload).pipe(
+        Effect.flip,
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
+        Effect.provide(collectQuoteLogs(logs)),
+      );
+      expect(failure).toMatchObject({
+        diagnostic: "native-action-unavailable",
+        state: "unavailable",
+      });
+      expect(logs).toHaveLength(1);
+      expect(logs[0]?.annotations.nativeCode).toBe("other");
+      expect(logs[0]?.annotations.upstreamStatus).toBe(scenario === "transport" ? "none" : 503);
+      expect(["HttpClientError", "SchemaError"]).toContain(logs[0]?.annotations.nativeTag);
+      expect(logs[0]?.cause).toBeUndefined();
+      const text = JSON.stringify(logs);
+      for (const value of [
+        ...privateQuoteValues,
+        "cart-test-key",
+        "fresh-quote-assertion",
+        tenantId,
+        legalEntityId,
+        marketId,
+      ]) {
+        expect(text).not.toContain(value);
+      }
+      expect(owner.calls.filter((call) => call.url.includes("/actions/"))).toHaveLength(1);
+    }),
+  );
+}
