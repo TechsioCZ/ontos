@@ -1,5 +1,5 @@
 import type { ScopedTransactionExecutor } from '@app/core-runtime';
-import { and, asc, eq, gte, inArray, isNotNull, isNull, or } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
 import { DateTime, Effect, Option, Schema } from 'effect';
 
 import type { PaymentAuthorizationProof } from '../../shared/domain/authorization-proof.ts';
@@ -286,6 +286,52 @@ const caseRecordOf = (row: CaseRow): PaymentReconciliationCaseRecord => ({
   status: row.status,
 });
 
+interface DisproofTargetRow {
+  readonly amountMinor: number | null;
+  readonly observationId: string;
+  readonly paymentId: string | null;
+  readonly sourceAuthorityId: string | null;
+}
+interface DisproofCorrectionRow {
+  readonly acceptanceOutcome: ObservationRow['acceptanceOutcome'];
+  readonly amountMinor: number | null;
+  readonly capabilityCorrelated: boolean | null;
+  readonly correctsObservationId: string | null;
+  readonly factKind: ObservationRow['factKind'];
+  readonly paymentId: string | null;
+  readonly sourceAuthorityId: string | null;
+}
+
+/**
+ * The one rule for "this statement is fully disproven" (#1151/#1152), shared by every reader: a qualified
+ * SOURCE_CORRECTION of the same Payment, issued by the statement's own authority, capability-proven where
+ * its source must prove one, that retracts all of it (no amount, or at least the statement's amount).
+ * Whether the correction changed an outcome when it arrived does not matter; partial corrections and
+ * corrections that name another Payment or come from another authority never disprove.
+ */
+const fullyDisproves = (correction: DisproofCorrectionRow, target: DisproofTargetRow): boolean =>
+  correction.factKind === 'SOURCE_CORRECTION' &&
+  QUALIFIED_CORRECTION_OUTCOMES.some((outcome) => outcome === correction.acceptanceOutcome) &&
+  target.paymentId !== null &&
+  target.sourceAuthorityId !== null &&
+  correction.paymentId === target.paymentId &&
+  correction.sourceAuthorityId === target.sourceAuthorityId &&
+  correction.capabilityCorrelated !== false &&
+  (target.amountMinor === null || correction.amountMinor === null || correction.amountMinor >= target.amountMinor);
+
+/** The fully disproven statements among rows that hold both the statements and their corrections. */
+const fullyDisprovenIds = (rows: readonly (DisproofCorrectionRow & DisproofTargetRow)[]): ReadonlySet<string> => {
+  const byId = new Map(rows.map((row) => [row.observationId, row]));
+  const disproven = new Set<string>();
+  for (const correction of rows) {
+    const target = correction.correctsObservationId === null ? undefined : byId.get(correction.correctsObservationId);
+    if (target !== undefined && fullyDisproves(correction, target)) {
+      disproven.add(target.observationId);
+    }
+  }
+  return disproven;
+};
+
 /** The immutable source binding a stored statement was issued under. */
 const effectSourceOf = (row: Pick<ObservationRow, 'accountRef' | 'environment' | 'sourceKind' | 'sourceSystem'>) => ({
   accountRef: row.accountRef,
@@ -429,7 +475,7 @@ export interface PaymentEvidencePersistence {
     readonly paymentId: string | undefined;
     readonly source: PaymentSourceBinding;
   }) => Effect.Effect<boolean, PaymentUnavailable>;
-  /** Whether a qualified SOURCE_CORRECTION (accepted, held or conflicting) names this observation. */
+  /** Whether a qualified SOURCE_CORRECTION fully disproves this observation (the shared full-disproof rule). */
   readonly isObservationCorrected: (observationId: string) => Effect.Effect<boolean, PaymentUnavailable>;
   /** Whether an applied full SOURCE_CORRECTION already reopened this observation, so its effect no longer stands. */
   readonly isObservationReopened: (observationId: string) => Effect.Effect<boolean, PaymentUnavailable>;
@@ -552,56 +598,6 @@ export const paymentEvidencePersistenceForTransaction = (
     return row !== undefined;
   });
 
-  const isObservationCorrected = Effect.fn('PaymentEvidencePersistence.isObservationCorrected')(
-    function* isObservationCorrected(observationId: string) {
-      const scope = yield* ownerScope;
-      // A correction disproves its target only once it is correlated to the target's Payment, issued by
-      // the target's own authority and covers its whole amount; anything less stays debt, never disproof.
-      const [target] = yield* transaction
-        .select({
-          amountMinor: observations.amountMinor,
-          paymentId: observations.paymentId,
-          sourceAuthorityId: observations.sourceAuthorityId,
-        })
-        .from(observations)
-        .where(
-          and(
-            eq(observations.tenantId, scope.tenantId),
-            eq(observations.legalEntityId, scope.legalEntityId),
-            eq(observations.observationId, observationId),
-          ),
-        )
-        .limit(1)
-        .pipe(Effect.mapError(readFailure));
-      if (target === undefined || target.paymentId === null || target.sourceAuthorityId === null) {
-        return false;
-      }
-      const [row] = yield* transaction
-        .select({ observationId: observations.observationId })
-        .from(observations)
-        .where(
-          and(
-            eq(observations.tenantId, scope.tenantId),
-            eq(observations.legalEntityId, scope.legalEntityId),
-            eq(observations.correctsObservationId, observationId),
-            eq(observations.factKind, 'SOURCE_CORRECTION'),
-            eq(observations.paymentId, target.paymentId),
-            eq(observations.sourceAuthorityId, target.sourceAuthorityId),
-            inArray(observations.acceptanceOutcome, [...QUALIFIED_CORRECTION_OUTCOMES]),
-            // A carrier or POS correction must have proven the selected capability (#1152).
-            or(isNull(observations.capabilityCorrelated), eq(observations.capabilityCorrelated, true)),
-            // Only a full disproof clears a held monetary effect: a partial amount leaves the rest owed.
-            target.amountMinor === null
-              ? undefined
-              : or(isNull(observations.amountMinor), gte(observations.amountMinor, target.amountMinor)),
-          ),
-        )
-        .limit(1)
-        .pipe(Effect.mapError(readFailure));
-      return row !== undefined;
-    },
-  );
-
   const listObservationAttachments = Effect.fn('PaymentEvidencePersistence.listObservationAttachments')(
     function* listObservationAttachments(observationIds: readonly string[]) {
       if (observationIds.length === 0) {
@@ -659,17 +655,9 @@ export const paymentEvidencePersistenceForTransaction = (
         )
         .orderBy(asc(observations.verifiedAt), asc(observations.observationId))
         .pipe(Effect.mapError(readFailure));
-      // Only an applied full disproof removes an attached statement's effect identity; a held or partial
-      // correction leaves it standing until governed reconciliation settles it (#1151).
-      const corrected = new Set(
-        rows.flatMap((row) =>
-          row.factKind === 'SOURCE_CORRECTION' &&
-          row.correctsObservationId !== null &&
-          row.correctionEffect === 'REOPEN_TO_CONFLICT'
-            ? [row.correctsObservationId]
-            : [],
-        ),
-      );
+      // Only a full disproof removes an attached statement's effect identity; a partial or unqualified
+      // correction leaves it standing (#1151).
+      const corrected = fullyDisprovenIds(rows);
       const held = rows.filter(
         (row) =>
           row.acceptanceOutcome !== 'ACCEPTED_OBSERVATION' &&
@@ -701,33 +689,90 @@ export const paymentEvidencePersistenceForTransaction = (
     },
   );
 
-  /** Observations among these ids that an applied full correction already reopened (REOPEN_TO_CONFLICT). */
-  const reopenedAmong = Effect.fn('PaymentEvidencePersistence.reopenedAmong')(function* reopenedAmong(
+  /** The statements among these ids that a correction fully disproves (see `fullyDisproves`). */
+  const fullyDisprovenAmong = Effect.fn('PaymentEvidencePersistence.fullyDisprovenAmong')(function* fullyDisprovenAmong(
     observationIds: readonly string[],
   ) {
     if (observationIds.length === 0) {
       return new Set<string>();
     }
     const scope = yield* ownerScope;
-    const rows = yield* transaction
-      .select({ correctsObservationId: observations.correctsObservationId })
-      .from(observations)
-      .where(
-        and(
-          eq(observations.tenantId, scope.tenantId),
-          eq(observations.legalEntityId, scope.legalEntityId),
-          eq(observations.factKind, 'SOURCE_CORRECTION'),
-          eq(observations.correctionEffect, 'REOPEN_TO_CONFLICT'),
-          inArray(observations.correctsObservationId, [...observationIds]),
-        ),
-      )
-      .pipe(Effect.mapError(readFailure));
-    return new Set(rows.flatMap((row) => (row.correctsObservationId === null ? [] : [row.correctsObservationId])));
+    const ofScope = and(eq(observations.tenantId, scope.tenantId), eq(observations.legalEntityId, scope.legalEntityId));
+    const [targets, corrections] = yield* Effect.all(
+      [
+        transaction
+          .select({
+            amountMinor: observations.amountMinor,
+            observationId: observations.observationId,
+            paymentId: observations.paymentId,
+            sourceAuthorityId: observations.sourceAuthorityId,
+          })
+          .from(observations)
+          .where(and(ofScope, inArray(observations.observationId, [...observationIds])))
+          .pipe(Effect.mapError(readFailure)),
+        transaction
+          .select({
+            acceptanceOutcome: observations.acceptanceOutcome,
+            amountMinor: observations.amountMinor,
+            capabilityCorrelated: observations.capabilityCorrelated,
+            correctsObservationId: observations.correctsObservationId,
+            factKind: observations.factKind,
+            paymentId: observations.paymentId,
+            sourceAuthorityId: observations.sourceAuthorityId,
+          })
+          .from(observations)
+          .where(
+            and(
+              ofScope,
+              eq(observations.factKind, 'SOURCE_CORRECTION'),
+              inArray(observations.correctsObservationId, [...observationIds]),
+            ),
+          )
+          .pipe(Effect.mapError(readFailure)),
+      ],
+      { concurrency: 1 },
+    );
+    const targetOf = new Map(targets.map((target) => [target.observationId, target]));
+    const disproven = new Set<string>();
+    for (const correction of corrections) {
+      const target =
+        correction.correctsObservationId === null ? undefined : targetOf.get(correction.correctsObservationId);
+      if (target !== undefined && fullyDisproves(correction, target)) {
+        disproven.add(target.observationId);
+      }
+    }
+    return disproven;
   });
 
+  /**
+   * Whether an APPLIED full correction already reopened the observation's outcome. Narrower than a full
+   * disproof on purpose: a disproof that is still held has not changed Current state, so its case must
+   * stay open.
+   */
   const isObservationReopened = Effect.fn('PaymentEvidencePersistence.isObservationReopened')(
     function* isObservationReopened(observationId: string) {
-      return (yield* reopenedAmong([observationId])).has(observationId);
+      const scope = yield* ownerScope;
+      const [row] = yield* transaction
+        .select({ observationId: observations.observationId })
+        .from(observations)
+        .where(
+          and(
+            eq(observations.tenantId, scope.tenantId),
+            eq(observations.legalEntityId, scope.legalEntityId),
+            eq(observations.factKind, 'SOURCE_CORRECTION'),
+            eq(observations.correctionEffect, 'REOPEN_TO_CONFLICT'),
+            eq(observations.correctsObservationId, observationId),
+          ),
+        )
+        .limit(1)
+        .pipe(Effect.mapError(readFailure));
+      return row !== undefined;
+    },
+  );
+
+  const isObservationCorrected = Effect.fn('PaymentEvidencePersistence.isObservationCorrected')(
+    function* isObservationCorrected(observationId: string) {
+      return (yield* fullyDisprovenAmong([observationId])).has(observationId);
     },
   );
 
@@ -772,7 +817,7 @@ export const paymentEvidencePersistenceForTransaction = (
         )
         .pipe(Effect.mapError(readFailure));
       const candidates = rows.filter((row) => row.observationId !== input.excludeObservationId);
-      const reopened = yield* reopenedAmong(candidates.map((row) => row.observationId));
+      const reopened = yield* fullyDisprovenAmong(candidates.map((row) => row.observationId));
       const uncorrected = candidates.filter((row) => !reopened.has(row.observationId));
       if (uncorrected.some((row) => row.acceptanceOutcome === 'ACCEPTED_OBSERVATION' && row.operationId !== null)) {
         return true;
@@ -791,13 +836,16 @@ export const paymentEvidencePersistenceForTransaction = (
         .select({
           acceptanceOutcome: observations.acceptanceOutcome,
           accountRef: observations.accountRef,
-          correctionEffect: observations.correctionEffect,
+          amountMinor: observations.amountMinor,
+          capabilityCorrelated: observations.capabilityCorrelated,
           correctsObservationId: observations.correctsObservationId,
           economicEffectKey: observations.economicEffectKey,
           environment: observations.environment,
           factKind: observations.factKind,
           observationId: observations.observationId,
           operationId: observations.operationId,
+          paymentId: observations.paymentId,
+          sourceAuthorityId: observations.sourceAuthorityId,
           sourceKind: observations.sourceKind,
           sourceSystem: observations.sourceSystem,
         })
@@ -812,17 +860,9 @@ export const paymentEvidencePersistenceForTransaction = (
         )
         .orderBy(asc(observations.verifiedAt), asc(observations.observationId))
         .pipe(Effect.mapError(readFailure));
-      // Only an applied full disproof (the correction reopened the outcome) removes a statement's effect
-      // identity; partial, held or record-only corrections keep it (#1151).
-      const corrected = new Set(
-        rows.flatMap((row) =>
-          row.factKind === 'SOURCE_CORRECTION' &&
-          row.correctsObservationId !== null &&
-          row.correctionEffect === 'REOPEN_TO_CONFLICT'
-            ? [row.correctsObservationId]
-            : [],
-        ),
-      );
+      // Only a full disproof removes a statement's effect identity, whatever the operation's outcome was
+      // when it arrived; partial or unqualified corrections keep it (#1151).
+      const corrected = fullyDisprovenIds(rows);
       const statements = rows.filter(
         (row) => row.factKind !== 'SOURCE_CORRECTION' && !corrected.has(row.observationId),
       );
