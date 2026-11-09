@@ -445,7 +445,11 @@ const decideCorrection = (
     (observation) => observation.observationId === correction.correctsObservationId,
   );
   if (corrected === undefined || corrected.operationId === undefined) {
-    return hold('CORRECTION_TARGET_UNKNOWN', correction.operationId);
+    // A governed-attached target keeps its operation, so the hold stays resolvable by reconciliation.
+    const attachedTarget = aggregate.attachedStatements.find(
+      (observation) => observation.observationId === correction.correctsObservationId,
+    );
+    return hold('CORRECTION_TARGET_UNKNOWN', correction.operationId ?? attachedTarget?.operationId);
   }
   if (correction.operationId !== undefined && correction.operationId !== corrected.operationId) {
     return PaymentEvidenceDecision.CONFLICT({

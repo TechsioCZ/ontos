@@ -569,6 +569,21 @@ describe('#1151 Payment evidence interpretation', () => {
     );
   });
 
+  it('#1151 a correction of governed-attached evidence is held on the attached operation, never operationless', () => {
+    const attachedOnly = aggregateOf(
+      [operation('EFFECT_CONFIRMED')],
+      [],
+      [accepted('obs-attached-receipt', { economicEffectKey: 'gopay:payment:1' })],
+    );
+    expect(
+      interpretPaymentObservation(
+        attachedOnly,
+        // The source names only the corrected statement, not its operation.
+        { ...uncorrelated(), correctsObservationId: 'obs-attached-receipt', factKind: 'SOURCE_CORRECTION' },
+      ),
+    ).toEqual(PaymentEvidenceDecision.HOLD({ operationId: COLLECT_ID, reason: 'CORRECTION_TARGET_UNKNOWN' }));
+  });
+
   it('#1151 corrections: already corrected, unknown target and lineage mismatch', () => {
     const correctedOnce = aggregateOf(
       [operation('CONFLICT')],
