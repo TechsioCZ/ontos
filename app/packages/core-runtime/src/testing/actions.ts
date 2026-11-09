@@ -69,6 +69,17 @@ export { makeGatewayScopeGrantRegistrar } from '../auth/gateway-scope-grant.ts';
 /** Test-only: owner fixtures bind routines to the package's single scoped-transaction implementation. */
 export { installOperationalScope } from '../db/scoped-transaction.ts';
 
+/**
+ * Test-only: the existing runner constructor and its repository tag, so a *bundled* fixture can
+ * assemble the real runner from the composition's own services without inlining a second copy of
+ * Core's private module state. A fixture that reached these through a relative path would get its own
+ * `ActionRuntime` tag and registration WeakMaps, and its registered Actions would stop being the ones
+ * the external `@app/core-runtime` resolves. The production factory (`makeActionRuntimeLive`) is
+ * unchanged: it still binds the live access gate and currentness preparation.
+ */
+export { makeActionRuntime } from '../actions/runtime.ts';
+export { ActionRepository } from '../actions/repository.ts';
+
 const actionTestServiceBinding: unique symbol = Symbol('test-action-service-binding');
 const querySchema = Schema.Union([Schema.String, Schema.Struct({ text: Schema.String })]);
 const scopeValuesSchema = Schema.Tuple([Schema.String, Schema.String]);

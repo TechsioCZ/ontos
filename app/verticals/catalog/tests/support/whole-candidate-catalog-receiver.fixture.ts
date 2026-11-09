@@ -2,28 +2,35 @@ import { catalogRegistration } from '../../vertical.registration.ts';
 import {
   ActionRuntime,
   ActionTransactionError,
+  ActiveApplicationCompositionService,
+  ContextAccess,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfig,
+  DatabaseIdentityEnrollmentContext,
   GatewayAssertionRedemptionService,
   GatewayAssertionReplayError,
+  ModuleEntrypointGateway,
+  ModuleStateGate,
+  OperationalScopeResolver,
   makeReadRuntimeLive,
   OntosModuleDeploymentContractSchema,
   TenantModuleStateServiceLive,
   TrustedPrincipalContextSchema,
-  makeActionRuntimeLive,
   parseDatabaseConfig,
   defineDatabaseIdentityEnrollment,
   makeDatabaseIdentityEnrollmentLive,
 } from '@app/core-runtime';
 import type { ActionRegistration, DomainEventContractMap } from '@app/core-runtime';
 import {
+  ActionPermission,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
+import { CoreDatabase } from '@app/core-runtime/db/client';
 import {
   ActiveApplicationCompositionSnapshotSchema,
   makeActiveApplicationCompositionLayer,
@@ -82,7 +89,8 @@ import { ProductUnitRefSchema } from '../../shared/resources/product-unit.ts';
 import { VariantRefSchema } from '../../shared/resources/variant.ts';
 import { catalogApi } from '../../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
-import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';
+import { ActionRepository, makeActionRuntime } from '@app/core-runtime/testing/actions';
+import { makeCatalogScriptedAccess } from './catalog-scripted-access-seam.ts';
 
 const readOnlyBootstrapType = 'bootstrap-read-only' as const;
 const configurationChoiceKey = 'fixture-finish';
@@ -236,7 +244,9 @@ const unavailable = (stage: string, cause?: unknown) =>
 const demand = (condition: boolean, stage: string) => (condition ? Effect.void : Effect.fail(unavailable(stage)));
 
 /** Public production layers on the parent's native identity and owned DB; no fixture setup or lock override. */
-const wholeCandidateCatalogRuntime = (bootstrap: Omit<typeof WholeCandidateCatalogBootstrapSchema.Type, 'type'>) => {
+const wholeCandidateCatalogRuntime = Effect.fn('WholeCandidateCatalog.runtime')(function* wholeCandidateCatalogRuntime(
+  bootstrap: Omit<typeof WholeCandidateCatalogBootstrapSchema.Type, 'type'>,
+) {
   const databaseConfig = Layer.effect(
     DatabaseConfig,
     parseDatabaseConfig({ DATABASE_URL: Redacted.value(bootstrap.runtimeConnectionString) }),
@@ -245,12 +255,15 @@ const wholeCandidateCatalogRuntime = (bootstrap: Omit<typeof WholeCandidateCatal
   const states = TenantModuleStateServiceLive.pipe(Layer.provide(persistence));
   const stateGate = ModuleStateGateLive.pipe(Layer.provide(states));
   const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(stateGate));
-  const access = makeTestAccessGateLayers({
+  // One scripted seam, bound once: the scope resolver reads it from context and the Action runner
+  // receives that same gate already bound to the fixture's inert ports (see the seam's own note).
+  const { bound: boundAccessGate, services: accessServices } = yield* makeCatalogScriptedAccess({
     deniedPrincipalIds: [bootstrap.deniedPrincipalId],
     selectableLegalEntityIds: [bootstrap.legalEntityId],
     spec: { defaultAnswer: { outcome: 'ALLOWED' } },
     unavailable: bootstrap.accessOutcome === 'unavailable',
   });
+  const access = Layer.succeedContext(accessServices);
   const scopes = OperationalScopeResolverLive.pipe(
     Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, access)),
   );
@@ -266,7 +279,31 @@ const wholeCandidateCatalogRuntime = (bootstrap: Omit<typeof WholeCandidateCatal
     composition,
     access,
   );
-  const actions = makeActionRuntimeLive(ultramodernDeliveryUnit, catalogRegistration).pipe(
+  // The production Action runner, assembled from this receiver's own real services. Only the declared
+  // scripted access seam differs from the production root: the runner still owns the real Core
+  // repository, permission service, operational scope resolver, module gateway/state gate, composition
+  // authority, access fence and owner registration.
+  const actions = Layer.effect(
+    ActionRuntime,
+    Effect.gen(function* wholeCandidateActionRuntime() {
+      return makeActionRuntime(
+        yield* CoreDatabase,
+        yield* ActionRepository,
+        yield* ActionPermission,
+        yield* OperationalScopeResolver,
+        {
+          accessDecision: boundAccessGate,
+          applicationComposition: yield* ActiveApplicationCompositionService,
+          contextAccess: yield* ContextAccess,
+          databaseIdentities: yield* DatabaseIdentityEnrollmentContext,
+          expectedDeployment: ultramodernDeliveryUnit,
+          moduleEntrypointGateway: yield* ModuleEntrypointGateway,
+          moduleStateGate: yield* ModuleStateGate,
+          ownerRegistration: catalogRegistration,
+        },
+      );
+    }),
+  ).pipe(
     Layer.provide(Layer.mergeAll(common, ActionRepositoryLive, ActionPermissionLive)),
     Layer.provide(NodeCrypto.layer),
   );
@@ -275,7 +312,7 @@ const wholeCandidateCatalogRuntime = (bootstrap: Omit<typeof WholeCandidateCatal
     Layer.provide(NodeCrypto.layer),
   );
   return Layer.mergeAll(actions, reads, namespace);
-};
+});
 
 const runOwnerAction = <
   Payload extends Schema.ConstraintDecoder<unknown>,
@@ -587,7 +624,7 @@ const serveCatalog = Effect.fn('WholeCandidateCatalog.serve')(function* serveCat
     'owned-runtime-address',
   );
   yield* demand(bootstrap.actor.legalEntityId === undefined, 'producer-tenant-only-context');
-  const runtime = wholeCandidateCatalogRuntime(bootstrap);
+  const runtime = yield* wholeCandidateCatalogRuntime(bootstrap);
   const population = Layer.succeed(CartOpenSelectionPopulationService, {
     read: () =>
       Effect.succeed({

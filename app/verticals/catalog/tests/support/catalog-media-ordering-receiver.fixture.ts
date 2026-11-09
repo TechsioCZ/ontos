@@ -1,14 +1,20 @@
 import { Socket } from 'node:net';
 import { promisify } from 'node:util';
 import {
+  ActionRuntime,
+  ActiveApplicationCompositionService,
+  ContextAccess,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfig,
+  DatabaseIdentityEnrollmentContext,
   GatewayAssertionRedemptionService,
   GatewayAssertionReplayError,
+  ModuleEntrypointGateway,
+  ModuleStateGate,
+  OperationalScopeResolver,
   TenantModuleStateServiceLive,
   TrustedPrincipalContextSchema,
-  makeActionRuntimeLive,
   makeReadRuntimeLive,
   extractVerticalRuntimeSafeDescriptors,
   OntosDeploymentIdentitySchema,
@@ -21,12 +27,14 @@ import {
   makeDatabaseIdentityEnrollmentLive,
 } from '@app/core-runtime';
 import {
+  ActionPermission,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
+import { CoreDatabase } from '@app/core-runtime/db/client';
 import {
   STAFF_AUTHENTICATION_NAMESPACE_ID,
   staffAuthenticationNamespaceRegistryLayer,
@@ -35,6 +43,7 @@ import {
   ActiveApplicationCompositionSnapshotSchema,
   makeActiveApplicationCompositionLayer,
 } from '@app/core-runtime/modules/active-application-composition';
+import { ActionRepository, makeActionRuntime } from '@app/core-runtime/testing/actions';
 import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/application-composition-source';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { NodeCrypto, NodeHttpServer, NodeRuntime, NodeServices, NodeStream } from '@effect/platform-node';
@@ -60,7 +69,7 @@ import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
 import { FetchHttpClient, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
-import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';
+import { makeCatalogScriptedAccess } from './catalog-scripted-access-seam.ts';
 import { createProductActionApiLive } from '../../api/create-product-action-server.ts';
 import { assignCatalogMediaActionApiLive } from '../../api/assign-catalog-media-action-server.ts';
 import { reorderCatalogMediaActionApiLive } from '../../api/reorder-catalog-media-action-server.ts';
@@ -383,14 +392,13 @@ const serveCatalog = Effect.fn('MediaOrdering.serveCatalog')(function* serveCata
     Layer.provide(TenantModuleStateServiceLive.pipe(Layer.provide(persistence))),
   );
   const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(stateGate));
-  // The one access gate this receiver scripts (CUTOVER-PLAN §3.1 step 8). The owned database carries
-  // no v2 access intent and reaches no engine, so the seam answers ALLOWED for the admitted actor and
-  // DENIED for the named principal, while the real scope resolver still asks it which companies the
-  // actor may select (O28).
-  const access = makeTestAccessGateLayers({
+  // One scripted seam, bound once: the scope resolver reads it from context and the Action runner
+  // receives that same gate already bound to the fixture's inert ports (see the seam's own note).
+  const { bound: boundAccessGate, services: accessServices } = yield* makeCatalogScriptedAccess({
     deniedPrincipalIds: [bootstrap.deniedPrincipalId],
     spec: { defaultAnswer: { outcome: 'ALLOWED' } },
   });
+  const access = Layer.succeedContext(accessServices);
   const resolver = OperationalScopeResolverLive.pipe(
     Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, access)),
   );
@@ -406,7 +414,31 @@ const serveCatalog = Effect.fn('MediaOrdering.serveCatalog')(function* serveCata
     composition,
     access,
   );
-  const actions = makeActionRuntimeLive(ultramodernDeliveryUnit, catalogRegistration).pipe(
+  // The production Action runner, assembled from this receiver's own real services. Only the declared
+  // scripted access seam differs from the production root: the runner still owns the real Core
+  // repository, permission service, operational scope resolver, module gateway/state gate, composition
+  // authority, access fence and owner registration.
+  const actions = Layer.effect(
+    ActionRuntime,
+    Effect.gen(function* catalogActionRuntime() {
+      return makeActionRuntime(
+        yield* CoreDatabase,
+        yield* ActionRepository,
+        yield* ActionPermission,
+        yield* OperationalScopeResolver,
+        {
+          accessDecision: boundAccessGate,
+          applicationComposition: yield* ActiveApplicationCompositionService,
+          contextAccess: yield* ContextAccess,
+          databaseIdentities: yield* DatabaseIdentityEnrollmentContext,
+          expectedDeployment: ultramodernDeliveryUnit,
+          moduleEntrypointGateway: yield* ModuleEntrypointGateway,
+          moduleStateGate: yield* ModuleStateGate,
+          ownerRegistration: catalogRegistration,
+        },
+      );
+    }),
+  ).pipe(
     Layer.provide(Layer.mergeAll(common, ActionRepositoryLive, ActionPermissionLive)),
     Layer.provide(NodeCrypto.layer),
   );
