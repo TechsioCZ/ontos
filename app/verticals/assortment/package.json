@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "exports": {
+    "./actions/create-applicability-binding": "./shared/actions/create-applicability-binding.ts",
+    "./actions/create-rule": "./shared/actions/create-rule.ts",
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/assortment-client.ts",
     "./contracts/consumer-evidence": "./shared/domain/consumer-evidence.ts",

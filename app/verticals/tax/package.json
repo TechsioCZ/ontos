@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "exports": {
+    "./actions/import-seller-vat-regime-declarations": "./shared/actions/import-seller-vat-regime-declarations.ts",
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/tax-client.ts",
     "./permissions/tax.evidence.read": "./shared/permissions/tax-evidence-read.ts",

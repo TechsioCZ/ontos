@@ -48,6 +48,7 @@
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"
   },
   "dependencies": {
+    "@app/assortment": "workspace:*",
     "@app/catalog": "workspace:*",
     "@app/commerce-customer-context": "workspace:*",
     "@app/core-runtime": "workspace:*",
@@ -58,6 +59,7 @@
     "@app/pricing": "workspace:*",
     "@app/privacy": "workspace:*",
     "@app/shared-contracts": "workspace:*",
+    "@app/tax": "workspace:*",
     "@effect/opentelemetry": "4.0.7",
     "@effect/platform-node": "4.0.7",
     "@effect/sql-pg": "4.0.7",
