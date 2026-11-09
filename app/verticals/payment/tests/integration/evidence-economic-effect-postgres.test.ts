@@ -29,6 +29,7 @@ import {
   loadPaymentAggregate,
   refundRuntimeContextAccess,
   refundRuntimePermission,
+  transitionOperation,
 } from '../support/refund-native-runtime.ts';
 import type { RefundNativeRuntime } from '../support/refund-native-runtime.ts';
 
@@ -307,6 +308,72 @@ it.live(
           aggregate.operations.find((operation) => operation.operationId === operationId)?.outcome;
         expect(outcomeOf(first.operation.operationId)).toBe('EFFECT_CONFIRMED');
         expect(outcomeOf(second.operation.operationId)).toBe('PENDING');
+      }),
+    ),
+);
+
+/** The GoPay gateway account as the configured collection outcome authority. */
+const gatewayOutcomeAuthority = {
+  factFamily: 'GATEWAY_OUTCOME',
+  reason: 'GoPay reports collections of this account',
+  refundRoute: false,
+  source: gopayRefundExecution,
+  status: 'ACTIVE',
+} as const;
+
+it.live(
+  '#1151 a second charge confirmed for a collection established by governed attachment is held, not counted once',
+  () =>
+    native(
+      Effect.gen(function* attachedCollectionSecondCharge() {
+        const refundCase = yield* refundCaseFor(yield* nativeRuntime, { amountMinor: 100_000, collected: false });
+        const key = yield* randomUuid;
+        yield* refundCase.native.actionRuntime.runAction({
+          payload: { ...gatewayOutcomeAuthority, submitterPrincipalIds: [refundCase.scope.principalId] },
+          principal: refundCase.principal,
+          registration: configurePaymentSourceAuthorityAction,
+          transport: { correlationId: 'payment-economic-effect-authority', idempotencyKey: key },
+        });
+        const collectionStatement = {
+          amount: { amountMinor: 100_000, currency: 'CZK' },
+          factFamily: 'GATEWAY_OUTCOME',
+          factKind: 'COLLECTION_CONFIRMED',
+          paymentId: refundCase.payment.paymentId,
+          source: gopayRefundExecution,
+          sourceRevision: 0,
+        } as const;
+        // Contradictory signals left the collection in CONFLICT: a report of charge 1 waits as held debt.
+        yield* transitionOperation(refundCase.native.database, refundCase.scope, {
+          operationId: refundCase.payment.collectOperationId,
+          paymentId: refundCase.payment.paymentId,
+          to: 'CONFLICT',
+        });
+        const heldCharge = yield* acceptObservation(refundCase, {
+          ...collectionStatement,
+          economicEffectKey: 'gopay:charge:1',
+          sourceOccurrenceId: 'gopay-settlement-charge-1',
+        });
+        expect(heldCharge.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+        // Governed reconciliation attaches charge 1 to the collection, which confirms it.
+        const attached = yield* decideReconciliation(refundCase, {
+          caseId: heldCharge.reconciliationCaseId ?? '',
+          decision: {
+            _tag: 'ATTACH_EVIDENCE',
+            observationId: heldCharge.observationId,
+            operationId: refundCase.payment.collectOperationId,
+          },
+          reason: 'The settlement line is the collection',
+        });
+        expect(Option.getOrUndefined(attached.outcomeChange)).toMatchObject({ toOutcome: 'EFFECT_CONFIRMED' });
+        // A different charge 2 confirmed for the same collection is evidence of a second charge: debt.
+        const secondCharge = yield* acceptObservation(refundCase, {
+          ...collectionStatement,
+          economicEffectKey: 'gopay:charge:2',
+          operationId: refundCase.payment.collectOperationId,
+          sourceOccurrenceId: 'gopay-callback-charge-2',
+        });
+        expect(secondCharge.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+        expect(secondCharge.reconciliationCaseId).toBeDefined();
       }),
     ),
 );

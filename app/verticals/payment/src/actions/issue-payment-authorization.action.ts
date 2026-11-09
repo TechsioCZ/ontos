@@ -46,6 +46,7 @@ import { paymentAuthorizationPersistenceForTransaction } from '../persistence/pa
 import type { PaymentAuthorizationPersistence } from '../persistence/payment-authorization-persistence.ts';
 import { PaymentOwnerEvidenceUnavailable } from '../ports/owner-evidence-unavailable.ts';
 import { createIssuePaymentAuthorizationPaymentCoreAuthorizationIssuedV1OutboxMessage } from './issue-payment-authorization-payment-core-authorization-issued-v1.outbox-message.ts';
+import { recordPaymentAggregateReads, recordPaymentLookup } from './payment-data-access.ts';
 
 const MODULE_KEY = 'payment.core' as const;
 const AUTHORIZATION_ISSUED = 'payment.core.authorization-issued.v1' as const;
@@ -66,6 +67,8 @@ interface IssuePaymentAuthorizationServices {
   readonly authorizations: PaymentAuthorizationPersistence;
 }
 
+type IssuePaymentAuthorizationContext = ActionHandlerContext<typeof domainEvents, IssuePaymentAuthorizationServices>;
+
 const sameBinding = Schema.toEquivalence(PaymentAuthorizationBindingSchema);
 
 /** Exact issuance replay: same issuance key, same Attempt material and same requested window. */
@@ -79,14 +82,24 @@ const isSameIssuance = (proof: PaymentAuthorizationProof, payload: IssuePaymentA
  * once that proof expired or the coverage changed). Decided under the Payment row lock.
  */
 const requireUnheldCoverage = (
-  authorizations: PaymentAuthorizationPersistence,
+  context: IssuePaymentAuthorizationContext,
   payment: PaymentRecord,
   orderCommitmentAttemptId: string,
 ) =>
   Effect.all(
-    [authorizations.listPrepaidAtCoverageRevision(payment.paymentId, payment.coverageRevision), DateTime.now],
+    [
+      context.services.authorizations.listPrepaidAtCoverageRevision(payment.paymentId, payment.coverageRevision),
+      DateTime.now,
+    ],
     { concurrency: 1 },
   ).pipe(
+    Effect.tap(([issued]) =>
+      recordPaymentLookup(context, {
+        paymentId: payment.paymentId,
+        query: 'prepaid-coverage-proofs',
+        resultCount: issued.length,
+      }),
+    ),
     Effect.flatMap(([issued, actualTime]) =>
       competingAttemptProofs(issued, orderCommitmentAttemptId, actualTime).length === 0
         ? Effect.void
@@ -112,7 +125,7 @@ const requireUnheldCoverage = (
 export const handleIssuePaymentAuthorization = Effect.fn('IssuePaymentAuthorizationAction.handle')(
   function* handleIssuePaymentAuthorization(
     payload: IssuePaymentAuthorizationPayload,
-    context: ActionHandlerContext<typeof domainEvents, IssuePaymentAuthorizationServices>,
+    context: IssuePaymentAuthorizationContext,
   ) {
     const { aggregate, applicability, authorizations } = context.services;
     const { binding } = payload;
@@ -121,7 +134,13 @@ export const handleIssuePaymentAuthorization = Effect.fn('IssuePaymentAuthorizat
       return yield* paymentUnavailable('A verified Selling Legal Entity scope is required');
     }
     const loaded = yield* aggregate.loadAggregate(binding.paymentId, { lock: true });
+    yield* recordPaymentAggregateReads(context, [loaded.payment.paymentId]);
     const existing = yield* authorizations.findByIssuanceKey(loaded.payment.paymentId, payload.issuanceKey);
+    yield* recordPaymentLookup(context, {
+      paymentId: loaded.payment.paymentId,
+      query: 'authorization-issuance',
+      resultCount: Option.isSome(existing) ? 1 : 0,
+    });
     if (Option.isSome(existing)) {
       if (!isSameIssuance(existing.value, payload)) {
         return yield* paymentAuthorizationRefused(
@@ -143,9 +162,12 @@ export const handleIssuePaymentAuthorization = Effect.fn('IssuePaymentAuthorizat
     const condition =
       proofKind === 'PREPAID_COVERAGE'
         ? yield* requirePrepaidCoverage(paymentFundsSnapshotOf(loaded)).pipe(
-            Effect.tap(() => requireUnheldCoverage(authorizations, payment, binding.orderCommitmentAttemptId)),
+            Effect.tap(() => requireUnheldCoverage(context, payment, binding.orderCommitmentAttemptId)),
           )
         : yield* applicability.loadCurrentEnablements(payment.customerConfigurationId).pipe(
+            Effect.tap((enablements) =>
+              recordPaymentLookup(context, { query: 'method-enablements', resultCount: enablements.length }),
+            ),
             Effect.flatMap((enablements) => verifyMethodCondition(payment, enablements, { legalEntityId, tenantId })),
             Effect.flatMap((check) =>
               MethodConditionCheck.$match(check, {

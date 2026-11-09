@@ -26,6 +26,7 @@ import { paymentOperationViewOf } from '../domain/lifecycle-views.ts';
 import { decideOperationAdmission, OperationAdmissionDecision } from '../domain/operation-lifecycle.ts';
 import {
   canonicalRefundBasis,
+  findHeldRefundItemOverlap,
   findUnavailableRefundItem,
   operationRequestedPayloadOf,
   refundFailureOf,
@@ -53,6 +54,7 @@ import {
   RequestPaymentRefundPaymentCoreOperationRequestedV1OutboxProducerModuleKey,
   RequestPaymentRefundPaymentCoreOperationRequestedV1OutboxTopic,
 } from './request-payment-refund-payment-core-operation-requested-v1.outbox-message.ts';
+import { recordPaymentAggregateReads, recordPaymentLookup } from './payment-data-access.ts';
 
 const PAYMENT_MODULE_KEY = 'payment.core';
 
@@ -185,6 +187,8 @@ const handleRequestPaymentRefund = Effect.fn('RequestPaymentRefund.handle')(func
     ],
     { concurrency: 1 },
   ).pipe(Effect.mapError(refundFailureOf));
+  yield* recordPaymentLookup(context, { query: 'refund-routes', resultCount: routeCandidates.length });
+  yield* recordPaymentAggregateReads(context, [aggregate.payment.paymentId]);
   const basis = canonicalRefundBasis(payload.basis);
   const materialRequest = refundMaterialRequest({ amount: payload.amount, basis, reason: payload.reason });
   const materialHash = yield* computePaymentMaterialHash(materialRequest).pipe(Effect.mapError(refundFailureOf));
@@ -216,6 +220,15 @@ const handleRequestPaymentRefund = Effect.fn('RequestPaymentRefund.handle')(func
   const returnEvidence = yield* context.services.refunds
     .selectReturnEvidence(aggregate.payment.paymentId)
     .pipe(Effect.mapError(refundFailureOf));
+  yield* recordPaymentLookup(context, {
+    paymentId: aggregate.payment.paymentId,
+    query: 'return-evidence',
+    resultCount: returnEvidence.length,
+  });
+  const heldOverlap = findHeldRefundItemOverlap(aggregate);
+  if (Option.isSome(heldOverlap)) {
+    return yield* refundItemUnavailableConflict(heldOverlap.value);
+  }
   const funds = fundsSnapshotWithPriorReturns(paymentFundsSnapshotOf(aggregate), returnEvidence);
   const permitted = yield* requireRefundReservation(funds, {
     amount: payload.amount,

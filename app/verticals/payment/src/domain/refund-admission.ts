@@ -101,22 +101,69 @@ export const cancellationMaterialRequest = (request: {
 });
 
 export interface UnavailableRefundItem {
-  readonly availability: Exclude<PaymentRefundableItemAvailability, 'AVAILABLE'>;
+  /** HELD_FOR_RECONCILIATION: two refunds that are not definitively non-executed stand for one item. */
+  readonly availability: Exclude<PaymentRefundableItemAvailability, 'AVAILABLE'> | 'HELD_FOR_RECONCILIATION';
   readonly itemRef: string;
 }
 
-/** An item already reserved by a live/unknown refund or already refunded cannot be selected again. */
+/**
+ * The items each REFUND still stands for: its immutable basis, unless definitive non-execution is its
+ * Current outcome. A refund whose non-execution is later overturned (CONFLICT, then possibly
+ * EFFECT_CONFIRMED) protects its items again although its released claim rows stay history (#1150).
+ */
+const refundItemProtections = (aggregate: PaymentAggregateRecord) =>
+  aggregate.operations.flatMap((operation) => {
+    const { refundBasis } = operation;
+    if (operation.kind !== 'REFUND' || operation.outcome === 'NOT_EFFECTED_CONFIRMED' || refundBasis === undefined) {
+      return [];
+    }
+    const items = Match.valueTags(refundBasis, {
+      FAILED_COMMITMENT_COMPENSATION: (): readonly PaymentRefundableItem[] => [],
+      REFUNDABLE_ITEMS: (basis): readonly PaymentRefundableItem[] => basis.items,
+    });
+    return items.map((item) => ({
+      active: true,
+      itemRef: item.itemRef,
+      operationId: operation.operationId,
+      operationOutcome: operation.outcome,
+    }));
+  });
+
+const findOverlap = (protections: ReturnType<typeof refundItemProtections>): Option.Option<UnavailableRefundItem> => {
+  const standingFor = new Map<string, string>();
+  for (const protection of protections) {
+    const holder = standingFor.get(protection.itemRef);
+    if (holder !== undefined && holder !== protection.operationId) {
+      return Option.some({ availability: 'HELD_FOR_RECONCILIATION', itemRef: protection.itemRef });
+    }
+    standingFor.set(protection.itemRef, protection.operationId);
+  }
+  return Option.none();
+};
+
+/**
+ * Two refunds standing for the same item (one was overturned after the item was legitimately
+ * reclaimed) are an ambiguous overlap: every new return of either basis is held for reconciliation
+ * rather than double returned or computed from invented funds (#1150 coverage).
+ */
+export const findHeldRefundItemOverlap = (aggregate: PaymentAggregateRecord): Option.Option<UnavailableRefundItem> =>
+  findOverlap(refundItemProtections(aggregate));
+
+/**
+ * An item reserved by a live/unknown refund or already refunded cannot be selected again, and an
+ * ambiguous item overlap holds every new item refund.
+ */
 export const findUnavailableRefundItem = (
   aggregate: PaymentAggregateRecord,
   itemRefs: readonly string[],
 ): Option.Option<UnavailableRefundItem> => {
-  const outcomes = new Map(aggregate.operations.map((operation) => [operation.operationId, operation.outcome]));
-  const claims = aggregate.activeClaims.flatMap((claim) => {
-    const operationOutcome = outcomes.get(claim.operationId);
-    return operationOutcome === undefined ? [] : [{ active: true, itemRef: claim.itemRef, operationOutcome }];
-  });
+  const protections = refundItemProtections(aggregate);
+  const overlap = findOverlap(protections);
+  if (Option.isSome(overlap)) {
+    return overlap;
+  }
   for (const itemRef of itemRefs) {
-    const availability = refundItemAvailability(claims, itemRef);
+    const availability = refundItemAvailability(protections, itemRef);
     if (availability !== 'AVAILABLE') {
       return Option.some({ availability, itemRef });
     }
@@ -125,12 +172,24 @@ export const findUnavailableRefundItem = (
 };
 
 export const refundItemUnavailableConflict = (unavailable: UnavailableRefundItem): PaymentRefundConflict =>
-  unavailable.availability === 'REFUNDED'
-    ? paymentRefundConflict('payment_refund_item_refunded', `Item ${unavailable.itemRef} is already refunded`)
-    : paymentRefundConflict(
+  Match.value(unavailable.availability).pipe(
+    Match.when('REFUNDED', () =>
+      paymentRefundConflict('payment_refund_item_refunded', `Item ${unavailable.itemRef} is already refunded`),
+    ),
+    Match.when('RESERVED_BY_PENDING_REFUND', () =>
+      paymentRefundConflict(
         'payment_refund_item_reserved',
         `Item ${unavailable.itemRef} is reserved by a pending or unresolved refund`,
-      );
+      ),
+    ),
+    Match.when('HELD_FOR_RECONCILIATION', () =>
+      paymentRefundConflict(
+        'payment_held_for_reconciliation',
+        `Item ${unavailable.itemRef} is held by more than one refund; new returns wait for reconciliation`,
+      ),
+    ),
+    Match.exhaustive,
+  );
 
 const offContractItemsAnswer = (reason: string) =>
   Result.fail(paymentRefundUnavailable('payment_owner_evidence_unavailable', reason));

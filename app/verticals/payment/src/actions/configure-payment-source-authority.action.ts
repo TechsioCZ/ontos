@@ -21,6 +21,7 @@ import {
 import { sourceAuthorityConfigurationProblem } from '../domain/source-qualification.ts';
 import { paymentSourceServicesForTransaction } from '../persistence/payment-source-persistence.ts';
 import type { PaymentSourceServices } from '../persistence/payment-source-persistence.ts';
+import { recordPaymentLookup } from './payment-data-access.ts';
 
 const MODULE_KEY = 'payment.core' as const;
 const domainEvents = {} as const;
@@ -62,6 +63,12 @@ export const handleConfigurePaymentSourceAuthority = Effect.fn('ConfigurePayment
     });
     yield* context.recordAuditEvidence({ reason: payload.reason });
     const { authority } = configured;
+    // The Current authority row was read under its lock; only a first configuration found none.
+    yield* recordPaymentLookup(context, {
+      query: 'source-authority',
+      recordId: authority.sourceAuthorityId,
+      resultCount: configured.written && authority.revision === 1 ? 0 : 1,
+    });
     return {
       changed: configured.written,
       factFamily: authority.factFamily,

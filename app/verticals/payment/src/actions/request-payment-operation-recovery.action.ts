@@ -25,6 +25,7 @@ import { paymentAggregatePersistenceForTransaction } from '../persistence/paymen
 import { paymentEvidencePersistenceForTransaction } from '../persistence/payment-evidence-persistence.ts';
 import type { PaymentEvidenceActionServices } from '../persistence/payment-evidence-persistence.ts';
 import type { PaymentOperationRecord } from '../persistence/payment-aggregate-persistence.ts';
+import { recordPaymentAggregateReads } from './payment-data-access.ts';
 import { createRequestPaymentOperationRecoveryPaymentCoreOperationRecoveryRequestedV1OutboxMessage } from './request-payment-operation-recovery-payment-core-operation-recovery-requested-v1.outbox-message.ts';
 
 const MODULE_KEY = 'payment.core' as const;
@@ -98,6 +99,7 @@ export const handleRequestPaymentOperationRecovery = Effect.fn('RequestPaymentOp
     const { aggregate, evidence } = context.services;
     const provenance = provenanceOf(context);
     const current = yield* aggregate.loadAggregate(payload.paymentId, { lock: true });
+    yield* recordPaymentAggregateReads(context, [current.payment.paymentId]);
     const operation = yield* requireOperation(current.operations, payload.operationId);
     const now = yield* DateTime.now;
     const plan = yield* requireExecutablePlan(

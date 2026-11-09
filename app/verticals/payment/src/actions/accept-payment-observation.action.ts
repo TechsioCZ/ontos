@@ -19,6 +19,7 @@ import {
 } from '../domain/source-statement-acceptance.ts';
 import { paymentSourceServicesForTransaction } from '../persistence/payment-source-persistence.ts';
 import type { PaymentSourceServices } from '../persistence/payment-source-persistence.ts';
+import { observedPaymentSourceServices } from './payment-data-access.ts';
 import {
   AcceptPaymentObservationPaymentCoreOperationOutcomeChangedV1OutboxPayloadSchema,
   AcceptPaymentObservationPaymentCoreOperationOutcomeChangedV1OutboxTopic,
@@ -48,12 +49,14 @@ export const handleAcceptPaymentObservation = Effect.fn('AcceptPaymentObservatio
       actorPrincipalId: context.scope.principalId,
       compositionRevision: context.compositionRevision,
     };
-    const acceptance = yield* acceptPaymentSourceStatement(context.services, {
+    const observed = observedPaymentSourceServices(context.services);
+    const acceptance = yield* acceptPaymentSourceStatement(observed.services, {
       entry: 'INTEGRATION',
       provenance,
       receivedAt: Option.fromUndefinedOr(payload.receivedAt),
       statement: payload,
     });
+    yield* observed.recordReads(context);
     yield* Effect.forEach(
       acceptance.outcomeChanges,
       Effect.fnUntraced(function* emitOutcomeChanged(change) {

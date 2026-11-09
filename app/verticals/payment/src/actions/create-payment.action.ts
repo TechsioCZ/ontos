@@ -36,6 +36,7 @@ import { paymentLifecyclePersistenceForTransaction } from '../persistence/paymen
 import { paymentApplicabilityPersistenceForTransaction } from '../persistence/payment-applicability-persistence.ts';
 import type { PaymentLifecycleServices } from '../persistence/payment-lifecycle-persistence.ts';
 import { createCreatePaymentPaymentCorePaymentCreatedV1OutboxMessage } from './create-payment-payment-core-payment-created-v1.outbox-message.ts';
+import { recordPaymentAggregateReads, recordPaymentLookup } from './payment-data-access.ts';
 
 const MODULE_KEY = 'payment.core' as const;
 const PAYMENT_CREATED = 'payment.core.payment-created.v1' as const;
@@ -123,19 +124,31 @@ export const handleCreatePayment = Effect.fn('CreatePaymentAction.handle')(funct
     compositionRevision: context.compositionRevision,
   };
   const existing = yield* services.lifecycle.findPaymentIdByIntentKey(payload.intentKey);
+  yield* recordPaymentLookup(context, { query: 'intent-key', resultCount: Option.isSome(existing) ? 1 : 0 });
   if (Option.isSome(existing)) {
-    return yield* recoverExistingIntent(payload, existing.value, services);
+    const recovered = yield* recoverExistingIntent(payload, existing.value, services);
+    yield* recordPaymentAggregateReads(context, [existing.value]);
+    return recovered;
   }
   // Every intent of this purchase is locked first (Payment id order), so competing intents serialize.
   const purchasePaymentIds = yield* services.lifecycle.lockPurchasePaymentIds(payload.purchaseCorrelationId);
+  yield* recordPaymentLookup(context, { query: 'purchase-intents', resultCount: purchasePaymentIds.length });
   const predecessorPaymentId = Option.fromNullishOr(payload.predecessorPaymentId);
   if (Option.isSome(predecessorPaymentId)) {
     yield* requireReleasedPredecessor(predecessorPaymentId.value, services);
+    yield* recordPaymentAggregateReads(context, [predecessorPaymentId.value]);
+    yield* recordPaymentLookup(context, {
+      paymentId: predecessorPaymentId.value,
+      query: 'successor',
+      resultCount: 0,
+    });
   }
   // Omitting the predecessor never bypasses it: every other intent of the purchase must be released.
   yield* requireReleasedPurchase(purchasePaymentIds, services.aggregate);
+  yield* recordPaymentAggregateReads(context, purchasePaymentIds);
   // #1147 applicability of exactly the selected branch at this execution; nothing else is selected.
   const enablements = yield* services.applicability.loadCurrentEnablements(payload.customerConfigurationId);
+  yield* recordPaymentLookup(context, { query: 'method-enablements', resultCount: enablements.length });
   const [branch] = yield* evaluatePaymentMethodApplicability({
     amount: payload.payableAmount,
     customerConfigurationId: payload.customerConfigurationId,
@@ -171,6 +184,8 @@ export const handleCreatePayment = Effect.fn('CreatePaymentAction.handle')(funct
   );
   const payment = paymentIntentViewOf(inserted.record);
   if (!inserted.written) {
+    // A concurrent identical intent won the insert: the stored Payment is read and replayed.
+    yield* recordPaymentAggregateReads(context, [payment.paymentId]);
     return { payment, replayed: true } satisfies CreatePaymentResult;
   }
   const createdBase = {
