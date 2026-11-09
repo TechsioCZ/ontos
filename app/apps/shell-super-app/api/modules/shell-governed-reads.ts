@@ -23,14 +23,14 @@ import {
   ShellResourceResponseSchema,
   ShellSearchPayloadSchema,
   ShellSearchResponseSchema,
-} from '../../shared/api.ts';
+} from '../../shared/browser-api.ts';
 import type {
   ResourceRef,
   ResolvedModuleTarget,
   ShellComposition,
   ShellResourceResponse,
   ShellSearchResponse,
-} from '../../shared/api.ts';
+} from '../../shared/browser-api.ts';
 import { capturedShellCatalog } from './captured-shell-catalog.ts';
 import { ShellGovernedReadDefinitions } from './shell-governed-read-definitions.ts';
 import { ShellCompositionFactory } from './shell-composition.ts';

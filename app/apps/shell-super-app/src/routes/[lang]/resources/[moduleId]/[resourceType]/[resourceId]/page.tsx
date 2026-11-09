@@ -6,7 +6,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { DateTime, Effect, Schema } from 'effect';
 import { useState } from 'react';
 
-import { ShellReloadRequiredProblemSchema } from '../../../../../../../shared/api.ts';
+import { ShellReloadRequiredProblemSchema } from '../../../../../../../shared/browser-api.ts';
 import { attachResourceMedia } from '../../../../../../api/auth-client.ts';
 import { browserRuntime } from '../../../../../../runtime/browser-effect-runtime.ts';
 import { ShellContentLayout } from '../../../../../shell-content-layout.tsx';

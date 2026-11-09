@@ -12,7 +12,7 @@ import {
   ListAccessPeopleOptionsResponseSchema,
   ListAccessPeopleResponseSchema,
 } from '../../shared/access-admin-api.ts';
-import { shellAuthenticationApiContract } from '../../shared/api.ts';
+import { shellAuthenticationApiContract } from '../../shared/browser-api.ts';
 import { templateDatabaseLayer, withAccessAdminCase } from '../support/access-admin-real-gate-fixture.ts';
 import type { AccessAdminCase, Persona } from '../support/access-admin-real-gate-fixture.ts';
 

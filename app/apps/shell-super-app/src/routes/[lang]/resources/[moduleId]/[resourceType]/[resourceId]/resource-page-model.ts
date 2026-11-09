@@ -1,7 +1,7 @@
 import { Effect, Match, Schema } from 'effect';
 
-import { ShellResourceRequestSchema } from '../../../../../../../shared/api.ts';
-import type { ShellResourceResponse } from '../../../../../../../shared/api.ts';
+import { ShellResourceRequestSchema } from '../../../../../../../shared/browser-api.ts';
+import type { ShellResourceResponse } from '../../../../../../../shared/browser-api.ts';
 import { resourceDetail } from '../../../../../../api/auth-client.ts';
 import { browserRuntime } from '../../../../../../runtime/browser-effect-runtime.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../../../../../shell-authentication-client-options.ts';

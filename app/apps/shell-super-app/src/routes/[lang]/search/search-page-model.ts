@@ -1,7 +1,7 @@
 import { Effect, Match, Option, Schema } from 'effect';
 import { Url, UrlParams } from 'effect/http';
 
-import type { ShellSearchResponse } from '../../../../shared/api.ts';
+import type { ShellSearchResponse } from '../../../../shared/browser-api.ts';
 import { searchResources } from '../../../api/auth-client.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../../shell-authentication-client-options.ts';

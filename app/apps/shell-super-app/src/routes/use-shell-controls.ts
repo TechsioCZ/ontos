@@ -4,7 +4,7 @@ import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import { Effect, Exit, Match, Schema } from 'effect';
 import { useState } from 'react';
 
-import { SwitchLegalEntityPayloadSchema, SwitchTenantPayloadSchema } from '../../shared/api.ts';
+import { SwitchLegalEntityPayloadSchema, SwitchTenantPayloadSchema } from '../../shared/browser-api.ts';
 import { signOut, switchLegalEntity, switchTenant } from '../api/auth-client.ts';
 import type { SwitchLegalEntityClientError, SwitchTenantClientError } from '../api/auth-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';

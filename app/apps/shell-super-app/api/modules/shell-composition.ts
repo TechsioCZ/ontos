@@ -9,7 +9,7 @@ import { decideModuleStateAccess, isReservedShellRouteRoot } from '@app/core-run
 import type { GateInput } from '@app/core-runtime/access/enforcement';
 import { Context, DateTime, Effect, Layer, Schema } from 'effect';
 
-import { ShellCompositionSchema, ShellNavigationItemSchema } from '../../shared/api.ts';
+import { ShellCompositionSchema, ShellNavigationItemSchema } from '../../shared/browser-api.ts';
 import type { ShellAccessGate } from './shell-access-decisions.ts';
 import {
   isScopeMismatch,

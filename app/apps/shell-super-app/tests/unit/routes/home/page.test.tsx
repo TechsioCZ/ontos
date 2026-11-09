@@ -14,7 +14,7 @@ import {
   TenantAccessForbiddenProblemSchema,
   TenantAuthenticationRequiredProblemSchema,
   TenantIdSchema,
-} from '../../../../shared/api.ts';
+} from '../../../../shared/browser-api.ts';
 import type { HomePageModel } from '../../../../src/routes/[lang]/home-page-model.ts';
 import { HomeView } from '../../../../src/routes/[lang]/page.tsx';
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {

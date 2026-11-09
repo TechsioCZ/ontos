@@ -5,7 +5,7 @@ import { Cause, Effect, Exit, Layer, Predicate, Schema, Tracer } from 'effect';
 import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
 import { makeShellAuthenticationApiRuntime, shellProductionRuntimeArguments } from '../../api/index.ts';
-import { shellAuthenticationApiContract } from '../../shared/api.ts';
+import { shellAuthenticationApiContract } from '../../shared/browser-api.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { nativeShellAccessGateLive } from './native-shell-access-gate.ts';
 

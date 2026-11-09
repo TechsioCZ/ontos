@@ -10,7 +10,7 @@ import { Effect } from 'effect';
 import { afterEach, expect, it, rstest, test } from 'effect-rstest';
 import type { ComponentProps, ReactNode } from 'react';
 
-import { AppIdSchema } from '../../shared/api';
+import { AppIdSchema } from '../../shared/browser-api.ts';
 import { ultramodernUiMarker } from '../../shared/ultramodern-build.ts';
 import Layout from '../../src/routes/layout';
 import { AuthenticatedDashboardLayout } from '../../src/routes/shell-frame';

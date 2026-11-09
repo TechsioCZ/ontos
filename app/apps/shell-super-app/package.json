@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "exports": {
-    "./api": "./shared/api.ts",
+    "./api": "./shared/browser-api.ts",
     "./api/client": "./src/api/auth-client.ts",
     "./testing/api-key-gateway-native": "./tests/fixtures/api-key-gateway-native.ts",
     "./testing/tenant-party-shell-http": "./tests/support/tenant-party-shell-http.ts",

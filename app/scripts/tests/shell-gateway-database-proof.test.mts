@@ -10,12 +10,6 @@ const nativeRuntimeEntry = 'apps/shell-super-app/api/index.ts';
 const nativeTransportEntry = 'apps/shell-super-app/api/symmy/transport.ts';
 const fixtureRoot = '/issuer-proof';
 const rootFile = `${fixtureRoot}/apps/shell-super-app/api/index.ts`;
-const serverApiFile = `${fixtureRoot}/apps/shell-super-app/api/server-api.ts`;
-const baseApiFile = `${fixtureRoot}/apps/shell-super-app/shared/api.ts`;
-const appendGroupFile = `${fixtureRoot}/apps/shell-super-app/api/other-group.ts`;
-const groupConsumerFile = `${fixtureRoot}/apps/shell-super-app/api/group-consumer.ts`;
-const baseConsumerFile = `${fixtureRoot}/apps/shell-super-app/api/base-consumer.ts`;
-const serverApiConsumerFile = `${fixtureRoot}/apps/shell-super-app/api/server-api-consumer.ts`;
 const helperFile = `${fixtureRoot}/apps/shell-super-app/api/auth/evidence.ts`;
 const sharedFile = `${fixtureRoot}/packages/shared-contracts/src/index.ts`;
 const coreFile = `${fixtureRoot}/packages/core-runtime/src/db/client.ts`;
@@ -29,13 +23,12 @@ export const evidence = Effect.fn('evidence')(function* () {
  }));
 });`;
 const publishedGroupMount = 'Layer.mergeAll(group)';
-const baseApiExpression = "HttpApi.make('shell').add(GatewayContextApiGroup)";
 const registeredRoot = `import { Layer } from 'effect';
 import { HttpApi, HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { GatewayContextApiGroup } from '@app/shared-contracts';
 import { evidence } from './auth/evidence.ts';
-const api = ${baseApiExpression};
+const api = HttpApi.make('shell').add(GatewayContextApiGroup);
 export const makeRuntime = () => {
  const group = HttpApiBuilder.group(api, 'gatewayContext', handlers => handlers
   .handle('issueGatewayContext', () => evidence())
@@ -69,168 +62,9 @@ const proveFixture = (sources: ReadonlyMap<string, string>) =>
     return [...provedShellGatewayDatabaseSources(sources, fixtureRoot, path, fixtureExports)];
   }).pipe(Effect.provide(Path.layer));
 
-const appendExpression = 'ShellAuthenticationApi.add(OtherGroup)';
-const serverApiSource = `import { ShellAuthenticationApi } from '../shared/api.ts';
-import { OtherGroup } from './other-group.ts';
-export const api = ${appendExpression};`;
-const beforeAppend = (statement: string): string =>
-  serverApiSource.replace('export const api', `${statement}\nexport const api`);
-const baseApiSource = `import { HttpApi } from '@modern-js/bff-effect/effect-client';
-import { GatewayContextApiGroup } from '@app/shared-contracts';
-export const ShellAuthenticationApi = ${baseApiExpression};`;
-const appendGroupSource = `import { HttpApiGroup } from '@modern-js/bff-effect/effect-client';
-export const OtherGroup = HttpApiGroup.make('other');`;
-const appendedRuntime = registeredRoot.replace(
-  `const api = ${baseApiExpression};`,
-  "import { api } from './server-api.ts';",
-);
-const appendedSources = (): Map<string, string> => {
-  const sources = fixtureSources();
-  sources.set(rootFile, appendedRuntime);
-  sources.set(serverApiFile, serverApiSource);
-  sources.set(baseApiFile, baseApiSource);
-  sources.set(appendGroupFile, appendGroupSource);
-  return sources;
-};
-
 it.effect('proves the actual registered issuer role rather than an auth directory', () =>
   proveFixture(fixtureSources()).pipe(Effect.map((result) => expect(result).toEqual([helperFile]))),
 );
-
-it.effect('preserves the registered issuer through an immutable named API append', () =>
-  proveFixture(appendedSources()).pipe(Effect.map((result) => expect(result).toEqual([helperFile]))),
-);
-
-it.effect('permits consumers of unrelated exports from the appended group module', () => {
-  const sources = appendedSources();
-  sources.set(appendGroupFile, `${appendGroupSource}\nexport const Input = 'input';`);
-  sources.set(groupConsumerFile, "export { Input } from './other-group.ts';");
-  return proveFixture(sources).pipe(Effect.map((result) => expect(result).toEqual([helperFile])));
-});
-
-it.effect.each([
-  ['counterfeit base', baseApiFile, baseApiSource.replace('@modern-js/bff-effect/effect-client', 'foreign')],
-  ['mutable base', baseApiFile, baseApiSource.replace('export const', 'export let')],
-  ['replaced add', baseApiFile, `${baseApiSource}\nShellAuthenticationApi.add = foreign;`],
-  ['missing gateway in base', baseApiFile, baseApiSource.replace('.add(GatewayContextApiGroup)', '')],
-  ['counterfeit gateway group', appendGroupFile, appendGroupSource.replace("'other'", "'gatewayContext'")],
-  [
-    'reexported gateway group',
-    appendGroupFile,
-    "export { GatewayContextApiGroup as OtherGroup } from '@app/shared-contracts';",
-  ],
-  ['mutable appended group', appendGroupFile, appendGroupSource.replace('export const', 'export let')],
-  ['mutated appended group name', appendGroupFile, `${appendGroupSource}\nOtherGroup.identifier = 'gatewayContext';`],
-  [
-    'appended group aliased in its defining module',
-    appendGroupFile,
-    `${appendGroupSource}\nconst alias = OtherGroup; alias.identifier = 'gatewayContext';`,
-  ],
-  [
-    'appended group aliased before append',
-    serverApiFile,
-    beforeAppend("const alias = OtherGroup; alias.identifier = 'gatewayContext';"),
-  ],
-  [
-    'appended group reflectively mutated before append',
-    serverApiFile,
-    beforeAppend("Reflect.set(OtherGroup, 'identifier', 'gatewayContext');"),
-  ],
-  [
-    'appended group mutated from another importer',
-    groupConsumerFile,
-    "import { OtherGroup as group } from './other-group.ts'; Reflect.set(group, 'identifier', 'gatewayContext');",
-  ],
-  [
-    'appended group opened to a namespace importer',
-    groupConsumerFile,
-    "import * as groups from './other-group.ts'; Reflect.set(groups.OtherGroup, 'identifier', 'gatewayContext');",
-  ],
-  [
-    'appended group reexported from another module',
-    groupConsumerFile,
-    "export { OtherGroup as alias } from './other-group.ts';",
-  ],
-  [
-    'appended group locally reexported through a named importer',
-    groupConsumerFile,
-    "import { OtherGroup as group } from './other-group.ts'; export { group };",
-  ],
-  [
-    'add receiver aliased before append',
-    serverApiFile,
-    beforeAppend('const alias = ShellAuthenticationApi; alias.add = foreign;'),
-  ],
-  [
-    'base groups aliased in its defining module',
-    baseApiFile,
-    `${baseApiSource}\nconst alias = ShellAuthenticationApi.groups; alias.gatewayContext = foreign;`,
-  ],
-  [
-    'add receiver reflectively mutated from another importer',
-    baseConsumerFile,
-    `import { ShellAuthenticationApi } from '../shared/api.ts';
-Reflect.set(ShellAuthenticationApi, 'add', foreign);`,
-  ],
-  [
-    'add receiver passed to a counterfeit client factory',
-    baseConsumerFile,
-    `import { makeEffectHttpApiClient } from 'foreign';
-import { ShellAuthenticationApi } from '../shared/api.ts';
-makeEffectHttpApiClient(ShellAuthenticationApi);`,
-  ],
-  [
-    'assembled API aliased in its defining module',
-    serverApiFile,
-    `${serverApiSource}\nconst alias = api.groups; alias.gatewayContext = foreign;`,
-  ],
-  [
-    'assembled API aliased in the runtime root',
-    rootFile,
-    appendedRuntime.replace(
-      'export const makeRuntime',
-      'const alias = api.groups; alias.gatewayContext = foreign;\nexport const makeRuntime',
-    ),
-  ],
-  [
-    'assembled API reflectively mutated from another importer',
-    serverApiConsumerFile,
-    "import { api as descriptor } from './server-api.ts'; Reflect.set(descriptor.groups, 'gatewayContext', foreign);",
-  ],
-  [
-    'opaque appended group',
-    serverApiFile,
-    serverApiSource.replace(appendExpression, 'ShellAuthenticationApi.add(unknownGroup)'),
-  ],
-  [
-    'duplicate appended name',
-    serverApiFile,
-    beforeAppend(`import { HttpApiGroup } from '@modern-js/bff-effect/effect-client';
-const duplicate = HttpApiGroup.make('other');`).replace(
-      appendExpression,
-      'ShellAuthenticationApi.add(OtherGroup, duplicate)',
-    ),
-  ],
-  [
-    'spread append',
-    serverApiFile,
-    serverApiSource.replace(appendExpression, 'ShellAuthenticationApi.add(...[OtherGroup])'),
-  ],
-  [
-    'computed append',
-    serverApiFile,
-    serverApiSource.replace(appendExpression, 'ShellAuthenticationApi["add"](OtherGroup)'),
-  ],
-  [
-    'optional append',
-    serverApiFile,
-    serverApiSource.replace(appendExpression, 'ShellAuthenticationApi.add?.(OtherGroup)'),
-  ],
-])('rejects an unproved named API append with %s', ([_name, file, source]) => {
-  const sources = appendedSources();
-  sources.set(file, source);
-  return proveFixture(sources).pipe(Effect.map((result) => expect(result).toEqual([])));
-});
 
 it.effect.each([
   'Layer.empty.pipe(Layer.provideMerge(group))',
@@ -383,7 +217,7 @@ it.live('proves exactly the six current Shell issuer bootstrap sources', () =>
         to: '.foreignAdmit(rawKey, httpRequest)',
       },
       {
-        file: nodePath.join(root, 'apps/shell-super-app/api/symmy/contract.ts'),
+        file: nodePath.join(root, 'apps/shell-super-app/shared/api.ts'),
         from: "from '@app/shared-contracts/symmy'",
         to: "from '@app/foreign-contracts/symmy'",
       },

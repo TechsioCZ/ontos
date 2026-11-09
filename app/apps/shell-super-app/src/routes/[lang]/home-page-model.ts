@@ -8,7 +8,7 @@ import type {
   SafeTenantIdentity,
   ShellNavigationItem,
   ShellUnavailableDeployment,
-} from '../../../shared/api.ts';
+} from '../../../shared/browser-api.ts';
 import { availableLegalEntities, availableTenants, currentSession, shellComposition } from '../../api/auth-client.ts';
 import type { AvailableTenantsClientError } from '../../api/auth-client.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';

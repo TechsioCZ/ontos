@@ -9,7 +9,7 @@ import type {
 import { Context, Crypto, PlatformError } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/http';
 
-import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../shared/api.ts';
+import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../shared/browser-api.ts';
 import { AccessAdministrationApi } from '../../shared/access-admin-api.ts';
 import type {
   AccessAdminProblem,
@@ -111,7 +111,7 @@ import type {
   ShellResourceResponse,
   ShellSearchPayload,
   ShellSearchResponse,
-} from '../../shared/api.ts';
+} from '../../shared/browser-api.ts';
 
 export { issueGatewayContext } from '@app/shared-contracts';
 export type {
