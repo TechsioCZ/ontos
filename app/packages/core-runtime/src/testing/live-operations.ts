@@ -588,6 +588,7 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
     readonly namespaceRelationships: readonly ReturnType<typeof relationship>[];
     readonly reader: FixtureActor;
     readonly readerProviderSubjectId: string | undefined;
+    readonly scopedExecutor: FixtureExecutor;
     readonly secondaryLegalEntityId: string | undefined;
     readonly spice: FixtureSpiceClient;
     readonly tenantId: string;
@@ -665,7 +666,7 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
       ...(input.secondaryLegalEntityId === undefined ? [] : [input.secondaryLegalEntityId]),
     ].map((legalEntityId) => LegalEntityIdSchema.make(legalEntityId));
     yield* writeBootstrapScopes(
-      { enrollment: input.databaseIdentities, executor: input.executor },
+      { enrollment: input.databaseIdentities, executor: input.scopedExecutor },
       { ...input.manager, correlationId: 'live-fixture-access-bootstrap' },
       { scopes: bootstrapScopesOf(accessTenantId, accessCompanies), tenantId: accessTenantId },
     ).pipe(Effect.mapError((cause) => fixtureFailure('Unable to seed the live fixture access fences', cause)));
@@ -674,7 +675,7 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
       // exactly the keys it stated and a request for any other workload is refused (O73).
       const workloadStore = makeAccessWorkloadBindingDrizzleStore({
         enrollment: input.databaseIdentities,
-        executor: input.executor,
+        executor: input.scopedExecutor,
       });
       yield* workloadStore
         .registerBindings(
@@ -1594,7 +1595,7 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
       Effect.ensuring(Effect.sync(spice.close.bind(spice)).pipe(Effect.andThen(Scope.close(databaseScope, Exit.void)))),
     );
 
-    // Seed through a short-lived admin pool; the runtimes keep the runtime role's connection.
+    // Provision identities through admin; scoped writers must use the enrolled runtime role.
     yield* Effect.scoped(
       Effect.gen(function* seedLiveOperationFixture() {
         const admin = yield* makeCoreDatabase({ ...adminDatabaseConfiguration, maxConnections: 2 }).pipe(
@@ -1620,6 +1621,7 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
           namespaceRelationships,
           reader,
           readerProviderSubjectId: configuration.readerProviderSubjectId,
+          scopedExecutor: executor,
           secondaryLegalEntityId,
           spice,
           tenantId,
