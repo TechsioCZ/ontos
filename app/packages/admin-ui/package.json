@@ -6,6 +6,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./form-controls": "./src/form-controls.tsx",
     "./select-template": "./src/select-template.tsx",
     "./side-panel": "./src/side-panel.tsx",
     "./visible-text": "./src/visible-text.ts"
