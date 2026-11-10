@@ -31,7 +31,8 @@ import {
   CIMD_CLIENT_ID,
   GRANT_CLAIM,
 } from './env.mts';
-import { Recorder } from './report.mts';
+import { oldRefreshVerdict, Recorder } from './report.mts';
+import type { OldRefreshReplay } from './report.mts';
 import { startLoopbackCallback } from './loopback.mts';
 import type { E2eOAuthProviderOptions } from './provider.mts';
 import { runOAuthFlow, rotateRefreshToken, refreshIsRejected } from './flow.mts';
@@ -634,26 +635,31 @@ const runVariant = (def: VariantDef, summary: VariantSummary, verification: bool
         };
       }).pipe(Effect.scoped),
     );
-    const rotated = Option.getOrUndefined(recordedRotation);
-    if (rotated !== undefined) {
-      access = rotated.accessToken;
+    if (Option.isSome(recordedRotation)) {
+      access = recordedRotation.value.accessToken;
     }
 
-    /** Waits until the 30 s reuse grace of the rotated-out refresh token has passed, then presents it. */
-    const oldRefreshRejected = () =>
+    /**
+     * Waits until the 30 s reuse grace of the rotated-out refresh token has passed, then presents it. Without a recorded
+     * rotation there is no old refresh token to present, so nothing is replayed.
+     */
+    const replayOldRefresh = () =>
       Effect.gen(function* replayOldRefreshToken() {
-        if (rotated === undefined) {
-          return false;
+        if (Option.isNone(recordedRotation)) {
+          return { _tag: 'NotReplayed' } satisfies OldRefreshReplay;
         }
         const now = yield* Clock.monotonicTimeNanos;
         const remaining = rotatedAt + 31_000_000_000n - now;
         yield* Effect.sleep(Duration.nanos(remaining > 0n ? remaining : 0n));
-        return yield* refreshIsRejected({
+        const rejected = yield* refreshIsRejected({
           issuer: E2E.issuer,
           provider,
-          refreshToken: rotated.oldRefreshToken,
+          refreshToken: recordedRotation.value.oldRefreshToken,
           resource: E2E.mcpUrl,
         });
+        return rejected
+          ? ({ _tag: 'Rejected' } satisfies OldRefreshReplay)
+          : ({ _tag: 'Accepted' } satisfies OldRefreshReplay);
       });
 
     if (keep) {
@@ -665,9 +671,9 @@ const runVariant = (def: VariantDef, summary: VariantSummary, verification: bool
         k,
         'starý refresh po 30 s odmítnut → připojení zrušeno, 401 do 35 s',
         Effect.gen(function* verifyRefreshReuseRevokes() {
-          const rejected = yield* oldRefreshRejected();
-          if (!rejected) {
-            return { detail: 'starý refresh token prošel', pass: false };
+          const verdict = oldRefreshVerdict(yield* replayOldRefresh());
+          if (!verdict.pass) {
+            return verdict;
           }
           const waited = yield* waitForInvalidToken(access);
           return {
@@ -701,8 +707,7 @@ const runVariant = (def: VariantDef, summary: VariantSummary, verification: bool
         k,
         'starý refresh token odmítnut (po 30 s)',
         Effect.gen(function* verifyOldRefreshRejected() {
-          const rejected = yield* oldRefreshRejected();
-          return { detail: rejected ? 'invalid_grant' : 'starý refresh token prošel', pass: rejected };
+          return oldRefreshVerdict(yield* replayOldRefresh());
         }),
       );
     }
