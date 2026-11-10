@@ -110,6 +110,19 @@ describe('#1150 Current funds ledger', () => {
     );
   });
 
+  it('holds returns that stand without any proven collection, never dropping the returned money', () => {
+    const disproven = operation('collect', 'COLLECT', 'NOT_EFFECTED_CONFIRMED', 1000);
+    for (const outcome of ['EFFECT_CONFIRMED', 'PENDING', 'INDETERMINATE'] as const) {
+      expect(computePaymentFunds(snapshot([disproven, refund('r1', outcome, 600)]))).toEqual(
+        PaymentFundsLedger.Held({ reason: 'INCONSISTENT_EVIDENCE' }),
+      );
+    }
+    // A refund that definitively did not happen returned nothing.
+    expect(computePaymentFunds(snapshot([disproven, refund('r1', 'NOT_EFFECTED_CONFIRMED', 600)]))).toEqual(
+      PaymentFundsLedger.NotCollected({ liveCollectOperationId: Option.none() }),
+    );
+  });
+
   it('holds ambiguous, conflicting or inconsistent evidence for reconciliation', () => {
     expect(computePaymentFunds(snapshot([collected()], { unresolvedEvidence: true }))).toEqual(
       PaymentFundsLedger.Held({ reason: 'UNRESOLVED_EVIDENCE' }),

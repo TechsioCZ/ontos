@@ -134,6 +134,14 @@ export const computePaymentFunds = (snapshot: PaymentFundsSnapshot): PaymentFund
     return held('INCONSISTENT_EVIDENCE');
   }
   if (collect === undefined) {
+    const returnsStand = snapshot.operations.some(
+      (operation) => operation.kind === 'REFUND' && operation.outcome !== 'NOT_EFFECTED_CONFIRMED',
+    );
+    if (returnsStand) {
+      // Money went back, or may still go back, for a collection nothing proves any more (for example
+      // after its receipt was fully retracted): unexplained, never "nothing collected".
+      return held('INCONSISTENT_EVIDENCE');
+    }
     return PaymentFundsLedger.NotCollected({
       liveCollectOperationId: Option.map(
         EffectArray.findFirst(collects, (operation) => operation.outcome !== 'NOT_EFFECTED_CONFIRMED'),
