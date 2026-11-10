@@ -15,8 +15,13 @@ const commandSchema = Schema.Struct({
   principalId: PrincipalIdSchema,
   tenantId: TenantIdSchema,
 });
+const FailureStageSchema = Schema.Literals(['command', 'registration', 'transport']);
 const responseSchema = Schema.fromJsonString(
-  Schema.Struct({ type: Schema.Literals(['ready', 'registered', 'failed']) }),
+  Schema.Union([
+    Schema.Struct({ type: Schema.Literals(['ready', 'registered']) }),
+    // Only the failing step is named; the command, the assertion and the Cause stay private.
+    Schema.Struct({ stage: FailureStageSchema, type: Schema.Literal('failed') }),
+  ]),
 );
 
 // Authentication test seam only. Dedicated piped stdin/stdout carry commands and
@@ -25,21 +30,26 @@ const responseSchema = Schema.fromJsonString(
 const serve = Effect.gen(function* serveSignedAssertionRegistration() {
   const registrar = yield* GatewayScopeGrantRegistrar;
   const stdio = yield* Stdio.Stdio;
-  const write = (type: (typeof responseSchema.Type)['type']) =>
-    Schema.encodeEffect(responseSchema)({ type }).pipe(
+  const write = (response: typeof responseSchema.Type) =>
+    Schema.encodeEffect(responseSchema)(response).pipe(
       Effect.flatMap((document) => Stream.run(Stream.make(`${document}\n`), stdio.stdout())),
     );
-  yield* write('ready');
+  yield* write({ type: 'ready' });
   yield* stdio.stdin.pipe(
     Stream.decodeText(),
     Stream.splitLines,
     Stream.runForEach((document) =>
       Schema.decodeUnknownEffect(Schema.fromJsonString(commandSchema))(document).pipe(
-        Effect.flatMap((command) => registrar.register(command)),
-        Effect.andThen(write('registered')),
+        Effect.catchCause(() => Effect.fail('command' as const)),
+        Effect.flatMap((command) =>
+          registrar.register(command).pipe(Effect.catchCause(() => Effect.fail('registration' as const))),
+        ),
+        Effect.andThen(write({ type: 'registered' })),
       ),
     ),
-    Effect.catchCause(() => write('failed')),
+    Effect.catch((error) =>
+      write({ stage: Schema.is(FailureStageSchema)(error) ? error : 'transport', type: 'failed' }),
+    ),
   );
 });
 
