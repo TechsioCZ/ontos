@@ -5,8 +5,16 @@
  */
 export { AccessCatalogReleaseError, AccessCatalogReleaseErrorCodeSchema, releaseRefusal } from './errors.ts';
 export type { AccessCatalogReleaseErrorCode } from './errors.ts';
-export { buildAccessCatalogRelease, catalogReleaseDigest, catalogReleaseId, catalogReleaseLines } from './release.ts';
-export type { BuildAccessCatalogReleaseInput } from './release.ts';
+export {
+  buildAccessCatalogRelease,
+  buildDeploymentCatalogRelease,
+  catalogReleaseDigest,
+  catalogReleaseId,
+  catalogReleaseLines,
+} from './release.ts';
+export type { BuildAccessCatalogReleaseInput, BuildDeploymentCatalogReleaseInput } from './release.ts';
+export { CatalogReleaseOrderingSchema, orderCatalogRelease } from './release-ordering.ts';
+export type { CatalogReleaseOrdering, CatalogReleaseOrderingInput } from './release-ordering.ts';
 export {
   AccessCatalogDescriptorSchema,
   AccessCatalogModuleSchema,

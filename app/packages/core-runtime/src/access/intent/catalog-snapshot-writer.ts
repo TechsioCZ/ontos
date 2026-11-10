@@ -13,8 +13,9 @@ import type { CatalogSnapshot } from '../model.ts';
  * The initial release of the configurable catalog (O1, O67-Q7). A release is global — one per declaration
  * set, shared by every tenant — so this writer is the one place a release is published, and it publishes
  * exactly once: while nothing is released yet it publishes every declaration of the modules the tenant has
- * installed. After that, a capability arrives through Novinky and an explicit adoption (guarantee 2), never
- * by rebuilding the snapshot a role is already pinned to.
+ * installed. After that, every later release is the deployment's own catalog, published at release
+ * activation (`../release/activation.ts`): "Plný přístup" follows it and every other role adopts it through
+ * Novinky, and no release ever rebuilds the snapshot a role is already pinned to.
  *
  * Nothing here decides access: publishing a capability makes it configurable, and grants nobody anything.
  */
