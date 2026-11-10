@@ -573,6 +573,57 @@ export const useProductDetailsPrefetch = (
   }, [batch, needsPreload, request, scope, selection]);
 };
 
+/**
+ * Warms one row's detail when the user shows the intent to open it. The strict detail store does the rest: a fresh
+ * entry answers at once without a request and a running read is joined, so each row has at most one read in flight.
+ */
+export const prefetchProductDetail = (
+  context: ModulePageContext | undefined,
+  revision: number,
+  productId: string,
+): void => {
+  if (productScope(context) === undefined) {
+    return;
+  }
+  const input = Option.getOrUndefined(detailInput(context?.legalEntityId ?? '', productId, context, revision));
+  if (input !== undefined && productDetailData.snapshot(input).state !== 'ready') {
+    browserRuntime.runFork(productDetailData.read(input).pipe(Effect.ignore));
+  }
+};
+
+/** Row element events that announce an opening: pointing (touch included) and keyboard focus. */
+export interface RowIntentProps {
+  readonly onFocus: (event: { readonly currentTarget: HTMLElement }) => void;
+  readonly onPointerDown: (event: { readonly currentTarget: HTMLElement }) => void;
+  readonly onPointerEnter: (event: { readonly currentTarget: HTMLElement }) => void;
+}
+
+/** The DataTable row props that report the pointed or focused row by its position in the row model (`data-index`). */
+export const rowIntentProps = (onIntent: (index: number) => void): RowIntentProps => {
+  const intent = ({ currentTarget }: { readonly currentTarget: HTMLElement }) => {
+    const index = Number(currentTarget.dataset['index']);
+    if (Number.isInteger(index) && index >= 0) {
+      onIntent(index);
+    }
+  };
+  return { onFocus: intent, onPointerDown: intent, onPointerEnter: intent };
+};
+
+/** Intent prefetch of the products list: the row the user points at or focuses has its detail ready to open. */
+export const productDetailIntent = (
+  context: ModulePageContext | undefined,
+  revision: number,
+  table: ProductRowModel | undefined,
+  authorizedRows: readonly ProductRecord[],
+  enabled: boolean,
+): RowIntentProps =>
+  rowIntentProps((index) => {
+    const row = enabled ? currentProductRows(table, authorizedRows)[index] : undefined;
+    if (row !== undefined) {
+      prefetchProductDetail(context, revision, row.id);
+    }
+  });
+
 export type ProductDetailState =
   | { readonly status: 'loading' }
   | { readonly status: 'invalid' }
