@@ -34,7 +34,8 @@ import { Config, ConfigProvider, Console, DateTime, Effect, Layer, Option, Redac
 import { Command, Flag } from 'effect/cli';
 import { FetchHttpClient } from 'effect/http';
 
-import { connectSeedClient } from '../../../scripts/demo/seed-client.mts';
+import { connectSeedClient, ownerAction } from '../../../scripts/demo/seed-client.mts';
+import { ApplyCommandPayloadSchema } from '../shared/actions/apply-command.ts';
 import type { SeedClient, DemoSeedError } from '../../../scripts/demo/seed-client.mts';
 
 const partyAudience = 'party-registry';
@@ -75,11 +76,8 @@ const PartyLink = Schema.Struct({
   counterpartyId: Schema.String.pipe(Schema.brand('PartyId')).pipe(Schema.brand('CounterpartyId')),
   partyId: Schema.String.pipe(Schema.brand('PartyId')),
 });
-const LinkCommand = Schema.Struct({
-  _tag: Schema.Literal('LinkClientParty'),
-  clientId: CrmClientSchema.fields.id.pipe(Schema.brand('CrmClientId')),
-  partyRef: PartyLink,
-});
+/** CRM's `apply-command` Action owns `LinkClientParty` (`shared/commands/clients.ts`). */
+const applyCrmCommand = ownerAction('apply-command', Schema.toEncoded(ApplyCommandPayloadSchema));
 
 const fold = (value: string) =>
   value
@@ -345,12 +343,8 @@ const main = (apply: boolean) =>
         }
         const result = yield* client.apply(
           crmAudience,
-          LinkCommand,
-          yield* Schema.decodeUnknownEffect(LinkCommand)({
-            _tag: 'LinkClientParty',
-            clientId: crmClient.id,
-            partyRef: link,
-          }),
+          applyCrmCommand,
+          { _tag: 'LinkClientParty', clientId: crmClient.id, partyRef: link },
           revision,
           [partyAudience],
         );
