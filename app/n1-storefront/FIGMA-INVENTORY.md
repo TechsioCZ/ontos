@@ -58,7 +58,7 @@ schopnosti zůstávají oddělené od existujících UI kompozic.
 
 Aktuální navazující převod: kontakty `43:1162/43:1595` nyní mají celou veřejnou
 adresní kompozici a FormInput/FormTextarea podle hlavních rámců `369:2578/369:2758`.
-Formulář volá skutečný work-tasks owner; success vyžaduje potvrzený taskRef.
+Formulář volá Action `work.tasks.submit-storefront-inquiry`; success vyžaduje potvrzený taskRef.
 Validace, pending, forbidden, unavailable/retry a unconfirmed nejsou návrhové fixtures.
 Skutečný N1 zápis nebyl vyvolán; runtime oprávnění tím není ověřené.
 Hero je bez nadbytečných Control ploch; Novinky mají skutečný navigační cíl i bez

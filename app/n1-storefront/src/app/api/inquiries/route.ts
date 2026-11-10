@@ -24,7 +24,9 @@ const toInquiryProblem = (error: InquiryFailure) =>
   Match.value(error.reason).pipe(
     Match.when("invalid", () => InquiryInvalid.make({ ...details, status: 400 })),
     Match.when("forbidden", () => InquiryForbidden.make({ ...details, status: 403 })),
-    Match.when("unconfirmed", () => InquiryUnconfirmed.make({ ...details, status: 503 })),
+    Match.whenOr("unconfirmed", "committed", () =>
+      InquiryUnconfirmed.make({ ...details, status: 503 }),
+    ),
     Match.whenOr("conflict", "unavailable", () =>
       InquiryUnavailable.make({ ...details, status: 503 }),
     ),

@@ -1,9 +1,8 @@
 import "server-only";
-import { createHash, randomUUID } from "node:crypto";
-import { executeApplyCommandWithAuthorization } from "@app/work-tasks/clients/apply-command";
-import type { ApplyCommandPayload } from "@app/work-tasks/contracts/apply-command";
-import { RecordsResponseSchema } from "@app/work-tasks/contracts/records";
-import { Effect, Match, Predicate, Schema } from "effect";
+import { randomUUID } from "node:crypto";
+import { executeSubmitStorefrontInquiryWithAuthorization } from "@app/work-tasks/clients/submit-storefront-inquiry";
+import type { SubmitStorefrontInquiryPayload } from "@app/work-tasks/contracts/submit-storefront-inquiry";
+import { Effect, Match, Schema } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import type { StorefrontConfiguration } from "./config";
 import { readConfiguration } from "./config";
@@ -23,25 +22,19 @@ const ContextSchema = Schema.Struct({
   token: Schema.String.check(Schema.isMinLength(1)),
 });
 
-const shellRequest = (
-  config: StorefrontConfiguration,
-  path: "gateway-read" | "gateway-context",
-  body: {
-    readonly audience: "work-tasks";
-    readonly legalEntityId: string;
-    readonly query?: Record<string, never>;
-    readonly readName?: "records";
-  },
-) =>
-  Effect.gen(function* shellRequestProgram() {
+/** A single-use assertion for one Work Tasks write. The storefront key is admitted on no Work Tasks read. */
+const mintAssertion = (config: StorefrontConfiguration) =>
+  Effect.gen(function* mintAssertionProgram() {
     const request = yield* HttpClientRequest.bodyJson(
-      HttpClientRequest.post(`${config.shellUrl}/shell-super-app-api/auth/api-key/${path}`).pipe(
+      HttpClientRequest.post(
+        `${config.shellUrl}/shell-super-app-api/auth/api-key/gateway-context`,
+      ).pipe(
         HttpClientRequest.setHeaders({
           "x-api-key": config.apiKey,
           "x-correlation-id": randomUUID(),
         }),
       ),
-      body,
+      { audience: "work-tasks", legalEntityId: config.legalEntityId },
     ).pipe(Effect.mapError(() => new InquiryFailure({ reason: "unavailable" })));
     const response = yield* HttpClient.execute(request).pipe(
       Effect.timeout("10 seconds"),
@@ -52,47 +45,45 @@ const shellRequest = (
         reason: response.status === 403 ? "forbidden" : "unavailable",
       });
     }
-    return yield* response.json.pipe(
+    const raw = yield* response.json.pipe(
       Effect.timeout("10 seconds"),
+      Effect.mapError(() => new InquiryFailure({ reason: "unavailable" })),
+    );
+    return yield* Schema.decodeUnknownEffect(ContextSchema)(raw).pipe(
       Effect.mapError(() => new InquiryFailure({ reason: "unavailable" })),
     );
   });
 
-const writeInquiry = (config: StorefrontConfiguration, payload: ApplyCommandPayload) =>
+/** One `work.tasks.submit-storefront-inquiry` write under the given idempotency key; never repeated here. */
+const writeInquiry = (
+  config: StorefrontConfiguration,
+  payload: SubmitStorefrontInquiryPayload,
+  idempotencyKey: string,
+) =>
   Effect.gen(function* writeInquiryProgram() {
-    // gateway-read has already redeemed its assertion; obtain a distinct assertion for this write.
-    const raw = yield* shellRequest(config, "gateway-context", {
-      audience: "work-tasks",
-      legalEntityId: config.legalEntityId,
-    });
-    const context = yield* Schema.decodeUnknownEffect(ContextSchema)(raw).pipe(
-      Effect.mapError(() => new InquiryFailure({ reason: "unavailable" })),
-    );
-    const digest = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
-    const result = yield* executeApplyCommandWithAuthorization(
+    const context = yield* mintAssertion(config);
+    const result = yield* executeSubmitStorefrontInquiryWithAuthorization(
       payload,
       `Bearer ${context.token}`,
       randomUUID(),
       {
         baseUrl: `${config.shellUrl}${context.apiBaseUrl}`,
         compositionRevision: context.compositionRevision,
-        idempotencyKey: `n1-inquiry-${digest}`,
+        idempotencyKey,
       },
     ).pipe(
-      Effect.flatMap((outcome) =>
-        Predicate.isTagged(outcome, "ActionProposalAccepted")
-          ? Effect.fail(outcome)
-          : Effect.succeed(outcome),
-      ),
       Effect.timeout("20 seconds"),
       Effect.catchTags({
-        ApplyCommandActionConflictProblem: (problem) =>
+        SubmitStorefrontInquiryActionAlreadyCommittedProblem: () =>
+          Effect.fail(new InquiryFailure({ reason: "committed" })),
+        // A request id owned by another submission, a reused key with other content: terminal, never resent.
+        SubmitStorefrontInquiryActionConflictProblem: (problem) =>
           Effect.fail(
             new InquiryFailure({
               reason: problem.code === "work_revision_conflict" ? "conflict" : "unconfirmed",
             }),
           ),
-        ApplyCommandActionForbiddenProblem: () =>
+        SubmitStorefrontInquiryActionForbiddenProblem: () =>
           Effect.fail(new InquiryFailure({ reason: "forbidden" })),
       }),
       Effect.catch((error) =>
@@ -102,14 +93,7 @@ const writeInquiry = (config: StorefrontConfiguration, payload: ApplyCommandPayl
         ),
       ),
     );
-    return yield* Match.value(payload.command).pipe(
-      Match.tag("CreateTask", (command) =>
-        command.storefrontInquiry === undefined
-          ? Effect.fail(new InquiryFailure({ reason: "unconfirmed" }))
-          : confirmInquiryTask(result, config.tenantId, command.storefrontInquiry.requestId),
-      ),
-      Match.orElse(() => Effect.fail(new InquiryFailure({ reason: "unconfirmed" }))),
-    );
+    return yield* confirmInquiryTask(result, config.tenantId, payload.storefrontInquiry.requestId);
   });
 
 /** The same market-scoped public catalog backs prefill and fresh pre-write identity verification. */
@@ -131,22 +115,7 @@ export const persistInquiry = (inquiry: Inquiry) =>
       Effect.mapError(() => new InquiryFailure({ reason: "unavailable" })),
     );
     return yield* sendInquiry(inquiry, {
-      apply: (payload) => writeInquiry(config, payload),
       product: (selector) => readInquiryProduct(inquiry.locale, selector),
-      revision: shellRequest(config, "gateway-read", {
-        audience: "work-tasks",
-        legalEntityId: config.legalEntityId,
-        query: {},
-        readName: "records",
-      }).pipe(
-        Effect.flatMap(Schema.decodeUnknownEffect(RecordsResponseSchema)),
-        Effect.map((snapshot) => snapshot.revision),
-        Effect.catch((error) =>
-          Match.value(error).pipe(
-            Match.tag("InquiryFailure", (failure) => Effect.fail(failure)),
-            Match.orElse(() => Effect.fail(new InquiryFailure({ reason: "unavailable" }))),
-          ),
-        ),
-      ),
+      submit: (payload, idempotencyKey) => writeInquiry(config, payload, idempotencyKey),
     });
   });

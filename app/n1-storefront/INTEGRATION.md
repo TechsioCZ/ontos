@@ -76,6 +76,37 @@ Při rozdílu se starším dokumentačním příkladem rozhoduje aktuální sch�
 provisioning implementace. Deployment ani startup nemají tuto politiku
 automaticky měnit. Viz [Action Execution](../docs/architecture/ACTIONS.md).
 
+## Kontaktní formulář a dotaz na produkt
+
+`POST /api/inquiries` zapisuje dotaz jedinou Action Work Tasks
+`work.tasks.submit-storefront-inquiry` přes veřejný klient
+`@app/work-tasks/clients/submit-storefront-inquiry`
+(`executeSubmitStorefrontInquiryWithAuthorization`) a kontrakt
+`@app/work-tasks/contracts/submit-storefront-inquiry`. Je to jediný povrch
+Work Tasks, na který je klíč storefrontu připuštěn: žádné čtení `records`,
+žádná `expectedRevision`. Starší cesta přes `apply-command` s `CreateTask`
+je pro servisní klíč uzavřená (`deny.workload_forbidden`).
+
+- Každý zápis má vlastní jednorázovou assertion z `gateway-context`
+  (audience `work-tasks`) a hlavičky `authorization: Bearer`,
+  `x-ontos-composition-revision`, `idempotency-key` a `x-correlation-id`.
+- Payload je přesně `{title, description, storefrontInquiry}`; jiné pole owner
+  odmítne 400. Limity (title 1–200, description do 2000, name 1–120, e-mail do
+  254, subject 1–160, message 1–1500, produktové údaje 1–300) se ověřují před
+  voláním. Nic se nezkracuje: delší vstup skončí jako `invalid`.
+- Úspěch je `{requestId, taskRef}`. Formulář potvrdí přijetí jen při shodě
+  `requestId` a tenantu v `taskRef`.
+- `requestId` vzniká jednou na odeslání a je klíčem duplicity u ownera. První
+  zápis má `idempotency-key` `n1-inquiry-<requestId>`.
+- Jedno opakování s novým klíčem a stejným `requestId`, nikdy smyčka: 409
+  `action_already_committed` (owner vrátí existující `taskRef`) a 409
+  `work_revision_conflict` (souběh prvních úkolů firmy). 409
+  `work_lifecycle_conflict`, `action_request_hash_conflict`, 503 a každý
+  neznámý výsledek se neopakují a končí jako `unconfirmed`.
+- 403 končí jako `forbidden`. Klíč je připuštěn až po navázání principalu na
+  workload `work.storefront-client`; na stage to dělá operátor, do té doby
+  formulář odkazuje na e-mail a telefon.
+
 ## Ověření skutečného propojení
 
 - Service `current-market-catalog` musí vrátit účinnou N1 asociaci se správným
