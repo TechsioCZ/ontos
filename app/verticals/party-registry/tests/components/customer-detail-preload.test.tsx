@@ -444,3 +444,21 @@ it.live('missing context disables shared reuse and preserves direct full-page de
     expect(executeCounterpartyRead).toHaveBeenCalledTimes(2);
   }),
 );
+
+it.live('a background reload of the open customer keeps its record in the side panel', () =>
+  Effect.gen(function* backgroundReload() {
+    yield* preloadCustomerDetails(context, [customer]);
+    const { result } = renderHook(() => useCustomerDetailSelection(context));
+    act(() => result.current.openDetail(customer));
+    const shown = result.current.detailValue;
+    expect(shown).toBeDefined();
+    // A live change reloads the same customer; the strict store reads as pending until it answers.
+    rstest.mocked(executeCounterpartyRead).mockReturnValue(Effect.never);
+    act(() => {
+      globalThis.dispatchEvent(new Event(moduleChangeEvent));
+    });
+    yield* Effect.sleep('100 millis');
+    expect(result.current.detailValue).toBe(shown);
+    expect(result.current.detailFailure).toBeUndefined();
+  }),
+);

@@ -15,7 +15,7 @@ import { browserRuntime } from '../../../../../runtime/browser-effect-runtime.ts
 import type { CounterpartyRef } from '../../../../../../shared/resources/counterparty.ts';
 import { UltramodernRouteHead } from '../../../../ultramodern-route-head';
 import '../../../../index.css';
-import { CUSTOMER_DETAIL_KEY, CustomerDetailContent } from '../customer-detail-content.tsx';
+import { CUSTOMER_DETAIL_KEY, CustomerDetailContent, CustomerDetailSaveBar } from '../customer-detail-content.tsx';
 import type { CustomerDetailSubject } from '../customer-detail-content.tsx';
 import {
   customerDetailPageData,
@@ -175,6 +175,8 @@ export const CustomerDetailPageRecordView = ({ onChanged, onRetry, record, stale
       />
       <SectionCard>
         <CustomerDetailContent detail={detail} initialSnapshot={record} onRetry={refresh} subject={subject} />
+        {/* The one Save button of the page's form, last in its footer like in the side panel. */}
+        <CustomerDetailSaveBar detail={detail} />
       </SectionCard>
     </>
   );
@@ -277,8 +279,16 @@ const CustomerDetailPageContent = ({ context, routeParams }: CustomerDetailPageP
       );
     }
     if ((status === 'unavailable' || status === 'loading') && usableHeld !== undefined) {
+      // A background reload of the same record changes nothing on screen; only a failed reload offers a reload and
+      // holds the actions until the record is current again.
       return (
-        <CustomerDetailPageRecordView key={pageKey} onChanged={reload} onRetry={reload} record={usableHeld} stale />
+        <CustomerDetailPageRecordView
+          key={pageKey}
+          onChanged={reload}
+          onRetry={reload}
+          record={usableHeld}
+          stale={status === 'unavailable'}
+        />
       );
     }
     return (
