@@ -56,6 +56,7 @@ const owners = [
   'pricing',
   'privacy',
   'projects',
+  'promotion',
   'property-leasing',
   'property-portfolio',
   'sales-insights',
