@@ -22,7 +22,6 @@ import { executeFreshReadProject } from '../../../../api/projects-client.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { projectsI18nResources } from '../../../../i18n/resources';
 import { CreateProjectForm } from './create-project-form.tsx';
-import '../../../ui-kit.css';
 import '../../../index.css';
 
 const projectDetailKey = 'projects.pages.projectDetail';
