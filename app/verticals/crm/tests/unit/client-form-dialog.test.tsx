@@ -1,7 +1,7 @@
 // @rstest-environment happy-dom
 // The client form as the user sees it: typing changes only the draft, and one Save button (or the create button)
 // sends it. Only the i18n runtime, the toaster and the browser runtime's clock are replaced.
-import { saveLabelsFor } from '@app/admin-ui';
+import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
 import { Effect, Option, Schema } from 'effect';
 import { afterEach, describe, expect, it, rstest } from 'effect-rstest';
 import { act } from 'react';
@@ -133,6 +133,15 @@ afterEach(() => {
 });
 
 describe('client form', () => {
+  it.live('reads the required text of a required field in Czech', () =>
+    Effect.gen(function* requiredText() {
+      yield* Effect.promise(() => mount({ mode: 'create', submit: succeeding([]) }));
+      const name = document.querySelector<HTMLInputElement>('[id="crm-client-name"]');
+      expect(name?.labels?.[0]?.textContent).toContain(requiredLabelFor('cs'));
+      expect(document.body.textContent).not.toContain('(required)');
+    }),
+  );
+
   it.live('editing a client sends nothing until Uložit is clicked, and then sends once', () =>
     Effect.gen(function* editSendsOnce() {
       const sent: CrmCommandInput[] = [];
