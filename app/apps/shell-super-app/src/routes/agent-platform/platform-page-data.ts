@@ -27,6 +27,7 @@ const settled = <A>(call: () => Promise<AgentPlatformResult<A>>): Effect.Effect<
 
 /** The approval queue of the signed-in person (one per document; a company switch reloads the document). */
 export const agentQueueData = definePageData({
+  changesFrom: ['shell'],
   key: (request: AgentQueueRequest) =>
     [
       request.pendingOnly ?? '',
@@ -44,6 +45,7 @@ export const DEFAULT_ACTIVITY_REQUEST: AgentActivityRequest = { limit: AGENT_PAG
 export const DEFAULT_QUEUE_REQUEST: AgentQueueRequest = { pendingOnly: true };
 
 export const agentActivityData = definePageData({
+  changesFrom: ['shell'],
   key: (request: AgentActivityRequest) =>
     [
       request.agentPrincipalId ?? '',

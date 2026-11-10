@@ -183,6 +183,7 @@ export const loadCustomerDetailPageRecord = Effect.fn('CustomerDetailPage.load')
 /** Exact detail keyed by the complete Shell scope and the Counterparty id; a failed revalidation drops the record. */
 export const customerDetailPageData = definePageData({
   cancelWhenUnused: true,
+  changesFrom: ['party-registry'],
   key: (input: CustomerDetailPageInput) =>
     Option.getOrElse(customerDetailPageInputKey(input), () => 'party-registry:customer-detail:unscoped'),
   load: loadCustomerDetailPageRecord,

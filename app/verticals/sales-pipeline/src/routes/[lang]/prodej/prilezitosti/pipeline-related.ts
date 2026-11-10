@@ -189,6 +189,7 @@ const relatedKey = ({ counterpartyId, opportunity, revision, scope }: Opportunit
 /** A refusal is renderable for this opening, never a cached successful authorization decision. */
 export const opportunityRelatedData = definePageData({
   cancelWhenUnused: true,
+  changesFrom: ['legal-agreements', 'merchandise', 'sales-pipeline', 'work-tasks'],
   key: relatedKey,
   load: ({ counterpartyId, opportunity }: OpportunityRelatedInput) =>
     loadOpportunityRelated(opportunity, counterpartyId).pipe(

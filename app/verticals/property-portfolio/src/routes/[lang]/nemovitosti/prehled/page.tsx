@@ -165,6 +165,7 @@ interface OverviewInput {
 }
 /** One dataset per legal entity: the five governed reads (and with them every permission check) settle before reveal. */
 const overviewData = definePageData({
+  changesFrom: ['finance-billing', 'legal-agreements', 'property-leasing', 'property-portfolio', 'work-tasks'],
   key: (input: OverviewInput) => input.legalEntityId,
   load: loadOverview,
   runtime: browserRuntime,

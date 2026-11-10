@@ -17,6 +17,7 @@ export type EmployeesLoadError = typeof EmployeesLoadErrorSchema.Type;
 
 /** Every Employee the caller may see, unfiltered, so the stat tiles describe the whole team. */
 export const employeesData = definePageData({
+  changesFrom: ['workforce'],
   key: (legalEntityId: string) => legalEntityId,
   load: () =>
     newRequestToken.pipe(
@@ -56,6 +57,7 @@ const employeeTagsOf = (records: {
 
 /** Tags of every employee in one tagging read; it does not wait for the employee ids, so both load side by side. */
 export const employeeTagsData = definePageData({
+  changesFrom: ['tagging', 'workforce'],
   key: (legalEntityId: string) => legalEntityId,
   load: () => recordsOfKind('employee').pipe(Effect.map(employeeTagsOf)),
   runtime: browserRuntime,
@@ -68,6 +70,7 @@ export class AiActivityUnavailable extends Data.TaggedError('AiActivityUnavailab
 
 /** The "AI aktivita" feed: secondary data, started with the page but never awaited before the reveal. */
 export const aiActivityData = definePageData({
+  changesFrom: ['workforce'],
   key: (legalEntityId: string) => legalEntityId,
   load: () =>
     newRequestToken.pipe(

@@ -245,6 +245,7 @@ const scopedRecordsRequest = (
  * instead of leaving stale data on screen, and a transient failure shows its retry state.
  */
 const financeRecords = definePageData({
+  changesFrom: ['finance-billing'],
   key: scopedRecordsKey,
   load: (input: ScopedRecordsRequest) => fetchRecords(input.request),
   retainStale: false,
@@ -350,6 +351,7 @@ const loadActorLabel = Effect.fn('Finance.loadActorLabel')(function* loadActorLa
 }, Effect.timeout('10 seconds'));
 /** One label per verified scope (the key is the scope), so a principal switch never shows the previous name. */
 const actorLabels = definePageData({
+  changesFrom: ['finance-billing', 'shell'],
   key: (scope: string) => scope,
   load: (_scope: string) => loadActorLabel(),
   runtime: financeBrowserRuntime,

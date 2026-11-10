@@ -121,6 +121,7 @@ type CatalogScope = typeof catalogScope;
  * dataset, so a page that preloaded it shows its options at once and a second picker issues no read of its own.
  */
 export const tagCatalogData = definePageData({
+  changesFrom: ['tagging'],
   key: (scope: CatalogScope) => scope,
   load: () => listTags.pipe(Effect.map((tags) => [...tags])),
   runtime: browserRuntime,

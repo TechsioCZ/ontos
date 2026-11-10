@@ -101,6 +101,7 @@ export const dashboardInputOf = (props: ModulePageProps): DashboardInput => ({
  * again, so a prior denial is never cached as an authorization decision.
  */
 export const dashboardData = definePageData({
+  changesFrom: ['finance-billing', 'sales-insights', 'sales-pipeline', 'work-tasks'],
   key: (input: DashboardInput) => input.legalEntityId,
   load: (_input: DashboardInput) => loadDashboard,
   runtime: browserRuntime,

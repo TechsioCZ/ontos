@@ -171,6 +171,14 @@ const changedApps = (event: Event | undefined): ReadonlySet<string> | 'all' =>
 const concerns = (changesFrom: ReadonlySet<string> | undefined, apps: ReadonlySet<string> | 'all'): boolean =>
   changesFrom === undefined || apps === 'all' || [...changesFrom].some((app) => apps.has(app));
 
+/**
+ * Whether a `moduleWriteEvent` or `moduleChangeEvent` concerns data from `changesFrom`, by the same rule the stores
+ * use. For hooks that listen to these events themselves (a list re-warming its rows' details), so an unrelated
+ * module's change does not restart their work.
+ */
+export const changeConcerns = (event: Event, changesFrom: readonly string[]): boolean =>
+  concerns(new Set(changesFrom), changedApps(event));
+
 /** Invalidate all concerned local dependencies before any mounted store starts revalidation. */
 const writeInvalidators = MutableRef.make<ReadonlySet<WriteInvalidator>>(new Set());
 const writeListenerRegistered = MutableRef.make(false);

@@ -18,6 +18,7 @@ import {
   orderDetailData,
   orderDetailIntent,
   ordersPageData,
+  useOrderDetail,
   useOrders,
 } from '../../src/routes/[lang]/prodej/objednavky/orders-records.ts';
 import type { OrdersPageInput } from '../../src/routes/[lang]/prodej/objednavky/orders-records.ts';
@@ -258,5 +259,43 @@ it.effect('pointing at a row whose warmed detail expired reads that detail once'
     props.onPointerDown({ currentTarget: row });
     yield* idle(1);
     expect(count('detail')).toBe(DETAIL_READS);
+  }),
+);
+
+/** The orders page with one order's detail open, as `page.tsx` wires them. */
+const OpenOrder = () => {
+  const query = firstOrdersPage(PAGE_SIZE);
+  const { state } = useOrders(company.legalEntityId, query, company);
+  const detail = useOrderDetail('order-1', 0, company, {
+    legalEntityId: company.legalEntityId,
+    query,
+    scope: pageDataScopeKey(company, 'demo.merchandise'),
+  });
+  return createElement('output', null, `${state.kind}:${detail.status}`);
+};
+
+/** Reads of an idle open order while another module commits every 2 s for a minute, as on a busy stage tenant. */
+const openOrderReadsPerBusyMinute = (change: Effect.Effect<void>) =>
+  Effect.gen(function* busyOrder() {
+    yield* mount(OpenOrder);
+    yield* idle(5);
+    reads.length = 0;
+    yield* Effect.forEach(Array.from({ length: 30 }), () => change.pipe(Effect.andThen(idle(2))), { discard: true });
+    return reads.length;
+  });
+
+it.effect('an idle open order ignores other modules committing every 2 s', () =>
+  Effect.gen(function* otherModulesBusy() {
+    const perMinute = yield* openOrderReadsPerBusyMinute(liveChange(['finance-billing', 'party-registry', 'shell']));
+    expect(perMinute).toBe(15);
+  }),
+);
+
+it.effect('a change event without an app list still reloads the open order every time (as before scoping)', () =>
+  Effect.gen(function* unscopedBusy() {
+    const perMinute = yield* openOrderReadsPerBusyMinute(
+      Effect.sync(() => globalThis.dispatchEvent(new Event(moduleChangeEvent))),
+    );
+    expect(perMinute).toBe(150);
   }),
 );

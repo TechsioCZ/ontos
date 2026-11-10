@@ -124,6 +124,7 @@ const recordsInput = (clientId: string | undefined): CrmRecordsInput =>
  * fills it through `preloadPage` before it reveals a CRM page, so the page renders real data in its first commit.
  */
 export const crmRecordsData = definePageData({
+  changesFrom: ['crm'],
   key: ({ clientId }: CrmRecordsInput) => clientId ?? 'all',
   load: ({ clientId }: CrmRecordsInput) => loadCrmRecords(clientId),
   runtime: browserRuntime,

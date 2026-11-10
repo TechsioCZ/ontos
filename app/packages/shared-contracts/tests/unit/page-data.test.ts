@@ -1,4 +1,5 @@
 import {
+  changeConcerns,
   definePageData,
   moduleChangeEvent,
   modulePagePreload,
@@ -430,6 +431,17 @@ it.live('a change without an app list, a reset and a write reload every scoped s
     unsubscribe();
   }),
 );
+
+const changeOf = (detail: ModuleChangeDetail) => new CustomEvent(moduleChangeEvent, { detail });
+
+it('a hook listening to change events itself applies the same app rule as the stores', () => {
+  expect(changeConcerns(changeOf({ apps: ['tagging'] }), ['merchandise'])).toBe(false);
+  expect(changeConcerns(changeOf({ apps: ['tagging', 'merchandise'] }), ['merchandise'])).toBe(true);
+  expect(changeConcerns(changeOf({ apps: 'all' }), ['merchandise'])).toBe(true);
+  expect(changeConcerns(new CustomEvent(moduleChangeEvent, { detail: { other: true } }), ['merchandise'])).toBe(true);
+  expect(changeConcerns(new Event(moduleChangeEvent), ['merchandise'])).toBe(true);
+  expect(changeConcerns(new Event(moduleWriteEvent), ['merchandise'])).toBe(true);
+});
 
 it.effect('snapshots are referentially stable until the entry changes; update edits a ready value', () =>
   Effect.gen(function* stableSnapshots() {
