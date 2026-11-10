@@ -222,7 +222,11 @@ const conflictTo = (
 
 const isReturnFact = (meaning: FactMeaning) => meaning.kind === 'REFUND';
 
-/** Accepted observations that are not themselves corrected and are not corrections. */
+/** Whether persistence found the statement fully disproven (the shared rule, held retractions included). */
+const isFullyDisproven = (aggregate: PaymentEvidenceAggregate, observationId: string) =>
+  aggregate.fullyDisprovenObservationIds?.has(observationId) === true;
+
+/** Accepted observations that are neither corrected nor fully disproven and are not corrections. */
 const uncorrectedStatements = (aggregate: PaymentEvidenceAggregate) => {
   const corrected = new Set(
     aggregate.acceptedObservations.flatMap((observation) =>
@@ -232,7 +236,10 @@ const uncorrectedStatements = (aggregate: PaymentEvidenceAggregate) => {
     ),
   );
   return aggregate.acceptedObservations.filter(
-    (observation) => observation.factKind !== 'SOURCE_CORRECTION' && !corrected.has(observation.observationId),
+    (observation) =>
+      observation.factKind !== 'SOURCE_CORRECTION' &&
+      !corrected.has(observation.observationId) &&
+      !isFullyDisproven(aggregate, observation.observationId),
   );
 };
 
@@ -264,7 +271,8 @@ const effectIdentityStatements = (aggregate: PaymentEvidenceAggregate, operation
       statement.factKind !== 'SOURCE_CORRECTION' &&
       statement.operationId === operation.operationId &&
       partiallyCorrectedIds.has(statement.observationId) &&
-      !fullyCorrectedIds.has(statement.observationId),
+      !fullyCorrectedIds.has(statement.observationId) &&
+      !isFullyDisproven(aggregate, statement.observationId),
   );
   return [...standingObservations(aggregate, operation.operationId), ...partiallyCorrected];
 };
@@ -451,10 +459,7 @@ const reductionExceedsRemainingFunds = (
       prior.operationId === operation.operationId &&
       prior.amount !== undefined &&
       prior.amount.amountMinor < operation.amount.amountMinor &&
-      !(
-        prior.correctsObservationId !== undefined &&
-        aggregate.fullyDisprovenObservationIds?.has(prior.correctsObservationId) === true
-      )
+      !(prior.correctsObservationId !== undefined && isFullyDisproven(aggregate, prior.correctsObservationId))
     ) {
       reduced += prior.amount.amountMinor;
     }

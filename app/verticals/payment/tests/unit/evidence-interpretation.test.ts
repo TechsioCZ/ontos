@@ -555,6 +555,34 @@ describe('#1151 Payment evidence interpretation', () => {
     expect(PaymentEvidenceDecision.$is('CORRECTION')(applied)).toBe(true);
   });
 
+  it('#1151 a fully disproven receipt no longer identifies the collection its replacement established', () => {
+    // Charge 1 was reduced, then fully retracted (the retraction is held); charge 2 was attached instead.
+    const replaced = {
+      ...aggregateOf(
+        [operation('EFFECT_CONFIRMED')],
+        [
+          accepted('obs-charge-1', { economicEffectKey: 'gopay:charge:1' }),
+          accepted('obs-charge-1-reduction', {
+            amount: czk(10_000),
+            correctsObservationId: 'obs-charge-1',
+            economicEffectKey: 'gopay:charge:1:reduction',
+            factKind: 'SOURCE_CORRECTION',
+          }),
+        ],
+        [accepted('obs-charge-2', { economicEffectKey: 'gopay:charge:2' })],
+      ),
+      fullyDisprovenObservationIds: new Set(['obs-charge-1']),
+    };
+    // A new confirmation of the retracted charge 1 is a charge distinct from the replacement: held.
+    expect(interpretPaymentObservation(replaced, observed({ economicEffectKey: 'gopay:charge:1' }))).toEqual(
+      PaymentEvidenceDecision.HOLD({ operationId: COLLECT_ID, reason: 'DISTINCT_ECONOMIC_EFFECT' }),
+    );
+    // Restating the replacement still corroborates.
+    expect(interpretPaymentObservation(replaced, observed({ economicEffectKey: 'gopay:charge:2' }))).toEqual(
+      PaymentEvidenceDecision.NO_CHANGE({ operationId: COLLECT_ID, reason: 'CORROBORATES_ESTABLISHED_OUTCOME' }),
+    );
+  });
+
   it('#1151 a re-issued correction of a re-exported statement counts once; an overlapping one is held', () => {
     const correctedReceipt = aggregateOf(
       [operation('EFFECT_CONFIRMED')],
