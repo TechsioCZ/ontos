@@ -131,6 +131,32 @@ describe('explicit draft save', () => {
     }),
   );
 
+  it.effect('checks the same draft again when what its validation reads besides the draft changed', () =>
+    Effect.gen(function* revalidate() {
+      // A bulk form: the draft is valid only once rows are selected, and selecting them does not change the draft.
+      let selected = 0;
+      const options = {
+        equals: (left: Draft, right: Draft) => left.name === right.name,
+        isValid: (value: Draft) => value.name !== '' && selected > 0,
+        save: () => Effect.succeed('saved' as const),
+      };
+      const controller = yield* startDraftSave(draft(''), options);
+      controller.change(draft('5'));
+      expect(controller.status()).toBe('invalid');
+      selected = 2;
+      controller.revalidate();
+      expect(controller.status()).toBe('dirty');
+      // An equal draft that carries newer data (a loaded record) is checked again too.
+      selected = 0;
+      controller.change(draft('5'));
+      expect(controller.status()).toBe('invalid');
+      // An unchanged draft stays idle, and a revalidation never starts a save.
+      controller.change(draft(''));
+      controller.revalidate();
+      expect(controller.status()).toBe('idle');
+    }),
+  );
+
   it.effect('shows a failed save as an error and sends the same draft again on the next save()', () =>
     Effect.gen(function* failure() {
       const { controller, reply, sent } = yield* setup();

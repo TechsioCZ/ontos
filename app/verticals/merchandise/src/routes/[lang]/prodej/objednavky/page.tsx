@@ -681,6 +681,7 @@ const OrdersPageContent = (props: OrdersPageContentProps) => {
             toaster.create({ title: message, type: 'success' });
             load();
           }}
+          onRetry={load}
           onStatus={(order, status) => requestStatus([order], status)}
           revision={Math.max(ready?.records.revision ?? 0, detail.status === 'ready' ? detail.revision : 0)}
         />

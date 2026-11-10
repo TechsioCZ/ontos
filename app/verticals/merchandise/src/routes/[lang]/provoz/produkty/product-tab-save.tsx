@@ -4,7 +4,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
 import type { DraftSave, SaveOutcome, UnsavedChangesGuard } from '@app/admin-ui';
-import { Effect, Equal, Option } from 'effect';
+import { Array as Arr, Effect, Equal, Option } from 'effect';
 import { useEffect, useRef, useState } from 'react';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { productCommandOutcome } from './products-api.ts';
@@ -22,9 +22,33 @@ const tabSaveOutcome = (outcome: CommandOutcome): SaveOutcome => {
   return outcome.reason === 'conflict' ? 'conflict' : 'failed';
 };
 
+/**
+ * Sends `commands` one after another, each against the revision the previous one left. It stops at the first refused
+ * one; `committed` is the revision the commands that went through left (the base when none did).
+ */
+const runCommands = (
+  commands: readonly ProductCommand[],
+  revision: number,
+): Effect.Effect<{ readonly committed: number; readonly outcome: CommandOutcome }> => {
+  const [first, ...rest] = commands;
+  if (first === undefined) {
+    return Effect.succeed({ committed: revision, outcome: { ok: true, revision } });
+  }
+  return productCommandOutcome(first, revision).pipe(
+    Effect.flatMap((outcome) =>
+      outcome.ok && rest.length > 0
+        ? runCommands(rest, outcome.revision)
+        : Effect.succeed({ committed: outcome.ok ? outcome.revision : revision, outcome }),
+    ),
+  );
+};
+
 export interface ProductTabSaveOptions<V> {
-  /** The product command that saves `value`. */
-  readonly commandOf: (value: V) => ProductCommand;
+  /**
+   * The product command that saves `value`, or several sent one after another (one per changed market). `confirmed`
+   * is the version the server last confirmed, so only what changed since has to be sent.
+   */
+  readonly commandOf: (value: V, confirmed: V) => ProductCommand | readonly ProductCommand[];
   /** Text of a refused save; the general failure text when it returns undefined. */
   readonly failureText?: (outcome: Extract<CommandOutcome, { readonly ok: false }>, value: V) => string | undefined;
   /** The form's own validation; an invalid draft is never sent and keeps the Save button disabled. */
@@ -66,11 +90,20 @@ export const useProductTabSave = <V,>(options: ProductTabSaveOptions<V>): Produc
   // it started from, so the server refuses a save over someone else's change. A saved draft moves it to the revision
   // the server returned.
   const base = useRef(options.revision);
+  // The confirmed version as of the last render, which a save compares its draft with.
+  const confirmedNow = useRef(options.value);
   const draft = useDraftSave<V, never>({
     isValid: (value) => options.isValid(value),
     runtime: browserRuntime,
     save: (value) =>
-      productCommandOutcome(options.commandOf(value), base.current).pipe(
+      runCommands(Arr.ensure(options.commandOf(value, confirmedNow.current)), base.current).pipe(
+        Effect.tap(({ committed }) =>
+          Effect.sync(() => {
+            // Commands that went through before a refused one moved the revision; a retry starts after them.
+            base.current = Math.max(base.current, committed);
+          }),
+        ),
+        Effect.map(({ outcome }) => outcome),
         Effect.tap((outcome) =>
           Effect.sync(() => {
             if (outcome.ok) {
@@ -89,6 +122,10 @@ export const useProductTabSave = <V,>(options: ProductTabSaveOptions<V>): Produc
       ),
     value: options.value,
   });
+  const { confirmed: confirmedValue } = draft;
+  useEffect(() => {
+    confirmedNow.current = confirmedValue;
+  }, [confirmedValue]);
   const { pending } = draft;
   useEffect(() => {
     if (!pending) {

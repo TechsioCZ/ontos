@@ -7,6 +7,7 @@ import { Schema } from 'effect';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import { paginationProps } from '../../../../form-number.ts';
 import type { TagsOf } from '../../../../tags/subject-tags.ts';
+import type { RowIntentProps } from './products-api.ts';
 import { productColumns } from './products-columns.tsx';
 import { useTableTranslations } from './products-format.ts';
 
@@ -31,6 +32,8 @@ export interface ProductsTableProps {
   /** The page the server returned; `rowCount` is the number of all matching products. */
   readonly pagination: ProductsPage;
   readonly rowCount: number;
+  /** Row events that warm the detail of the row about to be opened. */
+  readonly rowIntent: RowIntentProps;
   readonly rows: readonly ProductRecord[];
   readonly selection: Record<string, true>;
   readonly status: ProductsTableStatus;
@@ -53,6 +56,7 @@ export const ProductsTable = ({
   onSelectionChange,
   pagination,
   rowCount,
+  rowIntent,
   rows,
   selection,
   status,
@@ -127,6 +131,7 @@ export const ProductsTable = ({
       rowCount={rowCount}
       rowSelection={selection}
       size="sm"
+      slotProps={{ row: rowIntent }}
       stickyHeader
       tableLayout="fixed"
       translations={tableText}

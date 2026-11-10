@@ -1,13 +1,16 @@
 // "Nový trh": the market definition for the signed-in company, then its merchandise price list (DESIGN 4).
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { DateTime, Effect, Schema } from 'effect';
 import { useState } from 'react';
 import { CreateMarketPayloadSchema } from '../../shared/actions/create-market.ts';
 import { executeCreateMarket } from '../api/create-market-action-client.ts';
+import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { newUuid } from './browser-crypto.ts';
-import { DialogFrame } from './dialog-frame.tsx';
+import { FormDialogFrame } from './dialog-frame.tsx';
 import { DefinitionFields, PricingFields } from './market-fields.tsx';
 import {
   configureMarketCommand,
@@ -19,11 +22,14 @@ import {
   pricingIssues,
 } from './market-form.ts';
 import type { MarketDefinitionForm, MarketPricingForm } from './market-form.ts';
-import { useMarketText } from './market-ui.tsx';
-import { runMarketAction, runMerchandiseCommand } from './page-data.ts';
+import { failureText, useMarketText } from './market-ui.tsx';
+import { commandOutcome } from './assortment-save.ts';
+import { marketActionEffect } from './page-data.ts';
 import type { MarketCommandResult, WriteFailure, WriteOutcome } from './page-data.ts';
 
 const isProposal = Schema.is(ActionProposalAcceptedSchema);
+
+type CreateResult = Effect.Success<ReturnType<typeof executeCreateMarket>>;
 
 /** The price list of a newly created market: saved, parked for approval, or not saved. */
 const MarketPricingSchema = Schema.Literals(['awaitingApproval', 'notSaved', 'saved']);
@@ -51,6 +57,13 @@ export interface NewMarketDialogProps {
   readonly tenantId: string;
 }
 
+/** The draft of the new-market form: the definition, the price list and whether the market launches at once. */
+interface NewMarketDraft {
+  readonly form: MarketDefinitionForm;
+  readonly launchNow: boolean;
+  readonly pricing: MarketPricingForm;
+}
+
 interface CreateRequest {
   readonly form: MarketDefinitionForm;
   readonly launchNow: boolean;
@@ -75,69 +88,82 @@ export const NewMarketDialog = ({
   tenantId,
 }: NewMarketDialogProps) => {
   const { text } = useMarketText();
-  const [form, setForm] = useState<MarketDefinitionForm>(() => emptyDefinitionForm());
-  const [pricing, setPricing] = useState<MarketPricingForm>(() => defaultPricingForm());
-  const [launchNow, setLaunchNow] = useState(true);
-  const [showIssues, setShowIssues] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [draft, setDraft] = useState<NewMarketDraft>(() => ({
+    form: emptyDefinitionForm(),
+    launchNow: true,
+    pricing: defaultPricingForm(),
+  }));
   const [failure, setFailure] = useState<WriteFailure | null>(null);
-  /** The creation was parked for approval: no market exists yet, and sending it again would propose it twice. */
-  const [parked, setParked] = useState(false);
-  const issues = definitionIssues(form);
-  const priceIssues = canConfigurePricing ? pricingIssues(pricing) : [];
-  const submit = () => {
-    if (parked) {
-      return;
+  /**
+   * The market is created by the first successful save; the price list follows in the same save. A save that stops
+   * after the market exists reports the market as created, so a retry never creates a second one.
+   */
+  const afterCreate = (
+    outcome: WriteOutcome<CreateResult>,
+    value: NewMarketDraft,
+    code: string,
+  ): Effect.Effect<SaveOutcome> => {
+    if (!outcome.ok) {
+      return Effect.sync((): SaveOutcome => {
+        setFailure(outcome.reason);
+        return 'failed';
+      });
     }
-    if (issues.length > 0 || priceIssues.length > 0) {
-      setShowIssues(true);
-      return;
+    const created = outcome.value;
+    if (isProposal(created)) {
+      return Effect.succeed('proposed');
     }
-    const code = normalizeMarketCode(form.code);
-    setBusy(true);
-    setFailure(null);
-    runMarketAction(
-      createPayload({ form, launchNow, legalEntityId, reason: text('create.reason', { code }), tenantId }),
-      executeCreateMarket,
-      (outcome) => {
-        if (!outcome.ok) {
-          setBusy(false);
-          setFailure(outcome.reason);
-          return;
-        }
-        const created = outcome.value;
-        if (isProposal(created)) {
-          setBusy(false);
-          setParked(true);
-          return;
-        }
-        const marketId = created.marketRef.resourceId;
-        const finish = (pricingResult: MarketPricing) => {
-          setBusy(false);
-          onCreated({ code, marketId, pricing: pricingResult });
-        };
-        if (!canConfigurePricing) {
-          finish('notSaved');
-          return;
-        }
-        // The market already exists; only its price list may wait for approval.
-        runMerchandiseCommand(
-          configureMarketCommand({ expectedRevision: 0, form: pricing, marketCode: code, marketId }),
-          merchandiseRevision,
-          (configured) => finish(pricingOf(configured)),
-        );
-      },
-    );
+    const marketId = created.marketRef.resourceId;
+    const finish = (pricing: MarketPricing): SaveOutcome => {
+      onCreated({ code, marketId, pricing });
+      return 'saved';
+    };
+    if (!canConfigurePricing) {
+      return Effect.sync(() => finish('notSaved'));
+    }
+    // The market already exists; only its price list may wait for approval.
+    return commandOutcome(
+      configureMarketCommand({ expectedRevision: 0, form: value.pricing, marketCode: code, marketId }),
+      merchandiseRevision,
+    ).pipe(Effect.map((configured) => finish(pricingOf(configured))));
   };
+  const record = useDraftSave<NewMarketDraft, never>({
+    isValid: (value) =>
+      definitionIssues(value.form).length === 0 && (!canConfigurePricing || pricingIssues(value.pricing).length === 0),
+    runtime: browserRuntime,
+    save: (value) => {
+      const code = normalizeMarketCode(value.form.code);
+      return marketActionEffect(
+        createPayload({
+          form: value.form,
+          launchNow: value.launchNow,
+          legalEntityId,
+          reason: text('create.reason', { code }),
+          tenantId,
+        }),
+        executeCreateMarket,
+      ).pipe(Effect.flatMap((outcome) => afterCreate(outcome, value, code)));
+    },
+    value: draft,
+  });
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({
+    draft: record,
+    navigation: blocker,
+    onDiscard: () => setDraft(record.confirmed),
+  });
+  const handleSave = record.save;
+  const issues = definitionIssues(draft.form);
+  const priceIssues = canConfigurePricing ? pricingIssues(draft.pricing) : [];
+  const showIssues = record.status === 'invalid';
   return (
-    <DialogFrame
-      busy={busy}
-      confirmLabel={text('create.submit')}
-      confirmVariant="primary"
+    <FormDialogFrame
       description={text('create.description')}
-      failure={failure}
+      error={failure === null ? null : failureText(text, failure)}
+      guard={guard}
       onClose={onClose}
-      onConfirm={submit}
+      onSave={handleSave}
+      status={record.status}
       title={text('create.title')}
     >
       <p className="text-sm">
@@ -146,35 +172,30 @@ export const NewMarketDialog = ({
       </p>
       <DefinitionFields
         codeEditable
-        form={form}
+        form={draft.form}
         issues={issues}
-        onChange={setForm}
+        onChange={(form) => setDraft((current) => ({ ...current, form }))}
         prefix="new-market"
         showIssues={showIssues}
       />
       <FormCheckbox
-        checked={launchNow}
+        checked={draft.launchNow}
         id="new-market-launch"
         label={text('form.launchNow')}
-        onCheckedChange={(checked: boolean) => setLaunchNow(checked)}
+        onCheckedChange={(checked: boolean) => setDraft((current) => ({ ...current, launchNow: checked }))}
       />
       {canConfigurePricing && (
         <section className="flex flex-col gap-150">
           <h3 className="font-semibold text-sm">{text('form.pricingTitle')}</h3>
           <PricingFields
-            form={pricing}
+            form={draft.pricing}
             issues={priceIssues}
-            onChange={setPricing}
+            onChange={(pricing) => setDraft((current) => ({ ...current, pricing }))}
             prefix="new-market"
             showIssues={showIssues}
           />
         </section>
       )}
-      {parked && (
-        <StatusText showIcon status="warning">
-          {text('approvalRequired')}
-        </StatusText>
-      )}
-    </DialogFrame>
+    </FormDialogFrame>
   );
 };

@@ -111,7 +111,6 @@
           "productMeta": "Price {{price}}, on hand {{stock}} pcs",
           "quantity": "Quantity (pcs)",
           "removeLine": "Remove item",
-          "submit": "Create order",
           "submitting": "Creating…",
           "title": "New order",
           "customerPlaceholder": "Search for a customer…",
@@ -209,6 +208,7 @@
           "firstDescription": "Create the first order and follow it through delivery.",
           "firstTitle": "There are no orders yet.",
           "forbiddenTitle": "You do not have access to this section.",
+          "reloadFailed": "The current version of the order could not be loaded. Your unsaved changes are still in the form.",
           "retry": "Try again",
           "tagFilterFailed": "Tags could not be loaded. Try again."
         },
@@ -264,7 +264,6 @@
         },
         "category": {
           "field": "New category",
-          "submit": "Change category",
           "title": "Change category"
         },
         "columns": {
@@ -287,8 +286,6 @@
           "save": "Save changes"
         },
         "create": {
-          "discardTitle": "Discard unsaved changes?",
-          "submit": "Create product",
           "title": "New product"
         },
         "description": "Products, prices and stock movements.",
@@ -421,7 +418,6 @@
           "affected": "Products affected: {{total}}",
           "description": "Enter the change in percent. A positive number raises prices, a negative one lowers them.",
           "field": "Price change (%)",
-          "submit": "Change price",
           "title": "Change price by %",
           "warning": "The price change does not affect issued invoices or orders."
         },
@@ -442,7 +438,8 @@
           "tagFilterFailed": "Tags could not be loaded. Try again.",
           "notFound": "Product not found",
           "invalidId": "The product address is invalid.",
-          "loading": "Loading product…"
+          "loading": "Loading product…",
+          "reloadFailed": "The current version of the product could not be loaded. Your unsaved changes are still in the form."
         },
         "stats": {
           "lowStock": "Below minimum",
@@ -520,6 +517,7 @@
           "notOffered": "Not offered",
           "noPrice": "price not available",
           "offeredSaved": "The product is offered in market {{code}}.",
+          "saved": "The product's market offers are saved.",
           "withdrawnSaved": "The product was withdrawn from market {{code}}."
         }
       },

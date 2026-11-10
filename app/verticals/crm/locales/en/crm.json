@@ -160,7 +160,6 @@
         "withoutSalesperson": "Without a salesperson"
       },
       "contacts": {
-        "createClient": "Create client",
         "empty": "No contact persons",
         "primary": "Primary client contact",
         "removeFromForm": "Remove this person from the form",

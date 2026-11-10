@@ -31,8 +31,7 @@
   },
   "create": {
     "title": "Nová událost",
-    "description": "Vlastní událost kalendáře (schůzka, revize, připomínka). Přiřazená osoba dostane upozornění.",
-    "submit": "Uložit událost"
+    "description": "Vlastní událost kalendáře (schůzka, revize, připomínka). Přiřazená osoba dostane upozornění."
   },
   "created": "Událost uložena",
   "stats": {

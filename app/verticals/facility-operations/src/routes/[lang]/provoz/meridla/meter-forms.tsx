@@ -23,6 +23,7 @@ import { meterCreateCommandOf, meterDraftOf, meterUpdateCommandOf, sameMeterDraf
 import type { MeterDraft } from './meter-draft.ts';
 import { EditGuard } from '../../../../ui/edit-guard.tsx';
 import { facilitySaveOutcome } from '../../../../ui/facility-save.ts';
+import { useDraftBase } from '../../../../ui/draft-base.ts';
 
 const k = 'facility-operations.meters';
 const CANCEL_LABEL = 'facility-operations.common.cancel';
@@ -93,7 +94,8 @@ export const MeterForm = ({
       : undefined;
   };
 
-  // An edit is sent on Uložit only; a new meter card is submitted on "Založit měřidlo".
+  // An edit is sent on Uložit only, with the revision of the read the draft was built on.
+  const base = useDraftBase(meter, run);
   const record = useDraftSave<MeterDraft, never>({
     equals: sameMeterDraft,
     isValid: (value) =>
@@ -104,9 +106,19 @@ export const MeterForm = ({
         ? Effect.succeed<SaveOutcome>('failed')
         : Option.match(meterUpdateCommandOf(value, meter, pickedLocationOf(value)), {
             onNone: () => Effect.succeed<SaveOutcome>('failed'),
-            onSome: (command) => facilitySaveOutcome(run(command)),
+            onSome: (command) => base.confirm(facilitySaveOutcome(base.run(command))),
           }),
     value: draft,
+  });
+  base.sync({
+    onAdopt: () => {
+      const stored = meterDraftOf(meter);
+      if (!sameMeterDraft(stored, draft)) {
+        record.adopt(stored);
+        setDraft(stored);
+      }
+    },
+    settled: !record.pending && sameMeterDraft(draft, record.confirmed),
   });
   const labels = saveLabelsFor(language);
   const discard = () => {
@@ -116,6 +128,7 @@ export const MeterForm = ({
   const handleSave = record.save;
   const handleReloadLatest = () => {
     const current = meterDraftOf(meter);
+    base.rebase();
     record.adopt(current);
     setDraft(current);
     setError(undefined);

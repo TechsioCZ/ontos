@@ -5,6 +5,7 @@ import { Effect, Option } from 'effect';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import type { SalesCustomer, SalesQuote } from '../../../../../shared/domain/purchasing.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { useDraftBase } from '../../../../ui/draft-base.ts';
 import { facilitySaveOutcome } from '../../../../ui/facility-save.ts';
 import type { CommandOutcome } from '../../../../ui/use-agenda.ts';
 import { quoteDraftOf, quoteUpdateCommandOf, sameQuoteDraft } from './sales-quote-draft.ts';
@@ -18,7 +19,8 @@ export interface QuoteDraftSave extends SavableDraft {
 }
 
 /**
- * Explicit save of one quote edit: nothing is sent until `save()`. `customerOf` resolves the draft's customer (only a
+ * Explicit save of one quote edit: nothing is sent until `save()`, and it carries the revision of the read the draft
+ * was built on; a settled draft follows a newer read of the quote. `customerOf` resolves the draft's customer (only a
  * ready customer read can), and `applyStored` puts a stored version back into the panel (someone else's change, or a
  * discarded draft).
  */
@@ -35,6 +37,8 @@ export const useQuoteDraftSave = ({
   readonly quote: SalesQuote | undefined;
   readonly run: (command: OpsCommand) => Effect.Effect<CommandOutcome>;
 }): QuoteDraftSave => {
+  // Saves carry the revision of the read the draft was built on, so someone else's newer change refuses them.
+  const base = useDraftBase(quote, run);
   const record = useDraftSave<QuoteDraft, never>({
     equals: sameQuoteDraft,
     isValid: (value) => quote !== undefined && Option.isSome(quoteUpdateCommandOf(value, quote, customerOf(value))),
@@ -44,13 +48,27 @@ export const useQuoteDraftSave = ({
         ? Effect.succeed<SaveOutcome>('failed')
         : Option.match(quoteUpdateCommandOf(value, quote, customerOf(value)), {
             onNone: () => Effect.succeed<SaveOutcome>('failed'),
-            onSome: (command) => facilitySaveOutcome(run(command)),
+            onSome: (command) => base.confirm(facilitySaveOutcome(base.run(command))),
           }),
     value: draft,
+  });
+  base.sync({
+    onAdopt: () => {
+      if (quote === undefined) {
+        return;
+      }
+      const stored = quoteDraftOf(quote);
+      if (!sameQuoteDraft(stored, draft)) {
+        record.adopt(stored);
+        applyStored(stored);
+      }
+    },
+    settled: !record.pending && sameQuoteDraft(draft, record.confirmed),
   });
   const reloadLatest = () => {
     if (quote !== undefined) {
       const stored = quoteDraftOf(quote);
+      base.rebase();
       record.adopt(stored);
       applyStored(stored);
     }

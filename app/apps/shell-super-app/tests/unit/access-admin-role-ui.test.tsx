@@ -22,6 +22,7 @@ import { authenticatedShellFixture } from './routes/authenticated-shell-fixture.
 import { roleErrorStatus } from '../../src/routes/access-admin/role-editor/role-commands.ts';
 import { RoleEditorFeature } from '../../src/routes/access-admin/role-editor/role-editor-feature.tsx';
 import { CreateRoleFeature } from '../../src/routes/access-admin/role-editor/create-role-feature.tsx';
+import type { GetAccessRoleResponse } from '../../shared/access-admin-api.ts';
 import {
   AccessRoleSchema,
   AccessRoleTemplateSchema,
@@ -57,6 +58,25 @@ beforeEach(() => {
   previewCall.mockReset();
   saveCall.mockReset();
 });
+
+interface NavigationStub {
+  readonly proceed: () => void;
+  readonly reset: () => void;
+  shouldBlock: () => boolean;
+  status: 'blocked' | 'idle';
+}
+const navigation = rstest.hoisted((): NavigationStub => ({
+  proceed: rstest.fn<() => void>(),
+  reset: rstest.fn<() => void>(),
+  shouldBlock: (): boolean => false,
+  status: 'idle',
+}));
+rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
+  useBlocker: (options: { readonly shouldBlockFn: () => boolean }) => {
+    navigation.shouldBlock = options.shouldBlockFn;
+    return { proceed: navigation.proceed, reset: navigation.reset, status: navigation.status };
+  },
+}));
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({
@@ -411,7 +431,7 @@ it.effect('creation uses only the blank template with no cells, then selects the
     render(<CreateRoleFeature catalog={catalog} onCreated={onCreated} writesAvailable />);
     const user = userEvent.setup();
     yield* Effect.promise(() => user.type(screen.getByLabelText(/shell.accessAdmin.role.name/u), 'New role'));
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'shell.accessAdmin.role.createBlank' })));
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Save' })));
     yield* Effect.promise(() => waitFor(() => expect(onCreated).toHaveBeenCalledWith(created)));
     expect(createCall).toHaveBeenCalledWith(
       expect.objectContaining({ cells: [], name: 'New role', scope: { kind: 'tenant' }, templateKey: 'blank' }),
@@ -423,11 +443,61 @@ it.effect('creation uses only the blank template with no cells, then selects the
 test('creation cannot use a nonblank template or an unavailable writer', () => {
   const fixture = featureFixture();
   render(<CreateRoleFeature catalog={fixture.catalog} onCreated={() => {}} writesAvailable={false} />);
-  expect(screen.getByRole('button', { name: 'shell.accessAdmin.role.createBlank' }).hasAttribute('disabled')).toBe(
-    true,
-  );
+  expect(screen.getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(true);
   expect(createCall).not.toHaveBeenCalled();
 });
+
+const blankCatalog = () => {
+  const fixture = featureFixture();
+  return {
+    ...fixture.catalog,
+    templates: [
+      Schema.decodeUnknownSync(AccessRoleTemplateSchema)({
+        catalogSnapshotId: fixture.catalog.catalogSnapshotId,
+        cells: [],
+        name: 'Blank',
+        source: 'blank',
+        templateKey: 'blank',
+      }),
+    ],
+  };
+};
+
+it.effect('create role: typing writes nothing, Save writes once', () =>
+  Effect.gen(function* createWritesOnSaveTest() {
+    const created = { ...featureFixture().role, cells: [] };
+    createCall.mockReturnValue(Effect.succeed(created));
+    const onCreated = rstest.fn<(role: GetAccessRoleResponse['role']) => void>();
+    render(<CreateRoleFeature catalog={blankCatalog()} onCreated={onCreated} writesAvailable />);
+    const user = userEvent.setup();
+    yield* Effect.promise(() => user.type(screen.getByLabelText(/shell.accessAdmin.role.name/u), 'New role'));
+    expect(createCall).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(false);
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Save' })));
+    yield* Effect.promise(() => waitFor(() => expect(onCreated).toHaveBeenCalledWith(created)));
+    expect(createCall).toHaveBeenCalledTimes(1);
+  }),
+);
+
+it.effect('create role: leaving with unsaved input asks first, Discard sends nothing', () =>
+  Effect.gen(function* createLeaveAsksTest() {
+    createCall.mockReturnValue(Effect.succeed({ ...featureFixture().role, cells: [] }));
+    const onCreated = rstest.fn<(role: GetAccessRoleResponse['role']) => void>();
+    const page = () => <CreateRoleFeature catalog={blankCatalog()} onCreated={onCreated} writesAvailable />;
+    const view = render(page());
+    const user = userEvent.setup();
+    yield* Effect.promise(() => user.type(screen.getByLabelText(/shell.accessAdmin.role.name/u), 'New role'));
+    expect(navigation.shouldBlock()).toBe(true);
+    // The router holds the navigation (a Shell link, browser Back) and the form asks.
+    navigation.status = 'blocked';
+    view.rerender(page());
+    const discard = yield* Effect.promise(() => screen.findByRole('button', { name: 'Discard changes' }));
+    yield* Effect.promise(() => user.click(discard));
+    expect(navigation.proceed).toHaveBeenCalledTimes(1);
+    expect(createCall).not.toHaveBeenCalled();
+    navigation.status = 'idle';
+  }),
+);
 
 it.effect('tenant administration loads without a selected company and anonymous sessions do not issue role reads', () =>
   Effect.gen(function* tenantContextTest() {

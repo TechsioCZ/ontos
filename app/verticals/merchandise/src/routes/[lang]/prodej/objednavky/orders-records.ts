@@ -20,6 +20,8 @@ import { executeChangeOrderStatus } from '../../../../api/change-order-status-ac
 import { committedResult } from '../../../../api/action-result.ts';
 import { executeRecords } from '../../../../api/records-consumer.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { useKeptDetail } from '../../../../runtime/kept-detail.ts';
+import type { DetailRead } from '../../../../runtime/kept-detail.ts';
 import { useSettledPageData } from '../../../../runtime/page-data-hooks.ts';
 import type { SettledPageData } from '../../../../runtime/page-data-hooks.ts';
 import { customerDirectoryData } from './customers-directory.ts';
@@ -583,7 +585,38 @@ export type OrderDetailState =
   | { readonly status: 'not-found' }
   | { readonly status: 'loading'; readonly summary?: OrderDetailSummary | undefined }
   | { readonly cause: Effect.Error<ReturnType<typeof loadOrderDetail>>; readonly status: 'error' }
-  | ({ readonly order: Order; readonly status: 'ready' } & OrderDetailRecords);
+  | ({
+      readonly order: Order;
+      /** The order shown is the last one read: reading it again failed with this cause. */
+      readonly reloadFailure?: Effect.Error<ReturnType<typeof loadOrderDetail>>;
+      readonly status: 'ready';
+    } & OrderDetailRecords);
+
+type OrderDetailFailure = Effect.Error<ReturnType<typeof loadOrderDetail>>;
+type ReadyOrderDetail = Extract<OrderDetailState, { readonly status: 'ready' }>;
+
+/** Failures of a denied read (signed out, no access): they never keep the shown order, its fields or actions. */
+const deniedFailureTags = [
+  'RecordsAuthenticationProblem',
+  'RecordsForbiddenProblem',
+  'GatewayAuthenticationRequiredProblem',
+  'GatewayForbiddenProblem',
+] as const;
+
+const orderRead = (state: OrderDetailState): DetailRead<ReadyOrderDetail, OrderDetailFailure> =>
+  Match.value(state).pipe(
+    Match.when({ status: 'ready' }, (ready): DetailRead<ReadyOrderDetail, OrderDetailFailure> => ({
+      kind: 'ready',
+      ready,
+    })),
+    Match.when({ status: 'loading' }, (): DetailRead<ReadyOrderDetail, OrderDetailFailure> => ({ kind: 'loading' })),
+    Match.when({ status: 'error' }, ({ cause: failure }): DetailRead<ReadyOrderDetail, OrderDetailFailure> =>
+      deniedFailureTags.some((tag) => Predicate.isTagged(failure, tag))
+        ? { kind: 'final' }
+        : { failure, kind: 'failed' },
+    ),
+    Match.orElse((): DetailRead<ReadyOrderDetail, OrderDetailFailure> => ({ kind: 'final' })),
+  );
 
 /** Only the row of this order from the ready page of the same authenticated scope may summarize it. */
 const listedSummary = (
@@ -662,25 +695,42 @@ export const useOrderDetail = (
       fiber?.interruptUnsafe();
     };
   }, [orderId, request]);
-  if (orderId === null) {
-    return { status: 'idle' };
-  }
-  if (scope !== undefined) {
-    if (cached.state === 'ready') {
-      return { ...cached.value, status: 'ready' };
+  const current = (): OrderDetailState => {
+    if (orderId === null) {
+      return { status: 'idle' };
     }
-    if (cached.state === 'failed') {
-      return Predicate.isTagged(cached.error, 'OrderDetailNotFound')
-        ? { status: 'not-found' }
-        : { cause: cached.error, status: 'error' };
+    if (scope !== undefined) {
+      if (cached.state === 'ready') {
+        return { ...cached.value, status: 'ready' };
+      }
+      if (cached.state === 'failed') {
+        return Predicate.isTagged(cached.error, 'OrderDetailNotFound')
+          ? { status: 'not-found' }
+          : { cause: cached.error, status: 'error' };
+      }
+      return summary === undefined ? { status: 'loading' } : { status: 'loading', summary };
     }
+    if (answer?.request === request) {
+      return answer.state;
+    }
+    // A reread after a change keeps showing the same order until the fresh copy lands.
     return summary === undefined ? { status: 'loading' } : { status: 'loading', summary };
+  };
+  const state = current();
+  // A failed reload of the order on screen keeps it, so an open edit form and its unsaved draft stay.
+  const kept = useKeptDetail({
+    key: Result.getOrThrow(encodeQueryIds([scope ?? '', orderId ?? ''])),
+    read: orderRead(state),
+    same: (left, right) =>
+      left.order === right.order &&
+      left.products === right.products &&
+      left.revision === right.revision &&
+      left.movesStock === right.movesStock,
+  });
+  if (kept === null) {
+    return state;
   }
-  if (answer?.request === request) {
-    return answer.state;
-  }
-  // A reread after a change keeps showing the same order until the fresh copy lands.
-  return summary === undefined ? { status: 'loading' } : { status: 'loading', summary };
+  return kept.reloadFailure === undefined ? kept.ready : { ...kept.ready, reloadFailure: kept.reloadFailure };
 };
 
 export const removeDemoOrder = (id: Order['id'], reason: string, revision: number) =>

@@ -49,11 +49,10 @@ const render = (overrides: Partial<MarketsPanelViewProps> = {}) =>
   renderToStaticMarkup(
     createElement(MarketsPanelView, {
       canManage: true,
-      error: null,
       labels: labelsOf(csResource),
       markets,
       onToggle: constVoid,
-      pendingMarketId: null,
+      saving: false,
       ...overrides,
     }),
   );
@@ -79,17 +78,16 @@ it('lists every configured market by its code, currency and converted price, wit
   expect(switchInputs(markup).some((input) => input.includes('disabled'))).toBe(false);
 });
 
-it('disables the offer switches without catalog management and while one offer is saving', () => {
-  for (const overrides of [{ canManage: false }, { pendingMarketId: SK }]) {
+it('disables the offer switches without catalog management and while the offers are saving', () => {
+  for (const overrides of [{ canManage: false }, { saving: true }]) {
     const inputs = switchInputs(render(overrides));
     expect(inputs).toHaveLength(2);
     expect(inputs.every((input) => input.includes('disabled'))).toBe(true);
   }
 });
 
-it('shows a plain message when the company has no markets and the save failure under the table', () => {
+it('shows a plain message when the company has no markets', () => {
   expect(visibleText(render({ markets: [] }))).toContain('Pro tuto společnost zatím nejsou nastavené trhy.');
-  expect(visibleText(render({ error: 'Změnu se nepodařilo uložit.' }))).toContain('Změnu se nepodařilo uložit.');
 });
 
 it('has every market label in Czech and English', () => {

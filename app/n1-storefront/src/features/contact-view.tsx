@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@techsio/ui-kit/atoms/button";
+import { Link as KitLink } from "@techsio/ui-kit/atoms/link";
 import { Link } from "@/features/plain-link";
 import { FormInput, FormTextarea } from "./form-controls";
 import { useToast } from "@techsio/ui-kit/molecules/toast";
@@ -149,7 +150,9 @@ export const ContactView = ({
       <section aria-labelledby="returns-heading" className="mt-6 text-center">
         <p className="wrap-break-word">
           {d.contact.email}:{" "}
-          <Link href="mailto:eshop@ndistribution.cz">eshop@ndistribution.cz</Link>
+          <KitLink href="mailto:eshop@ndistribution.cz" size="current">
+            eshop@ndistribution.cz
+          </KitLink>
         </p>
         <h2 className="mt-n1-contact-address text-md" id="returns-heading">
           {d.contact.returnsHeading}

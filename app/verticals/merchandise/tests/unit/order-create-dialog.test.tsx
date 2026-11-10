@@ -1,0 +1,200 @@
+// @rstest-environment happy-dom
+// The new order dialog as a user fills it: customer first, then a product whose full record loads afterwards. Uložit
+// becomes enabled once that record is there, and one click sends one CreateOrder. The two pickers are replaced by
+// buttons that pick, the product record read is answered by the test, and only the generated catalog client, the
+// i18n runtime and the router blocker are replaced besides.
+import { saveLabelsFor } from '@app/admin-ui';
+import { Effect, Option, Schema } from 'effect';
+import { constVoid } from 'effect/Function';
+import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
+import { act, createElement } from 'react';
+import { createRoot } from 'react-dom/client';
+import { ProductRecordSchema } from '../../shared/apis/records.ts';
+import type { ProductRecord } from '../../shared/apis/records.ts';
+import { executeManageCatalog } from '../../src/api/manage-catalog-action-client.ts';
+import { OrderCreateDialog } from '../../src/routes/[lang]/prodej/objednavky/order-create-dialog.tsx';
+import type { CustomerDirectory } from '../../src/routes/[lang]/prodej/objednavky/customers-directory.ts';
+import type { ProductRecordState } from '../../src/routes/[lang]/provoz/produkty/product-reads.ts';
+import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
+
+/** A read of a picked product's full record, waiting for the test to answer it. */
+interface ProductRead {
+  readonly answer: (state: ProductRecordState) => void;
+  readonly productId: string;
+}
+
+/** The product the mocked picker picks. */
+interface OfferedProduct {
+  current: ProductRecord | null;
+}
+
+const { offered, productReads } = rstest.hoisted(() => {
+  const reads: ProductRead[] = [];
+  // The product the mocked picker picks; set before each test, since the mocks exist before this module's constants.
+  const pick: OfferedProduct = { current: null };
+  return { offered: pick, productReads: reads };
+});
+
+rstest.mock('../../src/api/records-consumer.ts');
+rstest.mock('../../src/api/manage-catalog-action-client.ts');
+rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
+  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
+}));
+rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
+  useBlocker: () => ({ proceed: constVoid, reset: constVoid, status: 'idle' }),
+}));
+// The customer picker: one button that picks the first active customer.
+rstest.mock('@techsio/ui-kit/molecules/combobox', () => ({
+  Combobox: (props: {
+    readonly items: readonly { readonly value: string }[];
+    readonly onChange: (v: string[]) => void;
+  }) =>
+    createElement(
+      'button',
+      { onClick: () => props.onChange(props.items.slice(0, 1).map((item) => item.value)), type: 'button' },
+      'pick customer',
+    ),
+}));
+// The product picker: one button that picks the product the test offers.
+rstest.mock('../../src/routes/[lang]/provoz/produkty/product-search.tsx', () => ({
+  ProductSearchCombobox: (props: { readonly onSelect: (product: ProductRecord | null) => void }) =>
+    createElement('button', { onClick: () => props.onSelect(offered.current), type: 'button' }, 'pick product'),
+}));
+// The full record of a picked product: read when picked, answered by the test.
+rstest.mock('../../src/routes/[lang]/provoz/produkty/product-reads.ts', () => ({
+  loadProductRecord: (productId: string, answer: (state: ProductRecordState) => void) => {
+    productReads.push({ answer, productId });
+  },
+}));
+
+const labels = saveLabelsFor('cs');
+const at = '2026-10-19T08:00:00.000Z';
+
+const product: ProductRecord = Schema.decodeUnknownSync(ProductRecordSchema)({
+  active: true,
+  category: 'Šrouby',
+  createdAt: at,
+  currentPriceMinor: 800,
+  id: 'product-1',
+  lowStock: false,
+  lowStockThreshold: 5,
+  name: 'Nerezový šroub',
+  priceHistory: [],
+  sku: 'DIN933',
+  stockOnHand: 40,
+  stockValueMinor: 32_000,
+  unit: 'ks',
+  updatedAt: at,
+  vatRate: 21,
+});
+
+const customers: CustomerDirectory = {
+  active: [{ companyId: '12345678', name: 'Kavárna Dolce', partyId: 'party-1', status: 'ACTIVE' }],
+  entries: [{ companyId: '12345678', name: 'Kavárna Dolce', partyId: 'party-1', status: 'ACTIVE' }],
+  nameOf: () => 'Kavárna Dolce',
+  reload: constVoid,
+  status: 'ready',
+};
+
+const sent = () => rstest.mocked(executeManageCatalog).mock.calls.map(([payload]) => payload.command);
+
+const settle = async (): Promise<void> => {
+  await browserRuntime.runPromise(Effect.yieldNow);
+};
+
+const unmounts: (() => void)[] = [];
+const created: string[] = [];
+
+const mount = async () => {
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  await act(async () => {
+    root.render(
+      <OrderCreateDialog
+        customers={customers}
+        onCreated={() => {
+          created.push('created');
+        }}
+        onOpenChange={constVoid}
+        open
+        revision={4}
+      />,
+    );
+    await settle();
+  });
+  unmounts.push(() => {
+    act(() => {
+      root.unmount();
+      container.remove();
+    });
+  });
+};
+
+const buttonNamed = (name: string): HTMLButtonElement =>
+  Option.getOrThrow(
+    Option.fromUndefinedOr(
+      [...document.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.trim() === name),
+    ),
+  );
+
+const click = async (name: string) => {
+  await act(async () => {
+    buttonNamed(name).click();
+    await settle();
+  });
+};
+
+const waitUntil = async (condition: () => boolean, attempt = 0): Promise<void> => {
+  if (condition() || attempt >= 400) {
+    expect(condition()).toBe(true);
+    return;
+  }
+  await act(settle);
+  await waitUntil(condition, attempt + 1);
+};
+
+beforeEach(() => {
+  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  rstest.resetAllMocks();
+  productReads.length = 0;
+  offered.current = product;
+  created.length = 0;
+  rstest.mocked(executeManageCatalog).mockImplementation(() => Effect.succeed({ entityIds: [], revision: 5 }));
+});
+
+afterEach(() => {
+  for (const unmount of unmounts.splice(0)) {
+    unmount();
+  }
+  rstest.unstubAllGlobals();
+});
+
+it.effect('customer first, then a product whose record loads later: Uložit enables and one click sends one order', () =>
+  Effect.promise(async () => {
+    await mount();
+    expect(buttonNamed(labels.save).disabled).toBe(true);
+
+    await click('pick customer');
+    expect(buttonNamed(labels.save).disabled).toBe(true);
+    await click('pick product');
+    // The product record is still loading: the line cannot be priced yet.
+    expect(productReads.map((read) => read.productId)).toEqual(['product-1']);
+    expect(buttonNamed(labels.save).disabled).toBe(true);
+
+    await act(async () => {
+      productReads[0]?.answer({ product, status: 'ready' });
+      await settle();
+    });
+    expect(buttonNamed(labels.save).disabled).toBe(false);
+
+    await click(labels.save);
+    await waitUntil(() => created.length === 1);
+    expect(sent()).toHaveLength(1);
+    expect(sent()[0]).toMatchObject({
+      _tag: 'CreateOrder',
+      lines: [{ productId: 'product-1', quantity: 1 }],
+      partyId: 'party-1',
+    });
+  }),
+);

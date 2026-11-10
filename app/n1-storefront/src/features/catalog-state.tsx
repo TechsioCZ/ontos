@@ -66,9 +66,7 @@ export const CatalogState = ({
           <Skeleton speed="slow">
             <div className="h-n1-loading-image">
               <div className="w-full max-w-80">
-                <Skeleton.Rectangle>
-                  <div className="h-20" />
-                </Skeleton.Rectangle>
+                <Skeleton.Rectangle className="h-20" />
               </div>
             </div>
             <div className="mt-6 flex w-full max-w-80 flex-col gap-6">

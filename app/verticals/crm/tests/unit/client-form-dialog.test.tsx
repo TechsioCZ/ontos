@@ -161,15 +161,19 @@ describe('client form', () => {
     }),
   );
 
-  it.live('a new client is sent once by its create button', () =>
+  it.live('a new client is sent once by the same Uložit, never by Enter', () =>
     Effect.promise(async () => {
       const sent: CrmCommandInput[] = [];
       const { container } = await mount({ mode: 'create', submit: succeeding(sent) });
 
       await typeInto(container, 'crm-client-name', 'Nová firma');
+      await act(async () => {
+        Option.getOrThrow(Option.fromNullOr(document.querySelector('form'))).requestSubmit();
+      });
+      await settle();
       expect(sent).toEqual([]);
 
-      await clickButton(container, 'Založit klienta');
+      await clickButton(container, 'Uložit');
       expect(sent.length).toBe(1);
       expect(sent[0]).toMatchObject({ _tag: 'CreateClient', kind: 'organization', name: 'Nová firma' });
     }),

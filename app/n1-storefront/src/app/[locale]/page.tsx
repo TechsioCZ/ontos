@@ -53,7 +53,13 @@ const HomePage = async ({ params }: { params: Promise<{ locale: string }> }) => 
         <ul className="mx-auto grid max-w-n1-promo-content grid-cols-3 gap-x-2 gap-y-3 px-4 md:grid-cols-4 md:gap-x-3 md:px-0">
           {promoSlots.map((asset) => (
             <li className="flex min-w-0 flex-col items-center gap-1 md:gap-0" key={asset}>
-              <div className="w-full max-w-n1-promo-image">
+              <div
+                className={
+                  asset === "helmet"
+                    ? "w-full max-w-n1-promo-image"
+                    : "w-full max-w-n1-promo-image px-1 md:px-0"
+                }
+              >
                 <Image
                   alt=""
                   as={NextImage}
