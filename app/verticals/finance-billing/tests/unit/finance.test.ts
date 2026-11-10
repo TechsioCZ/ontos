@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'effect-rstest';
-import { ActionPermissionCheckError, OperationContextUnavailable } from '@app/core-runtime';
-import { ActionPermission } from '@app/core-runtime/actions/runtime-wiring';
+import { OperationContextUnavailable } from '@app/core-runtime';
+import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';
 import { OAuthConnectionContextSchema } from '@app/core-runtime/actions/principal-context';
 import { financeWriteCapability } from '../../src/api/records.read.ts';
-import { DateTime, Effect, Exit, Layer, Schema } from 'effect';
+import { DateTime, Effect, Exit, Schema } from 'effect';
 import type { FinanceCommand } from '../../shared/actions/apply-command.ts';
 import { FinanceRejected, FinanceCommandSchema } from '../../shared/actions/apply-command.ts';
 import { CalendarDateSchema, InvoiceDraftFields, RecordsResponseSchema } from '../../shared/apis/records.ts';
@@ -19,9 +19,12 @@ const tenantId = 'a0000000-0000-4000-8000-000000000001';
 const legalEntityId = 'a0000000-0000-4000-8000-000000000002';
 const now = DateTime.makeUnsafe('2026-10-06T12:00:00Z');
 const capabilityScope = {
+  authBindingId: 'a0000000-0000-4000-8000-000000000071',
+  authContextRef: 'session:finance-read-capability',
+  authMethod: 'session' as const,
   correlationId: 'finance-read-capability',
   legalEntityId,
-  principalId: 'finance-actor',
+  principalId: 'a0000000-0000-4000-8000-000000000070',
   tenantId,
 };
 const input = { attemptId: 'attempt-retry', now, resourceId: 'invoice-new' };
@@ -287,29 +290,21 @@ describe('Finance calendar and projection', () => {
   });
 });
 
-it.layer(
-  Layer.succeed(ActionPermission, {
-    checkActionPermission: (request) => {
-      expect(request).toEqual({
-        actionKey: 'finance.billing.apply-command',
-        ...capabilityScope,
-      });
-      return Effect.succeed('allowed');
-    },
-  }),
-)('Finance authorized capabilities', (suite) => {
-  suite.effect('exposes writes only after the exact existing Action permission is allowed', () =>
+const financeWrite = 'finance.billing.apply-command.write';
+const gateAnswering = (outcome: 'ALLOWED' | 'DENIED' | 'UNAVAILABLE') =>
+  makeTestAccessGateLayers(
+    outcome === 'UNAVAILABLE' ? { unavailable: true } : { spec: { answers: { [financeWrite]: { outcome } } } },
+  );
+
+it.layer(gateAnswering('ALLOWED'))('Finance authorized capabilities', (suite) => {
+  suite.effect('exposes writes only when the v2 gate admits the apply-command Action itself', () =>
     Effect.gen(function* allowedCapability() {
       expect(yield* financeWriteCapability(capabilityScope)).toBe(true);
     }),
   );
 });
 
-it.layer(
-  Layer.succeed(ActionPermission, {
-    checkActionPermission: () => Effect.succeed('denied'),
-  }),
-)('Finance readonly capabilities', (suite) => {
+it.layer(gateAnswering('DENIED'))('Finance readonly capabilities', (suite) => {
   suite.effect('keeps a legitimate readonly reader without mutation capability', () =>
     Effect.gen(function* readonlyCapability() {
       expect(yield* financeWriteCapability(capabilityScope)).toBe(false);
@@ -317,17 +312,7 @@ it.layer(
   );
 });
 
-it.layer(
-  Layer.succeed(ActionPermission, {
-    checkActionPermission: () =>
-      Effect.fail(
-        new ActionPermissionCheckError({
-          code: 'action_permission_check_failed',
-          reason: 'The native permission service is unavailable',
-        }),
-      ),
-  }),
-)('Finance unavailable capabilities', (suite) => {
+it.layer(gateAnswering('UNAVAILABLE'))('Finance unavailable capabilities', (suite) => {
   suite.effect('fails closed with a typed unavailable error instead of exposing editable records', () =>
     Effect.gen(function* unavailableCapability() {
       const failure = yield* Effect.flip(financeWriteCapability(capabilityScope));
@@ -338,11 +323,7 @@ it.layer(
 
 const connection = Schema.decodeUnknownSync(OAuthConnectionContextSchema);
 
-it.layer(
-  Layer.succeed(ActionPermission, {
-    checkActionPermission: () => Effect.succeed('allowed'),
-  }),
-)('Finance capabilities under an MCP connection', (suite) => {
+it.layer(gateAnswering('ALLOWED'))('Finance capabilities under an MCP connection', (suite) => {
   suite.effect('a read-only connection never reports write ability; a direct one with finance write does', () =>
     Effect.gen(function* connectionCapability() {
       const base = { clientId: 'client-1', clientName: 'Claude', grantId: '11111111-1111-4111-8111-111111111111' };

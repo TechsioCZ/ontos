@@ -6,11 +6,12 @@ import {
   defineTenantModuleEntrypoint,
   isConnectionWriteAllowed,
 } from '@app/core-runtime';
-import { ActionPermission } from '@app/core-runtime/actions/runtime-wiring';
-import { DateTime, Effect, Option, Struct } from 'effect';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import { DateTime, Effect, Option } from 'effect';
 import type { OperationalScope, ReadFinishContext, ReadServiceFactory } from '@app/core-runtime';
 import { decodeFinanceState, persistenceService } from '../services/finance-state-repository.ts';
 import { projectFinanceRecords } from '../services/persistence.service.ts';
+import { applyCommandAction } from '../actions/apply-command.action.ts';
 import { pragueCalendarDate } from '../../shared/domain/finance-planning.ts';
 import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
@@ -33,33 +34,33 @@ const recordsEntrypoint = defineTenantModuleEntrypoint({
   role: 'api',
 });
 
-/** Connection policy ∩ live Action permission. */
+/**
+ * Connection policy ∩ the Action's own v2 decision. The question is the one the Action runtime asks when the
+ * command runs (`AccessDecisionGate.decide` over the Action's descriptor), so the screen can never offer a write
+ * the Action refuses, nor hide one it admits (ADR-0030: no legacy `action` tuple exists to ask).
+ */
 export const financeWriteCapability = Effect.fn('Finance.writeCapability')(function* financeWriteCapability(
-  scope: Pick<OperationalScope, 'principalId' | 'correlationId' | 'tenantId' | 'legalEntityId'> &
-    Partial<Pick<OperationalScope, 'authMethod' | 'connection'>>,
+  scope: OperationalScope,
 ) {
   if (!isConnectionWriteAllowed(scope, financeModuleKey)) {
     return false;
   }
-  const permission = yield* ActionPermission;
-  const decision = yield* permission
-    .checkActionPermission({
-      actionKey: 'finance.billing.apply-command',
-      ...Struct.pick(scope, ['correlationId', 'legalEntityId', 'principalId', 'tenantId']),
-    })
-    .pipe(
-      Effect.mapError((failure) =>
-        Object.defineProperty(
-          new OperationContextUnavailable({
-            code: 'operation_context_unavailable',
-            reason: 'Finance write permission could not be determined',
-          }),
-          'cause',
-          { value: failure },
-        ),
-      ),
-    );
-  return decision === 'allowed';
+  const { descriptor } = applyCommandAction;
+  const gate = yield* AccessDecisionGate;
+  const decision = yield* gate.decide({
+    carrier: descriptor,
+    legalEntityScope: descriptor.legalEntityScope,
+    mode: 'run',
+    now: yield* DateTime.nowAsDate,
+    scope,
+  });
+  if (decision.outcome === 'UNAVAILABLE') {
+    return yield* new OperationContextUnavailable({
+      code: 'operation_context_unavailable',
+      reason: 'Finance write permission could not be determined',
+    });
+  }
+  return decision.outcome === 'ALLOWED';
 });
 
 /** Keeps the export history (who, when, hash) but blanks the file body for read-only principals. */
