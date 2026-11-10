@@ -287,6 +287,14 @@ describe('#1151 governed reconciliation decisions', () => {
       'payment_reconciliation_obligation_unresolved',
     );
     expect(closeHeldCorrection({ conflictClassified: true, correctionTargetEstablished: true })).toBe('applied');
+    // A classified conflict resolved with the corrected statement itself leaves the correction unapplied.
+    expect(
+      closeHeldCorrection({
+        conflictClassified: true,
+        correctionTargetEstablished: true,
+        correctionTargetRelied: true,
+      }),
+    ).toBe('payment_reconciliation_obligation_unresolved');
     expect(closeHeldCorrection({ correctionTargetEstablished: false })).toBe('applied');
   });
 

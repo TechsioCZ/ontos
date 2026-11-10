@@ -22,7 +22,7 @@ import { paymentRegistration } from '../../vertical.registration.ts';
 import { computePaymentFunds, PaymentFundsLedger } from '../../src/domain/coverage.ts';
 import type { PaymentFundsLedgerCase } from '../../src/domain/coverage.ts';
 import { paymentFundsSnapshotOf } from '../../src/persistence/payment-aggregate-persistence.ts';
-import { makeTestScope } from './database-fixture.ts';
+import { failureCodeOf, makeTestScope } from './database-fixture.ts';
 import {
   COMPOSITION_R1,
   COMPOSITION_R2,
@@ -199,6 +199,31 @@ it.live(
         expect(yield* calculatorOf(evidence, payment.paymentId)).toBe(coverage);
         const debt = yield* evidence.debt({ paymentId: payment.paymentId });
         expect(debt.openCases.length + debt.unresolvedOperations.length).toBeGreaterThan(0);
+
+        // Governance cannot make the held correction disappear: classifying the conflict, re-attaching
+        // the corrected receipt and closing would expose 200 CZK that is no longer proven collected.
+        const [held] = debt.openCases;
+        const caseId = held?.caseId ?? '';
+        yield* evidence.decide({
+          caseId,
+          decision: { _tag: 'CLASSIFY_CONFLICT' },
+          reason: 'The correction contradicts the returned amount',
+        });
+        yield* evidence.decide({
+          caseId,
+          decision: { _tag: 'ATTACH_EVIDENCE', observationId: first.observationId, operationId: collect.operationId },
+          reason: 'Re-attach the original receipt',
+        });
+        expect(
+          yield* failureCodeOf(
+            evidence.decide({
+              caseId,
+              decision: { _tag: 'CLOSE_CASE', evidenceRef: 'operator-note' },
+              reason: 'Close the held correction',
+            }),
+          ),
+        ).toBe('payment_reconciliation_obligation_unresolved');
+        expect((yield* evidence.coverage(payment.paymentId)).startsWith('Held ')).toBe(true);
       }),
     ),
 );

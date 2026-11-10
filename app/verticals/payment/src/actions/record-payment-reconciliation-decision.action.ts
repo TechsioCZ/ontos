@@ -315,6 +315,7 @@ const economicEffectCountedOf = Effect.fn('RecordPaymentReconciliationDecisionAc
       return false;
     }
     const counted = yield* context.services.evidence.isEconomicEffectCounted({
+      amountMinor: observation.amount?.amountMinor,
       economicEffectKey,
       excludeObservationId: observationId,
       factKind: observation.factKind,
@@ -336,11 +337,36 @@ const economicEffectCountedOf = Effect.fn('RecordPaymentReconciliationDecisionAc
   },
 );
 
+/**
+ * Whether Current state still rests on the statement a held correction names: the statement stands
+ * (accepted or attached, not fully disproven) and its operation still has the outcome it states. A
+ * classified conflict that was later resolved with that same statement leaves the correction unapplied.
+ */
+const correctionTargetReliedOn = Effect.fn('RecordPaymentReconciliationDecisionAction.correctionTargetReliedOn')(
+  function* correctionTargetReliedOn(
+    context: DecisionContext,
+    current: Option.Option<PaymentAggregateRecord>,
+    correctedObservationId: string | undefined,
+  ) {
+    if (correctedObservationId === undefined || Option.isNone(current)) {
+      return false;
+    }
+    const effects = yield* listEstablishedEffects(context, current.value.payment.paymentId);
+    const target = effects.find((effect) => effect.observationId === correctedObservationId);
+    if (target === undefined) {
+      return false;
+    }
+    const operation = current.value.operations.find((candidate) => candidate.operationId === target.operationId);
+    return operation !== undefined && paymentFactMeaning(target.factKind)?.outcome === operation.outcome;
+  },
+);
+
 /** CLOSE_CASE only: what Current state says about the observation the case holds. */
 const caseEvidenceFor = Effect.fn('RecordPaymentReconciliationDecisionAction.caseEvidence')(function* caseEvidence(
   context: DecisionContext,
   body: PaymentReconciliationDecisionBody,
   locked: PaymentReconciliationCaseRecord,
+  current: Option.Option<PaymentAggregateRecord>,
 ) {
   const observationId = closingCaseObservationId(body, locked);
   if (Option.isNone(observationId)) {
@@ -360,6 +386,10 @@ const caseEvidenceFor = Effect.fn('RecordPaymentReconciliationDecisionAction.cas
     correctionTargetEstablished:
       observation.factKind === 'SOURCE_CORRECTION' &&
       (yield* establishedCurrentState(context, observation.correctsObservationId)),
+    correctionTargetRelied:
+      observation.factKind === 'SOURCE_CORRECTION' &&
+      observation.acceptanceOutcome !== 'ACCEPTED_OBSERVATION' &&
+      (yield* correctionTargetReliedOn(context, current, observation.correctsObservationId)),
     economicEffectCounted: yield* economicEffectCountedOf(context, observation),
     factKind: observation.factKind,
   });
@@ -545,7 +575,7 @@ export const handleRecordPaymentReconciliationDecision = Effect.fn('RecordPaymen
     const { current, locked } = yield* lockSubject(context, payload.caseId);
     // One transaction connection: the evidence reads run in order.
     const [facts, caseEvidence] = yield* Effect.all(
-      [evidenceFactsFor(context, payload.decision), caseEvidenceFor(context, payload.decision, locked)],
+      [evidenceFactsFor(context, payload.decision), caseEvidenceFor(context, payload.decision, locked, current)],
       { concurrency: 1 },
     );
     const step = yield* requireApplied(

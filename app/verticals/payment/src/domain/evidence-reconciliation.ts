@@ -103,6 +103,11 @@ export interface PaymentReconciliationCaseEvidence {
   /** SOURCE_CORRECTION only: the disproven statement was accepted or resolved an operation by attachment. */
   readonly correctionTargetEstablished: boolean;
   /**
+   * Held SOURCE_CORRECTION only: Current state still rests on the statement it names (the statement
+   * stands and its operation has the outcome it states), so the unapplied correction is still owed.
+   */
+  readonly correctionTargetRelied?: boolean;
+  /**
    * EFFECT_CONFIRMED statements only: the same economic effect (source binding, fact kind, key) already
    * counts toward an operation of this Payment (any Payment when unassigned), so the held copy is accounted for.
    */
@@ -351,8 +356,12 @@ const unresolvedObligation = (evidence: PaymentReconciliationCaseEvidence): stri
     return undefined;
   }
   if (evidence.factKind === 'SOURCE_CORRECTION') {
-    return evidence.correctionTargetEstablished && !evidence.conflictClassified
-      ? 'The held correction disproves evidence the Current interpretation still relies on; classify the conflict first'
+    if (evidence.correctionTargetEstablished && !evidence.conflictClassified) {
+      return 'The held correction disproves evidence the Current interpretation still relies on; classify the conflict first';
+    }
+    // A classified conflict that was resolved with the corrected statement itself left the correction unapplied.
+    return evidence.correctionTargetRelied === true
+      ? 'The held correction is not applied and Current funds still rest on the statement it corrects'
       : undefined;
   }
   if (evidence.factKind === 'SETTLEMENT_OBSERVED') {

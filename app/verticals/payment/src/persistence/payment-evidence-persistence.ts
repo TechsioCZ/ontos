@@ -429,6 +429,8 @@ export interface PaymentEvidencePersistence {
   ) => Effect.Effect<PaymentRecoveryRequestRecord, PaymentUnavailable>;
   /** Whether an uncorrected statement of the same source binding, fact kind and economic effect key already counts toward an operation (see implementation). */
   readonly isEconomicEffectCounted: (input: {
+    /** The money the held statement states; a counted copy must state exactly the same. */
+    readonly amountMinor: number | undefined;
     readonly economicEffectKey: string;
     readonly excludeObservationId: string;
     readonly factKind: PaymentObservationFactKind;
@@ -734,12 +736,13 @@ export const paymentEvidencePersistenceForTransaction = (
 
   /**
    * Whether the economic effect of a held statement already counts toward an operation: an uncorrected
-   * statement of the same source binding, fact kind and key that an accepted interpretation or a governed
+   * statement of the same source binding, fact kind, key and money that an accepted interpretation or a governed
    * attachment resolved for the Payment (any Payment when unassigned). The attribution ledger is not
    * consulted: it outlives a full disproof of the statement that claimed the effect.
    */
   const isEconomicEffectCounted = Effect.fn('PaymentEvidencePersistence.isEconomicEffectCounted')(
     function* isEconomicEffectCounted(input: {
+      readonly amountMinor: number | undefined;
       readonly economicEffectKey: string;
       readonly excludeObservationId: string;
       readonly factKind: PaymentObservationFactKind;
@@ -750,6 +753,7 @@ export const paymentEvidencePersistenceForTransaction = (
       const rows = yield* transaction
         .select({
           acceptanceOutcome: observations.acceptanceOutcome,
+          amountMinor: observations.amountMinor,
           observationId: observations.observationId,
           operationId: observations.operationId,
         })
@@ -772,7 +776,11 @@ export const paymentEvidencePersistenceForTransaction = (
           ),
         )
         .pipe(Effect.mapError(readFailure));
-      const candidates = rows.filter((row) => row.observationId !== input.excludeObservationId);
+      // The same key with different money is contradictory evidence, never an accounted copy (#1151).
+      const candidates = rows.filter(
+        (row) =>
+          row.observationId !== input.excludeObservationId && (row.amountMinor ?? undefined) === input.amountMinor,
+      );
       const reopened = yield* fullyDisprovenAmong(candidates.map((row) => row.observationId));
       const uncorrected = candidates.filter((row) => !reopened.has(row.observationId));
       if (uncorrected.some((row) => row.acceptanceOutcome === 'ACCEPTED_OBSERVATION' && row.operationId !== null)) {
