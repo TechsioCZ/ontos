@@ -703,7 +703,7 @@ it('formats and lints every tracked file in exactly one pre-commit hook shard', 
       'app/package.json',
       'app/packages/core-runtime/package.json',
       'app/scripts/check.mts',
-      'app/scripts/prove-cloudflare-local-topology.sh',
+      'app/scripts/zerops/build-app.sh',
       'app/verticals/catalog/package.json',
       'lefthook.yml',
     ];
