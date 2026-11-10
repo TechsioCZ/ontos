@@ -1,5 +1,5 @@
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
-import { ContextAccess, OAuthGrantRegistry, ReadRuntime } from '@app/core-runtime';
+import { ContextAccess, OAuthGrantRegistry, ReadRuntime, TenantModuleStateService } from '@app/core-runtime';
 import type { OAuthGrantRecord, ReadRuntimeService } from '@app/core-runtime';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
@@ -162,6 +162,7 @@ const fixture = Effect.gen(function* activityGrantsFixture() {
         }),
         Layer.succeed(AccessDecisionGate, makeTestAccessDecision()),
         Layer.mock(ContextAccess, {}),
+        Layer.mock(TenantModuleStateService, {}),
         Layer.mock(ActionAuthority, {}),
         Layer.mock(ActiveApplicationCompositionService, {}),
         Layer.mock(GatewayIssuer, {}),

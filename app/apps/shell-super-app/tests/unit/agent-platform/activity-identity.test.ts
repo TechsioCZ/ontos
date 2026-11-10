@@ -1,5 +1,5 @@
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
-import { ContextAccess, ReadRuntime } from '@app/core-runtime';
+import { ContextAccess, ReadRuntime, TenantModuleStateService } from '@app/core-runtime';
 import type { ReadRuntimeService } from '@app/core-runtime';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
@@ -135,6 +135,7 @@ const fixture = (selected: AgentPlatformCaller, privateRecords = false) =>
           makeInstalledModuleCatalogLayer(Effect.succeed(composition)),
           Layer.succeed(AccessDecisionGate, makeTestAccessDecision()),
           Layer.mock(ContextAccess, {}),
+          Layer.mock(TenantModuleStateService, {}),
           Layer.mock(ActionAuthority, {}),
           Layer.mock(ActiveApplicationCompositionService, {}),
           Layer.mock(GatewayIssuer, {}),
