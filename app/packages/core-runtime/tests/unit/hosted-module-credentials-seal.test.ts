@@ -1,37 +1,56 @@
-import { Config, ConfigProvider, Effect, Redacted, Schema } from 'effect';
+import { Config, ConfigProvider, Effect, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
+  claimHostedModuleCredentials,
+  heldHostedModuleCredentials,
   HostedModuleCredentialsSealedError,
-  isHostedModuleCredentialProcess,
   MODULE_CREDENTIAL_VARIABLE,
   moduleCredentialConfigProvider,
-  sealHostedModuleCredentials,
 } from '../../src/auth/hosted-module-credentials.ts';
 
 const ORDER_KEY = 'order-module-credential-0001';
+const PARTY_KEY = 'party-module-credential-0001';
 
-it.effect('seals a multi-owner process once, after which each owner reads only its sealed entry', () =>
-  Effect.gen(function* sealOnce() {
+it.effect('claims a multi-owner process once; each owner slot is filled at most once, now or later', () =>
+  Effect.gen(function* claimOnce() {
     const environment = ConfigProvider.fromUnknown({ [MODULE_CREDENTIAL_VARIABLE]: 'environment-credential-000' });
-    const owner = moduleCredentialConfigProvider(environment, 'commerce-order');
     // A fresh read each time, as every delegated call reads its credential.
-    const read = Effect.suspend(() => Config.String(MODULE_CREDENTIAL_VARIABLE).parse(owner));
-    expect(isHostedModuleCredentialProcess()).toBe(false);
-    expect(yield* read).toBe('environment-credential-000');
-    yield* sealHostedModuleCredentials({
-      credentials: { 'commerce-order': Redacted.make(ORDER_KEY) },
-      schemaVersion: 1,
-    });
-    expect(isHostedModuleCredentialProcess()).toBe(true);
-    expect(yield* read).toBe(ORDER_KEY);
-    const refused = yield* Effect.flip(
-      sealHostedModuleCredentials({
-        credentials: { 'commerce-order': Redacted.make('another-module-key-0000') },
+    const readAs = (appId: string) =>
+      Effect.suspend(() =>
+        Config.option(Config.String(MODULE_CREDENTIAL_VARIABLE)).parse(
+          moduleCredentialConfigProvider(environment, appId),
+        ),
+      ).pipe(Effect.map(Option.getOrUndefined));
+    // Unclaimed: the process serves one module and reads its own environment.
+    expect(yield* readAs('commerce-order')).toBe('environment-credential-000');
+
+    const receiver = yield* claimHostedModuleCredentials(['commerce-order', 'party-registry']);
+    // Claimed and empty: no owner falls back to the shared environment.
+    expect(yield* readAs('commerce-order')).toBeUndefined();
+    const refusedClaim = yield* Effect.flip(claimHostedModuleCredentials(['commerce-order']));
+    expect(Schema.is(HostedModuleCredentialsSealedError)(refusedClaim)).toBe(true);
+
+    // The boot handover fills one owner; an owner this process does not serve is refused.
+    expect(
+      yield* receiver.accept({
+        credentials: { 'commerce-order': Redacted.make(ORDER_KEY), pricing: Redacted.make('pricing-module-key-0000') },
         schemaVersion: 1,
       }),
-    );
-    expect(Schema.is(HostedModuleCredentialsSealedError)(refused)).toBe(true);
-    expect(yield* read).toBe(ORDER_KEY);
+    ).toEqual({ accepted: ['commerce-order'], refused: ['pricing'] });
+    expect(yield* heldHostedModuleCredentials).toEqual(['commerce-order']);
+    // A later handover fills the owner that still holds none, and never replaces a key already held.
+    expect(
+      yield* receiver.accept({
+        credentials: {
+          'commerce-order': Redacted.make('replacement-order-module-key'),
+          'party-registry': Redacted.make(PARTY_KEY),
+        },
+        schemaVersion: 1,
+      }),
+    ).toEqual({ accepted: ['party-registry'], refused: ['commerce-order'] });
+    expect(yield* readAs('commerce-order')).toBe(ORDER_KEY);
+    expect(yield* readAs('party-registry')).toBe(PARTY_KEY);
+    expect(yield* readAs('pricing')).toBeUndefined();
   }),
 );

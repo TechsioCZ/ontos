@@ -1,5 +1,4 @@
-import { Config, ConfigProvider, Effect, Exit, Layer, Option, Redacted, Schema } from 'effect';
-import { HttpRouter, HttpServerResponse } from 'effect/http';
+import { Config, ConfigProvider, Effect, Exit, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -49,34 +48,6 @@ it.effect('lets a dedicated module deployment read its own environment', () =>
       Exit.succeed('shared-environment-credential'),
     );
   }),
-);
-
-it.effect('serves the overlay to request handlers when it is part of the runtime layer', () =>
-  Effect.gen(function* handlerSeesOverlay() {
-    const route = HttpRouter.add(
-      'GET',
-      '/credential',
-      Config.String(MODULE_CREDENTIAL_VARIABLE).pipe(
-        Effect.map((value) => HttpServerResponse.text(value === ORDER_KEY ? 'own' : 'other')),
-        Effect.orElseSucceed(() => HttpServerResponse.text('missing')),
-      ),
-    );
-    const overlay = ConfigProvider.layer(
-      Effect.gen(function* ownerOverlay() {
-        return ownerModuleCredentialConfigProvider(
-          yield* ConfigProvider.ConfigProvider,
-          'commerce-order',
-          () => hosted,
-        );
-      }),
-    );
-    const handler = yield* Effect.acquireRelease(
-      Effect.sync(() => HttpRouter.toWebHandler(Layer.mergeAll(route, overlay))),
-      (web) => Effect.promise(() => web.dispose()),
-    );
-    const response = yield* Effect.promise(() => handler.handler(new Request('http://owner.test/credential')));
-    expect(yield* Effect.promise(() => response.text())).toBe('own');
-  }).pipe(Effect.scoped),
 );
 
 it.effect('decodes a host handover with redacted keys and refuses short keys or unknown app ids', () =>

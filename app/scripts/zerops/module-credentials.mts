@@ -1,17 +1,21 @@
 /**
  * The platform's module credentials on a host: who gets one, how a provisioning pass reports them, and how a process
  * that serves several owners receives them. Keys travel only over pipes between processes and live only in their
- * memory; they are never logged, written to disk or put in an environment variable.
+ * memory; they are never logged, written to disk or put in an environment variable. A process's channel is its file
+ * descriptor 3; its standard output and standard error stay logs, so a stray log line never reaches a handover.
  */
+import { Socket } from 'node:net';
+
 import { fromReadable } from '@effect/platform-node/NodeStream';
 import { Config, Console, Duration, Effect, Option, Schema, Stream } from 'effect';
 import type { Redacted } from 'effect';
 
 import {
+  claimHostedModuleCredentials,
   HostedModuleCredentialsSchema,
   ModuleAppIdSchema,
-  sealHostedModuleCredentials,
 } from '../../packages/core-runtime/src/auth/hosted-module-credentials.ts';
+import type { HostedModuleCredentialReceiver } from '../../packages/core-runtime/src/auth/hosted-module-credentials.ts';
 
 export class ModuleCredentialHandoverError extends Schema.TaggedError<ModuleCredentialHandoverError>()(
   'ModuleCredentialHandoverError',
@@ -33,15 +37,24 @@ export const MODULE_CREDENTIAL_CALLERS: readonly string[] = Object.freeze([
   'pricing',
 ]);
 
-/** Set to `stdin` by whoever hands a multi-owner process its module credentials on its standard input. */
+/**
+ * Set to `fd3` by whoever starts a multi-owner process with its private handover channel open as file descriptor 3.
+ * The switch is not secret; the keys travel only on that channel, never in an environment variable or argument.
+ */
 export const MODULE_CREDENTIAL_HANDOVER_VARIABLE = 'ONTOS_MODULE_CREDENTIAL_HANDOVER';
+
+/** The private channel between a host and a process it starts: a pipe on file descriptor 3, beside stdout/stderr. */
+export const MODULE_CREDENTIAL_CHANNEL_FD = 3;
 
 const HandoverJsonSchema = Schema.fromJsonString(HostedModuleCredentialsSchema);
 
 /** A module key's provider id: not secret, it names which bound credential a pass issued. */
 const ProviderKeyIdSchema = Schema.String.check(Schema.isMinLength(1)).pipe(Schema.brand('ModuleProviderKeyId'));
 
-/** The bytes a host writes to one multi-owner process: exactly the given owners' credentials, nobody else's. */
+/**
+ * One handover message for one multi-owner process: exactly the given owners' credentials, nobody else's, as one
+ * line on its channel. A process accepts messages for as long as the channel is open; each fills only empty slots.
+ */
 export const encodeModuleCredentialHandover = Effect.fn('ModuleCredentials.encodeHandover')(function* encodeHandover(
   credentials: Readonly<Record<string, Redacted.Redacted>>,
   owners: readonly string[],
@@ -55,35 +68,67 @@ export const encodeModuleCredentialHandover = Effect.fn('ModuleCredentials.encod
     ),
     schemaVersion: 1,
   }).pipe(Effect.mapError(() => new ModuleCredentialHandoverError({ reason: 'The handover could not be encoded' })));
-  return new TextEncoder().encode(json);
+  return new TextEncoder().encode(`${json}\n`);
 });
 
 /**
- * Seals this multi-owner process before any owner runs. With the handover flag it reads its owners' credentials from
- * standard input; without it, it seals none, so no owner ever falls back to a module key in the shared environment.
+ * Applies the handover lines of one channel to this process's receiver, for as long as the channel stays open. A
+ * malformed line is refused and reported by name only (never echoed: it may hold keys); the next line still counts.
  */
-export const receiveModuleCredentialHandover = Effect.gen(function* receiveHandover() {
-  // The handover mode is a non-secret switch (`stdin`); the keys arrive on standard input, never in a variable.
-  const mode = yield* Config.option(Config.schema(Schema.Literal('stdin'), MODULE_CREDENTIAL_HANDOVER_VARIABLE)).pipe(
-    Effect.mapError(
-      () => new ModuleCredentialHandoverError({ reason: `${MODULE_CREDENTIAL_HANDOVER_VARIABLE} must be stdin` }),
+export const applyModuleCredentialHandovers = <E,>(
+  receiver: HostedModuleCredentialReceiver,
+  channel: Stream.Stream<Uint8Array, E>,
+) =>
+  channel.pipe(
+    Stream.decodeText(),
+    Stream.splitLines,
+    Stream.filter((line) => line.trim().length > 0),
+    Stream.runForEach((line) =>
+      Schema.decodeEffect(HandoverJsonSchema)(line).pipe(
+        Effect.flatMap(receiver.accept),
+        Effect.flatMap(({ accepted, refused }) => {
+          const refusal =
+            refused.length === 0 ? '' : `; refused ${refused.join(', ')} (not served here, or already held)`;
+          return Console.log(
+            `[module-credentials] received the credentials of ${accepted.join(', ') || 'no owner'}${refusal}`,
+          );
+        }),
+        Effect.catchTag('SchemaError', () =>
+          Console.error('[module-credentials] refused a malformed module credential handover'),
+        ),
+      ),
     ),
   );
+
+/**
+ * Claims this multi-owner process for `owners` before any owner runs. With the handover switch it keeps reading its
+ * private channel (file descriptor 3) in the background, so a host can hand over keys at start or later, once each;
+ * without it, no owner ever holds a key and none falls back to a module key in the shared environment.
+ */
+export const receiveModuleCredentialHandover = Effect.fn('ModuleCredentials.receiveHandover')(function* receive(
+  owners: readonly string[],
+) {
+  const mode = yield* Config.option(Config.schema(Schema.Literal('fd3'), MODULE_CREDENTIAL_HANDOVER_VARIABLE)).pipe(
+    Effect.mapError(
+      () => new ModuleCredentialHandoverError({ reason: `${MODULE_CREDENTIAL_HANDOVER_VARIABLE} must be fd3` }),
+    ),
+  );
+  const receiver = yield* claimHostedModuleCredentials(owners);
   if (Option.isNone(mode)) {
-    return yield* sealHostedModuleCredentials({ credentials: {}, schemaVersion: 1 });
+    return yield* Console.log('[module-credentials] no handover channel; no owner of this process holds a key');
   }
-  const text = yield* fromReadable<Uint8Array, ModuleCredentialHandoverError>({
-    evaluate: () => process.stdin,
-    onError: () => new ModuleCredentialHandoverError({ reason: 'The handover could not be read' }),
-  }).pipe(Stream.decodeText(), Stream.mkString);
-  // Never echo the input: it holds keys.
-  const handover = yield* Schema.decodeEffect(HandoverJsonSchema)(text).pipe(
-    Effect.mapError(() => new ModuleCredentialHandoverError({ reason: 'The module credential handover is malformed' })),
+  const channel = fromReadable<Uint8Array, ModuleCredentialHandoverError>({
+    // The channel is a pipe (a socket pair, or the local demo's FIFO); it is read as a stream, never seeked.
+    evaluate: () => new Socket({ fd: MODULE_CREDENTIAL_CHANNEL_FD, readable: true, writable: false }),
+    onError: () => new ModuleCredentialHandoverError({ reason: 'The handover channel could not be read' }),
+  });
+  yield* applyModuleCredentialHandovers(receiver, channel).pipe(
+    Effect.catchTag('ModuleCredentialHandoverError', (problem) =>
+      Console.error(`[module-credentials] ${problem.reason}`),
+    ),
+    Effect.forkScoped,
   );
-  yield* sealHostedModuleCredentials(handover);
-  return yield* Console.log(
-    `[module-credentials] received the credentials of ${Object.keys(handover.credentials).join(', ') || 'no owner'}`,
-  );
+  return yield* Effect.void;
 });
 
 /**

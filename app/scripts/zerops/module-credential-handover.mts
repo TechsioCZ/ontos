@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 /**
- * Splits one provisioning pass's output (read from standard input, never from a file or a variable) for a process that
- * starts owners itself, such as the local demo:
+ * Turns one provisioning pass's output (read from standard input, a pipe from the caller's memory, never a file) into
+ * the handover line of one process, for a launcher that starts owners itself, such as the local demo:
  *
- *   ... | node scripts/zerops/module-credential-handover.mts key <app-id>   # that module's key, for its own process
- *   ... | node scripts/zerops/module-credential-handover.mts handover       # the multi-owner handover, for its stdin
+ *   ... | node scripts/zerops/module-credential-handover.mts handover [<app-id> ...] >"$channel"
  *
- * It writes only the requested credential(s) to standard output and nothing to standard error but a failure's name.
+ * It writes exactly the named owners' credentials (all of the pass's, when none are named) to standard output, which
+ * the launcher points at that process's private channel, and nothing to standard error but a failure's name.
  */
 import { NodeServices } from '@effect/platform-node';
-import { Console, Effect, Exit, Redacted, Schema, Stdio, Stream } from 'effect';
+import { Console, Effect, Exit, Schema, Stdio, Stream } from 'effect';
 import { Argument, Command } from 'effect/cli';
 
 import { encodeModuleCredentialHandover, ProvisioningOutputJsonSchema } from './module-credentials.mts';
@@ -31,28 +31,22 @@ const readOutput = Effect.gen(function* readProvisioningOutput() {
   );
 });
 
-const key = Command.make('key', { appId: Argument.String('app-id') }, ({ appId }) =>
-  Effect.gen(function* moduleKey() {
-    const output = yield* readOutput;
-    const credential = output.credentials[appId];
-    if (credential === undefined) {
-      return yield* new ModuleCredentialSplitError({ reason: `No module credential was issued for ${appId}` });
-    }
-    const stdio = yield* Stdio.Stdio;
-    return yield* Stream.make(new TextEncoder().encode(Redacted.value(credential))).pipe(Stream.run(stdio.stdout()));
-  }),
+const handover = Command.make(
+  'handover',
+  { owners: Argument.String('app-id').pipe(Argument.variadic()) },
+  ({ owners }) =>
+    Effect.gen(function* multiOwnerHandover() {
+      const output = yield* readOutput;
+      const bytes = yield* encodeModuleCredentialHandover(
+        output.credentials,
+        owners.length === 0 ? Object.keys(output.credentials) : owners,
+      );
+      const stdio = yield* Stdio.Stdio;
+      return yield* Stream.make(bytes).pipe(Stream.run(stdio.stdout()));
+    }),
 );
 
-const handover = Command.make('handover', {}, () =>
-  Effect.gen(function* multiOwnerHandover() {
-    const output = yield* readOutput;
-    const bytes = yield* encodeModuleCredentialHandover(output.credentials, Object.keys(output.credentials));
-    const stdio = yield* Stdio.Stdio;
-    return yield* Stream.make(bytes).pipe(Stream.run(stdio.stdout()));
-  }),
-);
-
-const command = Command.make('module-credential-handover').pipe(Command.withSubcommands([key, handover]));
+const command = Command.make('module-credential-handover').pipe(Command.withSubcommands([handover]));
 
 if (import.meta.main) {
   const result = await Effect.runPromiseExit(
