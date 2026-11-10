@@ -1,14 +1,14 @@
 // "E-shopy" section of the market detail: the e-shops the market sells in, and associate / revise / remove.
 import { SectionCard, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
-import type { SavableDraft, SaveOutcome } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import type { StorefrontApplicationSummary } from '@app/storefront-registry/api/storefront-applications';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { DateTime, Effect, Equal, Schema } from 'effect';
-import { useEffect, useEffectEvent, useState } from 'react';
+import { DateTime, Effect, Schema } from 'effect';
+import { useState } from 'react';
 import { AssociateStorefrontPayloadSchema } from '../../shared/actions/associate-storefront.ts';
 import { RemoveStorefrontAssociationPayloadSchema } from '../../shared/actions/remove-storefront-association.ts';
 import { ReviseStorefrontAssociationPayloadSchema } from '../../shared/actions/revise-storefront-association.ts';
@@ -133,7 +133,12 @@ const AssociationDialog = ({
     );
   };
   const record = useDraftSave<AssociationDraft, never>({
+    // A new association exists nowhere yet: its confirmed version has no e-shop, so the pre-selected one is already
+    // something Uložit can send.
+    initial: association === undefined ? { ...opened, appId: '' } : undefined,
     isValid: (value) => value.appId !== '' && value.channel !== undefined,
+    // Leaving asks only about what the user changed, not about the pre-selected defaults.
+    opened,
     runtime: browserRuntime,
     save: (value) => {
       if (value.channel === undefined) {
@@ -160,20 +165,8 @@ const AssociationDialog = ({
     },
     value: draft,
   });
-  // A new association exists nowhere yet, so the pre-selected e-shop is already something Uložit can send.
-  const startFromNothing = useEffectEvent(() => {
-    if (association === undefined) {
-      // Nothing is stored yet: the confirmed version is one without an e-shop.
-      record.adopt({ ...opened, appId: '' });
-    }
-  });
-  useEffect(() => {
-    startFromNothing();
-  }, []);
-  // Leaving asks only about what the user changed, not about the pre-selected defaults.
-  const changed: SavableDraft = { ...record, dirty: record.dirty && !Equal.equals(draft, opened) };
-  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => changed.dirty, withResolver: true });
-  const guard = useUnsavedChangesGuard({ draft: changed, navigation: blocker, onDiscard: () => setDraft(opened) });
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: () => setDraft(opened) });
   const handleSave = record.save;
   return (
     <FormDialogFrame

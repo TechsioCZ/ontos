@@ -627,6 +627,8 @@ const DocumentEditPanel = ({
   const record = useDraftSave<DocumentEditDraft, never>({
     equals: sameDocumentEditDraft,
     isValid: (value) => Option.isSome(documentUpdateCommandOf(document.id, value)),
+    // A closed panel holds nothing on screen: only the open panel asks before leaving.
+    open,
     runtime: browserRuntime,
     save: (value) =>
       Option.match(documentUpdateCommandOf(document.id, value), {

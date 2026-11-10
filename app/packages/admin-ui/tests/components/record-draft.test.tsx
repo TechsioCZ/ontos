@@ -19,6 +19,8 @@ interface Harness {
 const harness = (): Harness => ({ bases: [], expected: [], replies: [], sent: [] });
 
 interface NameFormProps {
+  /** Something besides the draft that the validation reads, such as a selection: while set, no draft is valid. */
+  readonly held?: boolean;
   readonly revision?: number;
   readonly server: string;
   /** What a settled draft becomes when it takes a newer server version. */
@@ -28,9 +30,9 @@ interface NameFormProps {
 
 type NameFormOptions = UseRecordDraftOptions<string, never>;
 
-const NameForm = ({ revision = 1, server, takeServer, test }: NameFormProps) => {
+const NameForm = ({ held = false, revision = 1, server, takeServer, test }: NameFormProps) => {
   const options: { -readonly [Key in keyof NameFormOptions]: NameFormOptions[Key] } = {
-    isValid: (value: string) => value.trim() !== '',
+    isValid: (value: string) => value.trim() !== '' && !held,
     revision,
     runtime,
     save: (value: string, expectedRevision: number, confirmed: string) =>
@@ -387,6 +389,60 @@ describe('useRecordDraft', () => {
       expect(test.expected).toEqual([4, 5]);
       answer(test, 1, 6);
       yield* eventually(() => expect(screen.getByText('Uloženo')).toBeTruthy());
+    }),
+  );
+
+  it.effect('checks a changed draft again when what its validation reads changes, and leaves every other status', () =>
+    Effect.gen(function* revalidation() {
+      const test = harness();
+      const view = render(<NameForm server="Akros" test={test} />);
+      type('Akros CZ');
+      expect(flags()).toBe('dirty savable');
+      view.rerender(<NameForm held server="Akros" test={test} />);
+      yield* eventually(() => expect(flags()).toBe('dirty held'));
+      view.rerender(<NameForm server="Akros" test={test} />);
+      yield* eventually(() => expect(flags()).toBe('dirty savable'));
+
+      // A running save, a conflict and a parked draft keep their status whatever the validation now says.
+      clickSave();
+      view.rerender(<NameForm held server="Akros" test={test} />);
+      expect(saveButton().textContent).toBe('Ukládám…');
+      answer(test, 0, 'conflict');
+      yield* eventually(() => expect(screen.getByText('Záznam mezitím změnil někdo jiný.')).toBeTruthy());
+      view.rerender(<NameForm server="Akros" test={test} />);
+      expect(screen.getByText('Záznam mezitím změnil někdo jiný.')).toBeTruthy();
+      expect(flags()).toBe('dirty held');
+      fireEvent.click(screen.getByRole('button', { name: 'Načíst aktuální verzi' }));
+      save('Akros Praha');
+      answer(test, 1, 'proposed');
+      const parked = 'Odesláno ke schválení – změna zatím nebyla provedena';
+      yield* eventually(() => expect(screen.getByText(parked)).toBeTruthy());
+      view.rerender(<NameForm held server="Akros" test={test} />);
+      expect(screen.getByText(parked)).toBeTruthy();
+      expect(test.sent).toEqual(['Akros CZ', 'Akros Praha']);
+    }),
+  );
+
+  it.effect('a saved draft that renders again keeps its confirmed version and still takes a newer one', () =>
+    Effect.gen(function* equalDraft() {
+      const test = harness();
+      const view = render(<NameForm revision={4} server="Akros" test={test} />);
+      save('Akros CZ');
+      answer(test, 0, 5);
+      yield* eventually(() => expect(screen.getByText('Uloženo')).toBeTruthy());
+      // The same draft rendered with other validation answers is not a change: still saved, nothing to send.
+      view.rerender(<NameForm held revision={4} server="Akros" test={test} />);
+      view.rerender(<NameForm revision={4} server="Akros" test={test} />);
+      expect(screen.getByText('Uloženo')).toBeTruthy();
+      expect(flags()).toBe('clean held');
+      // The reload of that save, then someone else's version: the clean draft takes it.
+      view.rerender(<NameForm revision={5} server="Akros CZ" test={test} />);
+      view.rerender(<NameForm revision={6} server="Jejich" test={test} />);
+      expect(input().value).toBe('Jejich');
+      save('Moje');
+      yield* eventually(() => expect(test.sent).toEqual(['Akros CZ', 'Moje']));
+      expect(test.bases[1]).toBe('Jejich');
+      expect(test.expected[1]).toBe(6);
     }),
   );
 

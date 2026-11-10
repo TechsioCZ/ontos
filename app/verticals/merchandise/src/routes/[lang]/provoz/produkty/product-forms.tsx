@@ -18,7 +18,7 @@ import {
   useDraftSave,
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
-import type { DraftSave, SaveLabels, SaveOutcome, SaveState, UnsavedChangesGuard } from '@app/admin-ui';
+import type { SaveLabels, SaveOutcome, SaveState, UnsavedChangesGuard } from '@app/admin-ui';
 import { useState } from 'react';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
@@ -220,6 +220,9 @@ const useFormSave = <V,>(options: FormSaveOptions<V>) => {
     equals: options.equals,
     initial: options.initial,
     isValid: options.isValid,
+    // The panel stays mounted while closed; only what the user typed in the open panel asks before leaving.
+    open: options.open,
+    opened: options.opened,
     runtime: browserRuntime,
     save: (value) =>
       productCommandOutcome(options.command(value), options.revision).pipe(
@@ -244,12 +247,8 @@ const useFormSave = <V,>(options: FormSaveOptions<V>) => {
     startOver();
     options.onOpenChange(false);
   };
-  // Only what the user typed in the open panel asks before leaving: the panel stays mounted while closed, and the
-  // values it opens with are not lost input.
-  const untouched = options.opened !== undefined && options.equals(options.value, options.opened);
-  const guardDraft: DraftSave<V> = { ...record, dirty: record.dirty && options.open && !untouched };
-  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => guardDraft.dirty, withResolver: true });
-  const guard = useUnsavedChangesGuard({ draft: guardDraft, navigation: blocker, onDiscard: startOver });
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: startOver });
   const handleSave = () => {
     record.save();
     record.afterSave((status) => {

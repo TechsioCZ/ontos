@@ -81,6 +81,21 @@ const clickSave = async () => {
   await settle();
 };
 
+/** Whether the Uložit / Zahodit změny / Zůstat question is up. */
+const leaveQuestion = (): boolean => document.querySelector('[role="alertdialog"]') !== null;
+
+const clickCancel = async () => {
+  const cancel = Option.getOrThrow(
+    Option.fromNullishOr(
+      footerButtons().find((button) => (button.textContent ?? '').trim() === 'workforce.pages.employees.form.cancel'),
+    ),
+  );
+  await act(async () => {
+    cancel.click();
+  });
+  await settle();
+};
+
 beforeEach(() => {
   rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
 });
@@ -129,6 +144,47 @@ describe('bulk employee dialogs', () => {
       expect(saveButton().disabled).toBe(false);
       await clickSave();
       expect(sent).toEqual([{ _tag: 'BulkUpdateEmployees', ids, patch: { role: 'SALES_REP' } }]);
+    }),
+  );
+
+  it.live('the role dialog closes untouched without asking about unsaved changes', () =>
+    Effect.promise(async () => {
+      const closed: string[] = [];
+      const sent: WorkforceCommand[] = [];
+      await mount(
+        <BulkRoleDialog
+          commit={recording(sent)}
+          ids={ids}
+          onClose={() => {
+            closed.push('closed');
+          }}
+          onSaved={constVoid}
+        />,
+      );
+      await clickCancel();
+      expect(closed).toEqual(['closed']);
+      expect(leaveQuestion()).toBe(false);
+      expect(sent).toEqual([]);
+    }),
+  );
+
+  it.live('the department dialog asks before closing once something was typed', () =>
+    Effect.promise(async () => {
+      const closed: string[] = [];
+      await mount(
+        <BulkDepartmentDialog
+          commit={recording([])}
+          ids={ids}
+          onClose={() => {
+            closed.push('closed');
+          }}
+          onSaved={constVoid}
+        />,
+      );
+      await typeInto('bulk-department', 'Obchod');
+      await clickCancel();
+      expect(closed).toEqual([]);
+      expect(leaveQuestion()).toBe(true);
     }),
   );
 });

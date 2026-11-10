@@ -116,6 +116,22 @@ const clickSave = async () => {
   await settle();
 };
 
+const clickCancel = async () => {
+  const cancel = Option.getOrThrow(
+    Option.fromNullishOr(footerButtons().find((button) => (button.textContent ?? '').trim() === 'Zrušit')),
+  );
+  await act(async () => {
+    cancel.click();
+  });
+  await settle();
+};
+
+/** A submit the server refuses without a message. */
+const refusing: CrmCommandSubmit = () => Effect.succeed({ entityIds: [], ok: false });
+
+/** Whether the Uložit / Zahodit změny / Zůstat question is up. */
+const leaveQuestion = (): boolean => document.querySelector('[role="alertdialog"]') !== null;
+
 afterEach(() => {
   for (const unmount of views.splice(0)) {
     unmount();
@@ -162,6 +178,31 @@ describe('CRM panels save from Uložit only', () => {
 
       await clickSave();
       expect(sent).toEqual([{ _tag: 'PlanContact', clientId: client.id, dueDate: '2026-10-22' }]);
+    }),
+  );
+
+  it.live('the planned contact closes untouched without asking, but asks once its save failed', () =>
+    Effect.promise(async () => {
+      const closed: string[] = [];
+      await mount(
+        <PlanContactPanel
+          clientId={client.id}
+          onClose={() => {
+            closed.push('closed');
+          }}
+          records={records}
+          submit={refusing}
+        />,
+      );
+      await clickCancel();
+      expect(closed).toEqual(['closed']);
+      expect(leaveQuestion()).toBe(false);
+
+      // The opening values were sent and refused: they are now the user's unsaved draft.
+      await clickSave();
+      await clickCancel();
+      expect(closed).toEqual(['closed']);
+      expect(leaveQuestion()).toBe(true);
     }),
   );
 });

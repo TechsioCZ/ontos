@@ -6,7 +6,7 @@ import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
 import type { DraftSave, SaveLabels, SaveOutcome, UnsavedChangesGuard } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Effect, Equal, Option } from 'effect';
+import { Effect, Option } from 'effect';
 import { constVoid } from 'effect/Function';
 import { useRef, useState } from 'react';
 import type { CrmCommandInput } from '../../shared/actions/apply-command.ts';
@@ -46,6 +46,8 @@ export const useCrmFormSave = <V,>(options: CrmFormSaveOptions<V>): CrmFormSave<
   const record = useDraftSave<V, never>({
     initial: options.fromEmpty?.empty,
     isValid: (value) => Option.isSome(options.command(value)),
+    // Only what the user typed asks before leaving: values the form opened with are not lost input.
+    opened: options.fromEmpty?.opened,
     runtime: browserRuntime,
     save: (value) =>
       Option.match(options.command(value), {
@@ -65,11 +67,8 @@ export const useCrmFormSave = <V,>(options: CrmFormSaveOptions<V>): CrmFormSave<
       }),
     value: options.value,
   });
-  // Only what the user typed asks before leaving: values the form opened with are not lost input.
-  const untouched = options.fromEmpty !== undefined && Equal.equals(options.value, options.fromEmpty.opened);
-  const guardDraft: DraftSave<V> = { ...record, dirty: record.dirty && !untouched };
-  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => guardDraft.dirty, withResolver: true });
-  const guard = useUnsavedChangesGuard({ draft: guardDraft, navigation: blocker, onDiscard: constVoid });
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: constVoid });
   const handleSave = () => {
     record.save();
     record.afterSave((status) => {

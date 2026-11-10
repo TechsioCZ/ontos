@@ -166,6 +166,17 @@ it.effect('the price change it opens with is sent by the first Uložit', () =>
   }),
 );
 
+type ManageCatalogFailure = Effect.Error<ReturnType<typeof executeManageCatalog>>;
+/** The action's refusal for a user without the permission. */
+const forbidden: Extract<ManageCatalogFailure, { readonly _tag: 'ManageCatalogActionForbiddenProblem' }> = {
+  _tag: 'ManageCatalogActionForbiddenProblem',
+  code: 'action_permission_denied',
+  detail: 'The actor may not change prices',
+  status: 403,
+  title: 'Forbidden',
+  type: 'https://ontos.dev/problems/forbidden',
+};
+
 /** Whether closing or reloading the tab would ask now. */
 const unloadAsks = (): boolean => {
   const event = new Event('beforeunload', { cancelable: true });
@@ -195,5 +206,17 @@ it.effect('the price change asks before leaving only for a percent the user type
     expect(unloadAsks()).toBe(false);
     yield* typeInto('price-percent', '7');
     expect(unloadAsks()).toBe(true);
+  }),
+);
+
+it.effect('the price change it opens with asks before leaving once its save failed', () =>
+  Effect.gen(function* failedOpeningPrice() {
+    rstest.mocked(executeManageCatalog).mockImplementation(() => Effect.fail(forbidden));
+    yield* Effect.promise(() => mount(<PriceChangeDialog {...dialogProps} />));
+    expect(unloadAsks()).toBe(false);
+    yield* click(saveButton());
+    yield* Effect.promise(() => waitUntil(() => sent().length === 1));
+    yield* Effect.promise(() => waitUntil(() => unloadAsks()));
+    expect(committed).toEqual([]);
   }),
 );

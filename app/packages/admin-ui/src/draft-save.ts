@@ -313,6 +313,16 @@ export interface UseDraftSaveOptions<V, R> extends DraftSaveOptions<V, R> {
    * so the values it opens with already count as a draft the Save button sends.
    */
   readonly initial?: V | undefined;
+  /**
+   * Whether the form is on screen; open by default. A form that stays mounted while closed holds nothing the user
+   * can see, so it never counts as unsaved and leaving never asks about it.
+   */
+  readonly open?: boolean | undefined;
+  /**
+   * The values the form opens with, when they differ from `initial` (a suggested value Uložit can send at once).
+   * They are not typed input: while the draft still equals them and no save of them ran, leaving does not ask.
+   */
+  readonly opened?: V | undefined;
   /** The host's browser runtime; saves run in it. */
   readonly runtime: ManagedRuntime.ManagedRuntime<R, never>;
   /** The form's draft. Without `initial`, the first render's value is taken as saved. */
@@ -421,15 +431,13 @@ const useGeneration = <V, R>(options: GenerationOptions<V, R>) => {
     ),
   );
   const { base, controller } = generation;
-  useEffect(() => {
-    controller.configure(boundTo(options, base, controller));
-    // The new `isValid` may answer differently for the same draft: what it reads besides the draft changed.
-    controller.revalidate();
-  }, [base, controller, options]);
+  // The newest closures first, then this render's draft, so validation never pairs one render's rules with another
+  // render's draft. An equal draft is checked again: what `isValid` reads besides the draft may have changed.
   // The draft only moves the status. Nothing is sent here, and nothing is sent when the form unmounts.
   useEffect(() => {
+    controller.configure(boundTo(options, base, controller));
     controller.change(options.value);
-  }, [controller, options.value]);
+  }, [base, controller, options]);
   const status = useSyncExternalStore(controller.subscribe, controller.status, controller.status);
   const restart = (value: V, revision: number) => {
     controller.dispose();
@@ -459,7 +467,12 @@ const draftSaveOf = <V, R>(
  */
 export const useDraftSave = <V, R>(options: UseDraftSaveOptions<V, R>): DraftSave<V> => {
   const { controller, restart, status } = useGeneration({ ...options, revision: 0, save: options.save });
-  return draftSaveOf(controller, status, (value) => restart(value, 0));
+  const record = draftSaveOf(controller, status, (value) => restart(value, 0));
+  const same = options.equals ?? Equal.equals;
+  // Only a changed draft can be untouched: once a save of the opening values ran, its result is the user's.
+  const untouched =
+    options.opened !== undefined && (status === 'dirty' || status === 'invalid') && same(options.value, options.opened);
+  return { ...record, dirty: record.dirty && options.open !== false && !untouched };
 };
 
 export interface UseRecordDraftOptions<V, R> extends Omit<DraftSaveOptions<V, R>, 'save'> {

@@ -811,6 +811,7 @@ const useBulkSave = <V,>({
   initial,
   isValid,
   onSaved,
+  opened,
   patchOf,
   value,
 }: {
@@ -820,6 +821,8 @@ const useBulkSave = <V,>({
   readonly initial: V;
   readonly isValid: (value: V) => boolean;
   readonly onSaved: () => void;
+  /** The value the dialog opens with when it differs from `initial`: not typed input, so closing does not ask. */
+  readonly opened?: V;
   readonly patchOf: (value: V) => Partial<Employee> & Parameters<typeof bulkCommand>[1];
   readonly value: V;
 }) => {
@@ -828,6 +831,7 @@ const useBulkSave = <V,>({
   const record = useDraftSave<V, never>({
     initial,
     isValid,
+    opened,
     runtime: browserRuntime,
     save: (draft) => {
       const patch = patchOf(draft);
@@ -922,6 +926,9 @@ export const BulkDepartmentDialog = ({
   );
 };
 
+/** The role the bulk role dialog suggests when it opens. */
+const openingRole: EmployeeRole = 'SALES_REP';
+
 /** Bulk role change: one role applied to every selected Employee. */
 export const BulkRoleDialog = ({
   commit,
@@ -935,7 +942,7 @@ export const BulkRoleDialog = ({
   readonly onSaved: () => void;
 }) => {
   const { t } = useModernI18n();
-  const [role, setRole] = useState<EmployeeRole | null>('SALES_REP');
+  const [role, setRole] = useState<EmployeeRole | null>(openingRole);
   const roleItems = roleItemsOf(t);
   const bulk = useBulkSave<EmployeeRole | null>({
     commit,
@@ -944,6 +951,8 @@ export const BulkRoleDialog = ({
     initial: null,
     isValid: (value) => value !== null,
     onSaved,
+    // Closing the dialog untouched asks nothing: the opening role is a suggestion, not input.
+    opened: openingRole,
     patchOf: (value) => (value === null ? {} : { role: value }),
     value: role,
   });

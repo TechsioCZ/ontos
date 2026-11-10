@@ -169,6 +169,8 @@ export const OrderCreateDialog = ({ customers, onCreated, onOpenChange, open, re
     equals: sameDraft,
     initial: blankDraft,
     isValid: (value) => partyErrorOf(value) === undefined && lineErrorsOf(value).every((error) => error === undefined),
+    // The panel stays mounted while closed: only the open panel asks before leaving.
+    open,
     runtime: browserRuntime,
     save: createFrom,
     value: draft,

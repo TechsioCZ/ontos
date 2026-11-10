@@ -427,6 +427,8 @@ export const CustomerCreateDialog = ({
 
   const record = useDraftSave({
     isValid: (value) => Object.keys(validateCreateDraft(value)).length === 0,
+    // The panel stays mounted while closed: only the open panel asks before leaving.
+    open,
     runtime: browserRuntime,
     save: saveCustomer,
     value: draft,
