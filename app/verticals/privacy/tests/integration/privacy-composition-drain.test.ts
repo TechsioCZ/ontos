@@ -1387,6 +1387,30 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
       })),
     });
   });
+  // Every Outbox delivery with the message it delivers. The matcher reports only totals, and Core's own
+  // system subscriptions match Core lifecycle messages beside Privacy's, so attribution reads the rows.
+  const deliveries = Effect.fn('PrivacyCompletionTest.deliveries')(function* deliveries() {
+    const facts = yield* Effect.all(
+      {
+        deliveries: coreEvidenceExecutor.query.outboxDeliveries.findMany({
+          columns: { consumerModuleKey: true, outboxMessageId: true, status: true, workerKey: true },
+        }),
+        messages: coreEvidenceExecutor.query.outboxMessages.findMany({
+          columns: { outboxMessageId: true, producerModuleKey: true, topic: true },
+        }),
+      },
+      { concurrency: 2 },
+    );
+    const messages = new Map(facts.messages.map((message) => [message.outboxMessageId, message]));
+    return facts.deliveries.map((delivery) => ({
+      consumerModuleKey: delivery.consumerModuleKey,
+      messageId: delivery.outboxMessageId,
+      producerModuleKey: messages.get(delivery.outboxMessageId)?.producerModuleKey,
+      status: delivery.status,
+      topic: messages.get(delivery.outboxMessageId)?.topic,
+      workerKey: delivery.workerKey,
+    }));
+  });
   const observeSealFailure = Effect.gen(function* observeSealFailure() {
     const facts = yield* Effect.all({
       deliveries: coreEvidenceExecutor.query.outboxDeliveries.findMany({
@@ -1620,6 +1644,7 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
   return {
     control,
     cycle,
+    deliveries,
     dispatch,
     evidence,
     handoff,
@@ -2530,6 +2555,9 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           });
           yield* f.isolated.composition.closeAdmission();
           yield* pending(f);
+          const privacyDeliveries = (rows: Effect.Success<ReturnType<typeof f.deliveries>>) =>
+            rows.filter((row) => row.messageId === originalMessage.id && row.consumerModuleKey === 'party.registry');
+          const deliveriesBefore = yield* f.deliveries();
           // Actual registered handler + repository.complete: succeeded is counted only after durable ACK.
           const completedCycle = yield* f.cycle();
           expect(completedCycle).toMatchObject({
@@ -2539,9 +2567,18 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
             retried: 0,
             succeeded: 1,
           });
+          const deliveriesAfter = yield* f.deliveries();
           // Shell's real installed-catalog matcher also runs: this worker may find its delivery already matched.
           // Keep both matchers and require the same single claim/ACK and exact message-derived debt settlement.
-          expect([0, 1]).toContain(completedCycle.matched.deliveriesCreated);
+          // The cycle's matcher totals also count Core's own system subscriptions (module-state reconciliation),
+          // so Privacy's count comes from its own delivery rows: the one dispatch message, Party's consumer.
+          expect(privacyDeliveries(deliveriesAfter)).toHaveLength(1);
+          expect([0, 1]).toContain(
+            privacyDeliveries(deliveriesAfter).length - privacyDeliveries(deliveriesBefore).length,
+          );
+          expect(completedCycle.matched.deliveriesCreated).toBeLessThanOrEqual(
+            deliveriesAfter.length - deliveriesBefore.length,
+          );
           expect(completedCycle.matched.messagesMatched).toBeGreaterThanOrEqual(
             completedCycle.matched.deliveriesCreated,
           );
