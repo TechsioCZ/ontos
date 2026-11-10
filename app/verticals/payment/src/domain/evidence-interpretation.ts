@@ -69,6 +69,11 @@ export interface PaymentInterpretedEvidence {
    * `operationId`: their economic effect established that operation (#1151).
    */
   readonly attachedStatements: readonly PaymentAcceptedObservationView[];
+  /**
+   * Statements a qualified correction fully disproves (the persistence full-disproof rule, held
+   * retractions included). Reductions of such a receipt no longer apply to its collection.
+   */
+  readonly fullyDisprovenObservationIds?: ReadonlySet<string>;
 }
 
 /** The Current aggregate the interpreter reads: `PaymentAggregateRecord` operations plus the lineage. */
@@ -445,7 +450,11 @@ const reductionExceedsRemainingFunds = (
       prior.factKind === 'SOURCE_CORRECTION' &&
       prior.operationId === operation.operationId &&
       prior.amount !== undefined &&
-      prior.amount.amountMinor < operation.amount.amountMinor
+      prior.amount.amountMinor < operation.amount.amountMinor &&
+      !(
+        prior.correctsObservationId !== undefined &&
+        aggregate.fullyDisprovenObservationIds?.has(prior.correctsObservationId) === true
+      )
     ) {
       reduced += prior.amount.amountMinor;
     }

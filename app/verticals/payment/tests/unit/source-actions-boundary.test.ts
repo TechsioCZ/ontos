@@ -7,6 +7,7 @@ import { RecordPaymentLocalEvidencePayloadSchema } from '../../shared/actions/re
 import { acceptPaymentObservationAction } from '../../src/actions/accept-payment-observation.action.ts';
 import { configurePaymentSourceAuthorityAction } from '../../src/actions/configure-payment-source-authority.action.ts';
 import { recordPaymentLocalEvidenceAction } from '../../src/actions/record-payment-local-evidence.action.ts';
+import { startPaymentCollectionAction } from '../../src/actions/start-payment-collection.action.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
 
 /**
@@ -128,6 +129,12 @@ describe('#1152 source Actions at the Core boundary', () => {
     );
     expect(recordPaymentLocalEvidenceAction.descriptor.accessDeclaration?.risk).toBe('critical');
     expect(acceptPaymentObservationAction.descriptor.accessDeclaration?.key).toBe('payment.core.observation.accept');
+    // Automated bank, gateway and carrier integrations reach the integration Action as a registered
+    // workload; operator evidence stays human-only.
+    expect(acceptPaymentObservationAction.descriptor.accessWorkload?.workloads).toEqual(['payment.source-ingress']);
+    expect(recordPaymentLocalEvidenceAction.descriptor.accessWorkload).toBeUndefined();
+    // Starting a collection is money movement.
+    expect(startPaymentCollectionAction.descriptor.accessDeclaration?.risk).toBe('critical');
   });
 
   it('#1152 untrusted refund destination: the public contracts carry no destination, trusted scope or provider payload', () => {

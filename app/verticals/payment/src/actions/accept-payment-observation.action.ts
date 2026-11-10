@@ -94,6 +94,11 @@ export const acceptPaymentObservationAction = defineAction(
       captureMode: 'metadata_only',
       policyKey: 'payment.core.accept-payment-observation.access.v1',
     },
+    accessWorkload: {
+      reason:
+        'Configured bank, gateway and carrier integrations submit source statements without a human session; each is still qualified against its bound source authority',
+      workloads: ['payment.source-ingress'],
+    },
     actionKey: 'payment.core.accept-payment-observation',
     auditProfile: 'standard',
     domainErrorSchema: Schema.Union([PaymentSourceRejected, PaymentConflict, PaymentRejected, PaymentUnavailable]),
