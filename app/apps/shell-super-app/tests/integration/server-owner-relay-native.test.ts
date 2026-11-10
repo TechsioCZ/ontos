@@ -5686,11 +5686,11 @@ it.live(
                     enrollmentEvidenceRef: Schema.Literal(bindingEvidenceRef),
                     principalRef: Schema.Struct({
                       resourceId: Schema.Literal(bindingActor.principalId),
-                      tenantId: Schema.Literal(PLATFORM_TENANT.tenantId),
+                      tenantId: Schema.Literal(fixture.core.tenantId),
                     }),
                     profileRef: Schema.Struct({
                       resourceId: Schema.Literal(created.result.profileRef.resourceId),
-                      tenantId: Schema.Literal(PLATFORM_TENANT.tenantId),
+                      tenantId: Schema.Literal(fixture.core.tenantId),
                     }),
                     sellingLegalEntityRef: Schema.Struct({ resourceId: Schema.Literal(fixture.core.legalEntityId) }),
                     state: Schema.Literal('ACTIVE'),
