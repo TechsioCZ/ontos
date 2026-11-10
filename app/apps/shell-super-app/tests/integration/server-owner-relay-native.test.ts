@@ -94,6 +94,7 @@ import {
   Layer,
   Option,
   Path,
+  Predicate,
   Redacted,
   Schema,
 } from 'effect';
@@ -144,6 +145,24 @@ import {
   issueFixtureStorefrontGatewayAuthorization,
 } from '../support/server-owner-relay-native-fixture.ts';
 
+class RelayOwnerRefusal extends Schema.TaggedError<RelayOwnerRefusal>()('RelayOwnerRefusal', {
+  message: Schema.String,
+}) {}
+/** The fields a refused owner answer names: its problem tag, HTTP status and domain code. */
+const OwnerProblemFieldsSchema = Schema.Struct({
+  _tag: Schema.optionalKey(Schema.String),
+  code: Schema.optionalKey(Schema.String),
+  status: Schema.optionalKey(Schema.Number),
+});
+/** A refused owner answer as a real Error, so a failing case names the owner's problem and the reporter keeps its totals. */
+const reportableOwnerFailure = <Failure>(failure: Failure): Failure | RelayOwnerRefusal => {
+  const fields = Schema.decodeUnknownOption(OwnerProblemFieldsSchema)(failure);
+  return Predicate.isError(failure) || Option.isNone(fields)
+    ? failure
+    : new RelayOwnerRefusal({
+        message: `owner-refused:${fields.value._tag ?? 'unknown'}:status-${String(fields.value.status ?? 'none')}:code-${fields.value.code ?? 'none'}`,
+      });
+};
 const PARTY_MODULE_KEY = 'party.registry';
 const contactPointAddCapability = 'party.registry.contact-point.add';
 const partyReadCapability = 'party.registry.party.read';
@@ -6509,7 +6528,7 @@ it.live(
         expect(yield* child.isRunning).toBe(false);
       }
       if (Exit.isFailure(result)) {
-        yield* Effect.failCause(result.cause);
+        yield* Effect.failCause(result.cause).pipe(Effect.mapError(reportableOwnerFailure));
       }
     }).pipe(
       Effect.timeout('120 seconds'),
