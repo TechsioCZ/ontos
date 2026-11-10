@@ -705,6 +705,31 @@ it.live('#1151 e6 ledger: an unassigned duplicate report of a key already counte
   ),
 );
 
+// Guard: the same key with different money is contradictory evidence, never an accounted copy.
+it.live('#1151 an unassigned report of a counted key that states different money cannot be closed', () =>
+  nativeLedger(
+    Effect.gen(function* unassignedCopyWithOtherMoney() {
+      const { first, refundCase } = yield* twoBankTransferPayments();
+      const confirmed = yield* acceptObservation(refundCase, receiptOf(first, 'bank-statement-line-17'));
+      expect(confirmed.outcomeChange?.to).toBe('EFFECT_CONFIRMED');
+      const contradicting = yield* acceptObservation(refundCase, {
+        ...unassignedReceiptOf('erp-orphan-copy-17-other-money'),
+        amount: { amountMinor: 80_000, currency: 'CZK' },
+      });
+      expect(contradicting.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+      expect(
+        yield* failureCodeOf(
+          decideReconciliation(refundCase, {
+            caseId: contradicting.reconciliationCaseId ?? '',
+            decision: { _tag: 'CLOSE_CASE', evidenceRef: 'erp-orphan-copy-17-other-money' },
+            reason: 'Close the report as a copy of the counted transaction',
+          }),
+        ),
+      ).toBe('payment_reconciliation_obligation_unresolved');
+    }),
+  ),
+);
+
 // Guard: a held copy of an effect counted only for ANOTHER Payment is not accounted for and cannot be closed.
 it.live('#1151 e6 ledger: a held copy of an effect counted only for another Payment cannot be closed', () =>
   nativeLedger(
