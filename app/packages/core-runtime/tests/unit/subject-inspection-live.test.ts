@@ -6,7 +6,7 @@ import { TrustedPrincipalContextSchema } from '../../src/actions/principal-conte
 import { AccessIntent } from '../../src/access/decision/authority.ts';
 import { DecisionCheck } from '../../src/access/decision/engine.ts';
 import { AccessPrincipalKindSource } from '../../src/access/enforcement/actor.ts';
-import { AccessDecisionLog } from '../../src/access/enforcement/decision-log.ts';
+import { AccessDecisionLogBatch } from '../../src/access/enforcement/decision-log-batch.ts';
 import {
   SubjectAccessInspection,
   SubjectAccessInspectionLive,
@@ -54,10 +54,12 @@ const live = Effect.fn('SubjectInspectionTest.live')(function* live(snapshot: Ac
             return Effect.succeed(Option.some('human'));
           },
         }),
-        Layer.succeed(AccessDecisionLog, {
-          record: (entry) => {
-            expect(entry.scope).toBe(requesterScope);
-            expect(entry.onBehalfOfPrincipalId).toBe(person);
+        Layer.succeed(AccessDecisionLogBatch, {
+          recordAll: (entries) => {
+            for (const entry of entries) {
+              expect(entry.scope).toBe(requesterScope);
+              expect(entry.onBehalfOfPrincipalId).toBe(person);
+            }
             return Effect.void;
           },
         }),

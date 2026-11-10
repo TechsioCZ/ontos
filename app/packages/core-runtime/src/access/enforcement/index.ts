@@ -29,6 +29,12 @@ export type { AccessAmount } from '../decision/contract.ts';
 export { accessAmountAt, capabilityPolicyOf, gateAmountOf, gateScopeOf } from './capability.ts';
 export { seamDenial, seamRefusal, seamUnavailable } from './decisions.ts';
 export type { AccessDecisionLogEntry, AccessDecisionLogWriter } from './decision-log.ts';
+export type { AccessDecisionLogBatchWriter } from './decision-log-batch.ts';
+export {
+  AccessDecisionLogBatch,
+  AccessDecisionLogBatchLive,
+  makeDrizzleAccessDecisionLogBatch,
+} from './decision-log-batch.ts';
 export {
   AccessDecisionLog,
   AccessDecisionLogLive,
@@ -88,8 +94,11 @@ export type {
   InspectionSubject,
   SubjectAccessInspectionService,
   SubjectActionInspection,
+  SubjectCapabilityAnswer,
+  SubjectCapabilityBatchInspection,
   SubjectCapabilityInspection,
   SubjectCapabilityInspectionInput,
+  SubjectCapabilityQuestion,
   SubjectInspectionInput,
   SubjectListInspection,
   SubjectScopeInspection,

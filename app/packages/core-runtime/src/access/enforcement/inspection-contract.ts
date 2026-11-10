@@ -54,6 +54,31 @@ export interface SubjectListInspection {
   readonly predicate?: ListAccessPredicate;
 }
 
+/**
+ * One capability question of a batch, in the batch's subject and context. `listing` asks the LIST question of a
+ * selector-bearing read (as `list` does); otherwise it is the targetless decision `inspect` takes.
+ */
+export interface SubjectCapabilityQuestion extends Omit<
+  SubjectCapabilityInspectionInput,
+  keyof SubjectInspectionInput
+> {
+  readonly listing: boolean;
+}
+
+/** One batch answer: the decision `inspect` or `list` gives that question alone, and LIST's predicate. */
+export interface SubjectCapabilityAnswer {
+  readonly decision: AccessDecision;
+  readonly predicate?: ListAccessPredicate;
+}
+
+export interface SubjectCapabilityBatchInspection {
+  /** In question order. */
+  readonly answers: readonly SubjectCapabilityAnswer[];
+  /** In `actionKeys` order, exactly as `actions` answers them. */
+  readonly authorities: SubjectActionInspection['authorities'];
+  readonly inspectionOnly: true;
+}
+
 export interface SubjectScopeInspection {
   readonly decision: 'allowed' | 'denied';
   readonly inspectionOnly: true;
@@ -76,6 +101,18 @@ export interface SubjectAccessInspectionService {
   readonly actions: (
     input: SubjectInspectionInput & { readonly actionKeys: readonly string[] },
   ) => Effect.Effect<SubjectActionInspection, SubjectInspectionUnavailable>;
+  /**
+   * Many capability questions and Actions about one subject in one context, each answered exactly as `inspect`/`list`
+   * /`actions` answers it alone: the subject and its scope are resolved once per company context, every targetless
+   * decision shares one engine snapshot, an intent read the questions share is read once, and every decision row the
+   * single calls would write is written, all in one transaction.
+   */
+  readonly capabilities: (
+    input: SubjectInspectionInput & {
+      readonly actionKeys: readonly string[];
+      readonly questions: readonly SubjectCapabilityQuestion[];
+    },
+  ) => Effect.Effect<SubjectCapabilityBatchInspection, SubjectInspectionUnavailable>;
   readonly inspect: (
     input: SubjectCapabilityInspectionInput,
   ) => Effect.Effect<SubjectCapabilityInspection, SubjectInspectionUnavailable>;

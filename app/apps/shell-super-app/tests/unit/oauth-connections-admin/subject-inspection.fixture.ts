@@ -1,6 +1,6 @@
 import type { ActiveApplicationCompositionSnapshot, OperationalScope } from '@app/core-runtime';
 import {
-  AccessDecisionLog,
+  AccessDecisionLogBatch,
   AccessIntent,
   AccessPrincipalKindSource,
   DecisionCheck,
@@ -123,6 +123,8 @@ export const subjectInspectionFixture = (input: {
   readonly subjects: readonly InspectionFixtureSubject[];
 }) => {
   const requesterScopes: OperationalScope[] = [];
+  /** Every scripted port call, so a test can bound the round trips one inspection makes. */
+  const reads = { cells: 0, engine: 0, evidenceRows: 0, evidenceWrites: 0, facts: 0, kind: 0, scope: 0 };
   const subjectOf = (principalId: string) => input.subjects.find((subject) => subject.principalId === principalId);
   const companyScopeId = AccessScopeIdSchema.make('00000000-0000-4000-8000-000000000018');
   const tenantScopeId = AccessScopeIdSchema.make('00000000-0000-4000-8000-000000000019');
@@ -131,7 +133,10 @@ export const subjectInspectionFixture = (input: {
       requesterScopes.push(requesterScope);
       return {
         readCells: (query) =>
-          (input.onCapabilityRead?.(query.capabilityKey) ?? Effect.void).pipe(
+          Effect.sync(() => {
+            reads.cells += 1;
+          }).pipe(
+            Effect.andThen(input.onCapabilityRead?.(query.capabilityKey) ?? Effect.void),
             Effect.andThen(() =>
               Effect.succeed(
                 cellsOf(capabilityNamed(input.capabilities, query.capabilityKey), query, requesterScope.principalId),
@@ -155,6 +160,7 @@ export const subjectInspectionFixture = (input: {
             });
           const holderDeadlines = query.holders.map((holder) => ({ deadlines: [], holder }));
           return Effect.gen(function* fixtureInspectionScope() {
+            reads.scope += 1;
             if (principal !== undefined && principal._tag === 'Principal' && input.onScopeRead !== undefined) {
               yield* input.onScopeRead(principal.principalId);
             }
@@ -184,6 +190,7 @@ export const subjectInspectionFixture = (input: {
         Layer.succeed(AccessIntent, intent),
         Layer.succeed(AccessPrincipalKindSource, {
           readKind: ({ principalId, scope, tenantId }) => {
+            reads.kind += 1;
             requesterScopes.push(scope);
             const subject = subjectOf(principalId);
             return Effect.succeed(
@@ -195,6 +202,7 @@ export const subjectInspectionFixture = (input: {
         }),
         Layer.succeed(SubjectInspectionIdentitySource, {
           read: ({ legalEntityId, principalId, requesterScope }) => {
+            reads.facts += 1;
             requesterScopes.push(requesterScope);
             const subject = subjectOf(principalId);
             return Effect.succeed(
@@ -212,16 +220,24 @@ export const subjectInspectionFixture = (input: {
           },
         }),
         Layer.succeed(DecisionCheck, {
-          checkBulk: (checks) => Effect.succeed(checks.map(() => ({ permissionship: 'has' as const }))),
-        }),
-        Layer.succeed(AccessDecisionLog, {
-          record: ({ scope }) =>
+          checkBulk: (checks) =>
             Effect.sync(() => {
-              requesterScopes.push(scope);
+              reads.engine += 1;
+              return checks.map(() => ({ permissionship: 'has' as const }));
+            }),
+        }),
+        Layer.succeed(AccessDecisionLogBatch, {
+          recordAll: (entries) =>
+            Effect.sync(() => {
+              reads.evidenceWrites += 1;
+              reads.evidenceRows += entries.length;
+              for (const { scope } of entries) {
+                requesterScopes.push(scope);
+              }
             }),
         }),
       ),
     ),
   );
-  return { layer, requesterScopes };
+  return { layer, reads, requesterScopes };
 };
