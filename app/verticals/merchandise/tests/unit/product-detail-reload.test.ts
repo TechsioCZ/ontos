@@ -8,7 +8,10 @@ import { Effect, Option, Schema } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { act, createElement, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ManageCatalogActionConflictProblemSchema } from '../../shared/apis/manage-catalog-action.ts';
+import {
+  ManageCatalogActionConflictProblemSchema,
+  ManageCatalogActionUnavailableProblemSchema,
+} from '../../shared/apis/manage-catalog-action.ts';
 import { ProductRecordSchema } from '../../shared/domain/merchandise-model.ts';
 import type { ProductRecord } from '../../shared/domain/merchandise-model.ts';
 import { executeManageCatalog } from '../../src/api/manage-catalog-action-client.ts';
@@ -18,12 +21,16 @@ import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 
 rstest.mock('../../src/api/manage-catalog-action-client.ts');
 
-const productOf = (fields: { readonly description?: string; readonly name?: string }): ProductRecord =>
+const productOf = (fields: {
+  readonly description?: string;
+  readonly name?: string;
+  readonly priceMinor?: number;
+}): ProductRecord =>
   Schema.decodeSync(ProductRecordSchema)({
     active: true,
     category: 'Zrnková káva',
     createdAt: '2026-10-20T09:00:00.000Z',
-    currentPriceMinor: 25_804,
+    currentPriceMinor: fields.priceMinor ?? 25_804,
     description: fields.description ?? 'Etiopie, 250 g.',
     id: 'product-1',
     lowStock: false,
@@ -49,14 +56,36 @@ const conflict = Schema.decodeSync(ManageCatalogActionConflictProblemSchema)({
   type: 'urn:test:conflict',
 });
 
-/** The catalog: one revision for the whole company, and a command must expect exactly the current one. */
-const register = { revision: 1 };
+const unavailable = Schema.decodeSync(ManageCatalogActionUnavailableProblemSchema)({
+  _tag: 'ManageCatalogActionUnavailableProblem',
+  code: 'merchandise_persistence_unavailable',
+  detail: 'Try again',
+  retryable: true,
+  status: 503,
+  title: 'Unavailable',
+  type: 'urn:test:unavailable',
+});
+
+/**
+ * The catalog: one revision for the whole company, and a command must expect exactly the current one. While
+ * `priceChangesFail` is set, a price change is refused without changing anything.
+ */
+const register = { priceChangesFail: false, revision: 1 };
+
+/** Why the register refuses a command, or null when it takes it. */
+const refusalOf = (tag: string, expectedRevision: number): typeof conflict | typeof unavailable | null => {
+  if (tag === 'ChangePrice' && register.priceChangesFail) {
+    return unavailable;
+  }
+  return expectedRevision === register.revision ? null : conflict;
+};
 
 const answerLikeTheRegister = () => {
-  rstest.mocked(executeManageCatalog).mockImplementation(({ expectedRevision }) =>
+  rstest.mocked(executeManageCatalog).mockImplementation(({ command, expectedRevision }) =>
     Effect.suspend(() => {
-      if (expectedRevision !== register.revision) {
-        return Effect.fail(conflict);
+      const refusal = refusalOf(command._tag, expectedRevision);
+      if (refusal !== null) {
+        return Effect.fail(refusal);
       }
       register.revision += 1;
       return Effect.succeed({ entityIds: [], revision: register.revision });
@@ -68,11 +97,13 @@ const answerLikeTheRegister = () => {
 const sent = () =>
   rstest.mocked(executeManageCatalog).mock.calls.map(([payload]) => {
     const { command } = payload;
-    return {
-      expectedRevision: payload.expectedRevision,
-      patch: command._tag === 'UpdateProduct' ? command.patch : undefined,
-      tag: command._tag,
-    };
+    return command._tag === 'ChangePrice'
+      ? { expectedRevision: payload.expectedRevision, priceMinor: command.priceMinor, tag: command._tag }
+      : {
+          expectedRevision: payload.expectedRevision,
+          patch: command._tag === 'UpdateProduct' ? command.patch : undefined,
+          tag: command._tag,
+        };
   });
 
 type ProductEdit = ReturnType<typeof useProductDetailAutosave>;
@@ -157,6 +188,7 @@ const saveNow = Effect.promise(async () => {
 beforeEach(() => {
   rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   rstest.resetAllMocks();
+  register.priceChangesFail = false;
   register.revision = 1;
   answerLikeTheRegister();
   latest = null;
@@ -231,6 +263,95 @@ describe('mounted product detail draft while its product reloads', () => {
       yield* saveNow;
       expect(sent()).toEqual([{ expectedRevision: 1, patch: { name: 'Etiopie B' }, tag: 'UpdateProduct' }]);
       expect(edit().autosave.status).toBe('conflict');
+    }),
+  );
+
+  it.effect('after a save whose price change failed, taking the written name back is sent with the price', () =>
+    Effect.gen(function* partialThenRevert() {
+      const view = yield* Effect.promise(() => mount(productOf({}), 1));
+      register.priceChangesFail = true;
+      yield* type({ name: 'Etiopie B', priceCzk: 300, priceText: '300' });
+      yield* saveNow;
+      // The name went through and left revision 2; the price did not.
+      expect(sent()).toEqual([
+        { expectedRevision: 1, patch: { name: 'Etiopie B' }, tag: 'UpdateProduct' },
+        { expectedRevision: 2, priceMinor: 30_000, tag: 'ChangePrice' },
+      ]);
+      expect(edit().autosave.status).toBe('error');
+
+      // The reload lands with what the register has: the new name, the old price. The draft stays as typed.
+      yield* view.reload(productOf({ name: 'Etiopie B' }), 2);
+      expect(edit().draft.name).toBe('Etiopie B');
+      expect(edit().draft.priceCzk).toBe(300);
+
+      // The name goes back to what the form opened with, and the price is tried again.
+      register.priceChangesFail = false;
+      yield* type({ name: 'Etiopie' });
+      yield* saveNow;
+      expect(sent().slice(2)).toEqual([
+        { expectedRevision: 2, patch: { name: 'Etiopie' }, tag: 'UpdateProduct' },
+        { expectedRevision: 3, priceMinor: 30_000, tag: 'ChangePrice' },
+      ]);
+      expect(edit().autosave.status).toBe('saved');
+
+      yield* view.reload(productOf({ priceMinor: 30_000 }), 4);
+      expect(edit().draft.name).toBe('Etiopie');
+      expect(edit().autosave.status).toBe('saved');
+    }),
+  );
+
+  it.effect('after a save whose price change failed, taking both changes back still restores the name', () =>
+    Effect.gen(function* partialThenRevertAll() {
+      const view = yield* Effect.promise(() => mount(productOf({}), 1));
+      register.priceChangesFail = true;
+      yield* type({ name: 'Etiopie B', priceCzk: 300, priceText: '300' });
+      yield* saveNow;
+      expect(edit().autosave.status).toBe('error');
+      yield* view.reload(productOf({ name: 'Etiopie B' }), 2);
+
+      // Back to exactly what the form opened with: the register still has the changed name.
+      yield* type({ name: 'Etiopie', priceCzk: 258.04, priceText: '258,04' });
+      yield* saveNow;
+      expect(sent().slice(2)).toEqual([{ expectedRevision: 2, patch: { name: 'Etiopie' }, tag: 'UpdateProduct' }]);
+      expect(edit().autosave.status).toBe('saved');
+    }),
+  );
+
+  it.effect('retrying a save whose price change failed sends only the price, after the revision the name left', () =>
+    Effect.gen(function* partialThenRetry() {
+      yield* Effect.promise(() => mount(productOf({}), 1));
+      register.priceChangesFail = true;
+      yield* type({ name: 'Etiopie B', priceCzk: 300, priceText: '300' });
+      yield* saveNow;
+      expect(edit().autosave.status).toBe('error');
+
+      // The reload has not landed: the page still shows the old name at revision 1.
+      register.priceChangesFail = false;
+      yield* Effect.promise(() =>
+        act(async () => {
+          edit().autosave.retry();
+          await settle();
+        }),
+      );
+      yield* Effect.promise(() => waitUntil(() => edit().autosave.status === 'saved'));
+      expect(sent().slice(2)).toEqual([{ expectedRevision: 2, priceMinor: 30_000, tag: 'ChangePrice' }]);
+    }),
+  );
+
+  it.effect('a price change that failed on its own leaves the confirmed version where it was', () =>
+    Effect.gen(function* priceOnly() {
+      yield* Effect.promise(() => mount(productOf({}), 1));
+      register.priceChangesFail = true;
+      yield* type({ priceCzk: 300, priceText: '300' });
+      yield* saveNow;
+      expect(sent()).toEqual([{ expectedRevision: 1, priceMinor: 30_000, tag: 'ChangePrice' }]);
+      expect(edit().autosave.status).toBe('error');
+
+      // Taking the price back leaves nothing to save.
+      yield* type({ priceCzk: 258.04, priceText: '258,04' });
+      yield* saveNow;
+      expect(sent()).toHaveLength(1);
+      expect(edit().autosave.status).toBe('idle');
     }),
   );
 

@@ -3,7 +3,7 @@ import { Deferred, Effect, Layer, ManagedRuntime } from 'effect';
 import { afterEach, describe, expect, it } from 'effect-rstest';
 import { AutosaveStatus } from '../../src/autosave-status.tsx';
 import { useAutosaveDraft } from '../../src/autosave.ts';
-import type { RevisionedSaveResult } from '../../src/autosave.ts';
+import type { DraftSaveResult } from '../../src/autosave.ts';
 
 const runtime = ManagedRuntime.make(Layer.empty);
 
@@ -11,7 +11,7 @@ interface Harness {
   /** The confirmed version each save was handed. */
   readonly bases: string[];
   readonly expected: number[];
-  readonly replies: Deferred.Deferred<RevisionedSaveResult>[];
+  readonly replies: Deferred.Deferred<DraftSaveResult<string>>[];
   readonly sent: string[];
 }
 
@@ -34,7 +34,7 @@ const NameForm = ({ revision = 1, server, test }: NameFormProps) => {
         test.sent.push(value);
         test.expected.push(expectedRevision);
         test.bases.push(confirmed);
-        const reply = Deferred.makeUnsafe<RevisionedSaveResult>();
+        const reply = Deferred.makeUnsafe<DraftSaveResult<string>>();
         test.replies.push(reply);
         return Deferred.await(reply);
       }),
@@ -54,7 +54,7 @@ const NameForm = ({ revision = 1, server, test }: NameFormProps) => {
   );
 };
 
-const answer = (test: Harness, index: number, outcome: RevisionedSaveResult) => {
+const answer = (test: Harness, index: number, outcome: DraftSaveResult<string>) => {
   const reply = test.replies[index];
   expect(reply).toBeDefined();
   if (reply !== undefined) {
@@ -171,6 +171,34 @@ describe('useAutosaveDraft', () => {
       yield* eventually(() => expect(test.sent).toHaveLength(4));
       expect(test.bases[3]).toBe('Jejich');
       expect(test.expected[3]).toBe(4);
+    }),
+  );
+
+  it.effect('compares later drafts with what a partly successful save wrote, at the revision it left', () =>
+    Effect.gen(function* partlySaved() {
+      const test = harness();
+      const view = render(<NameForm revision={4} server="Akros" test={test} />);
+      const save = (value: string) => {
+        fireEvent.change(input(), { target: { value } });
+        fireEvent.focusOut(input());
+      };
+      // The save sent two commands: the first wrote `Akros CZ` and left revision 5, the second failed.
+      save('Akros CZ, a.s.');
+      yield* eventually(() => expect(test.sent).toEqual(['Akros CZ, a.s.']));
+      answer(test, 0, { confirmed: 'Akros CZ', outcome: 'failed', revision: 5 });
+      yield* eventually(() => expect(screen.getByRole('button', { name: 'zkusit znovu' })).toBeTruthy());
+
+      // The reload lands with what the server has now; the unsaved draft stays.
+      view.rerender(<NameForm revision={5} server="Akros CZ" test={test} />);
+      expect(input().value).toBe('Akros CZ, a.s.');
+
+      // Back to the value the form opened with: the server no longer has it, so it is a change to send.
+      save('Akros');
+      yield* eventually(() => expect(test.sent).toEqual(['Akros CZ, a.s.', 'Akros']));
+      expect(test.bases).toEqual(['Akros', 'Akros CZ']);
+      expect(test.expected).toEqual([4, 5]);
+      answer(test, 1, 6);
+      yield* eventually(() => expect(screen.getByText('Uloženo')).toBeTruthy());
     }),
   );
 
