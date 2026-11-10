@@ -1387,8 +1387,8 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
       })),
     });
   });
-  // Every Outbox delivery with the message it delivers. The matcher reports only totals, and Core's own
-  // system subscriptions match Core lifecycle messages beside Privacy's, so attribution reads the rows.
+  // Every Outbox delivery with the message it delivers. The matcher reports only totals across every
+  // subscription that matched (Privacy's own dispatch watchdog beside Party's consumer), so attribution reads the rows.
   const deliveries = Effect.fn('PrivacyCompletionTest.deliveries')(function* deliveries() {
     const facts = yield* Effect.all(
       {
@@ -2570,8 +2570,8 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           const deliveriesAfter = yield* f.deliveries();
           // Shell's real installed-catalog matcher also runs: this worker may find its delivery already matched.
           // Keep both matchers and require the same single claim/ACK and exact message-derived debt settlement.
-          // The cycle's matcher totals also count Core's own system subscriptions (module-state reconciliation),
-          // so Privacy's count comes from its own delivery rows: the one dispatch message, Party's consumer.
+          // One match inserts every subscribed delivery of the message: Party's consumer and Privacy's own
+          // dispatch watchdog. The totals count both, so this count reads Party's delivery of the one dispatch.
           expect(privacyDeliveries(deliveriesAfter)).toHaveLength(1);
           expect([0, 1]).toContain(
             privacyDeliveries(deliveriesAfter).length - privacyDeliveries(deliveriesBefore).length,
