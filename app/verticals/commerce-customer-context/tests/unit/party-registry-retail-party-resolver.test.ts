@@ -272,6 +272,7 @@ it.effect('prepares real server Party HTTP for the Action actor in Node, then co
     expect(server.delegations).toEqual([
       {
         audience: 'party-registry',
+        callingAppId: 'commerce-customer-context',
         legalEntityScope: 'subject',
         requestCorrelation: scope.requestCorrelation,
         subject: { _tag: 'Assertion', scope: nativePreflight.scope },

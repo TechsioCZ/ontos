@@ -299,12 +299,14 @@ it.effect('obtains a fresh Shell-issued context for every provider attempt', () 
     expect(issuanceRequests).toEqual([
       {
         audience: 'price-group-catalog',
+        callingAppId: 'commerce-customer-context',
         legalEntityScope: 'tenant',
         requestCorrelation: 'price-group-correlation',
         subject: priceGroupSubject,
       },
       {
         audience: 'price-group-catalog',
+        callingAppId: 'commerce-customer-context',
         legalEntityScope: 'tenant',
         requestCorrelation: 'price-group-correlation',
         subject: priceGroupSubject,
