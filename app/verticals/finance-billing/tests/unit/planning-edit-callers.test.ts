@@ -3,8 +3,8 @@ import { describe, expect, it } from 'effect-rstest';
 import type { BudgetLine, PlanItem } from '../../shared/apis/records.ts';
 import { emptyObjectSelection } from '../../src/routes/[lang]/finance/object-fields.tsx';
 import type { ObjectSelection } from '../../src/routes/[lang]/finance/object-fields.tsx';
-import { buildPlanItemCommand, editPlanItemDraft } from '../../src/routes/[lang]/finance/plan-items-section.tsx';
-import { buildBudgetLineCommand, editBudgetDraft } from '../../src/routes/[lang]/finance/planning-panel.tsx';
+import { buildPlanItemCommand, editPlanItemDraft } from '../../src/routes/[lang]/finance/plan-item-draft.ts';
+import { buildBudgetLineCommand, editBudgetDraft } from '../../src/routes/[lang]/finance/budget-draft.ts';
 import type { RentalObjects } from '../../src/routes/[lang]/finance/use-rental-objects.ts';
 
 const tenantId = 'a0000000-0000-4000-8000-000000000001';
