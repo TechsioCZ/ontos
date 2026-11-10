@@ -145,7 +145,7 @@ export const useIdleRoutePreload = (
 
   useEffect(() => {
     // A write drops cached reads and the router cache at once, but the menu prefetch starts over only once the
-    // writes are quiet: autosave writes every few seconds while someone types and must not re-read every module.
+    // writes are quiet: a form sends only on Uložit, and the re-read after it must not re-read every module.
     let pending: Fiber.Fiber<void> | undefined;
     const prefetchAgain = Effect.sync(() => setGeneration((previous) => previous + 1));
     const restart = () => {

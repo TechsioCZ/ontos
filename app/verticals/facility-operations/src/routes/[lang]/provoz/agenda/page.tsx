@@ -7,7 +7,7 @@ import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { Notification } from '../../../../../shared/domain/agenda.ts';
 import { AgendaPeopleContext } from '../../../../ui/ops-agenda/agenda-people.tsx';
-import { PageHeader } from '@app/admin-ui';
+import { PageHeader, UnsavedChangesBoundary, useUnsavedChangesScope } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -27,6 +27,8 @@ import { CalendarModeSchema, CalendarView } from './calendar.tsx';
 import type { CalendarMode } from './calendar.tsx';
 import { CreateEventPanel, DeadlinePanel } from './event-panel.tsx';
 import { MyAgenda, NotificationCenter, SettingsPanel, myNotifications, myPreference } from './inbox.tsx';
+import type { PreferenceDraft } from './inbox.tsx';
+import { facilitySaveOutcome } from '../../../../ui/facility-save.ts';
 
 const tabs = ['kalendar', 'moje', 'notifikace', 'nastaveni'] as const;
 const TabSchema = Schema.Literals(tabs);
@@ -120,7 +122,6 @@ const useAgendaView = ({ context }: { readonly context: ModulePageContext | unde
   const [requestedEvent, setRequestedEvent] = useState<string | undefined>(() => view.event);
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [saving, setSaving] = useState(false);
   const synced = useRef(false);
 
   const deadlines = buildDeadlines(sources, names);
@@ -219,24 +220,16 @@ const useAgendaView = ({ context }: { readonly context: ModulePageContext | unde
       ),
     );
   };
-  const savePreferences = (days: number, emailOptIn: boolean, emailCategories: readonly ('DEADLINE' | 'CHANGE')[]) => {
-    setSaving(true);
-    browserRuntime.runFork(
-      commands.run({ _tag: 'AgendaPreferencesSet', emailCategories, emailOptIn, leadDays: days }).pipe(
-        Effect.tap((outcome) =>
-          Effect.sync(() => {
-            setSaving(false);
-            toast.create({
-              title: outcome.ok
-                ? t('facility-operations.common.saved')
-                : t(`facility-operations.common.errors.${outcome.reason}`),
-              type: outcome.ok ? 'success' : 'error',
-            });
-          }),
-        ),
-      ),
+  // One explicit Uložit of the notification settings: the save bar shows the outcome, nothing is sent before it.
+  const savePreferences = (value: PreferenceDraft) =>
+    facilitySaveOutcome(
+      commands.run({
+        _tag: 'AgendaPreferencesSet',
+        emailCategories: value.optional,
+        emailOptIn: value.email,
+        leadDays: Number(value.leadDays),
+      }),
     );
-  };
 
   const opened: Deadline | undefined = deadlines.find((row) =>
     openKey?.startsWith('event:') === true ? `event:${row.eventId ?? ''}` === openKey : row.key === openKey,
@@ -260,7 +253,6 @@ const useAgendaView = ({ context }: { readonly context: ModulePageContext | unde
     openRow,
     overdueFilter,
     savePreferences,
-    saving,
     setCreating,
     setOpenKey,
     sources,
@@ -290,7 +282,6 @@ const AgendaView = (props: Parameters<typeof useAgendaView>[0]) => {
     openRow,
     overdueFilter,
     savePreferences,
-    saving,
     setCreating,
     setOpenKey,
     sources,
@@ -300,6 +291,7 @@ const AgendaView = (props: Parameters<typeof useAgendaView>[0]) => {
     today,
     unread,
   } = useAgendaView(props);
+  const scope = useUnsavedChangesScope();
 
   return (
     <AgendaPeopleContext value={agendaPeople(state, context)}>
@@ -340,9 +332,12 @@ const AgendaView = (props: Parameters<typeof useAgendaView>[0]) => {
       )}
       <Tabs
         onValueChange={(value) => {
-          if (Schema.is(TabSchema)(value)) {
-            changeTab(value);
-          }
+          // Leaving the settings tab with an unsaved draft asks first.
+          scope.request(() => {
+            if (Schema.is(TabSchema)(value)) {
+              changeTab(value);
+            }
+          });
         }}
         size="sm"
         value={tab}
@@ -399,16 +394,9 @@ const AgendaView = (props: Parameters<typeof useAgendaView>[0]) => {
         />
       )}
       {tab === 'nastaveni' && (
-        <SettingsPanel
-          canWrite={commands.canWrite}
-          key={`${me ?? ''}:${myPreference(state, me)?.leadDays ?? ''}:${myPreference(state, me)?.emailOptIn ?? ''}:${(myPreference(state, me)?.emailCategories ?? []).join(',')}`}
-          me={me}
-          onSave={(days, email, categories) => {
-            savePreferences(days, email, categories);
-          }}
-          saving={saving}
-          state={state}
-        />
+        <UnsavedChangesBoundary scope={scope}>
+          <SettingsPanel canWrite={commands.canWrite} me={me} onSave={savePreferences} state={state} />
+        </UnsavedChangesBoundary>
       )}
       <DeadlinePanel
         canWrite={commands.canWrite}

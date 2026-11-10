@@ -206,9 +206,12 @@ export const CommitOutcomeSchema = Schema.Literals(['saved', 'conflict', 'duplic
 export type CommitOutcome = typeof CommitOutcomeSchema.Type;
 export const isCommitOutcome = Schema.is(CommitOutcomeSchema);
 
-/** Maps a commit result of the edit panel onto autosave: a revision means saved. */
-export const employeeAutosaveResult = (result: CommitOutcome | number): RevisionedSaveResult => {
-  if (!isCommitOutcome(result)) {
+/** What one Save of the edit panel answers: a revision once saved, `proposed` when parked for approval, else why not. */
+export type EditCommitResult = CommitOutcome | 'proposed' | number;
+
+/** Maps the answer to the edit panel's Save onto the save bar: a revision means saved. */
+export const employeeSaveResult = (result: EditCommitResult): RevisionedSaveResult => {
+  if (result === 'proposed' || !isCommitOutcome(result)) {
     return result;
   }
   return result === 'saved' || result === 'conflict' ? result : 'failed';

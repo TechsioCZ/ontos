@@ -205,6 +205,7 @@
       "title": "Change history"
     },
     "planning": {
+      "invalidPlan": "Fill in the name, the responsible person and a valid period. Milestones must fall within the project period.",
       "projectTitle": "Project name",
       "plannedStart": "Planned start",
       "plannedEnd": "Planned end",

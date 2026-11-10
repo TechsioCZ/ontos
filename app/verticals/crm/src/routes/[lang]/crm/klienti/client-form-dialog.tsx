@@ -1,4 +1,5 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { Effect } from 'effect';
 import { assignableSalespeople } from '../../../../crm/records.ts';
@@ -7,14 +8,17 @@ import type { CrmCommandSubmit } from '../../../../crm/records.ts';
 // someone with the reassignment authority (`demo.crm.client-owner.assign`) may pick the salesperson; a
 // salesperson always creates the client for themself.
 import {
-  AutosaveStatus,
+  SaveBar,
   SidePanel,
+  UnsavedChangesDialog,
   dialogCloseLabel,
   foldSearchText,
+  saveLabelsFor,
   surfaceTileClassName,
-  useAutosaveDraft,
+  useRecordDraft,
+  useUnsavedChangesGuard,
 } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { ActionIcon } from '@techsio/ui-kit/atoms/action-icon';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -55,6 +59,58 @@ const optionalField = <K extends string>(key: K, value: string) => {
 
 const incompleteContact = (entry: ContactDraft) =>
   entry.name.trim() === '' && [entry.role, entry.phone, entry.email].some((value) => value.trim() !== '');
+
+const contactWithInvalidEmail = (entry: ContactDraft) =>
+  entry.name.trim() !== '' && entry.email.trim() !== '' && !EMAIL.test(entry.email.trim());
+
+const contactFilled = (entry: ContactDraft) =>
+  [entry.name, entry.role, entry.phone, entry.email].some((value) => value.trim() !== '');
+
+// Contacts of a new company that would block its creation (the form shows the field messages).
+const contactsBlock = (value: Draft, contacts: readonly ContactDraft[]) =>
+  value.kind === 'organization' && (contacts.some(incompleteContact) || contacts.some(contactWithInvalidEmail));
+
+const createCommandOf = (
+  value: Draft,
+  { canAssign, contacts }: { readonly canAssign: boolean; readonly contacts: readonly ContactDraft[] },
+): CrmCommandInput => {
+  const organization = value.kind === 'organization';
+  const filledContacts = organization ? contacts.filter((entry) => entry.name.trim() !== '') : [];
+  const segment = value.segment === NONE ? '' : value.segment;
+  const command: CrmCommandInput = {
+    _tag: 'CreateClient',
+    kind: value.kind,
+    name: value.name.trim(),
+    ...optionalField('address', value.address),
+    ...optionalField('email', value.email),
+    ...optionalField('note', value.note),
+    ...optionalField('phone', value.phone),
+    ...optionalField('website', value.website),
+    ...optionalField('segment', segment),
+  };
+  if (organization) {
+    Object.assign(command, optionalField('regNo', value.regNo), optionalField('vatNo', value.vatNo));
+  }
+  if (canAssign && value.owner !== NONE) {
+    Object.assign(command, { ownerSalespersonId: value.owner });
+  }
+  if (filledContacts.length > 0) {
+    const proposedContacts = filledContacts.map((entry, index) => {
+      const contact: NonNullable<Extract<CrmCommandInput, { readonly _tag: 'CreateClient' }>['contacts']>[number] = {
+        name: entry.name.trim(),
+        ...optionalField('role', entry.role),
+        ...optionalField('phone', entry.phone),
+        ...optionalField('email', entry.email),
+      };
+      if (index === 0) {
+        Object.assign(contact, { primary: true });
+      }
+      return contact;
+    });
+    Object.assign(command, { contacts: proposedContacts });
+  }
+  return command;
+};
 
 const ContactDraftFields = ({
   entry,
@@ -148,35 +204,73 @@ const useClientForm = ({
   const defaultOwner = viewer.salespersonId ?? NONE;
   const editing = mode === 'edit' && client !== undefined;
   const [failure, setFailure] = useState<string | undefined>();
-  // Edit mode autosaves the changed fields (UpdateClient is a patch; the CRM submit retries it on the latest
-  // revision). Create mode keeps its explicit "Založit klienta" and never autosaves.
-  const autosave = useAutosaveDraft<Draft, never>({
-    equals: sameClientDraft,
-    isValid: (value) => editing && validClientDraft(value),
-    runtime: browserRuntime,
-    save: (value): Effect.Effect<AutosaveOutcome> => {
-      if (client === undefined) {
-        return Effect.succeed('failed');
-      }
-      const changes = patchOf(value, client);
-      if (Object.keys(changes).length === 0) {
-        return Effect.succeed('saved');
-      }
-      return submit({ _tag: 'UpdateClient', id: client.id, patch: changes }).pipe(
-        Effect.tap((outcome) => Effect.sync(() => setFailure(outcome.ok ? undefined : outcome.message))),
-        Effect.map((outcome) => (outcome.ok ? 'saved' : 'failed')),
-      );
-    },
-    server: draftOf(client, defaultOwner),
-  });
-  const { draft, setDraft } = autosave;
   const [contacts, setContacts] = useState<readonly ContactDraft[]>(() => (mode === 'create' ? [emptyContact(0)] : []));
   const [touched, setTouched] = useState(editing);
-  const patch = (next: Partial<Draft>) => setDraft((current) => ({ ...current, ...next }));
+
+  // Edit: sends only the changed fields (UpdateClient is a patch; the CRM submit retries it on the latest revision).
+  const sendUpdate = (value: Draft): Effect.Effect<SaveOutcome> => {
+    if (client === undefined) {
+      return Effect.succeed('failed');
+    }
+    const changes = patchOf(value, client);
+    if (Object.keys(changes).length === 0) {
+      return Effect.succeed('saved');
+    }
+    return submit({ _tag: 'UpdateClient', id: client.id, patch: changes }).pipe(
+      Effect.tap((outcome) => Effect.sync(() => setFailure(outcome.ok ? undefined : outcome.message))),
+      Effect.map((outcome) => (outcome.ok ? 'saved' : 'failed')),
+    );
+  };
+
+  // Create: the one explicit "Založit klienta" sends the new client with its contacts.
+  const sendCreate = (value: Draft): Effect.Effect<SaveOutcome> => {
+    if (!validClientDraft(value) || contactsBlock(value, contacts)) {
+      return Effect.succeed('failed');
+    }
+    return submit(createCommandOf(value, { canAssign: viewer.assign, contacts })).pipe(
+      Effect.tap((outcome) =>
+        Effect.sync(() => {
+          if (!outcome.ok) {
+            const message = outcome.message ?? 'Uložení se nezdařilo. Zkuste to prosím znovu.';
+            setFailure(message);
+            toaster.create({ description: message, title: 'Klienta se nepodařilo uložit', type: 'error' });
+            return;
+          }
+          toaster.create({
+            description: 'Identitu firmy v evidenci zákazníků zapsal systém; najdete ji na kartě klienta.',
+            title: `Klient ${value.name.trim()} založen`,
+            type: 'success',
+          });
+          onSaved(outcome.entityIds[0] ?? '');
+        }),
+      ),
+      Effect.map((outcome) => (outcome.ok ? 'saved' : 'failed')),
+    );
+  };
+
+  // The draft is sent only by `record.save()` (the Save bar, Enter) or the create button. Nothing else sends it.
+  const record = useRecordDraft<Draft, never>({
+    equals: sameClientDraft,
+    isValid: (value) => validClientDraft(value),
+    runtime: browserRuntime,
+    save: (value) => (editing ? sendUpdate(value) : sendCreate(value)),
+    server: draftOf(client, defaultOwner),
+  });
+  const { draft } = record;
+  const patch = (next: Partial<Draft>) => record.setDraft((current) => ({ ...current, ...next }));
   const patchContact = (key: number, next: Partial<ContactDraft>) =>
     setContacts((current) => current.map((entry) => (entry.key === key ? { ...entry, ...next } : entry)));
 
   const handleRemoveContact = (key: number) => setContacts((current) => current.filter((item) => item.key !== key));
+
+  // A new client's contact persons are not part of the draft, but they are typed input that a leave would lose.
+  const otherChanges = mode === 'create' && contacts.some(contactFilled);
+  const blocker = useBlocker({
+    enableBeforeUnload: false,
+    shouldBlockFn: () => record.dirty || otherChanges,
+    withResolver: true,
+  });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard, otherChanges });
 
   const organization = draft.kind === 'organization';
   const nameError = touched && draft.name.trim() === '' ? 'Vyplňte název' : undefined;
@@ -194,37 +288,12 @@ const useClientForm = ({
       : [];
 
   const contactNameError = mode === 'create' && organization && contacts.some(incompleteContact);
-  const filledContacts = organization ? contacts.filter((entry) => entry.name.trim() !== '') : [];
-  const contactEmailError = filledContacts.some(
-    (entry) => entry.email.trim() !== '' && !EMAIL.test(entry.email.trim()),
-  );
+  const contactEmailError = mode === 'create' && organization && contacts.some(contactWithInvalidEmail);
 
-  const finish = (command: CrmCommandInput) => {
-    browserRuntime.runFork(
-      submit(command).pipe(
-        Effect.tap((outcome) =>
-          Effect.sync(() => {
-            if (!outcome.ok) {
-              const message = outcome.message ?? 'Uložení se nezdařilo. Zkuste to prosím znovu.';
-              setFailure(message);
-              toaster.create({ description: message, title: 'Klienta se nepodařilo uložit', type: 'error' });
-              return;
-            }
-            toaster.create({
-              description: 'Identitu firmy v evidenci zákazníků zapsal systém; najdete ji na kartě klienta.',
-              title: `Klient ${draft.name.trim()} založen`,
-              type: 'success',
-            });
-            onSaved(outcome.entityIds[0] ?? '');
-          }),
-        ),
-      ),
-    );
-  };
-
+  // The create button (and Enter in the create form) shows the field messages, then sends the new client.
   const save = () => {
     if (editing) {
-      autosave.flush();
+      record.save();
       return;
     }
     setTouched(true);
@@ -233,48 +302,15 @@ const useClientForm = ({
       draft.name.trim() === '' ||
       emailError !== undefined ||
       regNoError !== undefined ||
-      contactEmailError ||
-      contactNameError
+      contactNameError ||
+      contactEmailError
     ) {
       return;
     }
-    const segment = draft.segment === NONE ? '' : draft.segment;
-    const command: CrmCommandInput = {
-      _tag: 'CreateClient',
-      kind: draft.kind,
-      name: draft.name.trim(),
-      ...optionalField('address', draft.address),
-      ...optionalField('email', draft.email),
-      ...optionalField('note', draft.note),
-      ...optionalField('phone', draft.phone),
-      ...optionalField('website', draft.website),
-      ...optionalField('segment', segment),
-    };
-    if (organization) {
-      Object.assign(command, optionalField('regNo', draft.regNo), optionalField('vatNo', draft.vatNo));
-    }
-    if (viewer.assign && draft.owner !== NONE) {
-      Object.assign(command, { ownerSalespersonId: draft.owner });
-    }
-    if (filledContacts.length > 0) {
-      const proposedContacts = filledContacts.map((entry, index) => {
-        const contact: NonNullable<Extract<CrmCommandInput, { readonly _tag: 'CreateClient' }>['contacts']>[number] = {
-          name: entry.name.trim(),
-          ...optionalField('role', entry.role),
-          ...optionalField('phone', entry.phone),
-          ...optionalField('email', entry.email),
-        };
-        if (index === 0) {
-          Object.assign(contact, { primary: true });
-        }
-        return contact;
-      });
-      Object.assign(command, { contacts: proposedContacts });
-    }
-    // CRM.md §3: the server creates (or reuses by IČO / name) the Party Registry identity of a new client through
-    // its governed intake, for a salesperson too; the browser never writes the registry nor sends a registry claim.
-    finish(command);
+    browserRuntime.runFork(sendCreate(draft));
   };
+
+  const close = () => guard.request(onClose);
 
   const nameHelp: InputHelp = {};
   if (nameError !== undefined) {
@@ -294,13 +330,7 @@ const useClientForm = ({
     { label: 'Zatím bez obchodníka', value: NONE },
   ];
 
-  const close = () => {
-    autosave.flush();
-    onClose();
-  };
-
   return {
-    autosave,
     busy,
     close,
     contactEmailError,
@@ -309,6 +339,7 @@ const useClientForm = ({
     emailError,
     emailHelp,
     failure,
+    guard,
     handleRemoveContact,
     lookalikes,
     mode,
@@ -319,6 +350,7 @@ const useClientForm = ({
     owners,
     patch,
     patchContact,
+    record,
     regNoError,
     regNoHelp,
     save,
@@ -329,9 +361,8 @@ const useClientForm = ({
 };
 
 export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const {
-    autosave,
     busy,
     close,
     contactEmailError,
@@ -340,6 +371,7 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
     emailError,
     emailHelp,
     failure,
+    guard,
     handleRemoveContact,
     lookalikes,
     mode,
@@ -350,6 +382,7 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
     owners,
     patch,
     patchContact,
+    record,
     regNoError,
     regNoHelp,
     save,
@@ -357,15 +390,16 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
     touched,
     viewer,
   } = useClientForm(props);
-  const handleRetry = autosave.retry;
-  const handleReloadLatest = autosave.reloadLatest;
+  const labels = saveLabelsFor(language);
 
+  const handleReloadLatest = record.reloadLatest;
+  const handleSave = record.save;
   return (
     <SidePanel
       actions={
         mode === 'create' ? (
           <>
-            <Button disabled={busy} onClick={onClose} theme="outlined" variant="secondary">
+            <Button disabled={busy} onClick={close} theme="outlined" variant="secondary">
               Zrušit
             </Button>
             <Button isLoading={busy} loadingText="Zakládám klienta…" onClick={save} variant="primary">
@@ -374,10 +408,10 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
           </>
         ) : (
           <>
-            <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
             <Button onClick={close} theme="outlined" variant="secondary">
               Zavřít
             </Button>
+            <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
           </>
         )
       }
@@ -385,11 +419,13 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
       description={
         mode === 'create'
           ? 'Neuvedené údaje zůstanou prázdné. Kontaktní osoby můžete doplnit i později na kartě klienta.'
-          : 'Změny se ukládají samy a zapisují se do historie klienta.'
+          : undefined
       }
+      guard={guard}
       onOpenChange={(open) => {
+        // Escape, the close button and an outside click ask the guard first; this runs once it allowed the leave.
         if (!open) {
-          close();
+          onClose();
         }
       }}
       open
@@ -585,8 +621,11 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
             {failure}
           </StatusText>
         )}
-        <button aria-label={mode === 'create' ? 'Založit klienta' : 'Uložit'} className="hidden" type="submit" />
+        {mode === 'create' && (
+          <button aria-label={t('crm.ciClientsVisits.contacts.createClient')} className="hidden" type="submit" />
+        )}
       </form>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </SidePanel>
   );
 };

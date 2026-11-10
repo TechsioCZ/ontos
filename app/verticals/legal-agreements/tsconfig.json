@@ -22,7 +22,8 @@
     "vertical.registration.ts",
     "vertical.runtime-declaration.ts",
     "scripts/**/*.mts",
-    "tests/**/*.ts"
+    "tests/**/*.ts",
+    "tests/**/*.tsx"
   ],
   "references": [
     {

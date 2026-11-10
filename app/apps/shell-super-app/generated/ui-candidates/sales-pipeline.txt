@@ -23,7 +23,6 @@
 @min-[64rem]:grid-cols-4
 [&_label]:text-label-sm
 block
-blur
 border-border-primary
 border-t
 collapse

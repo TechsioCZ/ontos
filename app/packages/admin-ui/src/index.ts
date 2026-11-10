@@ -1,24 +1,25 @@
 export {
-  AUTOSAVE_DELAY_MS,
-  type Autosave,
-  type AutosaveDraft,
-  AutosaveController,
-  type AutosaveOptions,
-  type AutosaveOutcome,
-  AutosaveOutcomeSchema,
-  type AutosaveState,
+  type DraftSave,
+  DraftSaveController,
+  type DraftSaveOptions,
   type DraftSaveResult,
   type PartlySaved,
+  type RecordDraft,
   type RevisionedSaveResult,
-  AutosaveStateSchema,
-  autosavePending,
-  startAutosave,
-  useAutosave,
-  useAutosaveDraft,
-  type UseAutosaveDraftOptions,
-  type UseAutosaveOptions,
-} from './autosave.ts';
-export { AutosaveStatus, type AutosaveStatusProps } from './autosave-status.tsx';
+  type SavableDraft,
+  type SaveOutcome,
+  SaveOutcomeSchema,
+  type SaveState,
+  SaveStateSchema,
+  draftPending,
+  draftSavable,
+  draftUnsaved,
+  startDraftSave,
+  useDraftSave,
+  type UseDraftSaveOptions,
+  useRecordDraft,
+  type UseRecordDraftOptions,
+} from './draft-save.ts';
 export { BulkActionBar, type BulkActionBarProps } from './bulk-action-bar.tsx';
 export { DetailList, type DetailListItem } from './detail-list.tsx';
 export {
@@ -32,6 +33,8 @@ export { EmptyState, type EmptyStateProps } from './empty-state.tsx';
 export { formatDate, formatDateTime, formatMoney, formatNumber, formatPercent } from './format.ts';
 export { useHeldSnapshot } from './held-snapshot.ts';
 export { PageHeader, type PageHeaderProps } from './page-header.tsx';
+export { SaveBar, type SaveBarProps } from './save-bar.tsx';
+export { type SaveLabels, saveLabels, saveLabelsFor } from './save-labels.ts';
 export { foldSearchText, matchesSearch } from './search-text.ts';
 export { ScrollRegion, type ScrollRegionProps } from './scroll-region.tsx';
 export { SectionCard, type SectionCardProps } from './section-card.tsx';
@@ -55,6 +58,18 @@ export {
   surfaceCardClassName,
   surfaceTileClassName,
 } from './ui-kit-classes.ts';
+export {
+  type BlockedNavigation,
+  UnsavedChangesBoundary,
+  UnsavedChangesDialog,
+  type UnsavedChangesDialogProps,
+  type UnsavedChangesGuard,
+  type UnsavedChangesGuardOptions,
+  type UnsavedChangesPrompt,
+  type UnsavedChangesScope,
+  useUnsavedChangesGuard,
+  useUnsavedChangesScope,
+} from './unsaved-changes.tsx';
 export {
   comboboxTranslations,
   dataTableRowLabels,

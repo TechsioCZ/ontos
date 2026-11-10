@@ -1,4 +1,4 @@
-// Agreed skonto and late-payment interest of one invoice, as the payment terms dialog autosaves them.
+// Agreed skonto and late-payment interest of one invoice, as the payment terms dialog saves them on Uložit.
 import { Option } from 'effect';
 import type { Invoice } from '../../../../shared/apis/records.ts';
 import { minorToInput, parseAmountMinor } from './finance-ui.tsx';

@@ -2,7 +2,6 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
@@ -11,7 +10,15 @@ import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { selectItem } from '../../../../ui/select-item.ts';
-import { AutosaveStatus, dialogCloseLabel, formatDate, formatMoney, PageHeader } from '@app/admin-ui';
+import {
+  formatDate,
+  formatMoney,
+  PageHeader,
+  SaveBar,
+  saveLabelsFor,
+  UnsavedChangesDialog,
+  useUnsavedChangesGuard,
+} from '@app/admin-ui';
 import { DateTime, Schema } from 'effect';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { useState } from 'react';
@@ -19,7 +26,7 @@ import type { CategoryTrail, ProductRecord, StockMovement } from '../../../../..
 import type { ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
 import { orderLineVatMinor } from '../../../../../shared/domain/order-totals.ts';
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
-import { useProductDetailAutosave } from './product-detail-autosave.ts';
+import { useProductDetailDraft } from './product-detail-save.ts';
 import { detailDraftInvalid, draftOf, measurementInvalid } from './product-detail-draft.ts';
 import type { DetailDraft } from './product-detail-draft.ts';
 import {
@@ -83,9 +90,7 @@ export interface ProductDetailViewProps {
 
 /** Writable subset of ProductPatch, filled field by field so only changed values are sent. */
 
-/**
- * The page header submits this form by id. Tab contents stay mounted so unsaved fields survive tab switches.
- */
+/** Tab contents stay mounted so unsaved fields survive tab switches. */
 const DETAIL_FORM_ID = 'product-detail-form';
 /** A product's markets on the detail page and whether the viewer may switch its offer in them. */
 export interface ProductMarketsAccess {
@@ -129,17 +134,17 @@ const PriceHistory = ({ product }: { readonly product: ProductRecord }) => {
   );
 };
 
-/** The editable fields of the product. The view keeps the draft and every change saves itself. */
+/** The editable fields of the product. The view keeps the draft; only the Save button under the form sends it. */
 interface DetailFormProps {
   readonly canWrite: boolean;
   readonly draft: DetailDraft;
-  /** Sends a pending draft now: a field lost focus. */
-  readonly onBlur: () => void;
   readonly onDraftChange: (patch: Partial<DetailDraft>) => void;
+  /** The form was submitted (Enter in a field): the same one save as the Save button. */
+  readonly onSave: () => void;
   readonly product: ProductRecord;
 }
 
-const DetailForm = ({ canWrite, draft, onBlur, onDraftChange, product }: DetailFormProps) => {
+const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product }: DetailFormProps) => {
   const k = useProductLabel();
   const disabled = !canWrite;
   const { active, category, lowStock, lowStockText, name, priceCzk, priceText, unit, vatRate } = draft;
@@ -173,8 +178,8 @@ const DetailForm = ({ canWrite, draft, onBlur, onDraftChange, product }: DetailF
       ? priceMinor + orderLineVatMinor({ quantity: 1, unitPriceMinor: priceMinor, vatRate })
       : null;
 
-  // noValidate: the form may sit in a hidden tab, and native validation would block the autosave silently; the
-  // inline autosave line and the field messages say what is missing instead.
+  // noValidate: the save bar and the field messages say what is missing; native validation would only add a second,
+  // differently worded set of messages.
   return (
     <form
       className="grid grid-cols-1 gap-200 lg:grid-cols-2"
@@ -182,7 +187,7 @@ const DetailForm = ({ canWrite, draft, onBlur, onDraftChange, product }: DetailF
       noValidate
       onSubmit={(event) => {
         event.preventDefault();
-        onBlur();
+        onSave();
       }}
     >
       <FormInput disabled id="detail-sku" label={k('fields.sku')} name="sku" value={product.sku} />
@@ -410,10 +415,11 @@ const DetailForm = ({ canWrite, draft, onBlur, onDraftChange, product }: DetailF
 };
 
 /**
- * Full-page product editor, keyed by product id. It stays mounted while its product reloads. A reloaded product
- * replaces an untouched draft; a draft with unsaved changes stays, and its save still expects the revision it was
- * based on, so a change someone else made in the meantime ends in a conflict instead of being overwritten. The
- * active tab is owned by the page.
+ * Full-page product editor, keyed by product id. Editing the fields changes only the draft on screen; the Save
+ * button under the form sends it, and leaving with unsaved changes asks first. The editor stays mounted while its
+ * product reloads. A reloaded product replaces an untouched draft; a draft with unsaved changes stays, and its save
+ * still expects the revision it was based on, so a change someone else made in the meantime ends in a conflict
+ * instead of being overwritten. The active tab is owned by the page.
  */
 export const ProductDetailView = ({
   canWrite,
@@ -433,30 +439,38 @@ export const ProductDetailView = ({
   variantId,
 }: ProductDetailViewProps) => {
   const k = useProductLabel();
-  const { t } = useModernI18n();
+  const { language } = useModernI18n();
+  const labels = saveLabelsFor(language);
   const [movementDraft, setMovementDraft] = useState(EMPTY_MOVEMENT_DRAFT);
   const variantDestination = resolveProductVariantDestination(product, variantId);
-  // Every change of the product fields saves itself, debounced; the page re-reads the product after each save.
-  // The editor stays mounted across that reload (`useProductDetailAutosave`).
-  const { autosave, draft, followStockCommit, pendingMessage } = useProductDetailAutosave({ product, revision });
-  const dirty = autosave.pending || isMovementDraftDirty(movementDraft);
-  const blocker = useBlocker({ enableBeforeUnload: () => dirty, shouldBlockFn: () => dirty, withResolver: true });
+  // The page re-reads the product after each save; the editor stays mounted across that reload
+  // (`useProductDetailDraft`).
+  const { draft, followStockCommit, record } = useProductDetailDraft({ product, revision });
+  // A half-filled stock movement is its own command with its own button; leaving would lose it all the same.
+  const movementDirty = isMovementDraftDirty(movementDraft);
+  const dirty = record.dirty || movementDirty;
+  // Router navigation, including browser Back and Shell links, asks the same question as every other way out. The
+  // guard owns the browser's prompt for a closing tab.
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({
+    draft: record,
+    navigation: blocker,
+    onDiscard: () => {
+      record.discard();
+      setMovementDraft(EMPTY_MOVEMENT_DRAFT);
+    },
+    otherChanges: movementDirty,
+  });
   const updateDraft = (patch: Partial<DetailDraft>) => {
-    autosave.setDraft((current) => ({ ...current, ...patch }));
+    record.setDraft((current) => ({ ...current, ...patch }));
   };
   const updateMovementDraft = (patch: Partial<MovementDraft>) => {
     setMovementDraft((current) => ({ ...current, ...patch }));
   };
 
-  // Router navigation, including browser Back and Shell links, uses the same discard prompt.
-  const requestClose = (_next: boolean) => {
-    onBack();
-  };
-
-  const handleRetry = autosave.retry;
-  const handleBlur = autosave.flush;
+  const handleSave = record.save;
   const handleReloadLatest = () => {
-    autosave.adopt(draftOf(product));
+    record.adopt(draftOf(product));
     onReload();
   };
 
@@ -465,22 +479,14 @@ export const ProductDetailView = ({
       <div className="flex w-full min-w-0 flex-col gap-250">
         <PageHeader
           actions={
-            <div className="flex flex-wrap items-center gap-150">
-              <Button
-                className="shrink-0 whitespace-nowrap"
-                onClick={() => requestClose(false)}
-                theme="outlined"
-                variant="secondary"
-              >
-                {k('detail.back')}
-              </Button>
-              {canWrite && tab === 'detail' && (
-                <>
-                  {pendingMessage !== null && <StatusText status="error">{pendingMessage}</StatusText>}
-                  <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
-                </>
-              )}
-            </div>
+            <Button
+              className="shrink-0 whitespace-nowrap"
+              onClick={() => onBack()}
+              theme="outlined"
+              variant="secondary"
+            >
+              {k('detail.back')}
+            </Button>
           }
           description={
             <span className="flex flex-wrap items-center gap-100">
@@ -529,20 +535,24 @@ export const ProductDetailView = ({
               <Tabs.Indicator />
             </Tabs.List>
           </div>
-          <Tabs.Content className="py-200" value="detail">
+          <Tabs.Content className="flex flex-col gap-200 py-200" value="detail">
             <DetailForm
               canWrite={canWrite}
               draft={draft}
-              onBlur={handleBlur}
               onDraftChange={updateDraft}
+              onSave={handleSave}
               product={product}
             />
+            {/* The form's footer: the one Save button of the product fields, with the state of the draft. */}
+            {canWrite && (
+              <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
+            )}
           </Tabs.Content>
           <Tabs.Content className="py-200" value="variants">
             <VariantsPanel
+              active={tab === 'variants'}
               canMoveStock={canMoveStock}
               canWrite={canWrite}
-              key={`variants-${DateTime.formatIso(product.updatedAt)}`}
               onCommitted={onCommitted}
               onReload={onReload}
               onStockCommitted={followStockCommit}
@@ -562,8 +572,8 @@ export const ProductDetailView = ({
             />
             <EshopPanel
               {...(storefrontOrigin === undefined ? {} : { storefrontOrigin })}
+              active={tab === 'eshop'}
               canWrite={canWrite}
-              key={`eshop-${DateTime.formatIso(product.updatedAt)}`}
               onArchived={onBack}
               onCommitted={onCommitted}
               onReload={onReload}
@@ -573,10 +583,10 @@ export const ProductDetailView = ({
           </Tabs.Content>
           <Tabs.Content className="py-200" value="content">
             <CatalogContentPanel
+              active={tab === 'content'}
               canWrite={canWrite}
               category={category}
               hasCategoryTree={hasCategoryTree}
-              key={`content-${DateTime.formatIso(product.updatedAt)}`}
               onCommitted={onCommitted}
               onReload={onReload}
               product={product}
@@ -614,35 +624,7 @@ export const ProductDetailView = ({
           </Tabs.Content>
         </Tabs>
       </div>
-      <Dialog
-        actions={
-          <>
-            <Button onClick={() => blocker.reset?.()} theme="outlined" variant="secondary">
-              {k('detail.discardKeep')}
-            </Button>
-            <Button
-              onClick={() => {
-                blocker.proceed?.();
-              }}
-              variant="danger"
-            >
-              {k('detail.discardAction')}
-            </Button>
-          </>
-        }
-        closeLabel={dialogCloseLabel}
-        customTrigger
-        description={k('detail.discardDescription')}
-        onOpenChange={({ open: next }) => {
-          if (!next) {
-            blocker.reset?.();
-          }
-        }}
-        open={blocker.status === 'blocked'}
-        role="alertdialog"
-        size="sm"
-        title={t('merchandise.pages.products.detail.discardTitle', { name: product.name })}
-      />
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </>
   );
 };

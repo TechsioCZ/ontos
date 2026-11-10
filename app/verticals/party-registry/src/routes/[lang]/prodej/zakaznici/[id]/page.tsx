@@ -1,5 +1,5 @@
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useNavigate, useParams } from '@modern-js/plugin-tanstack/runtime';
+import { useBlocker, useNavigate, useParams } from '@modern-js/plugin-tanstack/runtime';
 import { PageHeader, SectionCard, Toaster } from '@app/admin-ui';
 import { pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
@@ -7,7 +7,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Option, Result, Schema } from 'effect';
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import type { CustomerListItem } from '../../../../../api/customers-client.ts';
 import { partyRegistryI18nResources } from '../../../../../i18n/resources.ts';
@@ -130,6 +130,9 @@ export const CustomerDetailPageRecordView = ({ onChanged, onRetry, record, stale
   const toaster = useToast();
   const subject = customerDetailPageSubject(record);
   const detailCustomer = editingCustomer(record.counterparty.counterpartyRef);
+  // Route navigation (Back, Shell links, another record) with unsaved edits asks the detail's question first.
+  const unsaved = useRef(false);
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => unsaved.current, withResolver: true });
   const model = useCustomerDetail(
     detailCustomer,
     record,
@@ -146,7 +149,12 @@ export const CustomerDetailPageRecordView = ({ onChanged, onRetry, record, stale
     (href) => {
       void navigate({ to: href });
     },
+    blocker,
   );
+  // Before the detail's own effects run, so a navigation it starts after a save or discard is not blocked again.
+  useLayoutEffect(() => {
+    unsaved.current = model.guard.dirty;
+  }, [model.guard.dirty]);
   /** A page reload refreshes both the editing model and the exact shared record. */
   const refresh = () => {
     model.refresh();

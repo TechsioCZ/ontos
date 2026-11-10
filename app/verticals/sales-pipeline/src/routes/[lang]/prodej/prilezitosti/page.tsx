@@ -35,8 +35,8 @@ import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
 import type { BulkByTagResult } from './pipeline-bulk-by-tag.tsx';
-import type { CreateCommand, OpportunityAutosave } from './pipeline-dialogs.tsx';
-import { opportunityAutosaveResult } from './opportunity-draft.ts';
+import type { CreateCommand, OpportunitySave } from './pipeline-dialogs.tsx';
+import { opportunitySaveResult } from './opportunity-draft.ts';
 import type { DialogState, Target } from './pipeline-dialog-host.tsx';
 import { PipelineDialogHost, ownerCommand, requestedCount, stageCommand } from './pipeline-dialog-host.tsx';
 import { PipelineDetailPage } from './pipeline-detail-page.tsx';
@@ -415,17 +415,19 @@ const usePipelineCommands = (revision: number, reload: () => void) => {
     );
   };
   /**
-   * Autosave of the edit panel. The saved opportunity reaches the list through the live reread; a revision conflict
-   * shows in the panel's status line, any other failure as its message.
+   * Save of the edit panel, sent only by its Uložit button. The saved opportunity reaches the list through the live
+   * reread; a revision conflict shows in the save bar, an approval proposal in its status, any other failure as its
+   * message.
    */
-  const autosave: OpportunityAutosave = (command, expectedRevision, unchanged) =>
-    opportunityAutosaveResult(
+  const saveEdit: OpportunitySave = (command, expectedRevision, unchanged) =>
+    opportunitySaveResult(
       applyPipelineCommandIfUnchanged(command, expectedRevision, unchanged).pipe(
         Effect.tapError((problem) =>
           Effect.sync(() =>
             setDialogError(
-              Predicate.isTagged(problem, 'ApplyCommandActionConflictProblem') &&
-                problem.code === 'sales_pipeline_revision_conflict'
+              Predicate.isTagged(problem, 'ActionProposalAccepted') ||
+                (Predicate.isTagged(problem, 'ApplyCommandActionConflictProblem') &&
+                  problem.code === 'sales_pipeline_revision_conflict')
                 ? undefined
                 : failureMessage(problem),
             ),
@@ -434,7 +436,7 @@ const usePipelineCommands = (revision: number, reload: () => void) => {
         Effect.tap(() => Effect.sync(() => setDialogError(undefined))),
       ),
     );
-  return { autosave, busy, dialogError, runCommand, setDialogError };
+  return { busy, dialogError, runCommand, saveEdit, setDialogError };
 };
 
 /** The open dialog with its opportunity as the list has it now, so the edit panel follows live rereads. */
@@ -568,7 +570,7 @@ const RecordsPageContent = ({
   );
   const canWrite = response?.canWrite === true;
   const revision = response?.revision ?? 0;
-  const { autosave, busy, dialogError, runCommand, setDialogError } = usePipelineCommands(revision, reload);
+  const { busy, dialogError, runCommand, saveEdit, setDialogError } = usePipelineCommands(revision, reload);
 
   const items = response?.items ?? [];
   const opportunityTags = useTagsFor('opportunity', toSubjectIds(items.map((item) => item.id)));
@@ -690,7 +692,7 @@ const RecordsPageContent = ({
       onBulkByTagDone={finishBulkByTag}
       onBulkTagsDone={finishBulkTags}
       onClose={closeDialog}
-      onFormAutosave={autosave}
+      onFormSave={saveEdit}
       onFormSubmit={submitForm}
       onOwnerSubmit={submitOwner}
       onStageSubmit={submitStage}

@@ -2,18 +2,18 @@ import {
   UpdateTagActionConflictProblemSchema,
   UpdateTagActionUnavailableProblemSchema,
 } from '../../shared/apis/update-tag-action.ts';
-import { startAutosave } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
-import { DateTime, Effect, Schema } from 'effect';
-import { TestClock } from 'effect/testing';
+import { startDraftSave } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+import { DateTime, Effect, Predicate, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { TagIdSchema } from '../../shared/apis/records.ts';
 import type { RecordsResponse, Tag } from '../../shared/apis/records.ts';
 import {
   sameTagDraft,
-  tagAutosaveResult,
   tagDraftOf,
   tagFieldsOf,
+  tagSaveResult,
   tagUnchangedSince,
   validTagDraft,
 } from '../../src/routes/[lang]/nastaveni/stitky/tag-draft.ts';
@@ -75,27 +75,45 @@ const isConflict = UpdateTagActionConflictProblemSchema.make({
   type: 'urn:ontos:test:tag-revision',
 });
 
+const proposal = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
+  _tag: 'ActionProposalAccepted',
+  expiresAt: '2026-11-10T12:00:00.000Z',
+  proposalId: '60000000-0000-4000-8000-000000000001',
+});
+
+const unavailable = UpdateTagActionUnavailableProblemSchema.make({
+  code: 'tagging_persistence_unavailable',
+  detail: 'The owner is unavailable',
+  retryable: true,
+  status: 503,
+  title: 'Unavailable',
+  type: 'urn:ontos:test:tag-unavailable',
+});
+
 const panel = Effect.fnUntraced(function* panel(write: Effect.Effect<'applied' | 'stale', unknown>) {
   const sent: TagDraft[] = [];
-  const controller = yield* startAutosave(saved, {
+  const controller = yield* startDraftSave(saved, {
     equals: sameTagDraft,
     isValid: validTagDraft,
     save: (value: TagDraft) =>
       Effect.sync(() => sent.push(value)).pipe(
-        Effect.andThen(tagAutosaveResult(write)),
-        Effect.map((result): AutosaveOutcome => (result === 'conflict' || result === 'failed' ? result : 'saved')),
+        Effect.andThen(tagSaveResult(write)),
+        Effect.map((result): SaveOutcome => (Predicate.isNumber(result) ? 'saved' : result)),
       ),
   });
   return { controller, sent };
 });
 
-describe('tag edit panel autosave', () => {
-  it.effect('saves a typed name after the quiet time', () =>
+describe('tag edit panel save', () => {
+  it.live('sends nothing while the draft only changes, and one update on Save', () =>
     Effect.gen(function* typed() {
       const { controller, sent } = yield* panel(Effect.succeed('applied'));
       controller.change({ ...saved, name: 'VIP klient' });
       expect(controller.status()).toBe('dirty');
-      yield* TestClock.adjust('800 millis');
+      yield* Effect.sleep('1 second');
+      expect(sent).toEqual([]);
+      controller.save();
+      yield* Effect.yieldNow;
       expect(sent.map(({ name }) => name)).toEqual(['VIP klient']);
       expect(controller.status()).toBe('saved');
     }),
@@ -105,10 +123,22 @@ describe('tag edit panel autosave', () => {
     Effect.gen(function* invalid() {
       const { controller, sent } = yield* panel(Effect.succeed('applied'));
       controller.change({ ...saved, kinds: [] });
-      controller.flush();
-      yield* TestClock.adjust('1 second');
+      controller.save();
+      yield* Effect.yieldNow;
       expect(sent).toEqual([]);
       expect(controller.status()).toBe('invalid');
+    }),
+  );
+
+  it.effect('discarding goes back to the confirmed version without sending', () =>
+    Effect.gen(function* discarded() {
+      const { controller, sent } = yield* panel(Effect.succeed('applied'));
+      controller.change({ ...saved, name: 'VIP klient' });
+      controller.discard();
+      expect(controller.status()).toBe('idle');
+      controller.save();
+      yield* Effect.yieldNow;
+      expect(sent).toEqual([]);
     }),
   );
 
@@ -116,32 +146,34 @@ describe('tag edit panel autosave', () => {
     Effect.gen(function* conflict() {
       const stale = yield* panel(Effect.succeed('stale'));
       stale.controller.change({ ...saved, color: 'blue' });
-      stale.controller.flush();
+      stale.controller.save();
       yield* Effect.yieldNow;
       expect(stale.controller.status()).toBe('conflict');
 
       const race = yield* panel(Effect.fail(isConflict));
       race.controller.change({ ...saved, color: 'blue' });
-      race.controller.flush();
+      race.controller.save();
       yield* Effect.yieldNow;
       expect(race.controller.status()).toBe('conflict');
 
-      const failed = yield* panel(
-        Effect.fail(
-          UpdateTagActionUnavailableProblemSchema.make({
-            code: 'tagging_persistence_unavailable',
-            detail: 'The owner is unavailable',
-            retryable: true,
-            status: 503,
-            title: 'Unavailable',
-            type: 'urn:ontos:test:tag-unavailable',
-          }),
-        ),
-      );
+      const failed = yield* panel(Effect.fail(unavailable));
       failed.controller.change({ ...saved, color: 'blue' });
-      failed.controller.flush();
+      failed.controller.save();
       yield* Effect.yieldNow;
       expect(failed.controller.status()).toBe('error');
+    }),
+  );
+
+  it.effect('parks a change sent for approval and does not send it again', () =>
+    Effect.gen(function* proposed() {
+      const { controller, sent } = yield* panel(Effect.fail(proposal));
+      controller.change({ ...saved, color: 'blue' });
+      controller.save();
+      yield* Effect.yieldNow;
+      expect(controller.status()).toBe('proposed');
+      controller.save();
+      yield* Effect.yieldNow;
+      expect(sent).toHaveLength(1);
     }),
   );
 });

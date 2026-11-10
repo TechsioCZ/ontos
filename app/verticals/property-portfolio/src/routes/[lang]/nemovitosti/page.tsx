@@ -4,7 +4,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { Link } from '@techsio/ui-kit/atoms/link';
-import { useNavigate, useRouterState } from '@modern-js/plugin-tanstack/runtime';
+import { useBlocker, useNavigate, useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { DateTime, Effect, Match, Option, Result, Schema } from 'effect';
@@ -15,7 +15,7 @@ import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import {
-  autosavePropertyEdit,
+  savePropertyEdit,
   currentEditDraft,
   editCommandOf,
   editUnchangedSince,
@@ -29,8 +29,8 @@ import {
 } from './use-property-editor.ts';
 import type { PropertyDraft } from './use-property-editor.ts';
 import { ResponsibleEmployeesField } from './responsible-employees-field.tsx';
-import { AutosaveStatus, useAutosaveDraft } from '@app/admin-ui';
-import type { RevisionedSaveResult } from '@app/admin-ui';
+import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useRecordDraft, useUnsavedChangesGuard } from '@app/admin-ui';
+import type { RevisionedSaveResult, SavableDraft } from '@app/admin-ui';
 import type { PropertyCommand } from '../../../../shared/actions/apply-command.ts';
 import { UnitStory, pragueToday } from './unit-story.tsx';
 import type { LeaseBlock } from './unit-story.tsx';
@@ -388,20 +388,18 @@ interface EditorFieldsProps {
   readonly errors: PropertyEditor['errors'];
   readonly fields: PropertyEditor['fields'];
   readonly model: RecordsModel;
-  readonly onBlur: () => void;
   readonly onEmployees: (value: string | string[]) => void;
   readonly onLifecycle: (value: string) => void;
   readonly onText: (field: Exclude<PropertyEditor['fields'][number], 'responsibleEmployeeIds'>, value: string) => void;
 }
 
-/** The fields of a building or unit, shared by the create dialog and the autosaving edit dialog. */
+/** The fields of a building or unit, shared by the create dialog and the edit dialog. */
 const RecordsEditorFields = ({
   disabled,
   draft,
   errors,
   fields,
   model,
-  onBlur,
   onEmployees,
   onLifecycle,
   onText,
@@ -441,7 +439,6 @@ const RecordsEditorFields = ({
               id="property-note"
               key={field}
               label={t(`${key}.editor.note`)}
-              onBlur={onBlur}
               onChange={(event) => onText('note', event.target.value)}
               value={draft.note}
             />
@@ -453,7 +450,6 @@ const RecordsEditorFields = ({
             id={`property-${field}`}
             key={field}
             label={t(`${key}.editor.${field}`)}
-            onBlur={onBlur}
             onChange={(event) => onText(field, event.target.value)}
             required
             value={draft[field]}
@@ -484,33 +480,30 @@ const RecordsEditorFields = ({
   );
 };
 
-const noBlur = () => {
-  // A new record is saved only on "Uložit".
-};
-
 const unitFields = ['name', 'note'] as const;
 const propertyFields = ['code', 'name', 'address', 'propertyType', 'responsibleEmployeeIds', 'note'] as const;
 
 /**
- * Edit an existing building or unit. Changes save themselves (debounced, on blur and on Zavřít) against the revision
- * the draft builds on; when someone else changed the record, the dialog offers the current version instead.
+ * Edit an existing building or unit. Nothing is saved until Uložit is clicked; leaving with unsaved changes asks first.
+ * A save runs against the revision the draft builds on; when someone else changed the record, the dialog offers the
+ * current version instead.
  */
 const RecordsEditPanel = ({ base: opened, view }: { readonly base: PropertyDraft; readonly view: RecordsView }) => {
   const { editor, model } = view;
-  const { key, records, t } = model;
+  const { key, language, records, t } = model;
   const server = (records === undefined ? undefined : currentEditDraft(opened, records)) ?? opened;
   /** The version of the record the draft builds on: what it opened with, last saved or reloaded. */
   const base = useRef(server);
   const rememberSaved = (value: PropertyDraft, result: RevisionedSaveResult) => {
-    if (result !== 'conflict' && result !== 'failed') {
+    if (result !== 'conflict' && result !== 'failed' && result !== 'proposed') {
       base.current = value;
     }
   };
   const send = (value: PropertyDraft, expectedRevision: number, command: PropertyCommand) =>
-    autosavePropertyEdit(command, expectedRevision, editUnchangedSince(base.current), editor.reportProposal).pipe(
+    savePropertyEdit(command, expectedRevision, editUnchangedSince(base.current), editor.reportProposal).pipe(
       Effect.tap((result) => Effect.sync(() => rememberSaved(value, result))),
     );
-  const autosave = useAutosaveDraft<PropertyDraft, never>({
+  const record = useRecordDraft<PropertyDraft, never>({
     equals: sameEditDraft,
     isValid: (value) => Option.isSome(editCommandOf(value, records)),
     revision: records?.revision ?? 0,
@@ -522,29 +515,29 @@ const RecordsEditPanel = ({ base: opened, view }: { readonly base: PropertyDraft
       }),
     server,
   });
-  const settledOnServer = !autosave.pending && sameEditDraft(autosave.draft, server);
+  const settledOnServer = !record.pending && sameEditDraft(record.draft, server);
   useEffect(() => {
     if (settledOnServer) {
       base.current = server;
     }
   }, [base, server, settledOnServer]);
-  const { draft } = autosave;
-  const close = () => {
-    autosave.flush();
-    editor.closeEdit();
-  };
-  const handleBlur = autosave.flush;
-  const handleRetry = autosave.retry;
-  const handleReloadLatest = autosave.reloadLatest;
+  const { draft } = record;
+  const labels = saveLabelsFor(language);
+  // Router navigation asks the same question as every other way out; the guard owns the closing-tab prompt.
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
+  const close = () => guard.request(() => editor.closeEdit());
   const isUnit = draft.unit !== undefined;
+  const handleReloadLatest = record.reloadLatest;
+  const handleSave = record.save;
   return (
     <Dialog
       actions={
         <>
-          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
           <Button onClick={close} theme="outlined" variant="secondary">
             {t(`${key}.editor.close`)}
           </Button>
+          <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
         </>
       }
       closeLabel={t(`${key}.editor.close`)}
@@ -565,7 +558,7 @@ const RecordsEditPanel = ({ base: opened, view }: { readonly base: PropertyDraft
         noValidate
         onSubmit={(event) => {
           event.preventDefault();
-          autosave.flush();
+          record.save();
         }}
       >
         <RecordsEditorFields
@@ -574,20 +567,29 @@ const RecordsEditPanel = ({ base: opened, view }: { readonly base: PropertyDraft
           errors={propertyDraftErrors(draft, records)}
           fields={isUnit ? unitFields : propertyFields}
           model={model}
-          onBlur={handleBlur}
-          onEmployees={(value) => autosave.setDraft((current) => withResponsibleEmployees(current, value))}
-          onLifecycle={(value) => autosave.setDraft((current) => withLifecycle(current, value))}
-          onText={(field, value) => autosave.setDraft((current) => withTextField(current, field, value))}
+          onEmployees={(value) => record.setDraft((current) => withResponsibleEmployees(current, value))}
+          onLifecycle={(value) => record.setDraft((current) => withLifecycle(current, value))}
+          onText={(field, value) => record.setDraft((current) => withTextField(current, field, value))}
         />
       </form>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </Dialog>
   );
 };
 
 const RecordsEditorForm = ({ view }: { readonly view: RecordsView }) => {
   const { editor, model } = view;
-  const { key, t } = model;
+  const { key, language, t } = model;
   const { draft, editing } = editor;
+  const labels = saveLabelsFor(language);
+  // The new-record draft counts as unsaved only while its dialog is open; a closed one is never asked about.
+  const create: SavableDraft = { ...editor.createDraft, dirty: draft !== undefined && editor.createDraft.dirty };
+  const createBlocker = useBlocker({
+    enableBeforeUnload: false,
+    shouldBlockFn: () => create.dirty,
+    withResolver: true,
+  });
+  const createGuard = useUnsavedChangesGuard({ draft: create, navigation: createBlocker, onDiscard: editor.cancel });
   if (editing !== undefined) {
     return (
       <RecordsEditPanel
@@ -600,30 +602,28 @@ const RecordsEditorForm = ({ view }: { readonly view: RecordsView }) => {
   if (draft === undefined) {
     return null;
   }
-  const propertyDraft = draft.unitFor === undefined && draft.unit === undefined;
+  const close = () => createGuard.request(() => editor.cancel());
+  const handleCreateSave = editor.createDraft.save;
   return (
     <Dialog
       actions={
         <>
-          <Button disabled={editor.busy} onClick={() => editor.cancel()} theme="outlined" variant="secondary">
+          <Button disabled={editor.busy} onClick={close} theme="outlined" variant="secondary">
             {t(`${key}.editor.cancel`)}
           </Button>
-          <Button
-            disabled={editor.busy || editor.blocked || (propertyDraft && model.employees === undefined)}
-            form="property-record-editor"
-            isLoading={editor.busy}
-            type="submit"
-            variant="primary"
-          >
-            {t(`${key}.editor.save`)}
-          </Button>
+          <SaveBar
+            labels={labels}
+            onReloadLatest={() => editor.createDraft.adopt(editor.createDraft.confirmed)}
+            onSave={handleCreateSave}
+            status={editor.createDraft.status}
+          />
         </>
       }
       closeLabel={t(`${key}.editor.cancel`)}
       customTrigger
       onOpenChange={({ open }) => {
         if (!open && !editor.busy) {
-          editor.cancel();
+          close();
         }
       }}
       open
@@ -636,11 +636,10 @@ const RecordsEditorForm = ({ view }: { readonly view: RecordsView }) => {
     >
       <form
         className="propertyportfolio:grid gap-250"
-        id="property-record-editor"
         noValidate
         onSubmit={(event) => {
           event.preventDefault();
-          editor.save();
+          editor.createDraft.save();
         }}
       >
         <RecordsEditorFields
@@ -649,13 +648,13 @@ const RecordsEditorForm = ({ view }: { readonly view: RecordsView }) => {
           errors={editor.errors}
           fields={editor.fields}
           model={model}
-          onBlur={noBlur}
           onEmployees={(value) => editor.changeResponsibleEmployees(value)}
           onLifecycle={(value) => editor.changeLifecycle(value)}
           onText={(field, value) => editor.change(field, value)}
         />
         {editor.feedback !== undefined && <output>{t(`${key}.editor.${editor.feedback}`)}</output>}
       </form>
+      <UnsavedChangesDialog labels={labels} prompt={createGuard.prompt} />
     </Dialog>
   );
 };

@@ -1,7 +1,8 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { czechPlural } from '@app/shared-contracts';
-import { AutosaveStatus, useAutosave } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
@@ -117,7 +118,8 @@ const PeopleEditor = ({
   readonly onCommitted: (change: PendingPeopleChange) => void;
   readonly scope: 'company' | 'tenant';
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
+  const labels = saveLabelsFor(language);
   const { person } = editor;
   const membership = person.selectedCompanyMembership;
   const { kind, principalRef } = person;
@@ -128,8 +130,8 @@ const PeopleEditor = ({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const title = editor.kind === 'role' ? 'Přiřadit nebo odebrat roli' : 'Členství ve firmě';
-  // The company membership of an existing person saves itself: the change is audited, so it is sent only once the
-  // reason is filled in, and the revision the server answered with is the one the next change builds on.
+  // The company membership is saved only by Uložit. The change is audited, so it is sent only once the reason is
+  // filled in, and the revision the server answered with is the one the next change builds on.
   const openedBase: MembershipBase = {
     affiliation: membership?.affiliation ?? null,
     status: membership?.status ?? 'invited',
@@ -137,13 +139,13 @@ const PeopleEditor = ({
   const base = useRef<MembershipBase>(openedBase);
   const revision = useRef(membership?.revision ?? 0);
   const [membershipDraft, setMembershipDraft] = useState<MembershipDraft>(() => membershipDraftOf(openedBase));
-  const autosave = useAutosave<MembershipDraft, HttpClient.HttpClient>({
+  const record = useDraftSave<MembershipDraft, HttpClient.HttpClient>({
     equals: sameMembershipDraft,
     isValid: (value) => Option.isSome(membershipEditOf(value, base.current)),
     runtime: browserRuntime,
     save: (value) =>
       Option.match(membershipEditOf(value, base.current), {
-        onNone: () => Effect.succeed<AutosaveOutcome>('saved'),
+        onNone: () => Effect.succeed<SaveOutcome>('saved'),
         onSome: (edit) =>
           changeCompanyMembership({
             affiliation: kind === 'agent' ? null : edit.affiliation,
@@ -152,7 +154,7 @@ const PeopleEditor = ({
             reason: edit.reason,
             status: edit.status,
           }).pipe(
-            Effect.map((outcome): AutosaveOutcome => {
+            Effect.map((outcome): SaveOutcome => {
               if (outcome.status === 'failed') {
                 setError(outcome.message);
                 return 'failed';
@@ -170,20 +172,28 @@ const PeopleEditor = ({
   });
   const patchMembership = (patch: Partial<MembershipDraft>) =>
     setMembershipDraft((current) => ({ ...current, ...patch }));
-  const close = () => {
-    autosave.flush();
-    onClose();
-  };
-  const handleRetry = autosave.retry;
-  const handleReloadLatest = () => autosave.adopt(membershipDraftOf(baseOf(person)));
+  const roleInput = roleId !== '' || reason.trim() !== '';
+  const otherChanges = editor.kind === 'role' && roleInput;
+  const blocker = useBlocker({
+    enableBeforeUnload: false,
+    shouldBlockFn: () => record.dirty || otherChanges,
+    withResolver: true,
+  });
+  const guard = useUnsavedChangesGuard({
+    draft: record,
+    navigation: blocker,
+    onDiscard: () => setMembershipDraft(record.confirmed),
+    otherChanges,
+  });
+  const handleReloadLatest = () => record.adopt(membershipDraftOf(baseOf(person)));
   const requestClose = () => {
     if (editor.kind === 'role') {
       if (!busy) {
-        onClose();
+        guard.request(onClose);
       }
       return;
     }
-    close();
+    guard.request(onClose);
   };
   const chosen = roles.find((role) => role.roleId === roleId);
   const held = chosen === undefined ? undefined : accessAssignmentOf(access, principalRef.principalId, chosen.roleId);
@@ -241,127 +251,135 @@ const PeopleEditor = ({
       ),
     );
   };
+  const handleSave = record.save;
   return (
-    <Dialog
-      actions={
-        editor.kind === 'role' ? (
-          <>
-            <Button disabled={busy} onClick={onClose} theme="outlined" variant="secondary">
-              Zrušit
-            </Button>
-            <Button disabled={busy || reason.trim() === '' || chosen === undefined} onClick={submit} variant="primary">
-              {busy ? 'Odesílám…' : 'Potvrdit změnu'}
-            </Button>
-          </>
-        ) : (
-          <>
-            <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
-            <Button onClick={close} theme="outlined" variant="secondary">
-              Zavřít
-            </Button>
-          </>
-        )
-      }
-      closeLabel="Zavřít"
-      customTrigger
-      onOpenChange={(details) => {
-        if (!details.open) {
-          requestClose();
-        }
-      }}
-      open
-      title={title}
-    >
-      <div className="grid gap-200">
-        <p>{person.displayName}</p>
-        {editor.kind === 'role' ? (
-          <>
-            <RolePicker
-              access={access}
-              busy={busy}
-              onChange={setRoleId}
-              operation={operation}
-              person={person}
-              roleId={roleId}
-              roles={roles}
-            />
-            <label className="grid gap-50">
-              Změna
-              <select
-                className={selectClass}
-                onChange={(event) => {
-                  setOperation(event.target.value === 'revoke' ? 'revoke' : 'assign');
-                  setRoleId('');
-                }}
-                value={operation}
+    <>
+      <Dialog
+        actions={
+          editor.kind === 'role' ? (
+            <>
+              <Button disabled={busy} onClick={requestClose} theme="outlined" variant="secondary">
+                Zrušit
+              </Button>
+              <Button
+                disabled={busy || reason.trim() === '' || chosen === undefined}
+                onClick={submit}
+                variant="primary"
               >
-                <option value="assign">Přiřadit</option>
-                <option value="revoke">Odebrat</option>
-              </select>
-            </label>
-          </>
-        ) : (
-          <>
-            {kind === 'human' ? (
+                {busy ? 'Odesílám…' : 'Potvrdit změnu'}
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button onClick={requestClose} theme="outlined" variant="secondary">
+                Zavřít
+              </Button>
+              <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
+            </>
+          )
+        }
+        closeLabel="Zavřít"
+        customTrigger
+        onOpenChange={(details) => {
+          if (!details.open) {
+            requestClose();
+          }
+        }}
+        open
+        title={title}
+      >
+        <div className="grid gap-200">
+          <p>{person.displayName}</p>
+          {editor.kind === 'role' ? (
+            <>
+              <RolePicker
+                access={access}
+                busy={busy}
+                onChange={setRoleId}
+                operation={operation}
+                person={person}
+                roleId={roleId}
+                roles={roles}
+              />
               <label className="grid gap-50">
-                Zařazení ve firmě
-                <select
-                  className={selectClass}
-                  onChange={(event) =>
-                    patchMembership({ affiliation: event.target.value === 'employee' ? 'employee' : 'external' })
-                  }
-                  value={membershipDraft.affiliation}
-                >
-                  <option value="employee">Zaměstnanec</option>
-                  <option value="external">Externí osoba</option>
-                </select>
-              </label>
-            ) : (
-              <p>AI agent nemá zaměstnanecké ani externí zařazení.</p>
-            )}
-            {editor.kind === 'membership' ? (
-              <label className="grid gap-50">
-                Stav členství
+                Změna
                 <select
                   className={selectClass}
                   onChange={(event) => {
-                    const { value } = event.target;
-                    if (value === 'active' || value === 'disabled' || value === 'departed' || value === 'invited') {
-                      patchMembership({ status: value });
-                    }
+                    setOperation(event.target.value === 'revoke' ? 'revoke' : 'assign');
+                    setRoleId('');
                   }}
-                  value={membershipDraft.status}
+                  value={operation}
                 >
-                  {Object.entries(membershipLabels).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
+                  <option value="assign">Přiřadit</option>
+                  <option value="revoke">Odebrat</option>
                 </select>
               </label>
-            ) : null}
-            <p className="text-fg-secondary text-sm">
-              Zařazení ve firmě a stav členství jsou organizační údaje: neurčují práva a jejich změna sama neodebere
-              žádnou roli. Oprávnění se mění přiřazením role; členství a správu firmy nastavujete ve správě přístupu.
-            </p>
-          </>
-        )}
-        <FormInput
-          label={t('shell.people.changeReason')}
-          maxLength={500}
-          onChange={(event) =>
-            editor.kind === 'role' ? setReason(event.target.value) : patchMembership({ reason: event.target.value })
-          }
-          required
-          value={editor.kind === 'role' ? reason : membershipDraft.reason}
-        />
-        {error === '' ? null : (
-          <StatusText role="alert" status="error">
-            {error}
-          </StatusText>
-        )}
-      </div>
-    </Dialog>
+            </>
+          ) : (
+            <>
+              {kind === 'human' ? (
+                <label className="grid gap-50">
+                  Zařazení ve firmě
+                  <select
+                    className={selectClass}
+                    onChange={(event) =>
+                      patchMembership({ affiliation: event.target.value === 'employee' ? 'employee' : 'external' })
+                    }
+                    value={membershipDraft.affiliation}
+                  >
+                    <option value="employee">Zaměstnanec</option>
+                    <option value="external">Externí osoba</option>
+                  </select>
+                </label>
+              ) : (
+                <p>AI agent nemá zaměstnanecké ani externí zařazení.</p>
+              )}
+              {editor.kind === 'membership' ? (
+                <label className="grid gap-50">
+                  Stav členství
+                  <select
+                    className={selectClass}
+                    onChange={(event) => {
+                      const { value } = event.target;
+                      if (value === 'active' || value === 'disabled' || value === 'departed' || value === 'invited') {
+                        patchMembership({ status: value });
+                      }
+                    }}
+                    value={membershipDraft.status}
+                  >
+                    {Object.entries(membershipLabels).map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              <p className="text-fg-secondary text-sm">
+                Zařazení ve firmě a stav členství jsou organizační údaje: neurčují práva a jejich změna sama neodebere
+                žádnou roli. Oprávnění se mění přiřazením role; členství a správu firmy nastavujete ve správě přístupu.
+              </p>
+            </>
+          )}
+          <FormInput
+            label={t('shell.people.changeReason')}
+            maxLength={500}
+            onChange={(event) =>
+              editor.kind === 'role' ? setReason(event.target.value) : patchMembership({ reason: event.target.value })
+            }
+            required
+            value={editor.kind === 'role' ? reason : membershipDraft.reason}
+          />
+          {error === '' ? null : (
+            <StatusText role="alert" status="error">
+              {error}
+            </StatusText>
+          )}
+        </div>
+      </Dialog>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
+    </>
   );
 };
 

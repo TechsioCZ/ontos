@@ -1,4 +1,4 @@
-// The asset card's values: a new asset is submitted once, an existing one is autosaved field by field.
+// The asset card's values: a new asset is submitted once, an edit of an existing one is sent on Uložit.
 import { Option } from 'effect';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import { optionalField } from '../../../../../shared/domain/common.ts';

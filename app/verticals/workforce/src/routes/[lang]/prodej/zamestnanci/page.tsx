@@ -35,7 +35,7 @@ import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { CellContext, ColumnDef, DataTableTranslations, Row } from '@techsio/ui-kit/organisms/data-table';
 import { SelectTemplate } from '@app/admin-ui/select-template';
-import { Effect, Fiber, Match, Option, Schema } from 'effect';
+import { Effect, Fiber, Match, Option, Predicate, Schema } from 'effect';
 import { createContext, use, useEffect, useRef, useState } from 'react';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { executeUpdateEmployee } from '../../../../api/update-employee-action-client.ts';
@@ -66,7 +66,7 @@ import {
   selectLabelProps,
 } from './employee-dialogs.tsx';
 import type {
-  AutosaveCommand,
+  EditCommitCommand,
   CommitCommand,
   EmployeeSearchNotice,
   EmployeeTargetRecord,
@@ -74,7 +74,7 @@ import type {
   EmployeeTargetState,
   ShownEdit,
 } from './employee-dialogs.tsx';
-import type { CommitOutcome, EmployeeFilters } from './employee-model.ts';
+import type { CommitOutcome, EditCommitResult, EmployeeFilters } from './employee-model.ts';
 import {
   allOption,
   bulkCommand,
@@ -83,7 +83,6 @@ import {
   employeeRoles,
   filterEmployees,
   hasActiveFilters,
-  isCommitOutcome,
   newRequestToken,
   noFilters,
   roleFromValue,
@@ -232,21 +231,25 @@ const execute = (command: WorkforceCommand, expectedRevision: number) =>
     Effect.flatMap(committedResult),
   );
 
-/** Autosave of the edit panel: the draft's base revision, no toast; the saved fields show on the row right away. */
-const autosaveCommitOf =
-  (reload: () => void, showSaved: (shown: ShownEdit) => void, failed: typeof outcomeOfFailure): AutosaveCommand =>
+/**
+ * The edit panel's Save: the draft's base revision, no toast; the saved fields show on the row right away. A change
+ * parked for approval is `proposed`: the panel's save bar says so and nothing on the row changes.
+ */
+const editCommitOf =
+  (reload: () => void, showSaved: (shown: ShownEdit) => void): EditCommitCommand =>
   (command, expectedRevision, shown) =>
     execute(command, expectedRevision).pipe(
       Effect.match({
-        onFailure: failed,
-        onSuccess: (response): CommitOutcome | number => response.revision,
+        onFailure: (error): EditCommitResult =>
+          pendingProposalMessage(error) === undefined ? outcomeOfFailure(error) : 'proposed',
+        onSuccess: (response): EditCommitResult => response.revision,
       }),
       Effect.tap((result) =>
         Effect.sync(() => {
-          if (!isCommitOutcome(result)) {
+          if (Predicate.isNumber(result)) {
             showSaved(shown);
           }
-          if (result === 'conflict' || !isCommitOutcome(result)) {
+          if (result === 'conflict' || Predicate.isNumber(result)) {
             reload();
           }
         }),
@@ -742,14 +745,12 @@ const EmployeeSearchNoticeSlot = ({
 /** The copied-target panel uses only the fresh response's record, revision and write capability. */
 const EmployeeSearchDialog = ({
   activeDialogOpened,
-  autosaveCommit,
-  commit,
+  commitEdit,
   onDismiss,
   panel,
 }: {
   readonly activeDialogOpened: boolean;
-  readonly autosaveCommit: AutosaveCommand;
-  readonly commit: CommitCommand;
+  readonly commitEdit: EditCommitCommand;
   readonly onDismiss: () => void;
   readonly panel: EmployeeTargetPanel | undefined;
 }) => {
@@ -759,9 +760,8 @@ const EmployeeSearchDialog = ({
   const { record } = panel;
   return (
     <EmployeeFormDialog
-      autosaveCommit={autosaveCommit}
       availablePrincipals={record.availablePrincipals}
-      commit={commit}
+      commitEdit={commitEdit}
       employee={record.employee}
       onClose={onDismiss}
       readOnly={employeeSearchPanelMode(record.canWrite) === 'read-only'}
@@ -772,8 +772,7 @@ const EmployeeSearchDialog = ({
 
 /** The row-click edit panel and the fresh copied-target panel never coexist; the page owns both close handlers. */
 const EmployeeRecordPanels = ({
-  autosaveCommit,
-  commit,
+  commitEdit,
   data,
   form,
   items,
@@ -781,8 +780,7 @@ const EmployeeRecordPanels = ({
   onDismissTarget,
   panel,
 }: {
-  readonly autosaveCommit: AutosaveCommand;
-  readonly commit: CommitCommand;
+  readonly commitEdit: EditCommitCommand;
   readonly data: RecordsResponse | undefined;
   readonly form: { readonly employee: Employee | null } | null;
   readonly items: readonly Employee[];
@@ -793,9 +791,8 @@ const EmployeeRecordPanels = ({
   <>
     {form !== null && (
       <EmployeeFormDialog
-        autosaveCommit={autosaveCommit}
         availablePrincipals={data?.availablePrincipals ?? []}
-        commit={commit}
+        commitEdit={commitEdit}
         employee={currentEmployee(items, form.employee)}
         onClose={onCloseForm}
         revision={data?.revision ?? 0}
@@ -803,8 +800,7 @@ const EmployeeRecordPanels = ({
     )}
     <EmployeeSearchDialog
       activeDialogOpened={form !== null}
-      autosaveCommit={autosaveCommit}
-      commit={commit}
+      commitEdit={commitEdit}
       onDismiss={onDismissTarget}
       panel={panel}
     />
@@ -948,7 +944,7 @@ const EmployeesPageContent = ({
     }
     return outcomeOfFailure(error);
   };
-  const autosaveCommit = autosaveCommitOf(reload, showSaved, failed);
+  const commitEdit = editCommitOf(reload, showSaved);
 
   const commit: CommitCommand = (build, successKey, shown) => {
     if (state.status !== 'ready') {
@@ -1152,8 +1148,7 @@ const EmployeesPageContent = ({
       </div>
 
       <EmployeeRecordPanels
-        autosaveCommit={autosaveCommit}
-        commit={commit}
+        commitEdit={commitEdit}
         data={data}
         form={form}
         items={items}

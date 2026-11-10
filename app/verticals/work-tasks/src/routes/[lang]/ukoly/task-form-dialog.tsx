@@ -1,14 +1,18 @@
 import {
-  AutosaveStatus,
+  SaveBar,
   SidePanel,
+  UnsavedChangesDialog,
   comboboxTranslations,
   datePickerTranslations,
   dialogCloseLabel,
+  saveLabelsFor,
   surfaceTileClassName,
-  useAutosaveDraft,
+  useRecordDraft,
+  useUnsavedChangesGuard,
 } from '@app/admin-ui';
-import type { RevisionedSaveResult } from '@app/admin-ui';
+import type { RevisionedSaveResult, UnsavedChangesGuard } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { assignmentLabel, principalKey } from '../../../../shared/assignment.ts';
 import { assignmentOptions, selectedPrincipal } from './assignment-options.ts';
@@ -344,13 +348,13 @@ interface TaskFormDialogProps {
   readonly lookupAccess: LookupAccess | undefined;
   /** Hides a closed task from the lists (true) or lists it again (false); absent without write access. */
   readonly onArchive?: ((archived: boolean) => void) | undefined;
-  /** Saves an edit of an existing task against the revision its draft builds on. */
-  readonly onAutosave: (
+  readonly onClose: () => void;
+  readonly onComment?: (text: string) => void;
+  /** Saves an edit of an existing task (the Save button) against the revision its draft builds on. */
+  readonly onSaveEdit: (
     submission: TaskFormSubmission,
     expectedRevision: number,
   ) => Effect.Effect<RevisionedSaveResult>;
-  readonly onClose: () => void;
-  readonly onComment?: (text: string) => void;
   /** Creates the task on "Vytvořit úkol". */
   readonly onSubmit: (submission: TaskFormSubmission) => void;
   readonly opportunities: readonly OpportunityOption[];
@@ -417,9 +421,9 @@ const submissionOf = (values: FormValues, props: ResolvedTaskFormProps) => {
 
 interface TaskDraftState {
   readonly markSubmitted: () => void;
-  /** Asks to close the panel: a create draft confirms first, an edit sends what is pending. */
+  /** Asks to close the panel: a changed create draft confirms first, an unsaved edit asks Uložit / Zahodit / Zůstat. */
   readonly requestClose: (form: { readonly openDiscard: () => void }) => void;
-  /** Sends a valid draft: creates the task, or saves the edit now. */
+  /** Sends a valid draft: creates the task, or saves the edit (the Save button, Enter in the title). */
   readonly send: (submission: TaskFormSubmission) => void;
   readonly setValues: Dispatch<SetStateAction<FormValues>>;
   /** Field errors show after the first create attempt and always while editing. */
@@ -877,12 +881,13 @@ const useCreateDraft = ({ onClose, onSubmit }: ResolvedTaskFormProps): TaskDraft
 };
 
 /**
- * An existing task's draft saves itself (debounced, on Enter and on closing) against the revision it builds on; a
- * task that someone else changed meanwhile ends in a conflict that offers the current version.
+ * An existing task's draft. Editing changes only the draft on screen; the Save button (or Enter in the title) sends
+ * it against the revision it builds on, and a task that someone else changed meanwhile ends in a conflict that offers
+ * the current version. Every way out of the panel asks first while something is unsaved.
  */
 const useEditDraft = (props: ResolvedTaskFormProps & { readonly task: Task }) => {
-  const { onAutosave, onClose, revision, task } = props;
-  const autosave = useAutosaveDraft<FormValues, never>({
+  const { onClose, onSaveEdit, revision, task } = props;
+  const record = useRecordDraft<FormValues, never>({
     equals: sameFormValues,
     isValid: (value) => Option.isSome(submissionOf(value, props)),
     revision,
@@ -890,33 +895,38 @@ const useEditDraft = (props: ResolvedTaskFormProps & { readonly task: Task }) =>
     save: (value, expectedRevision) =>
       Option.match(submissionOf(value, props), {
         onNone: () => Effect.succeed<RevisionedSaveResult>('failed'),
-        onSome: (submission) => onAutosave(submission, expectedRevision),
+        onSome: (submission) => onSaveEdit(submission, expectedRevision),
       }),
     server: initialValues(task),
   });
+  // Browser Back and links ask the same question as Zavřít and the panel's own close button.
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
   const draft: TaskDraftState = {
     markSubmitted: () => {
       // Edit errors always show.
     },
     requestClose: () => {
-      autosave.flush();
-      onClose();
+      guard.request(onClose);
     },
-    send: () => autosave.flush(),
-    setValues: autosave.setDraft,
+    send: () => record.save(),
+    setValues: record.setDraft,
     showErrors: true,
-    values: autosave.draft,
+    values: record.draft,
   };
-  return { autosave, draft };
+  return { draft, guard, record };
 };
 
-/** The task panel around a draft; `status` is the edit panel's autosave line. */
+/** The task panel around a draft; `status` is the edit panel's save bar, last in the footer. */
 const TaskPanel = ({
   draft,
+  guard,
   props,
   status,
 }: {
   readonly draft: TaskDraftState;
+  /** The edit panel's unsaved-changes guard: Escape, the close button and a click outside ask it first. */
+  readonly guard?: UnsavedChangesGuard;
   readonly props: ResolvedTaskFormProps;
   readonly status?: ReactNode;
 }) => {
@@ -957,21 +967,28 @@ const TaskPanel = ({
         actions={
           isEdit || locked ? (
             <>
-              {!locked && status}
               <Button onClick={requestClose} theme="outlined" variant="secondary">
                 {t(`${key}.close`)}
               </Button>
+              {!locked && status}
             </>
           ) : (
             createActions
           )
         }
+        guard={guard}
         // The first field takes focus, so typing starts at once.
         initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#task-title')}
         onOpenChange={(next) => {
-          if (!next) {
-            requestClose();
+          if (next) {
+            return;
           }
+          // An edit panel's guard has already asked; a create panel asks before it drops typed input.
+          if (guard === undefined) {
+            requestClose();
+            return;
+          }
+          onClose();
         }}
         open
         resizeLabel={t('work-tasks.sidePanel.resize')}
@@ -1018,19 +1035,27 @@ const TaskCreatePanel = ({ props }: { readonly props: ResolvedTaskFormProps }) =
 );
 
 const TaskEditPanel = ({ props }: { readonly props: ResolvedTaskFormProps & { readonly task: Task } }) => {
-  const { autosave, draft } = useEditDraft(props);
-  const handleRetry = autosave.retry;
-  const handleReloadLatest = autosave.reloadLatest;
+  const { language } = useModernI18n();
+  const { draft, guard, record } = useEditDraft(props);
+  const labels = saveLabelsFor(language);
+  const handleSave = record.save;
+  const handleReloadLatest = record.reloadLatest;
   return (
-    <TaskPanel
-      draft={draft}
-      props={props}
-      status={<AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />}
-    />
+    <>
+      <TaskPanel
+        draft={draft}
+        guard={guard}
+        props={props}
+        status={
+          <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
+        }
+      />
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
+    </>
   );
 };
 
-/** Create (`task` undefined) or edit one task in a right-hand panel; an edit saves itself. */
+/** Create (`task` undefined) or edit one task in a right-hand panel; an edit is sent by its Save button only. */
 export const TaskFormDialog = (input: TaskFormDialogProps) => {
   const { contextLabels = emptyContextLabels, projects = emptyProjects, readOnly = false, task } = input;
   const props = { ...input, contextLabels, projects, readOnly };

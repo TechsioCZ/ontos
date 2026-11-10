@@ -1,12 +1,26 @@
 // S13 notification centre, „Moje agenda“ and notification settings + export log. Owned by the ops-agenda lane.
-import { EmptyState, SectionCard, StatCard, StatRow, formatNumber } from '@app/admin-ui';
+import {
+  EmptyState,
+  SaveBar,
+  SectionCard,
+  StatCard,
+  StatRow,
+  UnsavedChangesDialog,
+  formatNumber,
+  saveLabelsFor,
+  useRecordDraft,
+} from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
+import type { Effect } from 'effect';
 import { DateTime } from 'effect';
 import { useState } from 'react';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { useEditGuard } from '../../../../ui/edit-guard.tsx';
 import type { Notification, NotificationPreference, AgendaState } from '../../../../../shared/domain/agenda.ts';
 import {
   DEFAULT_LEAD_DAYS,
@@ -427,33 +441,64 @@ export const MyAgenda = ({
 
 // ---- Settings + export log ---------------------------------------------------------------------------------------
 
+type OptionalCategory = (typeof OPTIONAL_EMAIL_CATEGORIES)[number];
+
+/** The notification settings as the form edits them; `optional` lists the chosen optional categories in order. */
+export interface PreferenceDraft {
+  readonly email: boolean;
+  readonly leadDays: string;
+  readonly optional: readonly OptionalCategory[];
+}
+
+const preferenceDraftOf = (current: NotificationPreference | undefined): PreferenceDraft => ({
+  email: current?.emailOptIn ?? false,
+  leadDays: String(current?.leadDays ?? DEFAULT_LEAD_DAYS),
+  optional: OPTIONAL_EMAIL_CATEGORIES.filter(
+    (category) => current?.emailCategories === undefined || current.emailCategories.includes(category),
+  ),
+});
+
+const samePreferenceDraft = (left: PreferenceDraft, right: PreferenceDraft): boolean =>
+  left.email === right.email &&
+  left.leadDays === right.leadDays &&
+  left.optional.length === right.optional.length &&
+  left.optional.every((category, index) => category === right.optional[index]);
+
 export const SettingsPanel = ({
   canWrite,
   me,
   onSave,
-  saving,
   state,
 }: {
   readonly canWrite: boolean;
   readonly me: string | undefined;
-  readonly onSave: (leadDays: number, emailOptIn: boolean, emailCategories: readonly ('DEADLINE' | 'CHANGE')[]) => void;
-  readonly saving: boolean;
-  readonly state: AgendaState | undefined;
+  readonly onSave: (value: PreferenceDraft) => Effect.Effect<SaveOutcome>;
+  /** The agenda read; undefined while it loads. */
+  readonly state?: AgendaState | undefined;
 }) => {
   const { language, t } = useModernI18n();
   const people = useAgendaPeople();
   const personOf = (id: string | undefined) => people.find((person) => person.principalId === id);
   const lang = langOf(language);
   const current = myPreference(state, me);
-  const [leadDays, setLeadDays] = useState(String(current?.leadDays ?? DEFAULT_LEAD_DAYS));
-  const [email, setEmail] = useState(current?.emailOptIn ?? false);
-  const [optional, setOptional] = useState<ReadonlySet<'DEADLINE' | 'CHANGE'>>(
-    new Set(
-      current?.emailCategories === undefined
-        ? OPTIONAL_EMAIL_CATEGORIES
-        : OPTIONAL_EMAIL_CATEGORIES.filter((category) => current.emailCategories?.includes(category) === true),
-    ),
-  );
+  // Nothing is sent until Uložit; a clean draft follows the reloaded preferences.
+  const record = useRecordDraft<PreferenceDraft, never>({
+    equals: samePreferenceDraft,
+    isValid: () => true,
+    runtime: browserRuntime,
+    save: (value) => onSave(value),
+    server: preferenceDraftOf(current),
+  });
+  const { draft, setDraft } = record;
+  const { email, leadDays, optional } = draft;
+  const setLeadDays = (value: string) => setDraft({ ...draft, leadDays: value });
+  const setEmail = (value: boolean) => setDraft({ ...draft, email: value });
+  const setOptional = (update: (previous: ReadonlySet<OptionalCategory>) => ReadonlySet<OptionalCategory>) => {
+    const next = update(new Set(optional));
+    setDraft({ ...draft, optional: OPTIONAL_EMAIL_CATEGORIES.filter((category) => next.has(category)) });
+  };
+  const labels = saveLabelsFor(language);
+  const guard = useEditGuard(record, record.discard);
   const provider = useEmailProvider();
   const address = t(`${k}.settings.yourAddress`);
   const providerPill = providerPillOf(provider, t);
@@ -461,6 +506,8 @@ export const SettingsPanel = ({
   const exports = (state?.exports ?? [])
     .toSorted((left, right) => DateTime.toEpochMillis(right.exportedAt) - DateTime.toEpochMillis(left.exportedAt))
     .slice(0, 25);
+  const handleReloadLatest = record.reloadLatest;
+  const handleSave = record.save;
   return (
     <div className="facilityoperations:grid facilityoperations:grid-cols-1 facilityoperations:gap-4 facilityoperations:xl:grid-cols-5">
       <div className="facilityoperations:xl:col-span-2">
@@ -513,7 +560,7 @@ export const SettingsPanel = ({
                 ))}
                 {OPTIONAL_EMAIL_CATEGORIES.map((category) => (
                   <FormCheckbox
-                    checked={optional.has(category)}
+                    checked={optional.includes(category)}
                     disabled={!canWrite}
                     id={`email-category-${category}`}
                     key={category}
@@ -543,20 +590,16 @@ export const SettingsPanel = ({
                 : t(`${k}.settings.savedAt`, { time: fmt.stamp(lang, DateTime.formatIso(current.updatedAt)) })}
             </p>
             {canWrite && (
-              <Button
-                isLoading={saving}
-                onClick={() =>
-                  onSave(
-                    Number(leadDays),
-                    email,
-                    OPTIONAL_EMAIL_CATEGORIES.filter((category) => optional.has(category)),
-                  )
-                }
-                size="sm"
-                variant="primary"
-              >
-                {t('facility-operations.common.save')}
-              </Button>
+              <>
+                <SaveBar
+                  labels={labels}
+                  onReloadLatest={handleReloadLatest}
+                  onSave={handleSave}
+                  size="sm"
+                  status={record.status}
+                />
+                <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
+              </>
             )}
           </div>
         </SectionCard>

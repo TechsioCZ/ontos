@@ -1,13 +1,27 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { EmptyState, SectionCard, SidePanel, surfaceTileClassName } from '@app/admin-ui';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
+import {
+  EmptyState,
+  SaveBar,
+  SectionCard,
+  SidePanel,
+  UnsavedChangesDialog,
+  saveLabelsFor,
+  surfaceTileClassName,
+  useDraftSave,
+  useUnsavedChangesGuard,
+} from '@app/admin-ui';
+import type { SaveOutcome, SaveState } from '@app/admin-ui';
 import { assignmentLabel, principalKey } from '../../../../shared/assignment.ts';
 import { assignmentOptions, selectedPrincipal } from './assignment-options.ts';
+import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
-import { DateTime, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import { constVoid } from 'effect/Function';
 import { useRef, useState } from 'react';
 import type { WorkCommand } from '../../../../shared/actions/apply-command.ts';
 import { PlanningCommandSchema } from '../../../../shared/actions/apply-command.ts';
@@ -70,7 +84,32 @@ const projectFieldLabels = {
   title: 'Název projektu',
 };
 
-const ProjectEditor = ({
+/** Two plans are the same when every typed field and milestone matches; the editor keys are only for rendering. */
+const sameDraft = (left: Draft, right: Draft) =>
+  left.title === right.title &&
+  left.plannedStart === right.plannedStart &&
+  left.plannedEnd === right.plannedEnd &&
+  left.state === right.state &&
+  left.responsiblePrincipalRef === right.responsiblePrincipalRef &&
+  left.milestones.length === right.milestones.length &&
+  left.milestones.every(
+    (milestone, index) =>
+      milestone.title === right.milestones[index]?.title &&
+      milestone.dueDate === right.milestones[index]?.dueDate &&
+      milestone.completed === right.milestones[index]?.completed,
+  );
+
+// The period rule: the project ends after it starts, and every milestone falls inside it.
+const periodOk = (value: Draft) =>
+  value.plannedStart <= value.plannedEnd &&
+  value.milestones.every(
+    (milestone) => milestone.dueDate >= value.plannedStart && milestone.dueDate <= value.plannedEnd,
+  );
+
+// A project plan carries no revision, so a revision conflict cannot happen here.
+const handleNoReloadLatest = constVoid;
+
+export const ProjectEditor = ({
   actorName,
   close,
   onApply,
@@ -89,7 +128,7 @@ const ProjectEditor = ({
   readonly project: WorkProject | undefined;
   readonly proposed: Option.Option<ProposedPlan>;
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const historyValue = (field: string, value: string | undefined): string => {
     if (value === undefined) {
       return '—';
@@ -110,18 +149,17 @@ const ProjectEditor = ({
   };
   const [draft, setDraft] = useState(() => initial(project));
   const nextMilestoneKey = useRef(draft.milestones.length);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
+  const [failure, setFailure] = useState<string>();
   const patch = (value: Partial<Draft>) => setDraft((current) => ({ ...current, ...value }));
-  const planCommand = () => {
+  const planOf = (value: Draft) => {
     const input = {
       _tag: project === undefined ? 'CreateProject' : 'UpdateProject',
-      ...draft,
-      milestones: draft.milestones.map(({ completed, dueDate, title }) => ({ completed, dueDate, title })),
+      ...value,
+      milestones: value.milestones.map(({ completed, dueDate, title }) => ({ completed, dueDate, title })),
       responsiblePrincipalRef:
-        selectedPrincipal(principals, draft.responsiblePrincipalRef) ??
+        selectedPrincipal(principals, value.responsiblePrincipalRef) ??
         (project?.responsiblePrincipalRef !== undefined &&
-        principalKey(project.responsiblePrincipalRef) === draft.responsiblePrincipalRef
+        principalKey(project.responsiblePrincipalRef) === value.responsiblePrincipalRef
           ? project.responsiblePrincipalRef
           : undefined),
     };
@@ -130,213 +168,240 @@ const ProjectEditor = ({
     }
     return Schema.decodeUnknownOption(PlanningCommandSchema)(input);
   };
-  const command = planCommand();
-  // The exact plan already waits for approval: it is shown as pending and cannot be sent again.
-  const pendingPlan = pendingProposal(proposed, command);
-  const save = () => {
-    if (Option.isSome(pendingPlan)) {
-      return;
-    }
-    if (
-      Option.isNone(command) ||
-      draft.plannedStart > draft.plannedEnd ||
-      draft.milestones.some(
-        (milestone) => milestone.dueDate < draft.plannedStart || milestone.dueDate > draft.plannedEnd,
-      )
-    ) {
-      setError('Vyplňte název, odpovědnou osobu a platné období. Milníky musí ležet v období projektu.');
-      return;
-    }
-    setBusy(true);
-    setError(undefined);
-    const sent = command.value;
-    onApply(sent, (outcome) => {
-      setBusy(false);
-      const answer = planAnswer(outcome);
-      if (Schema.is(PlanCommittedSchema)(answer)) {
-        close();
-        return;
-      }
-      if (Schema.is(PlanProposedSchema)(answer)) {
-        onProposed({ command: sent, message: answer.message });
-        return;
-      }
-      setError(answer.message);
-    });
-  };
-  return (
-    <SidePanel
-      actions={
-        <>
-          <Button disabled={busy} onClick={close} theme="outlined" variant="secondary">
-            Zrušit
-          </Button>
-          <Button disabled={busy || Option.isSome(pendingPlan)} isLoading={busy} onClick={save} variant="primary">
-            Uložit projekt
-          </Button>
-        </>
-      }
-      onOpenChange={(open) => {
-        if (!open && !busy) {
-          close();
+  const record = useDraftSave<Draft, never>({
+    equals: sameDraft,
+    isValid: (value) => Option.isSome(planOf(value)) && periodOk(value),
+    runtime: browserRuntime,
+    // Save sends the whole plan once; the answer decides whether the panel closes, parks the plan or shows why not.
+    save: (value) =>
+      Effect.callback<SaveOutcome>((resume) => {
+        const sent = planOf(value);
+        if (Option.isNone(sent)) {
+          resume(Effect.succeed('failed'));
+          return;
         }
-      }}
-      open
-      resizeLabel="Změnit šířku panelu"
-      size="lg"
-      title={project === undefined ? 'Nový projekt' : 'Upravit projekt'}
-    >
-      <div className="flex flex-col gap-200 py-200">
-        {error !== undefined && <StatusText status="error">{error}</StatusText>}
-        {Option.isSome(pendingPlan) && <output aria-live="polite">{pendingPlan.value.message}</output>}
-        <FormInput
-          disabled={busy}
-          id="project-title"
-          label={t('work-tasks.planning.projectTitle')}
-          maxLength={200}
-          onChange={(event) => patch({ title: event.target.value })}
-          required
-          value={draft.title}
-        />
-        <FormInput
-          disabled={busy}
-          id="project-start"
-          label={t('work-tasks.planning.plannedStart')}
-          onChange={(event) => patch({ plannedStart: event.target.value })}
-          required
-          type="date"
-          value={draft.plannedStart}
-        />
-        <FormInput
-          disabled={busy}
-          id="project-end"
-          label={t('work-tasks.planning.plannedEnd')}
-          onChange={(event) => patch({ plannedEnd: event.target.value })}
-          required
-          type="date"
-          value={draft.plannedEnd}
-        />
-        {project !== undefined && (
-          <p className="text-sm text-fg-secondary">
-            {assignmentLabel(
-              project.responsiblePrincipalRef,
-              principalNames,
-              project.assignmentNeedsReassignment,
-              project.assignmentWithoutLogin,
-            )}
-          </p>
-        )}
-        <Select
-          disabled={busy}
-          items={assignmentOptions(principals)}
-          label={t('work-tasks.planning.responsiblePerson')}
-          onValueChange={({ value }) => patch({ responsiblePrincipalRef: value[0] ?? '' })}
-          value={draft.responsiblePrincipalRef === '' ? [] : [draft.responsiblePrincipalRef]}
-        />
-        <Select
-          disabled={busy}
-          items={Object.entries(states).map(([value, label]) => selectOption(label, value))}
-          label={t('work-tasks.pages.records.columns.state')}
-          onValueChange={({ value }) => {
-            const [next] = value;
-            const decoded = Schema.decodeUnknownOption(ProjectStateSchema)(next);
-            if (Option.isSome(decoded)) {
-              patch({ state: decoded.value });
-            }
-          }}
-          value={[draft.state]}
-        />
-        <div className="flex items-center justify-between gap-100">
-          <h3 className="font-semibold">Milníky</h3>
-          <Button
-            disabled={busy || draft.milestones.length >= 50}
-            onClick={() => {
-              const editorKey = nextMilestoneKey.current;
-              nextMilestoneKey.current += 1;
-              patch({
-                milestones: [
-                  ...draft.milestones,
-                  { completed: false, dueDate: draft.plannedEnd, editorKey, title: '' },
-                ],
-              });
+        setFailure(undefined);
+        onApply(sent.value, (outcome) => {
+          const answer = planAnswer(outcome);
+          if (Schema.is(PlanCommittedSchema)(answer)) {
+            close();
+            resume(Effect.succeed('saved'));
+            return;
+          }
+          if (Schema.is(PlanProposedSchema)(answer)) {
+            onProposed({ command: sent.value, message: answer.message });
+            resume(Effect.succeed('proposed'));
+            return;
+          }
+          setFailure(answer.message);
+          resume(Effect.succeed('failed'));
+        });
+      }),
+    value: draft,
+  });
+  const busy = record.status === 'saving';
+  // The exact plan already waits for approval: it is shown as pending and cannot be sent again.
+  const pendingPlan = pendingProposal(proposed, planOf(draft));
+  const status: SaveState = Option.isSome(pendingPlan) ? 'proposed' : record.status;
+  // Nothing in this panel is sent except by its Save button; every way out asks first while the draft is unsaved.
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({
+    draft: record,
+    navigation: blocker,
+    onDiscard: () => setDraft(record.confirmed),
+  });
+  const labels = saveLabelsFor(language);
+  const handleSave = record.save;
+  return (
+    <>
+      <SidePanel
+        actions={
+          <>
+            <Button disabled={busy} onClick={() => guard.request(close)} theme="outlined" variant="secondary">
+              Zrušit
+            </Button>
+            <SaveBar
+              error={failure}
+              labels={labels}
+              onReloadLatest={handleNoReloadLatest}
+              onSave={handleSave}
+              status={status}
+            />
+          </>
+        }
+        guard={guard}
+        onOpenChange={(open) => {
+          if (!open && !busy) {
+            close();
+          }
+        }}
+        open
+        resizeLabel="Změnit šířku panelu"
+        size="lg"
+        title={project === undefined ? 'Nový projekt' : 'Upravit projekt'}
+      >
+        <div className="flex flex-col gap-200 py-200">
+          {record.status === 'invalid' && (
+            <StatusText status="error">{t('work-tasks.planning.invalidPlan')}</StatusText>
+          )}
+          {Option.isSome(pendingPlan) && <output aria-live="polite">{pendingPlan.value.message}</output>}
+          <FormInput
+            disabled={busy}
+            id="project-title"
+            label={t('work-tasks.planning.projectTitle')}
+            maxLength={200}
+            onChange={(event) => patch({ title: event.target.value })}
+            required
+            value={draft.title}
+          />
+          <FormInput
+            disabled={busy}
+            id="project-start"
+            label={t('work-tasks.planning.plannedStart')}
+            onChange={(event) => patch({ plannedStart: event.target.value })}
+            required
+            type="date"
+            value={draft.plannedStart}
+          />
+          <FormInput
+            disabled={busy}
+            id="project-end"
+            label={t('work-tasks.planning.plannedEnd')}
+            onChange={(event) => patch({ plannedEnd: event.target.value })}
+            required
+            type="date"
+            value={draft.plannedEnd}
+          />
+          {project !== undefined && (
+            <p className="text-sm text-fg-secondary">
+              {assignmentLabel(
+                project.responsiblePrincipalRef,
+                principalNames,
+                project.assignmentNeedsReassignment,
+                project.assignmentWithoutLogin,
+              )}
+            </p>
+          )}
+          <Select
+            disabled={busy}
+            items={assignmentOptions(principals)}
+            label={t('work-tasks.planning.responsiblePerson')}
+            // An empty value is not a user choice: the list emits it when the saved person is not among its options.
+            // A plan needs a responsible person, so an empty selection could never be saved anyway.
+            onValueChange={({ value }) => {
+              const [next] = value;
+              if (next !== undefined) {
+                patch({ responsiblePrincipalRef: next });
+              }
             }}
-            size="sm"
-            variant="secondary"
-          >
-            Přidat milník
-          </Button>
-        </div>
-        {draft.milestones.length === 0 && (
-          <p className="text-sm text-fg-secondary">Milníky zatím nejsou naplánované.</p>
-        )}
-        {draft.milestones.map((milestone, index) => (
-          <div className={`${surfaceTileClassName} flex flex-col gap-100 p-150`} key={milestone.editorKey}>
-            <FormInput
-              disabled={busy}
-              label={t('work-tasks.planning.milestoneTitle')}
-              maxLength={200}
-              onChange={(event) =>
-                patch({
-                  milestones: draft.milestones.map((item, i) =>
-                    i === index ? { ...item, title: event.target.value } : item,
-                  ),
-                })
+            value={draft.responsiblePrincipalRef === '' ? [] : [draft.responsiblePrincipalRef]}
+          />
+          <Select
+            disabled={busy}
+            items={Object.entries(states).map(([value, label]) => selectOption(label, value))}
+            label={t('work-tasks.pages.records.columns.state')}
+            onValueChange={({ value }) => {
+              const [next] = value;
+              const decoded = Schema.decodeUnknownOption(ProjectStateSchema)(next);
+              if (Option.isSome(decoded)) {
+                patch({ state: decoded.value });
               }
-              value={milestone.title}
-            />
-            <FormInput
-              disabled={busy}
-              label={t('work-tasks.planning.milestoneDueDate')}
-              onChange={(event) =>
-                patch({
-                  milestones: draft.milestones.map((item, i) =>
-                    i === index ? { ...item, dueDate: event.target.value } : item,
-                  ),
-                })
-              }
-              type="date"
-              value={milestone.dueDate}
-            />
-            <label className="flex items-center gap-100">
-              <input
-                checked={milestone.completed}
-                disabled={busy}
-                onChange={(event) =>
-                  patch({
-                    milestones: draft.milestones.map((item, i) =>
-                      i === index ? { ...item, completed: event.target.checked } : item,
-                    ),
-                  })
-                }
-                type="checkbox"
-              />
-              Dokončeno
-            </label>
+            }}
+            value={[draft.state]}
+          />
+          <div className="flex items-center justify-between gap-100">
+            <h3 className="font-semibold">Milníky</h3>
             <Button
-              disabled={busy}
-              onClick={() => patch({ milestones: draft.milestones.filter((_, i) => i !== index) })}
+              disabled={busy || draft.milestones.length >= 50}
+              onClick={() => {
+                const editorKey = nextMilestoneKey.current;
+                nextMilestoneKey.current += 1;
+                patch({
+                  milestones: [
+                    ...draft.milestones,
+                    { completed: false, dueDate: draft.plannedEnd, editorKey, title: '' },
+                  ],
+                });
+              }}
               size="sm"
               variant="secondary"
             >
-              Odebrat milník
+              Přidat milník
             </Button>
           </div>
-        ))}
-        <p className="text-sm text-fg-secondary">
-          Úkoly přiřadíte v jejich detailu. Změny projektu zůstávají uložené po obnovení stránky.
-        </p>
-        {project !== undefined && (
-          <ChangeHistory
-            actorName={actorName}
-            createdAt={project.createdAt}
-            entries={project.history}
-            fieldLabel={(field) => Object.entries(projectFieldLabels).find(([name]) => name === field)?.[1] ?? field}
-            formatValue={historyValue}
-            updatedAt={project.updatedAt}
-          />
-        )}
-      </div>
-    </SidePanel>
+          {draft.milestones.length === 0 && (
+            <p className="text-sm text-fg-secondary">Milníky zatím nejsou naplánované.</p>
+          )}
+          {draft.milestones.map((milestone, index) => (
+            <div className={`${surfaceTileClassName} flex flex-col gap-100 p-150`} key={milestone.editorKey}>
+              <FormInput
+                disabled={busy}
+                label={t('work-tasks.planning.milestoneTitle')}
+                maxLength={200}
+                onChange={(event) =>
+                  patch({
+                    milestones: draft.milestones.map((item, i) =>
+                      i === index ? { ...item, title: event.target.value } : item,
+                    ),
+                  })
+                }
+                value={milestone.title}
+              />
+              <FormInput
+                disabled={busy}
+                label={t('work-tasks.planning.milestoneDueDate')}
+                onChange={(event) =>
+                  patch({
+                    milestones: draft.milestones.map((item, i) =>
+                      i === index ? { ...item, dueDate: event.target.value } : item,
+                    ),
+                  })
+                }
+                type="date"
+                value={milestone.dueDate}
+              />
+              <label className="flex items-center gap-100">
+                <input
+                  checked={milestone.completed}
+                  disabled={busy}
+                  onChange={(event) =>
+                    patch({
+                      milestones: draft.milestones.map((item, i) =>
+                        i === index ? { ...item, completed: event.target.checked } : item,
+                      ),
+                    })
+                  }
+                  type="checkbox"
+                />
+                Dokončeno
+              </label>
+              <Button
+                disabled={busy}
+                onClick={() => patch({ milestones: draft.milestones.filter((_, i) => i !== index) })}
+                size="sm"
+                variant="secondary"
+              >
+                Odebrat milník
+              </Button>
+            </div>
+          ))}
+          <p className="text-sm text-fg-secondary">
+            Úkoly přiřadíte v jejich detailu. Změny projektu zůstávají uložené po obnovení stránky.
+          </p>
+          {project !== undefined && (
+            <ChangeHistory
+              actorName={actorName}
+              createdAt={project.createdAt}
+              entries={project.history}
+              fieldLabel={(field) => Object.entries(projectFieldLabels).find(([name]) => name === field)?.[1] ?? field}
+              formatValue={historyValue}
+              updatedAt={project.updatedAt}
+            />
+          )}
+        </div>
+      </SidePanel>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
+    </>
   );
 };
 

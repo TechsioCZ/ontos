@@ -24,7 +24,7 @@ import {
 import type { AgreementsInput, RentalReferences } from './agreements-data.ts';
 import { contractTitle } from './contract-title.ts';
 import { agreementDocumentState, selectorOfFields } from './document-selection.ts';
-import { termsAutosaveResult } from './contract-terms-draft.ts';
+import { termsSaveResult } from './contract-terms-draft.ts';
 import type { ContractTermsCommand } from './contract-terms-draft.ts';
 import { executeRecords } from '../../../api/records-client.ts';
 
@@ -90,10 +90,11 @@ const contractReferenceAudiences = (record: Contract | undefined) => {
   return audiences;
 };
 /**
- * Autosave of the terms panel against the revision its draft builds on. The revision covers every agreement, so a
- * conflict is resent once against a fresh read while `unchanged` holds for the contracts read then.
+ * The Save button of the terms panel: one save against the revision its draft builds on. The revision covers every
+ * agreement, so a conflict is resent once against a fresh read while `unchanged` holds for the contracts read then. A
+ * change parked for approval is not saved: the draft stays unconfirmed on its base revision.
  */
-export const autosaveTerms = (
+export const saveTerms = (
   command: ContractTermsCommand,
   expectedRevision: number,
   unchanged: (contracts: readonly Contract[]) => boolean,
@@ -114,7 +115,7 @@ export const autosaveTerms = (
         ),
       ),
     );
-  return termsAutosaveResult(
+  return termsSaveResult(
     send(expectedRevision).pipe(
       Effect.catchTag('ApplyCommandActionConflictProblem', (conflict) =>
         conflict.code === 'agreements_conflict'
@@ -123,13 +124,8 @@ export const autosaveTerms = (
             )
           : Effect.fail(conflict),
       ),
-      // A change parked for approval is not saved: the draft stays unconfirmed on its base revision.
-      Effect.flatMap((result) =>
-        Schema.is(ActionProposalAcceptedSchema)(result)
-          ? Effect.sync(() => onProposal?.(result)).pipe(Effect.andThen(Effect.fail(result)))
-          : Effect.succeed(result),
-      ),
     ),
+    onProposal,
   );
 };
 export const useRecordsPage = (input: AgreementsInput) => {

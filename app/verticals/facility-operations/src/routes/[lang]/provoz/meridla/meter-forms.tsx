@@ -1,7 +1,7 @@
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Meter master-data form and reading form (ops-meters lane). Both write through the governed apply-command Action.
-import { AutosaveStatus, formatDate, useAutosave } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import { SaveBar, formatDate, saveLabelsFor, useDraftSave } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -21,7 +21,8 @@ import type { CommandOutcome, FailureReason } from '../../../../ui/use-agenda.ts
 import { defaultUnitOf, formatChange, formatQuantity } from './meters-view.ts';
 import { meterCreateCommandOf, meterDraftOf, meterUpdateCommandOf, sameMeterDraft } from './meter-draft.ts';
 import type { MeterDraft } from './meter-draft.ts';
-import { facilityAutosaveOutcome } from '../../../../ui/facility-autosave.ts';
+import { EditGuard } from '../../../../ui/edit-guard.tsx';
+import { facilitySaveOutcome } from '../../../../ui/facility-save.ts';
 
 const k = 'facility-operations.meters';
 const CANCEL_LABEL = 'facility-operations.common.cancel';
@@ -67,7 +68,7 @@ export const MeterForm = ({
   readonly onSaved: (meterId: string | undefined) => void;
   readonly run: RunCommand;
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const properties = usePropertyOptions();
   const [draft, setDraft] = useState<MeterDraft>(() => meterDraftOf(meter));
   const [busy, setBusy] = useState(false);
@@ -92,29 +93,30 @@ export const MeterForm = ({
       : undefined;
   };
 
-  // An edit saves itself; a new meter card is submitted on "Založit měřidlo" only.
-  const autosave = useAutosave<MeterDraft, never>({
+  // An edit is sent on Uložit only; a new meter card is submitted on "Založit měřidlo".
+  const record = useDraftSave<MeterDraft, never>({
     equals: sameMeterDraft,
     isValid: (value) =>
       meter !== undefined && Option.isSome(meterUpdateCommandOf(value, meter, pickedLocationOf(value))),
     runtime: browserRuntime,
     save: (value) =>
       meter === undefined
-        ? Effect.succeed<AutosaveOutcome>('failed')
+        ? Effect.succeed<SaveOutcome>('failed')
         : Option.match(meterUpdateCommandOf(value, meter, pickedLocationOf(value)), {
-            onNone: () => Effect.succeed<AutosaveOutcome>('failed'),
-            onSome: (command) => facilityAutosaveOutcome(run(command)),
+            onNone: () => Effect.succeed<SaveOutcome>('failed'),
+            onSome: (command) => facilitySaveOutcome(run(command)),
           }),
     value: draft,
   });
-  const close = () => {
-    autosave.flush();
-    onCancel();
+  const labels = saveLabelsFor(language);
+  const discard = () => {
+    setDraft(record.confirmed);
+    setError(undefined);
   };
-  const handleRetry = autosave.retry;
+  const handleSave = record.save;
   const handleReloadLatest = () => {
     const current = meterDraftOf(meter);
-    autosave.adopt(current);
+    record.adopt(current);
     setDraft(current);
     setError(undefined);
   };
@@ -293,12 +295,23 @@ export const MeterForm = ({
           </Button>
         </div>
       ) : (
-        <div className="flex flex-wrap items-center justify-end gap-100">
-          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
-          <Button onClick={close} theme="outlined" variant="secondary">
-            {t('facility-operations.common.close')}
-          </Button>
-        </div>
+        // The panel around the form asks this guard before it closes as well.
+        <EditGuard draft={record} labels={labels} onDiscard={discard}>
+          {(guard) => (
+            <div className="flex flex-wrap items-center justify-end gap-100">
+              <Button
+                onClick={() => {
+                  guard.request(onCancel);
+                }}
+                theme="outlined"
+                variant="secondary"
+              >
+                {t('facility-operations.common.close')}
+              </Button>
+              <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
+            </div>
+          )}
+        </EditGuard>
       )}
     </div>
   );

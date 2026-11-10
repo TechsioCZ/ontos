@@ -1,5 +1,5 @@
-import { startAutosave } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import { draftSavable, startDraftSave } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { Effect, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
@@ -61,9 +61,9 @@ describe('meter card draft', () => {
   });
 });
 
-const panel = Effect.fnUntraced(function* panel(outcome: AutosaveOutcome) {
+const panel = Effect.fnUntraced(function* panel(outcome: SaveOutcome) {
   const sent: MeterDraft[] = [];
-  const controller = yield* startAutosave(stored, {
+  const controller = yield* startDraftSave(stored, {
     equals: sameMeterDraft,
     isValid: (value: MeterDraft) => Option.isSome(meterUpdateCommandOf(value, meter)),
     save: (value: MeterDraft) => Effect.sync(() => sent.push(value)).pipe(Effect.as(outcome)),
@@ -71,17 +71,37 @@ const panel = Effect.fnUntraced(function* panel(outcome: AutosaveOutcome) {
   return { controller, sent };
 });
 
-describe('meter card edit autosave', () => {
-  it.effect('saves a retyped serial number after the quiet time; an empty unit stays local', () =>
+describe('meter card edit explicit save', () => {
+  it.effect('sends a typed serial number only on Save, once; an empty unit stays local', () =>
     Effect.gen(function* typed() {
       const { controller, sent } = yield* panel('saved');
       controller.change({ ...stored, unit: '' });
-      controller.flush();
+      controller.save();
       expect(controller.status()).toBe('invalid');
+      expect(draftSavable(controller.status())).toBe(false);
       controller.change({ ...stored, serialNumber: 'EL-2026-042' });
-      yield* TestClock.adjust('800 millis');
+      // Longer than any delay the panel ever saved after: typing alone sends nothing.
+      yield* TestClock.adjust('1 minute');
+      expect(sent).toEqual([]);
+      expect(controller.status()).toBe('dirty');
+      controller.save();
+      controller.save();
+      yield* Effect.yieldNow;
       expect(sent.map(({ serialNumber }) => serialNumber)).toEqual(['EL-2026-042']);
       expect(controller.status()).toBe('saved');
+    }),
+  );
+
+  it.effect('discard goes back to the confirmed draft and sends nothing', () =>
+    Effect.gen(function* discarded() {
+      const { controller, sent } = yield* panel('saved');
+      controller.change({ ...stored, serialNumber: 'EL-2026-042' });
+      expect(controller.status()).toBe('dirty');
+      controller.discard();
+      expect(controller.status()).toBe('idle');
+      expect(controller.confirmed()).toBe(stored);
+      yield* TestClock.adjust('1 minute');
+      expect(sent).toEqual([]);
     }),
   );
 
@@ -89,7 +109,7 @@ describe('meter card edit autosave', () => {
     Effect.gen(function* conflict() {
       const { controller, sent } = yield* panel('conflict');
       controller.change({ ...stored, note: 'Vyměněn 2026' });
-      controller.flush();
+      controller.save();
       yield* Effect.yieldNow;
       expect(controller.status()).toBe('conflict');
       controller.change({ ...stored, note: 'Vyměněn 2027' });

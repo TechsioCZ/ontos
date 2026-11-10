@@ -8,8 +8,19 @@ import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { selectItem } from '../../../../ui/select-item.ts';
-import { AutosaveStatus, formatMoney, ScrollRegion, SectionCard, surfaceTileClassName } from '@app/admin-ui';
+import {
+  formatMoney,
+  SaveBar,
+  saveLabelsFor,
+  ScrollRegion,
+  SectionCard,
+  surfaceTileClassName,
+  UnsavedChangesDialog,
+  useUnsavedChangesGuard,
+} from '@app/admin-ui';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { Order, ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductId, ShippingMethod, VariantId } from '../../../../../shared/domain/merchandise-model.ts';
 import { convertGrossMinor } from '../../../../../shared/domain/market-offers.ts';
@@ -25,7 +36,7 @@ import { MONEY_FORMAT, moneyInputText } from '../../../../form-number.ts';
 import { shippingOptions } from './order-eshop.ts';
 import { addressIncomplete, contactIncomplete, parseAmount, parseQuantity } from './order-edit-draft.ts';
 import type { Draft, DraftLine } from './order-edit-draft.ts';
-import { useOrderEditAutosave } from './order-edit-autosave.ts';
+import { useOrderEditDraft } from './order-edit-save.ts';
 import { activeVariants } from './order-line-draft.ts';
 import { loadProductRecord } from '../../provoz/produkty/product-reads.ts';
 import type { ProductRecordState } from '../../provoz/produkty/product-reads.ts';
@@ -109,6 +120,11 @@ const previewTotals = (
 };
 
 interface OrderEditFormProps {
+  /**
+   * Where the form's actions (back to the detail, the save bar) go when its host has a footer of its own: the side
+   * panel's footer. `null` while that footer is not on screen yet; left out, the actions sit in the form's own footer.
+   */
+  readonly actionsSlot?: HTMLElement | null | undefined;
   /** The order wrote ORDER stock movements; quantity edits then move stock the same way. */
   readonly movesStock: boolean;
   readonly onCancel: () => void;
@@ -126,8 +142,9 @@ interface OrderEditFormProps {
  * totals and writes a before/after history entry per changed area. The price list never changes; when the order
  * already took goods from stock, quantity changes write the matching ORDER movements.
  *
- * The form stays mounted while the order reloads. `useOrderEditAutosave` owns the draft: an untouched draft takes
- * the reloaded order, a changed one stays and saves against the order version it was typed over.
+ * Editing changes only the draft on screen: the Save button sends it, and every way out of the form asks first
+ * while something is unsaved. The form stays mounted while the order reloads. `useOrderEditDraft` owns the draft: an
+ * untouched draft takes the reloaded order, a changed one stays and saves against the order version it was typed over.
  */
 const useOrderEditForm = ({
   movesStock,
@@ -138,7 +155,7 @@ const useOrderEditForm = ({
   products,
   revision,
 }: OrderEditFormProps) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const sequence = useRef(0);
   // The product picked for a new line, with its full record (variants) read on pick.
   const [pick, setPick] = useState<{
@@ -205,30 +222,34 @@ const useOrderEditForm = ({
       valid: !linesInvalid && !shippingInvalid && !addressInvalid && !contactInvalid,
     };
   };
-  const { autosave, pendingMessage, savedOnce } = useOrderEditAutosave({
+  const { record, savedOnce } = useOrderEditDraft({
     isValid: (value, confirmed) => draftValidation(value, confirmed).valid,
     order,
     revision,
   });
-  const { draft } = autosave;
-  const patch = (next: Partial<Draft>) => autosave.setDraft((current) => ({ ...current, ...next }));
+  const { draft } = record;
+  const patch = (next: Partial<Draft>) => record.setDraft((current) => ({ ...current, ...next }));
   const patchLine = (key: string, next: Partial<DraftLine>) =>
     patch({ lines: draft.lines.map((line) => (line.key === key ? { ...line, ...next } : line)) });
   const { addressInvalid, contactInvalid, linesInvalid, parsedLines, shippingInvalid, shippingPrice } = draftValidation(
     draft,
-    autosave.confirmed,
+    record.confirmed,
   );
 
   const preview = previewTotals(order, parsedLines, draft.shippingMethod, shippingPrice);
-  const busy = autosave.status === 'saving';
 
-  const close = () => {
-    autosave.flush();
-    if (savedOnce.current) {
-      onSaved(`Objednávka ${order.number} upravena — změna je zapsána v historii`);
-      return;
-    }
-    onCancel();
+  // Browser Back and links ask the same question as the form's own way out and the panel's close button.
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
+  /** Back to the order detail, once nothing is unsaved; an order edited in this session is reloaded there. */
+  const leave = () => {
+    guard.request(() => {
+      if (savedOnce.current) {
+        onSaved(`Objednávka ${order.number} upravena — změna je zapsána v historii`);
+        return;
+      }
+      onCancel();
+    });
   };
 
   const clearPick = () => pickProduct(null);
@@ -280,27 +301,26 @@ const useOrderEditForm = ({
   return {
     addLine,
     addressInvalid,
-    autosave,
-    busy,
-    close,
     contactInvalid,
     currencyUnit,
     draft,
     gross,
+    guard,
+    labels: saveLabelsFor(language),
+    leave,
     linesInvalid,
     methodItems,
     movesStock,
-    onCancel,
     order,
     parsedLines,
     patch,
     patchLine,
-    pendingMessage,
     pick,
     pickedVariantId,
     pickedVariants,
     pickProduct,
     preview,
+    record,
     setPickedVariantId,
     shippingInvalid,
     t,
@@ -437,240 +457,251 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
   const model = useOrderEditForm(props);
   const {
     addLine,
-    autosave,
-    busy,
-    close,
     currencyUnit,
     draft,
     gross,
+    guard,
+    labels,
+    leave,
     linesInvalid,
     movesStock,
     order,
     parsedLines,
     patch,
     patchLine,
-    pendingMessage,
     pick,
     pickedVariantId,
     pickedVariants,
     pickProduct,
     preview,
+    record,
     setPickedVariantId,
     t,
     unit,
   } = model;
-  const handleRetry = autosave.retry;
+  const { actionsSlot } = props;
+  const handleSave = record.save;
   /** Someone else changed the order: close the editor on their version and let the list reload it. */
   const reloadLatest = () => {
     props.onSaved(`Objednávka ${order.number}: načtena aktuální verze`);
   };
+  // The one way out of the form and its one Save button, in the host's footer or the form's own.
+  const actions = (
+    <>
+      <Button onClick={leave} theme="outlined" type="button" variant="secondary">
+        {t('merchandise.pages.orders.detail.backToDetail')}
+      </Button>
+      <SaveBar labels={labels} onReloadLatest={reloadLatest} onSave={handleSave} status={record.status} />
+    </>
+  );
 
   return (
-    <form
-      className="flex flex-col gap-250"
-      id="order-edit-form"
-      noValidate
-      onSubmit={(event) => {
-        event.preventDefault();
-        autosave.flush();
-      }}
-    >
-      <p className="text-fg-secondary text-sm">
-        Úprava DEMO objednávky. Součty přepočítá server, změna se zapíše do historie s autorem a časem. Ceník se nemění.{' '}
-        {movesStock
-          ? 'Objednávka už zboží odepsala ze skladu: přidané kusy se ze skladu odepíšou, ubrané se vrátí (uvidíte je v Pohybech produktu).'
-          : 'Tato objednávka sklad neodepsala, změna množství zásoby nemění.'}
-      </p>
-      <SectionCard flush title={t('merchandise.ui.items')}>
-        <ScrollRegion label={t('merchandise.ui.orderItems')}>
-          <Table size="sm" variant="line">
-            <Table.Header>
-              <Table.Row>
-                <Table.ColumnHeader>Položka</Table.ColumnHeader>
-                <Table.ColumnHeader align="end">Množství</Table.ColumnHeader>
-                <Table.ColumnHeader align="end">
-                  {`${gross ? 'Cena/j s DPH' : 'Cena/j bez DPH'} (${currencyUnit})`}
-                </Table.ColumnHeader>
-                <Table.ColumnHeader align="end">Celkem s DPH</Table.ColumnHeader>
-                <Table.ColumnHeader align="end">
-                  <span className="sr-only">Akce</span>
-                </Table.ColumnHeader>
-              </Table.Row>
-            </Table.Header>
-            <Table.Body>
-              {parsedLines.map(({ line, price, quantity, rules }) => (
-                <Table.Row key={line.key}>
-                  <Table.Cell>
-                    <div className="flex min-w-32 flex-col">
-                      <span className="font-medium">{line.name}</span>
-                      <span className="text-fg-secondary text-xs">
-                        {line.variantName === undefined ? line.sku : `${line.variantName} · ${line.sku}`}
-                      </span>
-                    </div>
-                  </Table.Cell>
-                  <Table.Cell align="end">
-                    <div className="ml-auto" style={{ minWidth: 100 }}>
-                      <FormNumericInput
-                        clampValueOnBlur={false}
-                        formatOptions={{ maximumFractionDigits: 6 }}
-                        id={`edit-qty-${line.key}`}
-                        label={<span className="sr-only">Množství</span>}
-                        locale="cs-CZ"
-                        min={rules.minimum}
-                        name={`qty-${line.key}`}
-                        onValueChange={(details) => patchLine(line.key, { quantityText: details.value })}
-                        size="sm"
-                        step={rules.step}
-                        value={line.quantityText}
-                        {...(quantity === null
-                          ? {
-                              helpText: `Minimum ${rules.minimum.toLocaleString('cs-CZ')}, balení po ${rules.step.toLocaleString('cs-CZ')}, dostupné ${rules.maximum.toLocaleString('cs-CZ')}`,
-                              validateStatus: 'error' as const,
-                            }
-                          : {})}
-                      >
-                        <NumericInput.Control>
-                          <NumericInput.Input aria-valuemax={undefined} />
-                        </NumericInput.Control>
-                      </FormNumericInput>
-                    </div>
-                  </Table.Cell>
-                  <Table.Cell align="end">
-                    <div className="ml-auto w-24">
-                      <FormNumericInput
-                        formatOptions={MONEY_FORMAT}
-                        id={`edit-price-${line.key}`}
-                        label={<span className="sr-only">Cena za jednotku</span>}
-                        locale="cs-CZ"
-                        min={0}
-                        name={`price-${line.key}`}
-                        onValueChange={(details) => patchLine(line.key, { priceText: details.value })}
-                        size="sm"
-                        value={line.priceText}
-                        {...(price === null ? { helpText: 'Zadejte cenu', validateStatus: 'error' as const } : {})}
-                      >
-                        <NumericInput.Control>
-                          <NumericInput.Input />
-                        </NumericInput.Control>
-                      </FormNumericInput>
-                    </div>
-                  </Table.Cell>
-                  <Table.Cell align="end" className="tabular-nums">
-                    {price === null || quantity === null
-                      ? '—'
-                      : formatMoney(
-                          lineGrossMinor(
-                            { quantity, unitPriceMinor: price, vatRate: line.vatRate },
-                            order.pricesIncludeVat,
-                          ),
-                          orderCurrency(order),
-                        )}
-                  </Table.Cell>
-                  <Table.Cell align="end">
-                    <Button
-                      aria-label={`Odebrat ${line.name}`}
-                      disabled={draft.lines.length <= 1}
-                      icon="icon-[mdi--delete-outline]"
-                      onClick={() => patch({ lines: draft.lines.filter((entry) => entry.key !== line.key) })}
-                      size="sm"
-                      theme="borderless"
-                      type="button"
-                      variant="secondary"
-                    />
-                  </Table.Cell>
+    <>
+      <form
+        className="flex flex-col gap-250"
+        id="order-edit-form"
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault();
+          handleSave();
+        }}
+      >
+        <p className="text-fg-secondary text-sm">
+          Úprava DEMO objednávky. Součty přepočítá server, změna se zapíše do historie s autorem a časem. Ceník se
+          nemění.{' '}
+          {movesStock
+            ? 'Objednávka už zboží odepsala ze skladu: přidané kusy se ze skladu odepíšou, ubrané se vrátí (uvidíte je v Pohybech produktu).'
+            : 'Tato objednávka sklad neodepsala, změna množství zásoby nemění.'}
+        </p>
+        <SectionCard flush title={t('merchandise.ui.items')}>
+          <ScrollRegion label={t('merchandise.ui.orderItems')}>
+            <Table size="sm" variant="line">
+              <Table.Header>
+                <Table.Row>
+                  <Table.ColumnHeader>Položka</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end">Množství</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end">
+                    {`${gross ? 'Cena/j s DPH' : 'Cena/j bez DPH'} (${currencyUnit})`}
+                  </Table.ColumnHeader>
+                  <Table.ColumnHeader align="end">Celkem s DPH</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end">
+                    <span className="sr-only">Akce</span>
+                  </Table.ColumnHeader>
                 </Table.Row>
-              ))}
-            </Table.Body>
-          </Table>
-        </ScrollRegion>
-        <div className="flex flex-col gap-150 p-200">
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-150">
-            <ProductSearchCombobox
-              activeOnly
-              errorMessage="Produkty se nepodařilo načíst."
-              id="order-edit-add-product"
-              label={t('merchandise.ui.addItem')}
-              loadingMessage="Načítám…"
-              noResultsMessage="Žádný produkt neodpovídá."
-              onSelect={pickProduct}
-              placeholder={t('merchandise.ui.searchProduct')}
-              retryLabel="Zkusit znovu"
-              selected={pick?.product ?? null}
-            />
-            <Button
-              disabled={unit === undefined}
-              icon="icon-[mdi--plus]"
-              onClick={addLine}
-              theme="outlined"
-              type="button"
-              variant="secondary"
-            >
-              Přidat
-            </Button>
+              </Table.Header>
+              <Table.Body>
+                {parsedLines.map(({ line, price, quantity, rules }) => (
+                  <Table.Row key={line.key}>
+                    <Table.Cell>
+                      <div className="flex min-w-32 flex-col">
+                        <span className="font-medium">{line.name}</span>
+                        <span className="text-fg-secondary text-xs">
+                          {line.variantName === undefined ? line.sku : `${line.variantName} · ${line.sku}`}
+                        </span>
+                      </div>
+                    </Table.Cell>
+                    <Table.Cell align="end">
+                      <div className="ml-auto" style={{ minWidth: 100 }}>
+                        <FormNumericInput
+                          clampValueOnBlur={false}
+                          formatOptions={{ maximumFractionDigits: 6 }}
+                          id={`edit-qty-${line.key}`}
+                          label={<span className="sr-only">Množství</span>}
+                          locale="cs-CZ"
+                          min={rules.minimum}
+                          name={`qty-${line.key}`}
+                          onValueChange={(details) => patchLine(line.key, { quantityText: details.value })}
+                          size="sm"
+                          step={rules.step}
+                          value={line.quantityText}
+                          {...(quantity === null
+                            ? {
+                                helpText: `Minimum ${rules.minimum.toLocaleString('cs-CZ')}, balení po ${rules.step.toLocaleString('cs-CZ')}, dostupné ${rules.maximum.toLocaleString('cs-CZ')}`,
+                                validateStatus: 'error' as const,
+                              }
+                            : {})}
+                        >
+                          <NumericInput.Control>
+                            <NumericInput.Input aria-valuemax={undefined} />
+                          </NumericInput.Control>
+                        </FormNumericInput>
+                      </div>
+                    </Table.Cell>
+                    <Table.Cell align="end">
+                      <div className="ml-auto w-24">
+                        <FormNumericInput
+                          formatOptions={MONEY_FORMAT}
+                          id={`edit-price-${line.key}`}
+                          label={<span className="sr-only">Cena za jednotku</span>}
+                          locale="cs-CZ"
+                          min={0}
+                          name={`price-${line.key}`}
+                          onValueChange={(details) => patchLine(line.key, { priceText: details.value })}
+                          size="sm"
+                          value={line.priceText}
+                          {...(price === null ? { helpText: 'Zadejte cenu', validateStatus: 'error' as const } : {})}
+                        >
+                          <NumericInput.Control>
+                            <NumericInput.Input />
+                          </NumericInput.Control>
+                        </FormNumericInput>
+                      </div>
+                    </Table.Cell>
+                    <Table.Cell align="end" className="tabular-nums">
+                      {price === null || quantity === null
+                        ? '—'
+                        : formatMoney(
+                            lineGrossMinor(
+                              { quantity, unitPriceMinor: price, vatRate: line.vatRate },
+                              order.pricesIncludeVat,
+                            ),
+                            orderCurrency(order),
+                          )}
+                    </Table.Cell>
+                    <Table.Cell align="end">
+                      <Button
+                        aria-label={`Odebrat ${line.name}`}
+                        disabled={draft.lines.length <= 1}
+                        icon="icon-[mdi--delete-outline]"
+                        onClick={() => patch({ lines: draft.lines.filter((entry) => entry.key !== line.key) })}
+                        size="sm"
+                        theme="borderless"
+                        type="button"
+                        variant="secondary"
+                      />
+                    </Table.Cell>
+                  </Table.Row>
+                ))}
+              </Table.Body>
+            </Table>
+          </ScrollRegion>
+          <div className="flex flex-col gap-150 p-200">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-150">
+              <ProductSearchCombobox
+                activeOnly
+                errorMessage="Produkty se nepodařilo načíst."
+                id="order-edit-add-product"
+                label={t('merchandise.ui.addItem')}
+                loadingMessage="Načítám…"
+                noResultsMessage="Žádný produkt neodpovídá."
+                onSelect={pickProduct}
+                placeholder={t('merchandise.ui.searchProduct')}
+                retryLabel="Zkusit znovu"
+                selected={pick?.product ?? null}
+              />
+              <Button
+                disabled={unit === undefined}
+                icon="icon-[mdi--plus]"
+                onClick={addLine}
+                theme="outlined"
+                type="button"
+                variant="secondary"
+              >
+                Přidat
+              </Button>
+            </div>
+            {pickedVariants.length > 0 && (
+              <SelectTemplate
+                items={pickedVariants.map((entry) => selectItem(entry.id, `${entry.name} (${entry.sku})`))}
+                label={t('merchandise.ui.variant')}
+                name="order-edit-add-variant"
+                onValueChange={(details) => {
+                  const [next] = details.value;
+                  setPickedVariantId(pickedVariants.find((entry) => entry.id === next)?.id ?? null);
+                }}
+                placeholder={t('merchandise.ui.selectVariant')}
+                size="sm"
+                value={pickedVariantId === null ? [] : [pickedVariantId]}
+              />
+            )}
+            {pick?.record.status === 'error' && (
+              <StatusText showIcon status="error">
+                Produkt se nepodařilo načíst. Vyberte ho znovu.
+              </StatusText>
+            )}
           </div>
-          {pickedVariants.length > 0 && (
-            <SelectTemplate
-              items={pickedVariants.map((entry) => selectItem(entry.id, `${entry.name} (${entry.sku})`))}
-              label={t('merchandise.ui.variant')}
-              name="order-edit-add-variant"
-              onValueChange={(details) => {
-                const [next] = details.value;
-                setPickedVariantId(pickedVariants.find((entry) => entry.id === next)?.id ?? null);
-              }}
-              placeholder={t('merchandise.ui.selectVariant')}
-              size="sm"
-              value={pickedVariantId === null ? [] : [pickedVariantId]}
-            />
+        </SectionCard>
+
+        {renderOrderShipping(model)}
+
+        {renderOrderAddress(model)}
+
+        {renderOrderContact(model)}
+
+        <FormTextarea
+          id="edit-note"
+          label={t('merchandise.ui.orderNote')}
+          maxLength={1000}
+          name="note"
+          onChange={(event) => patch({ note: event.target.value })}
+          value={draft.note}
+        />
+        <FormInput
+          id="edit-reason"
+          label={t('merchandise.ui.changeReason')}
+          maxLength={500}
+          name="reason"
+          onChange={(event) => patch({ reason: event.target.value })}
+          placeholder={t('merchandise.ui.changeReasonPlaceholder')}
+          value={draft.reason}
+        />
+
+        <div className={`${surfaceTileClassName} flex flex-wrap items-center justify-between gap-150 p-200`}>
+          <div className="flex flex-col">
+            <span className="text-fg-secondary text-sm">Náhled celkové částky s DPH (přepočte server)</span>
+            <span className="font-semibold text-lg tabular-nums">
+              {linesInvalid
+                ? 'Zkontrolujte množství a ceny položek'
+                : formatMoney(preview.totalMinor, orderCurrency(order))}
+            </span>
+          </div>
+          {actionsSlot === undefined && (
+            <div className="flex flex-wrap items-center justify-end gap-150">{actions}</div>
           )}
-          {pick?.record.status === 'error' && (
-            <StatusText showIcon status="error">
-              Produkt se nepodařilo načíst. Vyberte ho znovu.
-            </StatusText>
-          )}
         </div>
-      </SectionCard>
-
-      {renderOrderShipping(model)}
-
-      {renderOrderAddress(model)}
-
-      {renderOrderContact(model)}
-
-      <FormTextarea
-        id="edit-note"
-        label={t('merchandise.ui.orderNote')}
-        maxLength={1000}
-        name="note"
-        onChange={(event) => patch({ note: event.target.value })}
-        value={draft.note}
-      />
-      <FormInput
-        id="edit-reason"
-        label={t('merchandise.ui.changeReason')}
-        maxLength={500}
-        name="reason"
-        onChange={(event) => patch({ reason: event.target.value })}
-        placeholder={t('merchandise.ui.changeReasonPlaceholder')}
-        value={draft.reason}
-      />
-
-      <div className={`${surfaceTileClassName} flex flex-wrap items-center justify-between gap-150 p-200`}>
-        <div className="flex flex-col">
-          <span className="text-fg-secondary text-sm">Náhled celkové částky s DPH (přepočte server)</span>
-          <span className="font-semibold text-lg tabular-nums">
-            {linesInvalid
-              ? 'Zkontrolujte množství a ceny položek'
-              : formatMoney(preview.totalMinor, orderCurrency(order))}
-          </span>
-        </div>
-        <div className="flex flex-wrap items-center gap-150">
-          {pendingMessage !== null && <StatusText status="error">{pendingMessage}</StatusText>}
-          <AutosaveStatus onReloadLatest={reloadLatest} onRetry={handleRetry} status={autosave.status} />
-          <Button disabled={busy} onClick={close} theme="outlined" type="button" variant="secondary">
-            Zavřít
-          </Button>
-        </div>
-      </div>
-    </form>
+      </form>
+      {actionsSlot !== undefined && actionsSlot !== null && createPortal(actions, actionsSlot)}
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
+    </>
   );
 };

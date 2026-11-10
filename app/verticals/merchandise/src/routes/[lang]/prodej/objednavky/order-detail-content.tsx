@@ -152,9 +152,9 @@ const OrderHistory = ({
           </div>
           {entry.before !== undefined && entry.kind !== 'CREATED' ? (
             <div className="grid grid-cols-1 gap-50 text-sm sm:grid-cols-[auto_minmax(0,1fr)] sm:gap-x-150">
-              <span className="text-fg-secondary">{t('merchandise.pages.orders.detail.previousValue')}</span>
+              <span className="text-fg-secondary">{t('merchandise.pages.orders.detail.valueBefore')}</span>
               <span className="line-through decoration-1 opacity-70">{entry.before}</span>
-              <span className="text-fg-secondary">{t('merchandise.pages.orders.detail.newValue')}</span>
+              <span className="text-fg-secondary">{t('merchandise.pages.orders.detail.valueAfter')}</span>
               <span>{entry.after ?? '—'}</span>
             </div>
           ) : (
@@ -482,12 +482,14 @@ interface OrderDetailActionsProps {
   readonly customers: CustomerDirectory;
   readonly editing: boolean;
   readonly onClose: () => void;
-  readonly onEditingChange: (editing: boolean) => void;
   readonly onStatus: (order: Order, status: OrderStatus) => void;
   readonly order: Order;
 }
 
-/** The footer actions of an order: close, cancel, the next status, or back from the edit form. */
+/**
+ * The footer actions of an order: close, cancel and the next status. The edit form brings its own (back to the
+ * detail and the Save button), so an order being edited has none here.
+ */
 export const OrderDetailActions = ({
   busy,
   canCleanupDemo,
@@ -496,7 +498,6 @@ export const OrderDetailActions = ({
   customers,
   editing,
   onClose,
-  onEditingChange,
   onStatus,
   order,
 }: OrderDetailActionsProps) => {
@@ -514,11 +515,7 @@ export const OrderDetailActions = ({
     return labelKey === null ? status : t(labelKey);
   };
   if (editing) {
-    return (
-      <Button onClick={() => onEditingChange(false)} theme="outlined" variant="secondary">
-        {t('merchandise.pages.orders.detail.backToDetail')}
-      </Button>
-    );
+    return null;
   }
   return (
     <div className="flex flex-wrap items-center justify-end gap-100">
@@ -567,6 +564,11 @@ export interface OrderDetailContentProps {
   readonly customers: CustomerDirectory;
   /** The open order with its line products and whether it took goods from stock (quantity edits then move stock). */
   readonly detail: ReadyOrderDetail;
+  /**
+   * The host's footer for the edit form's actions (the side panel's footer); `null` until it is on screen. Left out,
+   * the edit form shows them in its own footer.
+   */
+  readonly editActionsSlot?: HTMLElement | null | undefined;
   readonly editing: boolean;
   readonly onClose: () => void;
   readonly onEdited: (message: string) => void;
@@ -584,6 +586,7 @@ export const OrderDetailContent = ({
   currentPrincipalId,
   customers,
   detail,
+  editActionsSlot,
   editing,
   onClose,
   onEdited,
@@ -611,6 +614,7 @@ export const OrderDetailContent = ({
     return (
       <div className="py-200">
         <OrderEditForm
+          actionsSlot={editActionsSlot}
           movesStock={orderMovesStock}
           onCancel={() => onEditingChange(false)}
           onSaved={(message) => {

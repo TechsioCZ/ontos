@@ -6,7 +6,7 @@ import {
   applyPipelineCommand,
   applyPipelineCommandIfUnchanged,
 } from '../../src/routes/[lang]/prodej/prilezitosti/pipeline-api.ts';
-import { opportunityAutosaveResult } from '../../src/routes/[lang]/prodej/prilezitosti/opportunity-draft.ts';
+import { opportunitySaveResult } from '../../src/routes/[lang]/prodej/prilezitosti/opportunity-draft.ts';
 
 const mocks = rstest.hoisted(() => ({ command: rstest.fn(), invalidate: rstest.fn(), records: rstest.fn() }));
 rstest.mock('../../src/api/apply-command-action-client.ts', () => ({ executeApplyCommand: mocks.command }));
@@ -44,11 +44,11 @@ it.effect('a parked proposal never reaches committed command callbacks or revisi
     expect(mocks.records).not.toHaveBeenCalled();
   }),
 );
-it.effect('a parked guarded autosave stays failed rather than adopting a fabricated revision', () =>
-  Effect.gen(function* pendingAutosave() {
+it.effect('a parked guarded save reports proposed rather than adopting a fabricated revision', () =>
+  Effect.gen(function* pendingSave() {
     mocks.command.mockReturnValue(Effect.succeed(proposal));
-    const result = yield* opportunityAutosaveResult(applyPipelineCommandIfUnchanged(command, 7, () => true));
-    expect(result).toBe('failed');
+    const result = yield* opportunitySaveResult(applyPipelineCommandIfUnchanged(command, 7, () => true));
+    expect(result).toBe('proposed');
     expect(mocks.command).toHaveBeenCalledTimes(1);
     expect(mocks.records).not.toHaveBeenCalled();
   }),

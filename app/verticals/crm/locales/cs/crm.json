@@ -160,6 +160,7 @@
         "withoutSalesperson": "Bez obchodníka"
       },
       "contacts": {
+        "createClient": "Založit klienta",
         "empty": "Bez kontaktních osob",
         "primary": "Hlavní kontakt klienta",
         "removeFromForm": "Odebrat osobu z formuláře",

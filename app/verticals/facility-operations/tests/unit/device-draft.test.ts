@@ -1,5 +1,5 @@
-import { startAutosave } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import { draftSavable, startDraftSave } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { Effect, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
@@ -63,9 +63,9 @@ describe('security device draft', () => {
   });
 });
 
-const panel = Effect.fnUntraced(function* panel(outcome: AutosaveOutcome) {
+const panel = Effect.fnUntraced(function* panel(outcome: SaveOutcome) {
   const sent: DeviceDraft[] = [];
-  const controller = yield* startAutosave(stored, {
+  const controller = yield* startDraftSave(stored, {
     equals: sameDeviceDraft,
     isValid: (value: DeviceDraft) => Option.isSome(deviceUpdateCommandOf(value, device)),
     save: (value: DeviceDraft) => Effect.sync(() => sent.push(value)).pipe(Effect.as(outcome)),
@@ -73,17 +73,37 @@ const panel = Effect.fnUntraced(function* panel(outcome: AutosaveOutcome) {
   return { controller, sent };
 });
 
-describe('security device edit panel autosave', () => {
-  it.effect('saves a typed note after the quiet time; a blank name stays local', () =>
+describe('security device edit panel explicit save', () => {
+  it.effect('sends a typed note only on Save, once; a blank name stays local', () =>
     Effect.gen(function* typed() {
       const { controller, sent } = yield* panel('saved');
       controller.change({ ...stored, name: '' });
-      controller.flush();
+      controller.save();
       expect(controller.status()).toBe('invalid');
+      expect(draftSavable(controller.status())).toBe(false);
       controller.change({ ...stored, note: 'Krytá chodba, nový zámek' });
-      yield* TestClock.adjust('800 millis');
+      // Longer than any delay the panel ever saved after: typing alone sends nothing.
+      yield* TestClock.adjust('1 minute');
+      expect(sent).toEqual([]);
+      expect(controller.status()).toBe('dirty');
+      controller.save();
+      controller.save();
+      yield* Effect.yieldNow;
       expect(sent.map(({ note }) => note)).toEqual(['Krytá chodba, nový zámek']);
       expect(controller.status()).toBe('saved');
+    }),
+  );
+
+  it.effect('discard goes back to the confirmed draft and sends nothing', () =>
+    Effect.gen(function* discarded() {
+      const { controller, sent } = yield* panel('saved');
+      controller.change({ ...stored, note: 'Krytá chodba, nový zámek' });
+      expect(controller.status()).toBe('dirty');
+      controller.discard();
+      expect(controller.status()).toBe('idle');
+      expect(controller.confirmed()).toBe(stored);
+      yield* TestClock.adjust('1 minute');
+      expect(sent).toEqual([]);
     }),
   );
 
@@ -91,7 +111,7 @@ describe('security device edit panel autosave', () => {
     Effect.gen(function* conflict() {
       const { controller, sent } = yield* panel('conflict');
       controller.change({ ...stored, supplier: 'Bezpečnost Praha s.r.o.' });
-      controller.flush();
+      controller.save();
       yield* Effect.yieldNow;
       expect(controller.status()).toBe('conflict');
       controller.change({ ...stored, supplier: 'Bezpečnost Praha a.s.' });

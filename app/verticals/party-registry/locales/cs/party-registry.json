@@ -98,12 +98,6 @@
           "companyId": "IČO",
           "conflict": "Záznam mezitím upravil někdo jiný. Načtěte ho znovu a změnu zopakujte.",
           "createdAt": "Vytvořeno",
-          "discard": {
-            "confirm": "Zahodit změny",
-            "description": "Neuložené změny budou ztraceny. Již uložené části zůstanou zachované.",
-            "keep": "Pokračovat v úpravách",
-            "title": "Zahodit neuložené změny?"
-          },
           "email": "E-mail",
           "errorRename": "Změny se nepodařilo uložit. Zkuste to znovu.",
           "name": "Název",
@@ -123,13 +117,11 @@
           "validation": "Zkontrolujte údaje a vyplňte důvod změny i odkaz na podklad.",
           "savedReloadFailed": "Tato část byla uložena, ale nové údaje se nepodařilo načíst. Před další změnou obnovte detail. {{reason}}",
           "restoreBlocked": "Obnovení vyžaduje vyřešení případu identity. Zákazník zůstal archivovaný.",
-          "separateSaves": "Každou část ukládáte samostatně. Již uložené změny zůstávají zachované, pokud se jinou část uložit nepodaří.",
+          "separateSaves": "Změny uložíte tlačítkem Uložit. Každý změněný údaj se zapíše zvlášť; pokud se některý zapsat nepodaří, již zapsané zůstanou uložené.",
           "evidence": "Podklad pro změnu (odkaz nebo reference)",
           "reason": "Důvod změny",
           "reload": "Obnovit detail",
           "saveName": "Uložit název",
-          "saveIdentifier": "Uložit identifikátor",
-          "saveContact": "Uložit kontakt",
           "sharedIdentity": "Název, identifikátory, kontakty a archivace patří ke sdílenému subjektu. Změna se projeví i v jeho ostatních obchodních kontextech.",
           "archive": "Archivovat subjekt",
           "backToList": "Zpět na zákazníky",
@@ -168,7 +160,9 @@
             "documents": "Dokumenty a spis"
           },
           "endContact": "Ukončit kontakt",
-          "endIdentifier": "Ukončit platnost identifikátoru"
+          "endIdentifier": "Ukončit platnost identifikátoru",
+          "basisRequired": "Bez podkladu a důvodu změny nelze změny uložit.",
+          "invalidEmail": "Zadejte platný e-mail."
         },
         "detailView": {
           "group": "Zobrazení detailu",

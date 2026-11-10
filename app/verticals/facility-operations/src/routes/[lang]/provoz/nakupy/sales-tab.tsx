@@ -9,12 +9,14 @@ import { optionalField } from '../../../../../shared/domain/common.ts';
 import { listCustomers } from '@app/party-registry/api/client';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import {
-  AutosaveStatus,
   DetailList,
   EmptyState,
+  SaveBar,
   SectionCard,
   SidePanel,
+  UnsavedChangesDialog,
   formatDate,
+  saveLabelsFor,
   surfaceTileClassName,
 } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -44,7 +46,8 @@ import { useIncomingInvoiceLinks } from './finance-links.tsx';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { quoteDraftOf } from './sales-quote-draft.ts';
 import type { QuoteDraft } from './sales-quote-draft.ts';
-import { useQuoteAutosave } from './sales-quote-autosave.ts';
+import { useQuoteDraftSave } from './sales-quote-save.ts';
+import { nothingToSave, useEditGuard } from '../../../../ui/edit-guard.tsx';
 import { addDays } from '../../../../ui/ops-agenda/deadlines.ts';
 import {
   dateTimeIso,
@@ -372,6 +375,94 @@ const submitSalesQuoteDraft = Effect.fn('FacilityOperations.Purchasing.submitSal
   },
 );
 
+/** The lines of a quote being edited: description, quantity, unit price and VAT rate, with the running totals. */
+const SalesQuoteLines = ({
+  lines,
+  onAddLine,
+  onChangeLine,
+  onRemoveLine,
+  totals,
+}: {
+  readonly lines: readonly LineDraft[];
+  readonly onAddLine: () => void;
+  readonly onChangeLine: (index: number, patch: Partial<LineDraft>) => void;
+  readonly onRemoveLine: (key: string) => void;
+  readonly totals: ReturnType<typeof salesTotals> | undefined;
+}) => {
+  const k = usePurchasingT();
+  return (
+    <fieldset className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
+      <legend className="px-50 font-semibold text-sm">{k(linesLabelKey)}</legend>
+      {lines.map((line, index) => (
+        <div className="flex flex-col gap-100 border-border-secondary border-b pb-150" key={line.key}>
+          <FormInput
+            id={`sales-line-${index}-description`}
+            label={k('sales.fields.description')}
+            onChange={(event) => onChangeLine(index, { description: event.target.value })}
+            placeholder={k('sales.form.descriptionPlaceholder')}
+            value={line.description}
+          />
+          <div className="grid items-end gap-100" style={{ gridTemplateColumns: '7rem minmax(6rem, 1fr) 6.5rem' }}>
+            <FormInput
+              id={`sales-line-${index}-quantity`}
+              inputMode="numeric"
+              label={k('sales.fields.quantity')}
+              onChange={(event) => onChangeLine(index, { quantity: event.target.value })}
+              value={line.quantity}
+            />
+            <FormInput
+              id={`sales-line-${index}-price`}
+              inputMode="decimal"
+              label={k('sales.fields.unitPrice')}
+              onChange={(event) => onChangeLine(index, { price: event.target.value })}
+              placeholder="4 500"
+              value={line.price}
+            />
+            <Select
+              items={vatRates.map((rate) => ({
+                displayValue: `${rate} %`,
+                label: `${rate} %`,
+                value: String(rate),
+              }))}
+              label={k('sales.fields.vat')}
+              name={`sales-line-${index}-vat`}
+              onValueChange={({ value }) => {
+                const selectedRate = vatRates.find((candidate) => candidate === Number(value[0] ?? 21));
+                if (selectedRate !== undefined) {
+                  onChangeLine(index, { vat: selectedRate });
+                }
+              }}
+              size="md"
+              value={[String(line.vat)]}
+            />
+          </div>
+          <div className="flex justify-end">
+            <Button
+              disabled={lines.length === 1}
+              onClick={() => onRemoveLine(line.key)}
+              size="sm"
+              theme="borderless"
+              variant="secondary"
+            >
+              {k('sales.form.removeLine')}
+            </Button>
+          </div>
+        </div>
+      ))}
+      <div className="flex flex-wrap items-center justify-between gap-100">
+        <Button onClick={onAddLine} size="sm" theme="outlined" variant="secondary">
+          {k('sales.form.addLine')}
+        </Button>
+        {totals !== undefined && (
+          <span className="text-sm">
+            {k('sales.totals', { base: formatAmount(totals.baseMinor), total: formatAmount(totals.totalMinor) })}
+          </span>
+        )}
+      </div>
+    </fieldset>
+  );
+};
+
 export const SalesQuoteFormPanel = ({
   onClose,
   onSaved,
@@ -384,7 +475,7 @@ export const SalesQuoteFormPanel = ({
   readonly run: RunCommand;
 }) => {
   const k = usePurchasingT();
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const customers = useCustomers();
   // Customer, dates and note of the quote as typed; the lines keep their own state because of their row keys.
   const [draft, setDraft] = useState<QuoteDraft>(() => ({
@@ -461,7 +552,7 @@ export const SalesQuoteFormPanel = ({
     customers.status === 'ready'
       ? customers.customers.find((entry) => entry.counterpartyId === value.customerId)
       : undefined;
-  const autosaveValue: QuoteDraft = {
+  const draftValue: QuoteDraft = {
     ...draft,
     lines: lines.map((line) => ({
       description: line.description,
@@ -470,200 +561,150 @@ export const SalesQuoteFormPanel = ({
       vat: line.vat,
     })),
   };
-  const autosave = useQuoteAutosave({
+  const record = useQuoteDraftSave({
     applyStored: (stored) => {
       setDraft(stored);
       setLines(stored.lines.map((line, index) => ({ ...line, key: `${linePrefix}-reload-${index}` })));
     },
     customerOf,
-    draft: autosaveValue,
+    draft: draftValue,
     quote,
     run,
   });
+  // Only an edit of a stored quote holds a draft; a new quote is submitted on its own buttons.
+  const editing = quote !== undefined;
+  const guard = useEditGuard(editing ? record : nothingToSave, record.discard);
+  const labels = saveLabelsFor(language);
   const close = () => {
-    autosave.flush();
-    onClose();
+    guard.request(onClose);
   };
-  const handleReloadLatest = autosave.reloadLatest;
-  const handleRetry = autosave.retry;
+  const handleReloadLatest = record.reloadLatest;
+  const handleSave = record.save;
 
   return (
-    <SidePanel
-      actions={
-        <>
-          {quote !== undefined && (
-            <>
-              <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
-              <Button onClick={close} theme="outlined" variant="secondary">
-                {t('facility-operations.common.close')}
+    <>
+      <SidePanel
+        actions={
+          <>
+            {quote !== undefined && (
+              <>
+                <Button onClick={close} theme="outlined" variant="secondary">
+                  {t('facility-operations.common.close')}
+                </Button>
+                <SaveBar
+                  labels={labels}
+                  onReloadLatest={handleReloadLatest}
+                  onSave={handleSave}
+                  status={record.status}
+                />
+              </>
+            )}
+            {quote === undefined && (
+              <Button disabled={busy} onClick={onClose} theme="outlined" variant="secondary">
+                {t(cancelLabelKey)}
               </Button>
-            </>
-          )}
-          {quote === undefined && (
-            <Button disabled={busy} onClick={onClose} theme="outlined" variant="secondary">
-              {t(cancelLabelKey)}
-            </Button>
-          )}
-          {quote === undefined && (
-            <Button
-              disabled={busy}
-              onClick={() => {
-                browserRuntime.runFork(submit('draft'));
-              }}
-              theme="outlined"
-              variant="secondary"
-            >
-              {k('sales.form.saveDraft')}
-            </Button>
-          )}
-          {quote === undefined && (
-            <Button
-              isLoading={busy}
-              onClick={() => {
-                browserRuntime.runFork(submit('sent'));
-              }}
-              variant="primary"
-            >
-              {k('sales.form.saveSent')}
-            </Button>
-          )}
-        </>
-      }
-      onOpenChange={(open) => {
-        if (!open) {
-          onClose();
+            )}
+            {quote === undefined && (
+              <Button
+                disabled={busy}
+                onClick={() => {
+                  browserRuntime.runFork(submit('draft'));
+                }}
+                theme="outlined"
+                variant="secondary"
+              >
+                {k('sales.form.saveDraft')}
+              </Button>
+            )}
+            {quote === undefined && (
+              <Button
+                isLoading={busy}
+                onClick={() => {
+                  browserRuntime.runFork(submit('sent'));
+                }}
+                variant="primary"
+              >
+                {k('sales.form.saveSent')}
+              </Button>
+            )}
+          </>
         }
-      }}
-      open
-      resizeLabel={t(closeLabelKey)}
-      size="xl"
-      title={quote === undefined ? k('sales.newQuote') : k('sales.editQuote', { number: quote.number })}
-    >
-      <div className="flex flex-col gap-200 py-200">
-        {error !== undefined && (
-          <StatusText showIcon status="error">
-            {error}
-          </StatusText>
-        )}
-        {quote !== undefined && quote.salesOrderId !== undefined && (
-          <StatusText showIcon status="default">
-            {k('sales.form.copyNote')}
-          </StatusText>
-        )}
-        {customers.status === 'ready' ? (
-          <Select
-            items={customers.customers.map((entry) => ({
-              displayValue: entry.name,
-              label: entry.name,
-              value: entry.counterpartyId,
-            }))}
-            label={k(customerLabelKey)}
-            name="sales-customer"
-            onValueChange={({ value }) => updateDraft({ customerId: value[0] ?? '' })}
-            placeholder={k('sales.form.pickCustomer')}
-            size="md"
-            value={draft.customerId === '' ? [] : [draft.customerId]}
+        guard={editing ? guard : undefined}
+        onOpenChange={(open) => {
+          if (!open) {
+            onClose();
+          }
+        }}
+        open
+        resizeLabel={t(closeLabelKey)}
+        size="xl"
+        title={quote === undefined ? k('sales.newQuote') : k('sales.editQuote', { number: quote.number })}
+      >
+        <div className="flex flex-col gap-200 py-200">
+          {error !== undefined && (
+            <StatusText showIcon status="error">
+              {error}
+            </StatusText>
+          )}
+          {quote !== undefined && quote.salesOrderId !== undefined && (
+            <StatusText showIcon status="default">
+              {k('sales.form.copyNote')}
+            </StatusText>
+          )}
+          {customers.status === 'ready' ? (
+            <Select
+              items={customers.customers.map((entry) => ({
+                displayValue: entry.name,
+                label: entry.name,
+                value: entry.counterpartyId,
+              }))}
+              label={k(customerLabelKey)}
+              name="sales-customer"
+              onValueChange={({ value }) => updateDraft({ customerId: value[0] ?? '' })}
+              placeholder={k('sales.form.pickCustomer')}
+              size="md"
+              value={draft.customerId === '' ? [] : [draft.customerId]}
+            />
+          ) : (
+            <p className="text-fg-secondary text-sm">
+              {k(customers.status === 'loading' ? 'sales.form.customersLoading' : 'sales.form.customersUnavailable')}
+            </p>
+          )}
+          <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
+            <FormInput
+              id="sales-quote-date"
+              label={k('sales.fields.date')}
+              onChange={(event) => updateDraft({ date: event.target.value })}
+              required
+              type="date"
+              value={draft.date}
+            />
+            <FormInput
+              id="sales-quote-valid"
+              label={k('sales.fields.validUntil')}
+              onChange={(event) => updateDraft({ validUntil: event.target.value })}
+              type="date"
+              value={draft.validUntil}
+            />
+          </div>
+          <SalesQuoteLines
+            lines={lines}
+            onAddLine={addLine}
+            onChangeLine={setLine}
+            onRemoveLine={(key) => setLines((current) => withoutSalesLine(current, key))}
+            totals={totals}
           />
-        ) : (
-          <p className="text-fg-secondary text-sm">
-            {k(customers.status === 'loading' ? 'sales.form.customersLoading' : 'sales.form.customersUnavailable')}
-          </p>
-        )}
-        <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-          <FormInput
-            id="sales-quote-date"
-            label={k('sales.fields.date')}
-            onChange={(event) => updateDraft({ date: event.target.value })}
-            required
-            type="date"
-            value={draft.date}
-          />
-          <FormInput
-            id="sales-quote-valid"
-            label={k('sales.fields.validUntil')}
-            onChange={(event) => updateDraft({ validUntil: event.target.value })}
-            type="date"
-            value={draft.validUntil}
+          <FormTextarea
+            id="sales-quote-note"
+            label={k(noteLabelKey)}
+            onChange={(event) => updateDraft({ note: event.target.value })}
+            rows={2}
+            value={draft.note}
           />
         </div>
-        <fieldset className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
-          <legend className="px-50 font-semibold text-sm">{k(linesLabelKey)}</legend>
-          {lines.map((line, index) => (
-            <div className="flex flex-col gap-100 border-border-secondary border-b pb-150" key={line.key}>
-              <FormInput
-                id={`sales-line-${index}-description`}
-                label={k('sales.fields.description')}
-                onChange={(event) => setLine(index, { description: event.target.value })}
-                placeholder={k('sales.form.descriptionPlaceholder')}
-                value={line.description}
-              />
-              <div className="grid items-end gap-100" style={{ gridTemplateColumns: '7rem minmax(6rem, 1fr) 6.5rem' }}>
-                <FormInput
-                  id={`sales-line-${index}-quantity`}
-                  inputMode="numeric"
-                  label={k('sales.fields.quantity')}
-                  onChange={(event) => setLine(index, { quantity: event.target.value })}
-                  value={line.quantity}
-                />
-                <FormInput
-                  id={`sales-line-${index}-price`}
-                  inputMode="decimal"
-                  label={k('sales.fields.unitPrice')}
-                  onChange={(event) => setLine(index, { price: event.target.value })}
-                  placeholder="4 500"
-                  value={line.price}
-                />
-                <Select
-                  items={vatRates.map((rate) => ({
-                    displayValue: `${rate} %`,
-                    label: `${rate} %`,
-                    value: String(rate),
-                  }))}
-                  label={k('sales.fields.vat')}
-                  name={`sales-line-${index}-vat`}
-                  onValueChange={({ value }) => {
-                    const selectedRate = vatRates.find((candidate) => candidate === Number(value[0] ?? 21));
-                    if (selectedRate !== undefined) {
-                      setLine(index, { vat: selectedRate });
-                    }
-                  }}
-                  size="md"
-                  value={[String(line.vat)]}
-                />
-              </div>
-              <div className="flex justify-end">
-                <Button
-                  disabled={lines.length === 1}
-                  onClick={() => setLines((current) => withoutSalesLine(current, line.key))}
-                  size="sm"
-                  theme="borderless"
-                  variant="secondary"
-                >
-                  {k('sales.form.removeLine')}
-                </Button>
-              </div>
-            </div>
-          ))}
-          <div className="flex flex-wrap items-center justify-between gap-100">
-            <Button onClick={addLine} size="sm" theme="outlined" variant="secondary">
-              {k('sales.form.addLine')}
-            </Button>
-            {totals !== undefined && (
-              <span className="text-sm">
-                {k('sales.totals', { base: formatAmount(totals.baseMinor), total: formatAmount(totals.totalMinor) })}
-              </span>
-            )}
-          </div>
-        </fieldset>
-        <FormTextarea
-          id="sales-quote-note"
-          label={k(noteLabelKey)}
-          onChange={(event) => updateDraft({ note: event.target.value })}
-          rows={2}
-          value={draft.note}
-        />
-      </div>
-    </SidePanel>
+      </SidePanel>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
+    </>
   );
 };
 

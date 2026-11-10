@@ -1,4 +1,4 @@
-// The security device card's values: a new device is submitted once, an existing one is autosaved.
+// The security device card's values: a new device is submitted once, an edit of an existing one is sent on Uložit.
 import { Option } from 'effect';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import type { IsoDateSchema, PropertyRef } from '../../../../../shared/domain/common.ts';

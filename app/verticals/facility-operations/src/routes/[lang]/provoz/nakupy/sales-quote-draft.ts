@@ -1,4 +1,4 @@
-// The quote panel's values: a new quote is submitted once, an existing one is autosaved.
+// The quote panel's values: a new quote is submitted once, an edit of an existing one is sent on Uložit.
 import { Option } from 'effect';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import type { IsoDateSchema } from '../../../../../shared/domain/common.ts';

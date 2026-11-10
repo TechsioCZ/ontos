@@ -15,7 +15,6 @@
 --office-building-outline
 --receipt-text-outline
 bg-base
-blur
 hidden
 hover:bg-surface
 icon-[mdi--account-box-outline]

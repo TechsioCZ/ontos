@@ -133,7 +133,7 @@ export interface DetailSave {
 }
 
 /**
- * What one autosave sends: the basic fields that differ from `base`, and a changed price as its own command. `base`
+ * What one save sends: the basic fields that differ from `base`, and a changed price as its own command. `base`
  * is the draft of the version the server last confirmed (`draftOf` the product the form opened with, then every
  * saved draft), with the same real variants as `draft`. The product on the page is not the base: until the reload
  * after the form's own save lands it still shows the version before that save.

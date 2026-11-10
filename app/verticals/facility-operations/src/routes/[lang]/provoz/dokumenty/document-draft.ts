@@ -1,4 +1,4 @@
-// The documents form's values: a new or amended document is submitted once, an existing one is autosaved.
+// The documents form's values: a new or amended document is submitted once, an edit is sent on Uložit.
 import { Option } from 'effect';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import { documentLinks } from '../../../../../shared/domain/documents.ts';

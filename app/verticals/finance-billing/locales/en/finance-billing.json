@@ -387,6 +387,7 @@
         "addTitle": "New price list item",
         "save": "Save",
         "close": "Close",
+        "cancel": "Cancel",
         "priceHint": "Unit price excluding VAT, in CZK.",
         "nameRequired": "Enter the item name.",
         "priceRequired": "Enter a price excluding VAT, e.g. 1500 or 1500.50.",

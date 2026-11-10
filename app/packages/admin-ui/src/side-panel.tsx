@@ -7,6 +7,8 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { isPanelEscape, panelContentId, readEscapeSnapshot } from './side-panel-escape.ts';
 import { sidePanelSurfaceClassName } from './ui-kit-classes.ts';
+import { UnsavedChangesBoundary, useEnclosingScope, useUnsavedChangesScope } from './unsaved-changes.tsx';
+import type { UnsavedChangesGuard } from './unsaved-changes.tsx';
 import { useSidePanelResize } from './use-side-panel-resize.ts';
 
 const sidePanelSizeSchema = Schema.Literals(['sm', 'md', 'lg', 'xl']);
@@ -21,12 +23,18 @@ export interface SidePanelProps {
   readonly closeLabel?: string;
   readonly description?: ReactNode;
   readonly finalFocusEl?: () => HTMLElement | null;
+  /**
+   * The unsaved-changes guard of the edit form in this panel, when the component that renders the panel also calls
+   * `useUnsavedChangesGuard`. A guard used further inside the panel is found by the panel itself. With a guard,
+   * Escape, the close button and a click outside all ask its question before `onOpenChange(false)`.
+   */
+  readonly guard?: Pick<UnsavedChangesGuard, 'request'> | undefined;
   readonly initialFocusEl?: () => HTMLElement | null;
   /** Localized notice shown when a click outside leaves an edited form open. */
   readonly keptDraftLabels?: KeptDraftLabels;
   /**
    * Receives `false` for Escape, the close button and a click outside a form nobody has edited. A click outside an
-   * edited form keeps the panel and its draft open instead. Draft owners confirm discard here; the parent owns `open`.
+   * edited form without a guard keeps the panel and its draft open instead. The parent owns `open`.
    */
   readonly onOpenChange: (open: boolean) => void;
   readonly open: boolean;
@@ -63,11 +71,8 @@ const defaultKeptDraftLabels: KeptDraftLabels = {
   message: 'Neuložené změny zůstaly zachované.',
 };
 
-/**
- * Autosave states in which nothing typed is waiting to be sent (saved, or handed over for approval);
- * `AutosaveStatus` publishes them.
- */
-const settledAutosaveStates = new Set(['idle', 'saved', 'proposed']);
+/** Save states in which nothing typed would be lost (saved, or handed over for approval); `SaveBar` publishes them. */
+const settledSaveStates = new Set(['idle', 'saved', 'proposed']);
 
 /** Form fields whose input the panel tracks; search boxes only filter and hold no draft. */
 const draftFieldSelector =
@@ -75,8 +80,9 @@ const draftFieldSelector =
 
 /**
  * Remembers which fields inside the open panel the user changed. A click outside an edited form must not drop the
- * draft, so the panel only treats such a click as a dismissal when no changed field is still on screen (a saved edit
- * form usually unmounts) or every autosave status in the panel is settled. Escape keeps closing as before.
+ * draft, so the panel only treats such a click as a dismissal when no changed field is still on screen (a saved create
+ * form usually unmounts) or every save bar in the panel is settled. Escape keeps closing as before. This covers forms
+ * without an unsaved-changes guard; a guarded form asks its question for every way out instead.
  */
 const useEditedDraft = (open: boolean, contentId: string) => {
   const edited = useRef(new Set<EventTarget>());
@@ -130,11 +136,8 @@ const useEditedDraft = (open: boolean, contentId: string) => {
     if (content === null) {
       return false;
     }
-    const autosave = [...content.querySelectorAll<HTMLElement>('[data-autosave-state]')];
-    if (
-      autosave.length > 0 &&
-      autosave.every((status) => settledAutosaveStates.has(status.dataset['autosaveState'] ?? ''))
-    ) {
+    const saveBars = [...content.querySelectorAll<HTMLElement>('[data-save-state]')];
+    if (saveBars.length > 0 && saveBars.every((bar) => settledSaveStates.has(bar.dataset['saveState'] ?? ''))) {
       return false;
     }
     return [...content.querySelectorAll(draftFieldSelector)].some((field) => edited.current.has(field));
@@ -207,6 +210,7 @@ export const SidePanel = ({
   closeLabel = 'Zavřít',
   description,
   finalFocusEl,
+  guard,
   initialFocusEl,
   keptDraftLabels = defaultKeptDraftLabels,
   onOpenChange,
@@ -218,7 +222,29 @@ export const SidePanel = ({
 }: SidePanelProps) => {
   const id = useId();
   const resize = useSidePanelResize();
-  useEscapeFallback(open, panelContentId(id), onOpenChange);
+  // Guards of forms inside the panel register here (or with a boundary around the panel).
+  const scope = useEnclosingScope(useUnsavedChangesScope());
+  const close = () => {
+    onOpenChange(false);
+  };
+  /** Every dismissal goes through the unsaved-changes guards; a clean or unguarded panel closes at once. */
+  const requestClose = () => {
+    if (guard === undefined) {
+      scope.request(close);
+      return;
+    }
+    guard.request(() => {
+      scope.request(close);
+    });
+  };
+  const handleEscapeFallback = (next: boolean) => {
+    if (next) {
+      onOpenChange(true);
+      return;
+    }
+    requestClose();
+  };
+  useEscapeFallback(open, panelContentId(id), handleEscapeFallback);
   const { keepsDraft, refocusDraft } = useEditedDraft(open, panelContentId(id));
   const [draftKept, setDraftKept] = useState(false);
   const [shownOpen, setShownOpen] = useState(open);
@@ -229,65 +255,70 @@ export const SidePanel = ({
   }
 
   return (
-    <Dialog
-      className={`min-w-0 sm:min-w-(--container-dialog-sm) ${sidePanelSurfaceClassName} ${className ?? ''}`}
-      {...(finalFocusEl === undefined ? {} : { finalFocusEl })}
-      {...(initialFocusEl === undefined ? {} : { initialFocusEl })}
-      {...(peek ? peekDialogProps : modalDialogProps)}
-      actions={actions}
-      contentRef={resize.contentRef}
-      contentStyle={{ maxWidth: '100vw', width: resize.width }}
-      customTrigger
-      description={description}
-      hideCloseButton
-      id={id}
-      onOpenChange={(details) => {
-        if (!details.open && keepsDraft()) {
-          setDraftKept(true);
-          refocusDraft();
-          return;
-        }
-        onOpenChange(details.open);
-      }}
-      open={open}
-      placement="right"
-      size={size}
-      title={<span className="font-semibold text-md">{title}</span>}
-    >
-      {/* ui-kit hard-codes the English "Close dialog" label, so the panel renders its own close button. */}
-      <ActionIcon
-        aria-label={closeLabel}
-        className="absolute end-dialog-close-trigger-offset top-dialog-close-trigger-offset"
-        icon="token-icon-dialog-close"
-        onClick={() => {
-          onOpenChange(false);
+    <UnsavedChangesBoundary scope={scope}>
+      <Dialog
+        className={`min-w-0 sm:min-w-(--container-dialog-sm) ${sidePanelSurfaceClassName} ${className ?? ''}`}
+        {...(finalFocusEl === undefined ? {} : { finalFocusEl })}
+        {...(initialFocusEl === undefined ? {} : { initialFocusEl })}
+        {...(peek ? peekDialogProps : modalDialogProps)}
+        actions={actions}
+        contentRef={resize.contentRef}
+        contentStyle={{ maxWidth: '100vw', width: resize.width }}
+        customTrigger
+        description={description}
+        hideCloseButton
+        id={id}
+        onOpenChange={(details) => {
+          if (details.open) {
+            onOpenChange(true);
+            return;
+          }
+          // A guarded form asks its own question; only an unguarded one is kept open by the edited-field check.
+          if (guard === undefined && !scope.guarded() && keepsDraft()) {
+            setDraftKept(true);
+            refocusDraft();
+            return;
+          }
+          requestClose();
         }}
-        size="md"
-        tone="neutral"
-      />
-      <ActionIcon
-        {...resize.handleProps}
-        aria-controls={panelContentId(id)}
-        aria-label={resizeLabel}
-        className="absolute inset-y-0 left-0 hidden h-full w-200 touch-none cursor-col-resize select-none rounded-none sm:flex"
-        icon="icon-[mdi--drag-vertical]"
-        size="sm"
-        tone="neutral"
-      />
-      {/* Above the scrolling body, so the notice stays visible however far the form is scrolled. */}
-      {draftKept && (
-        <div className="flex flex-wrap items-center gap-100">
-          <StatusText showIcon size="sm" status="warning">
-            {keptDraftLabels.message}
-          </StatusText>
-          <Button onClick={() => onOpenChange(false)} size="sm" theme="borderless" variant="secondary">
-            {keptDraftLabels.close}
-          </Button>
-        </div>
-      )}
-      {/* The body scrolls on its own, so the footer actions stay visible at the bottom of a tall panel. The
-          inline padding pair keeps focus rings from being clipped by the scroll edge. */}
-      <div className="-mx-100 flex min-h-0 flex-1 flex-col gap-dialog-content overflow-y-auto px-100">{children}</div>
-    </Dialog>
+        open={open}
+        placement="right"
+        size={size}
+        title={<span className="font-semibold text-md">{title}</span>}
+      >
+        {/* ui-kit hard-codes the English "Close dialog" label, so the panel renders its own close button. */}
+        <ActionIcon
+          aria-label={closeLabel}
+          className="absolute end-dialog-close-trigger-offset top-dialog-close-trigger-offset"
+          icon="token-icon-dialog-close"
+          onClick={requestClose}
+          size="md"
+          tone="neutral"
+        />
+        <ActionIcon
+          {...resize.handleProps}
+          aria-controls={panelContentId(id)}
+          aria-label={resizeLabel}
+          className="absolute inset-y-0 left-0 hidden h-full w-200 touch-none cursor-col-resize select-none rounded-none sm:flex"
+          icon="icon-[mdi--drag-vertical]"
+          size="sm"
+          tone="neutral"
+        />
+        {/* Above the scrolling body, so the notice stays visible however far the form is scrolled. */}
+        {draftKept && (
+          <div className="flex flex-wrap items-center gap-100">
+            <StatusText showIcon size="sm" status="warning">
+              {keptDraftLabels.message}
+            </StatusText>
+            <Button onClick={requestClose} size="sm" theme="borderless" variant="secondary">
+              {keptDraftLabels.close}
+            </Button>
+          </div>
+        )}
+        {/* The body scrolls on its own, so the footer actions stay visible at the bottom of a tall panel. The
+            inline padding pair keeps focus rings from being clipped by the scroll edge. */}
+        <div className="-mx-100 flex min-h-0 flex-1 flex-col gap-dialog-content overflow-y-auto px-100">{children}</div>
+      </Dialog>
+    </UnsavedChangesBoundary>
   );
 };

@@ -632,7 +632,7 @@ export const useOrderDetail = (
   );
   // The strict store reads as pending while it reloads this order, and the entry moves with the list revision. The
   // detail and its edit form stay mounted on the last ready read of the same order in the same scope until the
-  // reload settles; the form's draft decides what a reloaded order means for it (`useOrderEditAutosave`).
+  // reload settles; the form's draft decides what a reloaded order means for it (`useOrderEditDraft`).
   const cached = useHeldSnapshot(Result.getOrThrow(encodeQueryIds([scope ?? '', orderId ?? ''])), stored);
   // Each answer names the request it answers, so a newer request reads as loading without a synchronous reset.
   const [answer, setAnswer] = useState<{ readonly request: string; readonly state: OrderDetailState } | null>(null);

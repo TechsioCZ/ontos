@@ -37,6 +37,7 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
 }));
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
+  useBlocker: () => ({ status: 'idle' }),
   useNavigate: () => rstest.fn(),
   useParams: () => ({ id: '' }),
   useRouterState: () => '/cs/prodej/zakaznici',

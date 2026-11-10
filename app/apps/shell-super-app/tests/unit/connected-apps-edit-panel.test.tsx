@@ -39,6 +39,34 @@ rstest.mock('../../src/routes/[lang]/profile/connected-apps-client.ts', () => ({
   updateConnectionAccess: update,
 }));
 
+/** The router's blocker: `shouldBlock` is what the panel asks it to block on, `status` what the router answers. */
+interface Navigation {
+  readonly proceed: () => void;
+  readonly reset: () => void;
+  shouldBlock: () => boolean;
+  status: 'blocked' | 'idle';
+}
+const { navigation } = rstest.hoisted(() => {
+  const state: Navigation = {
+    proceed: rstest.fn<() => void>(),
+    reset: rstest.fn<() => void>(),
+    shouldBlock: () => false,
+    status: 'idle',
+  };
+  return { navigation: state };
+});
+rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
+  useBlocker: (options: { readonly shouldBlockFn: () => boolean }) => {
+    navigation.shouldBlock = options.shouldBlockFn;
+    return { proceed: navigation.proceed, reset: navigation.reset, status: navigation.status };
+  },
+}));
+afterEach(() => {
+  navigation.status = 'idle';
+  rstest.mocked(navigation.proceed).mockReset();
+  rstest.mocked(navigation.reset).mockReset();
+});
+
 const warehouse = AgentModuleKeySchema.make('warehouse');
 const limits: ConnectionLimits = {
   maxWritePolicy: 'approval',
@@ -90,21 +118,42 @@ const click = (element: HTMLElement) =>
 
 const ok = Effect.succeed({ status: 'ok', value: {} });
 
-it.effect('narrows the access by itself, without a save button', () =>
-  Effect.gen(function* narrowedAccessSavesItself() {
+const saveButton = (): HTMLElement => {
+  const button = screen.getByRole('button', { name: 'Uložit' });
+  return button;
+};
+
+it.live('changing the access writes nothing until Uložit, which writes once', () =>
+  Effect.gen(function* editThenSave() {
     update.mockReturnValue(ok);
     const onClose = rstest.fn<() => void>();
     const onSaved = rstest.fn<(name: string) => void>();
     const onStale = rstest.fn<(notice: string) => void>();
     render(<ConnectedAppsEditPanel connection={connection} onClose={onClose} onSaved={onSaved} onStale={onStale} />);
-    expect(screen.queryByRole('button', { name: 'Uložit změny' })).toBeNull();
     yield* click(screen.getByRole('radio', { name: 'Jen čtení' }));
-    // Closing the panel sends the draft that is still waiting for its quiet time.
-    yield* click(closeButton());
+    yield* Effect.sleep('1 second');
+    expect(update).not.toHaveBeenCalled();
+    yield* click(saveButton());
     yield* Effect.promise(async () => {
       await waitFor(() => expect(update).toHaveBeenCalledTimes(1), { timeout: 4000 });
     });
     expect(update.mock.calls[0]?.[0]).toMatchObject({ grantId: 'g1', writePolicy: 'read_only' });
+  }),
+);
+
+it.effect('leaving with unsaved changes asks first, and Zahodit změny sends nothing', () =>
+  Effect.gen(function* leaveAsks() {
+    update.mockReturnValue(ok);
+    const onClose = rstest.fn<() => void>();
+    const onSaved = rstest.fn<(name: string) => void>();
+    const onStale = rstest.fn<(notice: string) => void>();
+    render(<ConnectedAppsEditPanel connection={connection} onClose={onClose} onSaved={onSaved} onStale={onStale} />);
+    yield* click(screen.getByRole('radio', { name: 'Jen čtení' }));
+    yield* click(closeButton());
+    expect(onClose).not.toHaveBeenCalled();
+    yield* click(screen.getByRole('button', { name: 'Zahodit změny' }));
+    expect(update).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
   }),
 );
 
@@ -116,9 +165,32 @@ it.effect('says so and closes when the connection was revoked elsewhere', () =>
     const onStale = rstest.fn<(notice: string) => void>();
     render(<ConnectedAppsEditPanel connection={connection} onClose={onClose} onSaved={onSaved} onStale={onStale} />);
     yield* click(screen.getByRole('radio', { name: 'Jen čtení' }));
-    yield* click(closeButton());
+    yield* click(saveButton());
     yield* Effect.promise(async () => {
       await waitFor(() => expect(onStale).toHaveBeenCalled(), { timeout: 4000 });
     });
+  }),
+);
+
+it.effect('a route change with unsaved changes asks first, and Zahodit změny lets it go without saving', () =>
+  Effect.gen(function* routeChangeAsks() {
+    update.mockReturnValue(ok);
+    const onClose = rstest.fn<() => void>();
+    const onSaved = rstest.fn<(name: string) => void>();
+    const onStale = rstest.fn<(notice: string) => void>();
+    const panel = () => (
+      <ConnectedAppsEditPanel connection={connection} onClose={onClose} onSaved={onSaved} onStale={onStale} />
+    );
+    const view = render(panel());
+    expect(navigation.shouldBlock()).toBe(false);
+    yield* click(screen.getByRole('radio', { name: 'Jen čtení' }));
+    expect(navigation.shouldBlock()).toBe(true);
+    // The router holds the navigation (a Shell link, browser Back) and the panel asks.
+    navigation.status = 'blocked';
+    view.rerender(panel());
+    const discard = yield* Effect.promise(() => screen.findByRole('button', { name: 'Zahodit změny' }));
+    yield* click(discard);
+    expect(navigation.proceed).toHaveBeenCalledTimes(1);
+    expect(update).not.toHaveBeenCalled();
   }),
 );

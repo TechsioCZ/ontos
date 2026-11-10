@@ -100,7 +100,6 @@ bg-success
 bg-success-light
 bg-surface
 block
-blur
 border
 border-2
 border-b
@@ -272,6 +271,7 @@ rounded-full
 rounded-lg
 rounded-md
 rounded-sm
+running
 self-center
 shrink-0
 size-5

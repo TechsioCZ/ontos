@@ -1,6 +1,8 @@
-// The commercial terms form of one contract: what the terms panel autosaves.
+// The commercial terms form of one contract: what the terms panel saves with its Save button.
 import type { RevisionedSaveResult } from '@app/admin-ui';
-import { Effect, Option, Predicate } from 'effect';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import type { AgreementsCommand } from '../../../../shared/actions/apply-command.ts';
 import type { Contract } from '../../../../shared/apis/records.ts';
 
@@ -111,9 +113,13 @@ export const termsUnchangedSince =
     return current !== undefined && sameTermsDraft(termsDraftOf(current), base);
   };
 
-/** An autosave of the terms panel: the new revision once saved, `conflict` for a revision conflict, else `failed`. */
-export const termsAutosaveResult = <E>(
-  write: Effect.Effect<{ readonly revision: number }, E>,
+/**
+ * One save of the terms panel: the new revision once saved, `conflict` for a revision conflict, `proposed` for a change
+ * parked for approval (nothing is saved yet, `onProposal` hears of it), else `failed`.
+ */
+export const termsSaveResult = <E>(
+  write: Effect.Effect<{ readonly revision: number } | ActionProposalAccepted, E>,
+  onProposal?: (proposal: ActionProposalAccepted) => void,
 ): Effect.Effect<RevisionedSaveResult> =>
   write.pipe(
     Effect.match({
@@ -123,6 +129,12 @@ export const termsAutosaveResult = <E>(
         error.code === 'agreements_conflict'
           ? 'conflict'
           : 'failed',
-      onSuccess: ({ revision }): RevisionedSaveResult => revision,
+      onSuccess: (result): RevisionedSaveResult => {
+        if (Schema.is(ActionProposalAcceptedSchema)(result)) {
+          onProposal?.(result);
+          return 'proposed';
+        }
+        return result.revision;
+      },
     }),
   );

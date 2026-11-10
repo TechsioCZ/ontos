@@ -1,12 +1,21 @@
-import { AutosaveStatus, SidePanel, dialogCloseLabel, useAutosaveDraft } from '@app/admin-ui';
+import {
+  SaveBar,
+  SidePanel,
+  UnsavedChangesDialog,
+  saveLabelsFor,
+  useDraftSave,
+  useRecordDraft,
+  useUnsavedChangesGuard,
+} from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { SelectTemplate } from '@app/admin-ui/select-template';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import { Url } from 'effect/http';
 import { useState } from 'react';
 import type { WorkforceCommand } from '../../../../../shared/actions/apply-command.ts';
@@ -21,7 +30,7 @@ import {
   emptyDraft,
   employeeRoles,
   errorFieldKey,
-  employeeAutosaveResult,
+  employeeSaveResult,
   isDepartmentName,
   listedFieldsOf,
   newEmployeeId,
@@ -29,7 +38,7 @@ import {
   sameDraft,
   updateCommand,
 } from './employee-model.ts';
-import type { CommitOutcome, DraftField, EmployeeDraft } from './employee-model.ts';
+import type { CommitOutcome, DraftField, EditCommitResult, EmployeeDraft } from './employee-model.ts';
 
 const RESIZE_LABEL_KEY = 'workforce.sidePanel.resize';
 
@@ -53,12 +62,15 @@ export type CommitCommand = (
   shown?: ShownEdit,
 ) => Effect.Effect<CommitOutcome>;
 
-/** Runs one autosave of the edit panel with the draft's base revision: the new revision once saved, else why not. */
-export type AutosaveCommand = (
+/**
+ * Runs one Save of the edit panel with the draft's base revision: the new revision once saved, `proposed` when the
+ * change was parked for approval, else why not.
+ */
+export type EditCommitCommand = (
   command: WorkforceCommand,
   expectedRevision: number,
   shown: ShownEdit,
-) => Effect.Effect<CommitOutcome | number>;
+) => Effect.Effect<EditCommitResult>;
 
 /** What a copied employees URL names: one exact employee, nothing, or an explicit invalid selection. */
 export type EmployeeSearchTarget =
@@ -336,7 +348,6 @@ interface EmployeeFieldsProps {
   /** Set when the server reports that another Employee already uses the typed e-mail. */
   readonly emailTaken: boolean;
   readonly employee: Employee | null;
-  readonly onBlur: () => void;
   readonly onChange: (patch: Partial<EmployeeDraft>) => void;
   /** Inline field errors are shown (after the first create attempt; always while editing). */
   readonly showErrors: boolean;
@@ -349,7 +360,6 @@ const EmployeeFields = ({
   draft,
   emailTaken,
   employee,
-  onBlur,
   onChange,
   showErrors,
 }: EmployeeFieldsProps) => {
@@ -409,7 +419,6 @@ const EmployeeFields = ({
         id="employee-full-name"
         label={t(`${key}.form.fullName`)}
         name="fullName"
-        onBlur={onBlur}
         onChange={(event) => onChange({ fullName: event.target.value })}
         required
         value={draft.fullName}
@@ -421,7 +430,6 @@ const EmployeeFields = ({
         id="employee-email"
         label={t(`${key}.form.email`)}
         name="email"
-        onBlur={onBlur}
         onChange={(event) => onChange({ email: event.target.value })}
         required
         type="email"
@@ -434,7 +442,6 @@ const EmployeeFields = ({
         id="employee-phone"
         label={t(`${key}.form.phone`)}
         name="phone"
-        onBlur={onBlur}
         onChange={(event) => onChange({ phone: event.target.value })}
         type="tel"
         value={draft.phone}
@@ -461,7 +468,6 @@ const EmployeeFields = ({
         id="employee-department"
         label={t(`${key}.form.department`)}
         name="department"
-        onBlur={onBlur}
         onChange={(event) => onChange({ department: event.target.value })}
         required
         value={draft.department}
@@ -475,32 +481,33 @@ const EmployeeFields = ({
 };
 
 /**
- * Edit one existing Employee. Changes save themselves (debounced, on blur and on close) with the revision the
- * draft is based on; a revision conflict offers the current version instead of overwriting it.
+ * Edit one existing Employee. Editing changes only the draft on screen; the Save button sends it with the revision
+ * the draft is based on, and a revision conflict offers the current version instead of overwriting it. Every way out
+ * of the panel asks first while something is unsaved.
  */
 const EmployeeEditPanel = ({
-  autosaveCommit,
   availablePrincipals,
+  commitEdit,
   employee,
   onClose,
   revision,
 }: {
-  readonly autosaveCommit: AutosaveCommand;
   readonly availablePrincipals: RecordsResponse['availablePrincipals'];
+  readonly commitEdit: EditCommitCommand;
   readonly employee: Employee;
   readonly onClose: () => void;
   readonly revision: number;
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const [emailTaken, setEmailTaken] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
-  const autosave = useAutosaveDraft<EmployeeDraft, never>({
+  const record = useRecordDraft<EmployeeDraft, never>({
     equals: sameDraft,
     isValid: (value) => draftErrors(value).length === 0,
     revision,
     runtime: browserRuntime,
     save: (value, expectedRevision) =>
-      autosaveCommit(updateCommand(employee, value), expectedRevision, {
+      commitEdit(updateCommand(employee, value), expectedRevision, {
         ids: [employee.id],
         patch: listedFieldsOf(value),
       }).pipe(
@@ -510,140 +517,141 @@ const EmployeeEditPanel = ({
             setServerError(result === 'forbidden' ? t(commitErrorKey(result)) : null);
           }),
         ),
-        Effect.map(employeeAutosaveResult),
+        Effect.map(employeeSaveResult),
       ),
     server: draftFromEmployee(employee),
   });
-  const close = () => {
-    autosave.flush();
-    onClose();
+  // Browser Back and links ask the same question as Zavřít and the panel's own close button.
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
+  const labels = saveLabelsFor(language);
+  const handleClose = () => {
+    guard.request(onClose);
   };
-  const handleBlur = autosave.flush;
-  const handleRetry = autosave.retry;
-  const handleReloadLatest = autosave.reloadLatest;
+  const handleSave = record.save;
+  const handleReloadLatest = record.reloadLatest;
   return (
-    <SidePanel
-      actions={
-        <div className="workforce-employee-form-actions">
-          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
-          <Button onClick={close} theme="outlined" variant="secondary">
-            {t(`${key}.form.close`)}
-          </Button>
-        </div>
-      }
-      initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#employee-full-name')}
-      onOpenChange={(next) => {
-        if (!next) {
-          close();
+    <>
+      <SidePanel
+        actions={
+          <div className="workforce-employee-form-actions">
+            <Button onClick={handleClose} theme="outlined" type="button" variant="secondary">
+              {t(`${key}.form.close`)}
+            </Button>
+            <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
+          </div>
         }
-      }}
-      open
-      resizeLabel={t(RESIZE_LABEL_KEY)}
-      size="md"
-      title={t(`${key}.form.editTitle`)}
-    >
-      <form
-        className="flex flex-col gap-200 py-200"
-        id={employeeFormId}
-        noValidate
-        onSubmit={(event) => {
-          event.preventDefault();
-          autosave.flush();
+        guard={guard}
+        initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#employee-full-name')}
+        onOpenChange={(next) => {
+          if (!next) {
+            onClose();
+          }
         }}
+        open
+        resizeLabel={t(RESIZE_LABEL_KEY)}
+        size="md"
+        title={t(`${key}.form.editTitle`)}
       >
-        {serverError !== null && (
-          <StatusText showIcon status="error">
-            {serverError}
-          </StatusText>
-        )}
-        <EmployeeFields
-          availablePrincipals={availablePrincipals}
-          disabled={false}
-          draft={autosave.draft}
-          emailTaken={emailTaken}
-          employee={employee}
-          onBlur={handleBlur}
-          onChange={(patch) => {
-            if (patch.email !== undefined) {
-              setEmailTaken(false);
-            }
-            autosave.setDraft((current) => ({ ...current, ...patch }));
+        <form
+          className="flex flex-col gap-200 py-200"
+          id={employeeFormId}
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+            handleSave();
           }}
-          showErrors
-        />
-      </form>
-    </SidePanel>
+        >
+          {serverError !== null && (
+            <StatusText showIcon status="error">
+              {serverError}
+            </StatusText>
+          )}
+          <EmployeeFields
+            availablePrincipals={availablePrincipals}
+            disabled={false}
+            draft={record.draft}
+            emailTaken={emailTaken}
+            employee={employee}
+            onChange={(patch) => {
+              if (patch.email !== undefined) {
+                setEmailTaken(false);
+              }
+              record.setDraft((current) => ({ ...current, ...patch }));
+            }}
+            showErrors
+          />
+        </form>
+      </SidePanel>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
+    </>
   );
-};
-
-const noop = () => {
-  // Creating saves only on "Vytvořit zaměstnance".
 };
 
 const noopChange = () => {
   // A read-only detail never changes its draft.
 };
 
+/** A created Employee closes the create panel. A conflict has no draft to reload there, so it reads as a failed save. */
+const createSaveOutcome = (result: EditCommitResult): SaveOutcome => {
+  const saved = employeeSaveResult(result);
+  if (Predicate.isNumber(saved)) {
+    return 'saved';
+  }
+  return saved === 'conflict' ? 'failed' : saved;
+};
+
 /**
- * Create a new Employee in a right-hand dialog. The dialog holds a draft, so an outside click keeps it open. Escape,
- * the close button and Zrušit close it, after a discard confirmation when the draft has edits.
+ * Create a new Employee in a right-hand panel. Typing changes only the draft; Save sends it once and closes the panel
+ * when the Employee is saved. Every way out asks first while the draft holds edits.
  */
 const EmployeeCreateDialog = ({
   availablePrincipals,
-  commit,
+  commitEdit,
   onClose,
+  revision,
 }: {
   readonly availablePrincipals: RecordsResponse['availablePrincipals'];
-  readonly commit: CommitCommand;
+  readonly commitEdit: EditCommitCommand;
   readonly onClose: () => void;
+  readonly revision: number;
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const [draft, setDraft] = useState<EmployeeDraft>(emptyDraft);
-  const [submitted, setSubmitted] = useState(false);
-  const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [emailTaken, setEmailTaken] = useState(false);
-  const [discardOpen, setDiscardOpen] = useState(false);
-  const errors = draftErrors(draft);
-
-  /** A dirty draft asks before Escape, the close button or Zrušit drop the typed edits. */
-  const dirty = !sameDraft(draft, emptyDraft);
-  const requestClose = () => {
-    if (dirty && !busy) {
-      setDiscardOpen(true);
-      return;
-    }
-    onClose();
-  };
-
-  const submit = () => {
-    // Enter in a field submits too; a save already running must not send a second command.
-    if (busy) {
-      return;
-    }
-    setSubmitted(true);
-    if (errors.length > 0 || draft.principalRef === undefined) {
-      return;
-    }
-    setBusy(true);
-    setServerError(null);
-    const build = newEmployeeId.pipe(Effect.map((id) => createCommand(id, draft)));
-    void browserRuntime.runPromise(
-      commit(build, `${key}.toast.saved`).pipe(
-        Effect.tap((outcome) =>
+  const [submitted, setSubmitted] = useState(false);
+  const create = useDraftSave<EmployeeDraft, never>({
+    equals: sameDraft,
+    isValid: (value) => draftErrors(value).length === 0 && value.principalRef !== undefined,
+    runtime: browserRuntime,
+    save: (value) =>
+      newEmployeeId.pipe(
+        Effect.flatMap((id) => commitEdit(createCommand(id, value), revision, { ids: [], patch: {} })),
+        Effect.tap((result) =>
           Effect.sync(() => {
-            setBusy(false);
-            if (outcome === 'saved') {
-              onClose();
-            } else if (outcome === 'duplicateEmail') {
-              setEmailTaken(true);
-            } else {
-              setServerError(t(commitErrorKey(outcome)));
-            }
+            setEmailTaken(result === 'duplicateEmail');
+            setServerError(result === 'forbidden' ? t(commitErrorKey(result)) : null);
           }),
         ),
+        Effect.map(createSaveOutcome),
       ),
-    );
+    value: draft,
+  });
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => create.dirty, withResolver: true });
+  const discard = () => {
+    setDraft(create.confirmed);
+  };
+  const guard = useUnsavedChangesGuard({ draft: create, navigation: blocker, onDiscard: discard });
+  const labels = saveLabelsFor(language);
+  const handleSave = () => {
+    setSubmitted(true);
+    create.save();
+    create.afterSave((status) => {
+      if (status === 'saved') {
+        onClose();
+      }
+    });
   };
 
   return (
@@ -651,26 +659,18 @@ const EmployeeCreateDialog = ({
       <SidePanel
         actions={
           <div className="workforce-employee-form-actions">
-            <Button onClick={requestClose} theme="outlined" variant="secondary">
+            <Button onClick={() => guard.request(onClose)} theme="outlined" type="button" variant="secondary">
               {t(`${key}.form.cancel`)}
             </Button>
-            {/* The form lives in the panel body, so the footer submit button points at it through `form`. Enter submits too. */}
-            <Button
-              form={employeeFormId}
-              isLoading={busy}
-              loadingText={t(`${key}.form.saving`)}
-              type="submit"
-              variant="primary"
-            >
-              {t(`${key}.form.create`)}
-            </Button>
+            <SaveBar labels={labels} onReloadLatest={noopChange} onSave={handleSave} status={create.status} />
           </div>
         }
+        guard={guard}
         // The first field takes focus, not the close button the panel renders first.
         initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#employee-full-name')}
         onOpenChange={(next) => {
           if (!next) {
-            requestClose();
+            guard.request(onClose);
           }
         }}
         open
@@ -685,7 +685,7 @@ const EmployeeCreateDialog = ({
           noValidate
           onSubmit={(event) => {
             event.preventDefault();
-            submit();
+            handleSave();
           }}
         >
           {serverError !== null && (
@@ -695,11 +695,10 @@ const EmployeeCreateDialog = ({
           )}
           <EmployeeFields
             availablePrincipals={availablePrincipals}
-            disabled={busy}
+            disabled={create.status === 'saving'}
             draft={draft}
             emailTaken={emailTaken}
             employee={null}
-            onBlur={noop}
             onChange={(patch) => {
               if (patch.email !== undefined) {
                 setEmailTaken(false);
@@ -710,33 +709,13 @@ const EmployeeCreateDialog = ({
           />
         </form>
       </SidePanel>
-      <Dialog
-        actions={
-          <>
-            <Button onClick={() => setDiscardOpen(false)} theme="outlined" type="button" variant="secondary">
-              {t(`${key}.discard.keep`)}
-            </Button>
-            <Button onClick={onClose} type="button" variant="danger">
-              {t(`${key}.discard.confirm`)}
-            </Button>
-          </>
-        }
-        closeLabel={dialogCloseLabel}
-        customTrigger
-        description={t(`${key}.discard.description`)}
-        hideCloseButton
-        onOpenChange={(details) => setDiscardOpen(details.open)}
-        open={discardOpen}
-        role="alertdialog"
-        size="sm"
-        title={t(`${key}.discard.title`)}
-      />
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </>
   );
 };
 
 /**
- * One Employee opened from a copied search URL for a reader without write: the same fields, disabled, with no autosave
+ * One Employee opened from a copied search URL for a reader without write: the same fields, disabled, with no draft
  * controller, form submit, mutation action or draft. Closing it only dismisses the panel.
  */
 const EmployeeReadOnlyPanel = ({
@@ -774,7 +753,6 @@ const EmployeeReadOnlyPanel = ({
           draft={draftFromEmployee(employee)}
           emailTaken={false}
           employee={employee}
-          onBlur={noopChange}
           onChange={noopChange}
           showErrors={false}
         />
@@ -785,32 +763,37 @@ const EmployeeReadOnlyPanel = ({
 
 /** Create (employee is null) or edit one Employee in a right-hand panel. */
 export const EmployeeFormDialog = ({
-  autosaveCommit,
   availablePrincipals,
-  commit,
+  commitEdit,
   employee,
   onClose,
   readOnly = false,
   revision,
 }: {
-  readonly autosaveCommit: AutosaveCommand;
   readonly availablePrincipals: RecordsResponse['availablePrincipals'];
-  readonly commit: CommitCommand;
+  readonly commitEdit: EditCommitCommand;
   readonly employee: Employee | null;
   readonly onClose: () => void;
   readonly readOnly?: boolean;
   readonly revision: number;
 }) => {
   if (employee === null) {
-    return <EmployeeCreateDialog availablePrincipals={availablePrincipals} commit={commit} onClose={onClose} />;
+    return (
+      <EmployeeCreateDialog
+        availablePrincipals={availablePrincipals}
+        commitEdit={commitEdit}
+        onClose={onClose}
+        revision={revision}
+      />
+    );
   }
   if (readOnly) {
     return <EmployeeReadOnlyPanel availablePrincipals={availablePrincipals} employee={employee} onClose={onClose} />;
   }
   return (
     <EmployeeEditPanel
-      autosaveCommit={autosaveCommit}
       availablePrincipals={availablePrincipals}
+      commitEdit={commitEdit}
       employee={employee}
       onClose={onClose}
       revision={revision}

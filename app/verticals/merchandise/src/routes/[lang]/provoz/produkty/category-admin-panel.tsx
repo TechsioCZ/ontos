@@ -1,24 +1,27 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
-import { AutosaveStatus, SidePanel, formatDateTime, useAutosaveDraft } from '@app/admin-ui';
+import {
+  SaveBar,
+  SidePanel,
+  UnsavedChangesDialog,
+  formatDateTime,
+  saveLabelsFor,
+  useRecordDraft,
+  useUnsavedChangesGuard,
+} from '@app/admin-ui';
 import type { RevisionedSaveResult } from '@app/admin-ui';
 import { DateTime, Effect, Match, Option, Predicate } from 'effect';
 import { useState } from 'react';
 import type { CategoryNode } from '../../../../../shared/domain/merchandise-model.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { loadCategoryDetail, loadCategoryTree } from './products-api.ts';
-import {
-  autosaveCategoryEdit,
-  categoryDraftErrors,
-  draftOf,
-  sameCategoryDraft,
-  savedCategory,
-} from './category-autosave.ts';
-import type { CategoryDraft } from './category-autosave.ts';
+import { categoryDraftErrors, draftOf, sameCategoryDraft, saveCategoryEdit, savedCategory } from './category-save.ts';
+import type { CategoryDraft } from './category-save.ts';
 
 type Loaded =
   | { readonly status: 'idle' | 'loading' | 'error' }
@@ -85,7 +88,6 @@ const CategoryHistory = ({ selected }: { readonly selected: CategoryNode }) => (
 interface CategoryEditorProps {
   readonly draft: CategoryDraft;
   readonly nameError: 'required' | 'tooLong' | undefined;
-  readonly onBlur: () => void;
   readonly parentName: string | undefined;
   readonly patchDraft: (patch: Partial<CategoryDraft>) => void;
   readonly positionError: 'negative' | 'notWhole' | 'required' | undefined;
@@ -93,11 +95,10 @@ interface CategoryEditorProps {
   readonly siblings: readonly CategoryNode[];
 }
 
-/** The category's own fields. A category exists already, so every field saves itself. */
+/** The category's own fields. Editing them changes the draft only; the panel's Save button sends it. */
 const CategoryEditor = ({
   draft,
   nameError,
-  onBlur,
   parentName,
   patchDraft,
   positionError,
@@ -132,7 +133,6 @@ const CategoryEditor = ({
         label={t('merchandise.ui.name')}
         maxLength={200}
         name="name"
-        onBlur={onBlur}
         onChange={(event) => patchDraft({ name: event.target.value })}
         required
         value={draft.name}
@@ -143,7 +143,6 @@ const CategoryEditor = ({
         label={t('merchandise.ui.categoryPageHeading')}
         maxLength={300}
         name="heading"
-        onBlur={onBlur}
         onChange={(event) => patchDraft({ heading: event.target.value })}
         value={draft.heading}
       />
@@ -152,7 +151,6 @@ const CategoryEditor = ({
         label={t('merchandise.ui.shortDescription')}
         maxLength={5000}
         name="description"
-        onBlur={onBlur}
         onChange={(event) => patchDraft({ description: event.target.value })}
         value={draft.description}
       />
@@ -161,7 +159,6 @@ const CategoryEditor = ({
         label={t('merchandise.ui.categoryDescription')}
         maxLength={50_000}
         name="longDescription"
-        onBlur={onBlur}
         onChange={(event) => patchDraft({ longDescription: event.target.value })}
         value={draft.longDescription}
       />
@@ -170,7 +167,6 @@ const CategoryEditor = ({
         inputMode="numeric"
         label={t('merchandise.ui.siblingPosition')}
         name="position"
-        onBlur={onBlur}
         onChange={(event) => patchDraft({ positionText: event.target.value })}
         value={draft.positionText}
         {...(positionError === undefined ? {} : { helpText: positionMessage, validateStatus: 'error' as const })}
@@ -217,19 +213,20 @@ interface CategoryEditPanelProps {
 }
 
 /**
- * Edit an existing category. Changes save themselves (debounced, on blur and on Zavřít) against the revision the
- * draft builds on; when someone else changed the category, the panel offers the version they saved instead.
+ * Edit an existing category. Editing changes the draft only; the Save button in the panel footer sends it against the
+ * revision the draft builds on. When someone else changed the category, the panel offers the version they saved
+ * instead. Leaving with unsaved changes asks first.
  */
 const CategoryEditPanel = ({ category, onBack, onSaved, parentName, revision, siblings }: CategoryEditPanelProps) => {
-  const { t } = useModernI18n();
-  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
-  const autosave = useAutosaveDraft<CategoryDraft, never>({
+  const { language, t } = useModernI18n();
+  const labels = saveLabelsFor(language);
+  const record = useRecordDraft<CategoryDraft, never>({
     equals: sameCategoryDraft,
     isValid: (value) => Object.keys(categoryDraftErrors(value)).length === 0,
     revision,
     runtime: browserRuntime,
     save: (value, expectedRevision): Effect.Effect<RevisionedSaveResult> =>
-      autosaveCategoryEdit(value, category, expectedRevision, setPendingMessage).pipe(
+      saveCategoryEdit(value, category, expectedRevision).pipe(
         Effect.tap((result) =>
           Effect.sync(() => {
             if (Predicate.isNumber(result)) {
@@ -240,51 +237,60 @@ const CategoryEditPanel = ({ category, onBack, onSaved, parentName, revision, si
       ),
     server: draftOf(category),
   });
-  const { draft } = autosave;
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
+  const { draft } = record;
   const errors = categoryDraftErrors(draft);
-  const patchDraft = (patch: Partial<CategoryDraft>) => autosave.setDraft((current) => ({ ...current, ...patch }));
+  const patchDraft = (patch: Partial<CategoryDraft>) => record.setDraft((current) => ({ ...current, ...patch }));
   const close = () => {
-    autosave.flush();
-    onBack();
+    guard.request(onBack);
   };
-  const handleBlur = autosave.flush;
-  const handleRetry = autosave.retry;
-  const handleReloadLatest = autosave.reloadLatest;
+  const handleSave = record.save;
+  const handleReloadLatest = record.reloadLatest;
   return (
-    <SidePanel
-      actions={
-        <>
-          {pendingMessage !== null && <StatusText status="error">{pendingMessage}</StatusText>}
-          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
-          <Button onClick={close} theme="outlined" variant="secondary">
-            Zpět na seznam
-          </Button>
-        </>
-      }
-      onOpenChange={(open) => {
-        if (!open) {
-          close();
+    <>
+      <SidePanel
+        actions={
+          <>
+            <Button onClick={close} theme="outlined" variant="secondary">
+              Zpět na seznam
+            </Button>
+            <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
+          </>
         }
-      }}
-      open
-      resizeLabel={t('merchandise.sidePanel.resize')}
-      size="md"
-      title={t('merchandise.ui.storefrontCategories')}
-    >
-      <div className="flex flex-col gap-200 py-200">
-        <p className="text-fg-secondary text-sm">Úpravy se ukládají samy; změnu uvidí zákazník v e-shopu.</p>
-        <CategoryEditor
-          draft={draft}
-          nameError={errors.name}
-          onBlur={handleBlur}
-          parentName={parentName}
-          patchDraft={patchDraft}
-          positionError={errors.position}
-          selected={category}
-          siblings={siblings}
-        />
-      </div>
-    </SidePanel>
+        guard={guard}
+        onOpenChange={(open) => {
+          if (!open) {
+            onBack();
+          }
+        }}
+        open
+        resizeLabel={t('merchandise.sidePanel.resize')}
+        size="md"
+        title={t('merchandise.ui.storefrontCategories')}
+      >
+        <form
+          className="flex flex-col gap-200 py-200"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+            handleSave();
+          }}
+        >
+          <p className="text-fg-secondary text-sm">Uložené změny uvidí zákazník v e-shopu.</p>
+          <CategoryEditor
+            draft={draft}
+            nameError={errors.name}
+            parentName={parentName}
+            patchDraft={patchDraft}
+            positionError={errors.position}
+            selected={category}
+            siblings={siblings}
+          />
+        </form>
+      </SidePanel>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
+    </>
   );
 };
 
