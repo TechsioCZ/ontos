@@ -91,6 +91,8 @@ const issuePartyModuleCredential = Effect.fn('PrivacyCompletionShell.issuePartyM
       correlationId: `${input.suffix}:module:key`,
       idempotencyKey: `${input.suffix}:module:key`,
       managedPrincipalId: service.principalId,
+      // A module credential is a tenant-managed key: the bind action refuses a managed key with no scope.
+      managedScope: 'tenant-managed',
       // Better Auth's API key plugin caps key names at 32 characters.
       name: 'Party registry module',
       principal: input.principal,
