@@ -399,7 +399,13 @@ const useGeneration = <V, R>(options: GenerationOptions<V, R>) => {
     controller.configure(boundTo(options, base, controller));
     return { base, controller };
   };
-  const [generation, setGeneration] = useState(() => begin(options.initial ?? options.value, options.revision));
+  const [generation, setGeneration] = useState(() =>
+    // `null` is a version too (an empty choice); only an absent `initial` falls back to the first draft.
+    begin(
+      Option.getOrElse(Option.fromUndefinedOr(options.initial), () => options.value),
+      options.revision,
+    ),
+  );
   const { base, controller } = generation;
   useEffect(() => {
     controller.configure(boundTo(options, base, controller));

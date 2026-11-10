@@ -801,6 +801,58 @@ export const EmployeeFormDialog = ({
   );
 };
 
+/**
+ * Explicit save of one bulk dialog: the change is only on screen until the shared Save button sends it as one bulk
+ * command, and leaving with an unsent change asks Uložit / Zahodit změny / Zůstat.
+ */
+const useBulkSave = <V,>({
+  commit,
+  ids,
+  initial,
+  isValid,
+  onSaved,
+  patchOf,
+  value,
+}: {
+  readonly commit: CommitCommand;
+  readonly ids: readonly EmployeeId[];
+  /** What the draft is compared with: the empty dialog, so a change it opens with is already savable. */
+  readonly initial: V;
+  readonly isValid: (value: V) => boolean;
+  readonly onSaved: () => void;
+  readonly patchOf: (value: V) => Partial<Employee> & Parameters<typeof bulkCommand>[1];
+  readonly value: V;
+}) => {
+  const { language, t } = useModernI18n();
+  const [serverError, setServerError] = useState<string | null>(null);
+  const record = useDraftSave<V, never>({
+    initial,
+    isValid,
+    runtime: browserRuntime,
+    save: (draft) => {
+      const patch = patchOf(draft);
+      return commit(Effect.succeed(bulkCommand(ids, patch)), `${key}.toast.bulkSaved`, { ids, patch }).pipe(
+        Effect.map((outcome): SaveOutcome => {
+          setServerError(outcome === 'saved' ? null : t(commitErrorKey(outcome)));
+          return outcome === 'saved' ? 'saved' : 'failed';
+        }),
+      );
+    },
+    value,
+  });
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: noopChange });
+  const handleSave = () => {
+    record.save();
+    record.afterSave((status) => {
+      if (status === 'saved') {
+        onSaved();
+      }
+    });
+  };
+  return { guard, handleSave, labels: saveLabelsFor(language), record, serverError };
+};
+
 /** Bulk department change: one text field applied to every selected Employee. */
 export const BulkDepartmentDialog = ({
   commit,
@@ -815,51 +867,36 @@ export const BulkDepartmentDialog = ({
 }) => {
   const { t } = useModernI18n();
   const [department, setDepartment] = useState('');
-  const [submitted, setSubmitted] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [serverError, setServerError] = useState<string | null>(null);
-  const trimmed = department.trim();
-  const invalid = submitted && !isDepartmentName(trimmed);
-
-  const submit = () => {
-    setSubmitted(true);
-    if (!isDepartmentName(trimmed)) {
-      return;
-    }
-    setBusy(true);
-    setServerError(null);
-    void browserRuntime.runPromise(
-      commit(Effect.succeed(bulkCommand(ids, { department: trimmed })), `${key}.toast.bulkSaved`, {
-        ids,
-        patch: { department: trimmed },
-      }).pipe(
-        Effect.tap((outcome) =>
-          Effect.sync(() => {
-            setBusy(false);
-            if (outcome === 'saved') {
-              onSaved();
-            } else {
-              setServerError(t(commitErrorKey(outcome)));
-            }
-          }),
-        ),
-      ),
-    );
-  };
+  const bulk = useBulkSave({
+    commit,
+    ids,
+    initial: '',
+    isValid: (value) => isDepartmentName(value.trim()),
+    onSaved,
+    patchOf: (value) => ({ department: value.trim() }),
+    value: department,
+  });
+  const invalid = bulk.record.status === 'invalid';
 
   return (
     <SidePanel
       actions={
         <>
-          <Button onClick={onClose} theme="outlined" variant="secondary">
+          <Button onClick={() => bulk.guard.request(onClose)} theme="outlined" variant="secondary">
             {t(`${key}.form.cancel`)}
           </Button>
-          <Button isLoading={busy} loadingText={t(`${key}.form.saving`)} onClick={submit} variant="primary">
-            {t(`${key}.bulk.apply`)}
-          </Button>
+          <SaveBar
+            error={bulk.serverError}
+            labels={bulk.labels}
+            onReloadLatest={noopChange}
+            onSave={bulk.handleSave}
+            status={bulk.record.status}
+          />
+          <UnsavedChangesDialog labels={bulk.labels} prompt={bulk.guard.prompt} />
         </>
       }
       description={t(`${key}.bulk.description`, { total: ids.length })}
+      guard={bulk.guard}
       // The first field takes focus, not the close button the panel renders first.
       initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#bulk-department')}
       onOpenChange={closeWhenDismissed(onClose)}
@@ -868,19 +905,8 @@ export const BulkDepartmentDialog = ({
       size="md"
       title={t(`${key}.bulk.departmentTitle`)}
     >
-      <form
-        className="flex flex-col gap-200 py-200"
-        noValidate
-        onSubmit={(event) => {
-          event.preventDefault();
-          submit();
-        }}
-      >
-        {serverError !== null && (
-          <StatusText showIcon status="error">
-            {serverError}
-          </StatusText>
-        )}
+      {/* Enter never applies the change: only Uložit does. */}
+      <form className="flex flex-col gap-200 py-200" noValidate onSubmit={(event) => event.preventDefault()}>
         <FormInput
           autoComplete="off"
           id="bulk-department"
@@ -909,43 +935,38 @@ export const BulkRoleDialog = ({
   readonly onSaved: () => void;
 }) => {
   const { t } = useModernI18n();
-  const [role, setRole] = useState<EmployeeRole>('SALES_REP');
-  const [busy, setBusy] = useState(false);
-  const [serverError, setServerError] = useState<string | null>(null);
+  const [role, setRole] = useState<EmployeeRole | null>('SALES_REP');
   const roleItems = roleItemsOf(t);
-
-  const submit = () => {
-    setBusy(true);
-    setServerError(null);
-    void browserRuntime.runPromise(
-      commit(Effect.succeed(bulkCommand(ids, { role })), `${key}.toast.bulkSaved`, { ids, patch: { role } }).pipe(
-        Effect.tap((outcome) =>
-          Effect.sync(() => {
-            setBusy(false);
-            if (outcome === 'saved') {
-              onSaved();
-            } else {
-              setServerError(t(commitErrorKey(outcome)));
-            }
-          }),
-        ),
-      ),
-    );
-  };
+  const bulk = useBulkSave<EmployeeRole | null>({
+    commit,
+    ids,
+    // The role the dialog opens with is already a change Uložit applies.
+    initial: null,
+    isValid: (value) => value !== null,
+    onSaved,
+    patchOf: (value) => (value === null ? {} : { role: value }),
+    value: role,
+  });
 
   return (
     <SidePanel
       actions={
         <>
-          <Button onClick={onClose} theme="outlined" variant="secondary">
+          <Button onClick={() => bulk.guard.request(onClose)} theme="outlined" variant="secondary">
             {t(`${key}.form.cancel`)}
           </Button>
-          <Button isLoading={busy} loadingText={t(`${key}.form.saving`)} onClick={submit} variant="primary">
-            {t(`${key}.bulk.apply`)}
-          </Button>
+          <SaveBar
+            error={bulk.serverError}
+            labels={bulk.labels}
+            onReloadLatest={noopChange}
+            onSave={bulk.handleSave}
+            status={bulk.record.status}
+          />
+          <UnsavedChangesDialog labels={bulk.labels} prompt={bulk.guard.prompt} />
         </>
       }
       description={t(`${key}.bulk.description`, { total: ids.length })}
+      guard={bulk.guard}
       // The first field takes focus. A Select trigger has the DOM id `select:<id>:trigger`.
       initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('[id="select:bulk-role:trigger"]')}
       onOpenChange={closeWhenDismissed(onClose)}
@@ -955,11 +976,6 @@ export const BulkRoleDialog = ({
       title={t(`${key}.bulk.roleTitle`)}
     >
       <div className="flex flex-col gap-200 py-200">
-        {serverError !== null && (
-          <StatusText showIcon status="error">
-            {serverError}
-          </StatusText>
-        )}
         <SelectTemplate
           id="bulk-role"
           items={roleItems}
@@ -973,7 +989,7 @@ export const BulkRoleDialog = ({
             }
           }}
           placeholder={t(selectPlaceholder)}
-          value={[role]}
+          value={role === null ? [] : [role]}
         />
       </div>
     </SidePanel>
