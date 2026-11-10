@@ -727,6 +727,8 @@ const chooseScope = (label: string, candidate: string) =>
       }),
     );
   });
+const leaveLabels = saveLabelsFor('en');
+const cancelName = translate('shell.accessAdmin.common.cancel');
 const endMembershipName = translate(`${people}.endMembershipNamed`, { person: 'Ada Lovelace', scope: 'Alpha s.r.o.' });
 
 it.effect('each company lists only its own directory people and admission previews person, company and effect', () =>
@@ -777,6 +779,7 @@ it.effect('ending a membership names what ends with it and cannot be confirmed w
     ).toBeTruthy();
     expect(within(dialog).getByText(translate(`${people}.endMembershipEffect`))).toBeTruthy();
     const confirm = within(dialog).getByRole('button', { name: 'Confirm' });
+    expect(confirm.hasAttribute('disabled')).toBe(true);
     const reason = within(dialog).getByLabelText(translate(`${people}.endMembershipReason`), { exact: false });
     fireEvent.change(reason, { target: { value: '   ' } });
     expect(confirm.hasAttribute('disabled')).toBe(true);
@@ -789,6 +792,68 @@ it.effect('ending a membership names what ends with it and cannot be confirmed w
       { kind: 'end-membership', personId, reason: 'Left the company', scopeId: companyId },
       revision,
     );
+  }),
+);
+
+it.effect('closing the end confirmation with a typed reason asks the shared leave question', () =>
+  Effect.gen(function* endLeaveQuestion() {
+    const view = renderPeople(admissionSnapshot());
+    // Untouched: Cancel closes without asking and nothing is sent.
+    fireEvent.click(screen.getByRole('button', { name: endMembershipName }));
+    const untouched = yield* Effect.promise(() => screen.findByRole('dialog'));
+    expect(navigation.shouldBlock()).toBe(false);
+    fireEvent.click(within(untouched).getByRole('button', { name: cancelName }));
+    yield* Effect.promise(() => waitFor(() => expect(screen.queryByRole('dialog')).toBeNull()));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+
+    // Typed reason, then Cancel: the question asks; Zahodit změny drops the reason and closes without sending.
+    fireEvent.click(screen.getByRole('button', { name: endMembershipName }));
+    const typed = yield* Effect.promise(() => screen.findByRole('dialog'));
+    const reasonLabel = translate(`${people}.endMembershipReason`);
+    fireEvent.change(within(typed).getByLabelText(reasonLabel, { exact: false }), { target: { value: 'Left' } });
+    expect(navigation.shouldBlock()).toBe(true);
+    // Escape, the way the reason used to be lost, asks too.
+    fireEvent.keyDown(typed, { key: 'Escape' });
+    const escaped = yield* Effect.promise(() => screen.findByRole('alertdialog'));
+    fireEvent.click(within(escaped).getByRole('button', { name: leaveLabels.stay }));
+    yield* Effect.promise(() => waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull()));
+    fireEvent.click(within(typed).getByRole('button', { name: cancelName }));
+    const leave = yield* Effect.promise(() => screen.findByRole('alertdialog'));
+    fireEvent.click(within(leave).getByRole('button', { name: leaveLabels.stay }));
+    yield* Effect.promise(() => waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull()));
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: cancelName }));
+    const discard = yield* Effect.promise(() => screen.findByRole('alertdialog'));
+    fireEvent.click(within(discard).getByRole('button', { name: leaveLabels.discard }));
+    yield* Effect.promise(() => waitFor(() => expect(screen.queryByRole('dialog')).toBeNull()));
+    expect(view.onCommand).not.toHaveBeenCalled();
+
+    // A reason of spaces is input to keep, but the question cannot send it.
+    fireEvent.click(screen.getByRole('button', { name: endMembershipName }));
+    const blank = yield* Effect.promise(() => screen.findByRole('dialog'));
+    fireEvent.change(within(blank).getByLabelText(reasonLabel, { exact: false }), { target: { value: '   ' } });
+    fireEvent.click(within(blank).getByRole('button', { name: cancelName }));
+    const blankLeave = yield* Effect.promise(() => screen.findByRole('alertdialog'));
+    expect(within(blankLeave).getByRole('button', { name: leaveLabels.save }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(within(blankLeave).getByRole('button', { name: leaveLabels.discard }));
+    yield* Effect.promise(() => waitFor(() => expect(screen.queryByRole('dialog')).toBeNull()));
+    expect(view.onCommand).not.toHaveBeenCalled();
+
+    // The question's Uložit sends the same reviewed end.
+    fireEvent.click(screen.getByRole('button', { name: endMembershipName }));
+    const again = yield* Effect.promise(() => screen.findByRole('dialog'));
+    const reason = within(again).getByLabelText(reasonLabel, { exact: false });
+    expect(reason.getAttribute('value') ?? '').toBe('');
+    fireEvent.change(reason, { target: { value: ' Left the company ' } });
+    fireEvent.click(within(again).getByRole('button', { name: cancelName }));
+    const save = yield* Effect.promise(() => screen.findByRole('alertdialog'));
+    fireEvent.click(within(save).getByRole('button', { name: leaveLabels.save }));
+    expect(view.onCommand).toHaveBeenCalledWith(
+      { kind: 'end-membership', personId, reason: 'Left the company', scopeId: companyId },
+      revision,
+    );
+    expect(view.onCommand).toHaveBeenCalledTimes(1);
+    yield* Effect.promise(() => waitFor(() => expect(screen.queryByRole('dialog')).toBeNull()));
   }),
 );
 

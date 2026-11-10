@@ -289,20 +289,36 @@ const directoryFor = (reads: { directoryReads: number }): AccessPeopleDirectoryS
 const PersonaSchema = Schema.Literals(['companyAdmin', 'delegate', 'nobody', 'owner']);
 type Persona = typeof PersonaSchema.Type;
 
-const gateFor = (persona: Persona): AccessDecisionService => {
+/** How the BFF asked the gate: each single decision, and each batch with its questions. */
+interface GateAsks {
+  readonly batches: (readonly GateInput[])[];
+  readonly singles: GateInput[];
+}
+
+const gateFor = (persona: Persona, asks: GateAsks): AccessDecisionService => {
   const base = makeTestAccessDecision();
   const allowed = (input: GateInput): boolean =>
     persona === 'owner' ||
     (persona === 'companyAdmin' && input.legalEntityScope === 'required' && input.scope.legalEntityId === COMPANY_A) ||
     (persona === 'delegate' && input.legalEntityScope === 'required' && input.scope.legalEntityId === COMPANY_B);
+  const answer = (input: GateInput): AccessDecision => ({
+    evidence: [],
+    outcome: allowed(input) ? 'ALLOWED' : 'DENIED',
+    reasons: [{ code: allowed(input) ? 'structural.owner' : 'deny.insufficient_grant' }],
+    selectors: [],
+  });
   return {
     ...base,
     decide: (input) =>
-      Effect.succeed<AccessDecision>({
-        evidence: [],
-        outcome: allowed(input) ? 'ALLOWED' : 'DENIED',
-        reasons: [{ code: allowed(input) ? 'structural.owner' : 'deny.insufficient_grant' }],
-        selectors: [],
+      Effect.sync(() => {
+        asks.singles.push(input);
+        return answer(input);
+      }),
+    // A batch answers each question exactly as a single decision would, as the live gate does.
+    decideMany: (inputs) =>
+      Effect.sync(() => {
+        asks.batches.push(inputs);
+        return inputs.map(answer);
       }),
   };
 };
@@ -361,8 +377,9 @@ const harness = (input: {
   readonly writes?: boolean;
 }) => {
   const recorded: Recorded = { calls: [], directoryReads: 0, reconciles: 0 };
+  const asks: GateAsks = { batches: [], singles: [] };
   const actor = { companyAdmin: COMPANY_ADMIN, delegate: BOB, nobody: OWNER, owner: OWNER }[input.persona];
-  const gate = gateFor(input.persona);
+  const gate = gateFor(input.persona, asks);
   const layer = AccessPeopleBffLive.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -380,7 +397,7 @@ const harness = (input: {
   );
   const run = <Value>(body: (bff: AccessPeopleBffService) => Effect.Effect<Value, AccessAdminProblem>) =>
     AccessPeopleBff.pipe(Effect.flatMap(body), Effect.provide(layer));
-  return { recorded, run };
+  return { asks, recorded, run };
 };
 
 const headers = new Headers();
@@ -814,6 +831,25 @@ it.effect('offers as admission candidates only active directory humans not yet l
     ]);
     expect(admin.recorded.directoryReads).toBe(1);
     expect([own.writeAvailability.canAdmitMember, own.writeAvailability.canEndMembership]).toEqual([true, true]);
+  }),
+);
+
+it.effect('answers an owner options with one gate batch for every write and one directory read per company', () =>
+  Effect.gen(function* boundedOptions() {
+    const owner = harness({ persona: 'owner' });
+    const offered = yield* owner.run((bff) => bff.options(headers, { limit: 100 }));
+    const scopes = view.scopes.length;
+    const companies = scopes - 1;
+    const writes = Object.values(offered.writeAvailability).length;
+    expect([scopes, companies, writes, offered.admissionCandidates.length]).toEqual([3, 2, 8, 3]);
+    expect(Object.values(offered.writeAvailability)).toEqual(Array.from({ length: writes }, () => true));
+    // The read's own admission asks once per scope, as every Lidé read does. Every write control is
+    // then one batch of one question per write and scope, never a single decision per write and scope,
+    // which held an owner's options for tens of seconds on a tenant with five companies.
+    expect(owner.asks.singles).toHaveLength(scopes);
+    expect(owner.asks.batches.map((batch) => batch.length)).toEqual([writes * scopes]);
+    // Candidates come from one directory read per administered company, never one per candidate.
+    expect(owner.recorded.directoryReads).toBe(companies);
   }),
 );
 
