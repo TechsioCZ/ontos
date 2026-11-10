@@ -8,6 +8,7 @@ import {
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
+import { grantTestTenantRoleAccess, liveFixtureSpiceDb } from '@app/core-runtime/testing/tenant-access';
 import { GatewayPrincipalVerifierLive } from '@app/gateway-principal-verifier/server';
 import { PartyDetailResponseSchema } from '@app/party-registry/api/client';
 import {
@@ -148,6 +149,21 @@ export const makeEnrollmentProfileReconciliationFixture = Effect.fn('EnrollmentP
       }),
       (resource) => resource.close().pipe(Effect.orDie),
     );
+    // A binding writes its portal access against the published access catalog release, and this isolated database
+    // starts without one. A narrow read role for the fixture's human reader publishes it; the Storefront workload
+    // that binds is given no role.
+    yield* grantTestTenantRoleAccess({
+      holders: [
+        {
+          capabilityKeys: ['commerce.customer-context.counterparty-commerce-access.list'],
+          principalId: fixture.reader.principalId,
+        },
+      ],
+      legalEntityIds: [fixture.legalEntityId],
+      spiceDb: yield* liveFixtureSpiceDb(fixture.permissionEnvironment),
+      tenantId: fixture.tenantId,
+      writerConnectionString: Redacted.make(connections.runtime.connectionString),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
     const at = yield* DateTime.now;
     const partyResourceId = randomUUID();
     const partyRef = {
