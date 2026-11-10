@@ -93,12 +93,10 @@ const ReceiptHeader = ({
           {d.checkout.email}: {receipt.contact.email}
         </p>
       )}
-      {(receipt === null || receipt === undefined) && (
+      {(receipt === null || receipt === undefined) && checkout.progress !== "recovery" && (
         <div>
           <Button
             disabled={checkout.progress !== "idle"}
-            isLoading={checkout.progress === "recovery"}
-            loadingText={d.checkout.checking}
             onClick={() => checkout.recover()}
             size="sm"
             theme="outlined"
@@ -150,12 +148,12 @@ const ConfirmedCheckout = ({
         <h1 className="text-lg font-semibold leading-7" ref={heading} tabIndex={-1}>
           {d.checkout.confirmed}
         </h1>
-        <p className="text-sm text-fg-secondary">{d.checkout.paymentNote}</p>
+        <p className="text-sm text-fg-secondary">{d.checkout.thankYou}</p>
       </div>
       <div className="flex w-full max-w-3xl flex-col gap-5">
         <ReceiptHeader checkout={checkout} dictionary={d} locale={locale} result={result} />
         <section className="flex flex-col gap-4 rounded-xs border border-border-secondary p-4">
-          <h2 className="text-lg font-semibold">{d.checkout.summary}</h2>
+          <h2 className="text-lg font-semibold">{d.checkout.orderItems}</h2>
           <CheckoutItems
             currency={result.scope.currency}
             dictionary={d}
@@ -167,7 +165,7 @@ const ConfirmedCheckout = ({
         </section>
         {receipt?.deliveryAddress !== null && receipt?.deliveryAddress !== undefined && (
           <section className="flex flex-col gap-4 rounded-xs border border-border-secondary p-4">
-            <h2 className="text-lg font-semibold">{d.checkout.address}</h2>
+            <h2 className="text-lg font-semibold">{d.checkout.deliveryAddress}</h2>
             <div className="text-sm text-fg-secondary">
               {receipt.contact !== null && <p>{receipt.contact.name}</p>}
               <p>{receipt.deliveryAddress.street}</p>
@@ -185,7 +183,7 @@ const ConfirmedCheckout = ({
           </section>
         )}
         <section className="flex flex-col gap-4 rounded-xs border border-border-secondary p-4">
-          <h2 className="text-lg font-semibold">{d.checkout.total}</h2>
+          <h2 className="text-lg font-semibold">{d.checkout.priceSummary}</h2>
           <CheckoutTotals
             actions={
               <LinkButton

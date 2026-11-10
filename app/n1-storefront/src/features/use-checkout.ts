@@ -146,6 +146,66 @@ const recoverCheckoutProgram = (guard: CheckoutGuard, locale: string) =>
       Effect.timeout("65 seconds"),
     ),
   );
+
+/** Enrich an acknowledged placement once; a failed read never changes its committed outcome. */
+export const recoverConfirmedCheckoutProgram = ({
+  expected,
+  guard,
+  isCurrent,
+  locale,
+  onConfirmed,
+  onUnavailable,
+}: {
+  expected: CheckoutResult;
+  guard: CheckoutGuard;
+  isCurrent: () => boolean;
+  locale: string;
+  onConfirmed: (result: CheckoutResult) => void;
+  onUnavailable: () => void;
+}) =>
+  Effect.suspend(() => {
+    if (
+      !isCurrent() ||
+      (expected.outcome !== "PLACED" && expected.outcome !== "REPLAYED") ||
+      (expected.receipt !== null && expected.receipt !== undefined)
+    ) {
+      return Effect.void;
+    }
+    if (
+      expected.orderId === null ||
+      expected.orderNumber === null ||
+      checkoutGuardKey(expected.scope) !== checkoutGuardKey(guard.scope)
+    ) {
+      onUnavailable();
+      return Effect.void;
+    }
+    return recoverCheckoutProgram(guard, locale).pipe(
+      Effect.match({
+        onFailure: () => {
+          if (isCurrent()) {
+            onUnavailable();
+          }
+        },
+        onSuccess: (recovered) => {
+          if (!isCurrent()) {
+            return;
+          }
+          if (
+            recovered.state === "confirmed" &&
+            recovered.result.orderId === expected.orderId &&
+            recovered.result.orderNumber === expected.orderNumber &&
+            checkoutGuardKey(recovered.result.scope) === checkoutGuardKey(guard.scope) &&
+            recovered.result.receipt !== null &&
+            recovered.result.receipt !== undefined
+          ) {
+            onConfirmed(recovered.result);
+          } else {
+            onUnavailable();
+          }
+        },
+      }),
+    );
+  });
 const dismissReceiptProgram = (guard: CheckoutGuard) =>
   withCheckoutLock(
     guard.scope,
@@ -222,10 +282,17 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
   >(null);
   const [receipt, setReceipt] = useState<CheckoutResult | null>(null);
   const [receiptSession, setReceiptSession] = useState<number | null>(null);
-  const [receiptGuard, setReceiptGuard] = useState<CheckoutGuard | null>(null);
+  const receiptGuard = useRef<CheckoutGuard | null>(null);
   const [receiptEntries, setReceiptEntries] = useState<readonly CartEntry[]>([]);
   const [guardState, setGuardState] = useState<GuardObservation | null>(null);
   const key = checkoutGuardKey(options.scope);
+  const currentScope = useRef<string | null>(key);
+  useLayoutEffect(() => {
+    currentScope.current = key;
+    return () => {
+      currentScope.current = null;
+    };
+  }, [key]);
   const lines = cartLineSnapshot(cart?.entries ?? []);
   const selectionKey = JSON.stringify([
     key,
@@ -255,7 +322,11 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
       ? quoteSnapshot.result
       : null;
   const activeGuard = guardState?.key === key ? guardState : null;
-  const restore = () => clientRuntime.runSync(observeGuard(options.scope, setGuardState));
+  const restore = () => {
+    if (currentSession.current !== -1 && currentScope.current === key) {
+      clientRuntime.runSync(observeGuard(options.scope, setGuardState));
+    }
+  };
   useEffect(() => {
     clientRuntime.runFork(observeGuard(options.scope, setGuardState));
     const changed = (event: StorageEvent) => {
@@ -267,7 +338,10 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
     return () => window.removeEventListener("storage", changed);
   }, [key, options.scope]);
   const complete = (result: CheckoutResult, submitted: CheckoutGuard, generation: number) => {
-    if (currentSession.current !== generation) {
+    if (
+      currentSession.current !== generation ||
+      currentScope.current !== checkoutGuardKey(submitted.scope)
+    ) {
       restore();
       return;
     }
@@ -276,7 +350,7 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
     }
     setReceipt(result);
     setReceiptSession(generation);
-    setReceiptGuard(submitted);
+    receiptGuard.current = submitted;
     const cleared = cart?.clearSubmitted(submitted.lines) ?? false;
     if (cart !== null && cart.entries.length > 0 && !cleared) {
       setNotice("cart-preserved");
@@ -286,7 +360,10 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
   };
   const finish = () => {
     busy.current = false;
-    setProgress("idle");
+    // Busy excludes newer operations; the mounted checkout must leave pending even after a scope/session change.
+    if (currentSession.current !== -1 && currentScope.current !== null) {
+      setProgress("idle");
+    }
   };
   const submit = (
     fields: FormData,
@@ -329,20 +406,40 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
         placing,
         scope: options.scope,
       }).pipe(
-        Effect.match({
+        Effect.matchEffect({
           onFailure: (error) => {
-            if (currentSession.current === requestSession) {
+            if (currentSession.current === requestSession && currentScope.current === key) {
               setNotice(failureNotice(error, placing));
             }
             restore();
+            return Effect.void;
           },
           onSuccess: ({ guard, result }) => {
-            if (currentSession.current !== requestSession) {
+            if (currentSession.current !== requestSession || currentScope.current !== key) {
               restore();
-              return;
+              return Effect.void;
             }
             if (result.outcome === "PLACED" || result.outcome === "REPLAYED") {
               complete(result, guard, requestSession);
+              if (result.receipt === null || result.receipt === undefined) {
+                setProgress("recovery");
+                return recoverConfirmedCheckoutProgram({
+                  expected: result,
+                  guard,
+                  isCurrent: () =>
+                    currentSession.current === requestSession &&
+                    currentScope.current === key &&
+                    receiptGuard.current !== null &&
+                    receiptGuard.current.clientRequestId === guard.clientRequestId &&
+                    checkoutGuardKey(receiptGuard.current.scope) === key,
+                  locale,
+                  // The placement has already cleared its submitted lines. Only enrich the receipt.
+                  onConfirmed: setReceipt,
+                  onUnavailable: () => {
+                    // Keep the committed success. Returning to idle exposes the explicit read retry.
+                  },
+                });
+              }
             } else {
               setQuoteSnapshot({ generation: requestGeneration, key: requestKey, result });
               if (result.outcome === "REJECTED") {
@@ -350,6 +447,7 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
               }
               restore();
             }
+            return Effect.void;
           },
         }),
         Effect.ensuring(Effect.sync(finish)),
@@ -357,7 +455,7 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
     );
   };
   const recover = () => {
-    const guard = currentReceipt === null ? activeGuard?.guard : receiptGuard;
+    const guard = currentReceipt === null ? activeGuard?.guard : receiptGuard.current;
     if (busy.current || guard === null || guard === undefined) {
       return;
     }
@@ -365,16 +463,40 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
     const requestSession = sessionGeneration;
     setProgress("recovery");
     setNotice(null);
+    if (currentReceipt !== null) {
+      const isCurrent = () =>
+        currentSession.current === requestSession &&
+        currentScope.current === key &&
+        receiptGuard.current !== null &&
+        receiptGuard.current.clientRequestId === guard.clientRequestId &&
+        checkoutGuardKey(receiptGuard.current.scope) === key;
+      clientRuntime.runFork(
+        recoverConfirmedCheckoutProgram({
+          expected: currentReceipt,
+          guard,
+          isCurrent,
+          locale,
+          // A receipt retry must not clear a cart refilled after the original placement.
+          onConfirmed: setReceipt,
+          onUnavailable: () => {
+            if (isCurrent()) {
+              setNotice("unavailable");
+            }
+          },
+        }).pipe(Effect.ensuring(Effect.sync(finish))),
+      );
+      return;
+    }
     clientRuntime.runFork(
       recoverCheckoutProgram(guard, locale).pipe(
         Effect.match({
           onFailure: () => {
-            if (currentSession.current === requestSession) {
+            if (currentSession.current === requestSession && currentScope.current === key) {
               setNotice(currentReceipt === null ? "uncertain" : "unavailable");
             }
           },
           onSuccess: (result) => {
-            if (currentSession.current !== requestSession) {
+            if (currentSession.current !== requestSession || currentScope.current !== key) {
               restore();
               return;
             }
@@ -390,12 +512,12 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
     );
   };
   const dismiss = (onDone: () => void) => {
-    if (busy.current || currentReceipt === null || receiptGuard === null) {
+    if (busy.current || currentReceipt === null || receiptGuard.current === null) {
       return;
     }
     busy.current = true;
     clientRuntime.runFork(
-      dismissReceiptProgram(receiptGuard).pipe(
+      dismissReceiptProgram(receiptGuard.current).pipe(
         Effect.match({
           onFailure: () => setNotice("storage"),
           onSuccess: () => {

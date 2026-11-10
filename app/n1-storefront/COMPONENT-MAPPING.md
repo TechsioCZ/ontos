@@ -922,3 +922,17 @@ Auditované lokální ilustrace mají přednost, ostatní kategorie mohou použ�
 skutečné owner imageSrc. Nevznikají ilustrace odvozené z názvu ani fixture.
 Stávající modeless popup, šest sloupců, mezera 8 a panelový padding 18
 zůstávají beze změny; používají zavedené tokeny a app kompozici.
+
+## 10. 11. — potvrzení objednávky a nativní readback
+
+Fresh Figma55:1948/55:2309, obsah372:3125: potvrzený nákup doplní své
+datum, adresu a dopravu jedním existujícím status readem. Úspěch placementu
+zůstává potvrzený i při chybě čtení; ruční načtení je jen fallback. Automatické
+i ruční doplnění pouze aktualizuje receipt, neopakuje placement ani čištění
+košíku. Odpověď musí patřit stejné objednávce, scope, guardu a session.
+
+Nadpisy Položky objednávky, Doručovací adresa a Souhrn ceny jsou převzaté
+z návrhu. Děkovná věta neslibuje odeslaný e-mail, protože pro něj nativní
+kontrakt nedává důkaz. Žádná nová komponenta, CSS nebo tokenový override.
+Moje objednávky pro guest nákup nepřidáváme; přihlášená větev zůstává
+samostatnou neověřenou částí.

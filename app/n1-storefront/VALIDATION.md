@@ -2023,3 +2023,33 @@ konkrétní upravenou skladbu; neprohlašuje celkovou shodu všech Figma stráne
 ani otestování owner-image fallbacku jen na základě auditovaných ilustrací.
 
 Aktuální plná N1 sada: 801 testů v 76 souborech PASS bez skipů.
+
+## 10. 11. — potvrzení objednávky a zachování nového košíku
+
+Cílené nativní HTTP/Deferred regrese ověřují jeden status read, soft failure
+po PLACED, pozdní odpovědi po vypršení caller fence, odmítnutí jiné objednávky
+nebo scope a explicitní read retry. SSR ověřuje potvrzené texty a fallback.
+Tyto testy nejsou vydávané za React lifecycle E2E. Source review odstranilo
+dvě skutečná rizika: pending progress po změně session a druhé clearSubmitted
+při ručním doplnění již potvrzené objednávky.
+
+Skutečný GUI nákup OBJ-2026-0006: quote200/VALID, právě jeden place200/PLACED,
+998 Kč včetně České pošty119 Kč. Samostatné čtení uložené objednávky
+vrátilo200/REPLAYED se shodným kontaktem TEST, variantou, cenou a dopravou.
+Původní cross-tab část nedokončila testovací přípravu klienta; její neúplný
+report zůstává zachovaný. Bez nového nákupu následně prošlo sdílení přidání
+i odebrání mezi dvěma hydratovanými panely.
+
+Samostatný regresní GUI případ OBJ-2026-0007 potvrdil nativní vytvoření,
+řízené přerušení prvního čtení, zachovaný úspěch, nový stejný košík ve druhém
+panelu, ruční status200 a zachování nového košíku po readbacku. Bez runtime
+mocků, vložení storage nebo placement retry. Závěrečný screenshot selhal:
+completed=false v celém helperu je zachované, následný screenshot a lokální
+cleanup se neprohlašují za provedené. Funkční assertions/readback jsou
+samostatně doložené; nejde o celkové vizuální schválení potvrzení.
+
+Po převzetí94 upstream commitů na ffe48b6f2 a standardní instalaci UI kitu
+0.59.0 znovu prošlo809 testů v76souborech, typy, standardní N1 lint, formát
+a kontrola447 kanonických tokenů. Živé GUI průchody výše předcházely této
+aktualizaci knihovny; jejich přesná verze není zaměňovaná za nový browser
+průchod na0.59. Všechny nové aplikační a testové změny tohoto celku jsou N1.
