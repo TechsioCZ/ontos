@@ -970,8 +970,27 @@ export const paymentEvidencePersistenceForTransaction = (
       if (existing === undefined) {
         return yield* paymentUnavailable('The conflicting economic effect attribution is unreadable');
       }
+      if (existing.paymentId !== input.paymentId) {
+        return 'ATTRIBUTED_ELSEWHERE' satisfies PaymentEconomicEffectAttribution;
+      }
+      if (existing.operationId === input.operationId) {
+        return 'ATTRIBUTED' satisfies PaymentEconomicEffectAttribution;
+      }
+      // A prior return claimed for a collection is the money a REFUND of that collection returned: the
+      // REFUND that the same effect confirms is that one return, never a second one (#1150).
+      const [claiming] = yield* transaction
+        .select({ targetOperationId: paymentOperations.targetOperationId })
+        .from(paymentOperations)
+        .where(
+          and(
+            eq(paymentOperations.tenantId, scope.tenantId),
+            eq(paymentOperations.legalEntityId, scope.legalEntityId),
+            eq(paymentOperations.operationId, input.operationId),
+          ),
+        )
+        .pipe(Effect.mapError(readFailure));
       return (
-        existing.paymentId === input.paymentId && existing.operationId === input.operationId
+        input.factKind === 'REFUND_CONFIRMED' && claiming?.targetOperationId === existing.operationId
           ? 'ATTRIBUTED'
           : 'ATTRIBUTED_ELSEWHERE'
       ) satisfies PaymentEconomicEffectAttribution;

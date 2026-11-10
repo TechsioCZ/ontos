@@ -1219,6 +1219,80 @@ it.live('#1150/#1152 Refund evidence from another refund route never confirms th
   ),
 );
 
+const BANK_REFUND_SOURCE = {
+  accountRef: 'refund-account-a',
+  environment: 'production',
+  sourceKind: 'BANK_ACCOUNTING',
+  sourceSystem: 'erp-primary',
+} as const;
+
+/** A bank-transfer Payment whose 1000 CZK collection is confirmed. */
+const collectedBankPayment = Effect.fn('collectedBankPayment')(function* collectedBankPayment(
+  evidence: EvidenceScenario,
+  operationKey: string,
+) {
+  const payment = yield* evidence.createPayment(100_000, BANK_BINDING, 'BANK_TRANSFER_ADVANCE');
+  const collect = yield* evidence.startOperation({
+    amountMinor: 100_000,
+    binding: BANK_BINDING,
+    operationKey,
+    paymentId: payment.paymentId,
+  });
+  yield* evidence.settle(payment.paymentId, collect.operationId, 1, 'EFFECT_CONFIRMED');
+  return { collect, payment };
+});
+
+/** A pending REFUND of the collection through the configured bank refund route. */
+const pendingBankRefund = (
+  evidence: EvidenceScenario,
+  routeAuthorityId: string,
+  paid: { readonly collect: { readonly operationId: string }; readonly payment: { readonly paymentId: string } },
+  amountMinor = 60_000,
+) =>
+  evidence.inTransaction((aggregate) =>
+    aggregate.insertOperation({
+      amount: czk(amountMinor),
+      binding: BANK_BINDING,
+      initialOutcome: 'PENDING',
+      kind: 'REFUND',
+      materialRequest: { amountMinor, currency: 'CZK', kind: 'REFUND' },
+      operationKey: `refund-${randomUUID()}`,
+      paymentId: paid.payment.paymentId,
+      provenance: evidence.provenance(),
+      refundBasis: itemsBasis('item-1', amountMinor),
+      refundExecutionRoute: Schema.decodeUnknownSync(PaymentRefundExecutionRouteSchema)({
+        ...BANK_REFUND_SOURCE,
+        routeKind: 'BANK_ACCOUNTING',
+        sourceAuthorityId: routeAuthorityId,
+        sourceAuthorityRevision: 1,
+      }),
+      targetOperationId: paid.collect.operationId,
+    }),
+  );
+
+/** The bank's statement of one return (one source-scoped economic effect) against an operation. */
+const bankReturnOf =
+  (evidence: EvidenceScenario, economicEffectKey: string, amountMinor = 60_000) =>
+  (paymentId: string, operationId: string) =>
+    evidence.accept({
+      amount: czk(amountMinor),
+      economicEffectKey,
+      factFamily: 'REFUND_EXECUTION',
+      factKind: 'REFUND_CONFIRMED',
+      operationId,
+      paymentId,
+      source: BANK_REFUND_SOURCE,
+      sourceOccurrenceId: `bank-line-${randomUUID()}`,
+      sourceRevision: 1,
+    });
+
+const closeReturnCase = (evidence: EvidenceScenario, caseId: string | undefined) =>
+  evidence.decide({
+    caseId: caseId ?? '',
+    decision: { _tag: 'CLOSE_CASE', evidenceRef: 'erp-bank-return' },
+    reason: 'The return is counted as a prior return of the collection',
+  });
+
 /**
  * #1151 one economic effect counts once in the whole scope: a return that already confirmed a REFUND of
  * one Payment is never also a prior return of another Payment's collection.
@@ -1227,79 +1301,74 @@ it.live('#1151 a return counted for another Payment is unresolved debt here, nev
   native(
     Effect.gen(function* returnAttributedToAnotherPayment() {
       const evidence = yield* scenario();
-      const collectedPayment = Effect.fn('collectedPayment')(function* collectedPayment(operationKey: string) {
-        const payment = yield* evidence.createPayment(100_000, BANK_BINDING, 'BANK_TRANSFER_ADVANCE');
-        const collect = yield* evidence.startOperation({
-          amountMinor: 100_000,
-          binding: BANK_BINDING,
-          operationKey,
-          paymentId: payment.paymentId,
-        });
-        yield* evidence.settle(payment.paymentId, collect.operationId, 1, 'EFFECT_CONFIRMED');
-        return { collect, payment };
-      });
-      const first = yield* collectedPayment('collect-first');
+      const first = yield* collectedBankPayment(evidence, 'collect-first');
       const routeA = yield* evidence.configureRefundRoute('erp-primary', 'refund-account-a');
-      const refund = yield* evidence.inTransaction((aggregate) =>
-        aggregate.insertOperation({
-          amount: czk(60_000),
-          binding: BANK_BINDING,
-          initialOutcome: 'PENDING',
-          kind: 'REFUND',
-          materialRequest: { amountMinor: 60_000, currency: 'CZK', kind: 'REFUND' },
-          operationKey: 'refund-first',
-          paymentId: first.payment.paymentId,
-          provenance: evidence.provenance(),
-          refundBasis: itemsBasis('item-1', 60_000),
-          refundExecutionRoute: Schema.decodeUnknownSync(PaymentRefundExecutionRouteSchema)({
-            accountRef: 'refund-account-a',
-            environment: 'production',
-            routeKind: 'BANK_ACCOUNTING',
-            sourceAuthorityId: routeA,
-            sourceAuthorityRevision: 1,
-            sourceKind: 'BANK_ACCOUNTING',
-            sourceSystem: 'erp-primary',
-          }),
-          targetOperationId: first.collect.operationId,
-        }),
-      );
-      const bankReturn = (paymentId: string, operationId: string) =>
-        evidence.accept({
-          amount: czk(60_000),
-          economicEffectKey: 'erp:bank-return:17',
-          factFamily: 'REFUND_EXECUTION',
-          factKind: 'REFUND_CONFIRMED',
-          operationId,
-          paymentId,
-          source: {
-            accountRef: 'refund-account-a',
-            environment: 'production',
-            sourceKind: 'BANK_ACCOUNTING',
-            sourceSystem: 'erp-primary',
-          },
-          sourceOccurrenceId: `bank-line-${randomUUID()}`,
-          sourceRevision: 1,
-        });
+      const refund = yield* pendingBankRefund(evidence, routeA, first);
+      const bankReturn = bankReturnOf(evidence, 'erp:bank-return:17');
       // The bank return confirms the REFUND of the first Payment.
       expect(yield* bankReturn(first.payment.paymentId, refund.record.operationId)).toMatchObject({
         acceptanceOutcome: 'ACCEPTED_OBSERVATION',
         interpretation: 'TRANSITION',
       });
       // The same bank return re-exported against the second Payment's collection is held...
-      const second = yield* collectedPayment('collect-second');
+      const second = yield* collectedBankPayment(evidence, 'collect-second');
       const reExported = yield* bankReturn(second.payment.paymentId, second.collect.operationId);
       expect(reExported).toMatchObject({ acceptanceOutcome: 'HELD_UNRESOLVED', interpretation: 'HOLD' });
       // ...and its case cannot be closed as "already counted": no money of the second Payment went back.
-      expect(
-        yield* failureCodeOf(
-          evidence.decide({
-            caseId: reExported.reconciliationCaseId ?? '',
-            decision: { _tag: 'CLOSE_CASE', evidenceRef: 'erp-bank-return-17' },
-            reason: 'Close the re-exported return',
-          }),
-        ),
-      ).toBe('payment_reconciliation_obligation_unresolved');
+      expect(yield* failureCodeOf(closeReturnCase(evidence, reExported.reconciliationCaseId))).toBe(
+        'payment_reconciliation_obligation_unresolved',
+      );
       expect((yield* evidence.coverage(second.payment.paymentId)).startsWith('Held ')).toBe(true);
+    }),
+  ),
+);
+
+it.live('#1151 one return reported against the collections of two Payments is a prior return of one only', () =>
+  native(
+    Effect.gen(function* returnClaimedOnce() {
+      const evidence = yield* scenario();
+      yield* evidence.configureRefundRoute('erp-primary', 'refund-account-a');
+      const first = yield* collectedBankPayment(evidence, 'collect-first');
+      const second = yield* collectedBankPayment(evidence, 'collect-second');
+      const bankReturn = bankReturnOf(evidence, 'erp:bank-return:18');
+      // Neither statement confirms a REFUND: both are held prior returns of their collections.
+      const onFirst = yield* bankReturn(first.payment.paymentId, first.collect.operationId);
+      const onSecond = yield* bankReturn(second.payment.paymentId, second.collect.operationId);
+      expect([onFirst.acceptanceOutcome, onSecond.acceptanceOutcome]).toEqual(['HELD_UNRESOLVED', 'HELD_UNRESOLVED']);
+      // Closing the first case claims the return for the first Payment...
+      expect((yield* closeReturnCase(evidence, onFirst.reconciliationCaseId)).caseStatus).toBe('CLOSED');
+      expect(yield* evidence.coverage(first.payment.paymentId)).toBe(
+        'Established collected=100000 returned=60000 remaining=40000',
+      );
+      // ...so the second Payment can no longer count it: its case stays open and its funds stay held.
+      expect(yield* failureCodeOf(closeReturnCase(evidence, onSecond.reconciliationCaseId))).toBe(
+        'payment_reconciliation_obligation_unresolved',
+      );
+      expect((yield* evidence.coverage(second.payment.paymentId)).startsWith('Held ')).toBe(true);
+    }),
+  ),
+);
+
+it.live('#1151 a prior return claimed for a collection still confirms the REFUND that returned that money', () =>
+  native(
+    Effect.gen(function* claimedReturnConfirmsItsRefund() {
+      const evidence = yield* scenario();
+      const routeA = yield* evidence.configureRefundRoute('erp-primary', 'refund-account-a');
+      const paid = yield* collectedBankPayment(evidence, 'collect-first');
+      // A 400 CZK refund is pending; with the 400 CZK prior return the 1000 CZK collection still covers both.
+      const refund = yield* pendingBankRefund(evidence, routeA, paid, 40_000);
+      const bankReturn = bankReturnOf(evidence, 'erp:bank-return:19', 40_000);
+      // The bank first files the return against the collection; the operator closes it as a prior return.
+      const misfiled = yield* bankReturn(paid.payment.paymentId, paid.collect.operationId);
+      expect((yield* closeReturnCase(evidence, misfiled.reconciliationCaseId)).caseStatus).toBe('CLOSED');
+      // The same return, now correlated to the REFUND that executed it, confirms that REFUND once.
+      expect(yield* bankReturn(paid.payment.paymentId, refund.record.operationId)).toMatchObject({
+        acceptanceOutcome: 'ACCEPTED_OBSERVATION',
+        interpretation: 'TRANSITION',
+      });
+      expect(yield* evidence.coverage(paid.payment.paymentId)).toBe(
+        'Established collected=100000 returned=40000 remaining=60000',
+      );
     }),
   ),
 );
