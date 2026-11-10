@@ -10,7 +10,7 @@ import {
   parseDatabaseConfig,
   parseDatabaseConnectionPair,
 } from '@app/core-runtime';
-import type { AccessDeclaration, DatabaseConnectionPair } from '@app/core-runtime';
+import type { AccessDeclaration, DatabaseConnectionPair, TrustedPrincipalContext } from '@app/core-runtime';
 import { AccessCatalogModulesSchema } from '@app/core-runtime/access/catalog';
 import { TenantIntentLoaderLive } from '@app/core-runtime/access/intent/tenant-intent-loader';
 import { CoreDatabase, CoreDatabaseLive } from '@app/core-runtime/db/client';
@@ -46,6 +46,7 @@ import type { CoreDatabaseExecutor } from '../../../../packages/core-runtime/src
 import { Cause, Context, Crypto, DateTime, Effect, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 
+import type { AuthenticationService, AuthenticationServiceContract } from '../../api/auth/service.ts';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
 import { shellLegalEntityScope } from '../../api/modules/shell-access-decisions';
 import { bindLiveActionAccessGate } from '../../../../packages/core-runtime/src/operations/access-gate.ts';
@@ -79,7 +80,17 @@ import { ONTOS_SPICEDB_SCHEMA } from '../../../../packages/core-runtime/src/perm
 /** A port nothing listens on, so "the engine is unavailable" is a real transport failure. */
 const UNREACHABLE_SPICEDB_ENDPOINT = '127.0.0.1:1';
 
-const TEMPLATE_DATABASE = 'p14_access_admin_template';
+/**
+ * The fixed template the full-catalog authority suites still clone by name (`templateDatabaseLayer`).
+ * Every process that builds it first drops it, so two sessions running those suites against one
+ * PostgreSQL server can still destroy each other's template.
+ */
+const SHARED_TEMPLATE_DATABASE = 'p14_access_admin_template';
+/**
+ * This process's own template (`accessAdminTemplateLayer`): no other session can drop it while a case
+ * clones it, and the layer drops it when the suite ends.
+ */
+export const ACCESS_ADMIN_TEMPLATE_DATABASE = `${SHARED_TEMPLATE_DATABASE}_${process.pid}_${globalThis.crypto.randomUUID().slice(0, 8)}`;
 const CASE_DATABASE_PREFIX = 'p14_access_admin_';
 const LOGIN_ROLES = ['ontos_runtime', 'party_registry_runtime', 'party_registry_worker'] as const;
 
@@ -130,12 +141,62 @@ export const PERSONAS = [
   'workload',
   /** The owner of a *different* tenant: the same declaration over another tenant's authority. */
   'foreignOwner',
+  /** An active human of the company directory in companies A and B with no access membership: admissible. */
+  'directoryMember',
+  /** A person whose company-A directory row is 'departed': never admissible. */
+  'departed',
+  /**
+   * A person whose tenant `member` row expired (still `active`) while the company-B row and a B
+   * assignment stay active: a fresh tenant row would revive that B authority (skeptic S1).
+   */
+  'lapsed',
+  /**
+   * A delegated manager of company A and nothing more: the owner's delegation names the tasks role,
+   * the plain member and the Lidé keys, including admit-member and end-membership. It also holds the
+   * tasks role itself and a place in company A's team, so ending them has something to close.
+   */
+  'manager',
 ] as const;
 export type Persona = (typeof PERSONAS)[number];
+
+/** The one capability the seeded tasks roles grant: a routine page read, decided by role cells. */
+export const TASKS_CAPABILITY_KEY = 'work.tasks.page-work-tasks-home.read';
+
+/** The Lidé keys of the seeded manager's delegation (the release publishes none of them). */
+const MANAGER_DELEGATED_PEOPLE_KEYS = [
+  'shell-super-app.access-people.list',
+  'shell-super-app.access-people.options',
+  'shell-super-app.access-people.assign',
+  'shell-super-app.access-people.revoke-assignment',
+  'shell-super-app.access-people.admit-member',
+  'shell-super-app.access-people.end-membership',
+] as const;
 
 export interface AccessAdminIdentifiers {
   readonly authBindingId: string;
   readonly principalId: string;
+}
+
+/** One seeded role: its id and the single revision it carries. */
+export interface SeededRole {
+  readonly roleId: string;
+  readonly roleRevisionId: string;
+}
+
+/** The intent rows the people-write scenarios act on, by their identities. */
+export interface SeededPeopleIntent {
+  /** The company-A administrator role (every published admin capability) held by companyAdmin. */
+  readonly adminRole: SeededRole;
+  /** The delegation of the manager persona (granted by the owner, written by fixture SQL). */
+  readonly managerDelegationId: string;
+  /** The manager's own, non-delegated tasks assignment in company A. */
+  readonly managerTasksAssignmentId: string;
+  /** A company-A role whose one cell is `TASKS_CAPABILITY_KEY`. */
+  readonly tasksRoleA: SeededRole;
+  /** The same cell as a company-B role; the lapsed person holds it in B. */
+  readonly tasksRoleB: SeededRole;
+  /** Company A's team; the manager holds a place in it. */
+  readonly teamId: string;
 }
 
 /**
@@ -143,6 +204,11 @@ export interface AccessAdminIdentifiers {
  * its declared scope and the trusted request scope (O66).
  */
 export interface DeclarationQuestion {
+  /**
+   * A declaration the release does not publish but a Shell entrypoint ships (the Lidé keys): the gate
+   * decides it exactly as that entrypoint asks it. Without it, `declarationKey` names a published one.
+   */
+  readonly declaration?: AccessDeclaration;
   readonly declarationKey: string;
   readonly legalEntityId?: string | undefined;
   readonly persona: Persona;
@@ -171,11 +237,15 @@ export interface AccessAdminCase {
   readonly decideUnavailable: (question: DeclarationQuestion) => Effect.Effect<GateAnswer>;
   /** Every declaration the published catalog carries, keyed the way the gate asks for it. */
   readonly declarations: ReadonlyMap<string, PublishedDeclaration>;
+  /** The foreign tenant's own principals (its owner and its directory member among them). */
+  readonly foreignIds: ReadonlyMap<Persona, AccessAdminIdentifiers>;
+  readonly foreignTenantId: string;
   readonly ids: ReadonlyMap<Persona, AccessAdminIdentifiers>;
   /** The trusted request scope of one persona (O66), for intent a scenario writes itself. */
   readonly scopeFor: (persona: Persona, legalEntityId?: string) => Effect.Effect<OperationalScope>;
   /** The scope id of one company, or of the tenant context when omitted. */
   readonly scopeIdOf: (legalEntityId?: string) => Effect.Effect<string>;
+  readonly seeded: SeededPeopleIntent;
   /** Every `admin` declaration of the published catalog under `core.shell.*` (P1 publishes them). */
   readonly shellAdminDeclarations: readonly PublishedDeclaration[];
   readonly tenantId: string;
@@ -230,7 +300,7 @@ const dropDatabase = (admin: PgClient.PgClient, database: string) =>
   admin.unsafe(`drop database if exists "${database}" with (force)`).pipe(Effect.orDie);
 
 const cloneDatabase = (admin: PgClient.PgClient, database: string) =>
-  admin.unsafe(`create database "${database}" template "${TEMPLATE_DATABASE}"`).pipe(Effect.orDie);
+  admin.unsafe(`create database "${database}" template "${ACCESS_ADMIN_TEMPLATE_DATABASE}"`).pipe(Effect.orDie);
 
 /** A pool the caller's own scope owns and closes; never a client whose scope already ended. */
 const makeClient = (connectionString: string, maxConnections: number) =>
@@ -279,49 +349,57 @@ const labelled = <A, E, R>(name: string, effect: Effect.Effect<A, E, R>): Effect
 const serverConnections = loadDatabaseConnectionPair().pipe(Effect.orDie);
 const serverAdminUrl = serverConnections.pipe(Effect.map((connections) => connections.admin.connectionString));
 
-const prepareTemplateDatabase = Effect.gen(function* prepareTemplate() {
-  const adminUrl = yield* serverAdminUrl;
-  const admin = yield* makeClient(adminUrl, 1);
-  yield* dropDatabase(admin, TEMPLATE_DATABASE);
-  yield* admin.unsafe(`create database "${TEMPLATE_DATABASE}"`).pipe(Effect.orDie);
-  const template = yield* makeClient(replacedDatabase(adminUrl, TEMPLATE_DATABASE), 1);
-  yield* buildTemplateDatabase(template);
-}).pipe(
-  Effect.scoped,
-  Effect.tapCause((cause) => Effect.logError('P14 template database failed', cause)),
-  Effect.provide(NodeServices.layer),
-  Effect.orDie,
-);
+const prepareTemplateDatabase = (name: string) =>
+  Effect.gen(function* prepareTemplate() {
+    const adminUrl = yield* serverAdminUrl;
+    const admin = yield* makeClient(adminUrl, 1);
+    yield* dropDatabase(admin, name);
+    yield* admin.unsafe(`create database "${name}"`).pipe(Effect.orDie);
+    const template = yield* makeClient(replacedDatabase(adminUrl, name), 1);
+    yield* buildTemplateDatabase(template);
+  }).pipe(
+    Effect.scoped,
+    Effect.tapCause((cause) => Effect.logError('P14 template database failed', cause)),
+    Effect.provide(NodeServices.layer),
+    Effect.orDie,
+  );
+
+const dropTemplateDatabase = (name: string) =>
+  Effect.gen(function* dropTemplate() {
+    yield* dropDatabase(yield* makeClient(yield* serverAdminUrl, 1), name);
+  }).pipe(Effect.scoped);
+
+/** The shared, fixed-name template of the full-catalog authority suites, which clone it by that name. */
+export const templateDatabaseLayer = Layer.effectDiscard(prepareTemplateDatabase(SHARED_TEMPLATE_DATABASE));
+
+/** Whether this process's own template exists: `withAccessAdminCase` clones nothing else. */
+let accessAdminTemplateReady = false;
 
 /**
- * The template is built once per process, on the first case's own budget: a suite hook has a shorter
- * deadline than a case, and applying the committed migrations is the cost this fixture pays once.
+ * The suite-scoped template every `withAccessAdminCase` clones: built once before the cases, on the
+ * suite's deadline, and dropped when the suite ends so no template outlives its process.
  */
-let templatePrepared = false;
-
-/** The suite-scoped template: built once, before the cases, on a deadline migrations can meet. */
-export const templateDatabaseLayer = Layer.effectDiscard(
-  prepareTemplateDatabase.pipe(
-    Effect.tap(() =>
-      Effect.sync(() => {
-        templatePrepared = true;
-      }),
+export const accessAdminTemplateLayer = Layer.effectDiscard(
+  Effect.acquireRelease(
+    prepareTemplateDatabase(ACCESS_ADMIN_TEMPLATE_DATABASE).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          accessAdminTemplateReady = true;
+        }),
+      ),
     ),
+    () =>
+      Effect.sync(() => {
+        accessAdminTemplateReady = false;
+      }).pipe(Effect.andThen(dropTemplateDatabase(ACCESS_ADMIN_TEMPLATE_DATABASE))),
   ),
 );
 
-const ensureTemplate = Effect.suspend((): Effect.Effect<void> => {
-  if (templatePrepared) {
-    return Effect.void;
-  }
-  return prepareTemplateDatabase.pipe(
-    Effect.tap(() =>
-      Effect.sync(() => {
-        templatePrepared = true;
-      }),
-    ),
-  );
-});
+const requireTemplate = Effect.suspend(() =>
+  accessAdminTemplateReady
+    ? Effect.void
+    : Effect.die(new Error('A suite that runs withAccessAdminCase provides accessAdminTemplateLayer')),
+);
 
 // ---------------------------------------------------------------------------------------------
 // The engine's schema
@@ -441,6 +519,50 @@ const insertMembership = (
     )
     .pipe(Effect.orDie);
 
+/** One row of the company directory (`core.principal_company_memberships`), which admission reads. */
+const insertDirectoryMember = (
+  admin: PgClient.PgClient,
+  input: {
+    readonly legalEntityId: string;
+    readonly principalId: string;
+    readonly status: 'active' | 'departed';
+    readonly tenantId: string;
+  },
+) =>
+  admin
+    .unsafe(
+      `insert into core.principal_company_memberships (tenant_id, legal_entity_id, principal_id, affiliation, status)
+       values ('${input.tenantId}', '${input.legalEntityId}', '${input.principalId}', 'employee', '${input.status}')`,
+    )
+    .pipe(Effect.orDie);
+
+const insertTeam = (
+  admin: PgClient.PgClient,
+  input: {
+    readonly createdBy: string;
+    readonly memberId: string;
+    readonly principalId: string;
+    readonly scopeId: string;
+    readonly teamId: string;
+    readonly tenantId: string;
+  },
+) =>
+  Effect.gen(function* insertTeamRows() {
+    yield* admin
+      .unsafe(
+        `insert into core.access_teams (team_id, tenant_id, scope_id, name, created_by)
+         values ('${input.teamId}', '${input.tenantId}', '${input.scopeId}', 'P14 team', '${input.createdBy}')`,
+      )
+      .pipe(Effect.orDie);
+    yield* admin
+      .unsafe(
+        `insert into core.access_team_members (team_member_id, tenant_id, team_id, principal_id, added_at, added_by)
+         values ('${input.memberId}', '${input.tenantId}', '${input.teamId}', '${input.principalId}', now(),
+                 '${input.createdBy}')`,
+      )
+      .pipe(Effect.orDie);
+  });
+
 const insertAssignment = (
   admin: PgClient.PgClient,
   input: {
@@ -500,11 +622,6 @@ const insertDelegation = (
                '${input.until}')`,
     )
     .pipe(Effect.orDie);
-
-interface SeededRole {
-  readonly roleId: string;
-  readonly roleRevisionId: string;
-}
 
 /**
  * The company assignments the personas hold: the administrator role for the people, a propose-only
@@ -578,6 +695,8 @@ const insertRole = (
     readonly capabilityKeys: readonly string[];
     readonly catalogSnapshotId: string;
     readonly createdBy: string;
+    /** The company the role lives in (O7); without it the role is the tenant context's. */
+    readonly legalEntityId?: string;
     readonly mode: 'propose' | 'run';
     readonly name: string;
     readonly roleId: string;
@@ -592,10 +711,11 @@ const insertRole = (
       mode: input.mode,
       selector: { _tag: 'all' as const },
     }));
+    const legalEntityId = input.legalEntityId === undefined ? 'null' : `'${input.legalEntityId}'`;
     yield* admin
       .unsafe(
-        `insert into core.access_roles (role_id, tenant_id, created_by, name)
-         values ('${input.roleId}', '${input.tenantId}', '${input.createdBy}', '${input.name}')`,
+        `insert into core.access_roles (role_id, tenant_id, created_by, name, legal_entity_id)
+         values ('${input.roleId}', '${input.tenantId}', '${input.createdBy}', '${input.name}', ${legalEntityId})`,
       )
       .pipe(Effect.orDie);
     yield* admin
@@ -850,8 +970,8 @@ interface QuestionContext {
 /** Asks the real gate one declaration question, the way the Shell entrypoint asks it. */
 const askWith = (gate: AccessDecisionService, context: QuestionContext) => (input: DeclarationQuestion) =>
   Effect.gen(function* askQuestion() {
-    const declaration = context.declarations.get(input.declarationKey);
-    if (declaration === undefined) {
+    const declaration = input.declaration ?? context.declarations.get(input.declarationKey);
+    if (declaration === undefined || declaration.key !== input.declarationKey) {
       return yield* Effect.die(new Error(`The published catalog does not declare ${input.declarationKey}`));
     }
     const tenantContext = input.scope !== 'legal-entity';
@@ -886,6 +1006,175 @@ const seedsOf = Effect.gen(function* makePersonaSeeds() {
   return seeds;
 });
 
+const identifiersOf = (seeds: PersonaSeeds): ReadonlyMap<Persona, AccessAdminIdentifiers> =>
+  new Map(PERSONAS.map((persona) => [persona, { ...(seeds.get(persona) ?? { authBindingId: '', principalId: '' }) }]));
+
+/** The personas holding live `member` rows in the tenant context and company A (the suspended one's tenant row aside). */
+const SEEDED_MEMBERS: ReadonlySet<Persona> = new Set<Persona>([
+  'agent',
+  'companyAdmin',
+  'delegate',
+  'expiredAssignment',
+  'manager',
+  'member',
+  'suspended',
+]);
+
+/**
+ * What admission and ending act on, beside the gate personas: the company directory (`core.principal_company_memberships`,
+ * which nothing else here seeds), the lapsed person, a tasks role in each company, company A's team, and
+ * the manager's delegation.
+ *
+ * The manager's delegation names `admit-member` and `end-membership`. No command can write that:
+ * `grantDelegation` refuses a key the release does not publish (`delegation_unknown_capability`), and
+ * no release publishes the Lidé keys. It is written here by SQL, because it is the only way to prove
+ * that Core's own permanent-basis check refuses a delegate the gate may admit.
+ */
+const seedPeopleIntent = (
+  admin: PgClient.PgClient,
+  input: {
+    readonly adminRole: SeededRole;
+    readonly catalogSnapshotId: string;
+    readonly companyA: string;
+    readonly companyB: string;
+    readonly companyScopeId: string;
+    readonly foreignCompany: string;
+    readonly foreignHolderOf: (persona: Persona) => string;
+    readonly foreignTenantId: string;
+    readonly holderOf: (persona: Persona) => string;
+    readonly ownerPrincipal: string;
+    readonly secondCompanyScopeId: string;
+    readonly tenantContextScopeId: string;
+    readonly tenantId: string;
+  },
+) =>
+  Effect.gen(function* seedPeopleIntentRows() {
+    const crypto = yield* Crypto.Crypto;
+    const { companyA, companyB, holderOf, tenantId } = input;
+    const directory: readonly (readonly [Persona, string, 'active' | 'departed'])[] = [
+      ['owner', companyA, 'active'],
+      ['owner', companyB, 'active'],
+      ['companyAdmin', companyA, 'active'],
+      ['delegate', companyA, 'active'],
+      ['member', companyA, 'active'],
+      ['member', companyB, 'active'],
+      ['suspended', companyA, 'active'],
+      ['expiredAssignment', companyA, 'active'],
+      ['manager', companyA, 'active'],
+      ['directoryMember', companyA, 'active'],
+      ['directoryMember', companyB, 'active'],
+      ['departed', companyA, 'departed'],
+      ['lapsed', companyA, 'active'],
+      ['lapsed', companyB, 'active'],
+    ];
+    for (const [persona, legalEntityId, status] of directory) {
+      yield* insertDirectoryMember(admin, { legalEntityId, principalId: holderOf(persona), status, tenantId });
+    }
+    yield* insertDirectoryMember(admin, {
+      legalEntityId: input.foreignCompany,
+      principalId: input.foreignHolderOf('directoryMember'),
+      status: 'active',
+      tenantId: input.foreignTenantId,
+    });
+
+    // The lapsed person: the tenant row ended an hour ago but still reads `active`; company B is live.
+    yield* insertMembership(admin, {
+      holderColumn: 'principal_id',
+      kind: 'member',
+      principalId: holderOf('lapsed'),
+      recordedBy: input.ownerPrincipal,
+      scopeId: input.tenantContextScopeId,
+      status: 'active',
+      tenantId,
+      validUntil: "now() - interval '1 hour'",
+    });
+    yield* insertMembership(admin, {
+      holderColumn: 'principal_id',
+      kind: 'member',
+      principalId: holderOf('lapsed'),
+      recordedBy: input.ownerPrincipal,
+      scopeId: input.secondCompanyScopeId,
+      status: 'active',
+      tenantId,
+    });
+
+    const tasksRole = (legalEntityId: string, scopeId: string, name: string) =>
+      Effect.gen(function* insertTasksRole() {
+        const role: SeededRole = {
+          roleId: yield* crypto.randomUUIDv4(),
+          roleRevisionId: yield* crypto.randomUUIDv4(),
+        };
+        yield* insertRole(admin, {
+          capabilityKeys: [TASKS_CAPABILITY_KEY],
+          catalogSnapshotId: input.catalogSnapshotId,
+          createdBy: input.ownerPrincipal,
+          legalEntityId,
+          mode: 'run',
+          name,
+          ...role,
+          scopeId,
+          tenantId,
+        });
+        return role;
+      });
+    const tasksRoleA = yield* tasksRole(companyA, input.companyScopeId, 'P14 tasks A');
+    const tasksRoleB = yield* tasksRole(companyB, input.secondCompanyScopeId, 'P14 tasks B');
+
+    const managerTasksAssignmentId = yield* crypto.randomUUIDv4();
+    yield* insertAssignment(admin, {
+      assignedBy: input.ownerPrincipal,
+      holderColumn: 'principal_id',
+      incarnationId: managerTasksAssignmentId,
+      principalId: holderOf('manager'),
+      roleId: tasksRoleA.roleId,
+      roleRevisionId: tasksRoleA.roleRevisionId,
+      scopeId: input.companyScopeId,
+      tenantId,
+    });
+    yield* insertAssignment(admin, {
+      assignedBy: input.ownerPrincipal,
+      holderColumn: 'principal_id',
+      incarnationId: yield* crypto.randomUUIDv4(),
+      principalId: holderOf('lapsed'),
+      roleId: tasksRoleB.roleId,
+      roleRevisionId: tasksRoleB.roleRevisionId,
+      scopeId: input.secondCompanyScopeId,
+      tenantId,
+    });
+
+    const teamId = yield* crypto.randomUUIDv4();
+    yield* insertTeam(admin, {
+      createdBy: input.ownerPrincipal,
+      memberId: yield* crypto.randomUUIDv4(),
+      principalId: holderOf('manager'),
+      scopeId: input.companyScopeId,
+      teamId,
+      tenantId,
+    });
+
+    const managerDelegationId = yield* crypto.randomUUIDv4();
+    yield* insertDelegation(admin, {
+      capabilityKeys: [TASKS_CAPABILITY_KEY, ...MANAGER_DELEGATED_PEOPLE_KEYS],
+      delegationId: managerDelegationId,
+      grantedBy: input.ownerPrincipal,
+      managerId: holderOf('manager'),
+      people: [holderOf('member')],
+      roleIds: [tasksRoleA.roleId],
+      scopeId: input.companyScopeId,
+      tenantId,
+      until: DELEGATION_UNTIL,
+    });
+
+    return {
+      adminRole: input.adminRole,
+      managerDelegationId,
+      managerTasksAssignmentId,
+      tasksRoleA,
+      tasksRoleB,
+      teamId,
+    } satisfies SeededPeopleIntent;
+  });
+
 /**
  * One case: its own cloned database, its own tenant, the real bootstrap, the seeded personas and the
  * real gate — asked here, and by nothing in this fixture, with a scripted answer.
@@ -909,7 +1198,7 @@ export const withAccessAdminCase = <Value, Failure>(
 
       const caseDatabase = `${CASE_DATABASE_PREFIX}${seedSuffix}`;
       const adminUrl = yield* serverAdminUrl;
-      yield* ensureTemplate;
+      yield* requireTemplate;
       const server = yield* makeClient(adminUrl, 1);
       yield* cloneDatabase(server, caseDatabase);
       yield* Effect.addFinalizer(() => dropDatabase(server, caseDatabase));
@@ -1011,7 +1300,7 @@ export const withAccessAdminCase = <Value, Failure>(
       );
 
       for (const persona of PERSONAS) {
-        if (persona === 'owner' || persona === 'foreignOwner' || persona === 'workload') {
+        if (!SEEDED_MEMBERS.has(persona)) {
           continue;
         }
         // A company decision rests on live `member` rows in the tenant and in the company (D6, M2); a
@@ -1071,6 +1360,25 @@ export const withAccessAdminCase = <Value, Failure>(
         tenantId,
       });
 
+      const seeded = yield* labelled(
+        'seed-people-intent',
+        seedPeopleIntent(admin, {
+          adminRole: { roleId: adminRoleId, roleRevisionId: adminRoleRevisionId },
+          catalogSnapshotId: ownerBootstrap.catalogSnapshotId,
+          companyA: companyA ?? '',
+          companyB: companyB ?? '',
+          companyScopeId,
+          foreignCompany: foreignCompanies[0] ?? '',
+          foreignHolderOf: (persona) => foreignPersonas.get(persona)?.principalId ?? '',
+          foreignTenantId,
+          holderOf,
+          ownerPrincipal,
+          secondCompanyScopeId,
+          tenantContextScopeId,
+          tenantId,
+        }),
+      );
+
       // One reconcile of the tenant through the single Core writer, exactly as a command would.
       yield* labelled('reconcile', graph.writer.reconcileTenant({ scope: yield* scopeFor('owner') }));
 
@@ -1085,14 +1393,6 @@ export const withAccessAdminCase = <Value, Failure>(
 
       const questionContext: QuestionContext = { companyA, declarations, scopeFor };
 
-      const identifiers = new Map<Persona, AccessAdminIdentifiers>();
-      for (const persona of PERSONAS) {
-        identifiers.set(persona, {
-          authBindingId: personas.get(persona)?.authBindingId ?? '',
-          principalId: holderOf(persona),
-        });
-      }
-
       return yield* run({
         admin,
         catalog,
@@ -1101,9 +1401,12 @@ export const withAccessAdminCase = <Value, Failure>(
         decide: askWith(live, questionContext),
         decideUnavailable: askWith(dead, questionContext),
         declarations,
-        ids: identifiers,
+        foreignIds: identifiersOf(foreignPersonas),
+        foreignTenantId,
+        ids: identifiersOf(personas),
         scopeFor,
         scopeIdOf: companyScopeIdFor,
+        seeded,
         shellAdminDeclarations: [...declarations.values()].filter(
           (declaration) => declaration.kind === 'admin' && declaration.key.startsWith('core.shell.'),
         ),
@@ -1123,3 +1426,144 @@ export const withAccessAdminCase = <Value, Failure>(
       });
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
+
+// ---------------------------------------------------------------------------------------------
+// The production Shell API over one case
+// ---------------------------------------------------------------------------------------------
+
+/** One answer of the Shell API: the HTTP status and the body as sent. */
+export interface ShellHttpAnswer {
+  readonly status: number;
+  readonly text: string;
+}
+
+export interface ShellHttpRequest {
+  /** The `idempotency-key` header every access write carries. */
+  readonly idempotencyKey?: string;
+  readonly path: string;
+  readonly payload: unknown;
+  /** The signed-in persona; a request without one has no session at all. */
+  readonly persona?: Persona;
+}
+
+export interface ShellHttp {
+  readonly post: (request: ShellHttpRequest) => Effect.Effect<ShellHttpAnswer>;
+}
+
+const PERSONA_HEADER = 'x-p14-persona';
+
+/** Every persona that signs in; the workload is never a Shell session. */
+const SIGNED_IN: readonly Persona[] = PERSONAS.filter((persona) => persona !== 'workload');
+
+const unsupportedSession = (operation: string) =>
+  Effect.die(new Error(`${operation} is not part of the access administration suites`));
+
+/** Signs in whichever seeded persona the request header names; every other session method is unused. */
+const personaAuthentication = (
+  authenticationService: typeof AuthenticationService,
+  principals: ReadonlyMap<string, TrustedPrincipalContext>,
+) => {
+  const service: AuthenticationServiceContract = {
+    availableTenants: () => unsupportedSession('availableTenants'),
+    createFixtureUser: () => unsupportedSession('createFixtureUser'),
+    currentSession: () => unsupportedSession('currentSession'),
+    resolveDocumentContext: () => unsupportedSession('resolveDocumentContext'),
+    resolveShellContext: () => unsupportedSession('resolveShellContext'),
+    resolveTenantContext: (headers) => {
+      const principal = principals.get(headers.get(PERSONA_HEADER) ?? '');
+      return Effect.succeed(
+        principal === undefined
+          ? { setCookieHeaders: [], state: 'anonymous' as const }
+          : {
+              identity: {
+                displayName: 'P14 person',
+                email: 'p14@example.test',
+                principalId: principal.principalId,
+                tenantId: principal.tenantId,
+              },
+              principal,
+              setCookieHeaders: [],
+              state: 'authenticated' as const,
+            },
+      );
+    },
+    signIn: () => unsupportedSession('signIn'),
+    signOut: () => unsupportedSession('signOut'),
+    switchLegalEntity: () => unsupportedSession('switchLegalEntity'),
+    switchTenant: () => unsupportedSession('switchTenant'),
+    switchToTenantContext: () => unsupportedSession('switchToTenantContext'),
+  };
+  return Layer.succeed(authenticationService, service);
+};
+
+/**
+ * The Shell API runtime `api/index.ts` builds for production, over this case's database and the
+ * integration SpiceDB, mounted as the browser reaches it. Nothing here chooses a gate: the access
+ * decision layer, the Lidé and Novinky ship gates and every store are the composition's own, so a
+ * suite driving writes through it goes red the moment the composition ships them closed.
+ *
+ * The signed-in person is the one thing it supplies itself: `resolveTenantContext` answers the
+ * persona a request header names with that persona's seeded principal, because authentication is not
+ * what these suites test.
+ *
+ * `api/index.ts` is loaded on first use, so the suites that only need the gate never load the Shell.
+ */
+export const shellHttpFor = Effect.fn('AccessAdminFixture.shellHttp')(function* shellHttp(accessCase: AccessAdminCase) {
+  const [shell, authentication, api, bff] = yield* Effect.promise(
+    async () =>
+      await Promise.all([
+        import('../../api/index.ts'),
+        import('../../api/auth/service.ts'),
+        import('../../shared/api.ts'),
+        import('@modern-js/bff-effect/effect-edge'),
+      ]),
+  );
+  const principals = new Map<string, TrustedPrincipalContext>();
+  for (const persona of SIGNED_IN) {
+    const scope = yield* accessCase.scopeFor(persona);
+    principals.set(persona, yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(scope).pipe(Effect.orDie));
+  }
+  const [, issuer, moduleStates] = shell.shellProductionRuntimeArguments;
+  const runtime = shell.makeShellAuthenticationApiRuntime(
+    personaAuthentication(authentication.AuthenticationService, principals),
+    issuer,
+    moduleStates,
+    undefined,
+    false,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    accessCase.databases,
+  );
+  const { apiPrefix } = api.shellAuthenticationApiContract;
+  const handler = yield* Effect.acquireRelease(
+    Effect.promise(
+      async () => await bff.createEffectBffTestHandler({ module: { default: runtime }, prefix: apiPrefix }),
+    ),
+    (created) => Effect.promise(created.dispose.bind(created)),
+  );
+  const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+  const post = (request: ShellHttpRequest) =>
+    Effect.gen(function* postJson() {
+      const headers = new Headers({ 'content-type': 'application/json' });
+      if (request.persona !== undefined) {
+        headers.set(PERSONA_HEADER, request.persona);
+      }
+      if (request.idempotencyKey !== undefined) {
+        headers.set('idempotency-key', request.idempotencyKey);
+      }
+      const body = yield* encodeJson(request.payload).pipe(Effect.orDie);
+      const response = yield* Effect.promise(
+        async () =>
+          await handler.handler(
+            new Request(`http://shell.test${apiPrefix}${request.path}`, { body, headers, method: 'POST' }),
+          ),
+      );
+      const text = yield* Effect.promise(async () => await response.text());
+      return { status: response.status, text } satisfies ShellHttpAnswer;
+    });
+  return { post } satisfies ShellHttp;
+});
