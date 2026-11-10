@@ -1,6 +1,64 @@
 import type { DatabaseTableGrant } from '../../packages/core-runtime/src/db/database-identities.ts';
 
+const promotionMutableStateReason = 'Promotion scoped mutable management state; no deletion';
+const promotionImmutableEvidenceReason = 'Promotion immutable publication, attribution and issued evidence';
+
 export const SHARED_RUNTIME_TABLE_GRANT_EXCEPTIONS = [
+  {
+    privileges: ['select', 'insert'],
+    reason: 'Immutable before/after Promotion selection and basis policy evidence',
+    table: 'promotion.policy_changes',
+  },
+  {
+    privileges: ['select', 'insert', 'update'],
+    reason: promotionMutableStateReason,
+    table: 'promotion.tenant_generations',
+  },
+  {
+    privileges: ['select', 'insert', 'update'],
+    reason: promotionMutableStateReason,
+    table: 'promotion.promotion_drafts',
+  },
+  {
+    privileges: ['select', 'insert', 'update'],
+    reason: promotionMutableStateReason,
+    table: 'promotion.selection_policies',
+  },
+  {
+    privileges: ['select', 'insert', 'update'],
+    reason: promotionMutableStateReason,
+    table: 'promotion.basis_policies',
+  },
+  {
+    privileges: ['select', 'insert'],
+    reason: promotionImmutableEvidenceReason,
+    table: 'promotion.published_promotions',
+  },
+  {
+    privileges: ['select', 'insert'],
+    reason: promotionImmutableEvidenceReason,
+    table: 'promotion.lifecycle_facts',
+  },
+  {
+    privileges: ['select', 'insert'],
+    reason: promotionImmutableEvidenceReason,
+    table: 'promotion.vouchers',
+  },
+  {
+    privileges: ['select', 'insert'],
+    reason: promotionImmutableEvidenceReason,
+    table: 'promotion.voucher_disable_facts',
+  },
+  {
+    privileges: ['select', 'insert'],
+    reason: promotionImmutableEvidenceReason,
+    table: 'promotion.issued_proofs',
+  },
+  {
+    privileges: ['select', 'insert', 'delete'],
+    reason: 'Single-use authentication receipts and expired receipt cleanup',
+    table: 'promotion.gateway_assertion_redemptions',
+  },
   {
     privileges: ['select', 'insert', 'update'],
     reason: 'Market retirement transitions preserve durable aborted and committed admission fences without deletion',

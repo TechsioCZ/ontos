@@ -2,7 +2,6 @@
   "name": "@app/price-group-catalog",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "exports": {
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/price-group-catalog-client.ts",

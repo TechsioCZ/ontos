@@ -270,7 +270,7 @@ it.live(
       const native = yield* fixture();
       yield* runToReadiness(allFile, native.allEnvironment, false);
       const streams = (yield* loadApplicationMigrationInventory()).filter(({ optional }) => !optional);
-      expect(streams).toHaveLength(19);
+      expect(streams).toHaveLength(20);
       const baseline = yield* observeNative(native.selectedEnvironment);
       expect(baseline.nativeTargets.map(({ database }) => database)).toEqual([native.database]);
       expect(baseline.nativeTargets.map(({ systemIdentifier }) => systemIdentifier)).toEqual([native.physicalIdentity]);

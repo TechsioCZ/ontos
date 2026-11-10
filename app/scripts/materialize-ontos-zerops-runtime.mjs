@@ -6,6 +6,9 @@ import { Config, Effect, FileSystem, Layer, Path, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
+import { stageNodeOutput } from './materialize-node-output.mjs';
+import { normalizeAndSealNodeRuntime } from './materialize-node-runtime-envelope.mts';
+
 class OutboxRuntimeError extends Schema.TaggedError()('OutboxRuntimeError', { message: Schema.String }) {}
 
 /** @param {string} message Error detail. */
@@ -43,6 +46,7 @@ const materializeCommand = Command.make(
         packageDir,
       ];
 
+      let relativeRuntime;
       if (worker) {
         const { materializeOutboxWorker, resolveOutboxWorker } = yield* Effect.tryPromise({
           catch: (cause) => failure(String(cause)),
@@ -70,7 +74,7 @@ const materializeCommand = Command.make(
         if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/u.test(delivery.serviceId)) {
           return yield* Effect.fail(failure('Outbox Worker service must be a service identifier'));
         }
-        const relativeRuntime = `.zerops/runtime/${delivery.serviceId}`;
+        relativeRuntime = `.zerops/runtime/${delivery.serviceId}`;
         const runtimeDir = path.join(workspaceRoot, relativeRuntime);
         // Check existing ancestors before replacing this service's prepared runtime.
         let ancestor = runtimeDir;
@@ -89,11 +93,14 @@ const materializeCommand = Command.make(
         });
         const runtimePackageJson = yield* Schema.encodeEffect(RuntimePackageJsonSchema)(runtimePackage);
         yield* fs.writeFileString(path.join(runtimeDir, 'package.json'), `${runtimePackageJson}\n`);
-        frameworkArgs.push('--finalize-only', '--runtime-dir', relativeRuntime);
+      } else {
+        relativeRuntime = yield* stageNodeOutput({ appId, packageDir, packageName, workspaceRoot });
       }
 
+      frameworkArgs.push('--finalize-only', '--runtime-dir', relativeRuntime);
+
       // The published tooling owns cohort normalization, platform filtering, lockfile pins and installation.
-      return yield* spawner
+      yield* spawner
         .exitCode(
           ChildProcess.make('pnpm', frameworkArgs, {
             cwd: workspaceRoot,
@@ -109,6 +116,33 @@ const materializeCommand = Command.make(
           ),
           Effect.asVoid,
         );
+      // Node's published temporary-install copy leaves absolute executable links. Let npm
+      // rebuild its own installed tree and bin links under the normal lifecycle policy.
+      yield* spawner
+        .exitCode(
+          ChildProcess.make('npm', ['rebuild'], {
+            cwd: path.join(workspaceRoot, relativeRuntime),
+            stderr: 'inherit',
+            stdin: 'inherit',
+            stdout: 'inherit',
+          }),
+        )
+        .pipe(
+          Effect.filterOrFail(
+            (code) => code === ChildProcessSpawner.ExitCode(0),
+            (code) => failure(`Runtime dependency rebuild failed with exit code ${code}`),
+          ),
+          Effect.asVoid,
+        );
+      if (!worker) {
+        yield* normalizeAndSealNodeRuntime({
+          packageDir,
+          packageName,
+          runtimeDir: path.join(workspaceRoot, relativeRuntime),
+          workspaceRoot,
+        });
+      }
+      return yield* Effect.void;
     }),
 );
 

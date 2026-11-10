@@ -26,6 +26,15 @@ export default defineConfig({
       output: {
         module: true,
       },
+      plugins: [
+        {
+          name: 'ontos:component-without-ssr-compilation',
+          remove: ['@modern-js/builder-plugin-ssr'],
+          setup() {
+            // Browser component tests do not compile production SSR output.
+          },
+        },
+      ],
       restoreMocks: true,
       testEnvironment: 'happy-dom',
     },

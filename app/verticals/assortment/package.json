@@ -2,7 +2,6 @@
   "name": "@app/assortment",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "exports": {
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/assortment-client.ts",
