@@ -140,7 +140,9 @@ describe("server cart quote", () => {
       netMinor: 45041,
       shippingMinor: 0,
     });
-    const [, , payload] = vi.mocked(callAction).mock.calls[0]!;
+    const [vertical, action, payload] = vi.mocked(callAction).mock.calls[0]!;
+    // The storefront key is admitted only on the narrow storefront-order Action, never on apply-command.
+    expect([vertical, action]).toEqual(["merchandise", "place-storefront-order"]);
     expect(payload).toMatchObject({
       expectedRevision: 3,
       command: { _tag: "PlaceStorefrontOrder", dryRun: true, shippingMethod: "PPL" },

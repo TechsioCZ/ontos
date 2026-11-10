@@ -93,6 +93,11 @@ describe("real order boundary", () => {
       "http://localhost:3070",
       "commerce-portal.session_token=admitted",
     );
+    // The storefront key is admitted only on the narrow storefront-order Action, never on apply-command.
+    expect(vi.mocked(callAction).mock.calls[0].slice(0, 2)).toEqual([
+      "merchandise",
+      "place-storefront-order",
+    ]);
     const payload = vi.mocked(callAction).mock.calls[0][2];
     expect(payload).toMatchObject({
       expectedRevision: 7,
