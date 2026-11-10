@@ -1,3 +1,4 @@
+import type { DetailViewMode } from '@app/admin-ui';
 import {
   BulkActionBar,
   DetailViewModeToggle,
@@ -11,7 +12,8 @@ import type { ModulePageContext, ModulePageProps } from '@app/shared-contracts/p
 import { useTagsFor } from '@app/tagging/components/tag-controls';
 import type { TagId } from '@app/tagging/contracts/records';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
+import { useNavigate, useRouterState } from '@modern-js/plugin-tanstack/runtime';
+import type { RegisteredRouter } from '@tanstack/react-router';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
@@ -37,6 +39,7 @@ import type { CreateCommand, OpportunityAutosave } from './pipeline-dialogs.tsx'
 import { opportunityAutosaveResult } from './opportunity-draft.ts';
 import type { DialogState, Target } from './pipeline-dialog-host.tsx';
 import { PipelineDialogHost, ownerCommand, requestedCount, stageCommand } from './pipeline-dialog-host.tsx';
+import { PipelineDetailPage } from './pipeline-detail-page.tsx';
 import { PipelineDetailPanel } from './pipeline-detail-panel.tsx';
 import { PipelineFilters, PipelineStats } from './pipeline-filters.tsx';
 import { applyPipelineCommand, applyPipelineCommandIfUnchanged } from './pipeline-api.ts';
@@ -443,6 +446,90 @@ const liveDialog = (dialog: DialogState | undefined, items: readonly Opportunity
   return { ...dialog, opportunity: items.find((item) => item.id === id) ?? dialog.opportunity };
 };
 
+/** Header actions of the records list: the detail view switch, bulk change by tag and a new case. */
+const RecordsHeaderActions = ({
+  canWrite,
+  loading,
+  onBulkByTag,
+  onCreate,
+  onViewMode,
+  viewMode,
+}: {
+  readonly canWrite: boolean;
+  readonly loading: boolean;
+  readonly onBulkByTag: () => void;
+  readonly onCreate: () => void;
+  readonly onViewMode: (next: DetailViewMode) => void;
+  readonly viewMode: DetailViewMode;
+}) => {
+  const { t } = useModernI18n();
+  return (
+    <>
+      <DetailViewModeToggle
+        groupLabel={t('sales-pipeline.detailView.group')}
+        onChange={onViewMode}
+        pageLabel={t('sales-pipeline.detailView.page')}
+        panelLabel={t('sales-pipeline.detailView.panel')}
+        value={viewMode}
+      />
+      {canWrite && (
+        <>
+          <Button disabled={loading} onClick={onBulkByTag} size="sm" theme="outlined" variant="secondary">
+            {t(`${K}.bulkByTag.title`)}
+          </Button>
+          <Button disabled={loading} icon="icon-[mdi--plus]" onClick={onCreate} size="sm" variant="primary">
+            {t(`${K}.newOpportunity`)}
+          </Button>
+        </>
+      )}
+    </>
+  );
+};
+
+/**
+ * Opening a case: the full page (`?opportunityId=` on the records route) by default, or the quick-view panel when the
+ * person chose it. A customer filter in the address stays on both the page and the way back to the list.
+ */
+const useOpportunityOpening = (
+  partyId: PartyId | undefined,
+  viewMode: DetailViewMode,
+  openPanel: (id: string) => void,
+) => {
+  const { language, t } = useModernI18n();
+  const navigate = useNavigate();
+  const toaster = useToast();
+  const navigateToRecords = navigate<RegisteredRouter, string>;
+  const notifyFailure = () =>
+    Effect.sync(() => {
+      toaster.create({ title: t('sales-pipeline.detail.navigationFailed'), type: 'error' });
+    });
+  const goToRecords = (opportunityId?: string) => {
+    const search: Record<string, string> = {};
+    if (partyId !== undefined) {
+      search['partyId'] = partyId;
+    }
+    if (opportunityId !== undefined) {
+      search['opportunityId'] = opportunityId;
+    }
+    void browserRuntime.runPromise(
+      Effect.tryPromise(
+        navigateToRecords.bind(undefined, { search, to: `/${language ?? 'cs'}/prodej/prilezitosti` }),
+      ).pipe(
+        Effect.timeout('10 seconds'),
+        Effect.catchTags({ TimeoutError: notifyFailure, UnknownError: notifyFailure }),
+      ),
+    );
+  };
+  const openOpportunity = (opportunity: Opportunity) => {
+    if (viewMode === 'panel') {
+      openPanel(opportunity.id);
+      return;
+    }
+    goToRecords(opportunity.id);
+  };
+  return { goToRecords, openOpportunity };
+};
+
 const RecordsPageContent = ({
   context,
   initialOpportunityId,
@@ -575,7 +662,7 @@ const RecordsPageContent = ({
     reload();
   };
 
-  // The full-page detail route is not generated yet, so both view modes open the quick-view panel for now.
+  const { goToRecords, openOpportunity } = useOpportunityOpening(initialPartyId, viewMode, setDetailId);
   const openCreate = () => openDialog({ kind: 'form' });
   const openStage = (target: Target) => openDialog({ kind: 'stage', target });
   const openOwner = (target: Target) => openDialog({ kind: 'owner', target });
@@ -584,159 +671,158 @@ const RecordsPageContent = ({
     return <StatusText status="error">{t(`${K}.errors.invalidFilter`)}</StatusText>;
   }
 
+  const dialogHost = (
+    <PipelineDialogHost
+      activeEmployees={activeEmployees}
+      busy={busy}
+      customerLabel={customerLabel}
+      customers={customers}
+      dialog={liveDialog(dialog, items)}
+      employees={employees}
+      error={dialogError}
+      onArchiveSubmit={(opportunity) => {
+        runCommand({ _tag: 'ArchiveOpportunity', id: opportunity.id }, () => {
+          closeDialog();
+          setSelection({});
+          toaster.create({ title: t(`${K}.toasts.archived`), type: 'success' });
+        });
+      }}
+      onBulkByTagDone={finishBulkByTag}
+      onBulkTagsDone={finishBulkTags}
+      onClose={closeDialog}
+      onFormAutosave={autosave}
+      onFormSubmit={submitForm}
+      onOwnerSubmit={submitOwner}
+      onStageSubmit={submitStage}
+      products={products}
+      revision={revision}
+    />
+  );
+
   return (
     <>
       <UltramodernRouteHead />
       <Toaster />
-      <PageHeader
-        actions={
-          <>
-            <DetailViewModeToggle
-              groupLabel={t('sales-pipeline.detailView.group')}
-              onChange={setViewMode}
-              pageLabel={t('sales-pipeline.detailView.page')}
-              panelLabel={t('sales-pipeline.detailView.panel')}
-              value={viewMode}
-            />
-            {canWrite && (
-              <>
-                <Button
-                  disabled={response === undefined}
-                  onClick={() => openDialog({ kind: 'bulkByTag' })}
-                  size="sm"
-                  theme="outlined"
-                  variant="secondary"
-                >
-                  {t(`${K}.bulkByTag.title`)}
-                </Button>
-                <Button
-                  disabled={response === undefined}
-                  icon="icon-[mdi--plus]"
-                  onClick={openCreate}
-                  size="sm"
-                  variant="primary"
-                >
-                  {t(`${K}.newOpportunity`)}
-                </Button>
-              </>
-            )}
-          </>
-        }
-        description={t(`${K}.description`)}
-        title={t(`${K}.title`)}
-      />
-
-      <PipelineStats indicators={response?.indicators} />
-
-      <PipelineFilters
-        customer={customerFilter}
-        customers={customers}
-        employees={activeEmployees}
-        onCustomer={setCustomerFilter}
-        onOwner={setOwnerFilter}
-        onSearch={setSearch}
-        onStage={setStageFilter}
-        onTag={setTagFilter}
-        onUnassignedOnly={setUnassignedOnly}
-        owner={ownerFilter}
-        search={search}
-        stage={stageFilter}
-        tag={tagFilter}
-        unassignedOnly={unassignedOnly}
-      />
-      {tagState?.status === 'error' && (
-        <StatusText showIcon status="error">
-          {t(`${K}.filters.tagFailed`)}
-        </StatusText>
-      )}
-
-      {canWrite && (
-        <PipelineBulkBar
-          onClear={() => setSelection({})}
-          onOwner={() => openOwner({ ids: selectedIds, mode: 'bulk' })}
-          onStage={() =>
-            openStage({
-              ids: selectedIds,
-              mode: 'bulk',
-              stages: rows.flatMap((row) => (selection[row.id] === true ? [row.stage] : [])),
-            })
-          }
-          onTags={() => openDialog({ ids: selectedIds, kind: 'tags' })}
-          selectedCount={selectedIds.length}
-          tagsShown={tagsBySubject !== null}
+      {viewMode === 'page' && detailId !== undefined ? (
+        <PipelineDetailPage
+          canWrite={canWrite}
+          context={context}
+          hasResponse={response !== undefined}
+          items={items}
+          loadError={loadError}
+          lookups={lookups}
+          onBack={() => goToRecords()}
+          onEdit={(opportunity) => openDialog({ kind: 'form', opportunity })}
+          onStage={(opportunity) => openStage({ mode: 'row', opportunity })}
+          pending={pending}
+          requestedId={detailId}
+          revision={revision}
         />
+      ) : (
+        <>
+          <PageHeader
+            actions={
+              <RecordsHeaderActions
+                canWrite={canWrite}
+                loading={response === undefined}
+                onBulkByTag={() => openDialog({ kind: 'bulkByTag' })}
+                onCreate={openCreate}
+                onViewMode={setViewMode}
+                viewMode={viewMode}
+              />
+            }
+            description={t(`${K}.description`)}
+            title={t(`${K}.title`)}
+          />
+
+          <PipelineStats indicators={response?.indicators} />
+
+          <PipelineFilters
+            customer={customerFilter}
+            customers={customers}
+            employees={activeEmployees}
+            onCustomer={setCustomerFilter}
+            onOwner={setOwnerFilter}
+            onSearch={setSearch}
+            onStage={setStageFilter}
+            onTag={setTagFilter}
+            onUnassignedOnly={setUnassignedOnly}
+            owner={ownerFilter}
+            search={search}
+            stage={stageFilter}
+            tag={tagFilter}
+            unassignedOnly={unassignedOnly}
+          />
+          {tagState?.status === 'error' && (
+            <StatusText showIcon status="error">
+              {t(`${K}.filters.tagFailed`)}
+            </StatusText>
+          )}
+
+          {canWrite && (
+            <PipelineBulkBar
+              onClear={() => setSelection({})}
+              onOwner={() => openOwner({ ids: selectedIds, mode: 'bulk' })}
+              onStage={() =>
+                openStage({
+                  ids: selectedIds,
+                  mode: 'bulk',
+                  stages: rows.flatMap((row) => (selection[row.id] === true ? [row.stage] : [])),
+                })
+              }
+              onTags={() => openDialog({ ids: selectedIds, kind: 'tags' })}
+              selectedCount={selectedIds.length}
+              tagsShown={tagsBySubject !== null}
+            />
+          )}
+
+          <PipelineTable
+            canWrite={canWrite}
+            conflictingFilters={ownerFilter !== '' && unassignedOnly}
+            context={context}
+            filtersActive={filtersActive}
+            hasResponse={response !== undefined}
+            loadError={loadError}
+            loading={(response === undefined && loadError === undefined) || pending || tagState?.status === 'loading'}
+            lookups={lookups}
+            onArchive={(opportunity) => openDialog({ kind: 'archive', opportunity })}
+            onClearFilters={clearFilters}
+            onCreate={openCreate}
+            onEdit={(opportunity) => openDialog({ kind: 'form', opportunity })}
+            onOpen={openOpportunity}
+            onOwner={(opportunity) => openOwner({ mode: 'row', opportunity })}
+            onRetry={reload}
+            onSelection={setSelection}
+            onStage={(opportunity) => openStage({ mode: 'row', opportunity })}
+            revision={revision}
+            rows={rows}
+            selection={selection}
+          />
+
+          <PipelineDetailPanel
+            canWrite={canWrite}
+            context={context}
+            hasResponse={response !== undefined}
+            items={items}
+            loadError={loadError}
+            lookups={lookups}
+            onClose={() => setDetailId(undefined)}
+            onEdit={(opportunity) => {
+              setDetailId(undefined);
+              openDialog({ kind: 'form', opportunity });
+            }}
+            onStage={(opportunity) => {
+              setDetailId(undefined);
+              openStage({ mode: 'row', opportunity });
+            }}
+            peek
+            pending={pending}
+            requestedId={detailId}
+            revision={revision}
+          />
+        </>
       )}
-
-      <PipelineTable
-        canWrite={canWrite}
-        conflictingFilters={ownerFilter !== '' && unassignedOnly}
-        context={context}
-        filtersActive={filtersActive}
-        hasResponse={response !== undefined}
-        loadError={loadError}
-        loading={(response === undefined && loadError === undefined) || pending || tagState?.status === 'loading'}
-        lookups={lookups}
-        onArchive={(opportunity) => openDialog({ kind: 'archive', opportunity })}
-        onClearFilters={clearFilters}
-        onCreate={openCreate}
-        onEdit={(opportunity) => openDialog({ kind: 'form', opportunity })}
-        onOpen={(opportunity) => setDetailId(opportunity.id)}
-        onOwner={(opportunity) => openOwner({ mode: 'row', opportunity })}
-        onRetry={reload}
-        onSelection={setSelection}
-        onStage={(opportunity) => openStage({ mode: 'row', opportunity })}
-        revision={revision}
-        rows={rows}
-        selection={selection}
-      />
-
-      <PipelineDetailPanel
-        canWrite={canWrite}
-        context={context}
-        hasResponse={response !== undefined}
-        items={items}
-        loadError={loadError}
-        lookups={lookups}
-        onClose={() => setDetailId(undefined)}
-        onEdit={(opportunity) => {
-          setDetailId(undefined);
-          openDialog({ kind: 'form', opportunity });
-        }}
-        onStage={(opportunity) => {
-          setDetailId(undefined);
-          openStage({ mode: 'row', opportunity });
-        }}
-        peek
-        pending={pending}
-        requestedId={detailId}
-        revision={revision}
-      />
-
-      <PipelineDialogHost
-        activeEmployees={activeEmployees}
-        busy={busy}
-        customerLabel={customerLabel}
-        customers={customers}
-        dialog={liveDialog(dialog, items)}
-        employees={employees}
-        error={dialogError}
-        onArchiveSubmit={(opportunity) => {
-          runCommand({ _tag: 'ArchiveOpportunity', id: opportunity.id }, () => {
-            closeDialog();
-            setSelection({});
-            toaster.create({ title: t(`${K}.toasts.archived`), type: 'success' });
-          });
-        }}
-        onBulkByTagDone={finishBulkByTag}
-        onBulkTagsDone={finishBulkTags}
-        onClose={closeDialog}
-        onFormAutosave={autosave}
-        onFormSubmit={submitForm}
-        onOwnerSubmit={submitOwner}
-        onStageSubmit={submitStage}
-        products={products}
-        revision={revision}
-      />
+      {dialogHost}
     </>
   );
 };

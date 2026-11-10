@@ -8,6 +8,7 @@ const lanePath = '../../src/routes/[lang]/prodej/prilezitosti/';
 const pageSource = readSource(`${lanePath}page.tsx`);
 const panelSource = readSource(`${lanePath}pipeline-detail-panel.tsx`);
 const contentSource = readSource(`${lanePath}pipeline-detail-content.tsx`);
+const fullPageSource = readSource(`${lanePath}pipeline-detail-page.tsx`);
 
 /** A locale file: nested objects whose leaves are the translated strings. */
 interface LocaleTree {
@@ -63,7 +64,7 @@ describe('opportunity detail view on the records list', () => {
   it('resolves every literal sales-pipeline key used by the lane in both locales', () => {
     const keyLiteral = /'(?<key>sales-pipeline\.[A-Za-z0-9_.]+)'/gu;
     const usedKeys = new Set(
-      [pageSource, panelSource, contentSource].flatMap((source) =>
+      [pageSource, panelSource, contentSource, fullPageSource].flatMap((source) =>
         [...source.matchAll(keyLiteral)].flatMap((match) =>
           match.groups?.key === undefined ? [] : [match.groups.key],
         ),
@@ -76,8 +77,8 @@ describe('opportunity detail view on the records list', () => {
     }
   });
 
-  it('keeps Czech UI text out of the code of the panel, the shared content and the list', () => {
-    for (const source of [panelSource, contentSource, pageSource]) {
+  it('keeps Czech UI text out of the code of the panel, the full page, the shared content and the list', () => {
+    for (const source of [panelSource, fullPageSource, contentSource, pageSource]) {
       const offending = codeLines(source).filter((line) => czechDiacritics.test(line));
       expect(offending).toEqual([]);
     }

@@ -1,6 +1,8 @@
 {
   "sales-pipeline": {
     "detail": {
+      "backToList": "Zpět na příležitosti",
+      "navigationFailed": "Stránku příležitosti se nepodařilo otevřít. Zkuste to znovu.",
       "missing": "Požadovaná příležitost není v tomto výběru dostupná.",
       "title": "Obchodní případ",
       "relatedRecords": "Navazující záznamy",

@@ -1,6 +1,8 @@
 {
   "sales-pipeline": {
     "detail": {
+      "backToList": "Back to opportunities",
+      "navigationFailed": "The opportunity page could not be opened. Try again.",
       "missing": "The requested opportunity is not available in this selection.",
       "title": "Business case",
       "relatedRecords": "Related records",
