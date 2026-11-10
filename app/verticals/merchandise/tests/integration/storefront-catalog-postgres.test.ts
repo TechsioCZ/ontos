@@ -574,8 +574,9 @@ const assertOwnSearchScope = (db: MerchandiseFixture['db'], scope: StoreScope, o
       expect(yield* transaction.select({ id: products.id }).from(products)).toEqual([{ id: 'p1' }]);
       expect(staffProductIds(yield* runtimeSearch(transaction, scope, 'SKU-legacy'))).toEqual(['p1']);
       expect((yield* runtimeSearch(transaction, scope, 'SKU-disabled')).total).toBe(0);
-      const foreign = yield* runtimeSearch(transaction, otherScope, 'SKU-legacy').pipe(Effect.flip);
-      expect(foreign.reason).toBe('The storefront catalog is not initialized');
+      // Row security hides the other company's head and products alike: its catalog reads as empty, never as data.
+      const foreign = yield* runtimeSearch(transaction, otherScope, 'SKU-legacy');
+      expect({ products: foreign.products, total: foreign.total }).toEqual({ products: [], total: 0 });
     }),
   );
 
@@ -700,15 +701,25 @@ it.live('pages results while keeping the total', () =>
   ),
 );
 
-it.live('fails closed when the company has no catalog head', () =>
+it.live('answers an empty catalog at revision 0 when the company has no catalog head', () =>
   onCatalog(({ db, scope }) =>
     Effect.gen(function* assertMissingHead() {
-      const failure = yield* storefrontProducts(
+      const page = yield* storefrontProducts(
         db,
         { ...scope, legalEntityId: '00000000-0000-4000-8000-000000000001' },
         { query: { fields: 'card' } },
-      ).pipe(Effect.flip);
-      expect(failure.reason).toBe('The storefront catalog is not initialized');
+      );
+      expect({ head: page.head, products: page.products, total: page.total }).toEqual({
+        head: { homepageFeaturedProductIds: [], revision: 0 },
+        products: [],
+        total: 0,
+      });
+      const searched = yield* storefrontProducts(
+        db,
+        { ...scope, legalEntityId: '00000000-0000-4000-8000-000000000001' },
+        { query: { fields: 'card', q: 'sroub' } },
+      );
+      expect(searched.total).toBe(0);
     }),
   ),
 );

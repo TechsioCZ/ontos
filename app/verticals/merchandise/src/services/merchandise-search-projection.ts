@@ -196,6 +196,17 @@ const currentRowsVisible = (
   scope: { readonly legalEntityId: string; readonly tenantId: string },
 ) => predicate === undefined || rows.every((row) => searchRecordVisible(predicate, row, scope));
 
+/** Whether a company's catalog head is absent (nothing published yet), mid-import, or published. */
+const headPublication = (head: { readonly bootstrapCheckpoint: unknown } | undefined) => {
+  if (head === undefined) {
+    return 'absent' as const;
+  }
+  return head.bootstrapCheckpoint === null ||
+    Schema.is(Schema.Struct({ status: Schema.Literal('VERIFIED') }))(head.bootstrapCheckpoint)
+    ? ('published' as const)
+    : ('unverified' as const);
+};
+
 const readCompanySearch = Effect.fn('Merchandise.readCompanySearch')(function* readCompany(
   db: CoreSearchSnapshotReadExecutor,
   tenantId: string,
@@ -211,12 +222,10 @@ const readCompanySearch = Effect.fn('Merchandise.readCompanySearch')(function* r
     .from(catalogHeads)
     .where(and(eq(catalogHeads.tenantId, tenantId), eq(catalogHeads.legalEntityId, legalEntityId)))
     .limit(1);
-  if (
-    head === undefined ||
-    (head.bootstrapCheckpoint !== null &&
-      !Schema.is(Schema.Struct({ status: Schema.Literal('VERIFIED') }))(head.bootstrapCheckpoint))
-  ) {
-    if (publication === 'current') {
+  const published = headPublication(head);
+  if (published !== 'published') {
+    // A company without a head row has no records yet; only an unfinished import is unavailable to a live search.
+    if (publication === 'current' && published === 'unverified') {
       return yield* unavailable();
     }
     // Empty replacement snapshots retire any formerly published records without indexing partial import batches.

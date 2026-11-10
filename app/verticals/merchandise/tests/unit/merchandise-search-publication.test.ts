@@ -438,7 +438,7 @@ it.effect(
     ),
 );
 
-it.effect('current rematch fails closed when publication is missing or unfinished after a Core shortlist', () =>
+it.effect('current rematch fails closed on an unfinished import and answers empty for a company without a head', () =>
   Effect.scoped(
     Effect.gen(function* test() {
       const hit = yield* Schema.decodeUnknownEffect(CoreSearchProjectionHitSchema)({
@@ -464,8 +464,14 @@ it.effect('current rematch fails closed when publication is missing or unfinishe
             loadCurrentMerchandiseSearch(source.db, scope, 'product', ids, { groups: [] }),
           ).pipe(Effect.provideService(CoreSearchQueryRuntime, { search: () => Effect.succeed([hit]) })),
         );
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(source.queries).toHaveLength(2);
+        if (state.missing) {
+          // No head row: the company has published nothing, so a stale Core hit matches no current row.
+          expect(Exit.isSuccess(exit) ? exit.value : exit).toEqual([]);
+          expect(source.queries.filter((sql) => sql.includes(productSql))).toEqual([]);
+        } else {
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(source.queries).toHaveLength(2);
+        }
       }
     }),
   ),
@@ -968,7 +974,7 @@ it.layer(NodeCrypto.layer)('Merchandise governed search publication fence', (sui
       }),
   );
 
-  suite.effect('both real providers refuse missing/importing publication before consulting the index', () =>
+  suite.effect('both real providers refuse an unfinished import and answer a company without a head empty', () =>
     Effect.gen(function* publicationFence() {
       for (const resource of ['product', 'order'] as const) {
         const hit = yield* providerHit(resource, `${resource}-1`, 'Stale title');
@@ -986,7 +992,11 @@ it.layer(NodeCrypto.layer)('Merchandise governed search publication fence', (sui
             providerOwnerRows,
             state,
           );
-          if (state.missing || (state.checkpoint !== null && state.checkpoint.status !== 'VERIFIED')) {
+          if (state.missing) {
+            // The index is consulted, but the current rematch reads no owner row of a company without a head.
+            expect(Exit.isSuccess(result.exit) ? result.exit.value : result.exit).toEqual([]);
+            expect(result.calls).toEqual(['authorization', 'head', 'index', 'head']);
+          } else if (state.checkpoint !== null && state.checkpoint.status !== 'VERIFIED') {
             expect(Exit.isFailure(result.exit)).toBe(true);
             expect(result.calls).toEqual(['authorization', 'head']);
             expect(result.snapshot.evidenceWrites).toBe(0);

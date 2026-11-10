@@ -85,7 +85,8 @@ import {
   storefrontCustomerOrders,
   storefrontProducts,
 } from './merchandise-queries.ts';
-import { loadHead, loadWorkingSet, persistChange } from './merchandise-store.ts';
+import { PLAYGROUND_COMPANY, PLAYGROUND_TENANT } from '../../shared/domain/playground-catalog-bootstrap.ts';
+import { EMPTY_CATALOG_HEAD, loadHead, loadWorkingSet, lockHeadForWrite, persistChange } from './merchandise-store.ts';
 import type { StoreScope, WorkingSet, WorkingSetRequest } from './merchandise-store.ts';
 import { realVariantsOf, stockLevelsOf, stockOnHandOf, toProductRecord, variantStockOf } from './stock-levels.ts';
 import { normalizeSearchText } from './storefront-catalog.ts';
@@ -1954,6 +1955,10 @@ export const prepareMerchandiseCommand = Effect.fn('Merchandise.prepareCommandRe
 // A gallery change re-validates against the product's current gallery, so uploads never wait for a revision; a
 // `Set` saves a whole gallery draft and is refused when the catalog changed since the draft was read.
 // Market commands never touch catalog rows and guard their own market revision.
+/** The bootstrap playground: its import claims the head row and must find the company untouched. */
+const isPlaygroundCatalog = (store: StoreScope) =>
+  store.tenantId === PLAYGROUND_TENANT && store.legalEntityId === PLAYGROUND_COMPANY;
+
 const ownRevisionGuard = (command: Exclude<MerchandiseCommand, AiCommand>): boolean =>
   isOrderScopedEdit(command) ||
   isMarketCommand(command) ||
@@ -1985,8 +1990,12 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
     }
     const store: StoreScope = { legalEntityId, tenantId: scope.tenantId };
     const lockedHead = Effect.fn('Merchandise.lockedHead')(function* lockedHead(aiChanges: boolean) {
-      const head = yield* loadHead(transaction, store, { aiChanges, lock: true }).pipe(Effect.mapError(unavailable));
-      return head ?? (yield* unavailable());
+      if (isPlaygroundCatalog(store)) {
+        // The playground's import claims its head itself; an ordinary write never creates it first.
+        const head = yield* loadHead(transaction, store, { aiChanges, lock: true }).pipe(Effect.mapError(unavailable));
+        return head ?? (yield* unavailable());
+      }
+      return yield* lockHeadForWrite(transaction, store, { aiChanges }).pipe(Effect.mapError(unavailable));
     });
     const persist = Effect.fn('Merchandise.persist')(function* persist(
       working: WorkingSet,
@@ -2175,10 +2184,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
           ? undefined
           : yield* storefrontProducts(transaction, store, { market: market.scope, query: catalogQuery });
       // Product pages carry their head in the same statement; category/order-only reads still need their revision.
-      const head = page?.head ?? (yield* loadHead(transaction, store));
-      if (head === undefined) {
-        return yield* unavailable();
-      }
+      const head = page?.head ?? (yield* loadHead(transaction, store)) ?? EMPTY_CATALOG_HEAD;
       const { homepageFeaturedProductIds: featuredIds, revision } = head;
       const tree =
         catalogQuery === undefined ||
@@ -2359,10 +2365,8 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       if (request.agentHistory !== undefined) {
         headOptions.history = request.agentHistory;
       }
-      const head = yield* loadHead(transaction, store, headOptions).pipe(Effect.mapError(unavailable));
-      if (head === undefined) {
-        return yield* unavailable();
-      }
+      const head =
+        (yield* loadHead(transaction, store, headOptions).pipe(Effect.mapError(unavailable))) ?? EMPTY_CATALOG_HEAD;
       if (request.agentHistory !== undefined) {
         const response: Mutable<RecordsResponse> = {
           actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },

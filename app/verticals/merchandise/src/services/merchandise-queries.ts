@@ -48,6 +48,7 @@ import {
 import {
   decodeMovementRow,
   decodeOrderDocument,
+  EMPTY_CATALOG_HEAD,
   hydrateProducts,
   loadHead,
   MerchandiseStoreFailure,
@@ -188,13 +189,17 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
   // relation is aggregated independently, avoiding a variants × tiers join and tunnel round trips.
   const counted = db
     .select({
+      // A company without a head row is an empty catalog at revision 0; only an unverified import answers null.
       head:
         input.catalogHead === true
-          ? sql<StorefrontHeadEncoded | null>`(select json_build_object(
+          ? sql<StorefrontHeadEncoded | null>`coalesce((select json_build_object(
             'revision', ${catalogHeads.revision}, 'homepageFeaturedProductIds', ${featuredProductIdsOf(scope)})
           from ${catalogHeads} where ${whereScope(catalogHeads, scope)}
             and (${catalogHeads.bootstrapCheckpoint} is null
-              or ${catalogHeads.bootstrapCheckpoint}->>'status' = 'VERIFIED'))`.as('head')
+              or ${catalogHeads.bootstrapCheckpoint}->>'status' = 'VERIFIED')),
+            case when not exists (select 1 from ${catalogHeads} where ${whereScope(catalogHeads, scope)})
+              then json_build_object('revision', ${EMPTY_CATALOG_HEAD.revision}::int,
+                'homepageFeaturedProductIds', ${featuredProductIdsOf(scope)}) end)`.as('head')
           : sql<StorefrontHeadEncoded | null>`null::json`.as('head'),
       total: sql<number>`count(*)::int`.as('total'),
     })
@@ -706,24 +711,22 @@ const currentProductInclusion = Effect.fn('MerchandiseQueries.currentProductIncl
     filters: readonly (SQL | undefined)[],
     words: readonly string[],
   ) {
-    const [head] = yield* query(
+    const [stored] = yield* query(
       db
-        .select({ revision: catalogHeads.revision })
+        .select({ bootstrapCheckpoint: catalogHeads.bootstrapCheckpoint, revision: catalogHeads.revision })
         .from(catalogHeads)
-        .where(
-          and(
-            whereScope(catalogHeads, scope),
-            or(
-              sql`${catalogHeads.bootstrapCheckpoint} is null`,
-              sql`${catalogHeads.bootstrapCheckpoint}->>'status' = 'VERIFIED'`,
-            ),
-          ),
-        )
+        .where(whereScope(catalogHeads, scope))
         .limit(1),
     );
-    if (head === undefined) {
+    // An absent head is an empty catalog at revision 0; a head row whose import is unverified is not published.
+    if (
+      stored !== undefined &&
+      stored.bootstrapCheckpoint !== null &&
+      !Schema.is(Schema.Struct({ status: Schema.Literal('VERIFIED') }))(stored.bootstrapCheckpoint)
+    ) {
       return yield* new MerchandiseStoreFailure({ reason: 'The storefront catalog is not initialized' });
     }
+    const head = stored ?? EMPTY_CATALOG_HEAD;
     let after = Option.none<number>();
     let done = false;
     const ids: ProductRecord['id'][] = [];
@@ -1056,8 +1059,8 @@ const verifySearchRevision = Effect.fn('MerchandiseQueries.verifySearchRevision'
     return yield* Effect.void;
   }
   // Additional bounded reads must not release evidence mixed across canonical writer revisions.
-  const currentHead = yield* loadHead(db, scope);
-  if (currentHead?.revision !== head.revision) {
+  const currentHead = (yield* loadHead(db, scope)) ?? EMPTY_CATALOG_HEAD;
+  if (currentHead.revision !== head.revision) {
     return yield* new MerchandiseStoreFailure({ reason: 'The catalog changed during the search read' });
   }
   return yield* Effect.void;
