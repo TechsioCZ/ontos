@@ -1566,6 +1566,58 @@ const currentCatalogBuildIdentity = Effect.fn('WholeCandidate.currentCatalogBuil
   },
 );
 
+/**
+ * The Shell's SOURCE sharing policy when no packaged browser pair is available: the Shell hosts every governed
+ * singleton, so its observation lists each one with the version the Shell's own dependencies resolve to.
+ */
+const observeShellSourceFederation = Effect.fn('WholeCandidate.shellSourceFederation')(function* shellSource() {
+  const program = `import { createRequire } from 'node:module';
+    import { readFileSync } from 'node:fs';
+    import { Schema } from 'effect';
+    import { createSharedRuntimeConfig } from './module-federation.shared.ts';
+    const require = createRequire(process.cwd() + '/apps/shell-super-app/package.json');
+    const version = (name) => Schema.decodeUnknownSync(Schema.Struct({ version: Schema.NonEmptyString }))(
+      require(name + '/package.json')).version;
+    const { dependencies } = Schema.decodeUnknownSync(Schema.Struct({
+      dependencies: Schema.Record(Schema.String, Schema.NonEmptyString)
+    }))(require('./package.json'));
+    const { shell } = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Struct({
+      shell: Schema.Struct({ moduleFederation: Schema.Struct({ name: Schema.NonEmptyString }) })
+    })))(readFileSync('./topology/reference-topology.json', 'utf8'));
+    const sharing = createSharedRuntimeConfig({
+      '@modern-js/plugin-i18n/runtime': version('@modern-js/plugin-i18n'),
+      '@modern-js/runtime': version('@modern-js/runtime'),
+      '@tanstack/react-router': dependencies['@tanstack/react-router'],
+      react: version('react'), 'react-dom': version('react-dom')
+    });
+    process.stdout.write(JSON.stringify({ name: shell.moduleFederation.name, exposes: [],
+      shared: Object.entries(sharing).map(([name, { requiredVersion, singleton }]) => ({ name, requiredVersion, singleton }))
+    }));`;
+  const child = yield* ChildProcess.make(process.execPath, ['--experimental-strip-types', '--input-type=module', '-'], {
+    cwd: appRoot,
+    env: {
+      APP_ENV_PATH: '/dev/null',
+      HOME: yield* Config.String('HOME'),
+      PATH: yield* Config.String('PATH'),
+      TMPDIR: yield* Config.String('TMPDIR').pipe(Config.withDefault('/tmp')),
+    },
+    extendEnv: false,
+    stderr: 'pipe',
+    stdin: Stream.make(new TextEncoder().encode(program)),
+    stdout: 'pipe',
+  });
+  const [document, code, diagnostics] = yield* Effect.all(
+    [
+      child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+      child.exitCode,
+      child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+    ],
+    { concurrency: 3 },
+  );
+  expect({ code, diagnostics: code === 0 ? '' : diagnostics.slice(-4000) }).toEqual({ code: 0, diagnostics: '' });
+  return document;
+});
+
 const deriveWholeCandidateSnapshot = Effect.fn('WholeCandidate.deriveSnapshot')(function* deriveSnapshot(
   catalogContractDocument: string,
 ) {
@@ -1579,13 +1631,6 @@ const deriveWholeCandidateSnapshot = Effect.fn('WholeCandidate.deriveSnapshot')(
     catalogContractDocument,
   );
   const fs = yield* FileSystem.FileSystem;
-  const topology = yield* Schema.decodeUnknownEffect(
-    Schema.fromJsonString(
-      Schema.Struct({
-        shell: Schema.Struct({ moduleFederation: Schema.Struct({ name: Schema.NonEmptyString }) }),
-      }),
-    ),
-  )(yield* fs.readFileString(`${appRoot}topology/reference-topology.json`));
   const boundaries = new Set(catalogContract.manifest.publicSurface.components.map(({ mfBoundaryId }) => mfBoundaryId));
   const [catalogBoundary] = boundaries;
   if (boundaries.size !== 1 || catalogBoundary === undefined) {
@@ -1609,13 +1654,8 @@ const deriveWholeCandidateSnapshot = Effect.fn('WholeCandidate.deriveSnapshot')(
           name: catalogBoundary,
           shared: [],
         }),
-    shell: observedBuildPair
-      ? fs.readFileString(shellManifestPath)
-      : Schema.encodeEffect(Schema.fromJsonString(sourceFederationSchema))({
-          exposes: [],
-          name: topology.shell.moduleFederation.name,
-          shared: [],
-        }),
+    // The Shell hosts every governed singleton; its SOURCE sharing policy is observed, never left empty.
+    shell: observedBuildPair ? fs.readFileString(shellManifestPath) : observeShellSourceFederation(),
   });
   // Pricing is an actual API-only owner with no MF boundary or public components; its observation is server-only.
   const documents = new Map<string, string>([
@@ -1717,11 +1757,16 @@ const deriveWholeCandidateSnapshot = Effect.fn('WholeCandidate.deriveSnapshot')(
       stdout: 'pipe',
     },
   );
-  const [code, output] = yield* Effect.all(
-    [child.exitCode, child.stdout.pipe(Stream.decodeText(), Stream.mkString), Stream.runDrain(child.stderr)],
+  const [code, output, diagnostics] = yield* Effect.all(
+    [
+      child.exitCode,
+      child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+      child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+    ],
     { concurrency: 3 },
   );
-  expect(code).toBe(0);
+  // The derivation child prints no credentials; its stderr is the only account of a refused composition.
+  expect({ code, diagnostics: code === 0 ? '' : diagnostics.slice(-4000) }).toEqual({ code: 0, diagnostics: '' });
   const snapshot = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(
     output,
   );
