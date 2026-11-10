@@ -570,6 +570,56 @@ const attachedEffectCountedElsewhere = Effect.fn(
   return attribution === 'ATTRIBUTED_ELSEWHERE';
 });
 
+/**
+ * Closing the case of a held return that the funds reader counts as a prior return of this Payment claims
+ * its source economic effect across the trusted scope (#1151 "count once"). The same return reported
+ * against a collection of another Payment can then never be counted there too: when another Payment holds
+ * the claim (also one committing concurrently), this Payment no longer counts it (`true`: refuse).
+ */
+const closedReturnCountedElsewhere = Effect.fn(
+  'RecordPaymentReconciliationDecisionAction.closedReturnCountedElsewhere',
+)(function* closedReturnCountedElsewhere(
+  context: DecisionContext,
+  current: Option.Option<PaymentAggregateRecord>,
+  step: AppliedStep,
+  observationId: Option.Option<string>,
+  provenance: PaymentExecutionProvenance,
+) {
+  if (step.decisionKind !== 'CLOSE_CASE' || Option.isNone(observationId)) {
+    return false;
+  }
+  const observation = Option.getOrUndefined(yield* findObservation(context, observationId.value));
+  if (
+    observation?.economicEffectKey === undefined ||
+    observation.operationId === undefined ||
+    observation.paymentId === undefined ||
+    !(yield* priorReturnCountedOf(context, observation, current))
+  ) {
+    return false;
+  }
+  const attribution = yield* context.services.evidence.attributeEconomicEffect({
+    economicEffectKey: observation.economicEffectKey,
+    factKind: observation.factKind,
+    operationId: observation.operationId,
+    paymentId: observation.paymentId,
+    provenance,
+    source: {
+      accountRef: observation.accountRef,
+      environment: observation.environment,
+      sourceKind: observation.sourceKind,
+      sourceSystem: observation.sourceSystem,
+    },
+  });
+  yield* recordPaymentLookup(context, {
+    paymentId: observation.paymentId,
+    query: 'economic-effect-attribution',
+    resultCount: 1,
+  });
+  // An operation of this Payment may already stand for the effect (its own REFUND): the reader still
+  // counts the return once. Only another Payment's claim stops this Payment from counting it.
+  return attribution === 'ATTRIBUTED_ELSEWHERE' && !(yield* priorReturnCountedOf(context, observation, current));
+});
+
 interface AppliedOutcome {
   readonly before: PaymentOperationRecord;
   readonly coverageRevision: number;
@@ -690,6 +740,19 @@ export const handleRecordPaymentReconciliationDecision = Effect.fn('RecordPaymen
       return yield* paymentEvidenceRejected(
         'payment_reconciliation_evidence_not_qualified',
         'The economic effect already counts toward another Payment operation',
+      );
+    }
+    const returnCountedElsewhere = yield* closedReturnCountedElsewhere(
+      context,
+      current,
+      step,
+      closingCaseObservationId(payload.decision, locked),
+      provenance,
+    );
+    if (returnCountedElsewhere) {
+      return yield* paymentEvidenceRejected(
+        'payment_reconciliation_obligation_unresolved',
+        'The held return already counts for another Payment',
       );
     }
     const decidedAt = yield* DateTime.now;
