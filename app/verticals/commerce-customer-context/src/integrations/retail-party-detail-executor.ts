@@ -47,6 +47,7 @@ export const makeRetailPartyDetailExecutor = (
       const issued = yield* acquire(
         {
           audience: 'party-registry',
+          callingAppId: 'commerce-customer-context',
           legalEntityScope: 'subject',
           requestCorrelation,
           subject: { _tag: 'Assertion', scope: authority.scope },

@@ -27,6 +27,7 @@ export const marketBootstrapMarketPortFromPublishedClient = (
   const admitted = acquireDelegatedGatewayContext(
     {
       audience: 'commerce-market-catalog',
+      callingAppId: 'commerce-customer-context',
       legalEntityScope: 'subject',
       requestCorrelation: scope.correlationId,
       subject: { _tag: 'Assertion', scope },

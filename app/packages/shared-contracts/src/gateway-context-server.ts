@@ -1,11 +1,15 @@
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
+import {
+  MODULE_CREDENTIAL_VARIABLE,
+  moduleCredentialConfigProvider,
+} from '@app/core-runtime/auth/hosted-module-credentials';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import {
   readVerifiedGatewayCompositionRevision,
   readVerifiedGatewayScopeAssertion,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { Crypto } from 'effect';
-import { Config, Effect, Match, Redacted, Schema } from 'effect';
+import { Config, ConfigProvider, Effect, Match, Redacted, Schema } from 'effect';
 
 import { issueDelegatedGatewayContext } from './gateway-context-api-key.ts';
 import type { GatewayDelegatedContextRequest } from './gateway-context.ts';
@@ -42,6 +46,11 @@ export type GatewayDelegationSubject = typeof GatewayDelegationSubjectSchema.Enc
 
 export interface GatewayDelegationRequest {
   readonly audience: string;
+  /**
+   * The module making the call. Its own module credential authenticates the call: in a process that hosts several
+   * owners, the one the host handed this module, never another owner's and never the shared environment's.
+   */
+  readonly callingAppId: string;
   readonly legalEntityScope: 'subject' | 'tenant';
   readonly requestCorrelation: string;
   readonly subject: GatewayDelegationSubject;
@@ -99,27 +108,38 @@ export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acqui
   request: GatewayDelegationRequest,
   crypto: Crypto.Crypto,
 ) {
-  const configuration = yield* Config.all({
-    apiKey: Config.Redacted('ONTOS_GATEWAY_MODULE_API_KEY'),
-    baseUrl: Config.schema(
-      Schema.URLFromString.check(
-        Schema.makeFilter((url) =>
-          (url.protocol === 'http:' || url.protocol === 'https:') &&
-          url.username === '' &&
-          url.password === '' &&
-          url.hash === ''
-            ? undefined
-            : 'Gateway transport requires an HTTP URL without credentials or fragment',
+  // Every delegated call reads its caller's own key through the per-owner view, whichever runtime, worker or
+  // background fiber it runs in; nothing else in a process reads a module credential.
+  const owner = moduleCredentialConfigProvider(yield* ConfigProvider.ConfigProvider, request.callingAppId);
+  const [configuration, source] = yield* Effect.all(
+    [
+      Config.all({
+        apiKey: Config.Redacted(MODULE_CREDENTIAL_VARIABLE),
+        baseUrl: Config.schema(
+          Schema.URLFromString.check(
+            Schema.makeFilter((url) =>
+              (url.protocol === 'http:' || url.protocol === 'https:') &&
+              url.username === '' &&
+              url.password === '' &&
+              url.hash === ''
+                ? undefined
+                : 'Gateway transport requires an HTTP URL without credentials or fragment',
+            ),
+          ),
+          'ONTOS_SHELL_GATEWAY_BASE_URL',
         ),
-      ),
-      'ONTOS_SHELL_GATEWAY_BASE_URL',
-    ),
-  }).pipe(
-    Effect.mapError(
-      (cause) => new GatewayDelegationSourceError({ cause, reason: 'Gateway delegation transport is unavailable' }),
-    ),
+      })
+        .parse(owner)
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new GatewayDelegationSourceError({ cause, reason: 'Gateway delegation transport is unavailable' }),
+          ),
+        ),
+      subjectWireOf(request.subject),
+    ],
+    { concurrency: 1 },
   );
-  const source = yield* subjectWireOf(request.subject);
   const exchangeId = yield* crypto
     .randomUUIDv4()
     .pipe(

@@ -1,11 +1,9 @@
 import { withWorkerRuntimeBinding } from './worker-runtime-binding.ts';
-import { moduleCredentialConfigProvider } from '../auth/hosted-module-credentials.ts';
 import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
 import {
   Array as Arr,
   Cause,
   Config,
-  ConfigProvider,
   Context,
   DateTime,
   Effect,
@@ -226,26 +224,13 @@ export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegi
           runOutboxPollingLoop(health === undefined ? pollingInput : { ...pollingInput, health }),
         );
       });
-      // The owner's loop and every handler it runs read this owner's configuration: in a host sealed with its owners'
-      // module credentials, its module credential resolves to its own key and never to the shared environment. Its
-      // layers build in their own runtime and must never read the module credential at build time; delegated calls
-      // read it per call.
-      const ownerLoop = ConfigProvider.ConfigProvider.pipe(
-        Effect.flatMap((host) =>
-          Effect.provideService(
-            loop,
-            ConfigProvider.ConfigProvider,
-            moduleCredentialConfigProvider(host, expectedDeployment.appId),
-          ),
-        ),
-      );
       return Effect.acquireUseRelease(
         Effect.sync(() => ManagedRuntime.make(input.layer)),
         // The owner runtime's context replaces the host's, so the host's admission report crosses explicitly.
         (runtime) =>
           Effect.all([runtime.contextEffect, Effect.service(OutboxWorkerAdmissionReport)], { concurrency: 1 }).pipe(
             Effect.flatMap(([context, report]) =>
-              Effect.provideContext(ownerLoop, Context.add(context, OutboxWorkerAdmissionReport, report)),
+              Effect.provideContext(loop, Context.add(context, OutboxWorkerAdmissionReport, report)),
             ),
           ),
         (runtime) => runtime.disposeEffect,

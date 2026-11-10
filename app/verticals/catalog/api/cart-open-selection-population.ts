@@ -54,6 +54,7 @@ export const cartOpenSelectionPopulationLive = Layer.effect(
         const credential = yield* acquireDelegatedGatewayContext(
           {
             audience: 'commerce-cart',
+            callingAppId: 'catalog',
             legalEntityScope: 'tenant',
             requestCorrelation,
             subject: { _tag: 'Assertion', scope: input.scope },
