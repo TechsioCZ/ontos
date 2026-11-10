@@ -290,6 +290,31 @@ redeems the key for a new single-use gateway assertion, so `reset-permissions.mt
 `agent-bot` keys (`auth.apikey.rate_limit_enabled = false`). Without it the agent gets `429
 GatewayRateLimitedProblem` after ten calls.
 
+### Reviewed roles of the three role accounts on stage
+
+`pnpm demo:stage:reviewed-people` gives Obchodník, Účetní and Skladník their reviewed roles in Obchodní
+firma (`…0020`) through the Shell's own administration endpoints, signed in as the tenant owner. It creates the
+four roles empty, previews and saves their reviewed cells, admits the three people to the company, and assigns
+`sales`, `accounting`, `warehouse` there and `demo-shell-routing` in the tenant. Nájempark and every other
+person, role and company are out of its reach; `scripts/demo/reviewed-people-plan.mts` holds those constants
+and every decision, and its unit test pins them.
+
+```bash
+printf %s "$OWNER_PASSWORD" | pnpm demo:stage:reviewed-people \
+  --shell-url https://ontos-stage.web-revolution.cz --email <tenant owner> --password-stdin   # --plan, reads only
+… --apply                    # one write at a time, re-reading stage after each answer
+… --plan --rollback          # print the rollback; --rollback sends it
+… --apply --generation 2     # re-apply after a rollback with fresh admission and assignment ids
+```
+
+- The password is read only from a pipe on stdin, never from argv, env or a terminal, and never printed.
+- Plan mode lists every request body, the byte size of each role save, and the admin-kind cells of each role by
+  name for sign-off. The dangerous-cell confirmations are computed from the release (the same rule Core uses),
+  compared with the stage release and with the server's preview, never echoed back unseen.
+- It stops at the first refusal and is safe to re-run. A role that already holds other cells, a managed role
+  held by anyone else, or a used-up generation halts it before any write.
+- Exits: 0 done, 2 usage, 3 not the tenant owner, 4 validation halt, 5 HTTP refusal or unexpected answer.
+
 ### CRM and e-shop companies (demo v2)
 
 The same step creates **Velkoobchod Hanák s.r.o.** (`…0022`, CRM) and **Kavárna Doma s.r.o.** (`…0023`,
