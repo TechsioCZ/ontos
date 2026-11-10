@@ -35,14 +35,19 @@ import { expect, it } from 'effect-rstest';
 
 import type { AccessAdminProblem } from '../../shared/access-admin-api.ts';
 import {
+  AdmitAccessMemberPayloadSchema,
   AssignAccessRolePayloadSchema,
   CreateAccessDelegationPayloadSchema,
+  EndAccessMembershipPayloadSchema,
   ListAccessAssignmentsPayloadSchema,
   RevokeAccessAssignmentPayloadSchema,
   RevokeAccessDelegationPayloadSchema,
   SetAccessTeamMembershipPayloadSchema,
+  TransferAccessOwnershipPayloadSchema,
 } from '../../shared/access-admin-api.ts';
 import { AccessAdminClock } from '../../api/access-admin/clock.ts';
+import { AccessCompanyDirectory } from '../../api/access-admin/people-company-directory.ts';
+import type { AccessCompanyDirectoryMember } from '../../api/access-admin/people-company-directory.ts';
 import type { AccessPeopleBffService } from '../../api/access-admin/people.ts';
 import { AccessPeopleBff, AccessPeopleBffLive, accessPeopleDeclarations } from '../../api/access-admin/people.ts';
 import { AccessAdminSession } from '../../api/access-admin/session.ts';
@@ -67,6 +72,12 @@ const OWNER = uuid(10);
 const ALICE = uuid(11);
 const BOB = uuid(12);
 const COMPANY_ADMIN = uuid(13);
+/** Listed by both companies' directories, admitted to neither yet. */
+const DANA = uuid(14);
+/** Listed by company A's directory as departed. */
+const EVA = uuid(15);
+/** An agent principal company A's directory lists. */
+const AGENT = uuid(16);
 const ROLE_A = uuid(20);
 const ROLE_B = uuid(21);
 const ROLE_A_REVISION = uuid(22);
@@ -211,9 +222,12 @@ const view: AccessPeopleView = {
 };
 
 const NAMES = new Map<string, string>([
+  [AGENT, 'Asistent'],
   [ALICE, 'Alice Nováková'],
   [BOB, 'Bob Dvořák'],
   [COMPANY_ADMIN, 'Cyril Správce'],
+  [DANA, 'Dana Malá'],
+  [EVA, 'Eva Odešlá'],
   [OWNER, 'Olga Majitelová'],
 ]);
 
@@ -222,7 +236,8 @@ const directory: AccessPeopleDirectoryService = {
     Effect.succeed(
       ids.flatMap((principalId) => {
         const displayName = NAMES.get(principalId);
-        return displayName === undefined ? [] : [{ displayName, kind: 'human', principalId, status: 'active' }];
+        const kind = principalId === AGENT ? 'agent' : 'human';
+        return displayName === undefined ? [] : [{ displayName, kind, principalId, status: 'active' }];
       }),
     ),
   scopeLabels: () =>
@@ -234,6 +249,22 @@ const directory: AccessPeopleDirectoryService = {
       tenantName: 'Skupina',
     }),
 };
+
+const listed = (principalId: string, membershipStatus = 'active'): AccessCompanyDirectoryMember => ({
+  displayName: NAMES.get(principalId) ?? principalId,
+  membershipStatus,
+  principalId: PrincipalIdSchema.make(principalId),
+  principalStatus: 'active',
+});
+
+/**
+ * Each company's own directory. Alice is already a live member of A; Bob is a live member of B but not
+ * of A; Eva left A; the agent is no person; Dana is listed by both and admitted to neither.
+ */
+const COMPANY_DIRECTORY = new Map<string, readonly AccessCompanyDirectoryMember[]>([
+  [COMPANY_A, [listed(AGENT), listed(ALICE), listed(BOB), listed(DANA), listed(EVA, 'departed')]],
+  [COMPANY_B, [listed(BOB), listed(DANA)]],
+]);
 
 /** Who may do what: a tenant owner everywhere, a company administrator in company A only. */
 const PersonaSchema = Schema.Literals(['companyAdmin', 'nobody', 'owner']);
@@ -263,6 +294,8 @@ type PeopleCommand = Parameters<
 
 interface Recorded {
   readonly calls: { readonly command: PeopleCommand; readonly operation: string }[];
+  /** How many times a company directory was read. */
+  directoryReads: number;
   /** How many times the projection was reconciled outside a write. */
   reconciles: number;
 }
@@ -307,7 +340,7 @@ const harness = (input: {
   readonly persona: Persona;
   readonly writes?: boolean;
 }) => {
-  const recorded: Recorded = { calls: [], reconciles: 0 };
+  const recorded: Recorded = { calls: [], directoryReads: 0, reconciles: 0 };
   const actor = input.persona === 'companyAdmin' ? COMPANY_ADMIN : OWNER;
   const gate = gateFor(input.persona);
   const layer = AccessPeopleBffLive.pipe(
@@ -322,6 +355,13 @@ const harness = (input: {
         Layer.succeed(AccessDecisionGate, gate),
         Layer.succeed(AccessPeopleCommands, commandsFor(recorded, input.failure)),
         Layer.succeed(AccessPeopleDirectory, directory),
+        Layer.succeed(AccessCompanyDirectory, {
+          companyMembers: (_scope, legalEntityId) =>
+            Effect.sync(() => {
+              recorded.directoryReads += 1;
+              return COMPANY_DIRECTORY.get(legalEntityId) ?? [];
+            }),
+        }),
       ),
     ),
   );
@@ -343,9 +383,11 @@ it.effect('decides every people operation by its own declared admin capability',
   Effect.sync(() => {
     const keys = Object.values(accessPeopleDeclarations).map(({ key, kind }) => `${kind} ${key}`);
     expect(keys.toSorted()).toEqual([
+      'admin shell-super-app.access-people.admit-member',
       'admin shell-super-app.access-people.assign',
       'admin shell-super-app.access-people.assignments',
       'admin shell-super-app.access-people.delegate',
+      'admin shell-super-app.access-people.end-membership',
       'admin shell-super-app.access-people.list',
       'admin shell-super-app.access-people.options',
       'admin shell-super-app.access-people.revoke-assignment',
@@ -611,30 +653,264 @@ it.effect('unassigns, delegates and revokes a delegation through the Core people
   }),
 );
 
-it.effect('refuses every write with a retryable 503 while the write gate is closed, and says so', () =>
+/** One call of each of the eight people writes, as the screen showing `revision` sends it. */
+const eightWrites = (revision: string) => ({
+  admitMember: (bff: AccessPeopleBffService) =>
+    bff.admitMember({
+      headers,
+      idempotencyKey: 'write-admit',
+      payload: decode(AdmitAccessMemberPayloadSchema, {
+        expectedRevision: revision,
+        principalId: DANA,
+        scope: { kind: 'company', legalEntityId: COMPANY_A },
+      }),
+    }),
+  assign: (bff: AccessPeopleBffService) =>
+    bff.assign({
+      headers,
+      idempotencyKey: 'write-assign',
+      payload: decode(AssignAccessRolePayloadSchema, {
+        expectedRevision: revision,
+        expectedRoleRevisionId: ROLE_A_REVISION,
+        principalId: ALICE,
+        roleId: ROLE_A,
+        scope: { kind: 'company', legalEntityId: COMPANY_A },
+      }),
+    }),
+  createDelegation: (bff: AccessPeopleBffService) =>
+    bff.createDelegation({
+      headers,
+      idempotencyKey: 'write-delegate',
+      payload: decode(CreateAccessDelegationPayloadSchema, {
+        capabilityKeys: [CAPABILITY],
+        expectedRevision: revision,
+        managerId: ALICE,
+        people: [COMPANY_ADMIN],
+        roleIds: [ROLE_A],
+        scope: { kind: 'company', legalEntityId: COMPANY_A },
+        validUntil: instant(20).toISOString(),
+      }),
+    }),
+  endMembership: (bff: AccessPeopleBffService) =>
+    bff.endMembership({
+      headers,
+      idempotencyKey: 'write-end',
+      payload: decode(EndAccessMembershipPayloadSchema, {
+        expectedRevision: revision,
+        principalId: ALICE,
+        reason: 'odchod z firmy',
+        scope: { kind: 'company', legalEntityId: COMPANY_A },
+      }),
+    }),
+  revokeAssignment: (bff: AccessPeopleBffService) =>
+    bff.revokeAssignment({
+      headers,
+      idempotencyKey: 'write-unassign',
+      payload: decode(RevokeAccessAssignmentPayloadSchema, {
+        expectedRevision: revision,
+        incarnationId: ALICE_ASSIGNMENT,
+        reason: 'odchod',
+      }),
+    }),
+  revokeDelegation: (bff: AccessPeopleBffService) =>
+    bff.revokeDelegation({
+      headers,
+      idempotencyKey: 'write-revoke-delegation',
+      payload: decode(RevokeAccessDelegationPayloadSchema, {
+        delegationId: BOB_DELEGATION,
+        expectedRevision: revision,
+        reason: 'konec',
+      }),
+    }),
+  setTeamMembership: (bff: AccessPeopleBffService) =>
+    bff.setTeamMembership({
+      headers,
+      idempotencyKey: 'write-team',
+      payload: decode(SetAccessTeamMembershipPayloadSchema, {
+        action: 'join',
+        expectedRevision: revision,
+        principalId: COMPANY_ADMIN,
+        teamId: TEAM_A,
+      }),
+    }),
+  transferOwnership: (bff: AccessPeopleBffService) =>
+    bff.transferOwnership({
+      headers,
+      idempotencyKey: 'write-transfer',
+      payload: decode(TransferAccessOwnershipPayloadSchema, {
+        expectedRevision: revision,
+        fromPrincipalId: OWNER,
+        scopes: [{ kind: 'tenant' }],
+        toPrincipalId: ALICE,
+      }),
+    }),
+});
+
+it.effect('refuses all eight writes with a retryable 503 while the write gate is closed, and says so', () =>
   Effect.gen(function* closedGate() {
     const revision = yield* revisionFor('owner');
-    const { recorded, run } = harness({ persona: 'owner', writes: false });
+    const writes = Object.entries(eightWrites(revision));
+    expect(writes).toHaveLength(8);
+    const closed = harness({ persona: 'owner', writes: false });
+    for (const [name, write] of writes) {
+      const problem = yield* failureOf(closed.run(write));
+      // The unavailable problem is the retryable one: a closed gate is never a denial.
+      expect([name, problem.status, problem._tag]).toEqual([name, 503, 'AccessAdminUnavailable']);
+    }
+    const options = yield* closed.run((bff) => bff.options(headers, { limit: 100 }));
+    expect(Object.values(options.writeAvailability)).toEqual(Array.from({ length: 8 }, () => false));
+    expect(options.admissionCandidates).toEqual([]);
+    // Nothing reached Core and no company directory was read while closed.
+    expect(closed.recorded.calls).toEqual([]);
+    expect(closed.recorded.directoryReads).toBe(0);
+    // The same eight requests are real writes: with the gate open each reaches its Core command.
+    const open = harness({ persona: 'owner' });
+    for (const [, write] of writes) {
+      yield* open.run(write);
+    }
+    expect(open.recorded.calls.map(({ operation }) => operation)).toEqual([
+      'admitMember',
+      'assignRole',
+      'grantDelegation',
+      'endMembership',
+      'unassignRole',
+      'revokeDelegation',
+      'setTeamMembership',
+      'transferOwnership',
+    ]);
+    const openOptions = yield* open.run((bff) => bff.options(headers, { limit: 100 }));
+    expect(Object.values(openOptions.writeAvailability)).toEqual(Array.from({ length: 8 }, () => true));
+  }),
+);
+
+it.effect('offers as admission candidates only active directory humans not yet live members of that company', () =>
+  Effect.gen(function* candidates() {
+    const owner = yield* harness({ persona: 'owner' }).run((bff) => bff.options(headers, { limit: 100 }));
+    // Bob is a live member of B only, so A still offers him; Alice is live in A, Eva left, the agent is no person.
+    expect(owner.admissionCandidates).toEqual([
+      { displayName: 'Bob Dvořák', principalId: BOB, scope: { kind: 'company', legalEntityId: COMPANY_A } },
+      { displayName: 'Dana Malá', principalId: DANA, scope: { kind: 'company', legalEntityId: COMPANY_A } },
+      { displayName: 'Dana Malá', principalId: DANA, scope: { kind: 'company', legalEntityId: COMPANY_B } },
+    ]);
+    // A company administrator is offered their own company only, and B's directory is never read.
+    const admin = harness({ persona: 'companyAdmin' });
+    const own = yield* admin.run((bff) => bff.options(headers, { limit: 100 }));
+    expect(own.admissionCandidates.map(({ principalId, scope }) => [principalId, scope])).toEqual([
+      [BOB, { kind: 'company', legalEntityId: COMPANY_A }],
+      [DANA, { kind: 'company', legalEntityId: COMPANY_A }],
+    ]);
+    expect(admin.recorded.directoryReads).toBe(1);
+    expect([own.writeAvailability.canAdmitMember, own.writeAvailability.canEndMembership]).toEqual([true, true]);
+  }),
+);
+
+it.effect('admits a candidate with tenant and company rows named by the idempotency key', () =>
+  Effect.gen(function* admitByKey() {
+    const revision = yield* revisionFor('owner');
+    const { recorded, run } = harness({ persona: 'owner' });
+    const admit = eightWrites(revision).admitMember;
+    yield* run(admit);
+    yield* run(admit);
+    const [first, retry] = recorded.calls.map(({ command }) => command);
+    expect(first).toMatchObject({ legalEntityId: COMPANY_A, principalId: DANA });
+    // A retry names the very same two rows, and the tenant row is never the company row.
+    expect(retry).toEqual(first);
+    const rows = recorded.calls.flatMap(({ command }) =>
+      'tenantMembershipId' in command ? [command.tenantMembershipId, command.companyMembershipId] : [],
+    );
+    expect(new Set(rows).size).toBe(2);
+  }),
+);
+
+/** One admission by a persona, answering its status and how many Core commands ran. */
+const admitInto = (persona: Persona, principalId: string, legalEntityId: string, expectedRevision?: string) =>
+  Effect.gen(function* admitOne() {
+    const revision = expectedRevision ?? (yield* revisionFor(persona));
+    const { recorded, run } = harness({ persona });
     const problem = yield* failureOf(
       run((bff) =>
-        bff.revokeAssignment({
+        bff.admitMember({
           headers,
-          idempotencyKey: 'revoke-5',
-          payload: decode(RevokeAccessAssignmentPayloadSchema, {
+          idempotencyKey: `admit-${principalId}`,
+          payload: decode(AdmitAccessMemberPayloadSchema, {
             expectedRevision: revision,
-            incarnationId: ALICE_ASSIGNMENT,
-            reason: 'odchod',
+            principalId,
+            scope: { kind: 'company', legalEntityId },
           }),
         }),
       ),
     );
-    expect(problem.status).toBe(503);
-    expect(recorded.calls).toEqual([]);
-    const options = yield* run((bff) => bff.options(headers, { limit: 100 }));
-    expect(Object.values(options.writeAvailability)).toEqual([false, false, false, false, false, false, false, false]);
-    const open = yield* harness({ persona: 'owner' }).run((bff) => bff.options(headers, { limit: 100 }));
-    // canAdmitMember and canEndMembership stay false until lane L2 declares and computes them.
-    expect(Object.values(open.writeAvailability)).toEqual([false, true, true, false, true, true, true, true]);
+    return [problem.status, recorded.calls.length];
+  });
+
+it.effect('refuses a non-candidate before Core runs: 403 off the directory, 409 when already a member', () =>
+  Effect.gen(function* nonCandidate() {
+    expect(yield* admitInto('owner', EVA, COMPANY_A)).toEqual([403, 0]);
+    expect(yield* admitInto('owner', AGENT, COMPANY_A)).toEqual([403, 0]);
+    expect(yield* admitInto('owner', OWNER, COMPANY_A)).toEqual([403, 0]);
+    expect(yield* admitInto('companyAdmin', DANA, COMPANY_B)).toEqual([403, 0]);
+    expect(yield* admitInto('owner', ALICE, COMPANY_A)).toEqual([409, 0]);
+    expect(yield* admitInto('owner', DANA, COMPANY_A, 'an-old-revision')).toEqual([409, 0]);
+  }),
+);
+
+it.effect('ends a membership in the named scope and passes the reason on to Core', () =>
+  Effect.gen(function* endMembership() {
+    const revision = yield* revisionFor('owner');
+    const { recorded, run } = harness({ persona: 'owner' });
+    const end = eightWrites(revision).endMembership;
+    yield* run(end);
+    expect(recorded.calls[0]?.command).toEqual({ principalId: ALICE, reason: 'odchod z firmy', scopeId: A_SCOPE });
+    const adminRevision = yield* revisionFor('companyAdmin');
+    const admin = harness({ persona: 'companyAdmin' });
+    const bobInB = yield* failureOf(
+      admin.run((bff) =>
+        bff.endMembership({
+          headers,
+          idempotencyKey: 'end-bob',
+          payload: decode(EndAccessMembershipPayloadSchema, {
+            expectedRevision: adminRevision,
+            principalId: BOB,
+            reason: 'odchod',
+            scope: { kind: 'company', legalEntityId: COMPANY_B },
+          }),
+        }),
+      ),
+    );
+    expect(bobInB.status).toBe(403);
+    expect(admin.recorded.calls).toEqual([]);
+  }),
+);
+
+it.effect('transfers ownership with membership rows named by the key, and refuses a scope outside reach', () =>
+  Effect.gen(function* transfer() {
+    const revision = yield* revisionFor('owner');
+    const { recorded, run } = harness({ persona: 'owner' });
+    const write = eightWrites(revision).transferOwnership;
+    const answer = yield* run(write);
+    yield* run(write);
+    expect(answer).toMatchObject({ transferredScopes: [{ kind: 'tenant' }] });
+    const [first, retry] = recorded.calls.map(({ command }) => command);
+    expect(first).toMatchObject({ fromPrincipalId: OWNER, scopeIds: [TENANT_SCOPE], toPrincipalId: ALICE });
+    expect(retry).toEqual(first);
+    const adminRevision = yield* revisionFor('companyAdmin');
+    const admin = harness({ persona: 'companyAdmin' });
+    const tenantTakeover = yield* failureOf(
+      admin.run((bff) =>
+        bff.transferOwnership({
+          headers,
+          idempotencyKey: 'transfer-tenant',
+          payload: decode(TransferAccessOwnershipPayloadSchema, {
+            expectedRevision: adminRevision,
+            fromPrincipalId: COMPANY_ADMIN,
+            scopes: [{ kind: 'tenant' }],
+            toPrincipalId: ALICE,
+          }),
+        }),
+      ),
+    );
+    expect(tenantTakeover.status).toBe(403);
+    expect(admin.recorded.calls).toEqual([]);
   }),
 );
 
@@ -659,5 +935,14 @@ it.effect('maps Core refusals onto one status each: 409 for a moved row, 422 for
     expect(yield* unassign(peopleFailure('delegation_limits_lost', 'lost'))).toBe(422);
     expect(yield* unassign(peopleFailure('access_intent_unavailable', 'down'))).toBe(503);
     expect(yield* unassign(peopleFailure('delegation_outside_grantor_authority', 'no'))).toBe(403);
+    const membershipWrite = (name: 'admitMember' | 'endMembership', failure: PeopleCommandFailure) =>
+      failureOf(harness({ failure, persona: 'owner' }).run(eightWrites(revision)[name])).pipe(
+        Effect.map(({ status }) => status),
+      );
+    expect(yield* membershipWrite('endMembership', peopleFailure('people_membership_unknown', 'gone'))).toBe(409);
+    expect(yield* membershipWrite('endMembership', peopleFailure('people_granted_delegations_live', 'live'))).toBe(409);
+    expect(
+      yield* membershipWrite('admitMember', peopleFailure('people_directory_membership_missing', 'departed')),
+    ).toBe(422);
   }),
 );
