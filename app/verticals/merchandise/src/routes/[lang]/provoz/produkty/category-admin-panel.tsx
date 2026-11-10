@@ -1,10 +1,8 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Switch } from '@techsio/ui-kit/molecules/switch';
+import { FormInput, FormTextarea, Switch } from '@app/admin-ui/form-controls';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import {
   SaveBar,
   SidePanel,

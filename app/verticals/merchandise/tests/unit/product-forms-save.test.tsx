@@ -2,7 +2,7 @@
 // The create and bulk product forms send their command only from the shared Save button ("Uložit"), last in the
 // footer: typing and Enter change only the draft. Only the generated catalog client, the i18n runtime and the router
 // blocker are replaced.
-import { saveLabelsFor } from '@app/admin-ui';
+import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
 import { Effect, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
@@ -218,5 +218,16 @@ it.effect('the price change it opens with asks before leaving once its save fail
     yield* Effect.promise(() => waitUntil(() => sent().length === 1));
     yield* Effect.promise(() => waitUntil(() => unloadAsks()));
     expect(committed).toEqual([]);
+  }),
+);
+
+it.effect('reads the required text of a required field in Czech', () =>
+  Effect.gen(function* requiredText() {
+    yield* Effect.promise(() => mount(<CategoryDialog {...dialogProps} />));
+    const label = Option.getOrThrow(
+      Option.fromNullishOr(document.querySelector<HTMLLabelElement>('label[for="bulk-category"]')),
+    );
+    expect(label.textContent).toContain(requiredLabelFor('cs'));
+    expect(document.body.textContent).not.toContain('(required)');
   }),
 );
