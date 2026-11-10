@@ -38,6 +38,9 @@ type Command = Parameters<FinanceViewModel['execute']>[0];
 const REVIEW_BACK = 'finance-billing.financeUi.payments.reviewBack';
 const REVIEW_CONFIRM = 'finance-billing.financeUi.payments.reviewConfirm';
 const paymentReview = () => document.querySelector('[data-testid="payment-review"]') !== null;
+const REMINDER_BACK = 'finance-billing.financeUi.reminders.reviewBack';
+const REMINDER_CONFIRM = 'finance-billing.financeUi.reminders.reviewConfirm';
+const reminderReview = () => document.querySelector('[data-testid="reminder-review"]')?.textContent ?? undefined;
 
 const invoice = invoiceFixture();
 const smtp = { kind: 'ready', provider: { configured: true, label: null } } as const;
@@ -142,7 +145,7 @@ describe('invoice extras and accounting setup save from Uložit only', () => {
     }),
   );
 
-  it.live('a reminder is recorded once by Uložit with the recipient and the suggested text', () =>
+  it.live('Uložit opens a review naming the recipient; only its confirmation sends the reminder e-mail once', () =>
     Effect.gen(function* step4() {
       const sent: Command[] = [];
       yield* mount(
@@ -158,6 +161,14 @@ describe('invoice extras and accounting setup save from Uložit only', () => {
       yield* typeInto('reminder-recipient', 'fakturace@kavarna.cz');
       expect(lastFooterButton()).toBe(saveButton());
       yield* clickSave;
+      expect(reminderReview()).toContain('fakturace@kavarna.cz');
+      expect(sent).toEqual([]);
+      yield* clickNamed(REMINDER_BACK);
+      expect(reminderReview()).toBeUndefined();
+      expect(sent).toEqual([]);
+
+      yield* clickSave;
+      yield* clickNamed(REMINDER_CONFIRM);
       yield* waitUntil(() => closes.length === 1);
       expect(sent).toHaveLength(1);
       expect(sent[0]).toMatchObject({
@@ -165,6 +176,25 @@ describe('invoice extras and accounting setup save from Uložit only', () => {
         invoiceRef: invoice.ref,
         recipient: 'fakturace@kavarna.cz',
       });
+    }),
+  );
+
+  it.live('Uložit in the leave question opens the reminder review; it never sends the e-mail by itself', () =>
+    Effect.gen(function* reminderOnLeave() {
+      const sent: Command[] = [];
+      const props = { counterpartyName: 'Kavárna Dolce', invoice, issuerName: 'OntOS Demo s.r.o.', provider: smtp };
+      yield* mount(<InvoiceReminderForm {...props} onClose={onClose} vm={fakeVm(sent)} />);
+      yield* typeInto('reminder-recipient', 'fakturace@kavarna.cz');
+      yield* clickCancel;
+      expect(leaveQuestion()).toBe(true);
+      yield* clickNamed(labels.save);
+      expect(leaveQuestion()).toBe(false);
+      expect(reminderReview()).toContain('fakturace@kavarna.cz');
+      expect(sent).toEqual([]);
+      expect(closes).toEqual([]);
+      yield* clickNamed(REMINDER_CONFIRM);
+      yield* waitUntil(() => closes.length === 1);
+      expect(sent).toHaveLength(1);
     }),
   );
 

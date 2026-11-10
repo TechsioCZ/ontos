@@ -375,7 +375,14 @@
         "ineligible": "Payment reminders are only prepared for unpaid confirmed invoices.",
         "recipient": "Recipient email",
         "emailExample": "billing@customer.cz",
-        "message": "Reminder text"
+        "message": "Reminder text",
+        "reviewTitle": "Send the reminder by e-mail?",
+        "reviewDescription": "Once confirmed, the reminder is really sent by e-mail to the address given. A sent e-mail cannot be taken back.",
+        "reviewInvoice": "Invoice",
+        "reviewRecipient": "Recipient",
+        "reviewSender": "Sender",
+        "reviewBack": "Back",
+        "reviewConfirm": "Send the e-mail"
       },
       "accounting": {
         "handover": "Accounting handover",
