@@ -1,11 +1,30 @@
 import { NodeServices } from '@effect/platform-node';
-import { Config, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Config, DateTime, Effect, Layer, Option, Predicate, Redacted, Schema } from 'effect';
 import { executeReviseCartDraftWithAuthorization } from '@app/commerce-cart/api/client';
 import { executePurchaseProposalBasisWithAuthorization } from '../../src/api/purchase-proposal-basis-client.ts';
 import { requireExecutedAction } from '../support/action-execution-result.ts';
 import { PurchaseProposalBasisUnavailableProblemSchema } from '../../shared/apis/purchase-proposal-basis.ts';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
+
+class PreproposalOwnerRefusal extends Schema.TaggedError<PreproposalOwnerRefusal>()('PreproposalOwnerRefusal', {
+  message: Schema.String,
+}) {}
+/** The fields a refused owner answer names: its problem tag, HTTP status and domain code. */
+const OwnerProblemFieldsSchema = Schema.Struct({
+  _tag: Schema.optionalKey(Schema.String),
+  code: Schema.optionalKey(Schema.String),
+  status: Schema.optionalKey(Schema.Number),
+});
+/** A refused owner answer as a real Error, so a failing case names the owner's problem and the reporter keeps its totals. */
+const reportableOwnerFailure = <Failure>(failure: Failure): Failure | PreproposalOwnerRefusal => {
+  const fields = Schema.decodeUnknownOption(OwnerProblemFieldsSchema)(failure);
+  return Predicate.isError(failure) || Option.isNone(fields)
+    ? failure
+    : new PreproposalOwnerRefusal({
+        message: `owner-refused:${fields.value._tag ?? 'unknown'}:status-${String(fields.value.status ?? 'none')}:code-${fields.value.code ?? 'none'}`,
+      });
+};
 
 // Merely collecting the integration project must not create a database or owner runtime.
 // The controller selects this file AND explicitly enables the bounded native lane.
@@ -30,7 +49,7 @@ it.live(
         );
         const fixture = yield* makeRegisteredPreproposalNativeFixture();
         const before = yield* fixture.transport.core.evidence();
-        const proof = yield* runRegisteredPreproposalBasisChain(fixture);
+        const proof = yield* runRegisteredPreproposalBasisChain(fixture).pipe(Effect.mapError(reportableOwnerFailure));
         expect(proof.prepared.status).toBe('PREPARED');
         expect(proof.ready.status).toBe('READY');
         expect(proof.current.basis.status).toBe('READY');
@@ -116,9 +135,9 @@ it.live(
           async () => await import('../support/preproposal-basis-native.ts'),
         );
         const fixture = yield* makeRegisteredPreproposalNativeFixture();
-        const proof = yield* runRegisteredPreproposalBasisChain(fixture);
+        const proof = yield* runRegisteredPreproposalBasisChain(fixture).pipe(Effect.mapError(reportableOwnerFailure));
         const stored = yield* fixture.verifyStoredProposal(proof);
-        const approval = yield* fixture.approveProposal(proof);
+        const approval = yield* fixture.approveProposal(proof).pipe(Effect.mapError(reportableOwnerFailure));
         expect(approval.submitted.outcome).toBe('SUBMITTED');
         expect(approval.submitted.request.status).toBe('PENDING');
         expect(approval.approved.outcome).toBe('DECISION_RECORDED');
