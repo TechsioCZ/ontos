@@ -22,6 +22,8 @@ export const SymmyRouteContextRequestSchema = Schema.Struct({
     'priceListPricesBatch',
     'priceListsBatchUpsert',
     'productsBatch',
+    'assortmentRulesFixtureBatch',
+    'sellerVatDeclarationsFixtureBatch',
   ]),
 });
 export type SymmyRouteContextRequest = typeof SymmyRouteContextRequestSchema.Type;

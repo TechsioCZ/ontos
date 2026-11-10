@@ -37,11 +37,19 @@ it('keeps every shared runtime exception within its exact owner privileges', () 
   expect(entry.tableGrantExceptions?.map(({ privileges, table }) => ({ privileges, table }))).toEqual([
     {
       privileges: ['select', 'insert', 'delete'],
+      table: 'assortment.gateway_assertion_redemptions',
+    },
+    {
+      privileges: ['select', 'insert', 'delete'],
       table: 'inventory.gateway_assertion_redemptions',
     },
     {
       privileges: ['select', 'insert', 'delete'],
       table: 'privacy.gateway_assertion_redemptions',
+    },
+    {
+      privileges: ['select', 'insert', 'delete'],
+      table: 'tax.gateway_assertion_redemptions',
     },
     {
       privileges: ['select', 'insert'],

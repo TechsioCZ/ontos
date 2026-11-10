@@ -6,6 +6,11 @@ const promotionImmutableEvidenceReason = 'Promotion immutable publication, attri
 export const SHARED_RUNTIME_TABLE_GRANT_EXCEPTIONS = [
   {
     privileges: ['select', 'insert', 'delete'],
+    reason: 'Assortment atomically redeems one-use assertions before Tenant scope without storing business data',
+    table: 'assortment.gateway_assertion_redemptions',
+  },
+  {
+    privileges: ['select', 'insert', 'delete'],
     reason: 'Inventory atomically redeems one-use assertions before Tenant scope without storing business data',
     table: 'inventory.gateway_assertion_redemptions',
   },
@@ -13,6 +18,11 @@ export const SHARED_RUNTIME_TABLE_GRANT_EXCEPTIONS = [
     privileges: ['select', 'insert', 'delete'],
     reason: 'Privacy atomically redeems one-use assertions before Tenant scope without storing business data',
     table: 'privacy.gateway_assertion_redemptions',
+  },
+  {
+    privileges: ['select', 'insert', 'delete'],
+    reason: 'Tax atomically redeems one-use assertions before Tenant scope without storing business data',
+    table: 'tax.gateway_assertion_redemptions',
   },
   {
     privileges: ['select', 'insert'],

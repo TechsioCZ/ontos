@@ -32,6 +32,22 @@ export const TAX_TABLE_INVENTORY = [
 
 export const taxSchema = pgSchema(TAX_SCHEMA_NAME);
 
+/** One-use assertion replay evidence written before the authenticated Tenant scope is installed. */
+export const gatewayAssertionRedemptions = taxSchema.table(
+  'gateway_assertion_redemptions',
+  {
+    audience: text('audience').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    issuer: text('issuer').notNull(),
+    jti: uuid('jti').notNull(),
+    redeemedAt: timestamp('redeemed_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique('tax_gateway_redemptions_identity_uk').on(table.issuer, table.audience, table.jti),
+    index('tax_gateway_redemptions_expiry_idx').on(table.expiresAt),
+  ],
+);
+
 type ScopedTable = Readonly<Record<'legalEntityId' | 'tenantId', AnyPgColumn>>;
 
 /**
@@ -325,6 +341,7 @@ export const taxOrderTaxFinalizations = taxSchema.table.withRLS(
 );
 
 const databaseSchema = {
+  gatewayAssertionRedemptions,
   taxOrderTaxFinalizations,
   taxRuleCorrections,
   taxRuleRevisionEndFacts,

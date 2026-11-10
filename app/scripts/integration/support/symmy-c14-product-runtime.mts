@@ -92,8 +92,12 @@ const derivePublishedContract = Effect.fn('SymmyC14ProductFixture.publishedContr
   return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(document);
 });
 
+const C14PolicyFixtureOwnerSchema = Schema.Literals(['assortment', 'tax']);
+export type C14PolicyFixtureOwner = typeof C14PolicyFixtureOwnerSchema.Type;
+
 export const productComposition = Effect.fn('SymmyC14ProductFixture.composition')(function* productComposition(
   backends: Readonly<Record<string, string>>,
+  fixtureOwners: readonly C14PolicyFixtureOwner[] = [],
 ) {
   const contracts = yield* Effect.forEach(
     [
@@ -106,6 +110,7 @@ export const productComposition = Effect.fn('SymmyC14ProductFixture.composition'
       'commerce-customer-context',
       'privacy',
       'commerce-market-catalog',
+      ...fixtureOwners,
     ],
     derivePublishedContract,
     { concurrency: 3 },
@@ -161,7 +166,8 @@ export const buildProductOwner = Effect.fn('SymmyC14ProductFixture.buildOwner')(
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const directory = `${c14AppRoot}/verticals/${contract.deployment.appId}`;
-  const cache = `${directory}/node_modules/.cache/INTERNAL_C14_PRODUCT`;
+  // Keep the native artifacts in their owning package scope for generated package self-imports.
+  const cache = `${directory}/dist/.cache/INTERNAL_C14_PRODUCT`;
   yield* fs.makeDirectory(cache, { recursive: true });
   const temporary = yield* fs.makeTempDirectoryScoped({ directory: cache, prefix: 'owner-' });
   const ownerArtifact = path.join(temporary, 'owner.mjs');
@@ -215,6 +221,8 @@ export const startProductOwner = Effect.fn('SymmyC14ProductFixture.startOwner')(
     | '/commerce-customer-context-api'
     | '/price-group-catalog-api'
     | '/inventory-api'
+    | '/assortment-api'
+    | '/tax-api'
     | '/commerce-market-catalog-api';
 }) {
   const child = yield* ChildProcess.make(process.execPath, [input.artifacts.receiverArtifact], {

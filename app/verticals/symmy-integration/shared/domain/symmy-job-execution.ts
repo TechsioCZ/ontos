@@ -20,9 +20,12 @@ import {
   SymmyPartyCommerceOwnerReceiptSchema,
 } from './symmy-party-commerce-intents.ts';
 
+import { SymmyPolicyFixtureIntentSchema } from './symmy-policy-fixture-intents.ts';
+
 export const SymmyOwnerIntentSchema = Schema.Union([
   SymmyCatalogPricingInventoryIntentSchema,
   SymmyPartyCommerceIntentSchema,
+  SymmyPolicyFixtureIntentSchema,
 ]);
 export const SymmyOwnerReceiptSchema = Schema.Union([
   SymmyCatalogPricingInventoryReceiptSchema,
@@ -188,7 +191,8 @@ export const SymmyInternalExecutionPlanSchema = SymmyFixtureExecutionPlanSchema.
         selector === undefined &&
         items.every(
           ({ effects, sourceOccurrenceId }) =>
-            sourceOccurrenceId !== undefined && effects.every(({ intent }) => intent !== undefined),
+            sourceOccurrenceId !== undefined &&
+            effects.every(({ intent }) => intent !== undefined && !Schema.is(SymmyPolicyFixtureIntentSchema)(intent)),
         )) ||
       'Every internal owner effect requires a finite typed intent',
   ),

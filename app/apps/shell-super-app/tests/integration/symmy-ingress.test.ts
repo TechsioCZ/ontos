@@ -2,7 +2,12 @@ import { ActiveApplicationCompositionUnavailableError } from '@app/core-runtime'
 import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
 import { moduleReleaseApiBaseUrl } from '@app/core-runtime/unit-service-fetch';
 import { GatewayAuthenticationRequiredProblemSchema, GatewayForbiddenProblemSchema } from '@app/shared-contracts';
-import { decodeSymmyItemOutcome, SYMMY_REST_PREFIX, SYMMY_ROUTES } from '@app/shared-contracts/symmy';
+import {
+  decodeSymmyItemOutcome,
+  SYMMY_FIXTURE_ROUTES,
+  SYMMY_REST_PREFIX,
+  SYMMY_ROUTES,
+} from '@app/shared-contracts/symmy';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { DEFAULT_DATA_BATCH_ENDPOINT } from '@modern-js/bff-effect/data-platform';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
@@ -934,6 +939,38 @@ it.effect('uses the authorized source Product read through the normal owner rele
       `${releasePath}/reads/symmy-route-context`,
       '/module-api/catalog/fixture-build/catalog-api/reads/catalog-source-products',
     ]);
+  }),
+);
+
+it.effect('only accepts an operator fixture ID on the policy fixture routes', () =>
+  Effect.gen(function* fixtureRouteContracts() {
+    const admittedJobId = Schema.decodeUnknownSync(SymmyFixtureJobIdSchema)(jobId);
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        start({
+          dispatch: {
+            apply: () => Effect.die('A fixture route cannot apply synchronous effects'),
+            poll: () => Effect.die('A fixture route cannot poll jobs'),
+            read: () => Effect.die('A fixture route cannot read owner data'),
+            submit: () => Effect.succeed(admittedJobId),
+          },
+        }),
+      ),
+      (fixture) => Effect.promise(fixture.dispose),
+    );
+    const headers = { ...fixtureJson.headers, 'idempotency-key': idempotencyKey, 'x-api-key': validKey };
+    for (const { path } of Object.values(SYMMY_FIXTURE_ROUTES)) {
+      const admitted = yield* Effect.promise(() => server.request(path, { ...fixtureJson, headers, method: 'POST' }));
+      expect(admitted.status).toBe(202);
+      const extra = yield* Effect.promise(() =>
+        server.request(path, {
+          body: JSON.stringify({ fixtureId, plan: {} }),
+          headers,
+          method: 'POST',
+        }),
+      );
+      expect(extra.status).toBe(400);
+    }
   }),
 );
 

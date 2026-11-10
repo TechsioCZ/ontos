@@ -133,8 +133,9 @@ export const SymmyInternalPlanPayloadSchema = Schema.Struct({
   contractVersion: Schema.Literal('INTERNAL_C14'),
   plan: SymmyInternalExecutionPlanSchema,
 });
+export const SymmyFixtureSubmitPayloadSchema = Schema.Struct({ fixtureId: SymmyFixtureIdSchema });
 export const SymmyInternalWritePayloadSchema = Schema.Union([
-  Schema.Struct({ fixtureId: SymmyFixtureIdSchema }),
+  SymmyFixtureSubmitPayloadSchema,
   SymmyInternalPlanPayloadSchema,
 ]);
 export const symmyCodeParams = Schema.Struct({
@@ -185,6 +186,11 @@ export const symmySubmitOptions = {
   headers: submitHeaders,
   payload: SymmyInternalWritePayloadSchema,
   success: SymmyFixtureAdmissionSchema.pipe(HttpApiSchema.status(202)),
+};
+
+export const symmyFixtureSubmitOptions = {
+  ...symmySubmitOptions,
+  payload: SymmyFixtureSubmitPayloadSchema,
 };
 
 export const symmyJobOptions = {

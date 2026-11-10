@@ -81,3 +81,22 @@ export const AssortmentPolicyAuditEvidenceSchema = Schema.Struct({
   resourceId: AssortmentOwnerResourceRefSchema.fields.resourceId,
   resourceType: Schema.String.check(Schema.isMinLength(1)),
 });
+
+const FixtureAccessDeniedFields = { code: Schema.Literal('assortment_symmy_fixture_access_denied'), reason };
+const FixtureAccessDeniedSchema = Schema.TaggedStruct('AssortmentSymmyFixtureAccessDenied', FixtureAccessDeniedFields);
+export const AssortmentSymmyFixtureAccessDenied = Schema.TaggedError<typeof FixtureAccessDeniedSchema.Type>()(
+  'AssortmentSymmyFixtureAccessDenied',
+  FixtureAccessDeniedFields,
+);
+
+const FixtureConfigurationUnavailableFields = {
+  code: Schema.Literal('assortment_symmy_fixture_configuration_unavailable'),
+  reason,
+};
+const FixtureConfigurationUnavailableSchema = Schema.TaggedStruct(
+  'AssortmentSymmyFixtureConfigurationUnavailable',
+  FixtureConfigurationUnavailableFields,
+);
+export const AssortmentSymmyFixtureConfigurationUnavailable = Schema.TaggedError<
+  typeof FixtureConfigurationUnavailableSchema.Type
+>()('AssortmentSymmyFixtureConfigurationUnavailable', FixtureConfigurationUnavailableFields);

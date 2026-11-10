@@ -10,6 +10,7 @@ import type {
 } from '../../shared/domain/symmy-job-execution.ts';
 import type { SymmyJobWorkerError } from './symmy-job-worker-error.ts';
 import { SymmyCatalogPricingInventoryAdapters } from './symmy-catalog-pricing-inventory-adapters.ts';
+import { SymmyPolicyFixtureAdapters } from './symmy-policy-fixture-adapters.ts';
 import { SymmyPartyCommerceAdapters } from './symmy-party-commerce-adapters.ts';
 
 interface SymmyEffectAdapterInputBase {
@@ -87,6 +88,7 @@ export const SymmyEffectAdaptersLive = Layer.effect(
   Effect.gen(function* combineOwnerAdapters() {
     const catalogPricingInventory = yield* SymmyCatalogPricingInventoryAdapters;
     const partyCommerce = yield* SymmyPartyCommerceAdapters;
-    return { adapters: [...catalogPricingInventory.adapters, ...partyCommerce.adapters] };
+    const policyFixtures = yield* SymmyPolicyFixtureAdapters;
+    return { adapters: [...catalogPricingInventory.adapters, ...partyCommerce.adapters, ...policyFixtures.adapters] };
   }),
 );

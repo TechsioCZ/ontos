@@ -24,6 +24,14 @@ import { syncAdmissionResourceDescriptor } from './shared/resources/sync-admissi
 const privacyModuleId = 'privacy.core' as const;
 const ownerOperationProviders = [
   {
+    moduleId: 'commerce.tax',
+    requiredOperations: [{ entrypointKey: 'commerce.tax.import-seller-vat-regime-declarations', schemaVersion: '1' }],
+  },
+  {
+    moduleId: 'commerce.assortment',
+    requiredOperations: [{ entrypointKey: 'commerce.assortment.import-symmy-rule', schemaVersion: '1' }],
+  },
+  {
     moduleId: 'commerce.catalog',
     requiredOperations: [
       { entrypointKey: 'commerce.catalog.create-product', schemaVersion: '2' },

@@ -27,8 +27,10 @@ import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
 import { FetchHttpClient } from 'effect/http';
+import { Reactivity } from 'effect/reactivity';
 import { taxApi, taxOperationContexts } from '../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
+import { TaxDatabaseLive, TaxPgClientLive } from '../src/database/client.ts';
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
@@ -133,6 +135,12 @@ const actionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, taxRegi
 /** Action runtime bound by generated governed Action HTTP handlers mounted in the slot below. */
 export const governedActionRuntimeLive = actionRuntimeLive;
 
+const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
+  Layer.provide(TaxDatabaseLive),
+  Layer.provide(TaxPgClientLive),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, Reactivity.layer)),
+);
+
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   taxReadinessLayer,
   // <generated-governed-http-handler-layers>
@@ -156,7 +164,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
 ).pipe(
   // <generated-governed-http-handler-support-layers>
   GovernedReadLayer.provide(
-    GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive, GovernedGatewayAssertionRedemptionLive),
+    GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive, productionGatewayAssertionRedemptionLive),
   ),
   // </generated-governed-http-handler-support-layers>
   Layer.provide(compositionSourceLive),

@@ -28,11 +28,13 @@ import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Layer as GovernedReadLayer, Logger, References, Result, Schema, Tracer } from 'effect';
 import { FetchHttpClient } from 'effect/http';
+import { Reactivity } from 'effect/reactivity';
 
 import { assortmentApi, assortmentMarkerSchema, assortmentOperationContexts } from '../shared/api.ts';
 import type { OperationContext } from '../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 import { assortmentOwnerAuthorizationOverlayLive } from '../src/services/assortment-currentness.ts';
+import { AssortmentDatabaseLive, AssortmentPgClientLive } from '../src/database/client.ts';
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
@@ -47,6 +49,7 @@ import { createRuleRevisionActionApiLive } from './create-rule-revision-action-s
 import { decisionExplanationReadApiLive } from './decision-explanation-read-server.ts';
 import { endApplicabilityBindingActionApiLive } from './end-applicability-binding-action-server.ts';
 import { endClosedAssortmentBoundaryActionApiLive } from './end-closed-assortment-boundary-action-server.ts';
+import { importSymmyRuleActionApiLive } from './import-symmy-rule-action-server.ts';
 import { issueAssortmentCommitmentConfirmationActionApiLive } from './issue-assortment-commitment-confirmation-action-server.ts';
 import { purchaseReadApiLive } from './purchase-read-server.ts';
 import { replaceApplicabilityBindingActionApiLive } from './replace-applicability-binding-action-server.ts';
@@ -156,6 +159,11 @@ const actionRuntimeCoreLive = withAssortmentOwnerAuthorizationOverlay(
 const productionActionRuntimeLive = actionRuntimeCoreLive.pipe(
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
 );
+const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
+  Layer.provide(AssortmentDatabaseLive),
+  Layer.provide(AssortmentPgClientLive),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, Reactivity.layer)),
+);
 const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
   Layer.succeed(Tracer.Tracer, Tracer.make({ span: (options) => new Tracer.NativeSpan(options) })),
@@ -165,7 +173,10 @@ const runtimeObservabilityLive = Layer.mergeAll(
 type AssortmentApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof productionReadRuntimeLive>>,
   actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof productionActionRuntimeLive>>,
-  gatewayAssertionRedemption: Layer.Layer<GatewayAssertionRedemptionService>,
+  gatewayAssertionRedemption: Layer.Layer<
+    GatewayAssertionRedemptionService,
+    Layer.Error<typeof productionGatewayAssertionRedemptionLive>
+  >,
 ];
 
 export type AssortmentApiRuntime = EffectBffDefinition<typeof assortmentApi> & EffectBffRuntime<typeof assortmentApi>;
@@ -186,6 +197,7 @@ export const makeAssortmentApiRuntime = (...args: AssortmentApiRuntimeArguments)
     decisionExplanationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     endApplicabilityBindingActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     endClosedAssortmentBoundaryActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    importSymmyRuleActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     issueAssortmentCommitmentConfirmationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     purchaseReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     replaceApplicabilityBindingActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -208,7 +220,7 @@ export const makeAssortmentApiRuntime = (...args: AssortmentApiRuntimeArguments)
 const apiRuntime = makeAssortmentApiRuntime(
   productionReadRuntimeLive,
   productionActionRuntimeLive,
-  GovernedGatewayAssertionRedemptionLive,
+  productionGatewayAssertionRedemptionLive,
 );
 
 export default apiRuntime;

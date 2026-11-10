@@ -2,6 +2,8 @@ import { Schema } from 'effect';
 import { SymmyDurableJobRouteKeySchema, SymmyJobIdSchema } from './symmy-job-identities.ts';
 import { SymmyInternalExecutionPlanSchema } from './symmy-job-execution.ts';
 
+import { SymmyPolicyFixtureRouteKeySchema } from './symmy-policy-fixture-intents.ts';
+
 export { SymmyJobIdSchema } from './symmy-job-identities.ts';
 
 const codedRoutes = Schema.Literals(['customerGroupCustomersBatch', 'priceListPricesBatch']);
@@ -23,9 +25,12 @@ export const AdmitSymmyJobPayloadSchema = Schema.Struct({
   Schema.makeFilter(
     ({ code, contractVersion, fixtureId, plan, routeKey }) =>
       (((fixtureId !== undefined && contractVersion === undefined && plan === undefined) ||
-        (fixtureId === undefined && contractVersion === 'INTERNAL_C14' && plan !== undefined)) &&
+        (fixtureId === undefined &&
+          contractVersion === 'INTERNAL_C14' &&
+          plan !== undefined &&
+          !Schema.is(SymmyPolicyFixtureRouteKeySchema)(routeKey))) &&
         Schema.is(codedRoutes)(routeKey) === (code !== undefined)) ||
-      'Only selected durable routes require a code',
+      'Fixture routes require a fixture ID and only selected durable routes require a code',
   ),
 );
 export type AdmitSymmyJobPayload = typeof AdmitSymmyJobPayloadSchema.Type;

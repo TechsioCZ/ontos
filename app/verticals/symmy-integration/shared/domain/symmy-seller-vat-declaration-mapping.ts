@@ -8,11 +8,15 @@ import type { DateTime } from 'effect';
 import { symmySourceRecordFingerprint } from './symmy-source-record-fingerprint.ts';
 
 const mappingVersion = 'INTERNAL_C14_SELLER_VAT_DECLARATION_V1';
-const ownerOperation = 'commerce.tax.import-seller-vat-regime-declarations';
+export const symmySellerVatDeclarationOperation = {
+  entrypointKey: 'commerce.tax.import-seller-vat-regime-declarations',
+  moduleId: 'commerce.tax',
+  schemaVersion: '1',
+} as const;
 const declarationFields = ImportSellerVatRegimeDeclarationsPayloadSchema.fields.declarations.value.fields;
 
 /** The first fixture requires one existing seller declaration with a date supplied by its source. */
-const SymmySellerVatDeclarationSourceSchema = Schema.Struct({
+export const SymmySellerVatDeclarationSourceSchema = Schema.Struct({
   contractVersion: Schema.Literal(mappingVersion),
   effectiveFrom: Schema.DateTimeUtcFromString,
   reason: declarationFields.reason,
@@ -31,7 +35,16 @@ class SymmySellerVatDeclarationMappingRejected extends Schema.TaggedError<SymmyS
 
 /** Prepares a single seller import. Keep the admitted run's start fixed across attempts. */
 export const mapSymmySellerVatDeclaration = Effect.fn('SymmySellerVatDeclaration.map')(function* mapDeclaration(
-  route: SymmyRouteContext,
+  route: Pick<
+    SymmyRouteContext,
+    | 'allowedOwnerOperations'
+    | 'factFamily'
+    | 'issuerId'
+    | 'mappingVersion'
+    | 'route'
+    | 'sellingLegalEntityId'
+    | 'sourceNamespace'
+  >,
   migrationStartedAt: DateTime.Utc,
   source: typeof SymmySellerVatDeclarationSourceSchema.Type,
 ) {
@@ -41,9 +54,9 @@ export const mapSymmySellerVatDeclaration = Effect.fn('SymmySellerVatDeclaration
     route.sellingLegalEntityId === undefined ||
     !route.allowedOwnerOperations.some(
       (operation) =>
-        operation.moduleId === 'commerce.tax' &&
-        operation.entrypointKey === ownerOperation &&
-        operation.schemaVersion === '1',
+        operation.moduleId === symmySellerVatDeclarationOperation.moduleId &&
+        operation.entrypointKey === symmySellerVatDeclarationOperation.entrypointKey &&
+        operation.schemaVersion === symmySellerVatDeclarationOperation.schemaVersion,
     )
   ) {
     return yield* new SymmySellerVatDeclarationMappingRejected({ reason: 'route_not_allowed' });

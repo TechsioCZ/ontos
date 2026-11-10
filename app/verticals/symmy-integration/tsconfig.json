@@ -33,6 +33,9 @@
       "path": "../../packages/gateway-principal-verifier"
     },
     {
+      "path": "../assortment"
+    },
+    {
       "path": "../catalog"
     },
     {
@@ -52,6 +55,9 @@
     },
     {
       "path": "../privacy"
+    },
+    {
+      "path": "../tax"
     }
   ]
 }

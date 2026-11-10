@@ -77,6 +77,8 @@ const durableRoutes = [
   'priceListPricesBatch',
   'priceListsBatchUpsert',
   'productsBatch',
+  'assortmentRulesFixtureBatch',
+  'sellerVatDeclarationsFixtureBatch',
 ] as const;
 export type SymmyDurableRouteKey = (typeof durableRoutes)[number];
 
@@ -112,7 +114,7 @@ export const symmyJobRoutes = symmyIntegrationSchema.table.withRLS(
         ${table.routeKey} in ('customerGroupCustomersBatch', 'priceListPricesBatch')
         and ${table.routeCode} is not null and char_length(${table.routeCode}) between 1 and 300
       ) or (
-        ${table.routeKey} in ('customersBatch', 'priceListsBatchUpsert', 'productsBatch', 'customerGroupsBatch', 'inventoryStockBatch', 'adminCustomers', 'adminProducts', 'adminRegions', 'priceLists') and ${table.routeCode} is null
+        ${table.routeKey} in ('customersBatch', 'priceListsBatchUpsert', 'productsBatch', 'customerGroupsBatch', 'inventoryStockBatch', 'adminCustomers', 'adminProducts', 'adminRegions', 'priceLists', 'assortmentRulesFixtureBatch', 'sellerVatDeclarationsFixtureBatch') and ${table.routeCode} is null
       )`,
     ),
     check(

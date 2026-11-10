@@ -141,12 +141,14 @@
     "drizzle-orm": "1.0.0-rc.5-ab785fc"
   },
   "devDependencies": {
+    "@app/assortment": "workspace:*",
     "@app/catalog": "workspace:*",
     "@app/commerce-market-catalog": "workspace:*",
     "@app/pricing": "workspace:*",
     "@app/pricing-contracts": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shell-super-app": "workspace:*",
+    "@app/tax": "workspace:*",
     "@babel/types": "8.0.6",
     "@effect/opentelemetry": "4.0.7",
     "@effect/platform-node": "4.0.7",

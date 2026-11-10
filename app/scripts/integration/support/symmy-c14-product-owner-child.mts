@@ -63,6 +63,8 @@ const serve = Effect.scoped(
         '/commerce-customer-context-api',
         '/price-group-catalog-api',
         '/inventory-api',
+        '/assortment-api',
+        '/tax-api',
         '/commerce-market-catalog-api',
       ]),
       'ONTOS_C14_OWNER_PREFIX',
@@ -82,16 +84,24 @@ const serve = Effect.scoped(
     const lost = yield* Ref.make(false);
     const faultMarker = yield* Config.option(Config.String('ONTOS_C14_RESPONSE_LOSS_MARKER'));
     const faultOperation = yield* Config.schema(
-      Schema.Literals(['catalog-create-product', 'customer-group-create', 'inventory-import']),
+      Schema.Literals([
+        'catalog-create-product',
+        'customer-group-create',
+        'inventory-import',
+        'assortment-import',
+        'tax-import',
+      ]),
       'ONTOS_C14_RESPONSE_LOSS_OPERATION',
     ).pipe(Config.withDefault('catalog-create-product'));
     const faultPaths = {
+      'assortment-import': { read: null, write: '/actions/import-symmy-rule' },
       'catalog-create-product': { read: '/reads/create-product-recovery', write: '/actions/create-product' },
       'customer-group-create': {
         read: '/reads/customer-group-definition-source',
         write: '/actions/create-customer-group',
       },
       'inventory-import': { read: '/reads/inventory-source-import-receipt', write: '/actions/import-source-assertion' },
+      'tax-import': { read: null, write: '/actions/import-seller-vat-regime-declarations' },
     } as const;
     const faultPath = faultPaths[faultOperation];
     const traceProblems = yield* Config.Boolean('ONTOS_C14_TRACE_PROBLEMS').pipe(Config.withDefault(false));
@@ -101,7 +111,7 @@ const serve = Effect.scoped(
       const path = new URL(request.url).pathname;
       const faultActive = Option.isSome(faultMarker) && (yield* fs.exists(faultMarker.value));
       // This is a test transport outage, never an owner acceptance or a replacement authorization gate.
-      if (faultActive && path.endsWith(faultPath.read)) {
+      if (faultActive && faultPath.read !== null && path.endsWith(faultPath.read)) {
         return HttpServerResponse.empty({ status: 503 });
       }
       const response = yield* Effect.tryPromise({
@@ -118,15 +128,14 @@ const serve = Effect.scoped(
           yield* sendOutput({ path, problem: problem.value, status: response.status, type: 'owner-http-problem' });
         }
       }
-      if (
-        faultActive &&
-        path.endsWith(faultPath.write) &&
-        response.status >= 200 &&
-        response.status < 300 &&
-        !(yield* Ref.getAndSet(lost, true))
-      ) {
-        yield* sendOutput({ path, status: response.status, type: 'committed-response-lost' });
-        return HttpServerResponse.empty({ status: 503 });
+      if (faultActive && path.endsWith(faultPath.write) && response.status >= 200 && response.status < 300) {
+        const firstLoss = !(yield* Ref.getAndSet(lost, true));
+        if (firstLoss) {
+          yield* sendOutput({ path, status: response.status, type: 'committed-response-lost' });
+        }
+        if (firstLoss || faultPath.read === null) {
+          return HttpServerResponse.empty({ status: 503 });
+        }
       }
       return HttpServerResponse.fromWeb(response);
     });

@@ -15,6 +15,7 @@ import {
   commitmentConfirmations,
   decisionEvidence,
   decisionSetFences,
+  gatewayAssertionRedemptions,
   ruleRevisions,
   stableRules,
 } from '../../src/database/schema.ts';
@@ -49,12 +50,54 @@ it('owns only the private, tenant/legal-entity-scoped Assortment policy catalog'
       config.name.startsWith('assortment_rule_') ||
       config.name === 'assortment_decision_set_fences';
     expect(config.columns.some(({ name, notNull }) => name === 'legal_entity_id' && notNull)).toBe(!isTenantOwned);
-    expect(config.policies.map((policy) => policy.for)).toEqual(
+    const regularPolicies = config.policies.filter((policy) => !policy.name.endsWith('_c14_fixture_insert'));
+    expect(regularPolicies.map((policy) => policy.for)).toEqual(
       config.name === 'assortment_decision_set_fences'
         ? ['select', 'insert', 'update', 'delete', 'all']
         : ['select', 'insert', 'update', 'delete'],
     );
   }
+});
+
+it('permits only the scoped internal fixture routine to insert its policy records', () => {
+  const targets = ASSORTMENT_TABLES.flatMap((table) => {
+    const config = getTableConfig(table);
+    return config.policies
+      .filter((policy) => policy.name.endsWith('_c14_fixture_insert'))
+      .map((policy) => ({ command: policy.for, table: config.name }));
+  });
+  expect(targets).toEqual([
+    { command: 'insert', table: 'assortment_stable_rules' },
+    { command: 'insert', table: 'assortment_rule_revisions' },
+    { command: 'insert', table: 'assortment_applicability_bindings' },
+  ]);
+  const sql = migrations();
+  expect(sql).toContain("source.action_key = 'integration.symmy.admit-symmy-job'");
+  expect(sql).toContain('SET search_path = pg_catalog, assortment, pg_temp');
+  expect(sql).toContain('GRANT EXECUTE ON FUNCTION "assortment"."import_c14_rule_fixture"');
+  expect(sql).not.toMatch(
+    /GRANT (?:SELECT|INSERT|UPDATE|DELETE).*ON TABLE "assortment"\."assortment_(?:stable_rules|rule_revisions|applicability_bindings)"/u,
+  );
+});
+
+it('records gateway replay identities separately from tenant policy data', () => {
+  const redemption = getTableConfig(gatewayAssertionRedemptions);
+  expect(redemption.enableRLS).toBe(false);
+  expect(redemption.columns.map(({ name }) => name)).toEqual([
+    'audience',
+    'expires_at',
+    'issuer',
+    'jti',
+    'redeemed_at',
+  ]);
+  expect(redemption.uniqueConstraints.map(({ columns }) => columns.map(({ name }) => name))).toEqual([
+    ['issuer', 'audience', 'jti'],
+  ]);
+  const sql = migrations();
+  expect(sql).toContain('REVOKE ALL ON TABLE "assortment"."gateway_assertion_redemptions" FROM PUBLIC, ontos_runtime');
+  expect(sql).toContain(
+    'GRANT SELECT, INSERT, DELETE ON TABLE "assortment"."gateway_assertion_redemptions" TO ontos_runtime',
+  );
 });
 
 it('models immutable lifecycle facts and collection provenance', () => {
@@ -174,7 +217,11 @@ it('uses a tenant fence whose database triggers invalidate exact sets atomically
 it('keeps the tenant-owned Rule lineage reusable across Selling Legal Entities', () => {
   for (const table of [getTableConfig(stableRules), getTableConfig(ruleRevisions)]) {
     expect(table.columns.some(({ name }) => name === 'legal_entity_id')).toBe(false);
-    expect(table.policies.every((policy) => policy.to === 'ontos_runtime')).toBe(true);
+    expect(
+      table.policies
+        .filter((policy) => !policy.name.endsWith('_c14_fixture_insert'))
+        .every((policy) => policy.to === 'ontos_runtime'),
+    ).toBe(true);
   }
   const selectorOwner = getTableConfig(ruleRevisions).columns.find(
     ({ name }) => name === 'selector_target_owner_module_id',

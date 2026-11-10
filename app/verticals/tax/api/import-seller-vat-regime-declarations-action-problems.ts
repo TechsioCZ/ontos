@@ -132,6 +132,8 @@ const mapDomainProblem = (error: DomainError): ImportSellerVatRegimeDeclarations
         importSellerVatRegimeDeclarationsActionProblem.unavailable('tax_governance_persistence_unavailable'),
       TaxGovernanceStaleBasis: () =>
         importSellerVatRegimeDeclarationsActionProblem.conflict('tax_governance_stale_basis'),
+      TaxSymmyFixtureAccessDenied: () =>
+        importSellerVatRegimeDeclarationsActionProblem.forbidden('tax_symmy_fixture_access_denied'),
     }),
     Match.exhaustive,
   );
