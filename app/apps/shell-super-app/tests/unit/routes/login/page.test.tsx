@@ -2,7 +2,7 @@ import { toaster } from '@techsio/ui-kit/molecules/toast';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Effect, Redacted, Schema } from 'effect';
-import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, rstest, it } from 'effect-rstest';
 import { renderToString } from 'react-dom/server';
 
 import LoginPage from '../../../../src/routes/[lang]/login/page';
@@ -34,6 +34,21 @@ const {
     routerState: { matches },
     signInMock: rstest.fn(),
   };
+});
+
+// The ui-kit Toaster shows its live region as a manual popover. Browsers have the Popover API; happy-dom does not.
+const popoverMethods = ['showPopover', 'hidePopover'] as const;
+beforeAll(() => {
+  for (const method of popoverMethods) {
+    if (!(method in HTMLElement.prototype)) {
+      Object.defineProperty(HTMLElement.prototype, method, { configurable: true, value: () => {} });
+    }
+  }
+});
+afterAll(() => {
+  for (const method of popoverMethods) {
+    Reflect.deleteProperty(HTMLElement.prototype, method);
+  }
 });
 
 beforeEach(() => {
@@ -103,7 +118,7 @@ rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
   browserRuntime: { runCallback: browserRuntime.runCallback, runPromise: browserRunPromiseMock },
 }));
 
-const getLogin = () => screen.getByRole('textbox', { name: 'Login *' });
+const getLogin = () => screen.getByRole('textbox', { name: /^Login/u });
 const getPassword = () => screen.getByLabelText(/^Password/u, { selector: 'input' });
 const getSubmit = () => screen.getByRole('button', { name: 'Login' });
 

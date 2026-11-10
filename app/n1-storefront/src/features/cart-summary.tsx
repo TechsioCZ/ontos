@@ -40,7 +40,8 @@ export const CartSummary = ({
       <h2 className="mb-4 text-lg font-semibold">{d.shopping.summary}</h2>
       <TotalsSummary
         actions={
-          <div className="flex flex-col gap-3">
+          // ui-kit Button sets its own aria-busy from isLoading, so the pending validation is announced on the actions.
+          <div aria-busy={quote.state === "pending" || undefined} className="flex flex-col gap-3">
             {verified === null && quote.state === "unavailable" && (
               <Button
                 disabled={invalid}
@@ -63,14 +64,7 @@ export const CartSummary = ({
                 {d.shopping.checkout}
               </LinkButton>
             ) : (
-              <Button
-                aria-busy={quote.state === "pending"}
-                disabled
-                size="md"
-                theme="solid"
-                type="button"
-                variant="primary"
-              >
+              <Button disabled size="md" theme="solid" type="button" variant="primary">
                 {d.shopping.checkout}
               </Button>
             )}

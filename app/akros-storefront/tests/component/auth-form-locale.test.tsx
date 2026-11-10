@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "@/app/api/ontos/account/route";
 import { LoginForm, RegistrationForm } from "@/components/auth-form";
@@ -122,7 +123,8 @@ describe.each(["cs", "sk", "en"] as const)("authentication in the %s market", (l
     })) {
       fill(id, value);
     }
-    fireEvent.click(
+    // The UI-kit checkbox toggles on a real pointer or keyboard activation, not on a bare synthetic click.
+    await userEvent.click(
       screen.getByRole("checkbox", { name: (name) => name.includes(copy.auth.consent) }),
     );
     submit("register-password");

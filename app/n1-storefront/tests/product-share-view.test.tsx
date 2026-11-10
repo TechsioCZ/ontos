@@ -58,7 +58,9 @@ it.each(["cs", "en"])("renders a safe inactive share action during SSR in %s", (
   const html = renderToStaticMarkup(
     <ProductView dictionary={dictionary} locale={locale} product={product} />,
   );
-  expect(html).toContain(`<a aria-disabled="true">${dictionary.sendToFriend}</a>`);
+  expect(html).toMatch(
+    new RegExp(`<a [^>]*aria-disabled="true"[^>]*>${dictionary.sendToFriend}</a>`, "u"),
+  );
   expect(html).not.toContain("mailto:");
 });
 
