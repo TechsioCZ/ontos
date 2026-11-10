@@ -172,23 +172,47 @@ const clickSave = async () => {
   await settle();
 };
 
+/** A catalogue product as the product search returns it: the search knows nothing of its offer in a market. */
+const searchHit = (productId: string, sku: string, name: string) => ({
+  active: true,
+  category: 'Šrouby',
+  createdAt: '2026-11-01T10:00:00.000Z',
+  currentPriceMinor: 100,
+  id: productId,
+  lowStock: false,
+  lowStockThreshold: 0,
+  name,
+  priceHistory: [],
+  sku,
+  stockOnHand: 0,
+  stockValueMinor: 0,
+  unit: 'ks',
+  updatedAt: '2026-11-01T10:00:00.000Z',
+  vatRate: 21,
+});
+
+/** The records the page reads: the exceptions as `items`, and `products` for a search. */
+const recordsOf = (items: readonly (typeof exceptionItems)[number][], products: readonly unknown[] = []) =>
+  Effect.succeed(
+    Schema.decodeUnknownSync(RecordsResponseSchema)({
+      actorPrincipalRef: { principalId: '20000000-0000-4000-8000-000000000002', tenantId },
+      canWrite: true,
+      indicators: { lowStockCount: 0, openOrderValueMinor: 0, orderCount: 0, productCount: 0, stockValueMinor: 0 },
+      marketExceptions: { items, marketId, total: items.length },
+      movements: [],
+      orders: [],
+      products,
+      revision: 3,
+    }),
+  );
+
+const sentCommands = () => rstest.mocked(executeManageMarkets).mock.calls.map(([payload]) => payload.command);
+
 beforeEach(() => {
   rstest.mocked(executeManageMarkets).mockReset();
   rstest.mocked(executeManageMarkets).mockReturnValue(Effect.succeed({ entityIds: [], revision: 9 }));
-  rstest.mocked(executeRecords).mockReturnValue(
-    Effect.succeed(
-      Schema.decodeUnknownSync(RecordsResponseSchema)({
-        actorPrincipalRef: { principalId: '20000000-0000-4000-8000-000000000002', tenantId },
-        canWrite: true,
-        indicators: { lowStockCount: 0, openOrderValueMinor: 0, orderCount: 0, productCount: 0, stockValueMinor: 0 },
-        marketExceptions: { items: exceptionItems, marketId, total: 2 },
-        movements: [],
-        orders: [],
-        products: [],
-        revision: 3,
-      }),
-    ),
-  );
+  rstest.mocked(executeRecords).mockReset();
+  rstest.mocked(executeRecords).mockImplementation(() => recordsOf(exceptionItems));
 });
 
 afterEach(() => {
@@ -281,6 +305,114 @@ describe('e-shop offer switches of the price list', () => {
       expect(buttons(labels.reloadLatest)).toHaveLength(1);
       // The draft is kept: the switch still shows the unsaved change.
       expect(switchFor('SKU-1').checked).toBe(false);
+    }),
+  );
+
+  it.live('after a conflict, Načíst aktuální verzi shows the other change and the next switch saves over it', () =>
+    Effect.gen(function* reloadAfterConflict() {
+      // The server: someone withdrew SKU-1 after the page showed it as offered.
+      const server = new Map(Object.entries({ 'p-1': false, 'p-2': true }));
+      rstest.mocked(executeManageMarkets).mockImplementation(({ command }) => {
+        if (command._tag !== 'SetProductMarketOffer') {
+          return Effect.succeed({ entityIds: [], revision: 9 });
+        }
+        if (command.expectedOffered !== undefined && command.expectedOffered !== server.get(command.productId)) {
+          return Effect.fail(staleOffer);
+        }
+        server.set(command.productId, command.offered);
+        return Effect.succeed({ entityIds: [], revision: 9 });
+      });
+      yield* Effect.promise(() => mount());
+      yield* Effect.sleep('50 millis');
+      yield* Effect.promise(settle);
+      // From now on a read shows the server as it is.
+      rstest
+        .mocked(executeRecords)
+        .mockImplementation(() =>
+          recordsOf(exceptionItems.map((item) => ({ ...item, offered: server.get(item.productId) ?? item.offered }))),
+        );
+      yield* Effect.promise(() => toggle('SKU-1'));
+      yield* Effect.promise(() => clickSave());
+      yield* Effect.sleep('100 millis');
+      yield* Effect.promise(settle);
+      expect(document.body.textContent).toContain(labels.conflict);
+
+      yield* Effect.promise(async () => {
+        await act(async () => {
+          buttons(labels.reloadLatest)[0]?.click();
+        });
+      });
+      yield* Effect.sleep('100 millis');
+      yield* Effect.promise(settle);
+      // The other person's withdrawal shows; nothing is unsaved.
+      expect(switchFor('SKU-1').checked).toBe(false);
+      expect(document.body.textContent).not.toContain(labels.conflict);
+
+      // Offering it again is checked against what was just read, and goes through.
+      yield* Effect.promise(() => toggle('SKU-1'));
+      yield* Effect.promise(() => clickSave());
+      yield* Effect.sleep('100 millis');
+      yield* Effect.promise(settle);
+      expect(sentCommands().at(-1)).toEqual({
+        _tag: 'SetProductMarketOffer',
+        expectedOffered: false,
+        marketId,
+        offered: true,
+        productId: 'p-1',
+      });
+      expect(server.get('p-1')).toBe(true);
+      expect(document.body.textContent).not.toContain(labels.conflict);
+    }),
+  );
+
+  it.live('withdrawing a search hit that is already withdrawn saves, and claims no offer it did not read', () =>
+    Effect.gen(function* searchHitAlreadyException() {
+      // The server: SKU-3 is already withdrawn from this whole-catalogue market, and it is not on the shown page.
+      const server = new Map(Object.entries({ 'p-3': false }));
+      rstest.mocked(executeManageMarkets).mockImplementation(({ command }) => {
+        if (
+          command._tag === 'SetProductMarketOffer' &&
+          command.expectedOffered !== undefined &&
+          command.expectedOffered !== server.get(command.productId)
+        ) {
+          return Effect.fail(staleOffer);
+        }
+        return Effect.succeed({ entityIds: [], revision: 9 });
+      });
+      rstest
+        .mocked(executeRecords)
+        .mockImplementation(({ view }) =>
+          recordsOf(exceptionItems, view?.search === undefined ? [] : [searchHit('p-3', 'SKU-3', 'Šroub C')]),
+        );
+      yield* Effect.promise(() => mount());
+      yield* Effect.sleep('50 millis');
+      yield* Effect.promise(settle);
+      yield* Effect.promise(async () => {
+        await act(async () => {
+          const input = Option.getOrThrow(
+            Option.fromNullOr(document.querySelector<HTMLInputElement>('input[id="market-product-search"]')),
+          );
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, 'Šroub');
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+      });
+      yield* Effect.sleep('600 millis');
+      yield* Effect.promise(settle);
+      const [withdraw] = buttons('commerce-market-catalog.detail.assortment.exceptions.withdraw');
+      expect(withdraw).toBeDefined();
+      yield* Effect.promise(async () => {
+        await act(async () => {
+          withdraw?.click();
+        });
+      });
+      yield* Effect.promise(settle);
+      expect(commands()).toBe(0);
+
+      yield* Effect.promise(() => clickSave());
+      yield* Effect.sleep('100 millis');
+      yield* Effect.promise(settle);
+      expect(sentCommands()).toEqual([{ _tag: 'SetProductMarketOffer', marketId, offered: false, productId: 'p-3' }]);
+      expect(document.body.textContent).not.toContain(labels.conflict);
     }),
   );
 

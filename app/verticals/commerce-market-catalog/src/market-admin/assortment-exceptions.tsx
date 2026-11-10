@@ -14,7 +14,8 @@ import type { ExceptionsInput, WriteFailure } from './page-data.ts';
 
 type SearchResult = Effect.Success<ReturnType<typeof searchProducts>>['products'];
 
-export type SetOffer = (productId: string, name: string, offered: boolean, currentlyOffered: boolean) => void;
+/** `currentlyOffered` is the offer as read; a search hit leaves it out, as it did not read the offer. */
+export type SetOffer = (productId: string, name: string, offered: boolean, currentlyOffered?: boolean) => void;
 
 export interface ExceptionsBlockProps {
   readonly canManage: boolean;
@@ -188,8 +189,8 @@ const ProductSearch = ({
       {results?.kind === 'found' && results.products.length > 0 && (
         <ul className="divide-y divide-border-primary/60">
           {results.products.map((product) => {
-            // A product found by search is not an exception yet: it has the market's default offer.
-            const handleClick = () => onSetOffer(product.id, product.name, !offeredByDefault, offeredByDefault);
+            // A search hit may already be an exception: its offer is not known here, so none is claimed as read.
+            const handleClick = () => onSetOffer(product.id, product.name, !offeredByDefault);
             return (
               <li className="flex flex-wrap items-center justify-between gap-150 py-100" key={product.id}>
                 <ProductLabel name={product.name} sku={product.sku} />

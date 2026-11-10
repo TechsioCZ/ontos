@@ -127,7 +127,10 @@ export const PriceListEditor = ({
   const record = useRecordDraft<SectionDraft, never>({
     equals: sameSectionDraft,
     isValid: (value) => pricingIssues(value.pricing).length === 0,
-    refresh,
+    // "Načíst aktuální verzi" re-reads the offers too, so a conflict shows the other person's offer change and the next
+    // switch is checked against it.
+    refresh:
+      exceptions === undefined ? refresh : Effect.andThen(refresh, marketExceptionsData.refresh(exceptions.input)),
     revision: settings.revision,
     runtime: browserRuntime,
     save: (value, expectedRevision, confirmed) =>
@@ -141,8 +144,13 @@ export const PriceListEditor = ({
   const issues = pricingIssues(record.draft.pricing);
   // A switch or a search result changes the draft only; the section's Save sends it.
   const setOffer: SetOffer = (productId, name, offered, currentlyOffered) => {
-    // The offer the product shows now, as last read; a Save compares the draft with it.
-    serverOffers.current.set(productId, currentlyOffered);
+    // The offer the product shows now, as last read; a Save compares the draft with it. A search hit does not know
+    // the product's offer, so its Save claims no read offer (a plain set, not checked against a stale one).
+    if (currentlyOffered === undefined) {
+      serverOffers.current.delete(productId);
+    } else {
+      serverOffers.current.set(productId, currentlyOffered);
+    }
     // Switching an offer back to what the server has takes it out of the draft again.
     record.setDraft((current) => {
       const others = Object.fromEntries(Object.entries(current.offers).filter(([id]) => id !== productId));
