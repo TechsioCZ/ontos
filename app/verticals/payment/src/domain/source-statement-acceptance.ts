@@ -12,6 +12,7 @@ import type {
 import { paymentSourceRejected } from '../../shared/domain/source-statement.ts';
 import type { PaymentSourceEntry, PaymentSourceStatementResult } from '../../shared/domain/source-statement.ts';
 import type { OutboxPayload as OperationOutcomeChangedPayload } from '../../shared/outbox/payment-core-operation-outcome-changed-v1.ts';
+import { computePaymentMaterialHash } from '../persistence/payment-aggregate-persistence.ts';
 import type { PaymentAggregateRecord } from '../persistence/payment-aggregate-persistence.ts';
 import type { NewPaymentObservationInput, PaymentSourceServices } from '../persistence/payment-source-persistence.ts';
 import type { PaymentEvidenceDecisionCase, PaymentEvidenceOutcomeChange } from './evidence-interpretation.ts';
@@ -24,7 +25,7 @@ import {
 import {
   PaymentSourceQualification,
   qualifyPaymentSourceStatement,
-  claimedCapabilityRef,
+  paymentSourceStatementMaterial,
   selectedCapabilityCorrelation,
 } from './source-qualification.ts';
 import type {
@@ -76,6 +77,8 @@ interface StatementRun {
   readonly input: PaymentSourceStatementInput;
   readonly receivedAt: DateTime.Utc;
   readonly services: PaymentSourceServices;
+  /** SHA-256 of the statement exactly as claimed; stored with the observation and compared on replays. */
+  readonly statementHash: string;
   readonly target: Option.Option<PaymentAggregateRecord>;
   readonly verifiedAt: DateTime.Utc;
 }
@@ -142,7 +145,6 @@ const recordObservation = (run: StatementRun, row: RecordedRow) => {
     amount: row.amount,
     authority: row.authority,
     capabilityCorrelated: run.capabilityCorrelated,
-    capabilityRef: claimedCapabilityRef(statement),
     correctionEffect: row.correctionEffect,
     correctsObservationId: statement.correctsObservationId,
     economicEffectKey: statement.economicEffectKey,
@@ -157,6 +159,7 @@ const recordObservation = (run: StatementRun, row: RecordedRow) => {
     sourceOccurredAt: statement.sourceOccurredAt,
     sourceOccurrenceId: statement.sourceOccurrenceId,
     sourceRevision: statement.sourceRevision,
+    statementHash: run.statementHash,
     verifiedAt: run.verifiedAt,
   });
 };
@@ -561,12 +564,14 @@ export const acceptPaymentSourceStatement = Effect.fn('PaymentSource.acceptState
     ],
     { concurrency: 1 },
   );
+  const statementHash = yield* computePaymentMaterialHash(paymentSourceStatementMaterial(statement));
   const qualification = qualifyPaymentSourceStatement({
     authorities,
     correctedObservation: Option.getOrUndefined(correctedObservation),
     entry: input.entry,
     existingOccurrence: Option.getOrUndefined(existingOccurrence),
     statement,
+    statementHash,
     target: Option.getOrUndefined(target),
   });
   const run: StatementRun = {
@@ -574,6 +579,7 @@ export const acceptPaymentSourceStatement = Effect.fn('PaymentSource.acceptState
     input,
     receivedAt,
     services,
+    statementHash,
     target,
     verifiedAt,
   };

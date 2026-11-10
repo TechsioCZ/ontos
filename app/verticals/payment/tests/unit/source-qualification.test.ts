@@ -5,6 +5,7 @@ import type { PaymentExecutionBinding } from '../../shared/domain/payment-execut
 import type { PaymentMethod } from '../../shared/domain/payment-vocabulary.ts';
 import {
   PaymentSourceQualification,
+  paymentSourceStatementMaterial,
   qualifyPaymentSourceStatement,
   selectedCapabilityCorrelation,
   sourceAuthorityConfigurationProblem,
@@ -94,6 +95,10 @@ const gatewayBinding: PaymentExecutionBinding = {
   providerFamily: 'GOPAY',
 };
 
+/** The hash of the statement as claimed; a redelivery replays only when it equals the recorded one. */
+const STATEMENT_HASH = 'a'.repeat(64);
+const OTHER_STATEMENT_HASH = 'b'.repeat(64);
+
 const qualify = (overrides: Partial<PaymentSourceQualificationInput> = {}): PaymentSourceQualificationCase =>
   qualifyPaymentSourceStatement({
     authorities: [authority()],
@@ -101,6 +106,7 @@ const qualify = (overrides: Partial<PaymentSourceQualificationInput> = {}): Paym
     entry: 'INTEGRATION',
     existingOccurrence: absent(),
     statement: statement(),
+    statementHash: STATEMENT_HASH,
     target: bankTarget,
     ...overrides,
   });
@@ -108,7 +114,6 @@ const qualify = (overrides: Partial<PaymentSourceQualificationInput> = {}): Paym
 const recorded = (overrides: Partial<PaymentRecordedObservationView> = {}): PaymentRecordedObservationView => ({
   acceptanceOutcome: 'ACCEPTED_OBSERVATION',
   amount: { amountMinor: 100_000, currency: 'CZK' },
-  capabilityRef: absent(),
   correctsObservationId: absent(),
   economicEffectKey: absent(),
   evidenceRef: absent(),
@@ -119,6 +124,7 @@ const recorded = (overrides: Partial<PaymentRecordedObservationView> = {}): Paym
   paymentId: PAYMENT_ID,
   sourceAuthorityId: BANK_AUTHORITY_ID,
   sourceOccurredAt: absent(),
+  statementHash: STATEMENT_HASH,
   ...overrides,
 });
 
@@ -254,96 +260,40 @@ describe('#1152 exact source qualification', () => {
     expect(tagOf(decision)).toBe('CurrencyMismatch');
   });
 
-  it('#1152 duplicate source occurrences: same occurrence and content is DUPLICATE, changed content conflicts', () => {
+  it('#1152 duplicate source occurrences: the same claimed statement is DUPLICATE, changed content conflicts', () => {
     expect(tagOf(qualify({ existingOccurrence: recorded() }))).toBe('Duplicate');
-    expect(tagOf(qualify({ existingOccurrence: recorded({ amount: { amountMinor: 90_000, currency: 'CZK' } }) }))).toBe(
+    expect(tagOf(qualify({ existingOccurrence: recorded(), statementHash: OTHER_STATEMENT_HASH }))).toBe(
       'OccurrenceConflict',
     );
-    const occurredAt = DateTime.makeUnsafe('2026-11-09T10:00:00.000Z');
-    expect(
-      tagOf(
-        qualify({
-          existingOccurrence: recorded({ sourceOccurredAt: occurredAt }),
-          statement: statement({ sourceOccurredAt: occurredAt }),
-        }),
-      ),
-    ).toBe('Duplicate');
+    // What qualification resolved for the original (no Payment, an inferred operation) never matters:
+    // only the claimed content does.
+    const unassigned = recorded({ operationId: absent(), paymentId: absent() });
+    expect(tagOf(qualify({ existingOccurrence: unassigned, target: absent() }))).toBe('Duplicate');
   });
 
-  it('#1151 a replayed occurrence that names a different operation conflicts; an inferred original still replays', () => {
-    // The original was recorded against the inferred COLLECT; a resubmission naming it or naming nothing replays.
-    expect(tagOf(qualify({ existingOccurrence: recorded(), statement: statement({ operationId: COLLECT_ID }) }))).toBe(
-      'Duplicate',
-    );
-    expect(tagOf(qualify({ existingOccurrence: recorded(), statement: statement() }))).toBe('Duplicate');
-    // Re-correlating the same occurrence to another operation is changed content, never a silent replay.
-    expect(tagOf(qualify({ existingOccurrence: recorded(), statement: statement({ operationId: REFUND_ID }) }))).toBe(
-      'OccurrenceConflict',
-    );
-  });
-
-  it('#1151 an unassigned original replayed naming a resolved Payment is changed content; an unresolved Payment still replays', () => {
-    const unassigned = recorded({ paymentId: absent() });
-    expect(tagOf(qualify({ existingOccurrence: unassigned, statement: statement() }))).toBe('OccurrenceConflict');
-    expect(tagOf(qualify({ existingOccurrence: unassigned, statement: statement({ paymentId: absent() }) }))).toBe(
-      'Duplicate',
-    );
-    // A Payment outside the trusted scope resolves to nothing, so the exact retry matches its unresolved original.
-    expect(
-      tagOf(
-        qualify({
-          existingOccurrence: unassigned,
-          statement: statement({ paymentId: '10000000-0000-4000-8000-0000000000ff' }),
-          target: absent(),
-        }),
-      ),
-    ).toBe('Duplicate');
-  });
-
-  it('#1151 an absent amount is not a wildcard: an exact no-amount replay is a duplicate, an added amount conflicts', () => {
-    const correction = {
-      correctsObservationId: '40000000-0000-4000-8000-000000000009',
-      factKind: 'SOURCE_CORRECTION',
-    } as const;
-    expect(
-      tagOf(
-        qualify({
-          existingOccurrence: recorded({ ...correction, amount: absent() }),
-          statement: statement({ ...correction, amount: absent() }),
-        }),
-      ),
-    ).toBe('Duplicate');
-    expect(
-      tagOf(
-        qualify({
-          existingOccurrence: recorded({ ...correction, amount: absent() }),
-          statement: statement({ ...correction }),
-        }),
-      ),
-    ).toBe('OccurrenceConflict');
-  });
-
-  it('#1151 a correction recorded with its inferred Payment replays when resent without a Payment', () => {
-    const correction = {
-      correctsObservationId: '40000000-0000-4000-8000-000000000009',
-      factKind: 'SOURCE_CORRECTION',
-    } as const;
-    // The original named no Payment; it was recorded with the Payment of the receipt it corrects.
-    const original = recorded({ ...correction, amount: absent() });
-    const replay = statement({ ...correction, amount: absent(), paymentId: absent() });
-    expect(tagOf(qualify({ correctedObservation: recorded(), existingOccurrence: original, statement: replay }))).toBe(
-      'Duplicate',
-    );
-    // A replay whose correction target belongs to another Payment is changed correlation.
-    expect(
-      tagOf(
-        qualify({
-          correctedObservation: recorded({ paymentId: '10000000-0000-4000-8000-0000000000ff' }),
-          existingOccurrence: original,
-          statement: replay,
-        }),
-      ),
-    ).toBe('OccurrenceConflict');
+  it('#1151 every claimed field is part of the statement material a redelivery must repeat', () => {
+    const base = statement();
+    const materialOf = (overrides: Partial<PaymentSourceStatement>) =>
+      paymentSourceStatementMaterial({ ...base, ...overrides });
+    expect(materialOf({})).toEqual(paymentSourceStatementMaterial(statement()));
+    const changed: readonly Partial<PaymentSourceStatement>[] = [
+      { amount: { amountMinor: 90_000, currency: 'CZK' } },
+      { amount: absent() },
+      { paymentId: absent() },
+      { paymentId: '10000000-0000-4000-8000-0000000000ff' },
+      { operationId: REFUND_ID },
+      { correctsObservationId: '40000000-0000-4000-8000-000000000009' },
+      { deliveryOfferRef: 'ppl-delivery-offer-2' },
+      { pickupCapabilityRef: 'pickup-prague-2' },
+      { economicEffectKey: 'bank:line:2' },
+      { evidenceRef: 'statement-2' },
+      { factKind: 'COLLECTION_NOT_EFFECTED' },
+      { sourceOccurredAt: DateTime.makeUnsafe('2026-11-09T10:00:00.000Z') },
+      { sourceRevision: base.sourceRevision + 1 },
+    ];
+    for (const overrides of changed) {
+      expect(materialOf(overrides)).not.toEqual(materialOf({}));
+    }
   });
 
   it('#1152 operator evidence cannot enter through the integration Action and vice versa', () => {
@@ -381,15 +331,6 @@ describe('#1152 exact source qualification', () => {
       );
     expect([correlation(), correlation('ppl-delivery-offer-1')]).toEqual([false, true]);
     expect(selectedCapabilityCorrelation(statement(), qualify())).toBeUndefined();
-    // The claimed Delivery Offer is part of the statement: a replay that changes or drops it conflicts.
-    const recordedCod = recorded({ capabilityRef: 'ppl-delivery-offer-1', factFamily: 'COD_CUSTOMER_COLLECTION' });
-    const replayOf = (deliveryOfferRef?: string) =>
-      tagOf(qualify({ ...input, existingOccurrence: recordedCod, statement: codStatement(deliveryOfferRef) }));
-    expect([replayOf('ppl-delivery-offer-1'), replayOf('ppl-delivery-offer-2'), replayOf()]).toEqual([
-      'Duplicate',
-      'OccurrenceConflict',
-      'OccurrenceConflict',
-    ]);
     // Another configured COD carrier naming the selected offer is not the carrier the Payment is bound to.
     const foreignCarrierSource = { ...carrierSource, accountRef: 'dpd-merchant-12', sourceSystem: 'dpd' } as const;
     const foreignCarrier = authority({

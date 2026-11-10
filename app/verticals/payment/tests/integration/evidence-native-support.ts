@@ -270,6 +270,9 @@ export interface EvidenceScenarioInput {
   readonly scope: PaymentTestScope;
 }
 
+/** Rows written directly by this helper never replay: they carry one fixed well-formed statement hash. */
+const DIRECT_ROW_STATEMENT_HASH = '0'.repeat(64);
+
 export const evidenceScenarioOf = ({ native, r1, r2, scope }: EvidenceScenarioInput) => {
   const principal = principalOf(scope);
 
@@ -452,6 +455,7 @@ export const evidenceScenarioOf = ({ native, r1, r2, scope }: EvidenceScenarioIn
             sourceOccurrenceId: spec.occurrenceId ?? `occurrence-${randomUUID()}`,
             sourceRevision: 0,
             sourceSystem: 'gopay',
+            statementHash: DIRECT_ROW_STATEMENT_HASH,
             tenantId: scope.tenantId,
             verifiedAt: now,
           })

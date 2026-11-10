@@ -178,8 +178,6 @@ export interface PaymentSourceAuthorityView {
 export interface PaymentRecordedObservationView {
   readonly acceptanceOutcome: PaymentObservationAcceptanceOutcome;
   readonly amount: PaymentMonetaryAmount | undefined;
-  /** The capability reference a selected-capability source claimed (see `claimedCapabilityRef`). */
-  readonly capabilityRef: string | undefined;
   readonly correctsObservationId: string | undefined;
   readonly economicEffectKey: string | undefined;
   readonly evidenceRef: string | undefined;
@@ -190,6 +188,8 @@ export interface PaymentRecordedObservationView {
   readonly paymentId: string | undefined;
   readonly sourceAuthorityId: string | undefined;
   readonly sourceOccurredAt: DateTime.Utc | undefined;
+  /** SHA-256 of the statement exactly as its source claimed it (`paymentSourceStatementMaterial`). */
+  readonly statementHash: string;
 }
 
 /** The Current Payment as qualification needs it (structurally satisfied by the aggregate records). */
@@ -239,6 +239,8 @@ export interface PaymentSourceQualificationInput {
   /** The observation already recorded for the same source occurrence and revision, if any. */
   readonly existingOccurrence: PaymentRecordedObservationView | undefined;
   readonly statement: PaymentSourceStatement;
+  /** SHA-256 of `paymentSourceStatementMaterial(statement)`: what a redelivery must equal to replay. */
+  readonly statementHash: string;
   /** The correlated Payment, loaded under its row lock; undefined when absent from the trusted scope. */
   readonly target: PaymentSourceTargetView | undefined;
 }
@@ -322,54 +324,35 @@ const NOT_A_BOUND_AUTHORITY = unauthorized(
   'The submitting principal is not bound to an active configured authority for this source binding and fact family',
 );
 
-const sameInstant = (left: DateTime.Utc | undefined, right: DateTime.Utc | undefined): boolean =>
-  left === undefined || right === undefined ? left === right : DateTime.Equivalence(left, right);
-
 /**
- * The Delivery Offer or pickup capability a selected-capability source (carrier, local POS) claims. It is
- * part of the statement's content: a replay that changes it is never the same statement (#1152).
+ * The statement exactly as its source claimed it, as canonical JSON material. Its hash is stored with the
+ * observation, so a redelivery is an exact duplicate only when it claims the same content, whatever
+ * Payment, operation or capability qualification later resolved, inferred or dropped (#1151/#1152).
  */
-export const claimedCapabilityRef = (statement: PaymentSourceStatement): string | undefined =>
-  PAYMENT_SELECTED_CAPABILITY_SOURCES.has(statement.source.sourceKind)
-    ? (statement.deliveryOfferRef ?? statement.pickupCapabilityRef)
-    : undefined;
-
-/**
- * An unassigned original recorded no Payment. A replay that names a Payment this scope resolves is changed
- * content (#1151: correlation is never silently dropped), while a replay whose Payment is outside the scope
- * stays as unresolved as its original, so an exact retry still replays.
- */
-const samePaymentCorrelation = (
-  recorded: PaymentRecordedObservationView,
-  claimedPaymentId: string | undefined,
-  paymentResolved: boolean,
-): boolean =>
-  recorded.paymentId === undefined
-    ? claimedPaymentId === undefined || !paymentResolved
-    : recorded.paymentId === claimedPaymentId;
-
-/**
- * Exact duplicate: the stable statement content equals what the original occurrence recorded. A recorded
- * amount is always the claimed amount of its original (absent when the statement claimed none), so an
- * absent amount matches only an absent amount: adding or changing one is changed content (#1151).
- */
-const sameStatement = (
-  recorded: PaymentRecordedObservationView,
-  statement: PaymentSourceStatement,
-  claimedPaymentId: string | undefined,
-  paymentResolved: boolean,
-): boolean =>
-  recorded.factFamily === statement.factFamily &&
-  recorded.factKind === statement.factKind &&
-  recorded.correctsObservationId === statement.correctsObservationId &&
-  recorded.economicEffectKey === statement.economicEffectKey &&
-  recorded.evidenceRef === statement.evidenceRef &&
-  sameInstant(recorded.sourceOccurredAt, statement.sourceOccurredAt) &&
-  samePaymentCorrelation(recorded, claimedPaymentId, paymentResolved) &&
-  recorded.capabilityRef === claimedCapabilityRef(statement) &&
-  (statement.operationId === undefined || recorded.operationId === statement.operationId) &&
-  recorded.amount?.amountMinor === statement.amount?.amountMinor &&
-  recorded.amount?.currency === statement.amount?.currency;
+export const paymentSourceStatementMaterial = (statement: PaymentSourceStatement) => ({
+  amount:
+    statement.amount === undefined
+      ? null
+      : { amountMinor: statement.amount.amountMinor, currency: statement.amount.currency },
+  correctsObservationId: statement.correctsObservationId ?? null,
+  deliveryOfferRef: statement.deliveryOfferRef ?? null,
+  economicEffectKey: statement.economicEffectKey ?? null,
+  evidenceRef: statement.evidenceRef ?? null,
+  factFamily: statement.factFamily,
+  factKind: statement.factKind,
+  operationId: statement.operationId ?? null,
+  paymentId: statement.paymentId ?? null,
+  pickupCapabilityRef: statement.pickupCapabilityRef ?? null,
+  source: {
+    accountRef: statement.source.accountRef,
+    environment: statement.source.environment,
+    sourceKind: statement.source.sourceKind,
+    sourceSystem: statement.source.sourceSystem,
+  },
+  sourceOccurredAt: statement.sourceOccurredAt === undefined ? null : DateTime.formatIso(statement.sourceOccurredAt),
+  sourceOccurrenceId: statement.sourceOccurrenceId,
+  sourceRevision: statement.sourceRevision,
+});
 
 /** Unassigned held evidence names the configured authority of its source binding (method-neutral first). */
 const unassignedAuthority = (active: readonly PaymentSourceAuthorityView[]): PaymentSourceAuthorityView | undefined =>
@@ -608,12 +591,8 @@ export const qualifyPaymentSourceStatement = (
   }
   const { existingOccurrence } = input;
   if (existingOccurrence !== undefined) {
-    // A correction that names no Payment is correlated through the statement it corrects, exactly as
-    // its original was recorded, so an exact retry still replays (#1151/#1152).
-    const claimedPaymentId =
-      statement.paymentId ??
-      (statement.factKind === 'SOURCE_CORRECTION' ? input.correctedObservation?.paymentId : undefined);
-    return sameStatement(existingOccurrence, statement, claimedPaymentId, input.target !== undefined)
+    // An exact redelivery claims the same content; anything else is a changed statement (#1151).
+    return existingOccurrence.statementHash === input.statementHash
       ? PaymentSourceQualification.Duplicate({ original: existingOccurrence })
       : PaymentSourceQualification.OccurrenceConflict({ original: existingOccurrence });
   }

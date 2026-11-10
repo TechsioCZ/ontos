@@ -70,8 +70,6 @@ export interface NewPaymentObservationInput {
   readonly authority: PaymentSourceAuthorityView;
   /** Selected-capability sources of a Payment only: qualification proved the selected capability (#1152). */
   readonly capabilityCorrelated: boolean | undefined;
-  /** The capability reference a selected-capability source claimed, stored exactly as stated. */
-  readonly capabilityRef: string | undefined;
   /**
    * Exactly for an accepted SOURCE_CORRECTION: what it did to the Current interpretation. An accepted
    * correction the interpretation left unchanged (NO_CHANGE) is recorded as RECORD_ONLY.
@@ -90,6 +88,8 @@ export interface NewPaymentObservationInput {
   readonly sourceOccurredAt: DateTime.Utc | undefined;
   readonly sourceOccurrenceId: string;
   readonly sourceRevision: number;
+  /** SHA-256 of the statement exactly as claimed, compared on occurrence replays. */
+  readonly statementHash: string;
   readonly verifiedAt: DateTime.Utc;
 }
 
@@ -196,7 +196,6 @@ const recordedViewOf = (row: ObservationRow) =>
     Effect.map((amount): PaymentRecordedObservationView => ({
       acceptanceOutcome: row.acceptanceOutcome,
       amount: Option.getOrUndefined(amount),
-      capabilityRef: row.capabilityRef ?? undefined,
       correctsObservationId: row.correctsObservationId ?? undefined,
       economicEffectKey: row.economicEffectKey ?? undefined,
       evidenceRef: row.evidenceRef ?? undefined,
@@ -207,6 +206,7 @@ const recordedViewOf = (row: ObservationRow) =>
       paymentId: row.paymentId ?? undefined,
       sourceAuthorityId: row.sourceAuthorityId ?? undefined,
       sourceOccurredAt: row.sourceOccurredAt === null ? undefined : DateTime.fromDateUnsafe(row.sourceOccurredAt),
+      statementHash: row.statementHash,
     })),
   );
 
@@ -495,7 +495,6 @@ export const paymentSourcePersistenceForTransaction = (
         actorPrincipalId: input.provenance.actorPrincipalId,
         amountMinor: input.amount?.amountMinor ?? null,
         capabilityCorrelated: input.capabilityCorrelated ?? null,
-        capabilityRef: input.capabilityRef ?? null,
         compositionRevision: input.provenance.compositionRevision,
         correctionEffect: recordedCorrectionEffect(input),
         correctsObservationId: input.correctsObservationId ?? null,
@@ -515,6 +514,7 @@ export const paymentSourcePersistenceForTransaction = (
         sourceOccurrenceId: input.sourceOccurrenceId,
         sourceRevision: input.sourceRevision,
         sourceSystem: input.source.sourceSystem,
+        statementHash: input.statementHash,
         verifiedAt: DateTime.toDateUtc(input.verifiedAt),
       })
       .returning({ observationId: observations.observationId })
