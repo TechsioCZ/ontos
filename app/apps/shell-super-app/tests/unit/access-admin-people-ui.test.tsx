@@ -108,6 +108,7 @@ const fixture = () => {
     soleAdministratorScopes: [company],
   };
   const options = Schema.decodeUnknownSync(ListAccessPeopleOptionsResponseSchema)({
+    admissionCandidates: [],
     capabilities: [
       {
         capabilityKey: capability,
@@ -133,8 +134,10 @@ const fixture = () => {
     scopes: [{ label: 'Alpha s.r.o.', scope: company }],
     teams: [{ name: 'Purchasing', scope: company, teamId }],
     writeAvailability: {
+      canAdmitMember: false,
       canAssign: true,
       canDelegate: true,
+      canEndMembership: false,
       canManageTeams: true,
       canRevokeDelegation: true,
       canTransferOwnership: false,
@@ -324,8 +327,10 @@ test('unavailable writers leave role, team and delegation mutation affordances d
     options: {
       ...snapshot.options,
       writeAvailability: {
+        canAdmitMember: false,
         canAssign: false,
         canDelegate: false,
+        canEndMembership: false,
         canManageTeams: false,
         canRevokeDelegation: false,
         canTransferOwnership: false,

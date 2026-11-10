@@ -46,7 +46,7 @@ import { AccessAdminClock } from '../../api/access-admin/clock.ts';
 import type { AccessPeopleBffService } from '../../api/access-admin/people.ts';
 import { AccessPeopleBff, AccessPeopleBffLive, accessPeopleDeclarations } from '../../api/access-admin/people.ts';
 import { AccessAdminSession } from '../../api/access-admin/session.ts';
-import { AccessChangesWriteAvailability } from '../../api/access-admin/write-gate.ts';
+import { AccessPeopleWriteAvailability } from '../../api/access-admin/people-write-gate.ts';
 
 /*
  * "Lidé", unit level: the BFF's own rules. Which capability each operation asks, what one person may
@@ -274,7 +274,9 @@ const commandsFor = (recorded: Recorded, failure?: PeopleCommandFailure): Access
       return failure === undefined ? Effect.succeed({ revision: 'after' }) : Effect.fail(failure);
     });
   return {
+    admitMember: (_scope, command) => answer('admitMember', command),
     assignRole: (_scope, command) => answer('assignRole', command),
+    endMembership: (_scope, command) => answer('endMembership', command),
     grantDelegation: (_scope, command) => answer('grantDelegation', command),
     read: () => Effect.succeed(view),
     readCatalog: () =>
@@ -313,7 +315,7 @@ const harness = (input: {
       Layer.mergeAll(
         Layer.succeed(AccessAdminSession, { requireTenantContext: () => Effect.succeed(scopeFor(actor)) }),
         Layer.succeed(AccessAdminClock, { now: Effect.succeed(NOW) }),
-        Layer.succeed(AccessChangesWriteAvailability, {
+        Layer.succeed(AccessPeopleWriteAvailability, {
           available: input.writes ?? true,
           reason: 'pending real-gate verification',
         }),
@@ -629,9 +631,10 @@ it.effect('refuses every write with a retryable 503 while the write gate is clos
     expect(problem.status).toBe(503);
     expect(recorded.calls).toEqual([]);
     const options = yield* run((bff) => bff.options(headers, { limit: 100 }));
-    expect(Object.values(options.writeAvailability)).toEqual([false, false, false, false, false, false]);
+    expect(Object.values(options.writeAvailability)).toEqual([false, false, false, false, false, false, false, false]);
     const open = yield* harness({ persona: 'owner' }).run((bff) => bff.options(headers, { limit: 100 }));
-    expect(Object.values(open.writeAvailability)).toEqual([true, true, true, true, true, true]);
+    // canAdmitMember and canEndMembership stay false until lane L2 declares and computes them.
+    expect(Object.values(open.writeAvailability)).toEqual([false, true, true, false, true, true, true, true]);
   }),
 );
 

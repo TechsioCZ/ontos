@@ -70,6 +70,7 @@ const roleIdOf = (name: string) => allRoles.find((role) => role.name === name)?.
 const assignedRoleNames = new Map<string, readonly string[]>();
 const accessViewFor = (people: readonly Person[]): PeopleAccessView => ({
   options: Schema.decodeUnknownSync(ListAccessPeopleOptionsResponseSchema)({
+    admissionCandidates: [],
     capabilities: [],
     managers: [],
     people: [],
@@ -85,8 +86,10 @@ const accessViewFor = (people: readonly Person[]): PeopleAccessView => ({
     scopes: [{ label: 'Firma', scope: companyScope }],
     teams: [],
     writeAvailability: {
+      canAdmitMember: false,
       canAssign: true,
       canDelegate: false,
+      canEndMembership: false,
       canManageTeams: false,
       canRevokeDelegation: false,
       canTransferOwnership: false,

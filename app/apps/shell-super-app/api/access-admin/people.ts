@@ -59,7 +59,7 @@ import {
   accessAdminUnavailableProblem,
   accessAdminUnprocessableProblem,
 } from './session.ts';
-import { AccessChangesWriteAvailability } from './write-gate.ts';
+import { AccessPeopleWriteAvailability } from './people-write-gate.ts';
 
 /*
  * "Lidé": who belongs to the tenant, which roles they hold where, the delegations they manage and the
@@ -80,7 +80,7 @@ import { AccessChangesWriteAvailability } from './write-gate.ts';
  * 3. **The revision is the screen's.** It is a digest of exactly the rows this person may see, so a
  *    change outside their authority neither leaks through it nor makes their form stale; a write whose
  *    echoed revision is not the current one is a 409 the client repairs by re-reading.
- * 4. **Writes ship behind the access write gate** (`write-gate.ts`), like Novinky: while it is closed,
+ * 4. **Writes ship behind Lidé's own write gate** (`write-gate.ts`), apart from Novinky's: while it is closed,
  *    every write is a retryable 503 and the options report every write as unavailable. Each write's
  *    identities (assignment incarnation, delegation, team place, management memberships) are derived
  *    from its idempotency key, so a retry names the same rows instead of forking new ones.
@@ -585,7 +585,7 @@ const writeAllowed = Effect.fn('AccessAdminPeople.writeAllowed')(function* write
   declaration: AccessDeclaration,
   now: Date,
 ) {
-  const gate = yield* AccessChangesWriteAvailability;
+  const gate = yield* AccessPeopleWriteAvailability;
   if (!gate.available) {
     return false;
   }
@@ -689,6 +689,8 @@ const options = Effect.fn('AccessAdminPeople.options')(function* listPeopleOptio
   return yield* encoded(
     ListAccessPeopleOptionsResponseSchema,
     {
+      // Stub until lane L2 lists the candidates and computes canAdmitMember and canEndMembership.
+      admissionCandidates: [],
       capabilities: offered.map((entry) => ({
         capabilityKey: entry.key,
         hasAmountInput: entry.amountInput !== undefined,
@@ -718,8 +720,10 @@ const options = Effect.fn('AccessAdminPeople.options')(function* listPeopleOptio
       })),
       teams: view.teams.flatMap((entry) => (reach.scopeIds.has(entry.team.scopeId) ? [plainTeam(view, entry)] : [])),
       writeAvailability: {
+        canAdmitMember: false,
         canAssign,
         canDelegate,
+        canEndMembership: false,
         canManageTeams,
         canRevokeDelegation,
         canTransferOwnership,
@@ -777,7 +781,7 @@ const admitWrite = Effect.fn('AccessAdminPeople.admitWrite')(function* admitPeop
   expectedRevision: string,
 ) {
   const scope = yield* requireScope(headers);
-  const gate = yield* AccessChangesWriteAvailability;
+  const gate = yield* AccessPeopleWriteAvailability;
   if (!gate.available) {
     // The ship gate is closed: the surface ships the screen, never a partial write.
     return yield* Effect.fail(accessAdminUnavailableProblem());
@@ -1170,5 +1174,9 @@ export const accessAdminPeopleGroupLive = HttpApiBuilder.group(
             }),
           ),
         ),
-      ),
+      )
+      // Stub until lane L2 implements admission: a retryable 503, so nothing is written by accident.
+      .handle('admitAccessMember', () => Effect.fail(accessAdminUnavailableProblem()))
+      // Stub until lane L2 implements ending: a retryable 503, so nothing is written by accident.
+      .handle('endAccessMembership', () => Effect.fail(accessAdminUnavailableProblem())),
 );

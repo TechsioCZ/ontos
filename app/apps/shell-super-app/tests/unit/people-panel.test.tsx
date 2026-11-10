@@ -107,6 +107,7 @@ const accessPerson = (assignments: EncodedAssignments) => ({
 });
 const accessView = (assignments: EncodedAssignments): PeopleAccessView => ({
   options: Schema.decodeUnknownSync(ListAccessPeopleOptionsResponseSchema)({
+    admissionCandidates: [],
     capabilities: [],
     managers: [],
     people: [],
@@ -115,8 +116,10 @@ const accessView = (assignments: EncodedAssignments): PeopleAccessView => ({
     scopes: [{ label: 'Firma', scope: companyScope }],
     teams: [],
     writeAvailability: {
+      canAdmitMember: false,
       canAssign: true,
       canDelegate: false,
+      canEndMembership: false,
       canManageTeams: false,
       canRevokeDelegation: false,
       canTransferOwnership: false,

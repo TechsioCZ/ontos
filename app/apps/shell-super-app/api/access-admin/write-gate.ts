@@ -1,14 +1,19 @@
 import { Context, Layer } from 'effect';
 
 /*
- * The Novinky ship gate: whether adoption, decline and undo may run at all, and why not.
+ * The ship gates of the access-administration surface: whether a surface's writes may run at all, and
+ * why not. Each surface that changes access has its own gate, so proving one surface never opens
+ * another:
  *
- * Those three are the only part of the access-administration surface that changes access, so the
- * surface ships read-and-preview first. The server enforces this gate on every write (a retryable
- * 503, never a denial and never a silent no-op) and reports it to the screen, which must display the
- * answer rather than decide for itself. Publication of the decision is a deployment choice: a
- * composition provides the closed layer until P14's real-gate suite proves the writes, then provides
- * the proven one. Nothing here is ever read from a request body.
+ * - Novinky (adoption, decline and undo) reads `AccessChangesWriteAvailability`;
+ * - Lidé (assign, revoke, delegate, teams, ownership transfer, admission and ending) reads
+ *   `AccessPeopleWriteAvailability` from `./people-write-gate.ts` (one Context class per file).
+ *
+ * The server enforces a gate on every write of its surface (a retryable 503, never a denial and never a
+ * silent no-op) and reports it to the screen, which must display the answer rather than decide for
+ * itself. Publication of the decision is a deployment choice: a composition provides the closed layer
+ * until the surface's real-gate suite proves the writes, then provides the proven one. Nothing here is
+ * ever read from an environment variable, a request or a session.
  */
 
 export interface AccessChangesWriteGate {

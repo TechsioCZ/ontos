@@ -174,6 +174,7 @@ import {
   accessAdminUnavailableProblem,
   accessAdminUnprocessableProblem,
 } from './access-admin/session.ts';
+import { AccessPeopleWritesClosedLive } from './access-admin/people-write-gate.ts';
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 import { dispatchModuleApiRequest } from '../src/module-api/transport.ts';
 import { mcpRequestIdentityMiddleware } from './mcp/request-identity.ts';
@@ -3949,6 +3950,7 @@ export const makeShellAuthenticationApiRuntime = (
         accessAdminPeopleCommandsLive,
         accessAdminApprovalsLive,
         AccessChangesWritesClosedLive,
+        AccessPeopleWritesClosedLive,
         accessAdminRequestSessionLive,
         accessAdminClockLive,
         accessEnforcementLive,

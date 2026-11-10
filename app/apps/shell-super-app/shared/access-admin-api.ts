@@ -382,15 +382,29 @@ export const AccessCapabilityChoiceSchema = Schema.Struct({
   risk: accessRisk,
   withinGrantorAuthority: Schema.Boolean,
 });
+/** Exactly one company: admission targets a company, never the tenant context. */
+export const AccessCompanyScopeTargetSchema = Schema.Struct({
+  kind: Schema.Literal('company'),
+  legalEntityId: AccessCompanyIdSchema,
+});
+/** A person the company directory lists as an active human with no live member row in that company yet. */
+export const AccessAdmissionCandidateSchema = Schema.Struct({
+  displayName: text,
+  principalId: AccessHumanIdSchema,
+  scope: AccessCompanyScopeTargetSchema,
+});
 export const AccessPeopleWriteAvailabilitySchema = Schema.Struct({
+  canAdmitMember: Schema.Boolean,
   canAssign: Schema.Boolean,
   canDelegate: Schema.Boolean,
+  canEndMembership: Schema.Boolean,
   canManageTeams: Schema.Boolean,
   canRevokeDelegation: Schema.Boolean,
   canTransferOwnership: Schema.Boolean,
   canUnassign: Schema.Boolean,
 });
 export const ListAccessPeopleOptionsResponseSchema = Schema.Struct({
+  admissionCandidates: Schema.Array(AccessAdmissionCandidateSchema),
   capabilities: Schema.Array(AccessCapabilityChoiceSchema),
   managers: Schema.Array(AccessPersonChoiceSchema),
   people: Schema.Array(AccessPersonChoiceSchema),
@@ -444,9 +458,26 @@ export const TransferAccessOwnershipPayloadSchema = Schema.Struct({
   scopes: Schema.NonEmptyArray(AccessScopeTargetSchema),
   toPrincipalId: AccessHumanIdSchema,
 });
+export const AdmitAccessMemberPayloadSchema = Schema.Struct({
+  expectedRevision: AccessPeopleRevisionSchema,
+  principalId: AccessHumanIdSchema,
+  scope: AccessCompanyScopeTargetSchema,
+});
+export const EndAccessMembershipPayloadSchema = Schema.Struct({
+  expectedRevision: AccessPeopleRevisionSchema,
+  principalId: AccessHumanIdSchema,
+  reason: namedEffect,
+  scope: AccessScopeTargetSchema,
+});
+export const AccessMembershipChangeSchema = Schema.Struct({
+  principalId: AccessHumanIdSchema,
+  scope: AccessScopeTargetSchema,
+  status: AccessMembershipSchema.fields.status,
+});
 export const AccessPeopleMutationResponseSchema = Schema.Struct({
   assignment: Schema.optionalKey(AccessAssignmentSchema),
   delegation: Schema.optionalKey(AccessDelegationResponseSchema),
+  membership: Schema.optionalKey(AccessMembershipChangeSchema),
   revision: AccessPeopleRevisionSchema,
   teamMembership: Schema.optionalKey(
     Schema.Struct({ active: Schema.Boolean, principalId: AccessHumanIdSchema, teamId: AccessTeamIdSchema }),
@@ -520,6 +551,22 @@ export const accessAdminPeopleGroup = HttpApiGroup.make('accessAdminPeople')
       error: accessAdminErrors,
       headers: AccessIdempotencyHeadersSchema,
       payload: RevokeAccessDelegationPayloadSchema,
+      success: AccessPeopleMutationResponseSchema,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post('admitAccessMember', '/shell/access/people/admit-member', {
+      error: accessAdminErrors,
+      headers: AccessIdempotencyHeadersSchema,
+      payload: AdmitAccessMemberPayloadSchema,
+      success: AccessPeopleMutationResponseSchema,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post('endAccessMembership', '/shell/access/people/end-membership', {
+      error: accessAdminErrors,
+      headers: AccessIdempotencyHeadersSchema,
+      payload: EndAccessMembershipPayloadSchema,
       success: AccessPeopleMutationResponseSchema,
     }),
   );
@@ -851,6 +898,9 @@ export type AccessPeopleMutationResponse = typeof AccessPeopleMutationResponseSc
 export type ListAccessPeopleOptionsResponse = typeof ListAccessPeopleOptionsResponseSchema.Type;
 export type SetAccessTeamMembershipPayload = typeof SetAccessTeamMembershipPayloadSchema.Type;
 export type TransferAccessOwnershipPayload = typeof TransferAccessOwnershipPayloadSchema.Type;
+export type AdmitAccessMemberPayload = typeof AdmitAccessMemberPayloadSchema.Type;
+export type EndAccessMembershipPayload = typeof EndAccessMembershipPayloadSchema.Type;
+export type AccessAdmissionCandidate = typeof AccessAdmissionCandidateSchema.Type;
 export type ListAccessChangesPayload = typeof AccessPageSchema.Type;
 export type ListAccessChangesResponse = typeof ListAccessChangesResponseSchema.Type;
 export type PreviewAccessChangesPayload = typeof PreviewAccessChangesPayloadSchema.Type;
