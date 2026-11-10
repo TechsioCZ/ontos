@@ -107,6 +107,25 @@ it('another record never shows the previous record while it loads', () => {
   expect(screen.getByText('Loading')).toBeDefined();
 });
 
+it('a record that was closed and opened again never shows the read held before it was closed', () => {
+  store.publish('product-1', { state: 'ready', value: 'Cable 1' });
+  const { rerender } = render(<Detail id="product-1" />);
+  expect(screen.getByRole('heading').textContent).toBe('Cable 1');
+
+  // The panel closes: the reader has no record. The record changes meanwhile, and the panel opens it again.
+  rerender(<Detail id="" />);
+  settle('product-1', pending);
+  rerender(<Detail id="product-1" />);
+  expect(screen.queryByText('Cable 1')).toBeNull();
+  expect(screen.getByText('Loading')).toBeDefined();
+
+  settle('product-1', { state: 'ready', value: 'Cable 1 renamed' });
+  expect(screen.getByRole('heading').textContent).toBe('Cable 1 renamed');
+  // From here on a reload of the open record is held again.
+  settle('product-1', pending);
+  expect(screen.getByRole('heading').textContent).toBe('Cable 1 renamed');
+});
+
 it('a refused reload removes the held record, and the retry after it shows loading', () => {
   store.publish('product-1', { state: 'ready', value: 'Cable 1' });
   render(<Detail id="product-1" />);

@@ -96,14 +96,14 @@ const Body = ({ note }: { readonly note: string }) => {
   return createElement('output', null, note);
 };
 
-const OpenOrder = () => {
+const OpenOrder = ({ orderId = 'order-1' }: { readonly orderId?: string | null }) => {
   // The orders page reads the list too, which is what reloads it after a write.
   useSyncExternalStore(
     (listener) => ordersPageData.subscribe(listener, source),
     () => ordersPageData.snapshot(source),
     () => pageDataPending,
   );
-  const detail = useOrderDetail('order-1', 0, context, source);
+  const detail = useOrderDetail(orderId, 0, context, source);
   useEffect(() => {
     ordersPageData.ensure(source);
   }, []);
@@ -181,5 +181,51 @@ it.effect('the open order stays on screen and mounted while a write reloads the 
     yield* Effect.promise(() => waitUntil(() => shown.at(-1) === 'ready:po změně'));
     expect(shown.filter((state) => !state.startsWith('ready:'))).toEqual([]);
     expect(mounts).toBe(1);
+  }),
+);
+
+it.effect('an order opened again after its panel closed never shows the read held before it closed', () =>
+  Effect.gen(function* reopened() {
+    serve('před změnou', 7);
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    unmount = () => {
+      act(() => {
+        root.unmount();
+        container.remove();
+      });
+    };
+    const show = (orderId: string | null) =>
+      Effect.promise(() =>
+        act(async () => {
+          root.render(createElement(OpenOrder, { orderId }));
+          await settle();
+        }),
+      );
+    yield* show('order-1');
+    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === 'ready:před změnou'));
+
+    // The panel closes; the order changes while it is closed, and its fresh read is still on its way.
+    yield* show(null);
+    expect(shown.at(-1)).toBe('idle');
+    const gate = yield* Deferred.make<boolean>();
+    serve('po změně', 8, gate);
+    yield* Effect.promise(() =>
+      act(async () => {
+        ordersPageData.invalidate();
+        orderDetailData.invalidate();
+        await settle();
+      }),
+    );
+    shown.length = 0;
+    yield* show('order-1');
+    yield* Effect.promise(() => act(settle));
+    expect(shown.length).toBeGreaterThan(0);
+    expect(shown).not.toContain('ready:před změnou');
+
+    yield* Deferred.succeed(gate, true);
+    yield* Effect.promise(() => waitUntil(() => shown.at(-1) === 'ready:po změně'));
+    expect(shown).not.toContain('ready:před změnou');
   }),
 );
