@@ -192,9 +192,10 @@ export const paymentRefundPersistenceForTransaction = (
     },
   );
   /**
-   * The operation each governed-attached statement counts toward, derived the way the evidence reader
-   * derives attachments (#1151): the attachment's resulting operation, else its case's operation. Only
-   * attachments with a resulting outcome count, and the latest one wins.
+   * The operation governance assigned each return statement to (#1151): the operation of its latest
+   * ATTACH_EVIDENCE decision. An attachment that confirmed a REFUND and one that only assigned the return
+   * to the collection it returned (no outcome change) both count: the reader decides what the operation
+   * makes of the statement.
    */
   const attachedOperationsOf = Effect.fn('PaymentRefundPersistence.attachedOperationsOf')(
     function* attachedOperationsOf(
@@ -209,7 +210,6 @@ export const paymentRefundPersistenceForTransaction = (
         .select({
           evidenceRef: reconciliationDecisions.evidenceRef,
           operationId: reconciliationDecisions.operationId,
-          resultingOutcome: reconciliationDecisions.resultingOutcome,
         })
         .from(reconciliationDecisions)
         .where(
@@ -223,7 +223,7 @@ export const paymentRefundPersistenceForTransaction = (
         .orderBy(asc(reconciliationDecisions.decidedAt), asc(reconciliationDecisions.decisionId))
         .pipe(Effect.mapError(returnEvidenceReadFailure));
       for (const row of decisionRows) {
-        if (row.evidenceRef !== null && row.resultingOutcome !== null && row.operationId !== null) {
+        if (row.evidenceRef !== null && row.operationId !== null) {
           attached.set(row.evidenceRef, row.operationId);
         }
       }

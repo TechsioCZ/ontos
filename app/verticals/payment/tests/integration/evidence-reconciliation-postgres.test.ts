@@ -1373,6 +1373,44 @@ it.live('#1151 a prior return claimed for a collection still confirms the REFUND
   ),
 );
 
+it.live('#1150 a return that governance assigns to its collection counts as a prior return of that collection', () =>
+  native(
+    Effect.gen(function* governedPriorReturn() {
+      const evidence = yield* scenario();
+      yield* evidence.configureRefundRoute('erp-primary', 'refund-account-a');
+      const paid = yield* collectedBankPayment(evidence, 'collect-first');
+      // The bank reports a 600 CZK return of this Payment without saying which operation it belongs to.
+      const unassigned = yield* evidence.accept({
+        amount: czk(60_000),
+        economicEffectKey: 'erp:bank-return:21',
+        factFamily: 'REFUND_EXECUTION',
+        factKind: 'REFUND_CONFIRMED',
+        paymentId: paid.payment.paymentId,
+        source: BANK_REFUND_SOURCE,
+        sourceOccurrenceId: `bank-line-${randomUUID()}`,
+        sourceRevision: 1,
+      });
+      expect(unassigned.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+      const caseId = unassigned.reconciliationCaseId ?? '';
+      // Governance assigns it to the collection it returned; the collection's own outcome does not change.
+      const attached = yield* evidence.decide({
+        caseId,
+        decision: {
+          _tag: 'ATTACH_EVIDENCE',
+          observationId: unassigned.observationId,
+          operationId: paid.collect.operationId,
+        },
+        reason: 'The bank line is a return of this collection',
+      });
+      expect(Option.isNone(attached.outcomeChange)).toBe(true);
+      expect((yield* closeReturnCase(evidence, caseId)).caseStatus).toBe('CLOSED');
+      expect(yield* evidence.coverage(paid.payment.paymentId)).toBe(
+        'Established collected=100000 returned=60000 remaining=40000',
+      );
+    }),
+  ),
+);
+
 it.live('#1150 a partially retracted refund receipt never restores the full refund through attachment', () =>
   native(
     Effect.gen(function* partiallyRetractedRefundReceipt() {
