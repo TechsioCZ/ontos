@@ -94,6 +94,7 @@ const AuthForm = ({
   onSubmit,
   passwordError,
   pending,
+  submitting,
 }: {
   dictionary: Dictionary;
   locale: string;
@@ -103,6 +104,7 @@ const AuthForm = ({
   onSubmit: (fields: FormData) => void;
   passwordError: string | undefined;
   pending: boolean;
+  submitting: boolean;
 }) => {
   const fieldId = useId();
   const form = useRef<HTMLFormElement>(null);
@@ -247,7 +249,11 @@ const AuthForm = ({
     <form
       action={mode === "register" ? "/api/enrollment" : "/api/account/login"}
       aria-busy={pending}
-      className={mode === "register" ? "flex flex-col gap-2" : "flex flex-col gap-1"}
+      className={
+        mode === "register"
+          ? "n1-auth-form flex flex-col gap-2"
+          : "n1-auth-form flex flex-col gap-1"
+      }
       method="post"
       onClickCapture={finishPointerValidation}
       onInvalidCapture={(event) => {
@@ -339,12 +345,12 @@ const AuthForm = ({
         size="sm"
         theme="solid"
         type="submit"
-        variant="primary"
+        variant="secondary"
       >
         {
           {
-            login: pending ? d.auth.signingIn : d.auth.signIn,
-            register: pending ? d.auth.registering : d.auth.register,
+            login: submitting ? d.auth.signingIn : d.auth.signIn,
+            register: submitting ? d.auth.registering : d.auth.register,
           }[mode]
         }
       </Button>
@@ -398,7 +404,8 @@ const outcomeText = (outcome: PortalOutcome, d: Dictionary) => {
 const PortalSessionContext = createContext<ReturnType<typeof usePortalSession> | null>(null);
 const usePortalSession = (enabled = true) => {
   const [outcome, setOutcome] = useState<PortalOutcome>({ state: "anonymous" });
-  const [pending, setPending] = useState(false);
+  const [pendingOperation, setPendingOperation] = useState<"read" | "action" | null>(null);
+  const pending = pendingOperation !== null;
   const [loaded, setLoaded] = useState(false);
   const active = useRef<Fiber.Fiber<PortalOutcome> | null>(null);
   const activeIsRefresh = useRef(false);
@@ -421,7 +428,7 @@ const usePortalSession = (enabled = true) => {
     ) {
       return;
     }
-    setPending(true);
+    setPendingOperation(isRefresh ? "read" : "action");
     activeIsRefresh.current = isRefresh;
     activeIsMfa.current = expected?.state === "mfa";
     const fiber = portalRuntime.runFork(program);
@@ -435,7 +442,7 @@ const usePortalSession = (enabled = true) => {
       activeIsRefresh.current = false;
       activeIsMfa.current = false;
       if (expected !== undefined && currentOutcome.current !== expected) {
-        setPending(false);
+        setPendingOperation(null);
         setLoaded(true);
         return;
       }
@@ -450,7 +457,7 @@ const usePortalSession = (enabled = true) => {
         start(readPortalCurrent(), true);
         return;
       }
-      setPending(false);
+      setPendingOperation(null);
       setLoaded(true);
       const next = isRefresh ? portalRefreshOutcome(currentOutcome.current, observed) : observed;
       publishOutcome(next);
@@ -499,7 +506,7 @@ const usePortalSession = (enabled = true) => {
       publishOutcome(Struct.omit(current, ["feedback"]));
     }
   };
-  return { edit, loaded, outcome, pending, run };
+  return { edit, loaded, outcome, pending, run, submitting: pendingOperation === "action" };
 };
 
 export const PortalSessionProvider = ({ children }: { children: ReactNode }) => {
@@ -518,7 +525,7 @@ export const usePortalAuth = ({
   const shared = useContext(PortalSessionContext);
   const local = usePortalSession(shared === null);
   const session = shared ?? local;
-  const { edit, loaded, pending, run } = session;
+  const { edit, loaded, pending, run, submitting } = session;
   const outcome =
     session.outcome.state === "anonymous"
       ? portalVerificationOutcome(verification)
@@ -548,7 +555,7 @@ export const usePortalAuth = ({
       ),
     );
   };
-  return { edit, loaded, outcome, pending, run, submit };
+  return { edit, loaded, outcome, pending, run, submit, submitting };
 };
 
 const mfaCodeError = (outcome: PortalOutcome, d: Dictionary) =>
@@ -586,7 +593,8 @@ export const AuthContent = ({
   mode: AuthMode;
   onNavigate?: (() => void) | undefined;
 }) => {
-  const { edit, outcome, pending, run, submit } = controller;
+  const { edit, outcome, pending, run, submit, submitting } = controller;
+  const feedbackError = outcome.state === "refused" || outcome.state === "unavailable";
   const toaster = useToast();
   const codeError = mfaCodeError(outcome, d);
   const mfaId = useId();
@@ -646,9 +654,16 @@ export const AuthContent = ({
   return (
     <>
       {feedbackText !== "" && (
-        <output aria-live="polite" className="mb-2 block">
+        <StatusText
+          aria-atomic={true}
+          aria-live={feedbackError ? undefined : "polite"}
+          className="mb-2"
+          showIcon={false}
+          size="md"
+          status={feedbackError ? "error" : "default"}
+        >
           {feedbackText}
-        </output>
+        </StatusText>
       )}
       {outcome.state === "mfa" && (
         <div className="flex flex-col gap-1">
@@ -754,6 +769,7 @@ export const AuthContent = ({
           onSubmit={submit}
           passwordError={outcome.state === "credentials" ? d.auth.credentials : undefined}
           pending={pending}
+          submitting={submitting}
         />
       )}
       {terminal && outcome.state !== "admitted" && (

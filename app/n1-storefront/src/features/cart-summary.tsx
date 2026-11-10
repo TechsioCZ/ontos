@@ -59,18 +59,17 @@ export const CartSummary = ({
                 href={`/${locale}/pokladna`}
                 size="md"
                 theme="solid"
-                variant="primary"
+                variant="secondary"
               >
                 {d.shopping.checkout}
               </LinkButton>
             ) : (
-              <Button disabled size="md" theme="solid" type="button" variant="primary">
+              <Button disabled size="md" theme="solid" type="button" variant="secondary">
                 {d.shopping.checkout}
               </Button>
             )}
           </div>
         }
-        footer={d.shopping.feesNote}
         rows={[
           { id: "net", label: d.shopping.net, value: net },
           { id: "vat", label: d.shopping.vat, value: vat },

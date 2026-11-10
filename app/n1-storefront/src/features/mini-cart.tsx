@@ -19,6 +19,7 @@ import type { CartQuote } from "@/ontos/cart-quote";
 import { publicImage } from "@/ontos/catalog-model";
 import { useCart } from "./cart-provider";
 import { CartQuoteFeedback } from "./cart-quote-feedback";
+import { verifiedCartQuote } from "./cart-quote-state";
 import { cartLineKey, cartQuantityStep } from "./cart-state";
 import type { CartEntry } from "./cart-state";
 import {
@@ -86,6 +87,7 @@ const MiniCartLine = ({
   locale,
   onDraft,
   onRemove,
+  onSaved,
 }: {
   dictionary: Dictionary;
   draft: QuantityDraft | undefined;
@@ -94,6 +96,7 @@ const MiniCartLine = ({
   locale: string;
   onDraft: (draft: QuantityDraft) => void;
   onRemove: () => void;
+  onSaved: () => void;
 }) => {
   const cart = useCart();
   const value = draft?.value ?? String(entry.quantity);
@@ -112,14 +115,14 @@ const MiniCartLine = ({
   ];
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex min-w-0 items-start gap-3">
+      <div className="flex min-w-0 items-start gap-3 max-n1-compact:flex-wrap pointer-coarse:flex-wrap">
         <div className="relative h-16 w-16 shrink-0">
           {image !== null && (
             <Image alt="" as={NextImage} fill objectFit="contain" sizes="64px" src={image} />
           )}
         </div>
         <div className="min-w-0 flex-1">
-          <Link as={NextLink} href={target}>
+          <Link as={NextLink} className="block truncate" href={target} title={entry.name}>
             {entry.name}
           </Link>
           <p className="truncate text-xs">{entry.variantName}</p>
@@ -129,10 +132,11 @@ const MiniCartLine = ({
               cart?.scope?.currency ?? "CZK",
               locale,
             )}
+            className="n1-mini-cart-price"
             state="known"
           />
         </div>
-        <div className="w-23 shrink-0 self-center">
+        <div className="n1-mini-cart-quantity w-23 shrink-0 self-center max-n1-compact:order-last max-n1-compact:w-full pointer-coarse:order-last pointer-coarse:w-full">
           <NumericInput
             allowOverflow={false}
             clampValueOnBlur={false}
@@ -155,36 +159,43 @@ const MiniCartLine = ({
                 saveError: valid && !saved,
                 value: next,
               });
+              if (saved) {
+                onSaved();
+              }
             }}
             size="sm"
             step={cartQuantityStep(entry.packageQuantity)}
             value={value}
           >
-            <div className="flex w-7 shrink-0">
-              <NumericInput.DecrementTrigger
-                aria-label={d.shopping.decreaseQuantity}
-                block
-                icon="token-icon-minus"
-                theme="outlined"
-                variant="secondary"
-              />
-            </div>
-            <div className="w-9 shrink-0">
-              <NumericInput.Control>
-                <NumericInput.Input
-                  aria-describedby={`${inputId}-feedback`}
-                  aria-label={`${d.quantity}: ${entry.name}`}
+            <div className="flex items-center max-n1-compact:justify-end pointer-coarse:justify-end">
+              <div className="flex h-8 w-7 shrink-0 pointer-coarse:h-11 pointer-coarse:w-11">
+                <NumericInput.DecrementTrigger
+                  aria-label={d.shopping.decreaseQuantity}
+                  block
+                  icon="token-icon-minus"
+                  iconSize="md"
+                  theme="outlined"
+                  variant="secondary"
                 />
-              </NumericInput.Control>
-            </div>
-            <div className="flex w-7 shrink-0">
-              <NumericInput.IncrementTrigger
-                aria-label={d.shopping.increaseQuantity}
-                block
-                icon="token-icon-plus"
-                theme="outlined"
-                variant="secondary"
-              />
+              </div>
+              <div className="w-9 shrink-0">
+                <NumericInput.Control>
+                  <NumericInput.Input
+                    aria-describedby={`${inputId}-feedback`}
+                    aria-label={`${d.quantity}: ${entry.name}`}
+                  />
+                </NumericInput.Control>
+              </div>
+              <div className="flex h-8 w-7 shrink-0 pointer-coarse:h-11 pointer-coarse:w-11">
+                <NumericInput.IncrementTrigger
+                  aria-label={d.shopping.increaseQuantity}
+                  block
+                  icon="token-icon-plus"
+                  iconSize="md"
+                  theme="outlined"
+                  variant="secondary"
+                />
+              </div>
             </div>
           </NumericInput>
         </div>
@@ -245,15 +256,58 @@ const MiniCartTotals = ({
   return (
     <TotalsSummary
       className="n1-mini-cart-totals"
-      footer={d.shopping.feesNote}
       rows={[
         { id: "net", label: d.shopping.net, value: net },
         { id: "shipping", label: d.shopping.shipping, value: d.shopping.chooseShipping },
         { id: "vat", label: d.shopping.vat, value: vat },
       ]}
-      totalLabel={d.shopping.subtotal}
+      totalLabel={d.checkout.total}
       totalValue={total}
     />
+  );
+};
+
+const MiniCartCheckoutAction = ({
+  dictionary: d,
+  locale,
+  onContinue,
+  onRetry,
+  ready,
+  unavailable,
+}: {
+  dictionary: Dictionary;
+  locale: string;
+  onContinue: () => void;
+  onRetry: () => void;
+  ready: boolean;
+  unavailable: boolean;
+}) => {
+  if (ready) {
+    return (
+      <LinkButton
+        as={NextLink}
+        block
+        href={`/${locale}/pokladna`}
+        onClick={onContinue}
+        size="md"
+        theme="solid"
+        variant="secondary"
+      >
+        {d.shopping.checkout}
+      </LinkButton>
+    );
+  }
+  if (unavailable) {
+    return (
+      <Button block onClick={onRetry} size="md" theme="solid" variant="secondary">
+        {d.retry}
+      </Button>
+    );
+  }
+  return (
+    <Button block disabled size="md" theme="solid" variant="secondary">
+      {d.shopping.checkout}
+    </Button>
   );
 };
 
@@ -344,6 +398,7 @@ export const MiniCart = ({
   const quote = useCartQuote(request, true);
   const [removal, setRemoval] = useState(0);
   const [mutationError, setMutationError] = useState(false);
+  const canCheckout = verifiedCartQuote(quote, invalid || mutationError) !== null;
   const heading = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (removal > 0 && document.activeElement === document.body) {
@@ -364,7 +419,7 @@ export const MiniCart = ({
       <Popover.Positioner>
         <Popover.Content className="n1-header-popover">
           <Popover.Arrow />
-          <div className="flex w-n1-header-panel-content max-w-n1-header-panel-viewport flex-col gap-4">
+          <div className="flex w-n1-header-panel-content max-w-full flex-col gap-4">
             <Popover.Title ref={heading} tabIndex={-1}>
               {d.cart}
               {state === "filled" ? ` (${count.label})` : ""}
@@ -390,6 +445,7 @@ export const MiniCart = ({
                         setRemoval((value) => value + 1);
                       }
                     }}
+                    onSaved={() => setMutationError(false)}
                   />
                 ))}
                 <CartQuoteFeedback dictionary={d} invalid={invalid} quote={quote} />
@@ -412,17 +468,14 @@ export const MiniCart = ({
                   quote={quote}
                 />
                 <div className="flex flex-col gap-3">
-                  <LinkButton
-                    as={NextLink}
-                    block
-                    href={`/${locale}/kosik`}
-                    onClick={continueShopping}
-                    size="md"
-                    theme="solid"
-                    variant="secondary"
-                  >
-                    {d.shopping.openCart}
-                  </LinkButton>
+                  <MiniCartCheckoutAction
+                    dictionary={d}
+                    locale={locale}
+                    onContinue={continueShopping}
+                    onRetry={() => quote.verify()}
+                    ready={canCheckout}
+                    unavailable={quote.state === "unavailable"}
+                  />
                   <Button
                     block
                     density="compact"

@@ -7,6 +7,38 @@ import { getDictionary } from "../src/i18n";
 
 const dictionary = getDictionary("en");
 describe("shared page and header login", () => {
+  for (const locale of ["cs", "en"] as const) {
+    for (const mode of ["login", "register"] as const) {
+      it(`reserves the ${locale} ${mode} action label for a submission, not a session read`, () => {
+        const copy = getDictionary(locale);
+        for (const submitting of [false, true]) {
+          const markup = renderToStaticMarkup(
+            createElement(AuthContent, {
+              controller: {
+                edit: () => {},
+                loaded: true,
+                outcome: { state: "anonymous" },
+                pending: true,
+                run: () => {},
+                submit: () => {},
+                submitting,
+              },
+              dictionary: copy,
+              locale,
+              mode,
+            }),
+          );
+          const button = /<button\b[^>]*type="submit"[^>]*>[\s\S]*?<\/button>/u.exec(markup)?.[0];
+          const action = mode === "login" ? copy.auth.signIn : copy.auth.register;
+          const working = mode === "login" ? copy.auth.signingIn : copy.auth.registering;
+          expect(button).toContain(submitting ? working : action);
+          expect(button).toContain("disabled");
+          expect(markup).toContain('aria-busy="true"');
+        }
+      });
+    }
+  }
+
   for (const mode of ["login", "register"] as const) {
     it(`rejects incomplete email domains at the ${mode} field before submission`, () => {
       const markup = renderToStaticMarkup(
@@ -94,6 +126,7 @@ describe("ongoing MFA presentation", () => {
             pending: false,
             run: () => {},
             submit: () => {},
+            submitting: false,
           },
           dictionary,
           locale: "en",
@@ -121,6 +154,7 @@ describe("ongoing MFA presentation", () => {
           pending: false,
           run: () => {},
           submit: () => {},
+          submitting: false,
         },
         dictionary,
         locale: "en",
@@ -145,6 +179,7 @@ for (const locale of ["cs", "en"] as const) {
           pending: false,
           run: () => {},
           submit: () => {},
+          submitting: false,
         },
         dictionary: copy,
         locale,

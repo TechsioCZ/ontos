@@ -46,7 +46,7 @@ export const CustomerOrderContent = ({
     <>
       <div className="flex flex-col flex-wrap items-start justify-between gap-2 md:flex-row">
         <div className="min-w-0">
-          <h1 className="text-xl leading-normal font-bold wrap-break-word">
+          <h1 className="text-xl leading-n1-copy font-bold wrap-break-word">
             {d.accountPage.orderNumber} {order.number}
           </h1>
           <p className="text-sm text-fg-secondary">
@@ -56,8 +56,8 @@ export const CustomerOrderContent = ({
         <CustomerOrderStatus dictionary={d} status={order.status} />
       </div>
       <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-semibold">{d.accountPage.orderedProducts}</h2>
-        <div className="grid min-w-0 gap-3 md:grid-cols-3">
+        <h2 className="text-lg leading-n1-copy font-bold">{d.accountPage.orderedProducts}</h2>
+        <div className="n1-order-items grid min-w-0 gap-3 md:grid-cols-3">
           {detail.lines.map((line) => (
             <ProductCard
               key={`${line.productId}-${line.variantId ?? ""}-${line.sku}`}
@@ -78,8 +78,8 @@ export const CustomerOrderContent = ({
         </div>
       </section>
       <div className="grid min-w-0 gap-4 md:grid-cols-2">
-        <section className="flex min-w-0 flex-col gap-2 rounded-xs border border-border-secondary p-4">
-          <h2 className="text-lg font-semibold">{d.accountPage.paymentSummary}</h2>
+        <section className="n1-order-totals flex min-w-0 flex-col gap-2 rounded-xs border border-border-secondary p-4">
+          <h2 className="text-lg leading-n1-copy font-semibold">{d.accountPage.paymentSummary}</h2>
           <TotalsSummary
             rows={[
               ...(order.pricesIncludeVat === true
@@ -109,7 +109,7 @@ export const CustomerOrderContent = ({
           />
         </section>
         <section className="flex min-w-0 flex-col gap-2 rounded-xs border border-border-secondary p-4">
-          <h2 className="text-lg font-semibold">{d.accountPage.orderDetails}</h2>
+          <h2 className="text-lg leading-n1-copy font-semibold">{d.accountPage.orderDetails}</h2>
           <div>
             <p className="text-xs text-fg-secondary">{d.accountPage.orderId}</p>
             <p className="text-sm wrap-break-word">{order.id}</p>
@@ -147,19 +147,23 @@ export const CustomerOrderContent = ({
         </section>
         {detail.billingAddress !== null && (
           <section className="flex min-w-0 flex-col gap-2 rounded-xs border border-border-secondary p-4">
-            <h2 className="text-lg font-semibold">{d.accountPage.billingAddress}</h2>
+            <h2 className="text-lg leading-n1-copy font-semibold">
+              {d.accountPage.billingAddress}
+            </h2>
             <OrderAddress address={detail.billingAddress} />
           </section>
         )}
         {detail.deliveryAddress !== null && (
           <section className="flex min-w-0 flex-col gap-2 rounded-xs border border-border-secondary p-4">
-            <h2 className="text-lg font-semibold">{d.accountPage.deliveryAddress}</h2>
+            <h2 className="text-lg leading-n1-copy font-semibold">
+              {d.accountPage.deliveryAddress}
+            </h2>
             <OrderAddress address={detail.deliveryAddress} />
           </section>
         )}
         {detail.note !== null && detail.note !== "" && (
           <section className="flex min-w-0 flex-col gap-2 rounded-xs border border-border-secondary p-4">
-            <h2 className="text-lg font-semibold">{d.accountPage.note}</h2>
+            <h2 className="text-lg leading-n1-copy font-semibold">{d.accountPage.note}</h2>
             <p className="text-sm whitespace-pre-wrap wrap-break-word">{detail.note}</p>
           </section>
         )}

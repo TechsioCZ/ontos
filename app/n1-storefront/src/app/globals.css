@@ -12,6 +12,14 @@
   /* Kit 0.57 exports this line-height separately; pair it with its native
    * text utility so StatusText md consumes the existing Figma typography role. */
   --text-status-text-md--line-height: var(--line-height-status-text-md);
+  /* Expose Tailwind's native font-size line-height companion so auth labels
+   * can use their Figma AUTO line box without changing the md input size. */
+  --text-label-md--line-height: var(--leading-normal);
+  /* Footer33:1100/34:1255 uses AUTO type; the bottom caption scope owns1.4. */
+  --text-footer-title-md--line-height: normal;
+  --text-footer-link-md--line-height: normal;
+  --text-footer-md--line-height: normal;
+  --text-totals-summary-total-size--line-height: var(--leading-normal);
   /* Native Toaster reserves 24px on each side; keep its width inside mobile
    * viewports while retaining the kit's canonical width on larger screens. */
   --spacing-toast-width: min(var(--size-toast-width), calc(100dvw - var(--dimension-48)));

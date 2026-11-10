@@ -7,9 +7,11 @@ import { useCheckout } from "../src/features/use-checkout";
 import { getDictionary } from "../src/i18n";
 import type { CheckoutOptions } from "../src/ontos/checkout-server";
 import { CheckoutResultSchema } from "../src/ontos/checkout";
+import { usePortalAuth } from "../src/features/auth-view";
 
 rs.mock("next/navigation", () => ({ useRouter: () => ({ push: rs.fn(), refresh: rs.fn() }) }));
 rs.mock("../src/features/use-checkout", () => ({ useCheckout: rs.fn() }));
+rs.mock("../src/features/auth-view", () => ({ usePortalAuth: rs.fn() }));
 
 const options = {
   countryCodes: ["CZ"],
@@ -89,6 +91,29 @@ const rejected = () =>
     totalVatMinor: null,
   });
 
+const confirmedResult = () =>
+  Schema.decodeUnknownSync(CheckoutResultSchema)({
+    ...rejected(),
+    issues: [],
+    lines: [
+      {
+        lineTotalMinor: 100,
+        name: "Item",
+        productId: "p1",
+        quantity: 1,
+        sku: "P1",
+        unitPriceMinor: 100,
+      },
+    ],
+    orderId: "o1",
+    orderNumber: "N1-1",
+    outcome: "PLACED",
+    shippingPriceMinor: 12_900,
+    status: "NEW",
+    totalMinor: 13_000,
+    totalVatMinor: 2256,
+  });
+
 const render = (checkout: ReturnType<typeof useCheckout>, locale = "cs") => {
   rs.mocked(useCheckout).mockReturnValue(checkout);
   return renderToStaticMarkup(
@@ -98,6 +123,48 @@ const render = (checkout: ReturnType<typeof useCheckout>, locale = "cs") => {
 
 beforeEach(() => {
   rs.clearAllMocks();
+  rs.mocked(usePortalAuth).mockReturnValue({
+    edit: () => {},
+    loaded: true,
+    outcome: { state: "anonymous" },
+    pending: false,
+    run: () => {},
+    submit: () => {},
+    submitting: false,
+  });
+});
+
+describe("confirmed order account navigation", () => {
+  for (const locale of ["cs", "en"]) {
+    it.effect(`offers own orders only for a currently admitted viewer (${locale})`, () =>
+      Effect.sync(() => {
+        const checkout = { ...populatedState(), guarded: true, receipt: confirmedResult() };
+        const admitted: ReturnType<typeof usePortalAuth> = {
+          edit: () => {},
+          loaded: true,
+          outcome: { email: "owner@example.test", name: "Owner", state: "admitted" },
+          pending: false,
+          run: () => {},
+          submit: () => {},
+          submitting: false,
+        };
+        const target = `href="/${locale}/ucet?tab=orders"`;
+        rs.mocked(usePortalAuth).mockReturnValue(admitted);
+        expect(render(checkout, locale)).toContain(target);
+        for (const session of [
+          { ...admitted, loaded: false },
+          { ...admitted, pending: true },
+          { ...admitted, outcome: { state: "anonymous" as const } },
+        ]) {
+          rs.mocked(usePortalAuth).mockReturnValue(session);
+          const html = render(checkout, locale);
+          expect(html).not.toContain(target);
+          expect(html).toContain(getDictionary(locale).checkout.confirmed);
+          expect(html).not.toContain('type="submit"');
+        }
+      }),
+    );
+  }
 });
 
 describe("checkout action accessibility", () => {
@@ -112,11 +179,17 @@ describe("checkout action accessibility", () => {
             const button = /<button(?=[^>]*type="submit")[^>]*>[\s\S]*?<\/button>/u.exec(html)?.[0];
             const label =
               progress === "place" ? dictionary.checkout.sending : dictionary.checkout.checking;
+            const shortLabel =
+              progress === "place"
+                ? dictionary.checkout.sendingShort
+                : dictionary.checkout.checkingShort;
             expect(html.split('type="submit"')).toHaveLength(2);
             expect(button).toContain('aria-busy="true"');
             expect(button).toContain(`aria-label="${label}"`);
             expect(button).toContain('disabled=""');
             expect(button).toContain(label);
+            expect(button).toContain(shortLabel);
+            expect(label).toContain(shortLabel);
           }
         }
       }),
@@ -228,27 +301,7 @@ describe("checkout operation feedback", () => {
 
   it.effect("does not mistake the retained guard of a confirmed order for an unknown result", () =>
     Effect.sync(() => {
-      const receipt = Schema.decodeUnknownSync(CheckoutResultSchema)({
-        ...rejected(),
-        issues: [],
-        lines: [
-          {
-            lineTotalMinor: 100,
-            name: "Item",
-            productId: "p1",
-            quantity: 1,
-            sku: "P1",
-            unitPriceMinor: 100,
-          },
-        ],
-        orderId: "o1",
-        orderNumber: "N1-1",
-        outcome: "PLACED" as const,
-        shippingPriceMinor: 12_900,
-        status: "NEW" as const,
-        totalMinor: 13_000,
-        totalVatMinor: 2256,
-      });
+      const receipt = confirmedResult();
       const checkout = { ...populatedState(), guarded: true, quote: rejected(), receipt };
       const html = render(checkout);
       expect(html).toContain(d.checkout.confirmed);

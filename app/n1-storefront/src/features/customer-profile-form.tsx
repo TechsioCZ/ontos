@@ -103,7 +103,7 @@ export const CustomerProfileForm = ({
   return (
     <form
       action="/api/customer-profile"
-      className="flex w-full min-w-0 flex-col gap-2"
+      className="n1-auth-form flex w-full min-w-0 flex-col gap-2"
       method="post"
       onSubmit={(event) => {
         event.preventDefault();

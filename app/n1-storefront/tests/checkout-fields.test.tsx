@@ -18,6 +18,7 @@ beforeEach(() => {
     pending: false,
     run: () => {},
     submit: () => {},
+    submitting: false,
   });
 });
 
@@ -44,6 +45,7 @@ describe("checkout field validation", () => {
         pending: false,
         run: () => {},
         submit: () => {},
+        submitting: false,
       });
       const html = render("en", ["GB"]);
       expect(html).not.toContain(d.checkout.guest);
