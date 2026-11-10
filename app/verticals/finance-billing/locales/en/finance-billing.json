@@ -331,9 +331,11 @@
         "title": "Payments",
         "date": "Payment date",
         "note": "Note (e.g. statement number)",
-        "counterpartyHistory": "Counterparty payment history"
+        "counterpartyHistory": "Counterparty payment history",
+        "record": "Record payment"
       },
       "common": {
+        "cancel": "Cancel",
         "amount": "Amount (CZK)",
         "vatRate": "VAT rate",
         "edit": "Edit",

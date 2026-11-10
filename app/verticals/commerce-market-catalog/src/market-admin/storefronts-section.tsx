@@ -1,6 +1,8 @@
 // "E-shopy" section of the market detail: the e-shops the market sells in, and associate / revise / remove.
-import { SectionCard } from '@app/admin-ui';
+import { SectionCard, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import type { StorefrontApplicationSummary } from '@app/storefront-registry/api/storefront-applications';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { SelectTemplate } from '@app/admin-ui/select-template';
@@ -13,16 +15,17 @@ import { ReviseStorefrontAssociationPayloadSchema } from '../../shared/actions/r
 import { executeAssociateStorefront } from '../api/associate-storefront-action-client.ts';
 import { executeRemoveStorefrontAssociation } from '../api/remove-storefront-association-action-client.ts';
 import { executeReviseStorefrontAssociation } from '../api/revise-storefront-association-action-client.ts';
+import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { newUuid } from './browser-crypto.ts';
 import type { CurrentAssociation, CurrentMarket, MarketChannel } from './eshops-model.ts';
 import { storefrontName } from './eshops-model.ts';
 import { storefrontChoices } from './market-detail-model.ts';
 import type { StorefrontChoice } from './market-detail-model.ts';
 import { dateOf, effectivePeriodOf } from './market-form.ts';
-import { DialogFrame } from './dialog-frame.tsx';
+import { DialogFrame, FormDialogFrame } from './dialog-frame.tsx';
 import { formatDay } from './definition-text.ts';
-import { useMarketText } from './market-ui.tsx';
-import { runMarketAction } from './page-data.ts';
+import { failureText, useMarketText } from './market-ui.tsx';
+import { marketActionEffect, runMarketAction } from './page-data.ts';
 import type { WriteFailure, WriteOutcome } from './page-data.ts';
 
 const isProposal = Schema.is(ActionProposalAcceptedSchema);
@@ -41,6 +44,28 @@ interface AssociationDialogProps {
   readonly onDone: (message: string) => void;
 }
 
+/** The draft of the associate / revise dialog: the e-shop, its channel and the validity dates. */
+interface AssociationDraft {
+  readonly appId: string;
+  readonly channel: MarketChannel | undefined;
+  readonly validFrom: string;
+  readonly validTo: string;
+}
+
+/** What the dialog opens with: the stored association, or the first e-shop and channel for a new one. */
+const associationDraftOf = (
+  association: CurrentAssociation | undefined,
+  choices: readonly StorefrontChoice[],
+): AssociationDraft => {
+  const appId = association?.storefrontRef.appId ?? choices[0]?.appId ?? '';
+  return {
+    appId,
+    channel: association?.channel ?? choices.find((candidate) => candidate.appId === appId)?.channels[0],
+    validFrom: association === undefined ? '' : dateOf(association.effectivePeriod.startsAt),
+    validTo: association?.effectivePeriod.endsAt === undefined ? '' : dateOf(association.effectivePeriod.endsAt),
+  };
+};
+
 const AssociationDialog = ({
   association,
   choices,
@@ -51,99 +76,105 @@ const AssociationDialog = ({
   onDone,
 }: AssociationDialogProps) => {
   const { text } = useMarketText();
-  const [appId, setAppId] = useState(association?.storefrontRef.appId ?? choices[0]?.appId ?? '');
-  const choice = choices.find((candidate) => candidate.appId === appId);
+  const [draft, setDraft] = useState<AssociationDraft>(() => associationDraftOf(association, choices));
+  const opened = associationDraftOf(association, choices);
+  const [failure, setFailure] = useState<WriteFailure | null>(null);
+  const choice = choices.find((candidate) => candidate.appId === draft.appId);
   const channelsOf = (selected: StorefrontChoice | undefined): readonly MarketChannel[] =>
     selected?.channels ?? (association === undefined ? [] : [association.channel]);
-  const [channel, setChannel] = useState<MarketChannel | undefined>(association?.channel ?? choice?.channels[0]);
-  const [validFrom, setValidFrom] = useState(
-    association === undefined ? '' : dateOf(association.effectivePeriod.startsAt),
-  );
-  const [validTo, setValidTo] = useState(
-    association?.effectivePeriod.endsAt === undefined ? '' : dateOf(association.effectivePeriod.endsAt),
-  );
-  const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<WriteFailure | null>(null);
-  const name = nameOf(appId);
+  const name = nameOf(draft.appId);
   const code = market.marketCode;
-  const periodOf = (now: DateTime.Utc) => {
-    const period = effectivePeriodOf({ validFrom, validTo }, now);
-    return association !== undefined && validFrom === dateOf(association.effectivePeriod.startsAt)
+  const periodOf = (value: AssociationDraft, now: DateTime.Utc) => {
+    const period = effectivePeriodOf({ validFrom: value.validFrom, validTo: value.validTo }, now);
+    return association !== undefined && value.validFrom === dateOf(association.effectivePeriod.startsAt)
       ? { ...period, startsAt: DateTime.formatIso(association.effectivePeriod.startsAt) }
       : period;
   };
   const provenance = { kind: 'CONFIGURATION_ACTION' as const, reference: text('detail.storefronts.provenance') };
-  const done = (outcome: WriteOutcome<object>) => {
-    setBusy(false);
-    if (outcome.ok && isProposal(outcome.value)) {
-      onAwaitingApproval();
-      return;
-    }
-    if (outcome.ok) {
-      onDone(
-        text(association === undefined ? 'detail.storefronts.associated' : 'detail.storefronts.revised', { name }),
-      );
-      return;
-    }
-    setFailure(outcome.reason);
-  };
-  const submit = () => {
-    if (channel === undefined || appId === '') {
-      setFailure('invalid');
-      return;
-    }
-    setBusy(true);
-    setFailure(null);
-    const storefrontRef = { appId, tenantId: market.marketRef.tenantId };
+  /** Sends the association as the dialog's draft says; a new one gets its own id. */
+  const send = (value: AssociationDraft, channel: MarketChannel): Effect.Effect<WriteOutcome<object>> => {
+    const storefrontRef = { appId: value.appId, tenantId: market.marketRef.tenantId };
     if (association === undefined) {
-      runMarketAction(
+      return marketActionEffect(
         Effect.all({ associationId: newUuid, now: DateTime.now }, { concurrency: 1 }).pipe(
           Effect.flatMap(({ associationId, now }) =>
             Schema.decodeUnknownEffect(AssociateStorefrontPayloadSchema)({
               associationId,
               channel,
-              effectivePeriod: periodOf(now),
+              effectivePeriod: periodOf(value, now),
               expectedMarketDefinitionRevisionRef: market.definitionRevisionRef,
               marketRef: market.marketRef,
               provenance,
-              reason: text('detail.storefronts.associateReason', { code, name }),
+              reason: text('detail.storefronts.associateReason', { code, name: nameOf(value.appId) }),
               sellingLegalEntityRef: market.sellingLegalEntityRef,
               storefrontRef,
             }),
           ),
         ),
         executeAssociateStorefront,
-        done,
       );
-      return;
     }
-    runMarketAction(
+    return marketActionEffect(
       DateTime.now.pipe(
         Effect.flatMap((now) =>
           Schema.decodeUnknownEffect(ReviseStorefrontAssociationPayloadSchema)({
             associationRef: association.associationRef,
             channel,
-            effectivePeriod: periodOf(now),
+            effectivePeriod: periodOf(value, now),
             expectedRevision: association.revision,
             marketRef: market.marketRef,
             provenance,
-            reason: text('detail.storefronts.reviseReason', { code, name }),
+            reason: text('detail.storefronts.reviseReason', { code, name: nameOf(value.appId) }),
             storefrontRef,
           }),
         ),
       ),
       executeReviseStorefrontAssociation,
-      done,
     );
   };
+  const record = useDraftSave<AssociationDraft, never>({
+    // A new association exists nowhere yet: its confirmed version has no e-shop, so the pre-selected one is already
+    // something Uložit can send.
+    initial: association === undefined ? { ...opened, appId: '' } : undefined,
+    isValid: (value) => value.appId !== '' && value.channel !== undefined,
+    // Leaving asks only about what the user changed, not about the pre-selected defaults.
+    opened,
+    runtime: browserRuntime,
+    save: (value) => {
+      if (value.channel === undefined) {
+        return Effect.succeed<SaveOutcome>('failed');
+      }
+      return send(value, value.channel).pipe(
+        Effect.map((outcome): SaveOutcome => {
+          if (!outcome.ok) {
+            setFailure(outcome.reason);
+            return 'failed';
+          }
+          if (isProposal(outcome.value)) {
+            onAwaitingApproval();
+            return 'proposed';
+          }
+          onDone(
+            text(association === undefined ? 'detail.storefronts.associated' : 'detail.storefronts.revised', {
+              name: nameOf(value.appId),
+            }),
+          );
+          return 'saved';
+        }),
+      );
+    },
+    value: draft,
+  });
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: () => setDraft(opened) });
+  const handleSave = record.save;
   return (
-    <DialogFrame
-      busy={busy}
-      confirmLabel={text(association === undefined ? 'detail.storefronts.submit' : 'detail.storefronts.save')}
-      confirmVariant="primary"
-      failure={failure}
+    <FormDialogFrame
+      error={failure === null ? null : failureText(text, failure)}
+      guard={guard}
       onClose={onClose}
-      onConfirm={submit}
+      onSave={handleSave}
+      status={record.status}
       title={
         association === undefined
           ? text('detail.storefronts.associateTitle', { code })
@@ -158,20 +189,22 @@ const AssociationDialog = ({
         onValueChange={(details: { readonly value: readonly string[] }) => {
           const next = choices.find((candidate) => candidate.appId === details.value[0]);
           if (next !== undefined) {
-            setAppId(next.appId);
-            setChannel(next.channels[0]);
+            setDraft((current) => ({ ...current, appId: next.appId, channel: next.channels[0] }));
           }
         }}
-        value={appId === '' ? [] : [appId]}
+        value={draft.appId === '' ? [] : [draft.appId]}
       />
       <SelectTemplate
         items={channelsOf(choice).map((value) => item(value, text(`form.channel${value}`)))}
         label={text('detail.storefronts.channel')}
         name="channel"
         onValueChange={(details: { readonly value: readonly string[] }) =>
-          setChannel(channelsOf(choice).find((candidate) => candidate === details.value[0]))
+          setDraft((current) => ({
+            ...current,
+            channel: channelsOf(choice).find((candidate) => candidate === details.value[0]),
+          }))
         }
-        value={channel === undefined ? [] : [channel]}
+        value={draft.channel === undefined ? [] : [draft.channel]}
       />
       <div className="grid grid-cols-2 gap-200">
         <FormInput
@@ -179,21 +212,21 @@ const AssociationDialog = ({
           id="association-valid-from"
           label={text('form.validFrom')}
           name="validFrom"
-          onChange={(event) => setValidFrom(event.target.value)}
+          onChange={(event) => setDraft((current) => ({ ...current, validFrom: event.target.value }))}
           type="date"
-          value={validFrom}
+          value={draft.validFrom}
         />
         <FormInput
           helpText={text('form.validToHelp')}
           id="association-valid-to"
           label={text('form.validTo')}
           name="validTo"
-          onChange={(event) => setValidTo(event.target.value)}
+          onChange={(event) => setDraft((current) => ({ ...current, validTo: event.target.value }))}
           type="date"
-          value={validTo}
+          value={draft.validTo}
         />
       </div>
-    </DialogFrame>
+    </FormDialogFrame>
   );
 };
 

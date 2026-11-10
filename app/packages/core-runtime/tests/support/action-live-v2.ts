@@ -767,11 +767,7 @@ export const makeNativeActionV2Fixture = Effect.gen(function* makeNativeActionV2
 });
 
 /** Public TEST-only session adapter seam; no Shell implementation or ambient provider is imported. */
-export {
-  NativeHumanSessionsFactory,
-  NativeHumanSessionsFactoryLive,
-  NativeHumanSessionFixtureError,
-} from './native-human-sessions.ts';
+export { NativeHumanSessionsFactory, NativeHumanSessionFixtureError } from './native-human-sessions.ts';
 export type {
   NativeHumanSessionExpectation,
   NativeHumanSessionHandle,

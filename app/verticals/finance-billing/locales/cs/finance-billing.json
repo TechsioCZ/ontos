@@ -331,9 +331,11 @@
         "title": "Úhrady",
         "date": "Datum úhrady",
         "note": "Poznámka (např. číslo výpisu)",
-        "counterpartyHistory": "Platební historie protistrany"
+        "counterpartyHistory": "Platební historie protistrany",
+        "record": "Zaznamenat úhradu"
       },
       "common": {
+        "cancel": "Zrušit",
         "amount": "Částka (Kč)",
         "vatRate": "Sazba DPH",
         "edit": "Upravit",

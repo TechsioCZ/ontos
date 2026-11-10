@@ -22,6 +22,12 @@ export interface CompanyDirectoryPort<R> {
   readonly replaceOperators: (input: {
     readonly agentPrincipalId: string;
     readonly context: 'agent-created' | 'operators-edited';
+    /**
+     * Operator revision the caller's form was read from. When it is given and the agent's operators moved on since,
+     * the change is refused with `ConnectionsGone` (409) instead of overwriting them; the Core Action checks the same
+     * revision under its lock, so the refusal is atomic. Absent: the revision of `snapshot` is used, as before.
+     */
+    readonly expectedRevision?: number;
     readonly operatorPrincipalIds: readonly string[];
     readonly revokedConnections: number;
     readonly snapshot: CompanyDirectorySnapshot;

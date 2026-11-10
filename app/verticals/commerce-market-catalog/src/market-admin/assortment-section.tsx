@@ -1,42 +1,36 @@
 // "Sortiment a ceník" of the market detail: the merchandise price list of the market and its product exceptions
-// (DESIGN 3.2). Commands go through the merchandise apply-command Action; switches are disabled for non-managers.
+// (DESIGN 3.2). Price list and offer switches form one draft; its one Save sends the changes.
 import {
   SaveBar,
+  SaveOutcomeSchema,
   SectionCard,
   UnsavedChangesDialog,
   saveLabelsFor,
   useRecordDraft,
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
-import type { RevisionedSaveResult } from '@app/admin-ui';
+import type { DraftSaveResult, SaveOutcome } from '@app/admin-ui';
 import type { MarketSettings } from '@app/merchandise/domain/market-offers';
 import type { RecordsResponse } from '@app/merchandise/contracts/records';
-import { pageDataPending } from '@app/shared-contracts/page-data';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { Effect, Fiber, Schema } from 'effect';
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { Effect, Predicate, Schema } from 'effect';
+import { useRef, useState } from 'react';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { commandOutcome, offerCommand, sameSectionDraft, saveSectionEffect } from './assortment-save.ts';
+import type { SectionDraft, SectionSteps } from './assortment-save.ts';
+import { ExceptionsBlock } from './assortment-exceptions.tsx';
+import type { SetOffer } from './assortment-exceptions.tsx';
 import type { CurrentMarket } from './eshops-model.ts';
 import { PricingFields } from './market-fields.tsx';
 import { configureMarketCommand, defaultPricingForm, pricingFormOf, pricingIssues } from './market-form.ts';
-import type { MarketPricingForm } from './market-form.ts';
 import { failureText, useMarketText } from './market-ui.tsx';
-import {
-  EXCEPTIONS_PAGE_SIZE,
-  marketExceptionsData,
-  merchandiseCommand,
-  runMerchandiseCommand,
-  searchProducts,
-  writeFailure,
-} from './page-data.ts';
-import type { ExceptionsInput, MarketCommandResult, MarketInput, WriteFailure } from './page-data.ts';
+import { marketExceptionsData, runMerchandiseCommand } from './page-data.ts';
+import type { ExceptionsInput, MarketInput, WriteFailure, WriteOutcome } from './page-data.ts';
 
-type SearchResult = Effect.Success<ReturnType<typeof searchProducts>>['products'];
+export { priceListSaveResult } from './assortment-save.ts';
 
 interface AssortmentSectionProps {
   readonly input: MarketInput;
@@ -50,62 +44,134 @@ interface AssortmentSectionProps {
   readonly refreshSettings: Effect.Effect<void>;
 }
 
-interface PriceListProps {
+/** The product exceptions shown under the price list, with the page the section is on. */
+export interface ExceptionsSpec {
+  readonly input: ExceptionsInput;
+  /** The offer a product has when it is not an exception. */
+  readonly offeredByDefault: boolean;
+  readonly onOffset: (offset: number) => void;
+}
+
+interface PriceListEditorProps {
   readonly canManage: boolean;
+  readonly exceptions?: ExceptionsSpec | undefined;
   readonly market: CurrentMarket;
   readonly onAwaitingApproval: () => void;
-  readonly onDone: (message: string) => void;
+  readonly onDone?: ((message: string) => void) | undefined;
   readonly refresh: Effect.Effect<void>;
+  /** The catalogue revision of the records the offers are sent over. */
   readonly revision: number;
+  readonly settings: MarketSettings;
 }
 
 const isProposal = Schema.is(ActionProposalAcceptedSchema);
 
-/** One price-list save: the market's new revision once committed; a change parked for approval is 'proposed'. */
-export const priceListSaveResult = (result: MarketCommandResult): RevisionedSaveResult =>
-  isProposal(result) ? 'proposed' : (result.marketRevision ?? 'saved');
+const isSaveOutcome = Schema.is(SaveOutcomeSchema);
+
+const outcomeOf = (result: DraftSaveResult<SectionDraft>): SaveOutcome | number =>
+  isSaveOutcome(result) || Predicate.isNumber(result) ? result : result.outcome;
 
 /**
- * The configured price list: the draft changes only on screen; Save sends one ConfigureMarket over the market's own
- * revision. An edit parked for approval is 'proposed': the draft stays unconfirmed and is not sent again.
+ * The price list and the offers of the section: edits change only the draft on screen, and the one Save sends the
+ * changed price list (one ConfigureMarket) and each changed offer once. A change parked for approval is 'proposed'
+ * and is not sent again.
  */
 export const PriceListEditor = ({
   canManage,
+  exceptions,
   market,
   onAwaitingApproval,
+  onDone,
   refresh,
   revision,
   settings,
-}: Omit<PriceListProps, 'onDone'> & { readonly settings: MarketSettings }) => {
+}: PriceListEditorProps) => {
   const { language, text } = useMarketText();
-  const record = useRecordDraft<MarketPricingForm, never>({
-    isValid: (value) => pricingIssues(value).length === 0,
-    refresh,
+  // The offer of each product as the server has it; a changed product is compared with it on Save.
+  const serverOffers = useRef(new Map<string, boolean>());
+  const marketId = market.marketRef.resourceId;
+  // Why the last command of a save was refused; the save bar names it while the save is failed.
+  const [failure, setFailure] = useState<WriteFailure | null>(null);
+  const noted = <A,>(outcome: WriteOutcome<A>) =>
+    Effect.sync(() => {
+      setFailure(outcome.ok ? null : outcome.reason);
+    });
+  const stepsOf = (serverOffersNow: Map<string, boolean>): SectionSteps => ({
+    configure: (pricing, expectedRevision) =>
+      commandOutcome(
+        configureMarketCommand({ expectedRevision, form: pricing, marketCode: market.marketCode, marketId }),
+        revision,
+      ).pipe(Effect.tap(noted)),
+    // Each offer names the offer it was read with, so the owner refuses it when someone changed it in the meantime.
+    offer: (productId, offered) =>
+      commandOutcome(
+        offerCommand({ marketId, offered, productId, read: serverOffersNow.get(productId) }),
+        revision,
+      ).pipe(Effect.tap(noted)),
+    serverOffers: serverOffersNow,
+  });
+  const announce = (result: DraftSaveResult<SectionDraft>) =>
+    Effect.sync(() => {
+      const outcome = outcomeOf(result);
+      if (outcome === 'proposed') {
+        onAwaitingApproval();
+        return;
+      }
+      if (outcome === 'saved' || Predicate.isNumber(outcome)) {
+        if (exceptions !== undefined) {
+          browserRuntime.runFork(marketExceptionsData.refresh(exceptions.input));
+        }
+        onDone?.(text('detail.assortment.saved', { code: market.marketCode }));
+      }
+    });
+  const record = useRecordDraft<SectionDraft, never>({
+    equals: sameSectionDraft,
+    isValid: (value) => pricingIssues(value.pricing).length === 0,
+    // "Načíst aktuální verzi" re-reads the offers too, so a conflict shows the other person's offer change and the next
+    // switch is checked against it.
+    refresh:
+      exceptions === undefined ? refresh : Effect.andThen(refresh, marketExceptionsData.refresh(exceptions.input)),
     revision: settings.revision,
     runtime: browserRuntime,
-    save: (value, expectedRevision) =>
-      merchandiseCommand(
-        configureMarketCommand({
-          expectedRevision,
-          form: value,
-          marketCode: market.marketCode,
-          marketId: market.marketRef.resourceId,
-        }),
-        revision,
-      ).pipe(
-        Effect.tap((result) => (isProposal(result) ? Effect.sync(onAwaitingApproval) : Effect.void)),
-        Effect.match({
-          onFailure: (reason): RevisionedSaveResult => (reason === 'conflict' ? 'conflict' : 'failed'),
-          onSuccess: priceListSaveResult,
-        }),
-      ),
-    server: pricingFormOf(settings),
+    save: (value, expectedRevision, confirmed) =>
+      saveSectionEffect(stepsOf(serverOffers.current), value, confirmed, expectedRevision).pipe(Effect.tap(announce)),
+    server: { offers: {}, pricing: pricingFormOf(settings) },
   });
-  // Leaving the detail page with unsaved price-list changes asks first; the dialog is the one question for this form.
+  // Leaving the detail page with unsaved changes asks first; the dialog is the one question for this form.
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
   const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
   const labels = saveLabelsFor(language);
-  const issues = pricingIssues(record.draft);
+  const issues = pricingIssues(record.draft.pricing);
+  // A switch or a search result changes the draft only; the section's Save sends it.
+  const setOffer: SetOffer = (productId, name, offered, currentlyOffered) => {
+    // The offer the product shows now, as last read; a Save compares the draft with it. A search hit does not know
+    // the product's offer, so its Save claims no read offer (a plain set, not checked against a stale one).
+    if (currentlyOffered === undefined) {
+      serverOffers.current.delete(productId);
+    } else {
+      serverOffers.current.set(productId, currentlyOffered);
+    }
+    // Switching an offer back to what the server has takes it out of the draft again.
+    record.setDraft((current) => {
+      const others = Object.fromEntries(Object.entries(current.offers).filter(([id]) => id !== productId));
+      return {
+        ...current,
+        offers: offered === currentlyOffered ? others : { ...others, [productId]: { name, offered } },
+      };
+    });
+  };
+  const handleOffset = (offset: number) => exceptions?.onOffset(offset);
+  const exceptionsView =
+    exceptions === undefined ? null : (
+      <ExceptionsBlock
+        canManage={canManage}
+        input={exceptions.input}
+        offeredByDefault={exceptions.offeredByDefault}
+        offers={record.draft.offers}
+        onOffset={handleOffset}
+        onSetOffer={setOffer}
+      />
+    );
   if (!canManage) {
     const mode = text(`form.offerMode${settings.offerMode}`);
     const summary = text('detail.assortment.summary', {
@@ -113,36 +179,58 @@ export const PriceListEditor = ({
       rate: settings.exchangeRate,
       rounding: settings.roundingMinor,
     });
-    return <p className="text-sm">{[mode, summary].join(' · ')}</p>;
+    return (
+      <div className="flex flex-col gap-150">
+        <p className="text-sm">{[mode, summary].join(' · ')}</p>
+        {exceptionsView}
+      </div>
+    );
   }
-  const handleDraftChange = record.setDraft;
   const handleReloadLatest = record.reloadLatest;
   const handleSave = record.save;
   return (
     <div className="flex flex-col gap-150">
       <PricingFields
-        form={record.draft}
+        form={record.draft.pricing}
         issues={issues}
-        onChange={handleDraftChange}
+        onChange={(pricing) => record.setDraft((current) => ({ ...current, pricing }))}
         prefix="market-pricing"
         showIssues={issues.length > 0}
         size="sm"
       />
-      <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
+      {exceptionsView}
+      <SaveBar
+        error={failure === null ? null : failureText(text, failure)}
+        labels={labels}
+        onReloadLatest={handleReloadLatest}
+        onSave={handleSave}
+        status={record.status}
+      />
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </div>
   );
 };
+interface PriceListProps {
+  readonly canManage: boolean;
+  readonly exceptions: ExceptionsSpec | undefined;
+  readonly market: CurrentMarket;
+  readonly onAwaitingApproval: () => void;
+  readonly onDone: (message: string) => void;
+  readonly refresh: Effect.Effect<void>;
+  readonly revision: number;
+  readonly settings: MarketSettings | undefined;
+}
 
 const PriceList = ({
   canManage,
+  exceptions,
   market,
   onAwaitingApproval,
   onDone,
   refresh,
   revision,
   settings,
-}: PriceListProps & { readonly settings: MarketSettings | undefined }) => {
+}: PriceListProps) => {
   const { text } = useMarketText();
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<WriteFailure | null>(null);
@@ -151,9 +239,11 @@ const PriceList = ({
     return (
       <PriceListEditor
         canManage={editable}
+        exceptions={exceptions}
         key={market.marketRef.resourceId}
         market={market}
         onAwaitingApproval={onAwaitingApproval}
+        onDone={onDone}
         refresh={refresh}
         revision={revision}
         settings={settings}
@@ -205,196 +295,6 @@ const PriceList = ({
   );
 };
 
-const SEARCH_DELAY = '400 millis';
-const SEARCH_MIN_LENGTH = 2;
-
-type SearchState =
-  | { readonly failure: WriteFailure; readonly kind: 'failed'; readonly search: string }
-  | { readonly kind: 'found'; readonly products: SearchResult; readonly search: string };
-
-/** Products matching the typed text, loaded after a short pause in typing; none for a too short text. */
-const useProductSearch = (search: string) => {
-  const trimmed = search.trim();
-  const [state, setState] = useState<SearchState | null>(null);
-  useEffect(() => {
-    const fiber = browserRuntime.runFork(
-      trimmed.length < SEARCH_MIN_LENGTH
-        ? Effect.void
-        : Effect.sleep(SEARCH_DELAY).pipe(
-            Effect.andThen(searchProducts(trimmed)),
-            Effect.match({
-              onFailure: (error) => setState({ failure: writeFailure(error), kind: 'failed', search: trimmed }),
-              onSuccess: (found) => setState({ kind: 'found', products: found.products, search: trimmed }),
-            }),
-          ),
-    );
-    return () => {
-      browserRuntime.runFork(Fiber.interrupt(fiber));
-    };
-  }, [trimmed]);
-  return trimmed.length < SEARCH_MIN_LENGTH || state?.search !== trimmed ? null : state;
-};
-
-interface OfferChange {
-  readonly disabled: boolean;
-  readonly onSetOffer: (productId: string, name: string, offered: boolean) => void;
-}
-
-const ProductLabel = ({ name, sku }: { readonly name: string; readonly sku: string }) => (
-  <span className="text-sm">
-    <span className="font-medium">{name}</span>
-    <span className="text-fg-secondary"> · {sku}</span>
-  </span>
-);
-
-/** The products that are the exception of the market's offer mode, one page at a time. */
-const ExceptionsList = ({
-  canManage,
-  change,
-  input,
-}: {
-  readonly canManage: boolean;
-  readonly change: OfferChange;
-  readonly input: ExceptionsInput;
-}) => {
-  const { text } = useMarketText();
-  const exceptions = useSyncExternalStore(
-    marketExceptionsData.subscribe,
-    () => marketExceptionsData.snapshot(input),
-    () => pageDataPending,
-  );
-  const { legalEntityId, marketId, offset, tenantId } = input;
-  useEffect(
-    () => marketExceptionsData.ensure({ legalEntityId, marketId, offset, tenantId }),
-    [legalEntityId, marketId, offset, tenantId],
-  );
-  if (exceptions.state === 'failed') {
-    return <StatusText status="error">{text('detail.assortment.unavailable')}</StatusText>;
-  }
-  if (exceptions.state === 'pending') {
-    return <StatusText>{text('detail.loading')}</StatusText>;
-  }
-  const items = exceptions.value.marketExceptions?.items ?? [];
-  if (items.length === 0) {
-    return <p className="text-fg-secondary text-sm">{text('detail.assortment.exceptions.empty')}</p>;
-  }
-  return (
-    <ul className="divide-y divide-border-primary/60">
-      {items.map((product) => {
-        const handleCheckedChange = (checked: boolean) => change.onSetOffer(product.productId, product.name, checked);
-        return (
-          <li className="flex flex-wrap items-center justify-between gap-150 py-100" key={product.productId}>
-            <ProductLabel name={product.name} sku={product.sku} />
-            <Switch
-              checked={product.offered}
-              disabled={!canManage || change.disabled}
-              name={`market-offer-${product.sku}`}
-              onCheckedChange={handleCheckedChange}
-            >
-              {text(
-                product.offered ? 'detail.assortment.exceptions.offered' : 'detail.assortment.exceptions.notOffered',
-              )}
-            </Switch>
-          </li>
-        );
-      })}
-    </ul>
-  );
-};
-
-/** Previous / next page of the exceptions, shown only when they do not fit one page. */
-const ExceptionsPager = ({
-  input,
-  onOffset,
-}: {
-  readonly input: ExceptionsInput;
-  readonly onOffset: (offset: number) => void;
-}) => {
-  const { text } = useMarketText();
-  const exceptions = useSyncExternalStore(
-    marketExceptionsData.subscribe,
-    () => marketExceptionsData.snapshot(input),
-    () => pageDataPending,
-  );
-  const total = exceptions.state === 'ready' ? (exceptions.value.marketExceptions?.total ?? 0) : 0;
-  if (total <= EXCEPTIONS_PAGE_SIZE) {
-    return null;
-  }
-  const { offset } = input;
-  const handlePrevious = () => onOffset(Math.max(0, offset - EXCEPTIONS_PAGE_SIZE));
-  const handleNext = () => onOffset(offset + EXCEPTIONS_PAGE_SIZE);
-  return (
-    <div className="flex items-center gap-150 text-sm">
-      <Button disabled={offset === 0} onClick={handlePrevious} size="sm" theme="outlined" variant="secondary">
-        {text('detail.assortment.exceptions.previous')}
-      </Button>
-      <span>
-        {text('detail.assortment.exceptions.page', {
-          from: offset + 1,
-          to: Math.min(total, offset + EXCEPTIONS_PAGE_SIZE),
-          total,
-        })}
-      </span>
-      <Button
-        disabled={offset + EXCEPTIONS_PAGE_SIZE >= total}
-        onClick={handleNext}
-        size="sm"
-        theme="outlined"
-        variant="secondary"
-      >
-        {text('detail.assortment.exceptions.next')}
-      </Button>
-    </div>
-  );
-};
-
-/** Search the catalogue and make a product an exception (withdraw it, or add it to a selected-products market). */
-const ProductSearch = ({
-  change,
-  offeredByDefault,
-}: {
-  readonly change: OfferChange;
-  readonly offeredByDefault: boolean;
-}) => {
-  const { text } = useMarketText();
-  const [search, setSearch] = useState('');
-  const results = useProductSearch(search);
-  return (
-    <div className="flex flex-col gap-100">
-      <FormInput
-        id="market-product-search"
-        label={text('detail.assortment.exceptions.search')}
-        name="productSearch"
-        onChange={(event) => setSearch(event.target.value)}
-        placeholder={text('detail.assortment.exceptions.searchPlaceholder')}
-        size="sm"
-        value={search}
-      />
-      {results?.kind === 'failed' && <StatusText status="error">{failureText(text, results.failure)}</StatusText>}
-      {results?.kind === 'found' && results.products.length === 0 && (
-        <p className="text-fg-secondary text-sm">{text('detail.assortment.exceptions.noResults')}</p>
-      )}
-      {results?.kind === 'found' && results.products.length > 0 && (
-        <ul className="divide-y divide-border-primary/60">
-          {results.products.map((product) => {
-            const handleClick = () => change.onSetOffer(product.id, product.name, !offeredByDefault);
-            return (
-              <li className="flex flex-wrap items-center justify-between gap-150 py-100" key={product.id}>
-                <ProductLabel name={product.name} sku={product.sku} />
-                <Button disabled={change.disabled} onClick={handleClick} size="sm" theme="outlined" variant="secondary">
-                  {text(
-                    offeredByDefault ? 'detail.assortment.exceptions.withdraw' : 'detail.assortment.exceptions.add',
-                  )}
-                </Button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
-  );
-};
-
 export const AssortmentSection = ({
   input,
   market,
@@ -406,8 +306,6 @@ export const AssortmentSection = ({
 }: AssortmentSectionProps) => {
   const { text } = useMarketText();
   const [offset, setOffset] = useState(0);
-  const [pendingProduct, setPendingProduct] = useState<string | null>(null);
-  const [failure, setFailure] = useState<WriteFailure | null>(null);
   if (records === undefined) {
     return (
       <SectionCard title={text('detail.assortment.title')}>
@@ -420,44 +318,15 @@ export const AssortmentSection = ({
   const page: ExceptionsInput = { ...input, offset };
   const settings = records.markets?.find((candidate) => candidate.marketId === input.marketId);
   const canManage = records.canManageMarkets === true && market.lifecycle !== 'RETIRED';
-  const change: OfferChange = {
-    disabled: pendingProduct !== null,
-    onSetOffer: (productId, name, offered) => {
-      setPendingProduct(productId);
-      setFailure(null);
-      runMerchandiseCommand(
-        { _tag: 'SetProductMarketOffer', marketId: input.marketId, offered, productId },
-        records.revision,
-        (outcome) => {
-          setPendingProduct(null);
-          if (outcome.ok && isProposal(outcome.value)) {
-            // Parked for approval: the offer is unchanged until someone approves it.
-            onAwaitingApproval();
-            return;
-          }
-          if (outcome.ok) {
-            browserRuntime.runFork(marketExceptionsData.refresh(page));
-            onDone(
-              text(
-                offered ? 'detail.assortment.exceptions.offeredSaved' : 'detail.assortment.exceptions.withdrawnSaved',
-                {
-                  name,
-                },
-              ),
-            );
-            return;
-          }
-          setFailure(outcome.reason);
-        },
-      );
-    },
-  };
-  const offeredByDefault = settings?.offerMode !== 'SELECTED_PRODUCTS';
   const retired = market.lifecycle === 'RETIRED';
+  const offeredByDefault = settings?.offerMode !== 'SELECTED_PRODUCTS';
+  const exceptions =
+    retired || settings === undefined ? undefined : { input: page, offeredByDefault, onOffset: setOffset };
   return (
     <SectionCard title={text('detail.assortment.title')}>
       <PriceList
         canManage={canManage}
+        exceptions={exceptions}
         market={market}
         onAwaitingApproval={onAwaitingApproval}
         onDone={onDone}
@@ -468,24 +337,6 @@ export const AssortmentSection = ({
       {retired && <p className="text-fg-secondary text-sm">{text('detail.assortment.retired')}</p>}
       {!retired && !canManage && settings !== undefined && (
         <p className="text-fg-secondary text-sm">{text('detail.assortment.readOnly')}</p>
-      )}
-      {!retired && settings !== undefined && (
-        <section className="flex flex-col gap-150">
-          <h3 className="font-semibold text-sm">{text('detail.assortment.exceptions.title')}</h3>
-          <p className="text-fg-secondary text-sm">
-            {text(
-              offeredByDefault ? 'detail.assortment.exceptions.wholeHint' : 'detail.assortment.exceptions.selectedHint',
-            )}
-          </p>
-          <ExceptionsList canManage={canManage} change={change} input={page} />
-          <ExceptionsPager input={page} onOffset={setOffset} />
-          {canManage && <ProductSearch change={change} offeredByDefault={offeredByDefault} />}
-          {failure !== null && (
-            <StatusText showIcon status="error">
-              {failureText(text, failure)}
-            </StatusText>
-          )}
-        </section>
       )}
     </SectionCard>
   );

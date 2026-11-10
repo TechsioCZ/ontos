@@ -83,6 +83,8 @@ const workTasksI18nResources = {
 } as const;
 
 const key = 'work-tasks.pages.records';
+// The deployment app id of this vertical; the stores below reload only on changes of the apps they show.
+const ownAppId = 'work-tasks';
 const NONE = 'none';
 const ALL = 'all';
 const BULK_TOAST_DURATION_MS = 6000;
@@ -183,7 +185,9 @@ interface TasksInput {
 }
 
 /** The page's primary data: loaded before the Shell reveals the page, kept per document, revalidated after writes. */
-const taskRecords = definePageData({
+export const taskRecords = definePageData({
+  // 'shell' carries Core identity changes; the read includes assignable principals and principal names.
+  changesFrom: [ownAppId, 'shell'],
   key: ({ includeArchived, legalEntityId, partyId }: TasksInput) =>
     `${legalEntityId}|${partyId ?? ''}|${includeArchived ? 'archived' : 'current'}`,
   load: ({ includeArchived, partyId }: TasksInput) =>
@@ -197,6 +201,7 @@ const taskRecords = definePageData({
 
 // Optional business-reference names load only when the work-tasks read allows their owner.
 const customerDirectory = definePageData({
+  changesFrom: ['party-registry', ownAppId],
   key: (legalEntityId: string) => legalEntityId,
   load: () =>
     listCustomers().pipe(
@@ -207,6 +212,7 @@ const customerDirectory = definePageData({
 });
 
 const opportunityDirectory = definePageData({
+  changesFrom: ['sales-pipeline', ownAppId],
   key: (legalEntityId: string) => legalEntityId,
   load: () =>
     requestId.pipe(

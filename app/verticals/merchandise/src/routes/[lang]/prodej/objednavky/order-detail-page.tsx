@@ -17,6 +17,7 @@ import { OrderCancelDialog } from './order-cancel-dialog.tsx';
 import { OrderDetailActions, OrderDetailContent, OrderPendingBody } from './order-detail-content.tsx';
 import { orderDetailTitle, useOrderEditing } from './order-detail-view.ts';
 import { orderNavigationFailureKey } from './order-navigation.ts';
+import { OrderReloadNotice } from './order-reload-notice.tsx';
 import type { PendingOrderDetail } from './order-detail-content.tsx';
 import { proposalToast, statusChangeNotification } from './order-status-notice.ts';
 import {
@@ -185,6 +186,7 @@ export const OrderDetailPage = ({ context, legalEntityId, orderId }: OrderDetail
           }
           title={title}
         />
+        <OrderReloadNotice detail={detail} onRetry={reload} />
         {detail.status === 'ready' ? (
           <OrderDetailContent
             brand={storefrontBrandOf(legalEntityId)}

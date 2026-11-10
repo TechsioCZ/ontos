@@ -70,6 +70,7 @@ const loadLeaseTasks = Effect.fn('LeaseRelated.loadTasks')(function* loadLeaseTa
 });
 export const leaseTasks = definePageData({
   cancelWhenUnused: true,
+  changesFrom: ['property-leasing', 'work-tasks'],
   key: leaseTaskKey,
   load: loadLeaseTasks,
   maxEntries: 256,
@@ -171,6 +172,7 @@ const loadLeaseInvoicesExact = Effect.fn('LeaseRelated.loadInvoicesExact')(funct
 /** Bounded exact lease-invoice prewarm: complete pages of one exact request, cancellable, never a partial claim. */
 export const leaseInvoicesExact = definePageData({
   cancelWhenUnused: true,
+  changesFrom: ['finance-billing', 'property-leasing'],
   key: leaseInvoiceExactKey,
   load: loadLeaseInvoicesExact,
   maxEntries: 256,

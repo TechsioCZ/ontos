@@ -19,6 +19,8 @@ import type { FinanceCommandDraft, FinanceViewModel } from './finance-ui.tsx';
 import { customerOf } from './invoice-view.ts';
 import { useInvoiceIssuer } from './use-invoice-issuer.ts';
 import { EXPORT_STATUS } from './invoice-extras.tsx';
+import { AccountingSetupForm, ISSUER_FIELDS, SETUP_FIELDS } from './accounting-setup-form.tsx';
+import type { SetupKey } from './accounting-setup-form.tsx';
 
 const at = (value: DateTime.Utc) => formatDateTime(DateTime.formatIso(value));
 
@@ -40,27 +42,6 @@ const FORMAT_LABEL = {
   POHODA_XML: 'POHODA XML',
 } satisfies Readonly<Record<AccountingExportFormat, string>>;
 
-const SETUP_FIELDS = [
-  ['product', 'Účetní systém'],
-  ['productVersion', 'Verze systému'],
-  ['accountant', 'Odpovědná účetní'],
-  ['transferFormat', 'Schválený přenosový formát'],
-  ['approvalDate', 'Datum schválení'],
-] as const;
-type SetupKey = (typeof SETUP_FIELDS)[number][0];
-
-/** Identity of the selected company as an accounting unit; written to POHODA XML (dataPack ico, myIdentity). */
-const ISSUER_FIELDS = [
-  ['issuerIco', 'IČO účetní jednotky'],
-  ['issuerVatId', 'DIČ účetní jednotky'],
-  ['issuerStreet', 'Ulice a číslo popisné'],
-  ['issuerCity', 'Obec'],
-  ['issuerZip', 'PSČ'],
-] as const;
-type IssuerKey = (typeof ISSUER_FIELDS)[number][0];
-type FormKey = IssuerKey | SetupKey;
-const ALL_FIELDS = [...SETUP_FIELDS, ...ISSUER_FIELDS] as const;
-
 const statusBadge = (entry: AccountingExport) => (
   <Badge className="whitespace-nowrap" size="sm" variant={EXPORT_STATUS[entry.status].variant}>
     {EXPORT_STATUS[entry.status].label}
@@ -70,8 +51,6 @@ const statusBadge = (entry: AccountingExport) => (
 /** Readable author label (display hint) next to the authenticated principal the server stored. */
 const authorText = (entry: AccountingExport) => entry.actorLabel ?? 'neznámý uživatel';
 
-const cleanSetupValue = (value: string | undefined) =>
-  value === undefined || value.trim() === '' ? undefined : value.trim();
 const AccountingSetupValue = ({ field, value }: { readonly field: SetupKey; readonly value: string | undefined }) => {
   if (value === undefined) {
     return (
@@ -97,41 +76,6 @@ const panelMessage = (
   const notice = outcomeNotice(vm, outcome);
   return { kind: notice.status, text: notice.text };
 };
-
-const accountingPanelSaveSetupProgram = Effect.fn('Finance.saveSetup')(function* accountingPanelSaveSetupProgram(
-  context: Pick<ReturnType<typeof useAccountingPanel>, 'form' | 'setEditing' | 'setFormError' | 'setMessage' | 'vm'>,
-) {
-  const { form, setEditing, setFormError, setMessage, vm } = context;
-  const ico = cleanSetupValue(form.issuerIco);
-  const vatId = cleanSetupValue(form.issuerVatId);
-  if (ico !== undefined && !/^\d{8}$/u.test(ico)) {
-    setFormError('IČO musí mít přesně 8 číslic.');
-    return;
-  }
-  if (vatId !== undefined && !/^CZ\d{8,10}$/u.test(vatId)) {
-    setFormError('DIČ musí mít tvar CZ a 8–10 číslic, např. CZ12345678.');
-    return;
-  }
-  setFormError(undefined);
-  const updateAccountingSetupCommand: FinanceCommandDraft<'UpdateAccountingSetup'> = {
-    _tag: 'UpdateAccountingSetup',
-    ...Object.fromEntries(
-      ALL_FIELDS.flatMap(([key]) => {
-        const value = cleanSetupValue(form[key]);
-        return value === undefined ? [] : [[key, value]];
-      }),
-    ),
-  };
-  if (vm.actorLabel !== undefined) {
-    updateAccountingSetupCommand.actorLabel = vm.actorLabel;
-  }
-  const outcome = yield* vm.execute(updateAccountingSetupCommand, 'Nastavení účetního napojení uloženo');
-  if (outcome.ok) {
-    setEditing(false);
-  } else {
-    setMessage(panelMessage(vm, outcome));
-  }
-});
 
 const accountingPanelCreateExportProgram = Effect.fn('Finance.createExport')(
   function* accountingPanelCreateExportProgram(
@@ -273,8 +217,6 @@ const useAccountingPanel = (vm: FinanceViewModel) => {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [format, setFormat] = useState<AccountingExportFormat>('CSV');
   const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState<Partial<Record<FormKey, string>>>({});
-  const [formError, setFormError] = useState<string>();
   const issuerName = useInvoiceIssuer();
   const [message, setMessage] = useState<PanelMessage>();
   const [confirmTarget, setConfirmTarget] = useState<AccountingExport>();
@@ -299,12 +241,6 @@ const useAccountingPanel = (vm: FinanceViewModel) => {
       }
       return next;
     });
-
-  const saveSetup = (): void => {
-    void financeBrowserRuntime.runPromise(
-      accountingPanelSaveSetupProgram({ form, setEditing, setFormError, setMessage, vm }),
-    );
-  };
 
   const createExport = (): void => {
     void financeBrowserRuntime.runPromise(
@@ -340,9 +276,7 @@ const useAccountingPanel = (vm: FinanceViewModel) => {
     exports,
     failReason,
     failTarget,
-    form,
     format,
-    formError,
     handedOver,
     handOver,
     issuerName,
@@ -351,16 +285,13 @@ const useAccountingPanel = (vm: FinanceViewModel) => {
     missing,
     nameOf,
     onlyNew,
-    saveSetup,
     selected,
     setConfirmTarget,
     setEditing,
     setEvidence,
     setFailReason,
     setFailTarget,
-    setForm,
     setFormat,
-    setFormError,
     setMessage,
     setOnlyNew,
     setSelected,
@@ -374,19 +305,14 @@ const useAccountingPanel = (vm: FinanceViewModel) => {
 
 const AccountingSetup = (model: ReturnType<typeof useAccountingPanel>) => {
   const { t } = useModernI18n();
-  const { editing, form, formError, issuerName, missing, saveSetup, setEditing, setForm, setFormError, setup, vm } =
-    model;
+  const { editing, issuerName, missing, setEditing, setup, vm } = model;
   return (
     <SectionCard
       actions={
         vm.canWrite && !editing ? (
           <Button
             icon="icon-[mdi--pencil-outline]"
-            onClick={() => {
-              setForm(Object.fromEntries(ALL_FIELDS.map(([key]) => [key, setup[key] ?? ''])));
-              setFormError(undefined);
-              setEditing(true);
-            }}
+            onClick={() => setEditing(true)}
             size="sm"
             theme="outlined"
             variant="secondary"
@@ -408,49 +334,7 @@ const AccountingSetup = (model: ReturnType<typeof useAccountingPanel>) => {
         </StatusText>
       )}
       {editing ? (
-        <div className="grid grid-cols-1 gap-200 md:grid-cols-2">
-          {ALL_FIELDS.map(([key, label]) => (
-            <FormInput
-              id={`setup-${key}`}
-              key={key}
-              label={label}
-              onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))}
-              size="sm"
-              type={key === 'approvalDate' ? 'date' : 'text'}
-              value={form[key] ?? ''}
-            />
-          ))}
-          {formError !== undefined && (
-            <div className="md:col-span-2">
-              <StatusText showIcon size="sm" status="error">
-                {formError}
-              </StatusText>
-            </div>
-          )}
-          <div className="flex items-end gap-100">
-            <Button
-              onClick={() => {
-                setEditing(false);
-                setFormError(undefined);
-              }}
-              size="sm"
-              theme="outlined"
-              variant="secondary"
-            >
-              Zrušit
-            </Button>
-            <Button
-              isLoading={vm.busy}
-              onClick={() => {
-                saveSetup();
-              }}
-              size="sm"
-              variant="primary"
-            >
-              Uložit
-            </Button>
-          </div>
-        </div>
+        <AccountingSetupForm onClose={() => setEditing(false)} vm={vm} />
       ) : (
         <>
           <dl className="grid grid-cols-1 gap-x-400 gap-y-150 text-sm md:grid-cols-2 xl:grid-cols-3">

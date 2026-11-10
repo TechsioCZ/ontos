@@ -273,6 +273,7 @@ const agendaSet = (agendas: readonly string[]): readonly AgendaId[] => {
  * in its first commit and never starts a second read.
  */
 export const agendaRecordsData = definePageData({
+  changesFrom: ['facility-operations'],
   key: (agendas: readonly AgendaId[]) => agendas.join(','),
   load: (agendas: readonly AgendaId[]) => recordsRead({ agendas }),
   runtime: browserRuntime,

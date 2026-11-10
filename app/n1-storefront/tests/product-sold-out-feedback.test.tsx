@@ -54,6 +54,17 @@ const purchase = (availability: "OUT_OF_STOCK" | "IN_STOCK" | "UNKNOWN", locale:
 };
 
 describe("sold-out purchase feedback", () => {
+  it("keeps both desktop steppers inside the field's horizontal focus and validation control", () => {
+    const html = purchase("IN_STOCK", "cs");
+    const [desktopControl] =
+      html.match(/<div[^>]*data-part="control"[^>]*>[\s\S]*?<\/div>/gu) ?? [];
+    expect(desktopControl).toMatch(
+      /data-part="decrement-trigger"[\s\S]*data-part="input"[\s\S]*data-part="increment-trigger"/u,
+    );
+    expect(desktopControl).toContain("numeric-input-focus-owner");
+    expect(desktopControl).toContain("numeric-input-validation");
+  });
+
   it.each(["cs", "en"])("explains sold-out stock without a shop outage caption in %s", (locale) => {
     const dictionary = getDictionary(locale);
     const html = purchase("OUT_OF_STOCK", locale);

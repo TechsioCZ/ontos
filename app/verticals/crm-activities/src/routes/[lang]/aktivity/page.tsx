@@ -15,7 +15,10 @@ import { Select } from '@techsio/ui-kit/molecules/select';
 import { withNativeLabels } from '@app/admin-ui/select-template';
 import { DateTime, Effect, Match, Option, Random, Schema } from 'effect';
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
+import { useBlocker, useRouterState } from '@modern-js/plugin-tanstack/runtime';
+import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
+import { constVoid } from 'effect/Function';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { loadCounterpartiesClient, executeCounterpartyRead } from '@app/party-registry/api/client';
 import { executeRecords as executeWorkRecords } from '@app/work-tasks/clients/records';
@@ -60,7 +63,8 @@ const resourceIdOf = (search: string): string | undefined =>
   Option.getOrUndefined(Schema.decodeOption(searchCodec)(search))?.resourceId;
 
 /** The page's primary data: loaded before the Shell reveals the page, kept per document, revalidated after writes. */
-const activities = definePageData({
+export const activities = definePageData({
+  changesFrom: ['crm-activities'],
   key: (input: ActivitiesInput) => `${input.legalEntityId}|${input.resourceId ?? ''}`,
   load: (input: ActivitiesInput) =>
     requestId.pipe(
@@ -72,7 +76,8 @@ const activities = definePageData({
 });
 
 /** Tasks an activity can follow up: loaded once the record form is shown, revalidated after writes. */
-const followUpTasks = definePageData({
+export const followUpTasks = definePageData({
+  changesFrom: ['crm-activities', 'work-tasks'],
   key: (legalEntityId: string) => legalEntityId,
   load: (_legalEntityId: string) => requestId.pipe(Effect.flatMap((id) => executeWorkRecords({}, id))),
   runtime: browserRuntime,
@@ -81,6 +86,15 @@ const followUpTasks = definePageData({
 export const preloadPage = modulePagePreload((props) =>
   activities.preload({ legalEntityId: props.context?.legalEntityId ?? '', resourceId: resourceIdOf(props.search) }),
 );
+
+/** The activity as typed: the contact, the follow-up task and the summary. */
+interface ActivityDraft {
+  readonly counterpartyId: readonly string[];
+  readonly summary: string;
+  readonly taskId: readonly string[];
+}
+
+const blankActivity: ActivityDraft = { counterpartyId: [], summary: '', taskId: [] };
 
 const useRelationshipsRecords = (input: ActivitiesInput) => {
   const { language, t } = useModernI18n();
@@ -113,11 +127,14 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
     );
   const loadFailure = snapshot.state === 'failed' ? failureText(snapshot.error) : '';
   const tasksFailure = canWrite && tasksSnapshot.state === 'failed' ? failureText(tasksSnapshot.error) : '';
-  const [summary, setSummary] = useState('');
+  // The activity as typed: only Uložit sends it.
+  const [draft, setDraft] = useState<ActivityDraft>(blankActivity);
+  const { counterpartyId, summary, taskId } = draft;
+  const setSummary = (next: string) => setDraft((current) => ({ ...current, summary: next }));
+  const setCounterpartyId = (next: readonly string[]) => setDraft((current) => ({ ...current, counterpartyId: next }));
+  const setTaskId = (next: readonly string[]) => setDraft((current) => ({ ...current, taskId: next }));
   const [query, setQuery] = useState('');
   const [counterparties, setCounterparties] = useState<Counterparties>([]);
-  const [counterpartyId, setCounterpartyId] = useState<string[]>([]);
-  const [taskId, setTaskId] = useState<string[]>([]);
   const [card, setCard] = useState<Card>();
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState('');
@@ -179,70 +196,94 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
       ),
     );
   };
-  const save = () => {
-    if (records === undefined) {
-      return;
+  const counterpartyOf = (value: ActivityDraft) =>
+    counterparties.find((item) => item.ref.resourceId === value.counterpartyId[0]);
+  const send = (value: ActivityDraft): Effect.Effect<SaveOutcome> => {
+    const counterparty = counterpartyOf(value);
+    if (records === undefined || counterparty === undefined) {
+      return Effect.succeed('failed');
     }
-    const counterparty = counterparties.find((item) => item.ref.resourceId === counterpartyId[0]);
-    const task = tasks.find((item) => item.ref.resourceId === taskId[0]);
-    if (counterparty === undefined) {
-      return;
-    }
-    setPending(true);
+    const task = tasks.find((item) => item.ref.resourceId === value.taskId[0]);
     const taskFields: FollowUpFields = {};
     if (task !== undefined) {
       taskFields.followUpTaskRef = task.ref;
     }
-    void browserRuntime.runPromise(
-      Effect.all(
-        {
-          id: requestId,
-          referenceCredentials: makeReferenceGatewayCredentials([
-            'party-registry',
-            ...(taskFields.followUpTaskRef === undefined ? [] : ['work-tasks']),
-          ]),
-        },
-        { concurrency: 1 },
-      ).pipe(
-        Effect.flatMap(({ id, referenceCredentials }) =>
-          executeApplyCommand(
-            {
-              command: {
-                _tag: 'RecordActivity',
-                counterpartyRef: counterparty.ref,
-                kind: 'CALL',
-                occurredAt: DateTime.makeUnsafe('2026-10-05T10:00:00Z'),
-                ownerPrincipalRef: records.actorPrincipalRef,
-                summary,
-                ...taskFields,
-              },
-              expectedRevision: records.revision,
+    return Effect.all(
+      {
+        id: requestId,
+        referenceCredentials: makeReferenceGatewayCredentials([
+          'party-registry',
+          ...(taskFields.followUpTaskRef === undefined ? [] : ['work-tasks']),
+        ]),
+      },
+      { concurrency: 1 },
+    ).pipe(
+      Effect.flatMap(({ id, referenceCredentials }) =>
+        executeApplyCommand(
+          {
+            command: {
+              _tag: 'RecordActivity',
+              counterpartyRef: counterparty.ref,
+              kind: 'CALL',
+              occurredAt: DateTime.makeUnsafe('2026-10-05T10:00:00Z'),
+              ownerPrincipalRef: records.actorPrincipalRef,
+              summary: value.summary,
+              ...taskFields,
             },
-            id,
-            { idempotencyKey: id, referenceCredentials },
-          ),
+            expectedRevision: records.revision,
+          },
+          id,
+          { idempotencyKey: id, referenceCredentials },
         ),
-        Effect.flatMap(committedResult),
-        Effect.andThen(activities.refresh(input)),
-        Effect.match({
-          onFailure: (error) => {
-            setPending(false);
-            setMessage(
-              pendingProposalMessage(error) ??
-                Match.value(error).pipe(
-                  Match.tag('ApplyCommandActionForbiddenProblem', () => t(`${key}.forbidden`)),
-                  Match.orElse(() => t(`${key}.invalid`)),
-                ),
-            );
-          },
-          onSuccess: () => {
-            setSummary('');
-            setPending(false);
-            setMessage(t(`${key}.saved`));
-          },
-        }),
       ),
+      Effect.flatMap(committedResult),
+      Effect.andThen(activities.refresh(input)),
+      Effect.match({
+        onFailure: (error): SaveOutcome => {
+          const proposal = pendingProposalMessage(error);
+          setMessage(
+            proposal ??
+              Match.value(error).pipe(
+                Match.tag('ApplyCommandActionForbiddenProblem', () => t(`${key}.forbidden`)),
+                Match.orElse(() => t(`${key}.invalid`)),
+              ),
+          );
+          return proposal === undefined ? 'failed' : 'proposed';
+        },
+        onSuccess: (): SaveOutcome => {
+          setMessage(t(`${key}.saved`));
+          return 'saved';
+        },
+      }),
     );
+  };
+  const record = useDraftSave<ActivityDraft, never>({
+    initial: blankActivity,
+    isValid: (value) => value.summary.trim() !== '' && counterpartyOf(value) !== undefined,
+    runtime: browserRuntime,
+    save: send,
+    value: draft,
+  });
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({
+    draft: record,
+    navigation: blocker,
+    onDiscard: () => {
+      setDraft(record.confirmed);
+    },
+  });
+  // A recorded activity keeps the contact and the follow-up for the next one; its summary starts empty.
+  const handleSave = () => {
+    const sent = draft;
+    setMessage('');
+    record.save();
+    record.afterSave((status) => {
+      if (status === 'saved') {
+        const next = { ...sent, summary: '' };
+        setDraft(next);
+        record.adopt(next);
+      }
+    });
   };
   const partyItems = counterparties.map((item) =>
     selectItem(item.ref.resourceId, item.party.title ?? item.ref.resourceId),
@@ -252,6 +293,8 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
     card,
     counterpartyId,
     findCounterparty,
+    guard,
+    handleSave,
     key,
     language,
     loadFailed: snapshot.state === 'failed',
@@ -259,9 +302,9 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
     partyItems,
     pending: pending || refreshing,
     query,
+    record,
     records,
     retry,
-    save,
     setCounterpartyId,
     setQuery,
     setSummary,
@@ -279,6 +322,8 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
     card,
     counterpartyId,
     findCounterparty,
+    guard,
+    handleSave,
     key,
     language,
     loadFailed,
@@ -286,9 +331,9 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
     partyItems,
     pending,
     query,
+    record,
     records,
     retry,
-    save,
     setCounterpartyId,
     setQuery,
     setSummary,
@@ -441,10 +486,8 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
               {records.canWrite && (
                 <form
                   className={`ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 crmactivities:min-w-0 crmactivities:space-y-5 crmactivities:p-5 ${card === undefined ? 'crmactivities:lg:col-span-2' : ''}`}
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    save();
-                  }}
+                  // Enter never records the activity: only Uložit does.
+                  onSubmit={(event) => event.preventDefault()}
                 >
                   <h2 className="crmactivities:text-xl crmactivities:font-semibold">{t(`${key}.record`)}</h2>
                   <div className="crmactivities:grid crmactivities:items-start crmactivities:gap-4 crmactivities:md:grid-cols-2">
@@ -472,7 +515,7 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                       <Select
                         items={withNativeLabels(partyItems)}
                         onValueChange={({ value }) => setCounterpartyId(value)}
-                        value={counterpartyId}
+                        value={[...counterpartyId]}
                       >
                         <Select.Label>{t(`${key}.contact`)}</Select.Label>
                         <Select.Control>
@@ -492,7 +535,7 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                       </Select>
                     </div>
                     <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base crmactivities:space-y-4 crmactivities:p-4">
-                      <Select items={taskItems} onValueChange={({ value }) => setTaskId(value)} value={taskId}>
+                      <Select items={taskItems} onValueChange={({ value }) => setTaskId(value)} value={[...taskId]}>
                         <Select.Label>{t(`${key}.followUp`)}</Select.Label>
                         <Select.Control>
                           <Select.Trigger>
@@ -519,16 +562,16 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                     required
                     value={summary}
                   />
-                  <div className="crmactivities:flex crmactivities:flex-wrap crmactivities:gap-2 crmactivities:border-t border-border-primary/60 crmactivities:pt-4">
-                    <Button
-                      disabled={pending || summary.trim() === '' || counterpartyId.length === 0}
+                  <div className="crmactivities:border-t border-border-primary/60 crmactivities:pt-4">
+                    <SaveBar
+                      labels={saveLabelsFor(language)}
+                      onReloadLatest={constVoid}
+                      onSave={handleSave}
                       size="sm"
-                      type="submit"
-                      variant="warning"
-                    >
-                      {t(`${key}.save`)}
-                    </Button>
+                      status={record.status}
+                    />
                   </div>
+                  <UnsavedChangesDialog labels={saveLabelsFor(language)} prompt={guard.prompt} />
                 </form>
               )}
             </div>

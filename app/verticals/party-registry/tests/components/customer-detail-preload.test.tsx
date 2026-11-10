@@ -18,6 +18,7 @@ import { customerSegmentsFor } from '../../src/api/customer-segments-client.ts';
 import { updateParty } from '../../src/api/party-command-client.ts';
 import {
   customerDetailData,
+  customerDetailIntent,
   customersData,
   customersQuery,
   loadCustomerDetailInto,
@@ -210,18 +211,24 @@ const expectNoReads = () => {
   expect(executePartyOfficialIdentifierHistory).not.toHaveBeenCalled();
 };
 
-it.live('a write rewarms every current visible detail even when row ids and list revisions stay the same', () =>
-  Effect.gen(function* rewarmVisiblePage() {
+it.live('a write does not rewarm the visible page; pointing at a row warms that row again', () =>
+  Effect.gen(function* rewarmOnIntent() {
     const rows = [customer, { ...customer, partyRevision: 2 }];
     const scope = pageDataScopeKey(context, 'party.registry') ?? '';
-    yield* preloadCustomerDetails(context, rows);
     const { unmount } = renderHook(() => usePrefetchCustomerDetails(context, rows));
+    yield* Effect.promise(() => waitFor(() => expect(executeCounterpartyRead).toHaveBeenCalledTimes(2)));
     clearCalls();
     act(() => customerDetailData.invalidate());
+    yield* Effect.sleep('20 millis');
+    // The batch was warmed once; a write that leaves its rows and revisions alone does not warm it again.
+    expect(executeCounterpartyRead).toHaveBeenCalledTimes(0);
+    const row = document.createElement('tr');
+    row.dataset['index'] = '1';
+    customerDetailIntent(context, () => rows).onPointerEnter({ currentTarget: row });
     yield* Effect.promise(() =>
       waitFor(() => {
-        expect(executeCounterpartyRead).toHaveBeenCalledTimes(2);
-        expect(rows.every((row) => customerDetailData.snapshot({ customer: row, scope }).state === 'ready')).toBe(true);
+        expect(executeCounterpartyRead).toHaveBeenCalledTimes(1);
+        expect(customerDetailData.snapshot({ customer: rows[1] ?? customer, scope }).state).toBe('ready');
       }),
     );
     unmount();
@@ -442,5 +449,23 @@ it.live('missing context disables shared reuse and preserves direct full-page de
     });
     yield* Effect.promise(() => waitFor(() => expect(values).toHaveLength(2)));
     expect(executeCounterpartyRead).toHaveBeenCalledTimes(2);
+  }),
+);
+
+it.live('a background reload of the open customer keeps its record in the side panel', () =>
+  Effect.gen(function* backgroundReload() {
+    yield* preloadCustomerDetails(context, [customer]);
+    const { result } = renderHook(() => useCustomerDetailSelection(context));
+    act(() => result.current.openDetail(customer));
+    const shown = result.current.detailValue;
+    expect(shown).toBeDefined();
+    // A live change reloads the same customer; the strict store reads as pending until it answers.
+    rstest.mocked(executeCounterpartyRead).mockReturnValue(Effect.never);
+    act(() => {
+      globalThis.dispatchEvent(new Event(moduleChangeEvent));
+    });
+    yield* Effect.sleep('100 millis');
+    expect(result.current.detailValue).toBe(shown);
+    expect(result.current.detailFailure).toBeUndefined();
   }),
 );

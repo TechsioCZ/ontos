@@ -16,10 +16,9 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Chart } from '@techsio/ui-kit/molecules/chart';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@app/admin-ui/select-template';
-import { DateTime, Effect } from 'effect';
+import { DateTime } from 'effect';
 import { useState } from 'react';
 import type { BudgetLine, Invoice } from '../../../../shared/apis/records.ts';
 import {
@@ -30,11 +29,12 @@ import {
   invoiceActualMinor,
   monthOf,
 } from '../../../../shared/domain/finance-planning.ts';
-import { minorToInput, monthLabel, outcomeNotice, parseAmountMinor } from './finance-ui.tsx';
-import type { FinanceCommandDraft, FinanceNotice, FinanceViewModel } from './finance-ui.tsx';
-import { BUDGET_CATEGORIES } from './incoming-invoice-dialog.tsx';
-import { emptyObjectSelection, objectAnchors, ObjectFields, objectSummary } from './object-fields.tsx';
-import type { ObjectSelection } from './object-fields.tsx';
+import { monthLabel } from './finance-ui.tsx';
+import type { FinanceViewModel } from './finance-ui.tsx';
+import { editBudgetDraft, newBudgetDraft } from './budget-draft.ts';
+import type { BudgetDraft } from './budget-draft.ts';
+import { objectSummary } from './object-fields.tsx';
+import { BudgetEditor, OpeningBalanceEditor } from './planning-forms.tsx';
 import { PlanItemsSection } from './plan-items-section.tsx';
 
 const at = (value: DateTime.Utc) => formatDateTime(DateTime.formatIso(value));
@@ -43,42 +43,6 @@ const axisFormat = new Intl.NumberFormat('cs-CZ', { maximumFractionDigits: 3, no
 const percentFormat = new Intl.NumberFormat('cs-CZ', { maximumFractionDigits: 1 });
 const axisKc = (value: number) => `${axisFormat.format(value)} Kč`;
 const percent = (value: number) => `${value > 0 ? '+' : ''}${percentFormat.format(value * 100)} %`;
-
-interface BudgetDraft {
-  readonly actual: string;
-  readonly category: string;
-  readonly existing?: Pick<BudgetLine, 'propertyRef' | 'unitRef'>;
-  readonly explanation: string;
-  readonly id?: string;
-  readonly kind: BudgetLine['kind'];
-  readonly object: ObjectSelection;
-  readonly planned: string;
-}
-
-const newDraft = (): BudgetDraft => ({
-  actual: '',
-  category: 'Energie',
-  explanation: '',
-  kind: 'COST',
-  object: emptyObjectSelection,
-  planned: '',
-});
-
-export const editBudgetDraft = (budget: BudgetLine): BudgetDraft => ({
-  actual: minorToInput(budget.actualManualMinor),
-  category: budget.category,
-  existing: budget,
-  explanation: budget.explanation ?? '',
-  id: budget.id,
-  kind: budget.kind,
-  object: {
-    contractId: '',
-    costCenter: budget.costCenter ?? '',
-    propertyId: budget.propertyRef?.resourceId ?? '',
-    unitId: budget.unitRef?.resourceId ?? '',
-  },
-  planned: minorToInput(budget.plannedMinor),
-});
 
 const actualFromInvoicesLabel = (budget: BudgetLine, invoices: readonly Invoice[]) =>
   `z faktur (${formatMoney(invoiceActualMinor(budget, invoices))})`;
@@ -143,100 +107,6 @@ const PlanActualBars = ({
   );
 };
 
-export const buildBudgetLineCommand = ({
-  actual,
-  budgetMonth,
-  draft,
-  planned,
-  vm,
-}: {
-  readonly actual?: number | undefined;
-  readonly budgetMonth: string;
-  readonly draft: BudgetDraft;
-  readonly planned: number;
-  readonly vm: Pick<FinanceViewModel, 'actorLabel' | 'objects'>;
-}): FinanceCommandDraft<'UpsertBudgetLine'> => {
-  const upsertBudgetLineCommand: FinanceCommandDraft<'UpsertBudgetLine'> = {
-    _tag: 'UpsertBudgetLine',
-    category: draft.category.trim(),
-    kind: draft.kind,
-    period: budgetMonth,
-    plannedMinor: planned,
-    ...objectAnchors(
-      vm.objects,
-      { ...draft.object, contractId: '' },
-      draft.id === undefined ? undefined : draft.existing,
-    ),
-  };
-  if (vm.actorLabel !== undefined) {
-    upsertBudgetLineCommand.actorLabel = vm.actorLabel;
-  }
-  if (actual !== undefined) {
-    upsertBudgetLineCommand.actualManualMinor = actual;
-  }
-  if (draft.explanation.trim() !== '') {
-    upsertBudgetLineCommand.explanation = draft.explanation.trim();
-  }
-  if (draft.id !== undefined) {
-    upsertBudgetLineCommand.id = draft.id;
-  }
-  return upsertBudgetLineCommand;
-};
-
-/** S09: monthly cash-flow with a confirmed opening balance, and user-editable budgets with plan vs. actual. */
-const planningPanelSaveBudgetProgram = Effect.fn('Finance.saveBudget')(function* planningPanelSaveBudgetProgram(
-  context: Pick<ReturnType<typeof usePlanningPanel>, 'budgetMonth' | 'draft' | 'setDraft' | 'setError' | 'vm'>,
-) {
-  const { budgetMonth, draft, setDraft, setError, vm } = context;
-  if (draft === undefined) {
-    return;
-  }
-  const planned = parseAmountMinor(draft.planned === '' ? '0' : draft.planned);
-  const actual = draft.actual.trim() === '' ? undefined : parseAmountMinor(draft.actual);
-  if (planned === undefined || (draft.actual.trim() !== '' && actual === undefined) || draft.category.trim() === '') {
-    setError({ status: 'error', text: 'Zkontrolujte kategorii a částky (např. 25 000 nebo 25 000,50).' });
-    return;
-  }
-  const upsertBudgetLineCommand = buildBudgetLineCommand({ actual, budgetMonth, draft, planned, vm });
-  const outcome = yield* vm.execute(upsertBudgetLineCommand, 'Rozpočet uložen');
-  if (outcome.ok) {
-    setDraft(undefined);
-    setError(undefined);
-  } else {
-    setError(outcomeNotice(vm, outcome));
-  }
-});
-
-const planningPanelSaveOpeningProgram = Effect.fn('Finance.saveOpening')(function* planningPanelSaveOpeningProgram(
-  context: Pick<
-    ReturnType<typeof usePlanningPanel>,
-    'openingAmount' | 'openingDate' | 'setError' | 'setOpeningOpen' | 'vm'
-  >,
-) {
-  const { openingAmount, openingDate, setError, setOpeningOpen, vm } = context;
-  const normalized = openingAmount.trim().startsWith('-') ? openingAmount.trim().slice(1) : openingAmount;
-  const amount = parseAmountMinor(normalized);
-  if (amount === undefined || openingDate === '') {
-    setError({ status: 'error', text: 'Zadejte počáteční stav a datum.' });
-    return;
-  }
-  const setOpeningBalanceCommand: FinanceCommandDraft<'SetOpeningBalance'> = {
-    _tag: 'SetOpeningBalance',
-    openingBalanceMinor: openingAmount.trim().startsWith('-') ? -amount : amount,
-    openingDate,
-  };
-  if (vm.actorLabel !== undefined) {
-    setOpeningBalanceCommand.actorLabel = vm.actorLabel;
-  }
-  const outcome = yield* vm.execute(setOpeningBalanceCommand, 'Počáteční stav potvrzen');
-  if (outcome.ok) {
-    setOpeningOpen(false);
-    setError(undefined);
-  } else {
-    setError(outcomeNotice(vm, outcome));
-  }
-});
-
 const usePlanningPanel = (vm: FinanceViewModel) => {
   const state = vm.snapshot?.state;
   const businessDate = vm.referenceDate === '' ? '2026-10-20' : vm.referenceDate;
@@ -247,10 +117,7 @@ const usePlanningPanel = (vm: FinanceViewModel) => {
   const [budgetMonth, setBudgetMonth] = useState(currentMonth);
   const [draft, setDraft] = useState<BudgetDraft>();
   const [deleteTarget, setDeleteTarget] = useState<BudgetLine>();
-  const [error, setError] = useState<FinanceNotice>();
   const [openingOpen, setOpeningOpen] = useState(false);
-  const [openingAmount, setOpeningAmount] = useState('');
-  const [openingDate, setOpeningDate] = useState(`${currentMonth}-01`);
   const invoices = state?.invoices ?? [];
   const [objectFilter, setObjectFilter] = useState('ALL');
   const budgets = (state?.budgets ?? []).filter(
@@ -299,18 +166,6 @@ const usePlanningPanel = (vm: FinanceViewModel) => {
     month.forecastBalanceMinor === undefined ? [] : [{ month: month.month, value: month.forecastBalanceMinor / 100 }],
   );
 
-  const saveBudget = (): void => {
-    void financeBrowserRuntime.runPromise(
-      planningPanelSaveBudgetProgram({ budgetMonth, draft, setDraft, setError, vm }),
-    );
-  };
-
-  const saveOpening = (): void => {
-    void financeBrowserRuntime.runPromise(
-      planningPanelSaveOpeningProgram({ openingAmount, openingDate, setError, setOpeningOpen, vm }),
-    );
-  };
-
   return {
     balanceData,
     budgetMonth,
@@ -321,7 +176,6 @@ const usePlanningPanel = (vm: FinanceViewModel) => {
     currentMonth,
     deleteTarget,
     draft,
-    error,
     flowData,
     fromMonth,
     invoices,
@@ -330,18 +184,11 @@ const usePlanningPanel = (vm: FinanceViewModel) => {
     objectFilter,
     objectFilterItems,
     opening,
-    openingAmount,
-    openingDate,
     openingOpen,
-    saveBudget,
-    saveOpening,
     setBudgetMonth,
     setDeleteTarget,
     setDraft,
-    setError,
     setObjectFilter,
-    setOpeningAmount,
-    setOpeningDate,
     setOpeningOpen,
     state,
     totals,
@@ -363,8 +210,7 @@ const tooltipKc = (value: number) => formatMoney(Math.round(Math.abs(value)) * 1
 
 const CashFlowForecast = (model: ReturnType<typeof usePlanningPanel>) => {
   const { language, t } = useModernI18n();
-  const { balanceData, currentMonth, flowData, months, opening, setOpeningAmount, setOpeningDate, setOpeningOpen, vm } =
-    model;
+  const { balanceData, currentMonth, flowData, months, opening, setOpeningOpen, vm } = model;
   const formats = monthFormatsFor(language);
   const tick = (month: string) => `${formats.short.format(monthEpochMillis(month))} ${month.slice(2, 4)}`;
   const monthTitles = new Map(
@@ -383,11 +229,7 @@ const CashFlowForecast = (model: ReturnType<typeof usePlanningPanel>) => {
         vm.canWrite ? (
           <Button
             icon="icon-[mdi--bank-check]"
-            onClick={() => {
-              setOpeningAmount(minorToInput(opening?.openingBalanceMinor));
-              setOpeningDate(opening?.openingDate ?? `${currentMonth}-01`);
-              setOpeningOpen(true);
-            }}
+            onClick={() => setOpeningOpen(true)}
             size="sm"
             theme="outlined"
             variant="secondary"
@@ -569,7 +411,7 @@ const BudgetComparison = (model: ReturnType<typeof usePlanningPanel>) => {
             />
           </div>
           {vm.canWrite && (
-            <Button icon="icon-[mdi--plus]" onClick={() => setDraft(newDraft())} size="sm" variant="primary">
+            <Button icon="icon-[mdi--plus]" onClick={() => setDraft(newBudgetDraft())} size="sm" variant="primary">
               Přidat položku
             </Button>
           )}
@@ -691,113 +533,6 @@ const BudgetComparison = (model: ReturnType<typeof usePlanningPanel>) => {
   );
 };
 
-const BudgetEditor = (model: ReturnType<typeof usePlanningPanel>) => {
-  const { t } = useModernI18n();
-  const { budgetMonth, draft, saveBudget, setDraft, vm } = model;
-  return (
-    <Dialog
-      actions={
-        <>
-          <Button onClick={() => setDraft(undefined)} theme="outlined" variant="secondary">
-            Zrušit
-          </Button>
-          <Button
-            isLoading={vm.busy}
-            onClick={() => {
-              saveBudget();
-            }}
-            variant="primary"
-          >
-            Uložit
-          </Button>
-        </>
-      }
-      closeLabel={dialogCloseLabel}
-      customTrigger
-      description={`Rozpočet pro ${monthLabel(budgetMonth)}`}
-      onOpenChange={(details) => {
-        if (!details.open) {
-          setDraft(undefined);
-        }
-      }}
-      open={draft !== undefined}
-      placement="center"
-      size="md"
-      title={draft?.id === undefined ? 'Nová rozpočtová položka' : 'Upravit rozpočet'}
-    >
-      {draft !== undefined && (
-        <div className="flex flex-col gap-150">
-          <div className="grid grid-cols-2 gap-150">
-            <SelectTemplate
-              items={[
-                { displayValue: 'Výdaj', label: 'Výdaj', value: 'COST' },
-                { displayValue: 'Příjem', label: 'Příjem', value: 'REVENUE' },
-              ]}
-              label={t('finance-billing.financeUi.common.type')}
-              labelProps={{ className: 'font-label text-label-md' }}
-              onValueChange={({ value }) => {
-                const [next] = value;
-                if (next === 'COST' || next === 'REVENUE') {
-                  setDraft({ ...draft, kind: next });
-                }
-              }}
-              size="sm"
-              value={[draft.kind]}
-            />
-            <SelectTemplate
-              items={BUDGET_CATEGORIES.map((category) => ({
-                displayValue: category,
-                label: category,
-                value: category,
-              }))}
-              label={t('finance-billing.financeUi.common.category')}
-              labelProps={{ className: 'font-label text-label-md' }}
-              onValueChange={({ value }) => {
-                const [next] = value;
-                if (next !== undefined) {
-                  setDraft({ ...draft, category: next });
-                }
-              }}
-              size="sm"
-              value={[draft.category]}
-            />
-          </div>
-          <ObjectFields
-            idPrefix="budget-object"
-            objects={vm.objects}
-            onChange={(next) => setDraft({ ...draft, object: next })}
-            value={draft.object}
-          />
-          <FormInput
-            id="budget-planned"
-            inputMode="decimal"
-            label={t('finance-billing.financeUi.planning.plannedAmount')}
-            onChange={(event) => setDraft({ ...draft, planned: event.target.value })}
-            size="sm"
-            value={draft.planned}
-          />
-          <FormInput
-            helpText="Prázdné = skutečnost se spočítá z potvrzených faktur kategorie."
-            id="budget-actual"
-            inputMode="decimal"
-            label={t('finance-billing.financeUi.planning.manualActual')}
-            onChange={(event) => setDraft({ ...draft, actual: event.target.value })}
-            size="sm"
-            value={draft.actual}
-          />
-          <FormInput
-            id="budget-explanation"
-            label={t('finance-billing.financeUi.planning.explanation')}
-            onChange={(event) => setDraft({ ...draft, explanation: event.target.value })}
-            size="sm"
-            value={draft.explanation}
-          />
-        </div>
-      )}
-    </Dialog>
-  );
-};
-
 const BudgetDeletion = (model: ReturnType<typeof usePlanningPanel>) => {
   const { t } = useModernI18n();
   const { budgetMonth, deleteTarget, setDeleteTarget, vm } = model;
@@ -840,70 +575,12 @@ const BudgetDeletion = (model: ReturnType<typeof usePlanningPanel>) => {
   );
 };
 
-const OpeningBalanceEditor = (model: ReturnType<typeof usePlanningPanel>) => {
-  const { t } = useModernI18n();
-  const { openingAmount, openingDate, openingOpen, saveOpening, setOpeningAmount, setOpeningDate, setOpeningOpen, vm } =
-    model;
-  return (
-    <Dialog
-      actions={
-        <>
-          <Button onClick={() => setOpeningOpen(false)} theme="outlined" variant="secondary">
-            Zrušit
-          </Button>
-          <Button
-            isLoading={vm.busy}
-            onClick={() => {
-              saveOpening();
-            }}
-            variant="primary"
-          >
-            Potvrzuji počáteční stav
-          </Button>
-        </>
-      }
-      closeLabel={dialogCloseLabel}
-      customTrigger
-      description="Zadejte stav prostředků ke dni, od kterého se počítá odhad. Uloží se s vaším jménem jako ručně potvrzený."
-      onOpenChange={(details) => setOpeningOpen(details.open)}
-      open={openingOpen}
-      placement="center"
-      size="sm"
-      title={t('finance-billing.financeUi.planning.openingTitle')}
-    >
-      <div className="flex flex-col gap-150">
-        <FormInput
-          id="opening-amount"
-          inputMode="decimal"
-          label={t('finance-billing.financeUi.planning.openingAmount')}
-          onChange={(event) => setOpeningAmount(event.target.value)}
-          size="sm"
-          value={openingAmount}
-        />
-        <FormInput
-          id="opening-date"
-          label={t('finance-billing.financeUi.planning.asOf')}
-          onChange={(event) => setOpeningDate(event.target.value)}
-          size="sm"
-          type="date"
-          value={openingDate}
-        />
-      </div>
-    </Dialog>
-  );
-};
-
 export const PlanningPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
   const { t } = useModernI18n();
   const model = usePlanningPanel(vm);
-  const { error, last, opening, totals } = model;
+  const { budgetMonth, currentMonth, draft, last, opening, openingOpen, setDraft, setOpeningOpen, totals } = model;
   return (
     <div className="flex flex-col gap-250">
-      {error !== undefined && (
-        <StatusText showIcon size="sm" status={error.status}>
-          {error.text}
-        </StatusText>
-      )}
       <StatRow>
         <StatCard
           label={t('finance-billing.financeUi.planning.confirmedOpening')}
@@ -925,9 +602,11 @@ export const PlanningPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
 
       <BudgetComparison {...model} />
 
-      <BudgetEditor {...model} />
+      {draft !== undefined && (
+        <BudgetEditor budgetMonth={budgetMonth} initial={draft} onClose={() => setDraft(undefined)} vm={vm} />
+      )}
       <BudgetDeletion {...model} />
-      <OpeningBalanceEditor {...model} />
+      {openingOpen && <OpeningBalanceEditor month={currentMonth} onClose={() => setOpeningOpen(false)} vm={vm} />}
     </div>
   );
 };

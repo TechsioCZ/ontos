@@ -9,6 +9,9 @@ import { CustomerCreateDialog } from '../../src/routes/[lang]/prodej/zakaznici/c
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({ t: (key: string) => key }),
 }));
+rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
+  useBlocker: () => ({ status: 'idle' }),
+}));
 rstest.mock('../../src/api/ares-lookup-client.ts');
 
 const KEY = 'party-registry.pages.customers.create';

@@ -119,8 +119,8 @@ const timed = Effect.fn('FacilityOperations.loadTimedSource')(function* timedSou
 type Whole = 'all';
 const whole: Whole = 'all';
 
-const sourceData = <A, E>(load: () => Effect.Effect<A, E>) =>
-  definePageData({ key: (input: Whole) => input, load: () => timed(load()), runtime: browserRuntime });
+const sourceData = <A, E>(changesFrom: readonly string[], load: () => Effect.Effect<A, E>) =>
+  definePageData({ changesFrom, key: (input: Whole) => input, load: () => timed(load()), runtime: browserRuntime });
 
 /**
  * One page-data store per source (one entry per document; `ops` has a second entry with the search rows). The Shell
@@ -128,15 +128,16 @@ const sourceData = <A, E>(load: () => Effect.Effect<A, E>) =>
  * commit; each source still settles on its own, so a slow or forbidden one never blocks the rest.
  */
 const sourceStores = {
-  agreements: sourceData(loaders.agreements),
-  finance: sourceData(loaders.finance),
-  occupancy: sourceData(loaders.occupancy),
-  parties: sourceData(loaders.parties),
-  property: sourceData(loaders.property),
-  sales: sourceData(loaders.sales),
-  work: sourceData(loaders.work),
+  agreements: sourceData(['legal-agreements'], loaders.agreements),
+  finance: sourceData(['finance-billing'], loaders.finance),
+  occupancy: sourceData(['property-leasing'], loaders.occupancy),
+  parties: sourceData(['party-registry'], loaders.parties),
+  property: sourceData(['property-portfolio'], loaders.property),
+  sales: sourceData(['sales-pipeline'], loaders.sales),
+  work: sourceData(['work-tasks'], loaders.work),
 };
 const opsStore = definePageData({
+  changesFrom: ['facility-operations'],
   key: (search: boolean) => (search ? 'search' : 'base'),
   load: (search: boolean) => timed(loaders.ops(search)),
   runtime: browserRuntime,

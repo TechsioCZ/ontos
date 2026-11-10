@@ -111,7 +111,6 @@
           "productMeta": "Cena {{price}}, skladem {{stock}} ks",
           "quantity": "Množství (ks)",
           "removeLine": "Odebrat položku",
-          "submit": "Vytvořit objednávku",
           "submitting": "Vytvářím…",
           "title": "Nová objednávka",
           "customerPlaceholder": "Hledat zákazníka…",
@@ -209,6 +208,7 @@
           "firstDescription": "Založte první objednávku a sledujte ji až do dokončení.",
           "firstTitle": "Zatím tu nejsou žádné objednávky.",
           "forbiddenTitle": "K této sekci nemáte oprávnění.",
+          "reloadFailed": "Aktuální verzi objednávky se nepodařilo načíst. Neuložené změny zůstávají ve formuláři.",
           "retry": "Zkusit znovu",
           "tagFilterFailed": "Štítky se nepodařilo načíst. Zkuste to znovu."
         },
@@ -264,7 +264,6 @@
         },
         "category": {
           "field": "Nová kategorie",
-          "submit": "Změnit kategorii",
           "title": "Změnit kategorii"
         },
         "columns": {
@@ -287,8 +286,6 @@
           "save": "Uložit změny"
         },
         "create": {
-          "discardTitle": "Zahodit neuložené změny?",
-          "submit": "Vytvořit produkt",
           "title": "Nový produkt"
         },
         "description": "Produkty, ceny a skladové pohyby.",
@@ -425,7 +422,6 @@
           "affected": "Počet ovlivněných produktů: {{total}}",
           "description": "Zadejte změnu v procentech. Kladné číslo zdraží, záporné zlevní.",
           "field": "Změna ceny (%)",
-          "submit": "Změnit cenu",
           "title": "Změnit cenu o %",
           "warning": "Změna ceny neovlivní vystavené faktury ani objednávky."
         },
@@ -446,7 +442,8 @@
           "tagFilterFailed": "Štítky se nepodařilo načíst. Zkuste to znovu.",
           "notFound": "Produkt nebyl nalezen",
           "invalidId": "Adresa produktu je neplatná.",
-          "loading": "Načítám produkt…"
+          "loading": "Načítám produkt…",
+          "reloadFailed": "Aktuální verzi produktu se nepodařilo načíst. Neuložené změny zůstávají ve formuláři."
         },
         "stats": {
           "lowStock": "Pod minimem",
@@ -524,6 +521,7 @@
           "notOffered": "Není v nabídce",
           "noPrice": "cena není dostupná",
           "offeredSaved": "Produkt je v nabídce trhu {{code}}.",
+          "saved": "Nabídka produktu na trzích je uložena.",
           "withdrawnSaved": "Produkt byl z nabídky trhu {{code}} vyřazen."
         }
       },

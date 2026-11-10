@@ -39,8 +39,10 @@ export const StorefrontFooter = ({
               width={16}
             />
             <div>
-              <Footer.Title>{d.contactHeading}</Footer.Title>
-              <Footer.Text>{d.address}</Footer.Text>
+              <Footer.Text>{d.contactHeading}</Footer.Text>
+              <div className="n1-footer-address">
+                <Footer.Text>{d.address}</Footer.Text>
+              </div>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -77,7 +79,7 @@ export const StorefrontFooter = ({
             <Footer.Text>{d.openingHours}</Footer.Text>
           </div>
         </Footer.Section>
-        <Footer.Section>
+        <Footer.Section className="n1-footer-navigation">
           <Footer.Title>{d.terms}</Footer.Title>
           <Footer.List>
             {[
@@ -85,13 +87,13 @@ export const StorefrontFooter = ({
               ["platba", d.payment],
               ["doprava", d.shipping],
             ].map(([slug, label]) => (
-              <li key={slug}>
+              <li className="flex" key={slug}>
                 <Footer.Link as={NextLink} href={`/${locale}/${slug}`}>
                   {label}
                 </Footer.Link>
               </li>
             ))}
-            <li>
+            <li className="flex">
               <Footer.Link
                 aria-label={`${d.cookiesSettings}: ${d.featureUnavailable}`}
                 as="button"
@@ -111,11 +113,15 @@ export const StorefrontFooter = ({
         </Footer.Section>
       </Footer.Container>
     </div>
-    <div className="w-full">
+    <div className="n1-footer-bottom w-full">
       <Footer.Bottom>
-        <Footer.Text>{d.copyright}</Footer.Text>
-        <div className="flex items-center gap-2">
-          <Footer.Text>{d.credit}</Footer.Text>
+        <div className="min-w-0 flex-1">
+          <Footer.Text>{d.copyright}</Footer.Text>
+        </div>
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-2 md:flex-none">
+          <div className="min-w-0 flex-1 md:flex-none">
+            <Footer.Text>{d.credit}</Footer.Text>
+          </div>
           <Image
             alt=""
             as={NextImage}

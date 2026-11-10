@@ -1,18 +1,26 @@
 import { failureFeedback } from '../../../../shared/actions/apply-command.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
-import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
-import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { pageDataPending } from '@app/shared-contracts/page-data';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
-import { Crypto, DateTime, Effect, Match, Option, PlatformError, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Schema } from 'effect';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { AgreementsCommand, Feedback } from '../../../../shared/actions/apply-command.ts';
 import type { Contract, Document } from '../../../../shared/apis/records.ts';
 import { ContractRefSchema } from '../../../../shared/resources/contract.ts';
 import type { ContractRef } from '../../../../shared/resources/contract.ts';
 import { executeApplyCommand } from '../../../api/apply-command-action-client.ts';
+import { createAgreement, newUuid, savePeriodDraft, sendAgreementsCommand } from './agreements-command.ts';
+import type { AgreementOutcome } from './agreements-command.ts';
+import {
+  DEFAULT_END_DATE,
+  DEFAULT_START_DATE,
+  contractReferenceAudiences,
+  contractTerms,
+  editableDraft,
+} from './agreement-draft.ts';
+import type { CreateDraft, PeriodDraft } from './agreement-draft.ts';
 import {
   agreements,
   agreementsView,
@@ -23,31 +31,12 @@ import {
 } from './agreements-data.ts';
 import type { AgreementsInput, RentalReferences } from './agreements-data.ts';
 import { contractTitle } from './contract-title.ts';
+import { useOpenCreated } from './use-open-created.ts';
 import { agreementDocumentState, selectorOfFields } from './document-selection.ts';
 import { termsSaveResult } from './contract-terms-draft.ts';
 import type { ContractTermsCommand } from './contract-terms-draft.ts';
 import { executeRecords } from '../../../api/records-client.ts';
 
-const DEFAULT_START_DATE = '2026-10-05';
-const DEFAULT_END_DATE = '2027-10-05';
-type CommercialTerms = Pick<Contract, 'noticePeriod' | 'rentTerms' | 'responsiblePerson' | 'subject'>;
-type MutableCommercialTerms = { -readonly [Field in keyof CommercialTerms]: CommercialTerms[Field] };
-const browserCrypto = Crypto.make({
-  digest: (algorithm, data) =>
-    Effect.tryPromise({
-      catch: (cause) => PlatformError.systemError({ _tag: 'Unknown', cause, method: 'digest', module: 'WebCrypto' }),
-      try: globalThis.crypto.subtle.digest.bind(globalThis.crypto.subtle, algorithm, new Uint8Array(data)),
-    }).pipe(
-      Effect.map((buffer) => new Uint8Array(buffer)),
-      Effect.timeoutOrElse({
-        duration: '5 seconds',
-        orElse: () =>
-          Effect.fail(PlatformError.systemError({ _tag: 'TimedOut', method: 'digest', module: 'WebCrypto' })),
-      }),
-    ),
-  randomBytes: (size) => globalThis.crypto.getRandomValues(new Uint8Array(size)),
-});
-const newUuid = browserCrypto.randomUUIDv4();
 const sameContractRef = Schema.toEquivalence(ContractRefSchema);
 /**
  * Documents belong to a contract only when every reference part matches. A shared resource id in another tenant,
@@ -62,33 +51,6 @@ export const documentsForContract = (
     : documents.filter(
         (document) => document.contractRef !== null && sameContractRef(document.contractRef, contract.contractRef),
       );
-/** The optional commercial terms of a contract, carried over when a draft is edited or a contract renewed. */
-export const contractTerms = (record: Contract): CommercialTerms => {
-  const terms: MutableCommercialTerms = {};
-  if (record.noticePeriod !== undefined) {
-    terms.noticePeriod = record.noticePeriod;
-  }
-  if (record.rentTerms !== undefined) {
-    terms.rentTerms = record.rentTerms;
-  }
-  if (record.responsiblePerson !== undefined) {
-    terms.responsiblePerson = record.responsiblePerson;
-  }
-  if (record.subject !== undefined) {
-    terms.subject = record.subject;
-  }
-  return terms;
-};
-const contractReferenceAudiences = (record: Contract | undefined) => {
-  const audiences = ['party-registry'];
-  if (record !== undefined && record.unitRef !== null) {
-    audiences.push('property-portfolio', 'property-portfolio');
-  }
-  if (record !== undefined && record.occupancyRef !== null) {
-    audiences.push('property-leasing');
-  }
-  return audiences;
-};
 /**
  * The Save button of the terms panel: one save against the revision its draft builds on. The revision covers every
  * agreement, so a conflict is resent once against a fresh read while `unchanged` holds for the contracts read then. A
@@ -128,6 +90,10 @@ export const saveTerms = (
     onProposal,
   );
 };
+/** The open contract form: a new contract, or the period of the draft contract it was opened for. */
+export type DraftForm =
+  | { readonly kind: Contract['kind']; readonly mode: 'create' }
+  | { readonly contract: Contract; readonly mode: 'edit' };
 export const useRecordsPage = (input: AgreementsInput) => {
   const { language, t } = useModernI18n();
   const data = useAgreementsDataset(input);
@@ -182,37 +148,31 @@ export const useRecordsPage = (input: AgreementsInput) => {
     selector: selectorOfFields(input),
     tenantId: input.context?.tenantId,
   });
-  const [formOpen, setFormOpen] = useState(false);
-  const [customerId, setCustomerId] = useState('');
+  /** The open contract form: a new contract, or the period of the draft contract it was opened for. */
+  const [draftForm, setDraftForm] = useState<DraftForm>();
+  /** The contract a create form saved; the page opens it once, after the form is gone. */
+  const setCreated = useOpenCreated(draftForm !== undefined, linkedResourceId, (resourceId) => {
+    void navigate({ search: { resourceId }, to: '.' });
+  });
   const [signedReference, setSignedReference] = useState('');
   const [signedFileName, setSignedFileName] = useState('');
   const [signedBy, setSignedBy] = useState('');
   const [signedOn, setSignedOn] = useState('');
-  const [occupancyId, setOccupancyId] = useState('');
-  const [startDate, setStartDate] = useState(DEFAULT_START_DATE);
-  const [endDate, setEndDate] = useState(DEFAULT_END_DATE);
-  const [editingDraft, setEditingDraft] = useState(false);
   const [expiringOnly, setExpiringOnly] = useState(false);
   const [termsOpen, setTermsOpen] = useState(false);
   const selected = snapshot?.contracts.find((record) => record.contractRef.resourceId === linkedResourceId);
   const clearSensitiveState = () => {
     setSensitiveHidden(true);
-    setCustomerId('');
     setRequestedRental(undefined);
     setRequestedRentalFeedback(undefined);
-    setFormOpen(false);
+    setDraftForm(undefined);
     setSignedReference('');
     setSignedFileName('');
     setSignedBy('');
     setSignedOn('');
-    setOccupancyId('');
-    setStartDate(DEFAULT_START_DATE);
-    setEndDate(DEFAULT_END_DATE);
-    setEditingDraft(false);
     setTermsOpen(false);
   };
-  const reportFailure = (failure: { readonly _tag: string; readonly status?: number }) => {
-    const nextFeedback = failureFeedback(failure);
+  const reportFeedback = (nextFeedback: Feedback) => {
     if (nextFeedback === 'forbidden' || nextFeedback === 'unavailable') {
       cancellation.current?.abort();
       cancellation.current = new AbortController();
@@ -223,6 +183,9 @@ export const useRecordsPage = (input: AgreementsInput) => {
       // Someone changed the agreements meanwhile: show their version before the person tries again.
       run(data.refresh(input));
     }
+  };
+  const reportFailure = (failure: { readonly _tag: string; readonly status?: number }) => {
+    reportFeedback(failureFeedback(failure));
   };
   const selectContractKind = (kind: Contract['kind']) => {
     setChosenContractKind(kind);
@@ -277,6 +240,49 @@ export const useRecordsPage = (input: AgreementsInput) => {
       void navigate({ search: { resourceId: record.contractRef.resourceId }, to: '.' });
     }
   };
+  const invalidate = Effect.sync(() => {
+    data.invalidate();
+    agreementCustomerData.invalidate();
+  });
+  /** Re-reads the agreements; a failed read shows on the page, the outcome of the write stands. */
+  const refreshAgreements = data.refresh(input).pipe(Effect.ignore);
+  /**
+   * A command's outcome for a form: a saved change re-reads the agreements first, so the form sees what it saved; a
+   * conflict re-reads them too, so "Načíst aktuální verzi" offers the newer version; a parked change is reported.
+   */
+  const settleForm = (outcome: AgreementOutcome) =>
+    Match.value(outcome).pipe(
+      Match.tags({
+        Conflict: () => refreshAgreements,
+        Proposed: ({ proposal: parked }) => Effect.sync(() => setProposal(parked)),
+        Saved: () => refreshAgreements,
+      }),
+      Match.orElse(() => Effect.void),
+      Effect.as(outcome),
+    );
+  const showCommitted = (resourceId: string | undefined) => {
+    openCommitted(resourceId);
+    setActionFeedback(undefined);
+  };
+  const showProposal = (parked: ActionProposalAccepted) => {
+    setProposal(parked);
+    setActionFeedback(undefined);
+  };
+  /** How the page shows the outcome of a one-click command. */
+  const settleCommand = (outcome: AgreementOutcome): Effect.Effect<void> =>
+    Match.value(outcome).pipe(
+      Match.tagsExhaustive({
+        Conflict: () => Effect.sync(() => reportFeedback('conflict')),
+        Failed: ({ reason }) => Effect.sync(() => reportFeedback(reason)),
+        // A change parked for approval changed nothing yet: no reload and no record to open.
+        Proposed: ({ proposal: parked }) => Effect.sync(() => showProposal(parked)),
+        Saved: ({ resourceRef }) =>
+          data
+            .refresh(input)
+            .pipe(Effect.match({ onFailure: reportFailure, onSuccess: () => showCommitted(resourceRef.resourceId) })),
+      }),
+    );
+  /** One-click commands (activate, renew, terminate, archive, signature): the page's feedback shows the outcome. */
   const runCommand = (command: AgreementsCommand) => {
     if (snapshot === undefined) {
       return;
@@ -284,134 +290,45 @@ export const useRecordsPage = (input: AgreementsInput) => {
     setProposal(undefined);
     setActionFeedback('saving');
     run(
-      Effect.all(
-        {
-          idempotencyKey: newUuid,
-          referenceCredentials: makeReferenceGatewayCredentials(referenceAudiences(command)),
-        },
-        { concurrency: 2 },
-      ).pipe(
-        Effect.flatMap(({ idempotencyKey, referenceCredentials }) =>
-          executeApplyCommand({ command, expectedRevision: snapshot.revision }, 'legal-agreements.command', {
-            idempotencyKey,
-            referenceCredentials,
-          }).pipe(
-            Effect.ensuring(
-              Effect.sync(() => {
-                data.invalidate();
-                agreementCustomerData.invalidate();
-              }),
-            ),
-          ),
-        ),
-        // A change parked for approval changed nothing yet: no reload and no record to open.
-        Effect.flatMap((result) =>
-          Schema.is(ActionProposalAcceptedSchema)(result)
-            ? Effect.succeed(Option.some(result))
-            : data
-                .refresh(input)
-                .pipe(
-                  Effect.andThen(Effect.sync(() => openCommitted(result.resourceRef?.resourceId))),
-                  Effect.as(Option.none<ActionProposalAccepted>()),
-                ),
-        ),
-        Effect.match({
-          onFailure: reportFailure,
-          onSuccess: (parked) => {
-            setProposal(Option.getOrUndefined(parked));
-            setActionFeedback(undefined);
-          },
-        }),
+      sendAgreementsCommand(command, snapshot.revision, { audiences: referenceAudiences(command) }).pipe(
+        Effect.ensuring(invalidate),
+        Effect.flatMap(settleCommand),
       ),
     );
   };
-  const createContract = () => {
-    const occupancy = occupancies?.occupancies.find((record) => record.occupancyRef.resourceId === occupancyId);
-    const unit = properties?.units.find((record) => record.unitRef.resourceId === occupancy?.unitRef.resourceId);
-    const customer = customers.find((record) => record.partyId === customerId && record.status === 'ACTIVE');
-    const counterpartyRef = contractKind === 'LEASE' ? occupancy?.customerCounterpartyRef : customer?.counterpartyRef;
-    if (
-      counterpartyRef === null ||
-      counterpartyRef === undefined ||
-      (contractKind === 'LEASE' && (occupancy === undefined || unit === undefined))
-    ) {
-      setActionFeedback('validation');
-      return;
-    }
-    run(
-      newUuid.pipe(
-        Effect.match({
-          onFailure: reportFailure,
-          onSuccess: (resourceId) =>
-            runCommand({
-              _tag: 'CreateContract',
-              record: {
-                contractRef: {
-                  moduleId: 'legal.agreements',
-                  resourceId,
-                  resourceType: 'legal.agreements.contract',
-                  tenantId: counterpartyRef.tenantId,
-                },
-                counterpartyRef,
-                endDate: endDate || null,
-                kind: contractKind,
-                lifecycleState: 'DRAFT',
-                note: null,
-                occupancyRef: contractKind === 'LEASE' ? (occupancy?.occupancyRef ?? null) : null,
-                propertyRef: contractKind === 'LEASE' ? (unit?.propertyRef ?? null) : null,
-                renewalNoticeDate: null,
-                signatureState: 'NOT_SENT',
-                startDate,
-                supersedesContractRef: null,
-                unitRef: contractKind === 'LEASE' ? (occupancy?.unitRef ?? null) : null,
-              },
-            }),
-        }),
-      ),
-    );
-  };
+
+  /**
+   * The Save button of the new-contract form. It is sent against the agreements as read now; a conflict caused by
+   * another agreement is resent once, as a new contract cannot overwrite anyone's change.
+   */
+  const createContract = (draft: CreateDraft): Effect.Effect<AgreementOutcome> =>
+    createAgreement(draft, {
+      expectedRevision: snapshot?.revision ?? 0,
+      references: { customers, occupancies: occupancies?.occupancies ?? [], units: properties?.units ?? [] },
+    }).pipe(Effect.ensuring(invalidate), Effect.flatMap(settleForm));
+  const savePeriod = (
+    draft: PeriodDraft,
+    expectedRevision: number,
+    confirmed: PeriodDraft,
+  ): Effect.Effect<AgreementOutcome> =>
+    savePeriodDraft(draft, expectedRevision, confirmed).pipe(Effect.ensuring(invalidate), Effect.flatMap(settleForm));
   const editDraft = () => {
-    if (selected?.lifecycleState !== 'DRAFT' || selected.signatureState !== 'NOT_SENT') {
+    if (selected === undefined || !editableDraft(selected)) {
       return;
     }
     setChosenContractKind(selected.kind);
-    setStartDate(selected.startDate);
-    setEndDate(selected.endDate ?? '');
-    setEditingDraft(true);
-    setFormOpen(true);
+    setDraftForm({ contract: selected, mode: 'edit' });
   };
   const resetDraftForm = () => {
-    setFormOpen(true);
-    setCustomerId('');
-    setEditingDraft(false);
-    setOccupancyId('');
-    setStartDate(DEFAULT_START_DATE);
-    setEndDate(DEFAULT_END_DATE);
+    setDraftForm({ kind: contractKind, mode: 'create' });
   };
-  const saveDraft = () => {
-    if (selected?.lifecycleState !== 'DRAFT' || selected.signatureState !== 'NOT_SENT') {
-      setActionFeedback('validation');
-      return;
-    }
-    runCommand({
-      _tag: 'UpdateContract',
-      record: {
-        ...contractTerms(selected),
-        contractRef: selected.contractRef,
-        counterpartyRef: selected.counterpartyRef,
-        endDate: endDate || null,
-        kind: selected.kind,
-        lifecycleState: selected.lifecycleState,
-        note: selected.note,
-        occupancyRef: selected.occupancyRef,
-        propertyRef: selected.propertyRef,
-        renewalNoticeDate: selected.renewalNoticeDate,
-        signatureState: selected.signatureState,
-        startDate,
-        supersedesContractRef: selected.supersedesContractRef,
-        unitRef: selected.unitRef,
-      },
-    });
+  const closeDraftForm = () => {
+    setDraftForm(undefined);
+  };
+  /** The create form saved `resourceId`: the form closes, then the page opens the new contract. */
+  const openCreated = (resourceId: string) => {
+    setCreated(resourceId);
+    setDraftForm(undefined);
   };
   const openTerms = () => {
     if (selected !== undefined) {
@@ -469,7 +386,7 @@ export const useRecordsPage = (input: AgreementsInput) => {
                 ...contractTerms(record),
                 contractRef: { ...record.contractRef, resourceId },
                 counterpartyRef: record.counterpartyRef,
-                endDate: endDate || null,
+                endDate: DEFAULT_END_DATE,
                 kind: record.kind,
                 lifecycleState: 'DRAFT',
                 note: record.note,
@@ -477,7 +394,7 @@ export const useRecordsPage = (input: AgreementsInput) => {
                 propertyRef: record.propertyRef,
                 renewalNoticeDate: null,
                 signatureState: 'NOT_SENT',
-                startDate: record.endDate ?? startDate,
+                startDate: record.endDate ?? DEFAULT_START_DATE,
                 supersedesContractRef: record.contractRef,
                 unitRef: record.unitRef,
               },
@@ -500,18 +417,13 @@ export const useRecordsPage = (input: AgreementsInput) => {
   const visible = snapshot?.contracts.filter((record) => !expiringOnly || record.expiringSoon) ?? [];
   const { customerName, customerNameFeedback } = useAgreementDetails(input, selected, visible, snapshot);
   const busy = feedback === 'loading' || feedback === 'saving';
-  const formView = {
-    showCommercialCustomer: !editingDraft && contractKind === 'OTHER',
-    showRentalFeedback: rentalFeedback !== undefined && contractKind === 'LEASE',
-    showRentalSelector: !editingDraft && contractKind === 'LEASE',
-  };
   const counterpartyOf = (record: Contract | undefined) =>
     record === undefined
       ? undefined
       : customers.find((item) => item.counterpartyRef.resourceId === record.counterpartyRef.resourceId);
   const detailView = {
     canActivate: selected?.lifecycleState === 'DRAFT',
-    canEdit: selected?.lifecycleState === 'DRAFT' && selected.signatureState === 'NOT_SENT',
+    canEdit: selected !== undefined && editableDraft(selected),
     canEditTerms: selected?.lifecycleState === 'DRAFT' || selected?.lifecycleState === 'ACTIVE',
     canRecordSignature:
       selected !== undefined &&
@@ -522,59 +434,50 @@ export const useRecordsPage = (input: AgreementsInput) => {
   };
   return {
     busy,
+    closeDraftForm,
     contractKind,
     counterpartyOf,
     createContract,
-    customerId,
     customerName,
     customerNameFeedback,
     customers,
     detailView,
     documentState,
+    draftForm,
     editDraft,
-    editingDraft,
-    endDate,
     expiringOnly,
     feedback,
-    formOpen,
-    formView,
     language,
     linkedDocumentId,
     linkedResourceId,
     occupancies,
-    occupancyId,
+    openCreated,
     openTerms,
     properties,
     proposal,
     recordSignature,
+    refreshAgreements,
     renew,
     rentalFeedback,
     reportProposal: setProposal,
     resetDraftForm,
     retry,
     runCommand,
-    saveDraft,
+    savePeriod,
     selectContractKind,
     selected,
     selectorIssue,
-    setCustomerId,
-
-    setEndDate,
     setExpiringOnly,
-    setFormOpen,
-    setOccupancyId,
     setSignedBy,
     setSignedFileName,
     setSignedOn,
     setSignedReference,
-    setStartDate,
     setTermsOpen,
     signedBy,
     signedFileName,
     signedOn,
     signedReference,
     snapshot,
-    startDate,
     t,
     termsOpen,
     titleOf,

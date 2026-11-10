@@ -33,7 +33,7 @@ import {
   GatewayAssertionRedemptionLive,
 } from '../../api/auth/gateway-assertion-redemption.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
-import { commerceMarketCatalogRegistration } from '../../vertical.registration.ts';
+import { commerceMarketCatalogBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import { createMarketAction } from '../../src/actions/create-market.action.ts';
 import { associateStorefrontAction } from '../../src/actions/associate-storefront.action.ts';
 import {
@@ -100,7 +100,7 @@ const main = Effect.scoped(
     const scopes = OperationalScopeResolverLive.pipe(
       Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, access)),
     );
-    const actions = makeActionRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogRegistration).pipe(
+    const actions = makeActionRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogBackendRegistration).pipe(
       Layer.provide(
         Layer.mergeAll(ActionRepositoryLive, ActionPermissionLive, gate, gateway, scopes, ContextAccessLive, access),
       ),

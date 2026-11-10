@@ -245,7 +245,7 @@ export const CheckoutFields = ({
               onEdit();
             }
           }}
-          size="lg"
+          size="md"
           value={selected === undefined ? [] : [selected.value]}
         >
           <Select.Label>{d.checkout.savedAddresses.label}</Select.Label>
@@ -299,7 +299,7 @@ export const CheckoutFields = ({
               onEdit();
             }}
             required
-            size="lg"
+            size="md"
             value={
               countryCodes.includes(currentPostal.fields.country)
                 ? [currentPostal.fields.country]

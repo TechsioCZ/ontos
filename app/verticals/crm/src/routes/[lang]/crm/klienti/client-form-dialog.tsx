@@ -222,10 +222,13 @@ const useClientForm = ({
     );
   };
 
-  // Create: the one explicit "Založit klienta" sends the new client with its contacts.
+  // Create: Uložit sends the new client with its contacts. Contacts that block it show their messages instead.
   const sendCreate = (value: Draft): Effect.Effect<SaveOutcome> => {
     if (!validClientDraft(value) || contactsBlock(value, contacts)) {
-      return Effect.succeed('failed');
+      return Effect.sync(() => {
+        setTouched(true);
+        return 'failed' as const;
+      });
     }
     return submit(createCommandOf(value, { canAssign: viewer.assign, contacts })).pipe(
       Effect.tap((outcome) =>
@@ -248,7 +251,7 @@ const useClientForm = ({
     );
   };
 
-  // The draft is sent only by `record.save()` (the Save bar, Enter) or the create button. Nothing else sends it.
+  // The draft is sent only by `record.save()`, the one Save button of both modes. Nothing else sends it.
   const record = useRecordDraft<Draft, never>({
     equals: sameClientDraft,
     isValid: (value) => validClientDraft(value),
@@ -273,7 +276,9 @@ const useClientForm = ({
   const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard, otherChanges });
 
   const organization = draft.kind === 'organization';
-  const nameError = touched && draft.name.trim() === '' ? 'Vyplňte název' : undefined;
+  // A new client shows its field messages once the draft cannot be sent or Uložit was refused.
+  const shown = touched || record.status === 'invalid';
+  const nameError = shown && draft.name.trim() === '' ? 'Vyplňte název' : undefined;
   const emailError = draft.email.trim() !== '' && !EMAIL.test(draft.email.trim()) ? 'Neplatný e-mail' : undefined;
   const regNoError =
     organization && draft.regNo.trim() !== '' && !/^\d{8}$/u.test(draft.regNo.trim()) ? 'IČO má 8 číslic' : undefined;
@@ -287,28 +292,7 @@ const useClientForm = ({
         )
       : [];
 
-  const contactNameError = mode === 'create' && organization && contacts.some(incompleteContact);
   const contactEmailError = mode === 'create' && organization && contacts.some(contactWithInvalidEmail);
-
-  // The create button (and Enter in the create form) shows the field messages, then sends the new client.
-  const save = () => {
-    if (editing) {
-      record.save();
-      return;
-    }
-    setTouched(true);
-    setFailure(undefined);
-    if (
-      draft.name.trim() === '' ||
-      emailError !== undefined ||
-      regNoError !== undefined ||
-      contactNameError ||
-      contactEmailError
-    ) {
-      return;
-    }
-    browserRuntime.runFork(sendCreate(draft));
-  };
 
   const close = () => guard.request(onClose);
 
@@ -353,9 +337,8 @@ const useClientForm = ({
     record,
     regNoError,
     regNoHelp,
-    save,
     setContacts,
-    touched,
+    shown,
     viewer,
   };
 };
@@ -385,9 +368,8 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
     record,
     regNoError,
     regNoHelp,
-    save,
     setContacts,
-    touched,
+    shown,
     viewer,
   } = useClientForm(props);
   const labels = saveLabelsFor(language);
@@ -397,23 +379,12 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
   return (
     <SidePanel
       actions={
-        mode === 'create' ? (
-          <>
-            <Button disabled={busy} onClick={close} theme="outlined" variant="secondary">
-              Zrušit
-            </Button>
-            <Button isLoading={busy} loadingText="Zakládám klienta…" onClick={save} variant="primary">
-              Založit klienta
-            </Button>
-          </>
-        ) : (
-          <>
-            <Button onClick={close} theme="outlined" variant="secondary">
-              Zavřít
-            </Button>
-            <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
-          </>
-        )
+        <>
+          <Button disabled={busy} onClick={close} theme="outlined" variant="secondary">
+            {mode === 'create' ? 'Zrušit' : 'Zavřít'}
+          </Button>
+          <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
+        </>
       }
       closeLabel={dialogCloseLabel}
       description={
@@ -435,10 +406,8 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
     >
       <form
         className="flex flex-col gap-250 py-100"
-        onSubmit={(event) => {
-          event.preventDefault();
-          save();
-        }}
+        // Enter never sends the client: only Uložit does.
+        onSubmit={(event) => event.preventDefault()}
       >
         <RadioGroup
           onValueChange={(next) => {
@@ -601,7 +570,7 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
                 onRemove={handleRemoveContact}
                 patchContact={patchContact}
                 removable={contacts.length > 1}
-                touched={touched}
+                touched={shown}
               />
             ))}
             {contactEmailError && (
@@ -620,9 +589,6 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
           <StatusText showIcon status="error">
             {failure}
           </StatusText>
-        )}
-        {mode === 'create' && (
-          <button aria-label={t('crm.ciClientsVisits.contacts.createClient')} className="hidden" type="submit" />
         )}
       </form>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />

@@ -1212,12 +1212,15 @@ it.layer(NodeServices.layer)('live approvals composition', (suite) => {
           ),
         );
         expect(Object.isFrozen(dispatch)).toBe(true);
+        // The forward Action (v2) entry points belong to the same adapter surface.
         expect(Object.keys(dispatch).toSorted()).toStrictEqual([
+          'authorizeExecution',
           'claim',
           'commit',
           'loadParkedProposal',
           'parkProposal',
           'prepare',
+          'prepareProposal',
         ]);
         // The composed service is the live one: it answers this tenant and refuses another.
         const ports = liveApprovalsPorts(live, eva);

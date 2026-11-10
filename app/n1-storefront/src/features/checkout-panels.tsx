@@ -84,6 +84,7 @@ export const CheckoutItems = ({
   entries,
   imageHosts,
   locale,
+  presentation = "checkout",
   result,
 }: {
   currency: ReadyOptions["scope"]["currency"];
@@ -91,6 +92,7 @@ export const CheckoutItems = ({
   entries: readonly CartEntry[];
   imageHosts: readonly string[];
   locale: string;
+  presentation?: "checkout" | "receipt";
   result: CheckoutResult | null;
 }) => {
   const verified = result !== null && result.outcome !== "REJECTED";
@@ -101,15 +103,18 @@ export const CheckoutItems = ({
     <div className="flex min-w-0 flex-col gap-4">
       {rows.map((line) => {
         const entry = entries.find((item) => cartLineKey(item) === cartLineKey(line));
-        const presentation = result?.productPresentation?.find(
+        const productPresentation = result?.productPresentation?.find(
           (item) => item.productId === line.productId,
         );
-        const image = publicImage(entry?.image ?? presentation?.image ?? undefined, imageHosts);
+        const image = publicImage(
+          entry?.image ?? productPresentation?.image ?? undefined,
+          imageHosts,
+        );
         const variantSuffix =
           line.variantId === undefined
             ? ""
             : `?${new URLSearchParams({ variantId: line.variantId })}`;
-        const slug = entry?.slug ?? presentation?.slug;
+        const slug = entry?.slug ?? productPresentation?.slug;
         const target =
           slug === undefined
             ? null
@@ -130,13 +135,19 @@ export const CheckoutItems = ({
                 </Link>
               )}
               {line.variantName !== undefined && line.variantName !== "" && (
-                <p className="text-xs text-fg-secondary">{line.variantName}</p>
+                <p className="text-xs leading-normal text-fg-secondary">{line.variantName}</p>
               )}
-              <p className="text-xs text-fg-secondary">
+              <p className="text-xs leading-normal text-fg-secondary">
                 {d.checkout.quantity}: {line.quantity}
               </p>
             </div>
-            <p className="shrink-0 text-sm font-semibold">
+            <p
+              className={
+                presentation === "receipt"
+                  ? "shrink-0 text-sm leading-normal font-medium"
+                  : "shrink-0 text-sm leading-normal font-semibold"
+              }
+            >
               {formatMarketAmount(line.unitPriceMinor, locale, currency)}
             </p>
           </div>

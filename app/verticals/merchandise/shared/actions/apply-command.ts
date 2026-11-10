@@ -193,7 +193,8 @@ export const merchandiseAiCommandSchemas = [
 /**
  * Market offer and price list commands (owner-local stand-in for Assortment/Pricing per commerce market). They ignore
  * the payload's catalog `expectedRevision` and never advance it: ConfigureMarket guards the market's own revision,
- * offer changes are idempotent set operations.
+ * SetProductMarketOffer guards the product's offer it replaces (`expectedOffered`), offer changes are idempotent set
+ * operations.
  */
 const ApplyConfigureMarketCommandSchema = Schema.TaggedStruct('ConfigureMarket', {
   currency: MarketCurrencySchema,
@@ -206,6 +207,11 @@ const ApplyConfigureMarketCommandSchema = Schema.TaggedStruct('ConfigureMarket',
 });
 
 const ApplySetProductMarketOfferCommandSchema = Schema.TaggedStruct('SetProductMarketOffer', {
+  /**
+   * The offer the caller read before this change (the market's offer mode with the product's exception). When given
+   * and the market now offers something else, the save is refused as a revision conflict; omitted = not checked.
+   */
+  expectedOffered: Schema.optionalKey(Schema.Boolean),
   marketId: MarketIdSchema,
   offered: Schema.Boolean,
   productId: ProductIdSchema,

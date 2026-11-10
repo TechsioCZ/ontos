@@ -42,7 +42,8 @@ export type LeasingSave = (
   onProposal?: OnProposal,
 ) => Effect.Effect<RevisionedSaveResult>;
 
-const send = (command: OccupancyCommand, expectedRevision: number) =>
+/** Sends one command against `expectedRevision`, with the reference credentials every lease command carries. */
+export const sendLeasingCommand = (command: OccupancyCommand, expectedRevision: number) =>
   Effect.all(
     {
       idempotencyKey: newUuid,
@@ -96,11 +97,13 @@ export const leasingSaveResult = <E>(
  */
 export const saveLeasingCommand: LeasingSave = (command, expectedRevision, unchanged, onProposal) =>
   leasingSaveResult(
-    send(command, expectedRevision).pipe(
+    sendLeasingCommand(command, expectedRevision).pipe(
       Effect.catchTag('ApplyCommandActionConflictProblem', (conflict) =>
         conflict.code === 'occupancy_conflict'
           ? executeRecords({}, 'property-leasing.records').pipe(
-              Effect.flatMap((fresh) => (unchanged(fresh) ? send(command, fresh.revision) : Effect.fail(conflict))),
+              Effect.flatMap((fresh) =>
+                unchanged(fresh) ? sendLeasingCommand(command, fresh.revision) : Effect.fail(conflict),
+              ),
             )
           : Effect.fail(conflict),
       ),

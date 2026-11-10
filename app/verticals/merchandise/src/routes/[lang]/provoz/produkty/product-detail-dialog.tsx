@@ -595,6 +595,7 @@ export const ProductDetailView = ({
           </Tabs.Content>
           <Tabs.Content className="py-200" value="markets">
             <MarketsPanel
+              active={tab === 'markets'}
               canManage={markets.canManage}
               markets={markets.entries}
               onCommitted={onCommitted}

@@ -202,7 +202,7 @@
         "configure": "Nastavit ceník",
         "edit": "Upravit ceník",
         "save": "Uložit ceník",
-        "saved": "Ceník trhu {{code}} je uložen.",
+        "saved": "Ceník a nabídka trhu {{code}} jsou uloženy.",
         "summary": "{{currency}}, kurz {{rate}}, zaokrouhlení {{rounding}}",
         "readOnly": "Ceník a sortiment může měnit jen správce katalogu.",
         "unavailable": "Ceník a sortiment se nepodařilo načíst.",

@@ -8,13 +8,19 @@ import {
   MerchandiseNotFound,
   MerchandiseRevisionConflict,
 } from '../../shared/actions/apply-command.ts';
-import { isMarketException, normalizeExchangeRate, offeredByDefault } from '../../shared/domain/market-offers.ts';
+import {
+  isMarketException,
+  isOfferedInMarket,
+  normalizeExchangeRate,
+  offeredByDefault,
+} from '../../shared/domain/market-offers.ts';
 import { EntityIdSchema } from '../../shared/domain/merchandise-model.ts';
 import {
   deleteExceptionsEqualTo,
   deleteMarket,
   existingProductIds,
   loadMarket,
+  marketExceptionsFor,
   writeMarketSettings,
   writeOffers,
 } from './market-store.ts';
@@ -74,6 +80,19 @@ export const planConfigureMarket = (
     },
   });
 };
+
+/**
+ * SetProductMarketOffer against the offer the market has now: a caller naming the offer it read (`expectedOffered`)
+ * is refused when someone changed it since. A command without `expectedOffered` is never refused here.
+ */
+export const isStaleProductOffer = (current: boolean, command: Pick<SetProductMarketOffer, 'expectedOffered'>) =>
+  command.expectedOffered !== undefined && command.expectedOffered !== current;
+
+const staleOffer = () =>
+  new MerchandiseRevisionConflict({
+    code: 'merchandise_revision_conflict',
+    reason: 'The product offer in this market changed; refresh before another change',
+  });
 
 const marketNotFound = () =>
   new MerchandiseNotFound({ code: 'merchandise_not_found', reason: 'Market is not configured' });
@@ -162,6 +181,15 @@ export const applyMarketCommand = Effect.fn('MarketCommands.apply')(function* ap
         return { entityIds: [entity] } satisfies MarketCommandResult;
       }),
       SetProductMarketOffer: Effect.fn('MarketCommands.setOne')(function* setOne(value: SetProductMarketOffer) {
+        if (value.expectedOffered !== undefined) {
+          // The caller holds the company's head row lock, so the offer read here is the one the write replaces.
+          const market = yield* requiredMarket(db, scope, value.marketId);
+          const exceptions = yield* marketExceptionsFor(db, scope, value.marketId, [value.productId]);
+          const current = isOfferedInMarket(market.offerMode, Option.fromUndefinedOr(exceptions.get(value.productId)));
+          if (isStaleProductOffer(current, value)) {
+            return yield* staleOffer();
+          }
+        }
         yield* setOffers(db, scope, {
           marketId: value.marketId,
           now,

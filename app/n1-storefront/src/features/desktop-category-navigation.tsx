@@ -191,6 +191,7 @@ export const DesktopCategoryNavigation = ({
                             as={NextLink}
                             href={`/${locale}/kategorie/${encodeURIComponent(category.slug)}`}
                             onClick={() => api.setOpen(false)}
+                            size="sm"
                           >
                             {category.name}
                           </Link>

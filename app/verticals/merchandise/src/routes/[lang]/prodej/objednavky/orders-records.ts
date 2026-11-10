@@ -1,10 +1,11 @@
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
-import { useHeldSnapshot } from '@app/admin-ui';
+import { rowIntentProps, useHeldSnapshot } from '@app/admin-ui';
+import type { RowIntentProps } from '@app/admin-ui';
 import { Data, Effect, Match, Predicate, Random, Result, Schema } from 'effect';
 import { definePageData, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, PageDataSnapshot } from '@app/shared-contracts/page-data';
-import { useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
+import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from 'react';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import type {
   Order,
@@ -20,6 +21,8 @@ import { executeChangeOrderStatus } from '../../../../api/change-order-status-ac
 import { committedResult } from '../../../../api/action-result.ts';
 import { executeRecords } from '../../../../api/records-consumer.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { useKeptDetail } from '../../../../runtime/kept-detail.ts';
+import type { DetailRead } from '../../../../runtime/kept-detail.ts';
 import { useSettledPageData } from '../../../../runtime/page-data-hooks.ts';
 import type { SettledPageData } from '../../../../runtime/page-data-hooks.ts';
 import { customerDirectoryData } from './customers-directory.ts';
@@ -160,6 +163,7 @@ const ordersPageKey = ({ legalEntityId, query, scope }: OrdersPageInput): string
 
 /** One page of orders per company and request. */
 export const ordersPageData = definePageData({
+  changesFrom: ['merchandise'],
   key: ordersPageKey,
   load: ({ query }: OrdersPageInput) => loadOrders(query),
   maxEntries: 16,
@@ -169,6 +173,7 @@ export const ordersPageData = definePageData({
 
 /** The header counts per authenticated scope; they do not depend on the filters. Legacy standalone keys are companies. */
 export const orderCountsData = definePageData({
+  changesFrom: ['merchandise'],
   key: (legalEntityId: string) => legalEntityId,
   load: () => loadCounts,
   maxEntries: 16,
@@ -350,6 +355,7 @@ const loadDetailInput = Effect.fn('OrdersRecords.loadDetailInput')(function* loa
 /** Only successful governed data is reusable. Missing rows and denials are retried on the next opening. */
 export const orderDetailData = definePageData({
   cancelWhenUnused: true,
+  changesFrom: ['merchandise'],
   key: (input: OrderDetailInput) =>
     Result.getOrThrow(encodeQueryIds([input.scope, input.orderId, String(input.revision)])),
   load: loadDetailInput,
@@ -370,6 +376,33 @@ export const preloadOrderDetails = (input: OrdersPageInput, records: RecordsResp
             .pipe(Effect.ignore),
         { concurrency: 2, discard: true },
       );
+
+/**
+ * Warms one order's detail when the user shows the intent to open its row. The strict detail store does the rest: a
+ * fresh entry answers at once without a request and a running read is joined, so each row has at most one read.
+ */
+export const prefetchOrderDetail = (input: OrdersPageInput, records: RecordsResponse, orderId: string): void => {
+  if (input.scope === undefined) {
+    return;
+  }
+  const detail: OrderDetailInput = { orderId, revision: records.revision, scope: input.scope, source: input };
+  if (orderDetailData.snapshot(detail).state !== 'ready') {
+    browserRuntime.runFork(orderDetailData.read(detail).pipe(Effect.ignore));
+  }
+};
+
+/** Intent prefetch of the orders table: `orders` are its rows in table order (no client sorting). */
+export const orderDetailIntent = (
+  input: OrdersPageInput,
+  records: RecordsResponse | undefined,
+  orders: readonly Order[],
+): RowIntentProps =>
+  rowIntentProps((index) => {
+    const order = orders[index];
+    if (records !== undefined && order !== undefined) {
+      prefetchOrderDetail(input, records, order.id);
+    }
+  });
 
 /** One governed command. Every call carries a fresh idempotency key and the revision the caller last saw. */
 const submitCommand = Effect.fn('OrdersRecords.submitCommand')(function* submitCommand(
@@ -534,17 +567,44 @@ export const useOrders = (legalEntityId: string, query: OrdersQuery, context?: M
   const shownPage = useHeldSnapshot(ordersPageData.key(input), page);
   const shownCounts = useHeldSnapshot(countsKey, counts);
   const settled = useSettledPageData(shownPage, input);
-  const prefetch = useEffectEvent((records: RecordsResponse) => preloadOrderDetails(input, records));
+  // One warm-up per request, list revision and rows. The strict detail entries read as pending again once their 20 s
+  // freshness window passes or a live change arrives, and each reload of the page settles as a new snapshot; warming
+  // every row on each of them made an idle list re-read all its details. A write or a change of these orders moves
+  // the revision and warms the rows again; a row opened later is warmed by intent (`orderDetailIntent`).
+  const batch =
+    page.state === 'ready'
+      ? Result.getOrThrow(
+          encodeQueryIds([
+            ordersPageData.key(input),
+            String(page.value.revision),
+            ...page.value.orders.map((order) => order.id),
+          ]),
+        )
+      : undefined;
+  const warmed = useRef<string>(undefined);
+  const prefetch = useEffectEvent((records: RecordsResponse, key: string) =>
+    preloadOrderDetails(input, records).pipe(
+      Effect.andThen(
+        Effect.sync(() => {
+          warmed.current = key;
+        }),
+      ),
+    ),
+  );
   // Prefetch only the current request, never the previous page retained while a filter loads.
   useEffect(() => {
     const fiber =
-      scope !== undefined && page.state === 'ready' && !page.refreshing
-        ? browserRuntime.runFork(prefetch(page.value))
+      scope !== undefined &&
+      page.state === 'ready' &&
+      !page.refreshing &&
+      batch !== undefined &&
+      warmed.current !== batch
+        ? browserRuntime.runFork(prefetch(page.value, batch))
         : undefined;
     return () => {
       fiber?.interruptUnsafe();
     };
-  }, [page, scope]);
+  }, [batch, page, scope]);
   return {
     load: () => {
       orderDetailData.invalidate();
@@ -583,7 +643,38 @@ export type OrderDetailState =
   | { readonly status: 'not-found' }
   | { readonly status: 'loading'; readonly summary?: OrderDetailSummary | undefined }
   | { readonly cause: Effect.Error<ReturnType<typeof loadOrderDetail>>; readonly status: 'error' }
-  | ({ readonly order: Order; readonly status: 'ready' } & OrderDetailRecords);
+  | ({
+      readonly order: Order;
+      /** The order shown is the last one read: reading it again failed with this cause. */
+      readonly reloadFailure?: Effect.Error<ReturnType<typeof loadOrderDetail>>;
+      readonly status: 'ready';
+    } & OrderDetailRecords);
+
+type OrderDetailFailure = Effect.Error<ReturnType<typeof loadOrderDetail>>;
+type ReadyOrderDetail = Extract<OrderDetailState, { readonly status: 'ready' }>;
+
+/** Failures of a denied read (signed out, no access): they never keep the shown order, its fields or actions. */
+const deniedFailureTags = [
+  'RecordsAuthenticationProblem',
+  'RecordsForbiddenProblem',
+  'GatewayAuthenticationRequiredProblem',
+  'GatewayForbiddenProblem',
+] as const;
+
+const orderRead = (state: OrderDetailState): DetailRead<ReadyOrderDetail, OrderDetailFailure> =>
+  Match.value(state).pipe(
+    Match.when({ status: 'ready' }, (ready): DetailRead<ReadyOrderDetail, OrderDetailFailure> => ({
+      kind: 'ready',
+      ready,
+    })),
+    Match.when({ status: 'loading' }, (): DetailRead<ReadyOrderDetail, OrderDetailFailure> => ({ kind: 'loading' })),
+    Match.when({ status: 'error' }, ({ cause: failure }): DetailRead<ReadyOrderDetail, OrderDetailFailure> =>
+      deniedFailureTags.some((tag) => Predicate.isTagged(failure, tag))
+        ? { kind: 'final' }
+        : { failure, kind: 'failed' },
+    ),
+    Match.orElse((): DetailRead<ReadyOrderDetail, OrderDetailFailure> => ({ kind: 'final' })),
+  );
 
 /** Only the row of this order from the ready page of the same authenticated scope may summarize it. */
 const listedSummary = (
@@ -662,25 +753,42 @@ export const useOrderDetail = (
       fiber?.interruptUnsafe();
     };
   }, [orderId, request]);
-  if (orderId === null) {
-    return { status: 'idle' };
-  }
-  if (scope !== undefined) {
-    if (cached.state === 'ready') {
-      return { ...cached.value, status: 'ready' };
+  const current = (): OrderDetailState => {
+    if (orderId === null) {
+      return { status: 'idle' };
     }
-    if (cached.state === 'failed') {
-      return Predicate.isTagged(cached.error, 'OrderDetailNotFound')
-        ? { status: 'not-found' }
-        : { cause: cached.error, status: 'error' };
+    if (scope !== undefined) {
+      if (cached.state === 'ready') {
+        return { ...cached.value, status: 'ready' };
+      }
+      if (cached.state === 'failed') {
+        return Predicate.isTagged(cached.error, 'OrderDetailNotFound')
+          ? { status: 'not-found' }
+          : { cause: cached.error, status: 'error' };
+      }
+      return summary === undefined ? { status: 'loading' } : { status: 'loading', summary };
     }
+    if (answer?.request === request) {
+      return answer.state;
+    }
+    // A reread after a change keeps showing the same order until the fresh copy lands.
     return summary === undefined ? { status: 'loading' } : { status: 'loading', summary };
+  };
+  const state = current();
+  // A failed reload of the order on screen keeps it, so an open edit form and its unsaved draft stay.
+  const kept = useKeptDetail({
+    key: Result.getOrThrow(encodeQueryIds([scope ?? '', orderId ?? ''])),
+    read: orderRead(state),
+    same: (left, right) =>
+      left.order === right.order &&
+      left.products === right.products &&
+      left.revision === right.revision &&
+      left.movesStock === right.movesStock,
+  });
+  if (kept === null) {
+    return state;
   }
-  if (answer?.request === request) {
-    return answer.state;
-  }
-  // A reread after a change keeps showing the same order until the fresh copy lands.
-  return summary === undefined ? { status: 'loading' } : { status: 'loading', summary };
+  return kept.reloadFailure === undefined ? kept.ready : { ...kept.ready, reloadFailure: kept.reloadFailure };
 };
 
 export const removeDemoOrder = (id: Order['id'], reason: string, revision: number) =>

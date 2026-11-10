@@ -1,7 +1,8 @@
 import type { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
 import {
   OwnerActionApprovalSchemaErrorLive,
-  makeOwnerActionApprovalApiLive,
+  makeOwnerActionApproveHandler,
+  makeOwnerActionInspectHandler,
 } from '@app/core-runtime/access/approvals/owner-http';
 import {
   ActionMandateDispatcher,
@@ -1194,7 +1195,11 @@ export const makeCommerceCustomerContextApiRuntime = (
     customerOwnPasswordChangeApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
     customerOwnProfileReadApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
     customerOwnProfileUpdateApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
-    makeOwnerActionApprovalApiLive(commerceCustomerContextApi, authenticateOwnerApprovalPrincipal).pipe(
+    HttpApiBuilder.group(commerceCustomerContextApi, 'ownerActionApprovals', (handlers) =>
+      handlers
+        .handle('approve', makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal))
+        .handle('inspect', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal)),
+    ).pipe(
       GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
       GovernedReadLayer.provide(governedActionRuntimeLive),
     ),

@@ -61,7 +61,11 @@ export const CatalogView = ({
   return (
     <section
       aria-label={title}
-      className={presentation === "featured" ? "mx-auto max-w-n1-content py-n1-section" : ""}
+      className={
+        presentation === "featured"
+          ? "n1-catalog-cards n1-featured-cards mx-auto max-w-n1-content py-n1-section"
+          : "n1-catalog-cards n1-listing-cards"
+      }
     >
       {presentation === "featured" && (
         <div className="mb-6 flex items-center gap-4">
@@ -79,7 +83,7 @@ export const CatalogView = ({
         className={
           presentation === "featured"
             ? "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
-            : "grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4"
+            : "grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4"
         }
       >
         {catalog.products.map((product) => (
@@ -137,7 +141,7 @@ export const CatalogView = ({
                 </ProductCard.Stock>
               )}
             </div>
-            <div className="flex flex-col items-center justify-center gap-0 md:flex-row md:gap-4">
+            <div className="flex flex-col items-center justify-center gap-0 md:flex-row md:flex-wrap md:gap-4">
               <PriceBlock {...priceProps(product, d, locale)} />
               {(product.variantCount ?? 0) > 0 ? (
                 <LinkButton

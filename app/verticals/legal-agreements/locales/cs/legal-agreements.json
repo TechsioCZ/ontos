@@ -78,6 +78,7 @@
       "create": "Vytvořit smlouvu",
       "noUnit": "Bez jednotky",
       "unnamedContract": "Smlouva bez názvu",
+      "unnamedCustomer": "Zákazník bez názvu",
       "list": "Smlouvy",
       "provider": "Poskytovatel",
       "attemptedAt": "Čas pokusu",

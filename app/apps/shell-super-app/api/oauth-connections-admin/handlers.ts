@@ -166,13 +166,17 @@ export const replaceAgentOperators = Effect.fn('ConnectionsAdmin.replaceAgentOpe
     const affected = agentGrants.filter(
       (connection) => Option.isSome(connection.delegatedBy) && !wantedIds.has(connection.delegatedBy.value.principalId),
     );
-    yield* deps.directory.replaceOperators({
+    const command = {
       agentPrincipalId,
-      context: 'operators-edited',
+      context: 'operators-edited' as const,
       operatorPrincipalIds: wanted,
       revokedConnections: affected.length,
       snapshot,
-    });
+    };
+    // A form that knows the operator revision it was read from is refused when the operators moved on since.
+    yield* deps.directory.replaceOperators(
+      request.expectedRevision === undefined ? command : { ...command, expectedRevision: request.expectedRevision },
+    );
     yield* Effect.forEach(
       affected,
       (connection) =>

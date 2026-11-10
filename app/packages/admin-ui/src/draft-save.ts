@@ -87,16 +87,30 @@ export class DraftSaveController<V, R = never> {
 
   /** The form's current draft. It only moves the status; a changed draft waits for `save()`. */
   readonly change = (value: V): void => {
-    if (this.same(value, this.latest)) {
+    const unchanged = this.same(value, this.latest);
+    // An equal draft can still carry newer data its validation reads, such as a product record that finished loading.
+    this.latest = value;
+    if (unchanged) {
+      this.revalidate();
       return;
     }
-    this.latest = value;
     // A running save decides the status when it ends.
     if (this.disposed || this.inFlight) {
       return;
     }
     // A conflict holds until the server version is adopted or the draft is back at the confirmed version.
     if (this.state === 'conflict' && !this.same(value, this.saved)) {
+      return;
+    }
+    this.setState(this.restingState());
+  };
+
+  /**
+   * Checks a changed draft against the form's validation again. The rule can read more than the draft, such as the
+   * rows a bulk form applies to, so the same draft can become valid (or invalid) without being typed again.
+   */
+  readonly revalidate = (): void => {
+    if (this.disposed || this.inFlight || (this.state !== 'dirty' && this.state !== 'invalid')) {
       return;
     }
     this.setState(this.restingState());
@@ -294,9 +308,24 @@ export interface DraftSave<V> extends SavableDraft {
 }
 
 export interface UseDraftSaveOptions<V, R> extends DraftSaveOptions<V, R> {
+  /**
+   * The version the draft starts from, when it is not the first render's draft: a create form passes its empty form,
+   * so the values it opens with already count as a draft the Save button sends.
+   */
+  readonly initial?: V | undefined;
+  /**
+   * Whether the form is on screen; open by default. A form that stays mounted while closed holds nothing the user
+   * can see, so it never counts as unsaved and leaving never asks about it.
+   */
+  readonly open?: boolean | undefined;
+  /**
+   * The values the form opens with, when they differ from `initial` (a suggested value Uložit can send at once).
+   * They are not typed input: while the draft still equals them and no save of them ran, leaving does not ask.
+   */
+  readonly opened?: V | undefined;
   /** The host's browser runtime; saves run in it. */
   readonly runtime: ManagedRuntime.ManagedRuntime<R, never>;
-  /** The form's draft. The first render's value is taken as saved. */
+  /** The form's draft. Without `initial`, the first render's value is taken as saved. */
   readonly value: V;
 }
 
@@ -344,6 +373,8 @@ export interface PartlySaved<V> {
 export type DraftSaveResult<V> = RevisionedSaveResult | PartlySaved<V>;
 
 interface GenerationOptions<V, R> extends Omit<DraftSaveOptions<V, R>, 'save'> {
+  /** The confirmed version of the first generation; `value` when absent. */
+  readonly initial?: V | undefined;
   readonly revision: number;
   readonly runtime: ManagedRuntime.ManagedRuntime<R, never>;
   readonly save: (value: V, expectedRevision: number, confirmed: V) => Effect.Effect<DraftSaveResult<V>, never, R>;
@@ -392,15 +423,21 @@ const useGeneration = <V, R>(options: GenerationOptions<V, R>) => {
     controller.configure(boundTo(options, base, controller));
     return { base, controller };
   };
-  const [generation, setGeneration] = useState(() => begin(options.value, options.revision));
+  const [generation, setGeneration] = useState(() =>
+    // `null` is a version too (an empty choice); only an absent `initial` falls back to the first draft.
+    begin(
+      Option.getOrElse(Option.fromUndefinedOr(options.initial), () => options.value),
+      options.revision,
+    ),
+  );
   const { base, controller } = generation;
-  useEffect(() => {
-    controller.configure(boundTo(options, base, controller));
-  }, [base, controller, options]);
+  // The newest closures first, then this render's draft, so validation never pairs one render's rules with another
+  // render's draft. An equal draft is checked again: what `isValid` reads besides the draft may have changed.
   // The draft only moves the status. Nothing is sent here, and nothing is sent when the form unmounts.
   useEffect(() => {
+    controller.configure(boundTo(options, base, controller));
     controller.change(options.value);
-  }, [controller, options.value]);
+  }, [base, controller, options]);
   const status = useSyncExternalStore(controller.subscribe, controller.status, controller.status);
   const restart = (value: V, revision: number) => {
     controller.dispose();
@@ -430,7 +467,12 @@ const draftSaveOf = <V, R>(
  */
 export const useDraftSave = <V, R>(options: UseDraftSaveOptions<V, R>): DraftSave<V> => {
   const { controller, restart, status } = useGeneration({ ...options, revision: 0, save: options.save });
-  return draftSaveOf(controller, status, (value) => restart(value, 0));
+  const record = draftSaveOf(controller, status, (value) => restart(value, 0));
+  const same = options.equals ?? Equal.equals;
+  // Only a changed draft can be untouched: once a save of the opening values ran, its result is the user's.
+  const untouched =
+    options.opened !== undefined && (status === 'dirty' || status === 'invalid') && same(options.value, options.opened);
+  return { ...record, dirty: record.dirty && options.open !== false && !untouched };
 };
 
 export interface UseRecordDraftOptions<V, R> extends Omit<DraftSaveOptions<V, R>, 'save'> {

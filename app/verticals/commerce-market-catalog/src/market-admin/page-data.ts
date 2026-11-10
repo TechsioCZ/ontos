@@ -14,6 +14,9 @@ import { MarketRefSchema } from '../../shared/resources/market.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { newUuid } from './browser-crypto.ts';
 
+/** This vertical's deployment app id: the stores below reload on its live changes and on those of the apps they read. */
+const ownApp = 'commerce-market-catalog';
+
 /** A fresh correlation for one request; Actions use the same value as their idempotency key. */
 export const requestId = newUuid.pipe(Effect.map((id) => `commerce-market-catalog:${id}`));
 
@@ -42,6 +45,7 @@ const marketRefEffect = (input: MarketInput) =>
 
 /** The company's markets and e-shop associations in force now. */
 export const marketCatalogData = definePageData({
+  changesFrom: [ownApp],
   key: (legalEntityId: string) => legalEntityId,
   load: (_legalEntityId: string) =>
     Effect.all({ at: DateTime.now, id: requestId }, { concurrency: 1 }).pipe(
@@ -52,6 +56,7 @@ export const marketCatalogData = definePageData({
 
 /** The tenant's registered e-shops (storefront registry). */
 export const storefrontsData = definePageData({
+  changesFrom: [ownApp, 'storefront-registry'],
   key: (legalEntityId: string) => legalEntityId,
   load: (_legalEntityId: string) =>
     Effect.all({ at: DateTime.now, id: requestId }, { concurrency: 1 }).pipe(
@@ -64,6 +69,7 @@ const marketSettingsView: RecordsRequestEncoded = { view: { limit: 0, markets: t
 
 /** Merchandise market settings (currency, rate, rounding, offer mode) and whether the person manages the catalogue. */
 export const marketSettingsData = definePageData({
+  changesFrom: [ownApp, 'merchandise'],
   key: (legalEntityId: string) => legalEntityId,
   load: (_legalEntityId: string) => requestId.pipe(Effect.flatMap((id) => executeRecords(marketSettingsView, id))),
   runtime: browserRuntime,
@@ -71,6 +77,7 @@ export const marketSettingsData = definePageData({
 
 /** Whether the person may create markets for the company (no market) or administer one market. */
 export const administrationData = definePageData({
+  changesFrom: [ownApp],
   key: (input: MarketInput) => `${input.legalEntityId}|${input.marketId}`,
   load: (input: MarketInput) =>
     Effect.all({ id: requestId, marketRef: marketRefEffect(input) }, { concurrency: 1 }).pipe(
@@ -80,6 +87,7 @@ export const administrationData = definePageData({
 });
 
 export const creationGrantData = definePageData({
+  changesFrom: [ownApp],
   key: (legalEntityId: string) => legalEntityId,
   load: (_legalEntityId: string) => requestId.pipe(Effect.flatMap((id) => executeMarketAdministration({}, id))),
   runtime: browserRuntime,
@@ -87,6 +95,7 @@ export const creationGrantData = definePageData({
 
 /** Every definition revision of one market. */
 export const marketHistoryData = definePageData({
+  changesFrom: [ownApp],
   key: (input: MarketInput) => `${input.legalEntityId}|${input.marketId}`,
   load: (input: MarketInput) =>
     Effect.all({ id: requestId, marketRef: marketRefEffect(input) }, { concurrency: 1 }).pipe(
@@ -103,6 +112,7 @@ export const EXCEPTIONS_PAGE_SIZE = 25;
 
 /** One page of the market's product exceptions (products whose offer differs from the market's offer mode). */
 export const marketExceptionsData = definePageData({
+  changesFrom: [ownApp, 'merchandise'],
   key: (input: ExceptionsInput) => `${input.legalEntityId}|${input.marketId}|${String(input.offset)}`,
   load: (input: ExceptionsInput) =>
     requestId.pipe(
@@ -202,6 +212,26 @@ export const runMarketAction = <P, A, E extends ProblemLike, D extends ProblemLi
     ),
   );
 };
+
+/**
+ * The Effect form of `runMarketAction` for a draft save: never fails, answers with the outcome the screen shows. The
+ * payload is decoded with the Action's own schema first, so an invalid form never reaches the owner.
+ */
+export const marketActionEffect = <P, A, E extends ProblemLike, D extends ProblemLike>(
+  payload: Effect.Effect<P, D>,
+  execute: (
+    payload: P,
+    requestCorrelation: string,
+    options: { readonly idempotencyKey: string },
+  ) => Effect.Effect<A, E>,
+): Effect.Effect<WriteOutcome<A>> =>
+  Effect.all({ decoded: payload, id: requestId }, { concurrency: 1 }).pipe(
+    Effect.flatMap(({ decoded, id }) => execute(decoded, id, { idempotencyKey: id })),
+    Effect.match({
+      onFailure: (error): WriteOutcome<A> => ({ ok: false, reason: writeFailure(error) }),
+      onSuccess: (value): WriteOutcome<A> => ({ ok: true, value }),
+    }),
+  );
 
 /** A merchandise command in its wire form (the screens build ConfigureMarket and SetProductMarketOffer). */
 export type MarketCommandInput = (typeof ManageMarketsPayloadSchema.Encoded)['command'];

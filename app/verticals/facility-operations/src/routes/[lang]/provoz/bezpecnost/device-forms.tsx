@@ -40,6 +40,7 @@ import { deviceCreateCommandOf, deviceDraftOf, deviceUpdateCommandOf, sameDevice
 import type { DeviceDraft } from './device-draft.ts';
 import { useEditGuard } from '../../../../ui/edit-guard.tsx';
 import { facilitySaveOutcome } from '../../../../ui/facility-save.ts';
+import { useDraftBase } from '../../../../ui/draft-base.ts';
 
 export type RunCommand = (command: OpsCommand) => Effect.Effect<CommandOutcome>;
 type InspectionCommand = Extract<OpsCommand, { readonly _tag: 'SecurityDeviceRecordInspection' }>;
@@ -393,6 +394,8 @@ const DeviceEditPanel = ({
   const [draft, setDraft] = useState<DeviceDraft>(() => deviceDraftOf(device));
   const set = <Key extends keyof DeviceDraft>(key: Key, value: DeviceDraft[Key]) =>
     setDraft((current) => ({ ...current, [key]: value }));
+  // Saves carry the revision of the read the draft was built on, so someone else's newer change refuses them.
+  const base = useDraftBase(device, run);
   const record = useDraftSave<DeviceDraft, never>({
     equals: sameDeviceDraft,
     isValid: (value) =>
@@ -401,9 +404,19 @@ const DeviceEditPanel = ({
     save: (value) =>
       Option.match(deviceUpdateCommandOf(value, device, pickedLocationOf({ device, draft: value, properties })), {
         onNone: () => Effect.succeed<SaveOutcome>('failed'),
-        onSome: (command) => facilitySaveOutcome(run(command)),
+        onSome: (command) => base.confirm(facilitySaveOutcome(base.run(command))),
       }),
     value: draft,
+  });
+  base.sync({
+    onAdopt: () => {
+      const stored = deviceDraftOf(device);
+      if (!sameDeviceDraft(stored, draft)) {
+        record.adopt(stored);
+        setDraft(stored);
+      }
+    },
+    settled: !record.pending && sameDeviceDraft(draft, record.confirmed),
   });
   const guard = useEditGuard(record, () => {
     setDraft(record.confirmed);
@@ -415,6 +428,7 @@ const DeviceEditPanel = ({
   const handleSave = record.save;
   const handleReloadLatest = () => {
     const current = deviceDraftOf(device);
+    base.rebase();
     record.adopt(current);
     setDraft(current);
   };

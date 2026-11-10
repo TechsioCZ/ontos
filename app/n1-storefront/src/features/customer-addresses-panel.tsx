@@ -55,7 +55,9 @@ export const CustomerAddressesList = ({
   dictionary: Dictionary;
 }) =>
   addresses.length === 0 ? (
-    <p>{d.accountPage.emptyAddresses}</p>
+    <p className="text-md leading-normal text-center text-fg-secondary">
+      {d.accountPage.emptyAddresses}
+    </p>
   ) : (
     <div className="flex flex-wrap gap-4">
       {addresses.map((address) => (
@@ -104,7 +106,7 @@ export const CustomerAddressesPanel = ({
     body = <output aria-live="polite">{message}</output>;
   }
   return (
-    <section className="flex flex-col gap-2 px-2 pb-2">
+    <section className="flex flex-col gap-2">
       <h2 className="text-lg leading-normal font-semibold">{d.accountPage.addresses}</h2>
       {body}
     </section>

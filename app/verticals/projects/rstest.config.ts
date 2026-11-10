@@ -1,7 +1,10 @@
 import { defineConfig } from '@rstest/core';
 
 const swc = {
-  jsc: { parser: { disallowAmbiguousJsxLike: false, syntax: 'typescript' } },
+  jsc: {
+    parser: { disallowAmbiguousJsxLike: false, syntax: 'typescript', tsx: true },
+    transform: { react: { runtime: 'automatic' } },
+  },
 } as const;
 
 export default defineConfig({
@@ -15,7 +18,8 @@ export default defineConfig({
       tools: { swc },
     },
     {
-      include: ['tests/unit/**/*.test.ts'],
+      // Mounted form tests (`.test.tsx`) choose happy-dom with `// @rstest-environment happy-dom`.
+      include: ['tests/unit/**/*.test.{ts,tsx}'],
       name: 'unit',
       root: new URL('.', import.meta.url).pathname,
       testEnvironment: 'node',

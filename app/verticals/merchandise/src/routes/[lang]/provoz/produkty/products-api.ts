@@ -1,12 +1,13 @@
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { useHeldSnapshot } from '@app/admin-ui';
+import { rowIntentProps, useHeldSnapshot } from '@app/admin-ui';
+import type { RowIntentProps } from '@app/admin-ui';
 import { definePageData, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
 import type { TanstackTable } from '@techsio/ui-kit/organisms/data-table';
 import { Effect, Match, Option, Random, Result, Schema } from 'effect';
 import type { Cause } from 'effect';
-import { useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
+import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from 'react';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { executeManageCatalog } from '../../../../api/manage-catalog-action-client.ts';
 import { executeManageMarkets } from '../../../../api/manage-markets-action-client.ts';
@@ -16,6 +17,8 @@ import { executeRecordStockMovement } from '../../../../api/record-stock-movemen
 import { committedResult } from '../../../../api/action-result.ts';
 import { executeRecords } from '../../../../api/records-consumer.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { useKeptDetail } from '../../../../runtime/kept-detail.ts';
+import type { DetailRead } from '../../../../runtime/kept-detail.ts';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import { ProductIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
 import type { ProductId, ProductRecord } from '../../../../../shared/domain/merchandise-model.ts';
@@ -233,6 +236,7 @@ export const productCategoryKey = (legalEntityId: string, context?: ModulePageCo
 
 /** One page of the products list with the company indicators and the write capability. */
 export const productListData = definePageData({
+  changesFrom: ['merchandise'],
   key: productListKey,
   load: ({ query }: ProductListInput) => readView(productListView(query)),
   maxEntries: 16,
@@ -268,6 +272,7 @@ export interface CategoryChoices {
  * (the filter then searches it on the server) and, without a tree, the distinct product category labels with counts.
  */
 export const categoryChoicesData = definePageData({
+  changesFrom: ['merchandise'],
   key: (legalEntityId: string) => legalEntityId,
   load: () =>
     readView({ includeProductCategories: true, limit: 0, ordersLimit: 0 }).pipe(
@@ -315,6 +320,7 @@ const readProductDetail = ({ productId }: ProductDetailInput) =>
 
 export const productDetailData = definePageData({
   cancelWhenUnused: true,
+  changesFrom: ['merchandise'],
   key: ({ legalEntityId, productId, revision, scope }: ProductDetailInput) =>
     cacheKey([scope ?? legalEntityId, productId, String(revision)]),
   load: readProductDetail,
@@ -545,24 +551,79 @@ export const useProductDetailsPrefetch = (
       ),
     () => false,
   );
+  // One batch per list revision and page of rows. The strict detail entries read as pending again once their 20 s
+  // freshness window passes or a live change from any module arrives; warming every row again then made an idle list
+  // re-read all its details every 40 s and on every live event. A write or a change of these products moves the
+  // revision and warms the rows again; opening a row always reads its detail fresh.
+  const batch = cacheKey([request, selection]);
+  const warmed = useRef<string>(undefined);
   const preload = useEffectEvent((key: string) =>
-    key === request ? preloadProductDetails(context, revision, rows) : Effect.void,
+    key === request
+      ? preloadProductDetails(context, revision, rows).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              warmed.current = batch;
+            }),
+          ),
+        )
+      : Effect.void,
   );
   useEffect(() => {
     const fiber =
-      needsPreload && scope !== undefined && selection !== '[]' ? browserRuntime.runFork(preload(request)) : undefined;
+      needsPreload && scope !== undefined && selection !== '[]' && warmed.current !== batch
+        ? browserRuntime.runFork(preload(request))
+        : undefined;
     return () => {
       fiber?.interruptUnsafe();
     };
-  }, [needsPreload, request, scope, selection]);
+  }, [batch, needsPreload, request, scope, selection]);
 };
+
+/**
+ * Warms one row's detail when the user shows the intent to open it. The strict detail store does the rest: a fresh
+ * entry answers at once without a request and a running read is joined, so each row has at most one read in flight.
+ */
+export const prefetchProductDetail = (
+  context: ModulePageContext | undefined,
+  revision: number,
+  productId: string,
+): void => {
+  if (productScope(context) === undefined) {
+    return;
+  }
+  const input = Option.getOrUndefined(detailInput(context?.legalEntityId ?? '', productId, context, revision));
+  if (input !== undefined && productDetailData.snapshot(input).state !== 'ready') {
+    browserRuntime.runFork(productDetailData.read(input).pipe(Effect.ignore));
+  }
+};
+
+/** Intent prefetch of the products list: the row the user points at or focuses has its detail ready to open. */
+export const productDetailIntent = (
+  context: ModulePageContext | undefined,
+  revision: number,
+  table: ProductRowModel | undefined,
+  authorizedRows: readonly ProductRecord[],
+  enabled: boolean,
+): RowIntentProps =>
+  rowIntentProps((index) => {
+    const row = enabled ? currentProductRows(table, authorizedRows)[index] : undefined;
+    if (row !== undefined) {
+      prefetchProductDetail(context, revision, row.id);
+    }
+  });
 
 export type ProductDetailState =
   | { readonly status: 'loading' }
   | { readonly status: 'invalid' }
   | { readonly status: 'not-found' }
   | { readonly reason: FailureReason; readonly status: 'error' }
-  | { readonly product: ProductRecord; readonly response: RecordsResponse; readonly status: 'ready' };
+  | {
+      readonly product: ProductRecord;
+      /** The product shown is the last one read: reading it again failed for this reason. */
+      readonly reloadFailure?: FailureReason;
+      readonly response: RecordsResponse;
+      readonly status: 'ready';
+    };
 
 export const detailState = (
   valid: boolean,
@@ -585,6 +646,21 @@ export const detailState = (
     onNone: (): ProductDetailState => ({ status: 'not-found' }),
     onSome: (found): ProductDetailState => ({ product: found, response, status: 'ready' }),
   });
+};
+
+type ReadyProductDetail = Extract<ProductDetailState, { readonly status: 'ready' }>;
+
+/** A denied read never keeps the shown product: its fields and actions go at once. */
+const productRead = (state: ProductDetailState): DetailRead<ReadyProductDetail, FailureReason> => {
+  if (state.status === 'ready') {
+    return { kind: 'ready', ready: state };
+  }
+  if (state.status === 'loading') {
+    return { kind: 'loading' };
+  }
+  return state.status === 'error' && state.reason !== 'forbidden'
+    ? { failure: state.reason, kind: 'failed' }
+    : { kind: 'final' };
 };
 
 /** A warmed complete scoped entry is consumed in render. Missing Shell identity never reuses the detail store. */
@@ -636,10 +712,20 @@ export const useProductDetail = (
     Option.isSome(input) ? productDetailData.key(input.value) : '',
     scope === undefined ? pageDataPending : snapshot,
   );
-  if (scope === undefined) {
-    return detailState(Option.isSome(input), unscoped?.key === request ? unscoped.snapshot : pageDataPending);
+  const state =
+    scope === undefined
+      ? detailState(Option.isSome(input), unscoped?.key === request ? unscoped.snapshot : pageDataPending)
+      : detailState(Option.isSome(input), shown);
+  // A failed reload of the product already on screen keeps it, so the editor and its unsaved drafts stay.
+  const kept = useKeptDetail({
+    key: cacheKey([legalEntityId, scope ?? '', routeId]),
+    read: productRead(state),
+    same: (left, right) => left.product === right.product && left.response === right.response,
+  });
+  if (kept === null) {
+    return state;
   }
-  return detailState(Option.isSome(input), shown);
+  return kept.reloadFailure === undefined ? kept.ready : { ...kept.ready, reloadFailure: kept.reloadFailure };
 };
 
 export const productNavigationFailureKey = Match.type<Cause.TimeoutError | Cause.UnknownError>().pipe(

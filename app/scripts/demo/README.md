@@ -258,6 +258,11 @@ the canonical Core path and lets the one Core writer project them. It runs at th
 in-memory, so re-run it after a container restart. A Role that names a capability the pinned release does not
 declare fails the seed with the exact key instead of silently granting less.
 
+The storefront workloads match what the storefront BFFs call: both bind `commerce.storefront-client` (market
+catalog, portal enrollment) and `demo.storefront-client` (merchandise records, media, guest orders), ŠroubShop's
+also `work.storefront-client` (inquiry form). Each storefront binding is registered for the storefront's own
+company (D6), exactly as `register-stage-workloads.mts` registers them on stage.
+
 Once the Shell is running, the same operator command calls the restricted
 `core.identity.configure-demo-companies` Action. It renames the fixed commercial demo company to
 Obchodní firma and ensures the separate Nájempark company and rental module states exist. This runs
@@ -329,7 +334,7 @@ exactly one company and a switch to any other company answers 403.
 | `obchodnik.b@hanak.demo` | Petra Svobodová | Hanák   | Obchodník B     | same as A                                                                                                 |
 | `eshop@kavarna.demo`     | Tereza Malá     | Kavárna | Správce e-shopu | products, orders, customers, tasks, employees                                                             |
 | `expedice@kavarna.demo`  | Ondřej Kříž     | Kavárna | Expedice        | merchandise only (orders, products)                                                                       |
-| `kavarna-storefront`     | service         | Kavárna | Storefront BFF  | merchandise read + `demo.merchandise.apply-command` (managed API key)                                     |
+| `kavarna-storefront`     | service         | Kavárna | Storefront BFF  | workloads `commerce.storefront-client`, `demo.storefront-client`, registered for Kavárna (managed key)    |
 
 The storefront key lands in `app/.env.demo.local` as `ONTOS_STOREFRONT_API_KEY` (with
 `ONTOS_STOREFRONT_PRINCIPAL_ID` and `ONTOS_STOREFRONT_LEGAL_ENTITY_ID`); it is verified against a
@@ -404,6 +409,38 @@ test needs an environment CI does not provision; prepare that environment first:
 The people-model scratch proofs need the same scratch database and local SpiceDB, and also rewrite its schema:
 `pnpm --filter @app/core-runtime test:operator` runs the company membership and agent profile, operator and status
 lifecycles, and `pnpm --filter @app/shell-super-app test:operator` runs the person invitation lifecycle.
+
+### Stage machine workloads and their companies
+
+A storefront key runs a workload Action only while Core holds an active binding for the declared key (O73) and a
+company registration naming the company it acts for (D6). `register-stage-workloads.mts` writes both through
+Core's own writers, with the identifiers the stage bootstrap derives, so a re-run changes nothing. Its input is an
+operator file outside the repository (ADR-0028):
+
+```json
+{
+  "schemaVersion": 1,
+  "tenants": [
+    {
+      "tenantId": "…",
+      "ownerPrincipalId": "<current human owner>",
+      "workloads": [
+        {
+          "principalId": "<service principal>",
+          "workloadKey": "work.storefront-client",
+          "legalEntityId": "<its company>"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Run it on the app host with only `DATABASE_URL` set: `--mode dry-run` prints every step (`writeBinding`,
+`writeRegistration`) and a fingerprint; `--mode apply --reviewed-plan-sha256 <fingerprint>` writes exactly that plan;
+`--mode verify` reads each one back through the gate's reader. It refuses keys the deployed catalog does not declare,
+non-machine principals, inactive companies, an owner that is not the Tenant's current human owner, and a binding
+already registered for another company. It writes no Role, grant, membership or key.
 
 ## Pseudonymous demo catalog (lane P/b)
 

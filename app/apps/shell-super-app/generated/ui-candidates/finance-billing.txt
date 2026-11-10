@@ -26,7 +26,6 @@
 --file-multiple-outline
 --file-pdf-box
 --file-upload-outline
---history
 --link-variant-plus
 --package-variant-closed
 --paperclip
@@ -35,7 +34,6 @@
 --printer-outline
 --receipt-text-outline
 --send-check-outline
---send-outline
 --undo
 --z-popup
 -rotate-30
@@ -66,14 +64,11 @@ gap-250
 gap-300
 gap-50
 gap-500
-gap-x-300
 gap-x-400
-gap-y-100
 gap-y-150
 grid
 grid-cols-1
 grid-cols-2
-grid-cols-[auto_1fr]
 h-2
 h-3
 h-[70vh]
@@ -100,7 +95,6 @@ icon-[mdi--file-image-outline]
 icon-[mdi--file-multiple-outline]
 icon-[mdi--file-pdf-box]
 icon-[mdi--file-upload-outline]
-icon-[mdi--history]
 icon-[mdi--link-variant-plus]
 icon-[mdi--package-variant-closed]
 icon-[mdi--paperclip]
@@ -109,7 +103,6 @@ icon-[mdi--plus]
 icon-[mdi--printer-outline]
 icon-[mdi--receipt-text-outline]
 icon-[mdi--send-check-outline]
-icon-[mdi--send-outline]
 icon-[mdi--undo]
 inline
 inline-flex
@@ -132,6 +125,7 @@ md:grid-cols-[10rem_1fr]
 md:grid-cols-[2fr_1fr]
 min-w-0
 ml-100
+ml-auto
 mt-100
 mt-150
 mt-[5px]

@@ -142,7 +142,8 @@ const ordersLoadError = (problem: Effect.Error<typeof loadOrders>): OrdersLoadEr
   );
 
 /** Order proposals of one legal entity. */
-const aiOrders = definePageData({
+export const aiOrders = definePageData({
+  changesFrom: ['merchandise', 'sales-pipeline'],
   key: (legalEntityId: string) => (legalEntityId === '' ? 'all' : legalEntityId),
   load: (_legalEntityId: string) => loadOrders.pipe(Effect.mapError(ordersLoadError)),
   runtime: browserRuntime,
