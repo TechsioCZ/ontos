@@ -1480,6 +1480,39 @@ it.live('#1150 a partial correction of a counted prior return reduces that retur
   ),
 );
 
+it.live('#1150 an unapplied second correction of a counted prior return keeps its hold', () =>
+  native(
+    Effect.gen(function* secondCorrectionOfPriorReturn() {
+      const evidence = yield* scenario();
+      yield* evidence.configureRefundRoute('erp-primary', 'refund-account-a');
+      const paid = yield* collectedBankPayment(evidence, 'collect-first');
+      const priorReturn = yield* bankReturnOf(
+        evidence,
+        'erp:bank-return:24',
+        40_000,
+      )(paid.payment.paymentId, paid.collect.operationId);
+      yield* closeReturnCase(evidence, priorReturn.reconciliationCaseId);
+      expect((yield* correctReturn(evidence, paid.payment.paymentId, priorReturn.observationId)).interpretation).toBe(
+        'CORRECTION',
+      );
+      // A further, different correction cannot be told apart from a re-issue: it is held, not applied.
+      const second = yield* correctReturn(evidence, paid.payment.paymentId, priorReturn.observationId);
+      expect(second).toMatchObject({ acceptanceOutcome: 'HELD_UNRESOLVED', interpretation: 'HOLD' });
+      // The funds still count the return it disproves, so its case cannot be closed as if nothing was owed.
+      expect(
+        yield* failureCodeOf(
+          evidence.decide({
+            caseId: second.reconciliationCaseId ?? '',
+            decision: { _tag: 'CLOSE_CASE', evidenceRef: 'operator-note' },
+            reason: 'Close the second correction',
+          }),
+        ),
+      ).toBe('payment_reconciliation_obligation_unresolved');
+      expect((yield* evidence.coverage(paid.payment.paymentId)).startsWith('Held ')).toBe(true);
+    }),
+  ),
+);
+
 it.live('#1150 a partially retracted refund receipt never restores the full refund through attachment', () =>
   native(
     Effect.gen(function* partiallyRetractedRefundReceipt() {
