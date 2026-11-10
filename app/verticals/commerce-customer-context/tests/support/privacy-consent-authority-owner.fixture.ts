@@ -1058,6 +1058,9 @@ const serve = Effect.scoped(
           ),
         ),
         Layer.provideMerge(Layer.mergeAll(CommercePortalAuthConfigLive, ResendEmailDeliveryConfigLive)),
+        // The realm captures its context here and sends every verification mail with it, so the owned inbox
+        // must be in it: without it, mail would leave for the real provider API.
+        Layer.provideMerge(Layer.succeed(FetchHttpClient.Fetch, localInboxFetch)),
       ),
     ).pipe(Effect.mapError((cause) => Object.assign(failed('portal-realm'), { cause })));
     const configuredRealm = Layer.succeedContext(configuredRealmContext);

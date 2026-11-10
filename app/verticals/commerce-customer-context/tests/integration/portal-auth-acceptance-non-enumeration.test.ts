@@ -1,8 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { ContextAccessLive, DatabaseConfigLive } from '@app/core-runtime';
-import { ResendEmailDeliveryConfig, ResendEmailDeliveryLive } from '@app/email-delivery/resend';
-import { FetchHttpClient } from 'effect/http';
+import { localEmailDeliveryLive } from '../support/local-email-delivery.ts';
 import { eq } from 'drizzle-orm';
 import { Config, Effect, Layer, Redacted } from 'effect';
 import type { Scope } from 'effect';
@@ -46,11 +45,6 @@ const realmConfiguration = Effect.gen(function* realmConfiguration() {
 });
 
 /** The transport credentials are a required input of the provider graph; nothing here sends mail. */
-const emailDeliveryConfiguration = Layer.succeed(ResendEmailDeliveryConfig, {
-  apiKey: Redacted.make('re_commerce_portal_auth_non_enumeration_test'),
-  endpoint: 'https://api.resend.com/emails',
-  from: 'no-reply@commerce.example.test',
-});
 
 const configuredRuntime = Effect.acquireRelease(
   Effect.gen(function* buildConfiguredRuntime() {
@@ -63,10 +57,8 @@ const configuredRuntime = Effect.acquireRelease(
         Layer.provideMerge(
           Layer.mergeAll(
             Layer.succeed(CommercePortalAuthConfig, configuration),
-            ResendEmailDeliveryLive.pipe(
-              Layer.provide(FetchHttpClient.layer),
-              Layer.provide(emailDeliveryConfiguration),
-            ),
+            // Provider mail stays local: the realm sends with the context it captured, never the real API.
+            localEmailDeliveryLive([]),
           ),
         ),
       ),
