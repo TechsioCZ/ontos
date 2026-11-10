@@ -1,7 +1,7 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Exit, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
@@ -13,6 +13,8 @@ import {
   writeOwnerAssignments,
 } from '../../src/access/bootstrap/persistence.ts';
 import { AccessChangesStoreLive, AccessReleaseStoreLive } from '../../src/access/changes/persistence/drizzle-store.ts';
+import { AccessReleaseStore } from '../../src/access/changes/persistence/release-store.ts';
+import { findRole, planRoleCellEdit } from '../../src/access/changes/role-edits.ts';
 import { AccessChangesStore } from '../../src/access/changes/persistence/store.ts';
 import {
   makeAccessProjectionCompiler,
@@ -36,6 +38,7 @@ import { AccessProjectionCompiler } from '../../src/access/intent/projection-com
 import { AccessProjectionWriter, AccessProjectionWriterLive } from '../../src/access/intent/projection-writer.ts';
 import { TenantIntentLoaderLive } from '../../src/access/intent/tenant-intent-loader.ts';
 import { AccessWriteJournalStoreLive } from '../../src/access/lifecycle/persistence/journal-store.ts';
+import { CellSchema } from '../../src/access/model.ts';
 import type { Cell } from '../../src/access/model.ts';
 import { activateCatalogRelease, releaseActorId } from '../../src/access/release/activation.ts';
 import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
@@ -68,11 +71,20 @@ const uid = (value: number) => `00000000-0000-4000-8000-${value.toString().padSt
 const MODULE = 'billing.invoices';
 const READ = 'billing.invoices.invoice.read';
 const APPROVE = 'billing.invoices.invoice.approve';
+const AUTHORIZE = 'billing.invoices.invoice.authorize';
+const SUMMARY = 'billing.invoices.summary.read';
 
 const readEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'protected' },
   entrypointKey: 'billing.invoices.api.list',
+  moduleKey: MODULE,
+  role: 'api',
+});
+const summaryEntrypoint = defineTenantModuleEntrypoint({
+  access: 'read',
+  authorization: { kind: 'protected' },
+  entrypointKey: 'billing.invoices.api.summary',
   moduleKey: MODULE,
   role: 'api',
 });
@@ -297,6 +309,21 @@ const tenantOnOlderRelease = (tenantId: TenantId, admin: PgClient.PgClient) =>
     return bootstrapped;
   });
 
+/** Whether the database refuses one statement. */
+const refusedBy = (admin: PgClient.PgClient, statement: string) =>
+  Effect.map(Effect.exit(admin.unsafe(statement)), Exit.isFailure);
+
+const templateValue = (template: string | null | undefined): string => {
+  if (template === undefined) {
+    return `'full_access'`;
+  }
+  return template === null ? 'null' : `'${template}'`;
+};
+
+const decodeHeldCells = Schema.decodeUnknownSync(
+  Schema.Tuple([Schema.Struct({ cells: Schema.fromJsonString(Schema.Array(CellSchema)) })]),
+);
+
 const activate = (modules: readonly AccessCatalogModule[], tenantId: TenantId) =>
   activateCatalogRelease({ dryRun: false, modules }).pipe(
     Effect.orDie,
@@ -391,6 +418,251 @@ it.layer(NodeServices.layer)('access catalog release activation', (suite) => {
         const ownerInB = yield* scopeFor(tenantId, owner, companyB);
         expect(yield* decide(approveCarrier, ownerInB)).toBe('ALLOWED');
         expect(Option.isSome(Option.fromUndefinedOr(preset))).toBe(true);
+      }),
+    ),
+  );
+
+  suite.effect('leaves a preset a person changed to Novinky, and never lets a stale run cell skip an approval', () =>
+    withTenant((tenantId, admin) =>
+      Effect.gen(function* editedPreset() {
+        const bootstrapped = yield* tenantOnOlderRelease(tenantId, admin);
+        const ownerScope = yield* scopeFor(tenantId, owner);
+        // The owner narrows "Plný přístup" in the role editor: the preset becomes customer-changed.
+        const changes = yield* AccessChangesStore;
+        const before = yield* changes.loadTenantChanges(ownerScope).pipe(Effect.orDie);
+        const preset = findRole(before.roles, bootstrapped.roleId);
+        if (preset === undefined) {
+          return yield* Effect.die('the preset is missing');
+        }
+        const edit = planRoleCellEdit(preset, [], [...preset.revision.cells], uid(70));
+        if (edit === undefined) {
+          return yield* Effect.die('the edit changes nothing');
+        }
+        yield* changes
+          .recordRoleRevision({
+            catalogSnapshotId: CatalogSnapshotIdSchema.make(bootstrapped.catalogSnapshotId),
+            decidedAt: decisionAt,
+            edit: { ...edit, targetRevisionId: RoleRevisionIdSchema.make(edit.targetRevisionId) },
+            scope: ownerScope,
+          })
+          .pipe(Effect.orDie);
+
+        const { tenant } = yield* activate(newerDeployment, tenantId);
+        expect(tenant).toMatchObject({ outcome: 'followed', presetCellsAdded: 0 });
+        expect((tenant?.items ?? 0) > 0).toBe(true);
+        const after = yield* changes.loadTenantChanges(ownerScope).pipe(Effect.orDie);
+        expect(findRole(after.roles, bootstrapped.roleId)?.revision).toMatchObject({
+          provenance: 'customer_changed',
+          revision: 2,
+        });
+        expect(after.items.map(({ capabilityKey }) => capabilityKey)).toContain(APPROVE);
+        expect(yield* decide(approveCarrier, yield* scopeFor(tenantId, owner, companyA))).toBe('DENIED');
+        return yield* Effect.void;
+      }),
+    ),
+  );
+
+  suite.effect('decides the running declaration, so a mode a deployment dropped is refused whatever cells say', () =>
+    withTenant((tenantId, admin) =>
+      Effect.gen(function* droppedMode() {
+        yield* tenantOnOlderRelease(tenantId, admin);
+        yield* activate(newerDeployment, tenantId);
+        const ownerInA = yield* scopeFor(tenantId, owner, companyA);
+        expect(yield* decide(approveCarrier, ownerInA)).toBe('ALLOWED');
+        // The same Action, now approval-only: the preset still holds its old `run` cell, and run is refused.
+        const approvalOnly = {
+          accessDeclaration: decodeAccessDeclarationOrThrow(
+            { ...approve, modes: ['propose', 'approve'] },
+            approveEntrypoint,
+          ),
+        };
+        const refused = yield* decision(approvalOnly, ownerInA);
+        expect(refused.outcome).toBe('DENIED');
+        expect(refused.reasons.map(({ code }) => code)).toContain('deny.mode_unsupported');
+      }),
+    ),
+  );
+
+  suite.effect('never publishes an older catalog that is not a successor, and refuses a stale follow', () =>
+    withTenant((tenantId, admin) =>
+      Effect.gen(function* overlapping() {
+        yield* tenantOnOlderRelease(tenantId, admin);
+        const second = yield* activate(newerDeployment, tenantId);
+        // The newest deployment renames the approval Action along declared lineage.
+        const renamedDeployment: readonly AccessCatalogModule[] = [
+          {
+            descriptors: [
+              { accessDeclaration: read, entrypoint: readEntrypoint },
+              {
+                accessDeclaration: { ...approve, key: AUTHORIZE, lineage: { renamedFrom: [APPROVE] } },
+                entrypoint: approveEntrypoint,
+              },
+            ],
+            moduleId: MODULE,
+          },
+        ];
+        const renamed = yield* activate(renamedDeployment, tenantId);
+        expect(renamed.report.ordering).toEqual({ _tag: 'Publish' });
+        // An older deployment that never published still declares the old key and lacks the new one.
+        const olderNeverPublished: readonly AccessCatalogModule[] = [
+          {
+            descriptors: [
+              { accessDeclaration: read, entrypoint: readEntrypoint },
+              { accessDeclaration: approve, entrypoint: approveEntrypoint },
+              { accessDeclaration: { ...read, key: SUMMARY }, entrypoint: summaryEntrypoint },
+            ],
+            moduleId: MODULE,
+          },
+        ];
+        const older = yield* activate(olderNeverPublished, tenantId);
+        expect(older.report.ordering).toEqual({ _tag: 'Superseded', reason: 'not_a_successor' });
+        expect(older.report.releaseId).toBe(renamed.report.releaseId);
+        expect(older.report.tenants).toEqual([]);
+        // The newer deployment restarting finds its own release current.
+        const restarted = yield* activate(renamedDeployment, tenantId);
+        expect(restarted.report.ordering).toEqual({ _tag: 'Current' });
+        // A follow planned against a release that is no longer the newest writes nothing.
+        const releases = yield* AccessReleaseStore;
+        const stale = yield* Effect.flip(
+          releases.recordReleaseFollow({
+            catalogSnapshotId: CatalogSnapshotIdSchema.make(second.report.releaseId),
+            decidedAt: decisionAt,
+            items: [],
+            scope: yield* scopeFor(tenantId, owner),
+          }),
+        );
+        expect(stale.code).toBe('access_changes_catalog_conflict');
+      }),
+    ),
+  );
+
+  suite.effect('the database accepts a system author only for the release actor extending the untouched preset', () =>
+    withTenant((tenantId, admin) =>
+      Effect.gen(function* databaseGuard() {
+        const bootstrapped = yield* tenantOnOlderRelease(tenantId, admin);
+        const { report } = yield* activate(newerDeployment, tenantId);
+        const actor = releaseActorId(tenantId);
+        const rows = (sql: string) => admin.unsafe(sql).pipe(Effect.orDie);
+        const refused = (statement: string) => refusedBy(admin, statement);
+        const [{ cells: held }] = decodeHeldCells(
+          yield* rows(
+            `select cells_json::text as cells from core.access_role_revisions
+               where role_id = '${bootstrapped.roleId}' and revision = 2`,
+          ),
+        );
+        const revision = (input: {
+          readonly author: string;
+          readonly cells: readonly unknown[];
+          readonly id: number;
+          readonly number: number;
+          readonly provenance?: string;
+          readonly release?: string;
+          readonly role?: string;
+          readonly template?: string | null;
+        }) => {
+          const template = templateValue(input.template);
+          return `insert into core.access_role_revisions
+            (role_revision_id, tenant_id, role_id, revision, catalog_snapshot_id, cells_json, created_by, provenance, template_key)
+            values ('${uid(input.id)}', '${tenantId}', '${input.role ?? bootstrapped.roleId}', ${String(input.number)},
+                    '${input.release ?? report.releaseId}', '${JSON.stringify(input.cells)}'::jsonb, '${input.author}',
+                    '${input.provenance ?? 'template'}', ${template})`;
+        };
+        // Other principals the tests try as authors.
+        yield* rows(`insert into core.principals (tenant_id, principal_id, kind, display_name, status) values
+          ('${tenantId}', '${uid(80)}', 'system', 'Jiný systém', 'active'),
+          ('${tenantId}', '${uid(81)}', 'service', 'Služba', 'active')`);
+        const otherTenant = TenantIdSchema.make(uid(90));
+        yield* rows(insertTenantStatement(otherTenant));
+        yield* rows(`insert into core.principals (tenant_id, principal_id, kind, display_name, status, platform_role) values
+          ('${otherTenant}', '${uid(91)}', 'system', 'Cizí aktér', 'active', 'access_release_actor')`);
+        const extra = { capabilityKey: READ, mode: 'run', selector: { _tag: 'assigned' } };
+        // A role a person created, a portal role and editor-created roles, each with a first human revision.
+        const roles: readonly (readonly [number, string, string | null])[] = [
+          [60, 'manual', null],
+          [61, 'template', 'commerce.portal'],
+          [62, 'template', 'blank'],
+          [63, 'template', 'catalog-full-access'],
+          [64, 'template', `copy:${bootstrapped.roleId}`],
+        ];
+        for (const [id, provenance, template] of roles) {
+          yield* rows(`insert into core.access_roles (role_id, tenant_id, name, created_by) values
+            ('${uid(id)}', '${tenantId}', 'Role ${String(id)}', '${owner}')`);
+          yield* rows(
+            revision({ author: owner, cells: held, id: id + 100, number: 1, provenance, role: uid(id), template }),
+          );
+          expect(yield* refused(revision({ author: actor, cells: held, id: id + 200, number: 2, role: uid(id) }))).toBe(
+            true,
+          );
+          expect(
+            yield* refused(
+              revision({ author: actor, cells: held, id: id + 300, number: 2, provenance, role: uid(id), template }),
+            ),
+          ).toBe(true);
+        }
+        // A preset a person changed stops qualifying for good.
+        yield* rows(`insert into core.access_roles (role_id, tenant_id, name, created_by) values
+          ('${uid(65)}', '${tenantId}', 'Upravený', '${owner}')`);
+        yield* rows(revision({ author: owner, cells: held, id: 165, number: 1, role: uid(65) }));
+        yield* rows(
+          revision({ author: owner, cells: held, id: 265, number: 2, provenance: 'customer_changed', role: uid(65) }),
+        );
+        expect(yield* refused(revision({ author: actor, cells: held, id: 365, number: 3, role: uid(65) }))).toBe(true);
+        // On the preset itself: narrowing, a capability the release does not declare, an older release.
+        expect(yield* refused(revision({ author: actor, cells: held.slice(1), id: 400, number: 3 }))).toBe(true);
+        const ghost = { capabilityKey: 'billing.invoices.invoice.ghost', mode: 'run', selector: { _tag: 'all' } };
+        expect(yield* refused(revision({ author: actor, cells: [...held, ghost], id: 401, number: 3 }))).toBe(true);
+        expect(yield* refused(revision({ author: actor, cells: [...held, extra], id: 402, number: 3 }))).toBe(true);
+        expect(
+          yield* refused(
+            revision({ author: actor, cells: held, id: 403, number: 3, release: bootstrapped.catalogSnapshotId }),
+          ),
+        ).toBe(true);
+        // Authors that are not this tenant's release actor.
+        for (const [author, id] of [
+          [uid(80), 404],
+          [uid(81), 405],
+          [uid(91), 406],
+        ] as const) {
+          expect(yield* refused(revision({ author, cells: held, id, number: 3 }))).toBe(true);
+        }
+        // An amount ceiling the preset held may never be narrowed.
+        const capped = {
+          amountCeiling: { currency: 'CZK', limitMinor: 100_000 },
+          capabilityKey: APPROVE,
+          mode: 'run',
+          selector: { _tag: 'all' },
+        };
+        const withCeiling = [
+          ...held.filter((cell) => !(cell.capabilityKey === APPROVE && cell.mode === 'run')),
+          capped,
+        ];
+        yield* rows(revision({ author: owner, cells: withCeiling, id: 407, number: 3 }));
+        const narrowed = withCeiling.map((cell) =>
+          cell === capped ? { ...capped, amountCeiling: { currency: 'CZK', limitMinor: 1 } } : cell,
+        );
+        expect(yield* refused(revision({ author: actor, cells: narrowed, id: 408, number: 4 }))).toBe(true);
+        // The one write it accepts: the untouched preset kept field for field.
+        expect(yield* refused(revision({ author: actor, cells: withCeiling, id: 409, number: 4 }))).toBe(false);
+
+        // The release actor's own row: no status change while the tenant is active, no role change, no delete.
+        expect(yield* refused(`update core.principals set status = 'disabled' where principal_id = '${actor}'`)).toBe(
+          true,
+        );
+        expect(yield* refused(`update core.principals set platform_role = null where principal_id = '${actor}'`)).toBe(
+          true,
+        );
+        expect(
+          yield* refused(
+            `update core.principals set platform_role = 'access_release_actor' where principal_id = '${owner}'`,
+          ),
+        ).toBe(true);
+        // Once it authored a revision, the revision keeps it: it cannot be deleted either.
+        expect(yield* refused(`delete from core.principals where principal_id = '${actor}'`)).toBe(true);
+        // A tenant that has ended may archive it.
+        yield* rows(`update core.tenants set status = 'archived' where tenant_id = '${tenantId}'`);
+        expect(yield* refused(`update core.principals set status = 'archived' where principal_id = '${actor}'`)).toBe(
+          false,
+        );
       }),
     ),
   );
