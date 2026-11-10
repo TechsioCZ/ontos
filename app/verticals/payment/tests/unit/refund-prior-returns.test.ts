@@ -161,6 +161,10 @@ describe('#1150 Prior return evidence reduces the remaining budget', () => {
     expect(contradictsStandingReturn(standing, candidate(60_000))).toBe(false);
     expect(contradictsStandingReturn(standing, candidate(40_000, 'binding-b'))).toBe(false);
     expect(contradictsStandingReturn(standing, { ...candidate(40_000), observationId: 'observation-1' })).toBe(false);
+    // A standing return is measured by what it still proves after its applied partial corrections.
+    const corrected = [{ ...standing[0], correctedAmount: czk(20_000) }];
+    expect(contradictsStandingReturn(corrected, candidate(40_000))).toBe(false);
+    expect(contradictsStandingReturn(corrected, candidate(60_000))).toBe(true);
   });
 
   it('no evidence leaves the funds snapshot unchanged', () => {
