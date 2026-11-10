@@ -1,4 +1,5 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { czechPlural } from '@app/shared-contracts';
 import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
@@ -172,10 +173,17 @@ const PeopleEditor = ({
   const patchMembership = (patch: Partial<MembershipDraft>) =>
     setMembershipDraft((current) => ({ ...current, ...patch }));
   const roleInput = roleId !== '' || reason.trim() !== '';
+  const otherChanges = editor.kind === 'role' && roleInput;
+  const blocker = useBlocker({
+    enableBeforeUnload: false,
+    shouldBlockFn: () => record.dirty || otherChanges,
+    withResolver: true,
+  });
   const guard = useUnsavedChangesGuard({
     draft: record,
+    navigation: blocker,
     onDiscard: () => setMembershipDraft(record.confirmed),
-    otherChanges: editor.kind === 'role' && roleInput,
+    otherChanges,
   });
   const handleReloadLatest = () => record.adopt(membershipDraftOf(baseOf(person)));
   const requestClose = () => {
@@ -263,10 +271,10 @@ const PeopleEditor = ({
             </>
           ) : (
             <>
-              <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
               <Button onClick={requestClose} theme="outlined" variant="secondary">
                 Zavřít
               </Button>
+              <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
             </>
           )
         }

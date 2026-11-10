@@ -4,7 +4,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
 import type { DraftSave, SaveOutcome, UnsavedChangesGuard } from '@app/admin-ui';
-import { Effect } from 'effect';
+import { Effect, Equal, Option } from 'effect';
 import { useEffect, useRef, useState } from 'react';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { productCommandOutcome } from './products-api.ts';
@@ -37,6 +37,12 @@ export interface ProductTabSaveOptions<V> {
   readonly reset: (value: V) => void;
   /** The catalog revision the command is sent against. */
   readonly revision: number;
+  /**
+   * The product as the page has it now, in the form's shape (recomputed on every render is fine). A clean draft
+   * takes a newer version; a draft with unsaved changes keeps them, and its save stays based on the revision it
+   * started from.
+   */
+  readonly server: V;
   /** The form's current draft. */
   readonly value: V;
 }
@@ -89,6 +95,34 @@ export const useProductTabSave = <V,>(options: ProductTabSaveOptions<V>): Produc
       base.current = Math.max(base.current, options.revision);
     }
   }, [options.revision, pending]);
+  // A reloaded product (after a save of another tab, a photo change or live revalidation) replaces a clean draft
+  // only. A draft with unsaved changes stays; once it is clean again it takes the version that was passed over,
+  // unless a save of this form confirmed a newer one in the meantime.
+  const [seen, setSeen] = useState(options.server);
+  const [passedOver, setPassedOver] = useState<Option.Option<V>>(Option.none);
+  const { adopt, confirmed } = draft;
+  const { reset, server, value } = options;
+  const clean = !pending && Equal.equals(value, confirmed);
+  const takeServer = () => {
+    reset(server);
+    adopt(server);
+  };
+  if (!Equal.equals(seen, server)) {
+    setSeen(server);
+    if (clean) {
+      setPassedOver(Option.none());
+      if (!Equal.equals(value, server)) {
+        takeServer();
+      }
+    } else {
+      setPassedOver(Option.some(confirmed));
+    }
+  } else if (clean && Option.isSome(passedOver)) {
+    setPassedOver(Option.none());
+    if (Equal.equals(confirmed, passedOver.value) && !Equal.equals(value, server)) {
+      takeServer();
+    }
+  }
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => draft.dirty, withResolver: true });
   const guard = useUnsavedChangesGuard({
     draft,

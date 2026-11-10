@@ -1,4 +1,5 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { financeBrowserRuntime } from '../../../runtime/browser.ts';
 import { Effect, Option } from 'effect';
 import {
@@ -171,7 +172,8 @@ const PriceItemEditDialog = ({
       base.current = server;
     }
   }, [base, server, settledOnServer]);
-  const guard = useUnsavedChangesGuard({ draft: record, onDiscard: record.discard });
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
   const close = () => {
     guard.request(onClose);
   };
@@ -184,10 +186,10 @@ const PriceItemEditDialog = ({
       <Dialog
         actions={
           <>
-            <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
             <Button onClick={close} theme="outlined" variant="secondary">
               {t('finance-billing.financeUi.priceList.close')}
             </Button>
+            <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
           </>
         }
         closeLabel={dialogCloseLabel}
@@ -251,7 +253,8 @@ const PriceItemCreateDialog = ({
       }),
     value: draft,
   });
-  const guard = useUnsavedChangesGuard({ draft: record, onDiscard: () => setDraft(initial) });
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: () => setDraft(initial) });
   const labels = saveLabelsFor(language);
   const close = () => {
     guard.request(onClose);
@@ -262,15 +265,15 @@ const PriceItemCreateDialog = ({
       <Dialog
         actions={
           <>
+            <Button onClick={close} theme="outlined" variant="secondary">
+              {t('finance-billing.financeUi.priceList.cancel')}
+            </Button>
             <SaveBar
               labels={labels}
               onReloadLatest={() => setDraft(initial)}
               onSave={handleSave}
               status={record.status}
             />
-            <Button onClick={close} theme="outlined" variant="secondary">
-              {t('finance-billing.financeUi.priceList.cancel')}
-            </Button>
           </>
         }
         closeLabel={dialogCloseLabel}

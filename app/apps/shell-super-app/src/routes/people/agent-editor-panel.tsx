@@ -21,6 +21,7 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Effect, Option, Schema } from 'effect';
 import type { HttpClient } from 'effect/http';
 import { useState } from 'react';
@@ -97,8 +98,10 @@ export const AgentEditorPanel = (props: AgentEditorPanelProps) => {
     showErrors && error !== undefined
       ? { helpText: t(`${key}.errors.${error}`), validateStatus: 'error' as const }
       : {};
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
   const guard = useUnsavedChangesGuard({
     draft: record,
+    navigation: blocker,
     onDiscard: () => setDraft(record.confirmed),
   });
 
@@ -108,6 +111,9 @@ export const AgentEditorPanel = (props: AgentEditorPanelProps) => {
       <SidePanel
         actions={
           <>
+            <Button onClick={() => guard.request(onClose)} theme="outlined" variant="secondary">
+              {t(`${key}.cancel`)}
+            </Button>
             <SaveBar
               error={serverError}
               labels={labels}
@@ -115,9 +121,6 @@ export const AgentEditorPanel = (props: AgentEditorPanelProps) => {
               onSave={handleSave}
               status={record.status}
             />
-            <Button onClick={() => guard.request(onClose)} theme="outlined" variant="secondary">
-              {t(`${key}.cancel`)}
-            </Button>
           </>
         }
         description={t(`${key}.createDescription`)}

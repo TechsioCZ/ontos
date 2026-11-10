@@ -1,4 +1,5 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { financeBrowserRuntime } from '../../../runtime/browser.ts';
 import {
   SaveBar,
@@ -516,7 +517,8 @@ const PaymentTermsDialog = ({
   const problems = paymentTermsProblems(draft);
   const change = (field: keyof PaymentTermsDraft) => (value: string) =>
     record.setDraft((current) => ({ ...current, [field]: value }));
-  const guard = useUnsavedChangesGuard({ draft: record, onDiscard: record.discard });
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
   const close = () => {
     guard.request(onClose);
   };
@@ -528,10 +530,10 @@ const PaymentTermsDialog = ({
       <Dialog
         actions={
           <>
-            <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
             <Button onClick={close} theme="outlined" variant="secondary">
               Zavřít
             </Button>
+            <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
           </>
         }
         closeLabel={dialogCloseLabel}

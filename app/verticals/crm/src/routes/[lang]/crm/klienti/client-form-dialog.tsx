@@ -1,4 +1,5 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { Effect } from 'effect';
 import { assignableSalespeople } from '../../../../crm/records.ts';
@@ -262,12 +263,14 @@ const useClientForm = ({
 
   const handleRemoveContact = (key: number) => setContacts((current) => current.filter((item) => item.key !== key));
 
-  const guard = useUnsavedChangesGuard({
-    draft: record,
-    onDiscard: record.discard,
-    // A new client's contact persons are not part of the draft, but they are typed input that a leave would lose.
-    otherChanges: mode === 'create' && contacts.some(contactFilled),
+  // A new client's contact persons are not part of the draft, but they are typed input that a leave would lose.
+  const otherChanges = mode === 'create' && contacts.some(contactFilled);
+  const blocker = useBlocker({
+    enableBeforeUnload: false,
+    shouldBlockFn: () => record.dirty || otherChanges,
+    withResolver: true,
   });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard, otherChanges });
 
   const organization = draft.kind === 'organization';
   const nameError = touched && draft.name.trim() === '' ? 'Vyplňte název' : undefined;
@@ -405,10 +408,10 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
           </>
         ) : (
           <>
-            <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
             <Button onClick={close} theme="outlined" variant="secondary">
               Zavřít
             </Button>
+            <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
           </>
         )
       }

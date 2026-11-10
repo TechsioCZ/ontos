@@ -17,6 +17,10 @@ import { initialCrmState } from '../../shared/domain/state.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 
 rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+// Outside a router: no route change is ever blocked here.
+rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
+  useBlocker: () => ({ status: 'idle' }),
+}));
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
 }));

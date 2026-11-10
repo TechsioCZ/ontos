@@ -349,6 +349,7 @@ const useVariantsPanel = ({
     onSaved: () => onCommitted('Varianty uloženy. Nové ceny uvidí zákazník v e-shopu po obnovení stránky.'),
     reset: setDrafts,
     revision,
+    server: variantDraftsOf(product),
     value: drafts,
   });
 
@@ -733,6 +734,12 @@ const slugInvalidOf = (slug: string) => slug.trim() !== '' && !/^[a-z0-9-]{1,120
  * Save button sends one UpdateProduct, and leaving with unsaved changes asks first. Archiving a DEMO product stays its
  * own command.
  */
+const eshopDraftOf = (product: ProductRecord): EshopDraft => ({
+  published: product.published !== false,
+  slug: product.slug ?? '',
+  stockTracked: product.stockTracked !== false,
+});
+
 const useEshopPanel = ({
   canWrite,
   onArchived,
@@ -743,11 +750,7 @@ const useEshopPanel = ({
   storefrontOrigin,
 }: PanelProps) => {
   const failure = useCommandFailure();
-  const [form, setForm] = useState<EshopDraft>(() => ({
-    published: product.published !== false,
-    slug: product.slug ?? '',
-    stockTracked: product.stockTracked !== false,
-  }));
+  const [form, setForm] = useState<EshopDraft>(() => eshopDraftOf(product));
   const { published, slug, stockTracked } = form;
   const setSlug = (next: string) => setForm((current) => ({ ...current, slug: next }));
   const setPublished = (next: boolean) => setForm((current) => ({ ...current, published: next }));
@@ -786,6 +789,7 @@ const useEshopPanel = ({
     onSaved: () => onCommitted('Nastavení e-shopu uloženo.'),
     reset: setForm,
     revision,
+    server: eshopDraftOf(product),
     value: form,
   });
 

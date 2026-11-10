@@ -1,4 +1,5 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -236,7 +237,8 @@ const CategoryEditPanel = ({ category, onBack, onSaved, parentName, revision, si
       ),
     server: draftOf(category),
   });
-  const guard = useUnsavedChangesGuard({ draft: record, onDiscard: record.discard });
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
   const { draft } = record;
   const errors = categoryDraftErrors(draft);
   const patchDraft = (patch: Partial<CategoryDraft>) => record.setDraft((current) => ({ ...current, ...patch }));

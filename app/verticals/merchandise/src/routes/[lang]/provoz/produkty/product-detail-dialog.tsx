@@ -553,7 +553,6 @@ export const ProductDetailView = ({
               active={tab === 'variants'}
               canMoveStock={canMoveStock}
               canWrite={canWrite}
-              key={`variants-${DateTime.formatIso(product.updatedAt)}`}
               onCommitted={onCommitted}
               onReload={onReload}
               onStockCommitted={followStockCommit}
@@ -575,7 +574,6 @@ export const ProductDetailView = ({
               {...(storefrontOrigin === undefined ? {} : { storefrontOrigin })}
               active={tab === 'eshop'}
               canWrite={canWrite}
-              key={`eshop-${DateTime.formatIso(product.updatedAt)}`}
               onArchived={onBack}
               onCommitted={onCommitted}
               onReload={onReload}
@@ -589,7 +587,6 @@ export const ProductDetailView = ({
               canWrite={canWrite}
               category={category}
               hasCategoryTree={hasCategoryTree}
-              key={`content-${DateTime.formatIso(product.updatedAt)}`}
               onCommitted={onCommitted}
               onReload={onReload}
               product={product}

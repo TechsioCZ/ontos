@@ -120,8 +120,12 @@ export const CatalogContentPanel = ({
     isValid: (value) => !parametersInvalidOf(value.parameters),
     onReload,
     onSaved: () => onCommitted('Obsah e-shopu uložen. Změnu uvidí zákazník po obnovení stránky.'),
-    reset: setForm,
+    reset: (next) => {
+      setForm(next);
+      nextKey.current = Math.max(nextKey.current, next.parameters.length);
+    },
     revision,
+    server: contentDraftOf(product),
     value: form,
   });
 

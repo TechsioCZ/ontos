@@ -9,6 +9,10 @@ import { ProjectEditor } from '../../src/routes/[lang]/ukoly/work-planning.tsx';
 import { ProjectSchema } from '../../shared/apis/records.ts';
 import type { WorkProject } from '../../shared/apis/records.ts';
 
+// Outside a router: no route change is ever blocked here.
+rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
+  useBlocker: () => ({ status: 'idle' }),
+}));
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
 }));

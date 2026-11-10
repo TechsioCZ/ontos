@@ -1,4 +1,5 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import {
   EmptyState,
   SaveBar,
@@ -203,7 +204,12 @@ export const ProjectEditor = ({
   const pendingPlan = pendingProposal(proposed, planOf(draft));
   const status: SaveState = Option.isSome(pendingPlan) ? 'proposed' : record.status;
   // Nothing in this panel is sent except by its Save button; every way out asks first while the draft is unsaved.
-  const guard = useUnsavedChangesGuard({ draft: record, onDiscard: () => setDraft(record.confirmed) });
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({
+    draft: record,
+    navigation: blocker,
+    onDiscard: () => setDraft(record.confirmed),
+  });
   const labels = saveLabelsFor(language);
   const handleSave = record.save;
   return (

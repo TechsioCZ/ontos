@@ -902,10 +902,10 @@ const RentTermsPanel = ({ occupancy, state }: { readonly occupancy: Occupancy; r
     <SidePanel
       actions={
         <>
-          <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
           <Button onClick={close} theme="outlined" variant="secondary">
             {t(LABEL_CLOSE)}
           </Button>
+          <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
         </>
       }
       closeLabel={t(LABEL_CLOSE)}

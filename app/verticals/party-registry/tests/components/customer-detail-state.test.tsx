@@ -16,7 +16,27 @@ import { expectHumanReadable } from '../support/visible-text.ts';
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
 }));
+/** The router's blocker: `shouldBlock` is what the panel asks it to block on, `status` what the router answers. */
+interface Navigation {
+  readonly proceed: () => void;
+  readonly reset: () => void;
+  shouldBlock: () => boolean;
+  status: 'blocked' | 'idle';
+}
+const { navigation } = rstest.hoisted(() => {
+  const state: Navigation = {
+    proceed: rstest.fn<() => void>(),
+    reset: rstest.fn<() => void>(),
+    shouldBlock: () => false,
+    status: 'idle',
+  };
+  return { navigation: state };
+});
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
+  useBlocker: (options: { readonly shouldBlockFn: () => boolean }) => {
+    navigation.shouldBlock = options.shouldBlockFn;
+    return { proceed: navigation.proceed, reset: navigation.reset, status: navigation.status };
+  },
   useRouterState: () => '/cs/prodej/zakaznici',
 }));
 
@@ -106,6 +126,7 @@ const afterParty = { ...party, displayName: Option.some('After'), revision: 2 };
 
 beforeEach(() => {
   rstest.clearAllMocks();
+  navigation.status = 'idle';
   rstest.mocked(executeCounterpartyRead).mockReturnValue(Effect.succeed(snapshot.counterparty));
   if (snapshot.identity.status === 'ready') {
     rstest
@@ -209,6 +230,25 @@ it.live('closing with unsaved text asks first and leaving discards without writi
     fireEvent.click(screen.getByRole('button', { name: 'Zahodit změny' }));
     yield* Effect.sleep('1 second');
     expect(close).toHaveBeenCalledWith(false);
+    expect(updateParty).not.toHaveBeenCalled();
+  }),
+);
+
+it.live('a route change from the peek panel with unsaved text asks first; Zůstat keeps the draft', () =>
+  Effect.gen(function* routeChangeAsks() {
+    const { rerender } = render(detailDialog(snapshot));
+    expect(navigation.shouldBlock()).toBe(false);
+    fillBasis();
+    fireEvent.change(nameField(), { target: { value: 'After' } });
+    yield* Effect.promise(() => waitFor(() => expect(navigation.shouldBlock()).toBe(true)));
+    // A Shell link next to the peek panel: the router holds the navigation and the panel asks.
+    navigation.status = 'blocked';
+    rerender(detailDialog(snapshot));
+    yield* Effect.promise(() => waitFor(() => expect(screen.getByRole('button', { name: 'Zůstat' })).toBeTruthy()));
+    fireEvent.click(screen.getByRole('button', { name: 'Zůstat' }));
+    expect(navigation.reset).toHaveBeenCalledTimes(1);
+    expect(navigation.proceed).not.toHaveBeenCalled();
+    expect(nameField().value).toBe('After');
     expect(updateParty).not.toHaveBeenCalled();
   }),
 );

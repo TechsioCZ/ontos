@@ -37,7 +37,7 @@ rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   }),
 }));
 
-const product = Schema.decodeSync(ProductRecordSchema)({
+const productInput: typeof ProductRecordSchema.Encoded = {
   active: true,
   category: 'Zrnková káva',
   createdAt: '2026-10-20T09:00:00.000Z',
@@ -56,7 +56,15 @@ const product = Schema.decodeSync(ProductRecordSchema)({
   updatedAt: '2026-10-20T09:00:00.000Z',
   variants: [],
   vatRate: 12,
-});
+};
+const product = Schema.decodeSync(ProductRecordSchema)(productInput);
+
+/** The product the page passes in; a test replaces it to deliver a reloaded record. */
+let shown = product;
+
+/** The record as a reload delivers it after someone saved it: a newer `updatedAt` and the given changes. */
+const reloaded = (changes: Partial<typeof ProductRecordSchema.Encoded>) =>
+  Schema.decodeSync(ProductRecordSchema)({ ...productInput, ...changes, updatedAt: '2026-10-21T09:00:00.000Z' });
 
 const commands = () => rstest.mocked(executeManageCatalog).mock.calls.map(([payload]) => payload.command._tag);
 
@@ -83,7 +91,7 @@ const mount = async () => {
           onCommitted={constVoid}
           onReload={constVoid}
           onTabChange={constVoid}
-          product={product}
+          product={shown}
           revision={1}
           tab="detail"
         />,
@@ -118,16 +126,21 @@ const button = (name: string): HTMLButtonElement => {
 const nameField = (): HTMLInputElement =>
   Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>('input[id="detail-name"]')));
 
+const fieldById = (id: string): HTMLInputElement =>
+  Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>(`input[id="${id}"]`)));
+
 /** Types like a user, then leaves the field: React sees native input and blur events. */
-const typeName = async (value: string) => {
+const typeInto = async (id: string, value: string) => {
   await act(async () => {
-    const field = nameField();
+    const field = fieldById(id);
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(field, value);
     field.dispatchEvent(new Event('input', { bubbles: true }));
     field.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
     await settle();
   });
 };
+
+const typeName = (value: string) => typeInto('detail-name', value);
 
 const click = async (target: HTMLElement) => {
   await act(async () => {
@@ -154,6 +167,7 @@ beforeEach(() => {
   navigation.proceeded = 0;
   navigation.reset = 0;
   navigation.status = 'idle';
+  shown = product;
 });
 
 afterEach(() => {
@@ -228,6 +242,35 @@ describe('product editor with one Save button', () => {
       expect(navigation.reset).toBe(1);
       expect(navigation.proceeded).toBe(0);
       expect(nameField().value).toBe('Etiopie B');
+    }),
+  );
+
+  it.effect('a reloaded product keeps the unsaved draft of another tab and asks before it is left', () =>
+    Effect.gen(function* keepTabDraft() {
+      const view = yield* Effect.promise(mount);
+      yield* Effect.promise(() => typeInto('content-image-alt', 'Balení kávy'));
+      yield* Effect.promise(() => typeInto('eshop-slug', 'etiopie-b'));
+      // Another tab was saved, or a photo changed: the page passes the re-read product in.
+      shown = reloaded({ name: 'Etiopie 2' });
+      yield* Effect.promise(view.rerender);
+      expect(fieldById('content-image-alt').value).toBe('Balení kávy');
+      expect(fieldById('eshop-slug').value).toBe('etiopie-b');
+
+      navigation.status = 'blocked';
+      yield* Effect.promise(view.rerender);
+      expect(buttons('Zůstat').length).toBeGreaterThan(0);
+      expect(commands()).toEqual([]);
+    }),
+  );
+
+  it.effect('a clean tab takes the reloaded product', () =>
+    Effect.gen(function* cleanTabFollows() {
+      const view = yield* Effect.promise(mount);
+      shown = reloaded({ imageAlt: 'Nový popis', slug: 'etiopie-nova' });
+      yield* Effect.promise(view.rerender);
+      expect(fieldById('content-image-alt').value).toBe('Nový popis');
+      expect(fieldById('eshop-slug').value).toBe('etiopie-nova');
+      expect(commands()).toEqual([]);
     }),
   );
 });

@@ -1,6 +1,7 @@
 import type { RefObject } from 'react';
-import { useImperativeHandle } from 'react';
+import { useImperativeHandle, useLayoutEffect, useRef } from 'react';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { SidePanel } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
@@ -35,6 +36,10 @@ const CustomerDetailView = ({
 }: CustomerDetailViewProps) => {
   const { t } = useModernI18n();
   const toaster = useToast();
+  // Route navigation (Back, Shell links) with unsaved edits asks the detail's question first: the peek panel leaves
+  // the rest of the Shell clickable.
+  const unsaved = useRef(false);
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => unsaved.current, withResolver: true });
   const detail = useCustomerDetail(
     customer,
     initialSnapshot,
@@ -44,7 +49,13 @@ const CustomerDetailView = ({
       toaster.create({ title: t(`${CUSTOMER_DETAIL_KEY}.toastRenamed`), type: 'success' });
     },
     t,
+    undefined,
+    blocker,
   );
+  // Before the detail's own effects run, so a navigation it starts after a save or discard is not blocked again.
+  useLayoutEffect(() => {
+    unsaved.current = detail.guard.dirty;
+  }, [detail.guard.dirty]);
   const { name } = customerIdentitySummary(customer, detail.party);
   // The panel asks the guard itself before it reports a dismissal; a command in flight keeps it open.
   const handleOpenChange = (open: boolean) => {

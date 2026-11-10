@@ -42,6 +42,10 @@ const { commands } = rstest.hoisted(() => ({
     role: rstest.fn(),
   },
 }));
+// Outside a router: no route change is ever blocked here.
+rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
+  useBlocker: () => ({ status: 'idle' }),
+}));
 rstest.mock('../../src/routes/people/people-client.ts', () => ({
   changeCompanyMembership: commands.membership,
   changePersonRole: commands.role,

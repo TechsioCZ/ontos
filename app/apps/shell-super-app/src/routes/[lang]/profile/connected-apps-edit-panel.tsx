@@ -1,4 +1,5 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Effect } from 'effect';
 import type { ConnectionSummary } from '@app/shared-contracts/agent-access';
 import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
@@ -80,8 +81,10 @@ export const ConnectedAppsEditPanel = ({
     }
     onClose();
   };
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
   const guard = useUnsavedChangesGuard({
     draft: record,
+    navigation: blocker,
     onDiscard: () => setDraft(record.confirmed),
   });
   const requestClose = () => {
@@ -94,15 +97,15 @@ export const ConnectedAppsEditPanel = ({
       <Dialog
         actions={
           <>
+            <Button onClick={requestClose} theme="outlined" variant="secondary">
+              Zavřít
+            </Button>
             <SaveBar
               labels={labels}
               onReloadLatest={() => record.adopt(draftFromConnection(connection))}
               onSave={handleSave}
               status={record.status}
             />
-            <Button onClick={requestClose} theme="outlined" variant="secondary">
-              Zavřít
-            </Button>
           </>
         }
         closeLabel="Zavřít"
