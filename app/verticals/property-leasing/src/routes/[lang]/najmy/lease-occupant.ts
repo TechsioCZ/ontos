@@ -11,6 +11,7 @@ import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { executeCounterpartyRead, executePartyDetail, listCustomers } from '@app/party-registry/api/client';
 import { executeRecords as executePropertyRecords } from '@app/property-portfolio/clients/records';
 import { executeRecords as executeAgreementsRecords } from '@app/legal-agreements/clients/records';
+import { useHeldSnapshot } from '@app/admin-ui';
 import { Effect, Option, Result, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { useEffect, useEffectEvent, useSyncExternalStore } from 'react';
@@ -230,10 +231,16 @@ export const preloadPage = modulePagePreload(prepareLeasePage);
 /** Foreground uses the exact authorized base row/revision and joins a visible-row read. */
 export const useLeaseData = (input: LeaseInput, search: Option.Option<RecordsSearch>) => {
   const resourceId = Option.getOrUndefined(search)?.resourceId;
-  const records = useSyncExternalStore(
-    (listener) => leaseRecords.subscribe(listener, input),
-    () => leaseRecords.snapshot(input),
-    () => pageDataPending,
+  // The base records are strict (`retainStale: false`): every background reload (a live change, the 20 s freshness, a
+  // settled write) reads `pending`. Without the held snapshot the selected lease turns undefined for that moment, its
+  // rent terms and tenant dossier forms unmount and lose what the user typed. A failed or denied read still replaces it.
+  const records = useHeldSnapshot(
+    leaseRecords.key(input),
+    useSyncExternalStore(
+      (listener) => leaseRecords.subscribe(listener, input),
+      () => leaseRecords.snapshot(input),
+      () => pageDataPending,
+    ),
   );
   const current = records.state === 'ready' ? records.value.records : undefined;
   const record = current?.occupancies.find((row) => row.occupancyRef.resourceId === resourceId);
