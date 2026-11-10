@@ -44,22 +44,22 @@ describe('product detail autosave draft', () => {
   });
 
   it('sends only the changed fields and a changed price as its own change', () => {
-    const untouched = detailSaveOf(saved, product);
+    const untouched = detailSaveOf(saved, saved);
     expect(untouched.patch).toEqual({});
     expect(untouched.priceChanged).toBe(false);
 
-    const renamed = detailSaveOf({ ...saved, active: false, name: ' Etiopie B ' }, product);
+    const renamed = detailSaveOf({ ...saved, active: false, name: ' Etiopie B ' }, saved);
     expect(renamed.patch).toEqual({ active: false, name: 'Etiopie B' });
     expect(renamed.priceChanged).toBe(false);
 
-    const repriced = detailSaveOf({ ...saved, priceCzk: 300 }, product);
+    const repriced = detailSaveOf({ ...saved, priceCzk: 300 }, saved);
     expect(repriced.patch).toEqual({});
     expect(repriced.priceChanged).toBe(true);
     expect(repriced.priceMinor).toBe(30_000);
 
     const edited = detailSaveOf(
       { ...saved, description: 'Nová káva', lowStock: 5, shortDescription: '', vatRate: 21 },
-      product,
+      saved,
     );
     expect(edited.patch).toMatchObject({
       description: 'Nová káva',
