@@ -5513,7 +5513,11 @@ it.live(
               gateway: { issuer: fixture.origin, publicJwks: gatewayMaterial.publicJwks },
               port: Number(new URL(customerContext.origin).port),
               relativeDirectory: '../../verticals/commerce-customer-context',
-              relaySource: { apiKey: issued.secret, shellBaseUrl: `${fixture.origin}/shell-super-app-api` },
+              relaySource: {
+                apiKey: issued.secret,
+                shellBaseUrl: `${fixture.origin}/shell-super-app-api`,
+                tenantId: fixture.core.tenantId,
+              },
             });
             children.push(enrolledCustomerContext.child);
             expect(enrolledCustomerContext.origin).toBe(customerContext.origin);
