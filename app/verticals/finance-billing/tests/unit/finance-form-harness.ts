@@ -121,6 +121,7 @@ export const fakeVm = (
       opportunitiesForbidden: false,
       opportunityTitles: new Map(),
       products: [],
+      productsFailed: false,
       productsReadable: false,
       referencesFailed: false,
     },
