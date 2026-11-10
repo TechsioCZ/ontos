@@ -1,11 +1,12 @@
 import type { ModuleCredentialEnrolment } from '@app/core-runtime/auth/module-credentials';
 import { GatewayAudienceSchema } from '@app/shared-contracts';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import { delegationForbidden, delegationUnavailable } from './gateway-delegation-errors.ts';
 import { GatewayDelegationPolicyUnavailable } from './gateway-delegation-policy-unavailable.ts';
 import { ModuleCredentialEnrolmentSource } from './module-credential-enrolment.service.ts';
+import type { AttestedModuleCredential } from './module-credential-enrolment.service.ts';
 
 export { GatewayDelegationPolicyUnavailable } from './gateway-delegation-policy-unavailable.ts';
 export {
@@ -36,11 +37,14 @@ const bindingsSchema = Schema.Array(GatewayModuleBindingSchema).check(
 );
 
 /**
- * The bindings of the installed release: each enrolled credential of an installed module, pinned to that module's
- * build and the release's composition revision. A credential of a module this release does not install binds nothing.
+ * The bindings of the installed release. A credential binds only what its issuing host attested with the key: its
+ * module, that module's build marker and the composition revision of the issuing host's release. It binds while the
+ * installed release has exactly that build of that module at exactly that revision, and nothing otherwise, so during a
+ * deploy overlap only the keys issued for the release that holds the authority bind; an older or newer host's keys,
+ * a key without an attestation and a key of a module this release does not install all bind nothing.
  */
 export const deriveGatewayModuleBindings = (
-  enrolment: readonly Pick<ModuleCredentialEnrolment, 'appId' | 'providerKeyId'>[],
+  enrolment: readonly Pick<AttestedModuleCredential, 'appId' | 'attestation' | 'providerKeyId'>[],
   installed: {
     readonly composition: { readonly revision: string };
     readonly contracts: readonly { readonly deployment: { readonly appId: string; readonly buildMarker: string } }[];
@@ -48,26 +52,33 @@ export const deriveGatewayModuleBindings = (
 ) =>
   Schema.decodeUnknownEffect(bindingsSchema)(
     enrolment.flatMap((credential) => {
+      if (Option.isNone(credential.attestation)) {
+        return [];
+      }
+      const attested = credential.attestation.value;
       const contract = installed.contracts.find((candidate) => candidate.deployment.appId === credential.appId);
-      return contract === undefined
+      return contract === undefined ||
+        attested.appId !== credential.appId ||
+        attested.buildMarker !== contract.deployment.buildMarker ||
+        attested.compositionRevision !== installed.composition.revision
         ? []
         : [
             {
-              compositionRevision: installed.composition.revision,
+              compositionRevision: attested.compositionRevision,
               providerKeyId: credential.providerKeyId,
               sourceAppId: credential.appId,
-              sourceBuildMarker: contract.deployment.buildMarker,
+              sourceBuildMarker: attested.buildMarker,
             },
           ];
     }),
   ).pipe(Effect.mapError((cause) => new GatewayDelegationPolicyUnavailable({ cause })));
 
 /**
- * The bindings for this request, derived from the platform's enrolment and the installed release, so they always
- * name the release that is live now. An unreadable enrolment or release fails the load; it is never read as "none".
+ * The bindings for this request, derived from the platform's attested enrolment and the installed release, so they
+ * always name the release that is live now. An unreadable enrolment or release fails the load; it is never "none".
  */
 export const loadGatewayModuleBindings = Effect.gen(function* loadDerivedGatewayModuleBindings() {
-  const enrolment = yield* (yield* ModuleCredentialEnrolmentSource).load;
+  const enrolment = yield* (yield* ModuleCredentialEnrolmentSource).loadAttested;
   const installed = yield* (yield* ShellInstalledModuleCatalog).load.pipe(
     Effect.mapError((cause) => new GatewayDelegationPolicyUnavailable({ cause })),
   );
@@ -82,15 +93,24 @@ export const isGatewayModuleCredential = (
 
 /**
  * Refuses a verified key that is any enrolled module credential, installed module or not: it may only issue through
- * the delegated endpoint. An unreadable enrolment fails as unavailable; it is never read as "no module key".
+ * the delegated endpoint. An unreadable enrolment fails as unavailable; it is never read as "no module key". Every
+ * API-key entry point other than the delegated endpoint admits its verified key through this check.
  */
-export const admitIntegrationCredential = Effect.fn('GatewayDelegationPolicy.admitIntegrationCredential')(
-  function* admitIntegrationCredential(providerKeyId: string) {
-    const enrolment = yield* (yield* ModuleCredentialEnrolmentSource).load.pipe(Effect.mapError(delegationUnavailable));
+export const admitIntegrationCredentialFrom = (source: typeof ModuleCredentialEnrolmentSource.Service) =>
+  Effect.fn('GatewayDelegationPolicy.admitIntegrationCredential')(function* admitIntegrationCredential(
+    providerKeyId: string,
+  ) {
+    const enrolment = yield* source.load.pipe(Effect.mapError(delegationUnavailable));
     if (isGatewayModuleCredential(enrolment, providerKeyId)) {
       return yield* delegationForbidden();
     }
     return yield* Effect.void;
+  });
+
+/** The same check against the enrolment source of the current context. */
+export const admitIntegrationCredential = Effect.fn('GatewayDelegationPolicy.admitIntegrationCredentialInContext')(
+  function* admitIntegrationCredentialInContext(providerKeyId: string) {
+    return yield* admitIntegrationCredentialFrom(yield* ModuleCredentialEnrolmentSource)(providerKeyId);
   },
 );
 

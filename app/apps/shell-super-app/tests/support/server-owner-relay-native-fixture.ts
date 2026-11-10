@@ -19,6 +19,7 @@ import { GatewayIssuer } from '../../api/auth/gateway-issuer.ts';
 import { ApiKeyService, makeApiKeyService } from '../../api/auth/api-key-service.ts';
 import { AuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase } from '../../api/auth/db/client.ts';
+import { moduleCredentialReleaseOf } from '../../api/auth/module-credential-attestation.ts';
 import { provisionModuleCredentials } from '../../api/auth/module-credential-provisioning.service.ts';
 
 const SHELL_APP_ID = 'shell-super-app';
@@ -636,6 +637,13 @@ export const runRegisteredPostalFactoryProbe = Effect.fn('ServerOwnerRelayNative
 export const provisionSourceModuleCredential = Effect.fn('ServerOwnerRelayNative.provisionSourceModuleCredential')(
   function* provisionSourceModuleCredential(input: {
     readonly appId: string;
+    /** The composition the Shell serves; the key is attested for its revision and the module's build. */
+    readonly composition: {
+      readonly composition: {
+        readonly modules: readonly { readonly deployment: { readonly appId: string; readonly buildMarker: string } }[];
+        readonly revision: string;
+      };
+    };
     readonly configuration: typeof AuthConfig.Service;
     readonly database: (typeof CoreDatabase.Service)['executor'];
     readonly persistence: typeof AuthDatabase.Service;
@@ -647,7 +655,12 @@ export const provisionSourceModuleCredential = Effect.fn('ServerOwnerRelayNative
     );
     const provisioned = yield* provisionModuleCredentials({
       appIds: [input.appId],
+      hostId: 'server-owner-relay-native',
       operationId: yield* crypto.randomUUIDv4(),
+      release: moduleCredentialReleaseOf({
+        composition: input.composition.composition,
+        contracts: input.composition.composition.modules,
+      }),
     }).pipe(
       Effect.provideService(ApiKeyService, keys),
       Effect.provideService(AuthDatabase, input.persistence),

@@ -247,6 +247,14 @@ export const serve = Effect.scoped(
       catch: () => unavailable('module-credential-provisioning-import'),
       try: async () => await import('../../api/auth/module-credential-provisioning.service.ts'),
     });
+    const { installedModuleCatalog, ShellInstalledModuleCatalogLive } = yield* Effect.tryPromise({
+      catch: () => unavailable('installed-module-catalog-import'),
+      try: async () => await import('../../api/modules/installed-module-catalog.ts'),
+    });
+    const { moduleCredentialReleaseOf } = yield* Effect.tryPromise({
+      catch: () => unavailable('module-credential-attestation-import'),
+      try: async () => await import('../../api/auth/module-credential-attestation.ts'),
+    });
     const { loadModuleCredentialEnrolment } = yield* Effect.tryPromise({
       catch: () => unavailable('module-credential-enrolment-import'),
       try: async () => await import('@app/core-runtime/auth/module-credentials'),
@@ -432,9 +440,15 @@ export const serve = Effect.scoped(
           const { enrolment, provisioned } = yield* Effect.scoped(
             Effect.gen(function* provisionModuleCredentialsOnce() {
               const coreDatabase = Context.get(yield* Layer.build(persistence), CoreDatabase);
+              // Attested for the release this composition serves, read exactly as the Shell reads it.
+              const installed = yield* installedModuleCatalog.pipe(
+                Effect.provide(ShellInstalledModuleCatalogLive.pipe(Layer.provide(composition))),
+              );
               const issued = yield* provisionModuleCredentials({
                 appIds: [...MODULE_APP_IDS],
+                hostId: 'preproposal-basis-identity',
                 operationId: yield* crypto.randomUUIDv4(),
+                release: moduleCredentialReleaseOf(installed),
               }).pipe(
                 Effect.provideService(ApiKeyService, keys),
                 Effect.provideService(AuthDatabase, authDatabase),

@@ -17,7 +17,8 @@ import { makeModuleContractFixture } from '@app/core-runtime/testing/module-cont
 import { makeEffectDrizzleAuthAdapter } from '@app/better-auth-effect-drizzle/server';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Cause, ConfigProvider, DateTime, Effect, Exit, Layer, Predicate, Schema } from 'effect';
+import { ModuleAppIdSchema } from '@app/core-runtime/auth/hosted-module-credentials';
+import { Cause, ConfigProvider, DateTime, Effect, Exit, Layer, Option, Predicate, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { Reactivity } from 'effect/reactivity';
 import { SqlClient } from 'effect/sql';
@@ -68,6 +69,8 @@ const callerIdentity: ResolvedPrincipalIdentity = {
 };
 
 interface DelegationCase {
+  /** The release the caller's key was attested for; by default, the release the Shell has installed. */
+  readonly attestedRevision?: string;
   readonly authRows?: DelegationUnitRows;
   readonly authUnavailable?: boolean;
   readonly callerKind?: 'human' | 'service';
@@ -190,6 +193,29 @@ const subjectFor = (token: string, input: DelegationCase) => {
     : { ...originator, legalEntityId: input.originatorLegalEntityId };
 };
 
+/** The catalog module's key as the platform attests it: for the release under test and that release's catalog build. */
+const attestedForCatalogBuild = <Credential extends object>(
+  credential: Credential,
+  installed: {
+    readonly composition: { readonly revision: string };
+    readonly contracts: readonly { readonly deployment: { readonly appId: string; readonly buildMarker: string } }[];
+  },
+) => {
+  const catalogBuild = installed.contracts.find((contract) => contract.deployment.appId === 'catalog');
+  return {
+    ...credential,
+    attestation:
+      catalogBuild === undefined
+        ? Option.none()
+        : Option.some({
+            appId: ModuleAppIdSchema.make('catalog'),
+            buildMarker: catalogBuild.deployment.buildMarker,
+            compositionRevision: installed.composition.revision,
+            ontosModuleCredential: 'attested_v1' as const,
+          }),
+  };
+};
+
 /** Controlled authority collaborators are unit fixtures; native tests establish actual Current admission. */
 const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegationCase(input: DelegationCase = {}) {
   yield* TestClock.setTime(delegationUnitNow * 1000);
@@ -259,6 +285,13 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
   const resolvedScopes: ResolvedScopeRequest[] = [];
   const registrar = capturingScopeGrantRegistrar();
   const installed = yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
+  const catalogEnrolment = {
+    appId: 'catalog',
+    authBindingId: callerIdentity.authBindingId,
+    boundAt: new Date(0),
+    principalId: callerIdentity.principalId,
+    providerKeyId: sourceKeyId,
+  };
   const selectedCatalog = {
     ...installed,
     composition: { ...installed.composition, revision: input.catalogRevision ?? revision },
@@ -295,14 +328,13 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
       Effect.provideService(ConfigProvider.ConfigProvider, provider),
       // The platform enrolled the catalog module's credential; its binding is derived from the installed release.
       Effect.provideService(ModuleCredentialEnrolmentSource, {
-        load: Effect.succeed([
-          {
-            appId: 'catalog',
-            authBindingId: callerIdentity.authBindingId,
-            boundAt: new Date(0),
-            principalId: callerIdentity.principalId,
-            providerKeyId: sourceKeyId,
-          },
+        load: Effect.succeed([catalogEnrolment]),
+        // Issued for the catalog build of the release under test, exactly as the platform attests it.
+        loadAttested: Effect.succeed([
+          attestedForCatalogBuild(catalogEnrolment, {
+            composition: { revision: input.attestedRevision ?? selectedCatalog.composition.revision },
+            contracts: installed.contracts,
+          }),
         ]),
       }),
       Effect.provideService(ShellInstalledModuleCatalog, {
@@ -713,6 +745,8 @@ const cryptoNegatives: readonly (readonly [string, DelegationCase, GatewayDelega
   ['unavailable-verification', { verificationUnavailable: true }, 'unavailable'],
   ['unavailable-current-catalog', { catalogUnavailable: true }, 'unavailable'],
   ['stale-current-composition', { catalogRevision: 'b'.repeat(64), originator: 'ok' }, 'reload_required'],
+  // A key issued for another release (an older or newer host's) binds nothing under the installed one.
+  ['key-attested-for-another-release', { attestedRevision: 'c'.repeat(64) }, 'forbidden'],
   ['denied-current-context', { contextFailure: 'denied' }, 'forbidden'],
   ['unavailable-current-context', { contextFailure: 'unavailable' }, 'unavailable'],
   ['suspended-module', { moduleState: 'suspended' }, 'forbidden'],

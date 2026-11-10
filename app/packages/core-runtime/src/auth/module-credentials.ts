@@ -1,8 +1,14 @@
-import { and, eq, isNull, like } from 'drizzle-orm';
-import { Duration, Effect, Option, Schema } from 'effect';
+import { and, eq, isNull, like, sql } from 'drizzle-orm';
+import { DateTime, Duration, Effect, Option, Schema } from 'effect';
 
 import { stableUuid } from '../access/catalog/stable-id.ts';
-import { principalAuthBindings, principals, tenants } from '../db/schema.ts';
+import {
+  applicationCompositionAuthority,
+  auditEvents,
+  principalAuthBindings,
+  principals,
+  tenants,
+} from '../db/schema.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import { ModuleAppIdSchema } from './hosted-module-credentials.ts';
 import { ModuleCredentialUnavailableError } from './module-credential-unavailable-error.ts';
@@ -216,5 +222,85 @@ export const revokeModuleCredential = Effect.fn('ModuleCredentials.revoke')(func
       tenantId: PLATFORM_TENANT.tenantId,
     })
     .pipe(Effect.mapError(unavailable('The superseded module credential could not be revoked')));
+  return yield* Effect.void;
+});
+
+/** The authority row's revision and when that revision took the authority, if a release holds it. */
+export const loadCompositionAuthorityActivation = Effect.fn('ModuleCredentials.loadAuthorityActivation')(
+  function* loadAuthorityActivation(executor: Pick<CoreDatabaseExecutor, 'select'>) {
+    const [authority] = yield* executor
+      .select({
+        phase: applicationCompositionAuthority.phase,
+        revision: applicationCompositionAuthority.revision,
+        revisionActivatedAt: applicationCompositionAuthority.revisionActivatedAt,
+      })
+      .from(applicationCompositionAuthority)
+      .where(eq(applicationCompositionAuthority.authorityKey, 'active'))
+      .limit(1)
+      .pipe(
+        Effect.timeout(DATABASE_OPERATION_TIMEOUT),
+        Effect.mapError(unavailable('The application composition authority could not be read')),
+      );
+    return Option.fromNullishOr(authority);
+  },
+);
+
+/** One module credential named in an audit row: the module and the key's provider id, never the key. */
+export interface AuditedModuleCredential {
+  readonly appId: string;
+  readonly providerKeyId: string;
+}
+
+/** One issue or retire pass, as the platform tenant's audit records it. */
+export interface ModuleCredentialPass {
+  readonly compositionRevision: string;
+  readonly credentials: readonly AuditedModuleCredential[];
+  /** Retire passes only: the moment the host's revision took the authority, before which credentials are superseded. */
+  readonly cutoff?: Date;
+  readonly failed: readonly string[];
+  readonly hostId: string;
+  readonly kind: 'issued' | 'retired';
+  readonly operationId: string;
+  readonly outcome: 'denied' | 'failed' | 'succeeded';
+  readonly outcomeCode: string;
+}
+
+/**
+ * Writes one system-actor audit row in the platform tenant for an issue or retire pass, as the authentication
+ * observers do: the platform's own server scope, no invented principal, and no key material, only module ids and
+ * provider key ids.
+ */
+export const recordModuleCredentialPass = Effect.fn('ModuleCredentials.recordPass')(function* recordPass(
+  executor: Pick<CoreDatabaseExecutor, 'transaction'>,
+  pass: ModuleCredentialPass,
+) {
+  yield* executor
+    .transaction(
+      Effect.fn('ModuleCredentials.recordPassTransaction')(function* recordScoped(transaction) {
+        yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${PLATFORM_TENANT.tenantId}, true)`);
+        yield* transaction.insert(auditEvents).values({
+          auditProfile: 'sensitive',
+          authMethod: 'system',
+          eventType: `platform.module_credentials.${pass.kind}`,
+          evidenceJson: {
+            compositionRevision: pass.compositionRevision,
+            credentials: pass.credentials.map(({ appId, providerKeyId }) => ({ appId, providerKeyId })),
+            cutoff: pass.cutoff === undefined ? null : DateTime.formatIso(DateTime.makeUnsafe(pass.cutoff)),
+            failed: [...pass.failed],
+            hostId: pass.hostId,
+            operationId: pass.operationId,
+          },
+          outcome: pass.outcome,
+          outcomeCode: pass.outcomeCode,
+          outcomeStage: 'system',
+          principalId: null,
+          targetModuleKey: 'core.identity',
+          targetResourceId: pass.operationId,
+          targetResourceType: 'module_credential_pass',
+          tenantId: PLATFORM_TENANT.tenantId,
+        });
+      }),
+    )
+    .pipe(Effect.mapError(unavailable('The module credential pass could not be audited')));
   return yield* Effect.void;
 });

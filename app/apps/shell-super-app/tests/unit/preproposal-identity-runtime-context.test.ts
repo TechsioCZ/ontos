@@ -57,9 +57,16 @@ rs.mock('@app/core-runtime/auth/module-credentials', () => ({
     }),
 }));
 rs.mock('../../api/auth/module-credential-provisioning.service.ts', () => ({
-  provisionModuleCredentials: ({ appIds }: { readonly appIds: readonly string[] }) =>
+  provisionModuleCredentials: ({
+    appIds,
+    release,
+  }: {
+    readonly appIds: readonly string[];
+    readonly release: { readonly compositionRevision: string };
+  }) =>
     Effect.sync(() => {
       expect(appIds).toEqual(fixture.modules.map(([appId]) => appId));
+      expect(release.compositionRevision).toBe('a'.repeat(64));
       fixture.calls.push('provision-module-credentials');
       return {
         credentials: new Map(appIds.map((appId) => [appId, Redacted.make(`inert-${appId}-key`)] as const)),
@@ -135,6 +142,11 @@ rs.mock('@app/core-runtime/actions/runtime-wiring', () => ({
   ModuleEntrypointGatewayLive: Layer.empty,
   ModuleStateGateLive: Layer.empty,
   OperationalScopeResolverLive: Layer.empty,
+}));
+rs.mock('../../api/modules/installed-module-catalog.ts', () => ({
+  // The release the fixture's composition serves; the platform attests each module credential for it.
+  installedModuleCatalog: Effect.succeed({ composition: { revision: 'a'.repeat(64) }, contracts: [] }),
+  ShellInstalledModuleCatalogLive: Layer.empty,
 }));
 rs.mock('@app/core-runtime/modules/active-application-composition', () => ({
   ActiveApplicationCompositionConfigLive: Layer.empty,

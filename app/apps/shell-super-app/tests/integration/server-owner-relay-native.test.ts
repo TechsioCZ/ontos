@@ -3285,6 +3285,8 @@ it.live(
             // The module credential, provisioned by the platform exactly as on every boot; no person issues it.
             const issued = yield* provisionSourceModuleCredential({
               appId: 'catalog',
+              // Attested for the release the Shell serves.
+              composition: current,
               configuration: fixture.configuration,
               database,
               persistence: fixture.persistence,
@@ -3614,6 +3616,8 @@ it.live(
             // The source module's credential, provisioned by the platform exactly as on every boot; no person issues it.
             const issued = yield* provisionSourceModuleCredential({
               appId: 'catalog',
+              // Attested for the release the Shell serves.
+              composition: current,
               configuration: fixture.configuration,
               database,
               persistence: fixture.persistence,
@@ -4465,6 +4469,8 @@ it.live('completes the real CCC Guest attribution through Party with the origina
           // The source module's credential, provisioned by the platform exactly as on every boot; no person issues it.
           const issued = yield* provisionSourceModuleCredential({
             appId: 'commerce-customer-context',
+            // Attested for the release the Shell serves.
+            composition: current,
             configuration: fixture.configuration,
             database,
             persistence: fixture.persistence,
@@ -5195,6 +5201,8 @@ it.live(
             // The source module's credential, provisioned by the platform exactly as on every boot; no person issues it.
             const issued = yield* provisionSourceModuleCredential({
               appId: 'commerce-customer-context',
+              // Attested for the release the Shell serves.
+              composition: current,
               configuration: fixture.configuration,
               database,
               persistence: fixture.persistence,
@@ -5209,6 +5217,8 @@ it.live(
             // Market's own credential: every module holds its own platform principal and key.
             const marketIssued = yield* provisionSourceModuleCredential({
               appId: 'commerce-market-catalog',
+              // Attested for the release the Shell serves.
+              composition: current,
               configuration: fixture.configuration,
               database,
               persistence: fixture.persistence,

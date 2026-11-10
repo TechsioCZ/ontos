@@ -1,4 +1,5 @@
-import { Cause, Effect, Exit, Layer, Schema } from 'effect';
+import { ModuleAppIdSchema } from '@app/core-runtime/auth/hosted-module-credentials';
+import { Cause, Effect, Exit, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { GatewayDelegationError } from '../../api/auth/gateway-delegation-errors.ts';
 import {
@@ -26,7 +27,19 @@ const binding = Schema.decodeUnknownSync(GatewayModuleBindingSchema)({
   sourceBuildMarker: 'order-build',
 });
 const source = { aud: 'commerce-order', compositionRevision: revision, targetBuildMarker: 'order-build' };
-const orderCredential = { appId: 'commerce-order', providerKeyId: 'order-module-key' };
+/** A key the issuing host attested for this module build and release, as the platform records it with the key. */
+const attested = (appId: string, buildMarker: string, compositionRevision: string) =>
+  Option.some({
+    appId: ModuleAppIdSchema.make(appId),
+    buildMarker,
+    compositionRevision,
+    ontosModuleCredential: 'attested_v1' as const,
+  });
+const orderCredential = {
+  appId: 'commerce-order',
+  attestation: attested('commerce-order', 'order-build', revision),
+  providerKeyId: 'order-module-key',
+};
 const installed = {
   composition: { revision },
   contracts: [{ deployment: { appId: 'commerce-order', buildMarker: 'order-build' } }],
@@ -55,8 +68,9 @@ it.effect('derives each installed module credential pinned to that module build 
   Effect.gen(function* derivedBindings() {
     expect(yield* deriveGatewayModuleBindings([orderCredential], installed)).toEqual([binding]);
     // Both credentials of a module bind while a newer pass overlaps the older one.
+    // Two hosts of the same release (a restart, a second container) hold keys attested for it: both bind.
     const rotated = yield* deriveGatewayModuleBindings(
-      [orderCredential, { appId: 'commerce-order', providerKeyId: 'order-module-key-2' }],
+      [orderCredential, { ...orderCredential, providerKeyId: 'order-module-key-2' }],
       installed,
     );
     expect(rotated.map((entry) => entry.providerKeyId)).toEqual(['order-module-key', 'order-module-key-2']);
@@ -64,10 +78,58 @@ it.effect('derives each installed module credential pinned to that module build 
   }),
 );
 
+it.effect('binds a key only for the module build and release its issuing host attested', () =>
+  Effect.gen(function* attestedOnly() {
+    // Deploy overlap: the older host's key names the older release and build, the newer host's key the newer ones.
+    // Only the keys of the release the Shell has installed bind; the other host's keys bind nothing.
+    const olderHost = {
+      appId: 'commerce-order',
+      attestation: attested('commerce-order', 'order-build-older', otherRevision),
+      providerKeyId: 'older-host-key',
+    };
+    const sameBuildOtherRelease = {
+      appId: 'commerce-order',
+      attestation: attested('commerce-order', 'order-build', otherRevision),
+      providerKeyId: 'other-release-key',
+    };
+    const otherBuildSameRelease = {
+      appId: 'commerce-order',
+      attestation: attested('commerce-order', 'order-build-older', revision),
+      providerKeyId: 'other-build-key',
+    };
+    const unattested = { appId: 'commerce-order', attestation: Option.none(), providerKeyId: 'unattested-key' };
+    const foreignModule = {
+      appId: 'commerce-order',
+      attestation: attested('commerce-cart', 'order-build', revision),
+      providerKeyId: 'foreign-module-key',
+    };
+    const bindings = yield* deriveGatewayModuleBindings(
+      [olderHost, sameBuildOtherRelease, otherBuildSameRelease, unattested, foreignModule, orderCredential],
+      installed,
+    );
+    expect(bindings).toEqual([binding]);
+    // Once the older release is installed again (a rollback), only its keys bind.
+    const rolledBack = yield* deriveGatewayModuleBindings([olderHost, orderCredential], {
+      composition: { revision: otherRevision },
+      contracts: [{ deployment: { appId: 'commerce-order', buildMarker: 'order-build-older' } }],
+    });
+    expect(rolledBack.map((entry) => entry.providerKeyId)).toEqual(['older-host-key']);
+  }),
+);
+
 it.effect('binds nothing for a module the installed release does not run', () =>
   Effect.gen(function* notInstalled() {
     expect(
-      yield* deriveGatewayModuleBindings([{ appId: 'commerce-cart', providerKeyId: 'cart-module-key' }], installed),
+      yield* deriveGatewayModuleBindings(
+        [
+          {
+            appId: 'commerce-cart',
+            attestation: attested('commerce-cart', 'cart-build', revision),
+            providerKeyId: 'cart-module-key',
+          },
+        ],
+        installed,
+      ),
     ).toEqual([]);
   }),
 );
@@ -79,19 +141,21 @@ it.effect('refuses two bindings under one credential', () =>
   }),
 );
 
+const unreadable = Effect.fail(new GatewayDelegationPolicyUnavailable({ cause: 'unreadable' }));
 const unavailableEnrolment = Layer.succeed(ModuleCredentialEnrolmentSource, {
-  load: Effect.fail(new GatewayDelegationPolicyUnavailable({ cause: 'unreadable' })),
+  load: unreadable,
+  loadAttested: unreadable,
 });
+const orderEnrolment = {
+  appId: 'commerce-order',
+  authBindingId: '40000000-0000-4000-8000-000000000001',
+  boundAt: new Date(0),
+  principalId: '20000000-0000-4000-8000-000000000001',
+  providerKeyId: 'order-module-key',
+};
 const enrolledOrder = Layer.succeed(ModuleCredentialEnrolmentSource, {
-  load: Effect.succeed([
-    {
-      appId: 'commerce-order',
-      authBindingId: '40000000-0000-4000-8000-000000000001',
-      boundAt: new Date(0),
-      principalId: '20000000-0000-4000-8000-000000000001',
-      providerKeyId: 'order-module-key',
-    },
-  ]),
+  load: Effect.succeed([orderEnrolment]),
+  loadAttested: Effect.succeed([{ ...orderEnrolment, attestation: orderCredential.attestation }]),
 });
 
 it.effect('derives the bindings of the live release from the enrolment and the installed catalog', () =>

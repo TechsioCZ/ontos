@@ -43,6 +43,8 @@ import { makeAuthenticationService } from '../../api/auth/service.ts';
 import { OAuthConnectionHooksLive } from '../../api/oauth-connections/better-auth-hooks.ts';
 import { OAuthEndpointGuardDataLive } from '../../api/oauth-connections/grant-store.ts';
 import { ApiKeyService, makeApiKeyService } from '../../api/auth/api-key-service.ts';
+import { moduleCredentialReleaseOf } from '../../api/auth/module-credential-attestation.ts';
+import type { ModuleCredentialRelease } from '../../api/auth/module-credential-attestation.ts';
 import { provisionModuleCredentials } from '../../api/auth/module-credential-provisioning.service.ts';
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
@@ -69,10 +71,13 @@ const startupStage = (stage: 'create-user' | 'creator-bootstrap' | 'fixture-runt
 /** Party Registry's module credential, provisioned through the platform's own program. */
 const partyModuleCredential = Effect.fn('PrivacyCompletionShell.partyModuleCredential')(function* partyModuleCredential(
   crypto: Crypto.Crypto,
+  release: ModuleCredentialRelease,
 ) {
   const provisioned = yield* provisionModuleCredentials({
     appIds: [partyAppId],
+    hostId: 'privacy-completion-shell',
     operationId: yield* crypto.randomUUIDv4(),
+    release,
   });
   const secret = provisioned.credentials.get(partyAppId);
   const [providerKeyId] = provisioned.providerKeyIds;
@@ -330,14 +335,14 @@ const serve = Effect.scoped(
     }).pipe(Effect.provideContext(fixtureContext));
     yield* keys.clearPendingCleanup(pending.providerKeyId);
     // The party-registry module credential is provisioned by the platform, as on every environment.
-    const moduleCredential = yield* partyModuleCredential(crypto).pipe(
+    const catalog = yield* makeInstalledModuleCatalogLoader(Effect.succeed(composition));
+    const moduleCredential = yield* partyModuleCredential(crypto, moduleCredentialReleaseOf(catalog)).pipe(
       Effect.provideContext(fixtureContext),
       Effect.provideService(ApiKeyService, keys),
       Effect.provideService(AuthDatabase, database),
       startupStage('module-credential'),
     );
     const principal = { ...resolved.principal, legalEntityId: fixture.legalEntityId };
-    const catalog = yield* makeInstalledModuleCatalogLoader(Effect.succeed(composition));
     const changePartyState = (newState: 'active' | 'inactive') =>
       Effect.gen(function* changePartyFixtureState() {
         yield* runAction({

@@ -3976,7 +3976,7 @@ export const makeShellAuthenticationApiRuntime = (
     Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive)),
   );
   const moduleCredentialEnrolmentLayer = ModuleCredentialEnrolmentSourceLive.pipe(
-    Layer.provide(runtimeCorePersistenceLive),
+    Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive)),
   );
   const handlerDependenciesLive = Layer.mergeAll(
     emailDeliveryRequestsLive,
@@ -4015,7 +4015,7 @@ export const makeShellAuthenticationApiRuntime = (
     shellGovernedReadsLayer,
     readRuntimeLayer,
     runtimeObservabilityLive,
-    externalIdentityWorkloadAuthorizationLive,
+    externalIdentityWorkloadAuthorizationLive.pipe(Layer.provide(moduleCredentialEnrolmentLayer)),
     externalIdentityDeploymentLayer,
     OAuthFlowLive.pipe(Layer.provide(authPersistenceLive)),
   ).pipe(Layer.provideMerge(Layer.mergeAll(ShellCryptoLive, accessEnforcementLive, activeApplicationCompositionLive)));
