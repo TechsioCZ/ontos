@@ -19764,6 +19764,449 @@
       "descriptors": [
         {
           "accessDeclaration": {
+            "key": "payment.core.applicability.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "payments",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "payment.core.api.payment-method-applicability",
+            "moduleKey": "payment.core",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "payment.core.authorization.issue",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "payments",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "payment.core.issue-payment-authorization",
+            "moduleKey": "payment.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "payment.core.authorization.validate",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "payments",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "payment.core.api.payment-authorization-validation",
+            "moduleKey": "payment.core",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "payment.core.cancellation.request",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "payments",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "payment.core.request-payment-cancellation",
+            "moduleKey": "payment.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "payment.core.collection.start",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "payments",
+              "level": "extended"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "payment.core.start-payment-collection",
+            "moduleKey": "payment.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "payment.core.history.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "payments",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "historical_read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "payment.core.api.payment-history",
+            "moduleKey": "payment.core",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "payment.core.local-evidence.record",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "payments",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "payment.core.record-payment-local-evidence",
+            "moduleKey": "payment.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "payment.core.method-enablement.configure",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "payments",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "payment.core.configure-payment-method-enablement",
+            "moduleKey": "payment.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "payment.core.observation.accept",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "payments",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "payment.core.accept-payment-observation",
+            "moduleKey": "payment.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "payment.core.operation-recovery.request",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "payments",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "payment.core.request-payment-operation-recovery",
+            "moduleKey": "payment.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "payment.core.payment.create",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "payments",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "payment.core.create-payment",
+            "moduleKey": "payment.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "payment.core.payment.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "payments",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "payment.core.api.current-payment",
+            "moduleKey": "payment.core",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "payment.core.reconciliation.decide",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "payments",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "payment.core.record-payment-reconciliation-decision",
+            "moduleKey": "payment.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "payment.core.reconciliation.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "payments",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "payment.core.api.payment-reconciliation-debt",
+            "moduleKey": "payment.core",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "payment.core.refund.request",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "payments",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "payment.core.request-payment-refund",
+            "moduleKey": "payment.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "payment.core.source-authority.configure",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "payments",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "payment.core.configure-payment-source-authority",
+            "moduleKey": "payment.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        }
+      ],
+      "moduleId": "payment.core"
+    },
+    {
+      "descriptors": [
+        {
+          "accessDeclaration": {
             "key": "payment.term-catalog.payment-term.correct",
             "kind": "action",
             "modes": [

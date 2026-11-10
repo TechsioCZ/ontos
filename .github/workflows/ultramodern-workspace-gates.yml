@@ -791,7 +791,7 @@ jobs:
           - {
               shard: 3,
               proof: none,
-              units: verticals/assortment apps/shell-super-app verticals/merchandise verticals/facility-operations verticals/sales-insights,
+              units: verticals/assortment apps/shell-super-app verticals/merchandise verticals/facility-operations verticals/sales-insights verticals/payment,
             }
           - {
               shard: 4,

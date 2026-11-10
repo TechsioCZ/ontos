@@ -867,10 +867,10 @@ credential revision as account identity.
 Monetary Amount + currency, selected Payment Method and resolved Payment Term. It owns its logical
 Payment Operations and derived monetary outcomes. At most one collection lineage may be live or
 proven for that Payment; a different operation key never authorizes a second concurrent/full
-collection. It is not an accounting receivable or an Order.
+collection. It is not an accounting receivable, bank transaction, runtime task or Order.
 _Avoid_: provider PaymentIntent/session as canonical Payment, invoice as Payment, Payment state as Order state.
 
-**Payment Operation** — One immutable logical attempt to cause or control one Payment monetary effect:
+**Payment Operation** — One immutable logical operation to cause or control one Payment monetary effect:
 `COLLECT`, `CANCEL_OR_VOID` or `REFUND`. Safe transport/provider retry retains that identity; a change to
 its amount, currency, method or any applicable Operation Binding, Refund Basis or refundable-item set
 is not the same operation.
@@ -887,6 +887,14 @@ _Avoid_: Current account as the automatic refund/recovery destination, credentia
 or explicitly authorized local/POS source about one Payment operation or monetary fact. An observation
 is evidence to interpret and reconcile, not automatically a new monetary effect.
 _Avoid_: webhook name as canonical state, arrival order as authority, same amount/reference as sufficient dedupe.
+
+**Source correction** — Qualified statement by the source authority that issued an earlier Payment
+Observation, disproving or amending that statement or its interpretation. It may reduce or reopen the
+Current Payment coverage of the corrected collection, but it is not a new monetary movement: no
+refund or reversal is invented, and the original observation and its acceptance audit remain
+immutable. A later real return of money is a separate Payment Refund.
+_Avoid_: correction as refund, deleting or overwriting the corrected observation, correction by a
+different source authority.
 
 **Payment Collection** — Proven receipt/collection of customer funds for one Payment according to the
 selected method. For COD, customer collection is distinct from later carrier remittance to the merchant.
@@ -922,6 +930,21 @@ method condition may satisfy the proof without pre-collection. It is distinct fr
 preauthorization, collection, settlement, refund, Principal authorization, and Order. It has explicit
 Payment/evidence correlation, idempotency, Current status, and validity; secrets or payment instruments
 never enter Commerce business payloads.
+
+**Payment coverage** — Payment-owned Current sufficiency of the exact required prepaid funds: the
+authoritatively established collection minus confirmed returns, pending or unknown returns and
+accepted source corrections. Unresolved or conflicting evidence holds coverage rather than counting
+it. Any change to these inputs supersedes earlier coverage, so a prepaid Payment Authorization issued
+against it stops being Current. A zero payable Payment needs no collected coverage.
+_Avoid_: historical collection existence as Current coverage, counting the same economic effect twice.
+
+**Payment reconciliation debt** — Explicit unresolved or conflicting Payment effect or evidence
+obligation: an operation whose outcome is unknown or contradictory, or a held/unassignable observation
+under governed reconciliation. A PENDING operation awaiting qualified evidence is business waiting,
+not debt. A reconciliation decision may attach qualified evidence, classify a conflict or close a
+settled case; it never creates money, a monetary operation or proof of non-execution.
+_Avoid_: debt as proof of non-execution, closing a case to discard unresolved accepted work, operator
+assertion as monetary evidence.
 
 **Order Commitment Time** — Trusted server-side business instant T captured once when the final
 Checkout submission freezes one exact purchase candidate for commitment. T identifies that frozen

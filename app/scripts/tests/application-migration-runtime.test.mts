@@ -238,6 +238,7 @@ it.effect(
         'projects',
         'commerce-cart',
         'commerce-order',
+        'payment',
       ]);
       // Controller metadata is asserted at its actual source inventory, rather than its former inline location.
       expect(
@@ -268,6 +269,7 @@ it.effect(
         'inventory',
         'legal_agreements',
         'party',
+        'payment',
         'payment_term_catalog',
         'price_group_catalog',
         'pricing',

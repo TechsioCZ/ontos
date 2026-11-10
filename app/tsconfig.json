@@ -41,6 +41,9 @@
       "path": "verticals/payment-term-catalog"
     },
     {
+      "path": "verticals/payment"
+    },
+    {
       "path": "verticals/catalog"
     },
     {
