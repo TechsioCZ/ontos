@@ -28,6 +28,8 @@ import { trustResolvedSystemPrincipalContext } from '../../../../packages/core-r
 import { CoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
 import {
+  accessScopeFences,
+  accessScopes,
   actionInvocations,
   auditEvents,
   coreRelations,
@@ -254,10 +256,10 @@ export const makeEnrollmentAcceptanceIdentityFixture = Effect.fnUntraced(
         actionInvocations,
         principalAuthBindings,
         principals,
-        tenants,
       ]) {
         yield* admin.executor.delete(table).where(eq(table.tenantId, tenantId));
       }
+      // Core retains access intent (D27), so the Tenant and its access scope stay.
     });
     yield* Effect.acquireRelease(cleanup, () => cleanup.pipe(Effect.orDie));
     yield* admin.executor.insert(tenants).values({
@@ -267,6 +269,13 @@ export const makeEnrollmentAcceptanceIdentityFixture = Effect.fnUntraced(
       status: 'active',
       tenantId,
     });
+    // The runner re-decides every Action under its access scope's shared fence. Seed the tenant
+    // context scope with a Ready fence, as Core bootstrap does.
+    const accessScopeId = randomUUID();
+    yield* admin.executor.insert(accessScopes).values({ scopeId: accessScopeId, tenantContextId: tenantId, tenantId });
+    yield* admin.executor
+      .insert(accessScopeFences)
+      .values({ revision: 1, scopeId: accessScopeId, state: 'Ready', tenantId });
     yield* admin.executor.insert(principals).values({
       displayName: 'Enrollment identity acceptance actor',
       kind: 'system',
