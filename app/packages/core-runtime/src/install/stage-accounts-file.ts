@@ -51,6 +51,7 @@ const StageAccountSchema = Schema.Struct({
 export const STAGE_DECLARED_WORKLOAD_KEYS: ReadonlySet<string> = new Set([
   'commerce.storefront-client',
   'core.identity-provider',
+  'payment.source-ingress',
 ]);
 const StageWorkloadKeySchema = WorkloadKeySchema.check(
   Schema.makeFilter((key) =>
