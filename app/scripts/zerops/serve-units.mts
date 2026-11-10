@@ -5,7 +5,8 @@ import { startProcessCompositionValidation } from './process-composition-validat
 /**
  * Serves the named units in this one Node process, each unit's own Modern.js production server on its loopback
  * port. Every unit resolves its packages through the installed workspace, so their shared dependencies load once.
- * A unit that fails to start stops the process; the app host then stops the container.
+ * A unit that fails to start stops the process; the app host then stops the container. The host hands the owners'
+ * module credentials over on standard input; the process holds them in memory, one per owner.
  *
  *   node scripts/zerops/serve-units.mts <appId> [...]
  */
@@ -18,6 +19,7 @@ import { Argument, Command } from 'effect/cli';
 
 import { UNIT_ENTRY, readHostedUnits, workspaceRoot } from './hosted-units.mts';
 import type { HostedUnit } from './hosted-units.mts';
+import { receiveModuleCredentialHandover } from './module-credentials.mts';
 import { ownerWarmState } from './owner-warm-state.mts';
 
 export class ServeUnitsError extends Schema.TaggedError<ServeUnitsError>()('ServeUnitsError', {
@@ -63,6 +65,8 @@ const serveUnit = (unit: HostedUnit) =>
 const command = Command.make('serve-units', { ids: Argument.String('app-id').pipe(Argument.atLeast(1)) }, ({ ids }) =>
   Effect.gen(function* serveUnits() {
     yield* startProcessObservability(ids.length === 1 && ids[0] === 'shell-super-app' ? 'shell' : 'owners');
+    // Before any owner loads: each owner then reads only its own module credential, never one from the environment.
+    yield* receiveModuleCredentialHandover;
     const units = yield* readHostedUnits;
     const selected = ids.map((id) => units.find((unit) => unit.id === id));
     const unknown = ids.filter((_, index) => selected[index] === undefined);

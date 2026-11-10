@@ -11,8 +11,8 @@ import {
   hostControlApplication,
   processEnvironment,
   relayResponseHeaders,
+  moduleCredentialCallersOf,
   routeRequest,
-  shellModuleEnrolment,
 } from '../zerops/app-host.mts';
 import { hostedUnits } from '../zerops/hosted-units.mts';
 import type { ReleaseIntent, Topology } from '../zerops/hosted-units.mts';
@@ -430,27 +430,13 @@ describe('ownerEntrySource', () => {
   });
 });
 
-describe('shellModuleEnrolment', () => {
-  it('gives the Shell the explicit empty enrolment when no operator value exists', () => {
-    expect(shellModuleEnrolment(undefined, Option.none())).toEqual({ ONTOS_GATEWAY_MODULE_BINDINGS: '[]' });
-    expect(shellModuleEnrolment({ OTHER_SECRET: 'x' }, Option.none())).toEqual({
-      ONTOS_GATEWAY_MODULE_BINDINGS: '[]',
-    });
-  });
-
-  it('yields to a value the operator stored with the Shell or set on the container, even a malformed one', () => {
-    const stored = { ONTOS_GATEWAY_MODULE_BINDINGS: '[{"sourceAppId":"commerce-order"}]' };
-    expect(shellModuleEnrolment(stored, Option.none())).toEqual({});
-    expect(shellModuleEnrolment(undefined, Option.some('[]'))).toEqual({});
-    expect(shellModuleEnrolment(undefined, Option.some('{not json'))).toEqual({});
-  });
-
-  it('never overrides the Shell secret that processEnvironment passes through', () => {
-    const secrets = { [SHELL_ID]: { ONTOS_GATEWAY_MODULE_BINDINGS: '[{"sourceAppId":"crm"}]' } };
-    const { conflicts, environment } = processEnvironment([SHELL_ID], secrets, {});
-    expect(conflicts).toEqual([]);
-    expect({ ...shellModuleEnrolment(secrets[SHELL_ID], Option.none()), ...environment }).toMatchObject({
-      ONTOS_GATEWAY_MODULE_BINDINGS: '[{"sourceAppId":"crm"}]',
-    });
+describe('moduleCredentialCallersOf', () => {
+  it('gives a module credential only to hosted owners that call other modules', () => {
+    const commerceOrder = 'commerce-order';
+    expect(moduleCredentialCallersOf([commerceOrder, 'workforce', PARTY_REGISTRY, 'tagging'])).toEqual([
+      commerceOrder,
+      PARTY_REGISTRY,
+    ]);
+    expect(moduleCredentialCallersOf([SHELL_ID])).toEqual([]);
   });
 });

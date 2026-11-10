@@ -396,7 +396,6 @@ const acquireLeanCoreComposition = Effect.fn('LeanCoreProof.acquireComposition')
     // The lean composition enrolls no module deployment credential, so every verified key is a subject's key.
     configuration: ConfigProvider.fromUnknown({
       ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: `${origin}/active`,
-      ONTOS_GATEWAY_MODULE_BINDINGS: '[]',
     }).pipe(ConfigProvider.orElse(ConfigProvider.fromEnv())),
     revision: approved.composition.revision,
     targetBuildMarker: moduleContract.deployment.buildMarker,
