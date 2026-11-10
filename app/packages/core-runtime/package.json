@@ -44,6 +44,8 @@
     "./auth/external-identity-admission": "./src/auth/external-identity/verifier.ts",
     "./auth/external-identity-contracts": "./src/auth/external-identity-contracts.ts",
     "./auth/gateway-assertion-redemption": "./src/auth/gateway-assertion-redemption.ts",
+    "./auth/hosted-module-credentials": "./src/auth/hosted-module-credentials.ts",
+    "./auth/module-credentials": "./src/auth/module-credentials.ts",
     "./auth/staff-authentication-namespace": "./src/auth/staff-authentication-namespace.ts",
     "./auth/system-principal-context-provenance": "./src/auth/system-principal-context-provenance.ts",
     "./http/action-proposal": "./src/actions/proposal-accepted.ts",
