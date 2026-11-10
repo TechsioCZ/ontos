@@ -6,7 +6,7 @@ import type { ModulePageContext, ModulePageProps, PageDataSnapshot } from '@app/
 import type { TanstackTable } from '@techsio/ui-kit/organisms/data-table';
 import { Effect, Match, Option, Random, Result, Schema } from 'effect';
 import type { Cause } from 'effect';
-import { useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
+import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from 'react';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { executeManageCatalog } from '../../../../api/manage-catalog-action-client.ts';
 import { executeManageMarkets } from '../../../../api/manage-markets-action-client.ts';
@@ -545,16 +545,32 @@ export const useProductDetailsPrefetch = (
       ),
     () => false,
   );
+  // One batch per list revision and page of rows. The strict detail entries read as pending again once their 20 s
+  // freshness window passes or a live change from any module arrives; warming every row again then made an idle list
+  // re-read all its details every 40 s and on every live event. A write or a change of these products moves the
+  // revision and warms the rows again; opening a row always reads its detail fresh.
+  const batch = cacheKey([request, selection]);
+  const warmed = useRef<string>(undefined);
   const preload = useEffectEvent((key: string) =>
-    key === request ? preloadProductDetails(context, revision, rows) : Effect.void,
+    key === request
+      ? preloadProductDetails(context, revision, rows).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              warmed.current = batch;
+            }),
+          ),
+        )
+      : Effect.void,
   );
   useEffect(() => {
     const fiber =
-      needsPreload && scope !== undefined && selection !== '[]' ? browserRuntime.runFork(preload(request)) : undefined;
+      needsPreload && scope !== undefined && selection !== '[]' && warmed.current !== batch
+        ? browserRuntime.runFork(preload(request))
+        : undefined;
     return () => {
       fiber?.interruptUnsafe();
     };
-  }, [needsPreload, request, scope, selection]);
+  }, [batch, needsPreload, request, scope, selection]);
 };
 
 export type ProductDetailState =
