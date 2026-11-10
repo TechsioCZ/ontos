@@ -1,22 +1,26 @@
 // Asset card (S02) in a resizable SidePanel: card, value/event timeline, revisions and depreciation (S03).
-// Every action switches the panel body to its form; the footer carries Zpět + the submit button, and the card edit
-// ends it with the save bar (Uložit and the draft's status). Owned by ops-assets.
+// Every action switches the panel body to its form; the footer carries Zpět and ends with the shared save bar: the
+// card edit's own, or the action form's Uložit rendered into the footer slot. Owned by ops-assets.
 import {
   DetailList,
   SaveBar,
   SidePanel,
+  UnsavedChangesBoundary,
   UnsavedChangesDialog,
   formatMoney,
   saveLabelsFor,
   surfaceTileClassName,
+  useUnsavedChangesScope,
 } from '@app/admin-ui';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
+import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { Effect, Match } from 'effect';
+import type { Effect } from 'effect';
+import { Match } from 'effect';
 import type { CommandOutcome } from '../../../../ui/use-agenda.ts';
 import type { TOptions } from 'i18next';
 import { useState } from 'react';
@@ -62,6 +66,8 @@ import { ChangeHistory } from '../../../../ui/change-history.tsx';
 import { LinkedDocuments } from '../../../../ui/linked-documents.tsx';
 import { AssetDepreciation, ConnectionBadge } from './depreciation.tsx';
 import { usePropertyTree } from './property-tree.ts';
+import type { AssetSubmit } from './form-kit.tsx';
+import { FooterSlotProvider, useFooterSlot } from '../../../../ui/footer-slot.tsx';
 
 export type DetailMode =
   | { readonly kind: 'view' }
@@ -74,7 +80,6 @@ export type DetailMode =
   | { readonly kind: 'plan'; readonly type: DepreciationType }
   | { readonly kind: 'entry'; readonly planId: string };
 
-const FORM_ID = 'facility-asset-detail-form';
 const ARCHIVE_LABEL = 'actions.archive';
 const kindVariants = { building: 'info', equipment: 'outline', technology: 'secondary' } as const;
 const permitVariants = {
@@ -528,9 +533,6 @@ interface AssetDetailProps {
   readonly state: AssetsState;
 }
 
-const continueAfterSave = (operation: Effect.Effect<boolean>, onSaved: () => void) =>
-  operation.pipe(Effect.tap((saved) => (saved ? Effect.sync(onSaved) : Effect.void)));
-
 const AssetDetailContent = ({
   actor,
   asset,
@@ -556,16 +558,21 @@ const AssetDetailContent = ({
     onClose();
   };
   const active = isActiveAsset(asset);
-  const submit = (successKey: string, nextTab?: string) => (command: OpsCommand) => {
-    void browserRuntime.runPromise(
-      continueAfterSave(onSubmit(command, successKey), () => {
-        setMode({ kind: 'view' });
-        if (nextTab !== undefined) {
-          setTab(nextTab);
-        }
-      }),
-    );
-  };
+  // Every way out of a form (Zpět, the panel's dismissal, closing) asks the form before typed input is lost.
+  const scope = useUnsavedChangesScope();
+  const footer = useFooterSlot();
+  const toast = useToast();
+  /** An action form sends its command on Uložit; a confirmed save toasts and goes back to the card. */
+  const submit = (successKey: string, nextTab?: string): AssetSubmit => ({
+    onSaved: () => {
+      toast.create({ title: k(successKey), type: 'success' });
+      setMode({ kind: 'view' });
+      if (nextTab !== undefined) {
+        setTab(nextTab);
+      }
+    },
+    run,
+  });
   const confirmPlan = (plan: DepreciationPlan) => {
     void browserRuntime.runPromise(
       onSubmit({ _tag: 'AssetDepreciationPlanConfirm', assetId: asset.id, planId: plan.id }, 'messages.planConfirmed'),
@@ -585,43 +592,35 @@ const AssetDetailContent = ({
     value: k('actions.changeValue'),
   };
 
-  const saveLabel = mode.kind === 'archive' ? k(ARCHIVE_LABEL) : k('actions.save');
   const body = Match.value(mode).pipe(
     Match.when({ kind: 'archive' }, () => (
       <ArchiveForm
         asset={asset}
-        formId={FORM_ID}
-        onSubmit={(command) => {
-          void browserRuntime.runPromise(continueAfterSave(onSubmit(command, 'messages.archived'), onClose));
+        onSubmit={{
+          onSaved: () => {
+            toast.create({ title: k('messages.archived'), type: 'success' });
+            onClose();
+          },
+          run,
         }}
       />
     )),
     Match.when({ kind: 'edit' }, () => (
-      <AssetCardForm
-        asset={asset}
-        draft={draft}
-        formId={FORM_ID}
-        onChange={changeDraft}
-        onSubmit={save}
-        state={state}
-      />
+      <AssetCardForm asset={asset} draft={draft} onChange={changeDraft} state={state} />
     )),
     Match.when({ kind: 'value' }, () => (
-      <ValueChangeForm asset={asset} formId={FORM_ID} onSubmit={submit('messages.valueChanged', 'history')} />
+      <ValueChangeForm asset={asset} onSubmit={submit('messages.valueChanged', 'history')} />
     )),
     Match.when({ kind: 'event' }, () => (
-      <EventForm asset={asset} formId={FORM_ID} onSubmit={submit('messages.eventRecorded', 'history')} />
+      <EventForm asset={asset} onSubmit={submit('messages.eventRecorded', 'history')} />
     )),
-    Match.when({ kind: 'dispose' }, () => (
-      <DisposeForm asset={asset} formId={FORM_ID} onSubmit={submit('messages.disposed', 'card')} />
-    )),
+    Match.when({ kind: 'dispose' }, () => <DisposeForm asset={asset} onSubmit={submit('messages.disposed', 'card')} />),
     Match.when({ kind: 'service' }, () => (
-      <ServiceForm asset={asset} formId={FORM_ID} onSubmit={submit('messages.serviceRecorded', 'services')} />
+      <ServiceForm asset={asset} onSubmit={submit('messages.serviceRecorded', 'services')} />
     )),
     Match.when({ kind: 'plan' }, (value) => (
       <PlanForm
         asset={asset}
-        formId={FORM_ID}
         onSubmit={submit('messages.planCreated', 'depreciation')}
         state={state}
         type={value.type}
@@ -629,12 +628,7 @@ const AssetDetailContent = ({
     )),
     Match.when({ kind: 'entry' }, () =>
       entryPlan === undefined ? null : (
-        <EntryForm
-          asset={asset}
-          formId={FORM_ID}
-          onSubmit={submit('messages.entryRecorded', 'depreciation')}
-          plan={entryPlan}
-        />
+        <EntryForm asset={asset} onSubmit={submit('messages.entryRecorded', 'depreciation')} plan={entryPlan} />
       ),
     ),
     Match.when({ kind: 'view' }, () => (
@@ -773,26 +767,19 @@ const AssetDetailContent = ({
         </>
       );
     }
+    // An action form renders its Uložit into the slot, last in the footer.
     return (
       <>
-        <Button onClick={() => setMode({ kind: 'view' })} theme="outlined" variant="secondary">
+        <Button onClick={() => scope.request(() => setMode({ kind: 'view' }))} theme="outlined" variant="secondary">
           {k('actions.back')}
         </Button>
-        <Button
-          form={FORM_ID}
-          isLoading={busy}
-          loadingText={k('saving')}
-          type="submit"
-          variant={mode.kind === 'dispose' || mode.kind === 'archive' ? 'danger' : 'primary'}
-        >
-          {mode.kind === 'dispose' ? k('actions.confirmDispose') : saveLabel}
-        </Button>
+        {footer.target}
       </>
     );
   };
 
   return (
-    <>
+    <UnsavedChangesBoundary scope={scope}>
       <SidePanel
         actions={footerActions()}
         className="lg:min-w-[62rem]"
@@ -805,7 +792,7 @@ const AssetDetailContent = ({
             <StatusBadge asset={asset} />
           </span>
         }
-        // Only the card edit holds a draft; the action forms keep the panel's own protection of typed input.
+        // The card edit's draft is guarded here; an action form's guard is asked by the panel on its own.
         guard={mode.kind === 'edit' ? guard : undefined}
         onOpenChange={(next) => {
           if (!next) {
@@ -817,10 +804,10 @@ const AssetDetailContent = ({
         size="xl"
         title={mode.kind === 'view' ? asset.name : `${formTitle[mode.kind]} · ${asset.name}`}
       >
-        {body}
+        <FooterSlotProvider slot={footer.slot}>{body}</FooterSlotProvider>
       </SidePanel>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
-    </>
+    </UnsavedChangesBoundary>
   );
 };
 
