@@ -145,6 +145,10 @@ const databaseBoundaryCode = (file: string, source: string): string => {
     ImportExpression: (node) => {
       moduleStrings.add(node.source.start);
     },
+    // Declaration emit names private Core modules through type-position `import("…")`; they are module authority too.
+    TSImportType: (node) => {
+      moduleStrings.add(node.source.start);
+    },
   }).visit(parsed.program);
   new Visitor({
     Literal: (node) => {
