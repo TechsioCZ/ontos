@@ -44,6 +44,8 @@ import {
   callerModuleAccess,
 } from './caller.ts';
 import { loadComposedModules } from './composed-modules.ts';
+import { requestPhase, withRequestTrace } from './request-trace.ts';
+import type { TracedRequest } from './request-trace.ts';
 import type { ComposedModules } from './composed-modules.ts';
 import type { AgentPlatformCaller } from './caller.ts';
 import { readLegacyBatches } from './legacy-queue.ts';
@@ -128,33 +130,37 @@ export const findPendingDuplicateBatch = (
   );
 };
 
-/** Stores an agent's batch as pending proposals. Repeating a runId returns the stored batch (`replayed`). */
-export const submitAgentProposals = Effect.fn('AgentPlatform.submitAgentProposals')(function* submitAgentProposals(
+const submitTracedProposals = Effect.fn('AgentPlatform.submitTracedProposals')(function* submitTracedProposalsEffect(
   agent: AgentPlatformCaller,
   request: AgentProposalSubmitRequest,
+  trace: TracedRequest,
 ) {
   const { legalEntityId, principalId, tenantId } = agent.principal;
-  yield* assertAgentProposalsAuthorized(agent, request.proposals);
+  yield* requestPhase(trace, 'assert', assertAgentProposalsAuthorized(agent, request.proposals));
   // Core owns atomic run/pending deduplication and rejects a reused ingress key with a different payload.
   // Never return an early Shell replay before the native Action can check that request hash.
   const actionTransport = yield* AgentActionRequestIdentity;
-  const modules = yield* callerModuleAccess(agent);
+  const modules = yield* requestPhase(trace, 'callerAccess', callerModuleAccess(agent, trace.caller));
   const composed = yield* loadComposedModules;
   const transport = yield* AgentReadRequestIdentity;
-  const names = yield* principalNames(agent.principal, transport);
+  const names = yield* requestPhase(trace, 'names', principalNames(agent.principal, transport));
   const identitySeed = `${tenantId}/${legalEntityId}/${principalId}/${actionTransport.idempotencyKey}`;
   const batchId = derivedUuid(`${identitySeed}/insert/batch`);
   // The modules describe their own commands (read as the agent); the platform never trusts the agent's diff.
-  const reviews = yield* reviewByModule(
-    agent.principal,
-    composed.byAppId,
-    request.proposals.map((proposal, index) => ({
-      actionSlug: proposal.actionSlug ?? DEFAULT_ACTION_SLUG,
-      appId: proposal.appId,
-      command: proposal.command,
-      key: `p${index}`,
-      stage: 'proposed' as const,
-    })),
+  const reviews = yield* requestPhase(
+    trace,
+    'reviews',
+    reviewByModule(
+      agent.principal,
+      composed.byAppId,
+      request.proposals.map((proposal, index) => ({
+        actionSlug: proposal.actionSlug ?? DEFAULT_ACTION_SLUG,
+        appId: proposal.appId,
+        command: proposal.command,
+        key: `p${index}`,
+        stage: 'proposed' as const,
+      })),
+    ),
   );
   const proposals: Extract<AgentProposalCommandPayload, { readonly operation: 'insert' }>['proposals'][number][] = [];
   for (const [index, proposal] of request.proposals.entries()) {
@@ -201,9 +207,10 @@ export const submitAgentProposals = Effect.fn('AgentPlatform.submitAgentProposal
     instruction: request.instruction,
     proposals,
   };
-  const stored = yield* insertProposals(
-    agent.principal,
-    request.runId === undefined ? insertion : { ...insertion, runId: request.runId },
+  const stored = yield* requestPhase(
+    trace,
+    'insert',
+    insertProposals(agent.principal, request.runId === undefined ? insertion : { ...insertion, runId: request.runId }),
   );
   return AgentProposalSubmitResponseSchema.make({
     batchId: AgentBatchIdSchema.make(stored.batchId),
@@ -212,6 +219,10 @@ export const submitAgentProposals = Effect.fn('AgentPlatform.submitAgentProposal
     reviewPath: REVIEW_PATH,
   });
 });
+
+/** Stores an agent's batch as pending proposals. Repeating a runId returns the stored batch (`replayed`). */
+export const submitAgentProposals = (agent: AgentPlatformCaller, request: AgentProposalSubmitRequest) =>
+  withRequestTrace('Agent proposal submit slow', (trace) => submitTracedProposals(agent, request, trace));
 
 /** The agent's own core batches in its company (newest first); the agent decides nothing. */
 export const listOwnAgentBatches = Effect.fn('AgentPlatform.listOwnAgentBatches')(function* listOwnAgentBatches(

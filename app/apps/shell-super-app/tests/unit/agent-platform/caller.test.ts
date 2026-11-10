@@ -1,9 +1,9 @@
 import { AgentAppIdSchema } from '@app/shared-contracts/agent-proposals';
 import type { AccessDeclarationInput, OntosActionContract, OperationalScope } from '@app/core-runtime';
-import { OntosActionContractSchema } from '@app/core-runtime';
+import { OntosActionContractSchema, OntosModuleIdSchema, TenantModuleStateService } from '@app/core-runtime';
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
-import { Effect, Predicate, Ref, Schema } from 'effect';
+import { Effect, Layer, Predicate, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ActionPermissionCheckError } from '../../../../../packages/core-runtime/src/actions/errors.ts';
@@ -31,6 +31,17 @@ const appId = AgentAppIdSchema.make('work-tasks');
 const legalEntityId = '71000000-0000-4000-8000-000000000020';
 const principalId = '72000000-0000-4000-8000-000000000020';
 const tenantId = '70000000-0000-4000-8000-000000000020';
+/** The tenant's own module states: the named modules installed and active, by default every module asked about. */
+const tenantModuleStates = (installedModuleIds?: readonly string[]) =>
+  Layer.mock(TenantModuleStateService, {
+    getTenantModuleStates: (_tenantId, moduleKeys) =>
+      Effect.succeed(
+        moduleKeys
+          .filter((moduleKey) => installedModuleIds?.includes(moduleKey) ?? true)
+          .map((moduleKey) => ({ moduleKey: OntosModuleIdSchema.make(moduleKey), state: 'active' as const })),
+      ),
+  });
+
 /** The caller's own resolved trusted scope; every gate question is asked in a scope derived from it. */
 const scope: OperationalScope = {
   authMethod: 'api_key',
@@ -211,6 +222,7 @@ it.effect('preserves the authenticated requester scope for visibility and exact 
     const actionScopes: OperationalScope[] = [];
     const rights = yield* callerModuleAccess({ scope: authenticatedScope }).pipe(
       Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(tenantModuleStates()),
       Effect.provideService(AccessDecisionGate, gate),
       Effect.provideService(ActionAuthority, {
         checkActionAuthorities: (input) => {
@@ -266,6 +278,7 @@ it.effect('never treats proposal authority as executable module authority', () =
     const installed = yield* catalog();
     const rights = yield* callerModuleAccess(caller).pipe(
       Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(tenantModuleStates()),
       Effect.provideService(AccessDecisionGate, gateAnswering('ALLOWED')),
       Effect.provideService(
         ActionAuthority,
@@ -332,6 +345,7 @@ it.effect('keeps a read-only module visible through its own read carrier, with n
     const installed = yield* catalogWithPageOnly();
     const rights = yield* callerModuleAccess(caller).pipe(
       Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(tenantModuleStates()),
       Effect.provideService(AccessDecisionGate, gateAnswering('ALLOWED')),
       Effect.provideService(
         ActionAuthority,
@@ -344,12 +358,37 @@ it.effect('keeps a read-only module visible through its own read carrier, with n
   }),
 );
 
+it.effect('counts a module only while the tenant has it installed, whatever the gate answers', () =>
+  Effect.gen(function* installedModulesOnly() {
+    const installed = yield* catalogWithPageOnly();
+    const rightsWith = (installedModuleIds: readonly string[]) =>
+      callerModuleAccess(caller).pipe(
+        Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+        Effect.provide(tenantModuleStates(installedModuleIds)),
+        Effect.provideService(AccessDecisionGate, gateAnswering('ALLOWED')),
+        Effect.provideService(
+          ActionAuthority,
+          actionAuthority(() => ({ execute: 'allowed' as const, propose: 'allowed' as const })),
+        ),
+      );
+    // A tenant owner is admitted on every administration declaration of the composition; the tenant's own state
+    // decides whether the module is there at all.
+    const absent = yield* rightsWith([]);
+    expect([...absent.access]).toEqual([]);
+    expect(absent.propose.size).toBe(0);
+    expect(absent.write.size).toBe(0);
+    const present = yield* rightsWith([moduleId]);
+    expect([...present.access]).toEqual([moduleId]);
+  }),
+);
+
 it.effect('uses list admission for a record-scoped read instead of asking without its required target', () =>
   Effect.gen(function* recordScopedModuleVisibility() {
     const installed = yield* catalogWithPageOnly({ ...pageDeclaration, selectors: ['assigned'] });
     const gate = gateAnswering('ALLOWED');
     const rights = yield* callerModuleAccess(caller).pipe(
       Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(tenantModuleStates()),
       Effect.provideService(AccessDecisionGate, gate),
       Effect.provideService(
         ActionAuthority,
@@ -368,6 +407,7 @@ it.effect('sees a module for a principal that holds only v2 grants and no legacy
     const installed = yield* catalog();
     const rights = yield* callerModuleAccess(caller).pipe(
       Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(tenantModuleStates()),
       // The gate admits the module's own carriers; no legacy `module_access` read is consulted at all.
       Effect.provideService(AccessDecisionGate, gateAnswering('ALLOWED')),
       Effect.provideService(
@@ -385,6 +425,7 @@ it.effect('denies a revoked or wrong-tenant acting principal that the gate refus
     const installed = yield* catalog();
     const rights = yield* callerModuleAccess(caller).pipe(
       Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(tenantModuleStates()),
       Effect.provideService(AccessDecisionGate, gateAnswering('DENIED')),
       Effect.provideService(
         ActionAuthority,

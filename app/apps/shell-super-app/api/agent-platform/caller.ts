@@ -1,5 +1,6 @@
 /** Trusted proposal callers and exact graph authority; profile labels never grant access. */
 import type { AccessDeclaration, LegalEntityScope, OperationalScope, TrustedPrincipalContext } from '@app/core-runtime';
+import { decideModuleStateAccess, TenantModuleStateService } from '@app/core-runtime';
 import {
   AccessDecisionGate,
   SubjectAccessInspection,
@@ -130,101 +131,195 @@ export const moduleCarriers = (installed: ShellInstalledCatalog): readonly Modul
   return carriers;
 };
 
+/** The inner steps of one caller authority load, in the order they run. */
+export const CALLER_ACCESS_PHASES = ['modules', 'carriers', 'lists', 'actions', 'states'] as const;
+export type CallerAccessPhase = (typeof CALLER_ACCESS_PHASES)[number];
+
+/**
+ * Progress of one caller authority load: the step running now, each finished step's milliseconds and how much was
+ * asked. Counts and fixed names only, never an identity. Kept in a Ref, so a load that stalls still names its step.
+ */
+export interface CallerAccessTrace {
+  /** Distinct Action keys asked about in the one Action batch. */
+  readonly actions: number;
+  readonly active: CallerAccessPhase | null;
+  /** Scope-wide module carriers asked about in the one carrier batch. */
+  readonly carriers: number;
+  readonly durations: Partial<Record<CallerAccessPhase, number>>;
+  /** Gate calls made: one carrier batch, one LIST per record-scoped carrier, one Action batch. */
+  readonly gateCalls: number;
+  /** Record-scoped read carriers, each a LIST question. */
+  readonly lists: number;
+}
+
+export const emptyCallerAccessTrace: CallerAccessTrace = Object.freeze({
+  actions: 0,
+  active: null,
+  carriers: 0,
+  durations: {},
+  gateCalls: 0,
+  lists: 0,
+});
+
+/** LIST questions in flight at once: the same bound the subject inspection batch uses on the shared pool. */
+const LIST_CONCURRENCY = 2;
+
+const callerPhase = Effect.fn('AgentPlatform.callerAccessPhase')(function* callerPhase<Value, Failure, Requirements>(
+  trace: Ref.Ref<CallerAccessTrace>,
+  phase: CallerAccessPhase,
+  effect: Effect.Effect<Value, Failure, Requirements>,
+) {
+  yield* Ref.update(trace, (current) => ({ ...current, active: phase }));
+  const startedAt = yield* Clock.currentTimeMillis;
+  const value = yield* effect;
+  const finishedAt = yield* Clock.currentTimeMillis;
+  yield* Ref.update(trace, (current) => ({
+    ...current,
+    active: null,
+    durations: { ...current.durations, [phase]: finishedAt - startedAt },
+  }));
+  return value;
+});
+
 /**
  * The modules a principal may use, and the ones whose Actions it may execute or propose. Visibility is the
  * one gate's answer over the modules' own published carriers (a projection hint, O25); `execute`/`propose`
  * are the same gate's answer over the modules' declared Actions, so the final authority for every Action and
  * read stays the gate's own and no legacy `ContextAccess` engine is consulted (O62, O67-Q5).
+ *
+ * Every scope-wide carrier is one gate batch and every Action another, each one engine snapshot; a record-scoped
+ * read stays its own LIST question. A module counts only while the tenant's own state admits that access, exactly as
+ * its entrypoints are gated: the gate answers over the whole composition, and a tenant owner is admitted on every
+ * administration declaration, also of a module this tenant never installed.
  */
-export const callerModuleAccess = Effect.fn('AgentPlatform.callerModuleAccess')(
-  function* callerModuleAccessEffect(caller: { readonly scope: OperationalScope }) {
-    const installed = yield* (yield* ShellInstalledModuleCatalog).load.pipe(
-      Effect.mapError((cause) => new AgentStoreUnavailable({ cause })),
-    );
-    const authority = yield* ActionAuthority;
-    const gate = yield* AccessDecisionGate;
-    const now = yield* DateTime.nowAsDate;
-    const carriers = moduleCarriers(installed);
-    const scopeWide: { readonly carrier: ModuleCarrier; readonly index: number }[] = [];
-    const recordScoped: { readonly carrier: ModuleCarrier; readonly index: number }[] = [];
-    for (const [index, carrier] of carriers.entries()) {
-      const target =
-        carrier.declaration?.kind === 'read' && carrier.declaration.selectors.length > 0 ? recordScoped : scopeWide;
-      target.push({ carrier, index });
-    }
-    const questionFor = (carrier: ModuleCarrier) => ({
-      carrier: { accessDeclaration: carrier.declaration },
-      legalEntityScope: carrier.legalEntityScope,
-      now,
-      scope: caller.scope,
-    });
-    const batched = yield* gate.decideMany(scopeWide.map(({ carrier }) => questionFor(carrier)));
-    if (batched.length !== scopeWide.length) {
-      return yield* new AgentStoreUnavailable({ cause: 'Module authorization returned incomplete evidence' });
-    }
-    // Visibility for a selector-bearing read is a LIST question, not a targetless record decision.
-    // The owner still applies the returned predicate when the actual read is dispatched.
-    const listed = yield* Effect.forEach(
+export const callerModuleAccess = Effect.fn('AgentPlatform.callerModuleAccess')(function* callerModuleAccessEffect(
+  caller: { readonly scope: OperationalScope },
+  trace?: Ref.Ref<CallerAccessTrace>,
+) {
+  const progress = trace ?? (yield* Ref.make(emptyCallerAccessTrace));
+  const installed = yield* callerPhase(
+    progress,
+    'modules',
+    (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError((cause) => new AgentStoreUnavailable({ cause }))),
+  );
+  const authority = yield* ActionAuthority;
+  const gate = yield* AccessDecisionGate;
+  const now = yield* DateTime.nowAsDate;
+  const carriers = moduleCarriers(installed);
+  const scopeWide: { readonly carrier: ModuleCarrier; readonly index: number }[] = [];
+  const recordScoped: { readonly carrier: ModuleCarrier; readonly index: number }[] = [];
+  for (const [index, carrier] of carriers.entries()) {
+    const target =
+      carrier.declaration?.kind === 'read' && carrier.declaration.selectors.length > 0 ? recordScoped : scopeWide;
+    target.push({ carrier, index });
+  }
+  const questionFor = (carrier: ModuleCarrier) => ({
+    carrier: { accessDeclaration: carrier.declaration },
+    legalEntityScope: carrier.legalEntityScope,
+    now,
+    scope: caller.scope,
+  });
+  yield* Ref.update(progress, (current) => ({
+    ...current,
+    carriers: scopeWide.length,
+    gateCalls: current.gateCalls + 1 + recordScoped.length,
+    lists: recordScoped.length,
+  }));
+  const batched = yield* callerPhase(
+    progress,
+    'carriers',
+    gate.decideMany(scopeWide.map(({ carrier }) => questionFor(carrier))),
+  );
+  if (batched.length !== scopeWide.length) {
+    return yield* new AgentStoreUnavailable({ cause: 'Module authorization returned incomplete evidence' });
+  }
+  // Visibility for a selector-bearing read is a LIST question, not a targetless record decision.
+  // The owner still applies the returned predicate when the actual read is dispatched.
+  const listed = yield* callerPhase(
+    progress,
+    'lists',
+    Effect.forEach(
       recordScoped,
       ({ carrier }) => gate.list(questionFor(carrier)).pipe(Effect.map(({ decision }) => decision)),
-      { concurrency: 1 },
-    );
-    const decisions = new Map<number, (typeof batched)[number]>();
-    for (const [position, { index }] of scopeWide.entries()) {
-      const decision = batched[position];
-      if (decision !== undefined) {
-        decisions.set(index, decision);
-      }
+      { concurrency: LIST_CONCURRENCY },
+    ),
+  );
+  const decisions = new Map<number, (typeof batched)[number]>();
+  for (const [position, { index }] of scopeWide.entries()) {
+    const decision = batched[position];
+    if (decision !== undefined) {
+      decisions.set(index, decision);
     }
-    for (const [position, { index }] of recordScoped.entries()) {
-      const decision = listed[position];
-      if (decision !== undefined) {
-        decisions.set(index, decision);
-      }
+  }
+  for (const [position, { index }] of recordScoped.entries()) {
+    const decision = listed[position];
+    if (decision !== undefined) {
+      decisions.set(index, decision);
     }
-    const access = new Set<string>();
-    for (const [index, carrier] of carriers.entries()) {
-      const decision = decisions.get(index);
-      if (decision === undefined || decision.outcome === 'UNAVAILABLE') {
-        return yield* new AgentStoreUnavailable({ cause: 'Module authorization is unavailable' });
-      }
-      if (decision.outcome === 'ALLOWED' || decision.outcome === 'NEEDS_APPROVAL') {
-        access.add(carrier.moduleId);
-      }
+  }
+  const visible = new Set<string>();
+  for (const [index, carrier] of carriers.entries()) {
+    const decision = decisions.get(index);
+    if (decision === undefined || decision.outcome === 'UNAVAILABLE') {
+      return yield* new AgentStoreUnavailable({ cause: 'Module authorization is unavailable' });
     }
-    // A module's Actions are asked without a record: a record-scoped Action is conservatively not counted
-    // as a global right, and its record-scoped admission stays the owner read's own gate (O9, O27).
-    const actions = installed.contracts.flatMap(({ manifest }) =>
-      manifest.publicSurface.actions.filter((action) => action.legalEntityScope !== 'forbidden'),
-    );
-    const decisionsByAction = yield* authority
-      .checkActionAuthorities({
-        actionKeys: [...new Set(actions.map(({ actionKey }) => actionKey))],
-        scope: caller.scope,
-      })
-      .pipe(Effect.mapError((cause) => new AgentStoreUnavailable({ cause })));
-    const executable = new Set(
-      decisionsByAction.flatMap(({ actionKey, execute }) => (execute === 'allowed' ? [actionKey] : [])),
-    );
-    const proposable = new Set(
-      decisionsByAction.flatMap(({ actionKey, propose }) => (propose === 'allowed' ? [actionKey] : [])),
-    );
-    for (const action of actions) {
-      if (executable.has(action.actionKey) || proposable.has(action.actionKey)) {
-        access.add(action.owningModuleId);
-      }
+    if (decision.outcome === 'ALLOWED' || decision.outcome === 'NEEDS_APPROVAL') {
+      visible.add(carrier.moduleId);
     }
-    return {
-      access,
-      propose: new Set(
-        actions.flatMap(({ actionKey, owningModuleId }) => (proposable.has(actionKey) ? [owningModuleId] : [])),
-      ),
-      write: new Set(
-        actions.flatMap(({ actionKey, owningModuleId }) => (executable.has(actionKey) ? [owningModuleId] : [])),
-      ),
-    };
-  },
-);
+  }
+  // A module's Actions are asked without a record: a record-scoped Action is conservatively not counted
+  // as a global right, and its record-scoped admission stays the owner read's own gate (O9, O27).
+  const actions = installed.contracts.flatMap(({ manifest }) =>
+    manifest.publicSurface.actions.filter((action) => action.legalEntityScope !== 'forbidden'),
+  );
+  const actionKeys = [...new Set(actions.map(({ actionKey }) => actionKey))];
+  yield* Ref.update(progress, (current) => ({
+    ...current,
+    actions: actionKeys.length,
+    gateCalls: current.gateCalls + 1,
+  }));
+  const decisionsByAction = yield* callerPhase(
+    progress,
+    'actions',
+    authority
+      .checkActionAuthorities({ actionKeys, scope: caller.scope })
+      .pipe(Effect.mapError((cause) => new AgentStoreUnavailable({ cause }))),
+  );
+  const executable = new Set(
+    decisionsByAction.flatMap(({ actionKey, execute }) => (execute === 'allowed' ? [actionKey] : [])),
+  );
+  const proposable = new Set(
+    decisionsByAction.flatMap(({ actionKey, propose }) => (propose === 'allowed' ? [actionKey] : [])),
+  );
+  for (const action of actions) {
+    if (executable.has(action.actionKey) || proposable.has(action.actionKey)) {
+      visible.add(action.owningModuleId);
+    }
+  }
+  const proposeAnswered = new Set(
+    actions.flatMap(({ actionKey, owningModuleId }) => (proposable.has(actionKey) ? [owningModuleId] : [])),
+  );
+  const writeAnswered = new Set(
+    actions.flatMap(({ actionKey, owningModuleId }) => (executable.has(actionKey) ? [owningModuleId] : [])),
+  );
+  const states = yield* callerPhase(
+    progress,
+    'states',
+    (yield* TenantModuleStateService)
+      .getTenantModuleStates(caller.scope.tenantId, [...visible])
+      .pipe(Effect.mapError((cause) => new AgentStoreUnavailable({ cause }))),
+  );
+  const stateOf = new Map(states.map(({ moduleKey, state }) => [moduleKey, state]));
+  const admitted = (modules: ReadonlySet<string>, access: 'read' | 'write'): Set<string> =>
+    new Set(
+      [...modules].filter((moduleId) => decideModuleStateAccess(stateOf.get(moduleId) ?? null, access) === 'allow'),
+    );
+  return {
+    access: admitted(visible, 'read'),
+    propose: admitted(proposeAnswered, 'write'),
+    write: admitted(writeAnswered, 'write'),
+  };
+});
 
 /** The inner steps of one subject read, in the order they run. */
 export const SUBJECT_ACCESS_PHASES = ['modules', 'scope', 'capabilities'] as const;
