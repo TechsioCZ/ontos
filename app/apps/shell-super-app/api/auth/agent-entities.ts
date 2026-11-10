@@ -215,6 +215,7 @@ export const listAgentEntities = Effect.fn('AgentEntities.listAgentEntities')(fu
       hasProfile: agent.hasProfile,
       modules: agent.modules,
       operators: people.filter((person) => agent.operatorPrincipalIds.includes(person.principalId)),
+      operatorsRevision: agent.operatorCommand?.revision ?? 0,
       owner: Option.fromUndefinedOr(people.find((person) => person.principalId === agent.ownerPrincipalId)),
       principalId: AgentPrincipalIdSchema.make(agent.principalId),
       status: agent.status,

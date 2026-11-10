@@ -26,6 +26,7 @@ const { fixture } = rs.hoisted(() => {
       hasProfile: true,
       modules: [],
       operators: [],
+      operatorsRevision: 0,
       owner: null,
       principalId: '00000000-0000-4000-8000-000000000004',
       status: 'active',
@@ -37,7 +38,10 @@ const { fixture } = rs.hoisted(() => {
   };
   return { fixture: state };
 });
-rs.mock('@modern-js/plugin-tanstack/runtime', () => ({ useRouterState: () => null }));
+rs.mock('@modern-js/plugin-tanstack/runtime', () => ({
+  useBlocker: () => ({ status: 'idle' }),
+  useRouterState: () => null,
+}));
 rs.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
 }));

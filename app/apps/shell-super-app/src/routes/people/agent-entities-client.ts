@@ -114,7 +114,11 @@ export const runAgentCommand = (
     return { status: 'ok' as const, value };
   }).pipe(Effect.orElseSucceed(() => failed('error')));
 
-/** Replaces the complete operator set of one agent; the shell answers how many connections were revoked with it. */
+/**
+ * Replaces the complete operator set of one agent; the shell answers how many connections were revoked with it.
+ * `request.expectedRevision` is the operator revision the form was read from: the shell refuses a stale save with 409
+ * (`conflict`) instead of overwriting someone else's change.
+ */
 export const saveAgentOperators = (
   request: AgentOperatorsRequest,
 ): Effect.Effect<AgentOutcome<AgentOperatorsResponse>, never, HttpClient.HttpClient> =>
