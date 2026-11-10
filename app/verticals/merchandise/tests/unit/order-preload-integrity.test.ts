@@ -26,7 +26,9 @@ rstest.mock('../../src/api/records-consumer.ts');
 rstest.mock('../../src/api/manage-catalog-action-client.ts');
 rstest.mock('../../src/api/cleanup-demo-action-client.ts');
 rstest.mock('../../src/api/change-order-status-action-client.ts');
-// Reproduce useSettledPageData's retained prior render without running cold-mount effects.
+// Reproduce useSettledPageData's retained prior render without running cold-mount effects. The retained value is
+// no held read (`useHeldSnapshot` finds no key in it): what a mounted list keeps while its own request reloads is
+// covered in orders-list-held.test.ts.
 const retained: {
   value?: {
     readonly input: OrdersPageInput;
@@ -160,7 +162,7 @@ beforeEach(() => {
   });
 });
 
-it.effect('the order hook cannot resurrect a retained ready page after strict invalidation', () =>
+it.effect('the order hook cannot resurrect a retained ready page it holds no read of after strict invalidation', () =>
   Effect.gen(function* retainedHookState() {
     yield* ordersPageData.read(source);
     const prior = ordersPageData.snapshot(source);

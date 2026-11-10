@@ -488,8 +488,10 @@ export const changeOrderStatuses = (input: {
   );
 
 /**
- * One page of orders for `query` with the header counts. While a new query loads the last page stays on screen
- * (`state.query` tells which query it answers). `load` reads the page and the counts again after a change.
+ * One page of orders for `query` with the header counts. `state.query` tells which query the state answers: while
+ * another query loads it is still the previous one, and the table shows its loading rows. A reload of the query on
+ * screen keeps its rows, capabilities and counts until the reload settles. `load` reads the page and the counts
+ * again after a change.
  */
 export const useOrders = (legalEntityId: string, query: OrdersQuery, context?: ModulePageContext) => {
   const scope = pageDataScopeKey(context, ORDERS_MODULE);
@@ -526,7 +528,12 @@ export const useOrders = (legalEntityId: string, query: OrdersQuery, context?: M
   useEffect(() => {
     orderCountsData.ensure(countsKey);
   }, [countsKey]);
-  const settled = useSettledPageData(page, input);
+  // The strict stores read as pending while they reload (freshness window, live change, settled write). The table
+  // keeps the last ready read of the same request and the header its counts until the reload settles; another
+  // request never reuses them, and a failed or refused reload replaces them at once.
+  const shownPage = useHeldSnapshot(ordersPageData.key(input), page);
+  const shownCounts = useHeldSnapshot(countsKey, counts);
+  const settled = useSettledPageData(shownPage, input);
   const prefetch = useEffectEvent((records: RecordsResponse) => preloadOrderDetails(input, records));
   // Prefetch only the current request, never the previous page retained while a filter loads.
   useEffect(() => {
@@ -552,10 +559,12 @@ export const useOrders = (legalEntityId: string, query: OrdersQuery, context?: M
       settled !== undefined &&
         settled.input.scope === scope &&
         settled.input.legalEntityId === legalEntityId &&
-        ordersPageData.snapshot(settled.input) === settled.snapshot
+        // Either the read of the request on screen (held while it reloads), or the page of the previous request,
+        // which may stand in only while the store still has it.
+        (settled.snapshot === shownPage || ordersPageData.snapshot(settled.input) === settled.snapshot)
         ? settled
         : undefined,
-      counts,
+      shownCounts,
     ),
   };
 };

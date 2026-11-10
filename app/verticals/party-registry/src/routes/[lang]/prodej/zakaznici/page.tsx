@@ -32,11 +32,10 @@ import { SelectTemplate } from '@app/admin-ui/select-template';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { BulkTagDialog, TagCell, TagFilter } from '@app/tagging/components/tag-controls';
 import type { TagsStatus } from '@app/tagging/components/tag-controls';
-import { pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import { Effect, Match, Predicate } from 'effect';
 import type { Cause } from 'effect';
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useState } from 'react';
 
 import '../../../index.css';
 
@@ -56,6 +55,7 @@ import {
   customersData,
   useCustomerDetailSelection,
   useCustomerIdentityReview,
+  useCustomersSnapshot,
   usePrefetchCustomerDetails,
   rememberCustomerWriteRefusal,
 } from './customers-data.ts';
@@ -125,8 +125,6 @@ const loadStateOf = (snapshot: CustomersDataSnapshot): LoadState => {
   }
   return { data: snapshot.value, status: 'ready' };
 };
-
-const serverSnapshot = (): CustomersDataSnapshot => pageDataPending;
 
 const nameCell = (info: CellContext<CustomerListItem>) => (
   <span className="block truncate font-medium">{orDash(info.row.original.displayName)}</span>
@@ -441,13 +439,7 @@ const CustomersContent = ({ context }: CustomersContentProps) => {
   const { t } = useModernI18n();
   // Every customer, archived included, so the stat tiles describe the whole register. The Shell preloads it.
   const query = customersQuery(context);
-  const state = loadStateOf(
-    useSyncExternalStore(
-      (listener) => customersData.subscribe(listener, query),
-      () => customersData.snapshot(query),
-      serverSnapshot,
-    ),
-  );
+  const state = loadStateOf(useCustomersSnapshot(query));
   // Refresh keeps rows on screen; only a failed first load shows an error, so an error never reads as "no records".
   const reload = () => {
     browserRuntime.runFork(customersData.refresh(query));
