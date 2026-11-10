@@ -291,7 +291,8 @@ export const makeTestAccessGateLayers = (options: TestAccessGateScript = {}): Te
     return scopeAccess?.decide(input) ?? scripted.decide(input);
   };
 
-  const gate: AccessDecisionService = {
+  // A scripted gate reads no ports, so it states its rebind: a prepared Action authority needs one to prove currentness.
+  const gate = withScriptedRebind({
     decide: decideOf,
     decideMany: (input) => Effect.forEach(input, decideOf, { concurrency: 1 }),
     list: (input: ListGateInput) => {
@@ -322,7 +323,7 @@ export const makeTestAccessGateLayers = (options: TestAccessGateScript = {}): Te
       const { legalEntityId: selected } = input.scope;
       return Effect.succeed(selected === undefined ? [] : [LegalEntityIdSchema.make(selected)]);
     },
-  };
+  });
 
   return Layer.mergeAll(
     Layer.succeed(AccessDecisionGate, gate),
