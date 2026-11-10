@@ -52,6 +52,8 @@ import type {
   RevokeAccessDelegationPayload,
   SetAccessTeamMembershipPayload,
   TransferAccessOwnershipPayload,
+  AdmitAccessMemberPayload,
+  EndAccessMembershipPayload,
 } from '../../shared/access-admin-api.ts';
 // @ontos-codesmith-core-read-client-imports:start
 
@@ -663,6 +665,20 @@ export const transferAccessOwnership = (
 ): Effect.Effect<AccessPeopleMutationResponse, AccessAdministrationClientError> =>
   invokeAccessAdministrationClient(options, (client) =>
     client.accessAdminPeople.transferAccessOwnership({ headers: accessWriteHeaders(options), payload }),
+  );
+export const admitAccessMember = (
+  payload: AdmitAccessMemberPayload,
+  options: AccessAdministrationWriteOptions,
+): Effect.Effect<AccessPeopleMutationResponse, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) =>
+    client.accessAdminPeople.admitAccessMember({ headers: accessWriteHeaders(options), payload }),
+  );
+export const endAccessMembership = (
+  payload: EndAccessMembershipPayload,
+  options: AccessAdministrationWriteOptions,
+): Effect.Effect<AccessPeopleMutationResponse, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) =>
+    client.accessAdminPeople.endAccessMembership({ headers: accessWriteHeaders(options), payload }),
   );
 
 export const listAccessChanges = (
