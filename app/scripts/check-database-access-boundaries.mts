@@ -36,7 +36,10 @@ const sourceExtensions = new Set(['.ts', '.tsx', '.mts']);
 const ignoredDirectories = new Set(['dist', 'node_modules', 'repos', '.output', '.codex']);
 const coreRuntimeSourcePrefix = 'packages/core-runtime/src/';
 
-const collect = (root: string): Effect.Effect<readonly string[], PlatformError, FileSystem.FileSystem | Path.Path> =>
+const collect = (
+  root: string,
+  workspaceRoot: string = root,
+): Effect.Effect<readonly string[], PlatformError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* collectSourceFiles() {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -47,10 +50,15 @@ const collect = (root: string): Effect.Effect<readonly string[], PlatformError, 
           return Effect.succeed<readonly string[]>([]);
         }
         const candidate = path.join(root, entry);
+        // The public materializer stages generated deployment output at this workspace-root path.
+        // Keep authored declarations and nested lookalikes subject to every source boundary check.
+        if (path.resolve(candidate) === path.resolve(workspaceRoot, '.zerops/runtime')) {
+          return Effect.succeed<readonly string[]>([]);
+        }
         return fileSystem.stat(candidate).pipe(
           Effect.flatMap((info) => {
             if (info.type === 'Directory') {
-              return collect(candidate);
+              return collect(candidate, workspaceRoot);
             }
             return Effect.succeed(sourceExtensions.has(path.extname(entry)) ? [candidate] : []);
           }),

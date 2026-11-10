@@ -1,3 +1,5 @@
+import { bootstrapScopesOf, writeBootstrapScopes } from '../access/bootstrap/persistence.ts';
+import { LegalEntityIdSchema, TenantIdSchema } from '../access/ids.ts';
 import { decodeActionPayload, getActionOwnerPermissionTargetResolver } from '../actions/definition.ts';
 import type { ActionRegistration, AnyActionRegistration } from '../actions/definition.ts';
 import type { DomainEventContractMap } from '../actions/events.ts';
@@ -45,7 +47,7 @@ import {
 } from '../db/schema.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
-import type { CoreTransaction } from '../db/types.ts';
+import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import type { ApplicationCompositionAuthorityError } from '../modules/application-composition-authority.ts';
 import type { ModuleStateGateError } from '../modules/module-state-gate-errors.ts';
 import { lockApplicationCompositionAuthority } from '../modules/application-composition-authority.ts';
@@ -180,6 +182,24 @@ const relation = (resourceType: string, resourceId: string, name: string, subjec
     resource: { objectId: resourceId, objectType: resourceType },
     subject: { object: { objectId: subjectId, objectType: subjectType } },
   });
+
+/** Only Action-capable fixtures need append-only fences; unused Read contexts retain normal cleanup. */
+const initializeNativeOwnerAccessScopes = (
+  configured: boolean,
+  executor: CoreDatabaseExecutor,
+  principal: TrustedPrincipalContext,
+  legalEntityId: string,
+): Effect.Effect<void, NativeReadTestError> => {
+  if (!configured) {
+    return Effect.void;
+  }
+  const tenantId = TenantIdSchema.make(principal.tenantId);
+  return writeBootstrapScopes(
+    { executor },
+    { ...principal, correlationId: `native-read-access-bootstrap-${principal.principalId}` },
+    { scopes: bootstrapScopesOf(tenantId, [LegalEntityIdSchema.make(legalEntityId)]), tenantId },
+  ).pipe(Effect.mapError((cause) => unavailable(cause, 'Native Read access fence initialization failed')));
+};
 
 /**
  * Isolated Core fixture for native owner Read tests. Core owns all administrative identity writes;
@@ -400,6 +420,7 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
       }),
     )
     .pipe(Effect.mapError(unavailable));
+  yield* initializeNativeOwnerAccessScopes(owner !== undefined, admin.executor, principal, legalEntityId);
   const legalEntityObjectId = yield* requiredObjectId(toLegalEntityAccessObjectId(tenantId, legalEntityId));
   const moduleObjectId = yield* requiredObjectId(toModuleAccessObjectId(tenantId, legalEntityId, options.moduleId));
   remember([

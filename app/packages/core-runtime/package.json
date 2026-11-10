@@ -78,7 +78,8 @@
     "./unit-service-fetch": "./src/http/unit-service-fetch.export.ts",
     "./workspace-environment": "./src/environment/workspace-environment.ts",
     "./testing/owner-evidence": "./src/testing/owner-evidence.ts",
-    "./legacy-completion-publication": "./src/modules/legacy-completion-publication.ts"
+    "./legacy-completion-publication": "./src/modules/legacy-completion-publication.ts",
+    "./drizzle-config": "./src/environment/drizzle-config.ts"
   },
   "imports": {
     "#database-runtime": {

@@ -2,7 +2,6 @@
   "name": "@app/commerce-customer-context",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "exports": {
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/commerce-customer-context-client.ts",

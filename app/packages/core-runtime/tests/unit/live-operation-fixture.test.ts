@@ -345,7 +345,7 @@ it.layer(NodeCrypto.layer)('live operation fixture', (suite) => {
       const beforeUpdate = transport.updateRows.mock.calls.length;
       const beforeSelect = transport.selectRows.mock.calls.length;
       transport.updateRows.mockReturnValue(Effect.succeed([{ moduleKey, tenantId: fixture.tenantId }]));
-      for (const state of ['suspended', 'active'] as const) {
+      for (const state of ['suspended', 'read_only', 'active'] as const) {
         transport.selectRows.mockReturnValue([{ moduleKey, state, tenantId: fixture.tenantId }]);
         expect(yield* fixture.setConfiguredModuleState(moduleKey, state)).toEqual({ moduleKey, state });
         const update = transport.updateRows.mock.lastCall;
@@ -358,8 +358,8 @@ it.layer(NodeCrypto.layer)('live operation fixture', (suite) => {
         expect(read[0]).toBe(tenantModuleStates);
         expect(new PgDialect().sqlToQuery(read[1]).params).toEqual([fixture.tenantId, moduleKey]);
       }
-      expect(transport.updateRows).toHaveBeenCalledTimes(beforeUpdate + 2);
-      expect(transport.selectRows).toHaveBeenCalledTimes(beforeSelect + 2);
+      expect(transport.updateRows).toHaveBeenCalledTimes(beforeUpdate + 3);
+      expect(transport.selectRows).toHaveBeenCalledTimes(beforeSelect + 3);
       expect(transport.insert).toHaveBeenCalledTimes(beforeInsert);
       expect(transport.writeRelationships).toHaveBeenCalledTimes(beforeWrite);
       expect(
@@ -382,7 +382,7 @@ it.layer(NodeCrypto.layer)('live operation fixture', (suite) => {
         const failure = yield* Effect.flip(fixture.setConfiguredModuleState(key, 'suspended'));
         expect(failure.reason).toBe('Invalid configured fixture module state mutation');
       }
-      for (const state of ['quarantined', 'read_only', 'unknown', '*']) {
+      for (const state of ['quarantined', 'inactive', 'unknown', '*']) {
         const failure = yield* Effect.flip(
           // @ts-expect-error Runtime callers cannot request unsupported or unknown module states.
           fixture.setConfiguredModuleState(moduleKey, state),

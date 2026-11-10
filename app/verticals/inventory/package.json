@@ -2,7 +2,6 @@
   "name": "@app/inventory",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "exports": {
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/inventory-client.ts",
@@ -52,8 +51,8 @@
     "./api/current-relevant-stock-position-set": "./shared/apis/current-relevant-stock-position-set.ts"
   },
   "scripts": {
-    "build": "modern build && node ../../scripts/generate-ontos-module-contract.mts --vertical inventory --target dist && ultramodern-create ultramodern public-surface --app inventory --target dist && cross-env MODERNJS_DEPLOY=node modern deploy --skip-build",
-    "cloudflare:build": "cross-env MODERNJS_DEPLOY=cloudflare modern build && node ../../scripts/generate-ontos-module-contract.mts --vertical inventory --target cloudflare-dist && ultramodern-create ultramodern public-surface --app inventory --target cloudflare-dist && cross-env MODERNJS_DEPLOY=cloudflare modern deploy --skip-build && ultramodern-create ultramodern cloudflare-output-verify --app inventory",
+    "build": "cross-env JITI_NATIVE_MODULES='[\"effect\"]' modern build && node ../../scripts/generate-ontos-module-contract.mts --vertical inventory --target dist && ultramodern-create ultramodern public-surface --app inventory --target dist && cross-env MODERNJS_DEPLOY=node JITI_NATIVE_MODULES='[\"effect\"]' modern deploy --skip-build",
+    "cloudflare:build": "cross-env MODERNJS_DEPLOY=cloudflare JITI_NATIVE_MODULES='[\"effect\"]' modern build && node ../../scripts/generate-ontos-module-contract.mts --vertical inventory --target cloudflare-dist && ultramodern-create ultramodern public-surface --app inventory --target cloudflare-dist && cross-env MODERNJS_DEPLOY=cloudflare JITI_NATIVE_MODULES='[\"effect\"]' modern deploy --skip-build && ultramodern-create ultramodern cloudflare-output-verify --app inventory",
     "cloudflare:deploy": "node ../../scripts/immutable-application-release.mts deploy --app-directory .",
     "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
     "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --app inventory",
@@ -62,8 +61,8 @@
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
     "db:test": "rstest run tests/unit/database-schema-contract.test.ts --config rstest.config.ts",
     "db:verify": "node scripts/verify-db-schema.mts",
-    "dev": "node ../../scripts/prepare-dev-module-contract.mts inventory && modern dev",
-    "serve": "modern serve",
+    "dev": "node ../../scripts/prepare-dev-module-contract.mts inventory && cross-env JITI_NATIVE_MODULES='[\"effect\"]' modern dev",
+    "serve": "cross-env JITI_NATIVE_MODULES='[\"effect\"]' modern serve",
     "test:integration": "rstest --project integration --pool.maxWorkers 1",
     "test:unit": "rstest --project unit",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",

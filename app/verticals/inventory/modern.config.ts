@@ -38,6 +38,7 @@ export default defineConfig(
           localeDetection: {
             fallbackLanguage: 'en',
             ignoreRedirectRoutes: [
+              '/.well-known',
               '/@mf-types',
               '/assets',
               '/bundles',

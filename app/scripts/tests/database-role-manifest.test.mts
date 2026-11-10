@@ -14,13 +14,24 @@ import {
 const explicitEntries = DATABASE_ROLE_GRANT_MANIFEST.flatMap((entry) => (entry.kind === 'explicit' ? [entry] : []));
 const schemaOf = (qualifiedName: string): string => qualifiedName.slice(0, qualifiedName.indexOf('.'));
 
-it('restricts the shared Market retirement fence to read, insert and lifecycle update privileges', () => {
+it('pins least-privilege shared exceptions for Promotion and the Market retirement fence', () => {
   const entry = manifestEntryForRole('ontos_runtime');
   expect(entry?.kind).toBe('legacy_shared');
   if (entry?.kind !== 'legacy_shared') {
     return;
   }
   expect(entry.tableGrantExceptions?.map(({ privileges, table }) => ({ privileges, table }))).toEqual([
+    { privileges: ['select', 'insert'], table: 'promotion.policy_changes' },
+    { privileges: ['select', 'insert', 'update'], table: 'promotion.tenant_generations' },
+    { privileges: ['select', 'insert', 'update'], table: 'promotion.promotion_drafts' },
+    { privileges: ['select', 'insert', 'update'], table: 'promotion.selection_policies' },
+    { privileges: ['select', 'insert', 'update'], table: 'promotion.basis_policies' },
+    { privileges: ['select', 'insert'], table: 'promotion.published_promotions' },
+    { privileges: ['select', 'insert'], table: 'promotion.lifecycle_facts' },
+    { privileges: ['select', 'insert'], table: 'promotion.vouchers' },
+    { privileges: ['select', 'insert'], table: 'promotion.voucher_disable_facts' },
+    { privileges: ['select', 'insert'], table: 'promotion.issued_proofs' },
+    { privileges: ['select', 'insert', 'delete'], table: 'promotion.gateway_assertion_redemptions' },
     {
       privileges: ['select', 'insert', 'update'],
       table: 'commerce_market_catalog.market_retirement_admissions',

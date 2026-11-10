@@ -11,6 +11,7 @@ import {
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { rootCertificates } from 'node:tls';
 import { brotliCompressSync, gzipSync } from 'node:zlib';
 
 import { NodeHttpServer, NodeServices } from '@effect/platform-node';
@@ -653,8 +654,7 @@ it.live('decodes native curl JSON while preserving independent compressed wire e
     const origin = `http://127.0.0.1:${address.port}`;
     const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-curl-content-coding-'));
     try {
-      // request() always passes --cacert; current curl refuses a missing file (exit 2) even for plain HTTP.
-      writeFileSync(path.join(directory, 'unused-certificate'), '');
+      writeFileSync(path.join(directory, 'unused-certificate'), rootCertificates.join('\n'), 'utf-8');
       // Probe the real curl independently, so removing --compressed from request() cannot hide coded cases.
       const probe = yield* collectToolingProcess(
         ChildProcess.make(
