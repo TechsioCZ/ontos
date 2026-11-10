@@ -349,31 +349,23 @@ const establishedCurrentState = Effect.fn('RecordPaymentReconciliationDecisionAc
 );
 
 /**
- * Whether a held REFUND_CONFIRMED is a prior return the shared funds accounting already counts against a
- * proven COLLECT of this Payment (#1150 "counted once ... whether or not its reconciliation case is closed").
- * Derived from the same reader and calculator as coverage and the refund guard: the reader holds the
- * statement as a return of that COLLECT, the collection is established, and with every case closed the
- * ledger is consistent (returns fit the collection, nothing ambiguous).
+ * The proven COLLECT of this Payment that the shared funds accounting counts a held REFUND_CONFIRMED
+ * against as a prior return (#1150 "counted once ... whether or not its reconciliation case is closed"),
+ * if any. Derived from the same reader and calculator as coverage and the refund guard: the reader holds
+ * the statement as a return of that COLLECT (named by its source or assigned by governance), the
+ * collection is established, and with every case closed the ledger is consistent (returns fit the
+ * collection, nothing ambiguous).
  */
-const priorReturnCountedOf = Effect.fn('RecordPaymentReconciliationDecisionAction.priorReturnCounted')(
-  function* priorReturnCounted(
+const priorReturnCollectionOf = Effect.fn('RecordPaymentReconciliationDecisionAction.priorReturnCollection')(
+  function* priorReturnCollection(
     context: DecisionContext,
     observation: PaymentObservationRecord,
     current: Option.Option<PaymentAggregateRecord>,
   ) {
-    const { operationId, paymentId } = observation;
+    const { paymentId } = observation;
     const loaded = Option.getOrUndefined(current);
-    if (
-      observation.factKind !== 'REFUND_CONFIRMED' ||
-      operationId === undefined ||
-      loaded === undefined ||
-      loaded.payment.paymentId !== paymentId
-    ) {
-      return false;
-    }
-    const collect = loaded.operations.find((operation) => operation.operationId === operationId);
-    if (collect?.kind !== 'COLLECT' || collect.outcome !== 'EFFECT_CONFIRMED') {
-      return false;
+    if (observation.factKind !== 'REFUND_CONFIRMED' || loaded === undefined || loaded.payment.paymentId !== paymentId) {
+      return Option.none<string>();
     }
     const evidence = yield* context.services.refunds.selectReturnEvidence(loaded.payment.paymentId);
     yield* recordPaymentLookup(context, {
@@ -383,13 +375,14 @@ const priorReturnCountedOf = Effect.fn('RecordPaymentReconciliationDecisionActio
       resultCount: evidence.length,
     });
     const counted = evidence.find((statement) => statement.observationId === observation.observationId);
-    if (counted?.operationId !== operationId) {
-      return false;
+    const collect = loaded.operations.find((operation) => operation.operationId === counted?.operationId);
+    if (collect?.kind !== 'COLLECT' || collect.outcome !== 'EFFECT_CONFIRMED') {
+      return Option.none<string>();
     }
     const ledger = computePaymentFunds(
       fundsSnapshotWithPriorReturns({ ...paymentFundsSnapshotOf(loaded), unresolvedEvidence: false }, evidence),
     );
-    return PaymentFundsLedger.$is('Established')(ledger);
+    return PaymentFundsLedger.$is('Established')(ledger) ? Option.some(collect.operationId) : Option.none<string>();
   },
 );
 
@@ -404,7 +397,7 @@ const economicEffectCountedOf = Effect.fn('RecordPaymentReconciliationDecisionAc
     observation: PaymentObservationRecord,
     current: Option.Option<PaymentAggregateRecord>,
   ) {
-    if (yield* priorReturnCountedOf(context, observation, current)) {
+    if (Option.isSome(yield* priorReturnCollectionOf(context, observation, current))) {
       return true;
     }
     const { economicEffectKey, observationId, paymentId } = observation;
@@ -614,18 +607,17 @@ const closedReturnCountedElsewhere = Effect.fn(
     return false;
   }
   const observation = Option.getOrUndefined(yield* findObservation(context, observationId.value));
-  if (
-    observation?.economicEffectKey === undefined ||
-    observation.operationId === undefined ||
-    observation.paymentId === undefined ||
-    !(yield* priorReturnCountedOf(context, observation, current))
-  ) {
+  if (observation?.economicEffectKey === undefined || observation.paymentId === undefined) {
+    return false;
+  }
+  const collection = yield* priorReturnCollectionOf(context, observation, current);
+  if (Option.isNone(collection)) {
     return false;
   }
   const attribution = yield* context.services.evidence.attributeEconomicEffect({
     economicEffectKey: observation.economicEffectKey,
     factKind: observation.factKind,
-    operationId: observation.operationId,
+    operationId: collection.value,
     paymentId: observation.paymentId,
     provenance,
     source: {
@@ -642,7 +634,10 @@ const closedReturnCountedElsewhere = Effect.fn(
   });
   // An operation of this Payment may already stand for the effect (its own REFUND): the reader still
   // counts the return once. Only another Payment's claim stops this Payment from counting it.
-  return attribution === 'ATTRIBUTED_ELSEWHERE' && !(yield* priorReturnCountedOf(context, observation, current));
+  return (
+    attribution === 'ATTRIBUTED_ELSEWHERE' &&
+    Option.isNone(yield* priorReturnCollectionOf(context, observation, current))
+  );
 });
 
 interface AppliedOutcome {
