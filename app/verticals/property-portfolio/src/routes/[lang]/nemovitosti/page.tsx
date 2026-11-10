@@ -9,10 +9,8 @@ import { pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { DateTime, Effect, Match, Option, Result, Schema } from 'effect';
 import { useEffect, useEffectEvent, useId, useRef, useState, useSyncExternalStore } from 'react';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
+import { Combobox, FormInput, FormTextarea } from '@app/admin-ui/form-controls';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
-import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import {
   savePropertyEdit,
@@ -30,6 +28,7 @@ import {
 import type { PropertyDraft } from './use-property-editor.ts';
 import { ResponsibleEmployeesField } from './responsible-employees-field.tsx';
 import {
+  DocumentTitle,
   SaveBar,
   UnsavedChangesDialog,
   saveLabelsFor,
@@ -861,9 +860,11 @@ const RecordsMetadata = ({ view }: { readonly view: RecordsView }) => {
   }
   const archive = unit?.archive ?? property.archive;
   const note = unit === undefined ? property.note : unit.note;
+  const name = unit?.name ?? property.name;
   return (
     <div className="space-y-200">
-      <h2 className="propertyportfolio:text-xl propertyportfolio:font-semibold">{unit?.name ?? property.name}</h2>
+      <DocumentTitle title={name} />
+      <h2 className="propertyportfolio:text-xl propertyportfolio:font-semibold">{name}</h2>
       <p className={secondaryTextClass}>{unit === undefined ? property.address : unit.code}</p>
       {unit === undefined ? (
         <dl className="propertyportfolio:grid gap-200 propertyportfolio:sm:grid-cols-2">

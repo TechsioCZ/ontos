@@ -1,5 +1,5 @@
 import { Badge } from '@techsio/ui-kit/atoms/badge';
-import { Combobox } from '@techsio/ui-kit/molecules/combobox';
+import { Combobox } from '@app/admin-ui/form-controls';
 
 import type { ResponsibleSelection } from './use-property-editor.ts';
 
