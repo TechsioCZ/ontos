@@ -281,6 +281,11 @@ const CreateInvoiceForm = ({ onOpenChange, vm }: Omit<CreateInvoiceDialogProps, 
             <p className="text-fg-secondary text-xs">
               {t(`${ns}.form.${references.productsReadable === false ? 'rentalLineHint' : 'priceNote'}`)}
             </p>
+            {references.productsFailed && (
+              <StatusText showIcon size="sm" status="error">
+                {t(`${ns}.referencesError`)}
+              </StatusText>
+            )}
           </div>
           <DraftTotalsSummary totals={totals} zeroPriceWarning={zeroPriceWarning} />
         </form>

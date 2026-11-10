@@ -32,6 +32,7 @@ import {
   loadCustomerDetailPageRecord,
 } from '../../src/routes/[lang]/prodej/zakaznici/customer-detail-page-data.ts';
 import type { CustomerDetailPageRecord } from '../../src/routes/[lang]/prodej/zakaznici/customer-detail-page-data.ts';
+import { RecordRouteTitle } from '../../src/routes/ultramodern-route-head.tsx' with { rstest: 'importActual' };
 import { expectHumanReadable } from '../support/visible-text.ts';
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
@@ -44,7 +45,10 @@ rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   useParams: () => ({ id: '' }),
   useRouterState: () => '/cs/prodej/zakaznici',
 }));
-rstest.mock('../../src/routes/ultramodern-route-head.tsx', () => ({ UltramodernRouteHead: () => null }));
+rstest.mock('../../src/routes/ultramodern-route-head.tsx', () => ({
+  RecordRouteTitle,
+  UltramodernRouteHead: () => null,
+}));
 rstest.mock('../../src/api/counterparty-read-client.ts');
 rstest.mock('../../src/api/party-detail-client.ts');
 rstest.mock('../../src/api/party-contact-points-client.ts');
@@ -443,6 +447,22 @@ it.live('a background reload of the same record changes nothing on the full page
     expect(archiveButton().disabled).toBe(false);
     expect(fieldById<HTMLInputElement>('customer-reason').value).toBe('Reviewed document');
     expect(saveButtons()).toHaveLength(1);
+  }),
+);
+
+it.live('the full page names the browser tab after the customer, over the Shell title', () =>
+  Effect.gen(function* tabTitle() {
+    const copy = { customerTab: 'Eva Bílá | OntOS', name: 'Eva Bílá', shellTitle: 'Domů | OntOS' } as const;
+    yield* customerDetailPageData.preload(pageInput);
+    // The Shell's frame renders its own title in the same commit as the page.
+    render(
+      <>
+        <title>{copy.shellTitle}</title>
+        <CustomerDetailPage context={context} routeParams={routeParams} />
+      </>,
+    );
+    yield* Effect.promise(() => waitFor(() => expect(screen.getByRole('heading', { name: copy.name })).toBeTruthy()));
+    yield* Effect.promise(() => waitFor(() => expect(document.title).toBe(copy.customerTab)));
   }),
 );
 

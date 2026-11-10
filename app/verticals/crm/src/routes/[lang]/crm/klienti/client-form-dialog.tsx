@@ -18,7 +18,7 @@ import {
   useRecordDraft,
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
-import type { SaveOutcome } from '@app/admin-ui';
+import type { SaveOutcome, SaveState } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { ActionIcon } from '@techsio/ui-kit/atoms/action-icon';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -69,6 +69,21 @@ const contactFilled = (entry: ContactDraft) =>
 // Contacts of a new company that would block its creation (the form shows the field messages).
 const contactsBlock = (value: Draft, contacts: readonly ContactDraft[]) =>
   value.kind === 'organization' && (contacts.some(incompleteContact) || contacts.some(contactWithInvalidEmail));
+
+/**
+ * The save status a client form shows. A new client's contact persons are typed input outside the draft: typing only
+ * them still shows the shared status, and contacts that would block the create make the form invalid, like an empty
+ * name does.
+ */
+const shownStatus = (
+  mode: 'create' | 'edit',
+  status: SaveState,
+  input: { readonly contacts: readonly ContactDraft[]; readonly draft: Draft; readonly otherChanges: boolean },
+): SaveState =>
+  mode === 'create' &&
+  ((status === 'idle' && input.otherChanges) || (status === 'dirty' && contactsBlock(input.draft, input.contacts)))
+    ? 'invalid'
+    : status;
 
 const createCommandOf = (
   value: Draft,
@@ -276,8 +291,9 @@ const useClientForm = ({
   const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard, otherChanges });
 
   const organization = draft.kind === 'organization';
+  const status = shownStatus(mode, record.status, { contacts, draft, otherChanges });
   // A new client shows its field messages once the draft cannot be sent or Uložit was refused.
-  const shown = touched || record.status === 'invalid';
+  const shown = touched || status === 'invalid';
   const nameError = shown && draft.name.trim() === '' ? 'Vyplňte název' : undefined;
   const emailError = draft.email.trim() !== '' && !EMAIL.test(draft.email.trim()) ? 'Neplatný e-mail' : undefined;
   const regNoError =
@@ -339,6 +355,7 @@ const useClientForm = ({
     regNoHelp,
     setContacts,
     shown,
+    status,
     viewer,
   };
 };
@@ -370,6 +387,7 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
     regNoHelp,
     setContacts,
     shown,
+    status,
     viewer,
   } = useClientForm(props);
   const labels = saveLabelsFor(language);
@@ -383,7 +401,7 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
           <Button disabled={busy} onClick={close} theme="outlined" variant="secondary">
             {mode === 'create' ? 'Zrušit' : 'Zavřít'}
           </Button>
-          <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
+          <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={status} />
         </>
       }
       closeLabel={dialogCloseLabel}

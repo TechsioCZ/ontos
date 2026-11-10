@@ -13,7 +13,7 @@ import type { CustomerListItem } from '../../../../../api/customers-client.ts';
 import { partyRegistryI18nResources } from '../../../../../i18n/resources.ts';
 import { browserRuntime } from '../../../../../runtime/browser-effect-runtime.ts';
 import type { CounterpartyRef } from '../../../../../../shared/resources/counterparty.ts';
-import { UltramodernRouteHead } from '../../../../ultramodern-route-head';
+import { RecordRouteTitle, UltramodernRouteHead } from '../../../../ultramodern-route-head';
 import '../../../../index.css';
 import { CUSTOMER_DETAIL_KEY, CustomerDetailContent, CustomerDetailSaveBar } from '../customer-detail-content.tsx';
 import type { CustomerDetailSubject } from '../customer-detail-content.tsx';
@@ -164,6 +164,7 @@ export const CustomerDetailPageRecordView = ({ onChanged, onRetry, record, stale
   const backHref = `/${language ?? 'cs'}/prodej/zakaznici`;
   return (
     <>
+      <RecordRouteTitle name={subject.displayName} />
       <PageHeader
         actions={
           <Button onClick={() => detail.requestNavigation(backHref)} theme="outlined" variant="secondary">

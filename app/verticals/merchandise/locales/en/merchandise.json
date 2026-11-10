@@ -297,9 +297,6 @@
         "description": "Products, prices and stock movements.",
         "detail": {
           "active": "Active product",
-          "discardAction": "Discard changes",
-          "discardDescription": "Unsaved changes in this form will be lost.",
-          "discardKeep": "Keep editing",
           "tab": "Detail",
           "back": "Back to products",
           "priceExplanation": "Edit the price excluding VAT. The price including VAT is calculated from the selected VAT rate.",
@@ -430,7 +427,6 @@
         },
         "receipt": {
           "description": "Record stock received. On-hand stock is recalculated from movements.",
-          "discardTitle": "Discard unsaved changes?",
           "submit": "Record receipt",
           "title": "Goods receipt"
         },

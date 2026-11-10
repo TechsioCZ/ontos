@@ -157,6 +157,7 @@ const model = (reminders: readonly InvoiceReminder[]): RemindersModel => ({
     opportunitiesForbidden: false,
     opportunityTitles: new Map(),
     products: [],
+    productsFailed: false,
     productsReadable: absent<boolean>(),
     referencesFailed: false,
   },
