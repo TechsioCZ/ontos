@@ -235,6 +235,15 @@ it('renders the same complete detail body in the side panel and on the page', ()
   expectDetailBody();
 });
 
+it('keeps the side panel save bar the last control of its footer', () => {
+  render(
+    <CustomerDetailDialog customer={customer} onOpenChange={noop} onRenamed={noop} onRetry={noop} snapshot={record} />,
+  );
+  expect(saveButtons()).toHaveLength(1);
+  const bar = saveButton().closest('[data-save-state]');
+  expect(bar?.parentElement?.lastElementChild).toBe(bar);
+});
+
 it('lists an ended identifier in the same dated history section on the page and in the panel', () => {
   const endedRecord: CustomerDetailPageRecord = {
     ...record,
@@ -381,6 +390,12 @@ it.live('keeps the same-scope record read-only and offers a reload after a trans
   }),
 );
 
+/** True when `second` comes after `first` in document order. */
+const follows = (first: Element, second: Element): boolean => {
+  const order = [...document.querySelectorAll('*')];
+  return order.indexOf(first) < order.indexOf(second);
+};
+
 it.live('the full page renders one Save button that sends the edited draft once', () =>
   Effect.gen(function* pageSave() {
     yield* customerDetailPageData.preload(pageInput);
@@ -388,6 +403,9 @@ it.live('the full page renders one Save button that sends the edited draft once'
     yield* Effect.promise(() => waitFor(() => expect(screen.getByRole('heading', { name: 'Eva Bílá' })).toBeTruthy()));
     expect(saveButtons()).toHaveLength(1);
     expect(saveButton().disabled).toBe(true);
+    // The save bar sits directly under the editable fields, above the related records.
+    expect(follows(fieldById('customer-rename'), saveButton())).toBe(true);
+    expect(follows(saveButton(), screen.getByText('party-registry.pages.customers.detail.related'))).toBe(true);
     fireEvent.change(fieldById<HTMLInputElement>('customer-evidence'), { target: { value: 'document:42' } });
     fireEvent.change(fieldById<HTMLInputElement>('customer-reason'), { target: { value: 'Reviewed document' } });
     fireEvent.change(fieldById<HTMLInputElement>('customer-rename'), { target: { value: 'Eva Černá' } });
