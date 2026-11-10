@@ -10,7 +10,7 @@ import type {
 import type { PaymentSourceBinding } from '../../shared/domain/source-statement.ts';
 import { sameAmount } from './money.ts';
 import { decideOutcomeTransition, isDefinitiveOutcome, OutcomeTransitionDecision } from './operation-lifecycle.ts';
-import { priorReturnsOf } from './refund-prior-returns.ts';
+import { contradictsStandingReturn, priorReturnsOf, returnSourceBindingKey } from './refund-prior-returns.ts';
 import type { PaymentReturnEvidence } from './refund-prior-returns.ts';
 
 /**
@@ -705,6 +705,17 @@ export const interpretPaymentObservation = (
   }
   if (observation.factKind === 'UNRECOGNIZED') {
     return hold('UNRECOGNIZED_FACT', observation.operationId);
+  }
+  if (
+    observation.factKind === 'REFUND_CONFIRMED' &&
+    contradictsStandingReturn(aggregate.returnEvidence ?? [], {
+      amount: observation.amount,
+      economicEffectKey: observation.economicEffectKey,
+      sourceBindingKey: returnSourceBindingKey(observation.source),
+    })
+  ) {
+    // The same return effect was already stated with other money: this statement confirms nothing.
+    return hold('DISTINCT_ECONOMIC_EFFECT', observation.operationId);
   }
   if (observation.operationId === undefined) {
     return hold('UNCORRELATED_OPERATION');

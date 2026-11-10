@@ -13,6 +13,7 @@ import type {
   PaymentEvidenceOperationView,
   QualifiedPaymentObservation,
 } from '../../src/domain/evidence-interpretation.ts';
+import { returnSourceBindingKey } from '../../src/domain/refund-prior-returns.ts';
 import type { PaymentReturnEvidence } from '../../src/domain/refund-prior-returns.ts';
 
 const czk = (amountMinor: number) => ({ amountMinor, currency: 'CZK' as const });
@@ -958,6 +959,35 @@ describe('#1151 Payment evidence interpretation', () => {
     );
     // A held statement about a REFUND established nothing: its correction still has no target.
     expect(PaymentEvidenceDecision.$is('HOLD')(returnCorrection(REFUND_ID))).toBe(true);
+    // The same return effect stated with other money confirms nothing: it is held as a distinct claim.
+    const pendingRefund = operation('PENDING', {
+      amount: czk(40_000),
+      kind: 'REFUND',
+      operationId: REFUND_ID,
+      targetOperationId: COLLECT_ID,
+    });
+    const restated = (amountMinor: number) =>
+      interpretPaymentObservation(
+        {
+          ...aggregateOf([operation('EFFECT_CONFIRMED'), pendingRefund]),
+          returnEvidence: [
+            {
+              ...priorReturn('obs-return', COLLECT_ID, amountMinor),
+              sourceBindingKey: returnSourceBindingKey(GATEWAY_SOURCE),
+            },
+          ],
+        },
+        observed({
+          amount: czk(40_000),
+          economicEffectKey: 'gopay:refund:prior',
+          factKind: 'REFUND_CONFIRMED',
+          operationId: REFUND_ID,
+        }),
+      );
+    expect(restated(60_000)).toEqual(
+      PaymentEvidenceDecision.HOLD({ operationId: REFUND_ID, reason: 'DISTINCT_ECONOMIC_EFFECT' }),
+    );
+    expect(PaymentEvidenceDecision.$is('TRANSITION')(restated(40_000))).toBe(true);
     expect(
       interpretPaymentObservation(
         aggregateOf([operation('EFFECT_CONFIRMED')], [accepted('obs-receipt')]),

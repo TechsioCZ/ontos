@@ -72,6 +72,11 @@ export interface PaymentReconciliationEvidenceFacts {
    * Delivery Offer / pickup capability of its Payment (recorded with the observation).
    */
   readonly capabilityCorrelated: boolean | undefined;
+  /**
+   * Return statements only: another standing return statement of the same source-scoped economic effect
+   * states a different amount (#1151). The statement can then be assigned to no operation.
+   */
+  readonly contradictsStandingReturn?: boolean;
   /** A qualified SOURCE_CORRECTION (accepted, held or conflicting) disproved this statement. */
   readonly corrected: boolean;
   /**
@@ -310,6 +315,12 @@ const decideAttach = (
   if (refusal !== undefined) {
     return reject('payment_reconciliation_evidence_not_qualified', refusal);
   }
+  if (facts.contradictsStandingReturn === true) {
+    return reject(
+      'payment_reconciliation_evidence_not_qualified',
+      'Another statement of the same economic effect states a different amount; the evidence stays held',
+    );
+  }
   const meaning = paymentFactMeaning(facts.factKind);
   const resolves = meaning !== undefined && meaning.kind === operation.kind && isDefinitiveOutcome(meaning.outcome);
   const evidenceOnly = PaymentReconciliationStep.Apply({
@@ -320,7 +331,14 @@ const decideAttach = (
     resultingOutcome: Option.none(),
   });
   if (!resolves) {
-    return evidenceOnly;
+    // An assignment that changes no outcome still makes the funds reader count the statement for this
+    // operation: one already counted toward another operation is never assigned a second time.
+    return facts.countedToward.some((counted) => counted !== operation.operationId)
+      ? reject(
+          'payment_reconciliation_evidence_not_qualified',
+          'The evidence already counts toward another operation of this Payment',
+        )
+      : evidenceOnly;
   }
   if (selectedCapabilityUnproven(facts)) {
     return reject(

@@ -1513,6 +1513,137 @@ it.live('#1150 an unapplied second correction of a counted prior return keeps it
   ),
 );
 
+/** A bank return statement that names its Payment but no operation. */
+const unassignedBankReturn = (
+  evidence: EvidenceScenario,
+  paymentId: string,
+  economicEffectKey: string,
+  amountMinor: number,
+) =>
+  evidence.accept({
+    amount: czk(amountMinor),
+    economicEffectKey,
+    factFamily: 'REFUND_EXECUTION',
+    factKind: 'REFUND_CONFIRMED',
+    paymentId,
+    source: BANK_REFUND_SOURCE,
+    sourceOccurrenceId: `bank-line-${randomUUID()}`,
+    sourceRevision: 1,
+  });
+
+const attachReturn = (
+  evidence: EvidenceScenario,
+  caseId: string | undefined,
+  observationId: string,
+  operationId: string,
+) =>
+  evidence.decide({
+    caseId: caseId ?? '',
+    decision: { _tag: 'ATTACH_EVIDENCE', observationId, operationId },
+    reason: 'Operator assigns the bank line',
+  });
+
+it.live('#1151 one return effect stated with two amounts is held, never folded into the smaller REFUND', () =>
+  native(
+    Effect.gen(function* returnStatedWithTwoAmounts() {
+      const evidence = yield* scenario();
+      const routeA = yield* evidence.configureRefundRoute('erp-primary', 'refund-account-a');
+      const paid = yield* collectedBankPayment(evidence, 'collect-first');
+      const refund = yield* pendingBankRefund(evidence, routeA, paid, 40_000);
+      const key = 'erp:bank-return:25';
+      // The bank states a 600 CZK return of the collection; the operator closes it as a prior return.
+      const larger = yield* bankReturnOf(evidence, key, 60_000)(paid.payment.paymentId, paid.collect.operationId);
+      yield* closeReturnCase(evidence, larger.reconciliationCaseId);
+      // The same effect now stated as 400 CZK for the pending REFUND contradicts it: nothing is confirmed.
+      const smaller = yield* bankReturnOf(evidence, key, 40_000)(paid.payment.paymentId, refund.record.operationId);
+      expect(smaller).toMatchObject({ acceptanceOutcome: 'HELD_UNRESOLVED', interpretation: 'HOLD' });
+      expect(
+        yield* failureCodeOf(
+          attachReturn(evidence, smaller.reconciliationCaseId, smaller.observationId, refund.record.operationId),
+        ),
+      ).toBe('payment_reconciliation_evidence_not_qualified');
+      expect((yield* evidence.coverage(paid.payment.paymentId)).startsWith('Held ')).toBe(true);
+      const debt = yield* evidence.debt({ paymentId: paid.payment.paymentId });
+      expect(debt.openCases.length).toBeGreaterThan(0);
+    }),
+  ),
+);
+
+it.live('#1151 a copy of a confirmed return that states another amount is never closed as accounted for', () =>
+  native(
+    Effect.gen(function* copyWithAnotherAmount() {
+      const evidence = yield* scenario();
+      const routeA = yield* evidence.configureRefundRoute('erp-primary', 'refund-account-a');
+      const paid = yield* collectedBankPayment(evidence, 'collect-first');
+      const refund = yield* pendingBankRefund(evidence, routeA, paid);
+      const key = 'erp:bank-return:26';
+      expect(
+        (yield* bankReturnOf(evidence, key)(paid.payment.paymentId, refund.record.operationId)).interpretation,
+      ).toBe('TRANSITION');
+      // The same effect reported against the collection as 500 CZK disagrees with the confirmed 600 CZK.
+      const copy = yield* bankReturnOf(evidence, key, 50_000)(paid.payment.paymentId, paid.collect.operationId);
+      expect(copy.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+      expect(yield* failureCodeOf(closeReturnCase(evidence, copy.reconciliationCaseId))).toBe(
+        'payment_reconciliation_obligation_unresolved',
+      );
+      expect((yield* evidence.coverage(paid.payment.paymentId)).startsWith('Held ')).toBe(true);
+    }),
+  ),
+);
+
+it.live('#1150 a return that confirmed a REFUND is never assigned to the collection as a second return', () =>
+  native(
+    Effect.gen(function* returnAssignedTwice() {
+      const evidence = yield* scenario();
+      const routeA = yield* evidence.configureRefundRoute('erp-primary', 'refund-account-a');
+      const paid = yield* collectedBankPayment(evidence, 'collect-first');
+      const refund = yield* pendingBankRefund(evidence, routeA, paid, 50_000);
+      const held = yield* unassignedBankReturn(evidence, paid.payment.paymentId, 'erp:bank-return:27', 50_000);
+      const attached = yield* attachReturn(
+        evidence,
+        held.reconciliationCaseId,
+        held.observationId,
+        refund.record.operationId,
+      );
+      expect(Option.getOrUndefined(attached.outcomeChange)).toMatchObject({ toOutcome: 'EFFECT_CONFIRMED' });
+      expect(
+        yield* failureCodeOf(
+          attachReturn(evidence, held.reconciliationCaseId, held.observationId, paid.collect.operationId),
+        ),
+      ).toBe('payment_reconciliation_evidence_not_qualified');
+      yield* closeReturnCase(evidence, held.reconciliationCaseId);
+      expect(yield* evidence.coverage(paid.payment.paymentId)).toBe(
+        'Established collected=100000 returned=50000 remaining=50000',
+      );
+    }),
+  ),
+);
+
+it.live('#1151 a held correction is not closed while the held statement it corrects can still be counted', () =>
+  native(
+    Effect.gen(function* correctionOfUnresolvedReturn() {
+      const evidence = yield* scenario();
+      yield* evidence.configureRefundRoute('erp-primary', 'refund-account-a');
+      const paid = yield* collectedBankPayment(evidence, 'collect-first');
+      const held = yield* unassignedBankReturn(evidence, paid.payment.paymentId, 'erp:bank-return:28', 60_000);
+      // The correction arrives before the return is assigned: it has no target to apply to yet.
+      const correction = yield* correctReturn(evidence, paid.payment.paymentId, held.observationId);
+      expect(correction.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+      // Closing it now would lose it: the return could then be assigned and counted at its full 600 CZK.
+      expect(
+        yield* failureCodeOf(
+          evidence.decide({
+            caseId: correction.reconciliationCaseId ?? '',
+            decision: { _tag: 'CLOSE_CASE', evidenceRef: 'operator-note' },
+            reason: 'Close the early correction',
+          }),
+        ),
+      ).toBe('payment_reconciliation_obligation_unresolved');
+      expect((yield* evidence.coverage(paid.payment.paymentId)).startsWith('Held ')).toBe(true);
+    }),
+  ),
+);
+
 it.live('#1150 a partially retracted refund receipt never restores the full refund through attachment', () =>
   native(
     Effect.gen(function* partiallyRetractedRefundReceipt() {

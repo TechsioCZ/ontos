@@ -177,6 +177,20 @@ describe('#1151 governed reconciliation decisions', () => {
     expect(rejectionCode(decide(attach, 'CONFLICT', Option.some(facts({ corrected: true }))))).toBe(
       'payment_reconciliation_evidence_not_qualified',
     );
+    // A return whose effect another standing statement states with other money is assigned to nothing.
+    expect(rejectionCode(decide(attach, 'CONFLICT', Option.some(facts({ contradictsStandingReturn: true }))))).toBe(
+      'payment_reconciliation_evidence_not_qualified',
+    );
+    // An assignment that changes no outcome is refused too when the statement already counts elsewhere.
+    expect(
+      rejectionCode(
+        decide(
+          attach,
+          'EFFECT_CONFIRMED',
+          Option.some(facts({ countedToward: ['refund-1'], factKind: 'REFUND_CONFIRMED' })),
+        ),
+      ),
+    ).toBe('payment_reconciliation_evidence_not_qualified');
     // A partially retracted statement proves less than it states: it cannot confirm the whole operation.
     expect(rejectionCode(decide(attach, 'CONFLICT', Option.some(facts({ correctedAmount: czk(10_000) }))))).toBe(
       'payment_reconciliation_evidence_not_qualified',
