@@ -6,6 +6,8 @@
  *   node scripts/zerops/provision-module-credentials.mts issue <operation-id> <app-id> [...]
  *     Issues each module a fresh key and writes the pass's output (keys included) to standard output, the only thing
  *     this command writes there. Whoever runs it reads that pipe into memory; it is never written to a file.
+ *   node scripts/zerops/provision-module-credentials.mts issue-callers <operation-id>
+ *     The same, for every module that calls another module (the local demo serves them all).
  *   node scripts/zerops/provision-module-credentials.mts retire <provider-key-id> [...]
  *     Revokes every module credential bound before the given (current) ones.
  *
@@ -24,7 +26,7 @@ import {
   retireSupersededModuleCredentials,
 } from '../../apps/shell-super-app/api/auth/module-credential-provisioning.ts';
 import { AuthPersistenceLive } from '../../apps/shell-super-app/api/auth/runtime-infrastructure.ts';
-import { ProvisioningOutputJsonSchema } from './module-credentials.mts';
+import { MODULE_CREDENTIAL_CALLERS, ProvisioningOutputJsonSchema } from './module-credentials.mts';
 
 const authPersistenceLive = AuthPersistenceLive.pipe(Layer.provide(AuthConfigLive));
 const ProvisioningLive = Layer.mergeAll(
@@ -33,28 +35,36 @@ const ProvisioningLive = Layer.mergeAll(
   CorePersistenceLive.pipe(Layer.provide(DatabaseConfigLive)),
 );
 
+const issueFor = (appIds: readonly string[], operationId: string) =>
+  Effect.gen(function* issueModuleCredentials() {
+    const provisioned = yield* provisionModuleCredentials({ appIds, operationId });
+    const output = yield* Schema.encodeUnknownEffect(ProvisioningOutputJsonSchema)({
+      credentials: Object.fromEntries(provisioned.credentials),
+      failedAppIds: provisioned.failedAppIds,
+      providerKeyIds: [...provisioned.providerKeyIds],
+      schemaVersion: 1,
+    });
+    yield* Console.error(
+      provisioned.failedAppIds.length === 0
+        ? `[module-credentials] issued for ${[...provisioned.credentials.keys()].join(', ')}`
+        : `[module-credentials] NOT issued for ${provisioned.failedAppIds.join(', ')}`,
+    );
+    return yield* Console.log(output);
+  });
+
 const issue = Command.make(
   'issue',
   {
     appIds: Argument.String('app-id').pipe(Argument.atLeast(1)),
     operationId: Argument.String('operation-id'),
   },
-  ({ appIds, operationId }) =>
-    Effect.gen(function* issueModuleCredentials() {
-      const provisioned = yield* provisionModuleCredentials({ appIds, operationId });
-      const output = yield* Schema.encodeUnknownEffect(ProvisioningOutputJsonSchema)({
-        credentials: Object.fromEntries(provisioned.credentials),
-        failedAppIds: provisioned.failedAppIds,
-        providerKeyIds: [...provisioned.providerKeyIds],
-        schemaVersion: 1,
-      });
-      yield* Console.error(
-        provisioned.failedAppIds.length === 0
-          ? `[module-credentials] issued for ${[...provisioned.credentials.keys()].join(', ')}`
-          : `[module-credentials] NOT issued for ${provisioned.failedAppIds.join(', ')}`,
-      );
-      return yield* Console.log(output);
-    }),
+  ({ appIds, operationId }) => issueFor(appIds, operationId),
+);
+
+const issueCallers = Command.make(
+  'issue-callers',
+  { operationId: Argument.String('operation-id') },
+  ({ operationId }) => issueFor(MODULE_CREDENTIAL_CALLERS, operationId),
 );
 
 const retire = Command.make(
@@ -71,7 +81,7 @@ const retire = Command.make(
 );
 
 const command = Command.make('provision-module-credentials').pipe(
-  Command.withSubcommands([issue, retire]),
+  Command.withSubcommands([issue, issueCallers, retire]),
   Command.provide(ProvisioningLive),
 );
 

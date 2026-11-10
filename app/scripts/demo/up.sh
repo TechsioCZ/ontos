@@ -192,6 +192,16 @@ for id in "${failed[@]}"; do
 done
 [ ${#failed[@]} -eq 0 ] || die "build failed: ${failed[*]} (logs: $LOG_DIR/build-<id>.log)"
 
+# 4b. Module credentials. The platform issues every calling module its own key on each start, with the same program
+#     the stage app host runs on each boot. The keys stay in this shell's memory and reach each process only through
+#     its own channel: a module's own environment for its dedicated server, standard input for the Outbox host.
+say "provisioning module credentials"
+MODULE_CREDENTIALS="$("${WITH_ENV[@]}" node scripts/zerops/provision-module-credentials.mts issue-callers \
+  "$(uuidgen | tr '[:upper:]' '[:lower:]')")" || die "module credential provisioning failed"
+module_key() { # module_key <app-id>: that module's key, or nothing when it calls no other module
+  printf '%s' "$MODULE_CREDENTIALS" | "${WITH_ENV[@]}" node scripts/zerops/module-credential-handover.mts key "$1" 2>/dev/null
+}
+
 # 5. Servers. Each runs in its own process group so down.sh can stop the whole tree.
 set -m
 start() { # start <name> <command...>
@@ -201,6 +211,14 @@ start() { # start <name> <command...>
     ONTOS_DEMO_VERTICALS="$(IFS=,; echo "${VERTICALS[*]}")" \
     nohup "$@" >"$LOG_DIR/$name.log" 2>&1 </dev/null &
   echo $! >"$PID_DIR/$name.pid"
+}
+start_module() { # start_module <app-id> <directory>: a module's own server, holding only its own key
+  local key
+  if key="$(module_key "$1")"; then
+    ONTOS_GATEWAY_MODULE_API_KEY="$key" start "$1" "${WITH_ENV[@]}" pnpm --dir "$2" exec modern serve
+  else
+    start "$1" "${WITH_ENV[@]}" pnpm --dir "$2" exec modern serve
+  fi
 }
 assert_free() {
   if lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; then
@@ -215,7 +233,7 @@ for id in "${VERTICALS[@]}"; do assert_free "$(port_of "$id")" "$id"; done
 say "starting shell-super-app on :$SHELL_PORT and ${#VERTICALS[@]} verticals"
 start shell-super-app "${WITH_ENV[@]}" pnpm --dir apps/shell-super-app exec modern serve
 for id in "${VERTICALS[@]}"; do
-  start "$id" "${WITH_ENV[@]}" pnpm --dir "verticals/$id" exec modern serve
+  start_module "$id" "verticals/$id"
 done
 wait_http "http://127.0.0.1:$SHELL_PORT/.well-known/ontos-shell-runtime.json" 180 shell-super-app
 for id in "${VERTICALS[@]}"; do
@@ -245,7 +263,13 @@ else
 fi
 
 say "starting the outbox worker host"
-start outbox-worker-host "${WITH_ENV[@]}" node --experimental-strip-types ./scripts/outbox-worker-host.generated.mts
+# It hosts every owner's workers, so it receives their keys on standard input and seals them per owner.
+ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL="http://127.0.0.1:$COMPOSITION_PORT/active" \
+  ONTOS_DEMO_VERTICALS="$(IFS=,; echo "${VERTICALS[*]}")" ONTOS_MODULE_CREDENTIAL_HANDOVER=stdin \
+  nohup "${WITH_ENV[@]}" node --experimental-strip-types ./scripts/outbox-worker-host.generated.mts \
+  >"$LOG_DIR/outbox-worker-host.log" 2>&1 \
+  < <(printf '%s' "$MODULE_CREDENTIALS" | "${WITH_ENV[@]}" node scripts/zerops/module-credential-handover.mts handover) &
+echo $! >"$PID_DIR/outbox-worker-host.pid"
 sleep 3
 kill -0 "$(cat "$PID_DIR/outbox-worker-host.pid")" 2>/dev/null ||
   say "WARN outbox worker host exited; see $LOG_DIR/outbox-worker-host.log"
@@ -290,7 +314,7 @@ restart_server() { # restart_server <name> <directory>
     kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
     for _ in $(seq 1 30); do kill -0 "$pid" 2>/dev/null || break; sleep .3; done
   fi
-  start "$1" "${WITH_ENV[@]}" pnpm --dir "$2" exec modern serve
+  start_module "$1" "$2"
 }
 restart_server shell-super-app apps/shell-super-app
 wait_http "http://127.0.0.1:$SHELL_PORT/.well-known/ontos-shell-runtime.json" 180 shell-super-app
