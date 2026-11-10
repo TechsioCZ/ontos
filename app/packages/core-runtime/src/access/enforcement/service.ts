@@ -299,6 +299,11 @@ interface BatchedGate {
   readonly scopeId: AccessScopeId;
 }
 
+/** A refusal the seam took for a known subject: only its evidence row is still owed (D6 step 5). */
+interface EvidencedGate extends Omit<BatchedGate, 'actor'> {
+  readonly actor: EvidenceSubject;
+}
+
 /** One batch: the inputs of one trusted request scope, in the order they were asked. */
 interface GateGroup {
   /** Built once, before any decision is taken, and only read afterwards. */
@@ -330,7 +335,9 @@ interface GroupGate {
   /** The declaration could not be read; only a workload-marked entry is then UNAVAILABLE (O48, D6). */
   readonly companyDeclarationUnavailable?: boolean | undefined;
   readonly decision?: AccessDecision | undefined;
+  readonly refusalScopeId?: AccessScopeId | undefined;
   readonly subjectDecision?: AccessDecision | undefined;
+  readonly subjectEvidence?: EvidenceSubject | undefined;
   readonly workloadKeys?: ReadonlySet<string> | undefined;
   readonly workloadRegistryUnavailable?: boolean | undefined;
 }
@@ -340,14 +347,18 @@ interface GatePrepared {
   readonly decision?: AccessDecision;
   readonly entry?: BatchedGate;
   /** A delegated decision the seam took without the engine: its evidence row still follows (D6). */
-  readonly evidenced?: BatchedGate;
+  readonly evidenced?: EvidencedGate;
 }
 
 /** The subject of one batch whose calls are delegated: the admitted person or workload, or why it is neither. */
 interface DelegatedGroup {
   readonly actor?: GateActor | undefined;
   readonly calledBy: VerifiedGatewayActor;
+  /** The subject's tenant scope, read once for the group when one of its refusals is evidenced there. */
+  readonly refusalScopeId?: AccessScopeId | undefined;
   readonly subjectDecision?: AccessDecision | undefined;
+  /** The subject a group-wide refusal is evidenced under: an agent or kindless principal is still named (D6). */
+  readonly subjectEvidence?: EvidenceSubject | undefined;
   /** The active workload keys of a workload subject, read once for the group when an entry names some. */
   readonly workloadKeys?: ReadonlySet<string> | undefined;
   readonly workloadRegistryUnavailable?: boolean | undefined;
@@ -379,8 +390,25 @@ const prepareDelegatedEntry = (params: {
   readonly preambles: ReadonlyMap<string, GatePreamble>;
   readonly scope: OperationalScope;
 }): GatePrepared => {
+  const { refusalScopeId } = params.group;
+  /** A refusal evidenced in the subject's tenant scope, exactly as `delegatedPreambleOf` records it. */
+  const refusedInTenant = (decision: AccessDecision, subject: EvidenceSubject | undefined): GatePrepared =>
+    subject === undefined || refusalScopeId === undefined
+      ? { decision }
+      : {
+          decision,
+          evidenced: {
+            actor: subject,
+            capability: evidenceCapabilityOf(params.gate.carrier.accessDeclaration),
+            delegation: delegationOf(params.group.calledBy),
+            gate: params.gate,
+            index: params.index,
+            mode: params.gate.mode ?? DEFAULT_MODE,
+            scopeId: refusalScopeId,
+          },
+        };
   if (params.group.subjectDecision !== undefined) {
-    return { decision: params.group.subjectDecision };
+    return refusedInTenant(params.group.subjectDecision, params.group.subjectEvidence);
   }
   const { actor } = params.group;
   if (actor === undefined) {
@@ -388,7 +416,9 @@ const prepareDelegatedEntry = (params: {
   }
   const gateScope = gateScopeOf(params.gate.legalEntityScope, params.scope);
   if (gateScope.refusal !== undefined) {
-    return { decision: denialOf([gateScope.refusal]) };
+    // A workload subject leaves no v2 evidence row (O29, O73); a person's refused company is evidenced in the tenant.
+    const decision = denialOf([gateScope.refusal]);
+    return isWorkloadPrincipalKind(actor.kind) ? { decision } : refusedInTenant(decision, actor);
   }
   if (isWorkloadPrincipalKind(actor.kind)) {
     return { decision: delegatedWorkloadDecision(params.gate, params.group) };
@@ -559,7 +589,7 @@ const evidenceOfOne = (params: {
   readonly answers: ReadonlyMap<number, AccessDecision>;
   readonly index: number;
   readonly one: GateInput;
-  readonly reached: ReadonlyMap<number, BatchedGate>;
+  readonly reached: ReadonlyMap<number, EvidencedGate>;
 }): { readonly decision: AccessDecision; readonly evidence?: EvidenceParams } => {
   const decision = params.answers.get(params.index) ?? seamUnavailable(IDENTITY_UNAVAILABLE);
   const entry = params.reached.get(params.index);
@@ -1026,10 +1056,25 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
       }
       const { actor } = subject;
       if (actor === undefined) {
-        return { calledBy, subjectDecision: seamRefusal(ACTOR_SUBJECT_INVALID) };
+        // An agent, or a principal with no kind, is never the subject of a module call. Every entry's refusal is
+        // evidence naming the delegate, in the subject's tenant scope read once for the group (D6 step 5).
+        const principalId = PrincipalIdSchema.make(params.scope.principalId);
+        return {
+          calledBy,
+          refusalScopeId: yield* refusalScopeOf(params.scope, memberHoldersOf({ principalId })),
+          subjectDecision: seamRefusal(ACTOR_SUBJECT_INVALID),
+          subjectEvidence: { principalId },
+        };
       }
       if (!isWorkloadPrincipalKind(actor.kind)) {
-        return { actor, calledBy };
+        // A refused company is evidenced in the tenant scope, read once for the group and only when one is refused.
+        const refusesCompany = params.group.indexes.some((index) => {
+          const one = params.input[index];
+          return one !== undefined && gateScopeOf(one.legalEntityScope, params.scope).refusal !== undefined;
+        });
+        return refusesCompany
+          ? { actor, calledBy, refusalScopeId: yield* refusalScopeOf(params.scope, memberHoldersOf(actor)) }
+          : { actor, calledBy };
       }
       // A workload subject reads the registry once for the whole group, and only when an entry names workload keys.
       const namesWorkloads = params.group.indexes.some(
@@ -1166,7 +1211,9 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
           group: {
             actor: gate.actor,
             calledBy: gate.calledBy,
+            refusalScopeId: gate.refusalScopeId,
             subjectDecision: gate.subjectDecision,
+            subjectEvidence: gate.subjectEvidence,
             workloadKeys: gate.workloadKeys,
             workloadRegistryUnavailable: gate.workloadRegistryUnavailable,
           },
@@ -1265,7 +1312,7 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
       })),
     );
     const answers = new Map<number, AccessDecision>(prepared.flatMap(({ decisions }) => [...decisions.entries()]));
-    const reached = new Map<number, BatchedGate>([
+    const reached = new Map<number, EvidencedGate>([
       ...batches.flatMap(({ entries }) => entries.map((entry) => [entry.index, entry] as const)),
       ...prepared.flatMap(({ evidence }) => evidence.map((entry) => [entry.index, entry] as const)),
     ]);
