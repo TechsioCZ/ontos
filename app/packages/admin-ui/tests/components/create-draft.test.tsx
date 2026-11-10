@@ -66,6 +66,8 @@ const typeDate = (value: string) => {
 };
 
 const saveButton = () => screen.getByRole<HTMLButtonElement>('button', { name: saveLabels.save });
+/** What the save bar says next to its button. */
+const saveStatus = () => saveButton().closest<HTMLElement>('[data-save-state]');
 
 afterEach(cleanup);
 
@@ -93,10 +95,17 @@ describe('the values a create form opens with', () => {
       render(<SuggestedForm sent={sent} />);
       expect(saveButton().disabled).toBe(false);
       expect(unsaved()).toBe('nothing to lose');
+      // Nothing typed yet: the save bar is neutral, without the unsaved-changes line, and Uložit stays enabled.
+      expect(saveStatus()?.dataset['saveState']).toBe('ready');
+      expect(saveStatus()?.textContent).not.toContain(saveLabels.unsaved);
       typeDate('tomorrow');
       yield* Effect.promise(() => waitFor(() => expect(unsaved()).toBe('unsaved')));
+      expect(saveStatus()?.dataset['saveState']).toBe('dirty');
+      expect(saveStatus()?.textContent).toContain(saveLabels.unsaved);
       typeDate(opened);
       yield* Effect.promise(() => waitFor(() => expect(unsaved()).toBe('nothing to lose')));
+      expect(saveStatus()?.textContent).not.toContain(saveLabels.unsaved);
+      expect(saveButton().disabled).toBe(false);
       // Once a save of them failed, they are the user's draft: leaving asks.
       fireEvent.click(saveButton());
       yield* Effect.promise(() => waitFor(() => expect(sent).toEqual([opened])));

@@ -1,3 +1,4 @@
+import { saveLabelsFor } from '@app/admin-ui';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { DateTime, Effect, Predicate, Schema } from 'effect';
 import { afterEach, expect, it, rstest, test } from 'effect-rstest';
@@ -21,7 +22,20 @@ import { PeopleView } from '../../src/routes/access-admin/people/people-view.tsx
 import type { PeopleCommand } from '../../src/routes/access-admin/people/people-view-model.ts';
 import { authenticatedShellFixture } from './routes/authenticated-shell-fixture.ts';
 
-const { locale } = rstest.hoisted(() => ({ locale: { current: 'en' } }));
+interface Navigation {
+  shouldBlock: () => boolean;
+}
+const { locale, navigation } = rstest.hoisted(() => {
+  const state: Navigation = { shouldBlock: () => false };
+  return { locale: { current: 'en' }, navigation: state };
+});
+// Every form of the page registers its leave guard with the router; the newest registration is checked.
+rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
+  useBlocker: (options: { readonly shouldBlockFn: () => boolean }) => {
+    navigation.shouldBlock = options.shouldBlockFn;
+    return { status: 'idle' };
+  },
+}));
 const flatten = (node: typeof Schema.Json.Type, prefix = ''): [string, string][] => {
   if (Predicate.isString(node)) {
     return [[prefix, node]];
@@ -556,7 +570,8 @@ it.effect('the role form previews the exact selected person, company, role and l
     fireEvent.change(within(form).getByLabelText(translate('shell.accessAdmin.people.endDate')), {
       target: { value: '2026-12-01T10:00' },
     });
-    const submit = within(form).getByRole('button', { name: translate('shell.accessAdmin.people.assignRole') });
+    // Picking and typing send nothing; the form's one Save button opens the confirmation.
+    const submit = within(form).getByRole('button', { name: saveLabelsFor('en').save });
     yield* Effect.promise(() => waitFor(() => expect(submit.hasAttribute('disabled')).toBe(false)));
     expect(within(form).getByLabelText(translate('shell.accessAdmin.people.endDate'))).toHaveProperty(
       'validity.valid',
@@ -574,6 +589,33 @@ it.effect('the role form previews the exact selected person, company, role and l
       { expiryInput: '2026-12-01T10:00', kind: 'assign', personId, roleId, scopeId: companyId },
       revision,
     );
+    expect(view.onCommand).toHaveBeenCalledTimes(1);
+  }),
+);
+
+it.effect('typed delegation input blocks leaving until it is cleared; Enter opens nothing and sends nothing', () =>
+  Effect.gen(function* delegationLeave() {
+    const view = renderPeople();
+    fireEvent.click(screen.getByRole('combobox', { name: translate('shell.accessAdmin.people.scope') }));
+    fireEvent.click(yield* Effect.promise(() => screen.findByRole('option', { name: 'Alpha s.r.o.' })));
+    const form = yield* Effect.promise(() =>
+      screen.findByRole('form', { name: translate('shell.accessAdmin.people.delegationCreate') }),
+    );
+    expect(navigation.shouldBlock()).toBe(false);
+    const amount = within(form).getByLabelText(translate('shell.accessAdmin.people.amountMinor'));
+    fireEvent.change(amount, { target: { value: '5000' } });
+    fireEvent.submit(form);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(view.onCommand).not.toHaveBeenCalled();
+    expect(navigation.shouldBlock()).toBe(true);
+    // Incomplete: the one Save button stays disabled until every required choice is made.
+    expect(
+      within(form)
+        .getByRole('button', { name: saveLabelsFor('en').save })
+        .hasAttribute('disabled'),
+    ).toBe(true);
+    fireEvent.change(amount, { target: { value: '' } });
+    expect(navigation.shouldBlock()).toBe(false);
   }),
 );
 

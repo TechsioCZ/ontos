@@ -64,11 +64,14 @@ gap-250
 gap-300
 gap-50
 gap-500
+gap-x-300
 gap-x-400
+gap-y-100
 gap-y-150
 grid
 grid-cols-1
 grid-cols-2
+grid-cols-[auto_1fr]
 h-2
 h-3
 h-[70vh]

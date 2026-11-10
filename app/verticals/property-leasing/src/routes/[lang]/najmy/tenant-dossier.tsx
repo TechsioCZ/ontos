@@ -8,7 +8,7 @@ import {
   useRecordDraft,
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
-import type { RevisionedSaveResult } from '@app/admin-ui';
+import type { RevisionedSaveResult, SaveOutcome } from '@app/admin-ui';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -23,8 +23,12 @@ import { formatInstant, principalLabel } from './principal-labels.ts';
 import type { TenantDirectoryEntry } from './lease-story.tsx';
 import './tenant-dossier.css';
 import { timelineEntries } from './timeline-entries.ts';
-import { TenantActivityInputSchema, TenantCaseStateSchema } from '../../../../shared/apis/records.ts';
+import { TenantCaseStateSchema } from '../../../../shared/apis/records.ts';
 import { contactCountLabel } from './contact-count.ts';
+import { DossierCommunication } from './dossier-communication.tsx';
+import type { DossierLog } from './dossier-communication.tsx';
+import { NewCounterpartyForm } from './new-counterparty-form.tsx';
+import type { NewCounterpartyInput } from './new-counterparty-form.tsx';
 import {
   caseChangesOf,
   caseDraftOf,
@@ -61,13 +65,7 @@ const fold = (value: string) =>
     .replaceAll(/\p{Diacritic}/gu, '')
     .toLowerCase();
 export type { DossierChanges } from './leasing-save.ts';
-
-interface DossierSectionProps {
-  readonly busy: boolean;
-  readonly canWrite: boolean;
-  readonly dossier: TenantDossier | undefined;
-  readonly onUpdate: (changes: DossierChanges) => void;
-}
+export type { NewCounterpartyInput } from './new-counterparty-form.tsx';
 
 /** The Save button of a dossier section: one save against the revision its draft builds on. */
 export type DossierSave = (
@@ -75,6 +73,8 @@ export type DossierSave = (
   expectedRevision: number,
   unchanged: UnchangedSince,
 ) => Effect.Effect<RevisionedSaveResult>;
+
+export type { DossierLog } from './dossier-communication.tsx';
 
 interface DossierDraftProps {
   readonly counterpartyId: string;
@@ -226,8 +226,8 @@ const DossierContacts = ({
           className="sp-tenant-stack"
           noValidate
           onSubmit={(event) => {
+            // Enter never saves: only Uložit does.
             event.preventDefault();
-            handleSave();
           }}
         >
           {contacts.map((contact, index) => {
@@ -359,8 +359,8 @@ const DossierCase = ({
           className="sp-tenant-stack"
           noValidate
           onSubmit={(event) => {
+            // Enter never saves: only Uložit does.
             event.preventDefault();
-            handleSave();
           }}
         >
           <div className="sp-tenant-fields">
@@ -447,64 +447,6 @@ const DossierCase = ({
     </div>
   );
 };
-const DossierCommunication = ({
-  busy,
-  canWrite,
-  onUpdate,
-}: Pick<DossierSectionProps, 'busy' | 'canWrite' | 'onUpdate'>) => {
-  const { t } = useModernI18n();
-  const [kind, setKind] = useState<'CALL' | 'EMAIL' | 'MEETING' | 'NOTE'>('CALL');
-  const [summary, setSummary] = useState('');
-  if (!canWrite) {
-    return null;
-  }
-  return (
-    <div className="sp-tenant-contact">
-      <h3>Zapsat komunikaci</h3>
-      <div className="sp-tenant-fields">
-        <label className="sp-tenant-stack">
-          <span>Druh komunikace</span>
-          <select
-            aria-label={t('property-leasing.dossier.communicationKind')}
-            onChange={(event) => {
-              const selected = Schema.decodeUnknownOption(TenantActivityInputSchema.fields.kind)(event.target.value);
-              if (Option.isSome(selected)) {
-                setKind(selected.value);
-              }
-            }}
-            value={kind}
-          >
-            {(['CALL', 'EMAIL', 'MEETING', 'NOTE'] as const).map((value) => (
-              <option key={value} value={value}>
-                {activityLabels[value]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <FormInput
-          label={t('property-leasing.dossier.communicationSummary')}
-          maxLength={500}
-          onChange={(event) => setSummary(event.target.value)}
-          placeholder={t('property-leasing.dossier.communicationPlaceholder')}
-          value={summary}
-        />
-      </div>
-      <Button
-        disabled={busy || summary.trim().length === 0}
-        onClick={() => {
-          onUpdate({ activity: { kind, summary } });
-          setSummary('');
-        }}
-        size="sm"
-        variant="primary"
-      >
-        Uložit záznam komunikace
-      </Button>
-      <p className="sp-tenant-muted">Ruční evidence. E-mail ani SMS se touto akcí neodesílá.</p>
-    </div>
-  );
-};
-
 /** Contacts and the case timeline belong to the tenant, not to one selected contract. */
 export const TenantDossierCard = ({
   busy,
@@ -515,6 +457,7 @@ export const TenantDossierCard = ({
   dossier,
   leaseHref,
   newContactId,
+  onLog,
   onSave,
   onUpdate,
   revision,
@@ -529,9 +472,11 @@ export const TenantDossierCard = ({
   readonly dossier: TenantDossier | undefined;
   readonly leaseHref?: string | undefined;
   readonly newContactId: Effect.Effect<string, PlatformError.PlatformError>;
+  /** Logs a call, e-mail, meeting or note in the timeline. */
+  readonly onLog: DossierLog;
   /** Saves a contacts or case edit against the revision its draft builds on. */
   readonly onSave: DossierSave;
-  /** Logs communication and archives: commands that stay explicit. */
+  /** Archives or restores the dossier: a command that stays explicit. */
   readonly onUpdate: (changes: DossierChanges) => void;
   /** Revision of the records the dossier comes from. */
   readonly revision: number;
@@ -571,7 +516,7 @@ export const TenantDossierCard = ({
           revision={revision}
           taskHref={taskHref}
         />
-        <DossierCommunication busy={busy} canWrite={canWrite} onUpdate={onUpdate} />
+        <DossierCommunication activityLabels={activityLabels} canWrite={canWrite} onSave={onLog} />
         <h3>Časová osa</h3>
         {timelineEntries(dossier?.history ?? []).map(({ entry, key }) => (
           <article className="sp-tenant-event" key={key}>
@@ -611,183 +556,6 @@ export const TenantDossierCard = ({
   );
 };
 
-export interface NewCounterpartyInput {
-  readonly companyId: string;
-  readonly displayName: string;
-  readonly email: string;
-  readonly note: string;
-  readonly partyType: 'ORGANIZATION' | 'PERSON';
-  readonly phone: string;
-}
-interface NewCounterpartyErrors {
-  companyId?: string;
-  displayName?: string;
-  email?: string;
-  note?: string;
-  phone?: string;
-}
-const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
-const phonePattern = /^\+?[0-9 ]{9,20}$/u;
-/** Czech inline validation of the new counterparty form (rules 3.8 and 3.9). */
-export const validateNewCounterparty = (input: NewCounterpartyInput): NewCounterpartyErrors => {
-  const errors: NewCounterpartyErrors = {};
-  if (input.displayName.trim().length === 0) {
-    errors.displayName = input.partyType === 'PERSON' ? 'Vyplňte jméno a příjmení.' : 'Vyplňte název firmy.';
-  } else if (input.displayName.trim().length > 300) {
-    errors.displayName = 'Název může mít nejvýše 300 znaků.';
-  }
-  if (input.partyType === 'ORGANIZATION' && input.companyId.trim() !== '' && !/^\d{8}$/u.test(input.companyId.trim())) {
-    errors.companyId = 'IČO musí mít přesně 8 číslic.';
-  }
-  if (input.email.trim() !== '' && !emailPattern.test(input.email.trim())) {
-    errors.email = 'Zadejte e-mail ve tvaru jmeno@firma.cz.';
-  }
-  if (input.phone.trim() !== '' && !phonePattern.test(input.phone.trim())) {
-    errors.phone = 'Zadejte telefon, například +420 777 123 456.';
-  }
-  if (input.note.length > 500) {
-    errors.note = 'Poznámka může mít nejvýše 500 znaků.';
-  }
-  return errors;
-};
-const emptyCounterparty: NewCounterpartyInput = {
-  companyId: '',
-  displayName: '',
-  email: '',
-  note: '',
-  partyType: 'ORGANIZATION',
-  phone: '',
-};
-
-const NewCounterpartyForm = ({
-  busy,
-  error,
-  existingHref,
-  onCancel,
-  onCreate,
-}: {
-  readonly busy: boolean;
-  readonly error: string | undefined;
-  /** Dossier link of a registry customer with the same name, so the user opens it instead of duplicating. */
-  readonly existingHref: (name: string) => string | undefined;
-  readonly onCancel: () => void;
-  readonly onCreate: (input: NewCounterpartyInput) => void;
-}) => {
-  const { t } = useModernI18n();
-  const [input, setInput] = useState<NewCounterpartyInput>(emptyCounterparty);
-  const [submitted, setSubmitted] = useState(false);
-  const [duplicateHref, setDuplicateHref] = useState<string>();
-  const errors = submitted ? validateNewCounterparty(input) : {};
-  const set = (field: keyof NewCounterpartyInput, value: string) => setInput({ ...input, [field]: value });
-  const person = input.partyType === 'PERSON';
-  return (
-    <form
-      className="sp-tenant-contact"
-      noValidate
-      onSubmit={(event) => {
-        event.preventDefault();
-        setSubmitted(true);
-        const existing = existingHref(input.displayName);
-        setDuplicateHref(existing);
-        if (existing === undefined && Object.keys(validateNewCounterparty(input)).length === 0) {
-          onCreate(input);
-        }
-      }}
-    >
-      <h3>Nová protistrana</h3>
-      <p className="sp-tenant-muted">
-        Firma nebo osoba se založí ve společném registru protistran této společnosti. Kontaktní osoby, poznámky a
-        obchodní případ doplníte hned po uložení, nájem k ní není potřeba.
-      </p>
-      <fieldset className="sp-tenant-actions">
-        <legend className="sp-tenant-muted">Typ protistrany</legend>
-        <label>
-          <input
-            checked={!person}
-            name="counterparty-type"
-            onChange={() => setInput({ ...input, partyType: 'ORGANIZATION' })}
-            type="radio"
-          />{' '}
-          Firma
-        </label>
-        <label>
-          <input
-            checked={person}
-            name="counterparty-type"
-            onChange={() => setInput({ ...input, companyId: '', partyType: 'PERSON' })}
-            type="radio"
-          />{' '}
-          Osoba
-        </label>
-      </fieldset>
-      <div className="sp-tenant-fields">
-        <FormInput
-          id="counterparty-name"
-          label={person ? 'Jméno a příjmení' : 'Název firmy'}
-          maxLength={300}
-          onChange={(event) => set('displayName', event.target.value)}
-          value={input.displayName}
-          {...(errors.displayName === undefined ? {} : { helpText: errors.displayName, validateStatus: 'error' })}
-        />
-        {!person && (
-          <FormInput
-            id="counterparty-ico"
-            inputMode="numeric"
-            label={t('property-leasing.dossier.optionalCompanyId')}
-            onChange={(event) => set('companyId', event.target.value)}
-            value={input.companyId}
-            {...(errors.companyId === undefined ? {} : { helpText: errors.companyId, validateStatus: 'error' })}
-          />
-        )}
-        <FormInput
-          id="counterparty-email"
-          label={t('property-leasing.dossier.optionalEmail')}
-          onChange={(event) => set('email', event.target.value)}
-          type="email"
-          value={input.email}
-          {...(errors.email === undefined ? {} : { helpText: errors.email, validateStatus: 'error' })}
-        />
-        <FormInput
-          id="counterparty-phone"
-          label={t('property-leasing.dossier.optionalPhone')}
-          onChange={(event) => set('phone', event.target.value)}
-          type="tel"
-          value={input.phone}
-          {...(errors.phone === undefined ? {} : { helpText: errors.phone, validateStatus: 'error' })}
-        />
-      </div>
-      <FormInput
-        id="counterparty-note"
-        label={t('property-leasing.dossier.optionalTimelineNote')}
-        maxLength={500}
-        onChange={(event) => set('note', event.target.value)}
-        placeholder={t('property-leasing.dossier.timelinePlaceholder')}
-        value={input.note}
-        {...(errors.note === undefined ? {} : { helpText: errors.note, validateStatus: 'error' })}
-      />
-      {duplicateHref !== undefined && (
-        <p className="sp-tenant-muted" role="alert">
-          {person ? 'Osoba' : 'Firma'} „{input.displayName.trim()}“ už v registru této společnosti je.{' '}
-          <a href={duplicateHref}>Otevřít její evidenci a doplnit kontakty →</a>
-        </p>
-      )}
-      {error !== undefined && duplicateHref === undefined && (
-        <p className="sp-tenant-muted" role="alert">
-          {error}
-        </p>
-      )}
-      <div className="sp-tenant-actions">
-        <Button disabled={busy} size="sm" type="submit" variant="primary">
-          {busy ? 'Ukládání…' : 'Založit protistranu'}
-        </Button>
-        <Button disabled={busy} onClick={onCancel} size="sm" theme="outlined" variant="secondary">
-          Zrušit
-        </Button>
-      </div>
-    </form>
-  );
-};
-
 const relationshipLabel = (
   leases: readonly Occupancy[],
   dossier: TenantDossier | undefined,
@@ -814,7 +582,8 @@ export const TenantDirectory = ({
   readonly createError: string | undefined;
   readonly directory: readonly TenantDirectoryEntry[];
   readonly language: string;
-  readonly onCreate: (input: NewCounterpartyInput) => void;
+  /** Creates the counterparty once; the page opens it after a save. */
+  readonly onCreate: (input: NewCounterpartyInput) => Effect.Effect<SaveOutcome>;
   readonly snapshot: RecordsResponse;
   readonly unitName: (id: string) => string;
 }) => {
@@ -871,11 +640,15 @@ export const TenantDirectory = ({
         </p>
         {creating && (
           <NewCounterpartyForm
-            busy={busy}
             error={createError}
             existingHref={existingHref}
             onCancel={() => setCreating(false)}
-            onCreate={onCreate}
+            onCreate={(input) =>
+              onCreate(input).pipe(
+                // A created counterparty is opened by the page: the form goes away first, so leaving does not ask.
+                Effect.tap((outcome) => Effect.sync(() => setCreating(outcome !== 'saved'))),
+              )
+            }
           />
         )}
         <FormInput

@@ -555,9 +555,9 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
       >
         <form
           className="flex flex-col gap-200 py-200"
+          // Enter in a field does not record the receipt; only its button does.
           onSubmit={(event) => {
             event.preventDefault();
-            submit();
           }}
         >
           <ErrorLine message={serverError} />

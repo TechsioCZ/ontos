@@ -11,7 +11,7 @@ import type { Contract, Document } from '../../../../shared/apis/records.ts';
 import { ContractRefSchema } from '../../../../shared/resources/contract.ts';
 import type { ContractRef } from '../../../../shared/resources/contract.ts';
 import { executeApplyCommand } from '../../../api/apply-command-action-client.ts';
-import { createAgreement, newUuid, savePeriodDraft, sendAgreementsCommand } from './agreements-command.ts';
+import { createAgreement, failedWith, newUuid, savePeriodDraft, sendAgreementsCommand } from './agreements-command.ts';
 import type { AgreementOutcome } from './agreements-command.ts';
 import {
   DEFAULT_END_DATE,
@@ -36,6 +36,7 @@ import { agreementDocumentState, selectorOfFields } from './document-selection.t
 import { termsSaveResult } from './contract-terms-draft.ts';
 import type { ContractTermsCommand } from './contract-terms-draft.ts';
 import { executeRecords } from '../../../api/records-client.ts';
+import type { SignatureDraft } from './signature-form.tsx';
 
 const sameContractRef = Schema.toEquivalence(ContractRefSchema);
 /**
@@ -90,6 +91,11 @@ export const saveTerms = (
     onProposal,
   );
 };
+/** A fresh read still has `record` waiting for its signature, as the signature form saw it. */
+const stillUnsigned = (record: Contract) => (item: Contract) =>
+  sameContractRef(item.contractRef, record.contractRef) &&
+  item.signatureState === record.signatureState &&
+  item.lifecycleState === record.lifecycleState;
 /** The open contract form: a new contract, or the period of the draft contract it was opened for. */
 export type DraftForm =
   | { readonly kind: Contract['kind']; readonly mode: 'create' }
@@ -154,10 +160,6 @@ export const useRecordsPage = (input: AgreementsInput) => {
   const setCreated = useOpenCreated(draftForm !== undefined, linkedResourceId, (resourceId) => {
     void navigate({ search: { resourceId }, to: '.' });
   });
-  const [signedReference, setSignedReference] = useState('');
-  const [signedFileName, setSignedFileName] = useState('');
-  const [signedBy, setSignedBy] = useState('');
-  const [signedOn, setSignedOn] = useState('');
   const [expiringOnly, setExpiringOnly] = useState(false);
   const [termsOpen, setTermsOpen] = useState(false);
   const selected = snapshot?.contracts.find((record) => record.contractRef.resourceId === linkedResourceId);
@@ -166,10 +168,6 @@ export const useRecordsPage = (input: AgreementsInput) => {
     setRequestedRental(undefined);
     setRequestedRentalFeedback(undefined);
     setDraftForm(undefined);
-    setSignedReference('');
-    setSignedFileName('');
-    setSignedBy('');
-    setSignedOn('');
     setTermsOpen(false);
   };
   const reportFeedback = (nextFeedback: Feedback) => {
@@ -335,44 +333,50 @@ export const useRecordsPage = (input: AgreementsInput) => {
       setTermsOpen(true);
     }
   };
-  const recordSignature = (record: Contract) => {
-    if ([signedReference, signedFileName, signedBy, signedOn].some((value) => value.trim().length === 0)) {
-      setActionFeedback('validation');
-      return;
-    }
-    run(
-      Effect.all({ resourceId: newUuid, timestamp: DateTime.now }, { concurrency: 1 }).pipe(
-        Effect.tap(({ resourceId, timestamp }) =>
-          Effect.sync(() => {
-            const now = DateTime.formatIso(timestamp);
-            runCommand({
-              _tag: 'RecordSignedDocument',
-              contractRef: record.contractRef,
-              document: {
-                contractRef: record.contractRef,
-                createdAt: now,
-                documentRef: {
-                  moduleId: 'legal.agreements',
-                  resourceId,
-                  resourceType: 'legal.agreements.document',
-                  tenantId: record.contractRef.tenantId,
-                },
-                fileName: signedFileName,
-                kind: record.kind,
-                lifecycleState: 'FINAL',
-                signedDocumentReference: signedReference,
-                title: t('legal-agreements.demo.manualSignedDocument'),
-                updatedAt: now,
-              },
-              signedBy,
-              signedOn,
-            });
-          }),
-        ),
-        Effect.match({ onFailure: reportFailure, onSuccess: () => setActionFeedback('saving') }),
-      ),
+  /**
+   * Uložit of the manual signature form: records the signed document once against the agreements as read now. A
+   * conflict caused by another agreement is resent once while this contract still waits for its signature.
+   */
+  const recordSignature = (record: Contract, draft: SignatureDraft): Effect.Effect<AgreementOutcome> =>
+    Effect.all({ resourceId: newUuid, timestamp: DateTime.now }, { concurrency: 1 }).pipe(
+      Effect.map(({ resourceId, timestamp }): AgreementsCommand => {
+        const now = DateTime.formatIso(timestamp);
+        return {
+          _tag: 'RecordSignedDocument',
+          contractRef: record.contractRef,
+          document: {
+            contractRef: record.contractRef,
+            createdAt: now,
+            documentRef: {
+              moduleId: 'legal.agreements',
+              resourceId,
+              resourceType: 'legal.agreements.document',
+              tenantId: record.contractRef.tenantId,
+            },
+            fileName: draft.signedFileName,
+            kind: record.kind,
+            lifecycleState: 'FINAL',
+            signedDocumentReference: draft.signedReference,
+            title: t('legal-agreements.demo.manualSignedDocument'),
+            updatedAt: now,
+          },
+          signedBy: draft.signedBy,
+          signedOn: draft.signedOn,
+        };
+      }),
+      Effect.matchEffect({
+        onFailure: (failure) => {
+          const reason = failureFeedback(failure);
+          return Effect.succeed(failedWith(reason));
+        },
+        onSuccess: (command) =>
+          sendAgreementsCommand(command, snapshot?.revision ?? 0, {
+            audiences: [],
+            unchanged: (contracts) => contracts.some(stillUnsigned(record)),
+          }).pipe(Effect.ensuring(invalidate)),
+      }),
+      Effect.flatMap(settleForm),
     );
-  };
   const renew = (record: Contract) => {
     run(
       newUuid.pipe(
@@ -468,15 +472,7 @@ export const useRecordsPage = (input: AgreementsInput) => {
     selected,
     selectorIssue,
     setExpiringOnly,
-    setSignedBy,
-    setSignedFileName,
-    setSignedOn,
-    setSignedReference,
     setTermsOpen,
-    signedBy,
-    signedFileName,
-    signedOn,
-    signedReference,
     snapshot,
     t,
     termsOpen,

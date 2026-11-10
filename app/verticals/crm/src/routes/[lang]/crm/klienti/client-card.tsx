@@ -6,7 +6,16 @@ import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Client card (C01/C02/C04/C05 facts) in a SidePanel over the clients list. Header with key facts and the owner,
 // then tabs Kontakty / Návštěvy / Objednávky / Historie. Návštěvy and Objednávky are rendered by the visits and
 // imports lanes through the ClientCardTabProps contract (./card-tab-props.ts).
-import { EmptyState, SidePanel, dialogCloseLabel, formatDate, formatNumber, surfaceTileClassName } from '@app/admin-ui';
+import {
+  EmptyState,
+  SidePanel,
+  UnsavedChangesBoundary,
+  dialogCloseLabel,
+  formatDate,
+  formatNumber,
+  surfaceTileClassName,
+  useUnsavedChangesScope,
+} from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
@@ -231,6 +240,10 @@ const CardBody = ({
   submit,
 }: Omit<CardProps, 'clientId'> & { readonly client: Client }) => {
   const toaster = useToast();
+  // The inline contact and visit forms of the tabs register their unsaved-changes guards here: every way out of the
+  // card (Zavřít, Upravit, dismissal) asks them first.
+  const scope = useUnsavedChangesScope();
+  const handleRequestLeave = scope.request;
   const [tab, setTab] = useState('contacts');
   const [editing, setEditing] = useState(false);
   const [assigning, setAssigning] = useState(false);
@@ -275,189 +288,196 @@ const CardBody = ({
   const tabProps = { busy, client, records, submit };
 
   return (
-    <SidePanel
-      actions={
-        <Button onClick={onClose} theme="outlined" variant="secondary">
-          Zavřít
-        </Button>
-      }
-      closeLabel={dialogCloseLabel}
-      description={
-        <span className="flex flex-wrap items-center gap-100">
-          <Badge size="sm" variant="outline">
-            {kindLabels[client.kind]}
-          </Badge>
-          {segment !== undefined && (
-            <Badge size="sm" variant="info">
-              {segment}
-            </Badge>
-          )}
-          {archived ? (
-            <Badge size="sm" variant="warning">
-              {`Archivován ${pipe(client.archivedAt, orderDateText, formatDate)}`}
-            </Badge>
-          ) : (
-            <Badge size="sm" variant="success">
-              Aktivní
-            </Badge>
-          )}
-          {!writable && (
-            <Badge size="sm" variant="secondary">
-              Jen pro čtení
-            </Badge>
-          )}
-        </span>
-      }
-      onOpenChange={(open) => {
-        if (!open) {
-          onClose();
+    <UnsavedChangesBoundary scope={scope}>
+      <SidePanel
+        actions={
+          <Button onClick={() => scope.request(onClose)} theme="outlined" variant="secondary">
+            Zavřít
+          </Button>
         }
-      }}
-      open
-      resizeLabel="Změnit šířku panelu"
-      size="xl"
-      title={client.name}
-    >
-      <div className="flex flex-col gap-250 py-100">
-        <div className="flex flex-wrap gap-100">
-          {writable && !archived && (
-            <Button
-              icon="icon-[mdi--pencil-outline]"
-              onClick={() => setEditing(true)}
-              size="sm"
-              theme="outlined"
-              variant="secondary"
-            >
-              Upravit údaje
-            </Button>
-          )}
-          {records.viewer.assign && (
-            <Button
-              icon="icon-[mdi--account-switch-outline]"
-              onClick={() => setAssigning(true)}
-              size="sm"
-              theme="outlined"
-              variant="secondary"
-            >
-              {owner === undefined ? 'Přidělit obchodníkovi' : 'Změnit obchodníka'}
-            </Button>
-          )}
-          {writable && records.viewer.writeAll && !archived && !partyLinked(client) && (
-            <Button
-              icon="icon-[mdi--link-variant]"
-              onClick={() => setLinkingParty(true)}
-              size="sm"
-              theme="outlined"
-              variant="secondary"
-            >
-              Propojit s evidencí zákazníků
-            </Button>
-          )}
-          {writable &&
-            (archived ? (
+        closeLabel={dialogCloseLabel}
+        description={
+          <span className="flex flex-wrap items-center gap-100">
+            <Badge size="sm" variant="outline">
+              {kindLabels[client.kind]}
+            </Badge>
+            {segment !== undefined && (
+              <Badge size="sm" variant="info">
+                {segment}
+              </Badge>
+            )}
+            {archived ? (
+              <Badge size="sm" variant="warning">
+                {`Archivován ${pipe(client.archivedAt, orderDateText, formatDate)}`}
+              </Badge>
+            ) : (
+              <Badge size="sm" variant="success">
+                Aktivní
+              </Badge>
+            )}
+            {!writable && (
+              <Badge size="sm" variant="secondary">
+                Jen pro čtení
+              </Badge>
+            )}
+          </span>
+        }
+        onOpenChange={(open) => {
+          if (!open) {
+            onClose();
+          }
+        }}
+        open
+        resizeLabel="Změnit šířku panelu"
+        size="xl"
+        title={client.name}
+      >
+        <div className="flex flex-col gap-250 py-100">
+          <div className="flex flex-wrap gap-100">
+            {writable && !archived && (
               <Button
-                icon="icon-[mdi--archive-arrow-up-outline]"
-                isLoading={busy}
-                onClick={() => {
-                  browserRuntime.runFork(run({ _tag: 'RestoreClient', id: client.id }, 'Klient obnoven z archivu'));
-                }}
+                icon="icon-[mdi--pencil-outline]"
+                onClick={() => scope.request(() => setEditing(true))}
                 size="sm"
                 theme="outlined"
                 variant="secondary"
               >
-                Obnovit z archivu
+                Upravit údaje
               </Button>
-            ) : (
+            )}
+            {records.viewer.assign && (
               <Button
-                icon="icon-[mdi--archive-outline]"
-                onClick={() => setArchiving(true)}
+                icon="icon-[mdi--account-switch-outline]"
+                onClick={() => setAssigning(true)}
                 size="sm"
-                theme="borderless"
+                theme="outlined"
                 variant="secondary"
+              >
+                {owner === undefined ? 'Přidělit obchodníkovi' : 'Změnit obchodníka'}
+              </Button>
+            )}
+            {writable && records.viewer.writeAll && !archived && !partyLinked(client) && (
+              <Button
+                icon="icon-[mdi--link-variant]"
+                onClick={() => setLinkingParty(true)}
+                size="sm"
+                theme="outlined"
+                variant="secondary"
+              >
+                Propojit s evidencí zákazníků
+              </Button>
+            )}
+            {writable &&
+              (archived ? (
+                <Button
+                  icon="icon-[mdi--archive-arrow-up-outline]"
+                  isLoading={busy}
+                  onClick={() => {
+                    browserRuntime.runFork(run({ _tag: 'RestoreClient', id: client.id }, 'Klient obnoven z archivu'));
+                  }}
+                  size="sm"
+                  theme="outlined"
+                  variant="secondary"
+                >
+                  Obnovit z archivu
+                </Button>
+              ) : (
+                <Button
+                  icon="icon-[mdi--archive-outline]"
+                  onClick={() => setArchiving(true)}
+                  size="sm"
+                  theme="borderless"
+                  variant="secondary"
+                >
+                  Archivovat
+                </Button>
+              ))}
+          </div>
+
+          <ClientCardFacts client={client} facts={facts} owner={owner} writeAll={records.viewer.writeAll} />
+          {client.note !== undefined && (
+            <div className="flex gap-100 rounded-lg bg-surface-secondary p-200 text-sm">
+              <span aria-hidden className="icon-[mdi--note-text-outline] mt-50 size-200 shrink-0 text-fg-secondary" />
+              <p className="whitespace-pre-line">{client.note}</p>
+            </div>
+          )}
+
+          <Tabs className="crm-client-card-tabs" onValueChange={setTab} value={tab} variant="line">
+            <Tabs.List>
+              <Tabs.Trigger value="contacts">Kontakty ({contacts.length})</Tabs.Trigger>
+              <Tabs.Trigger value="visits">Návštěvy ({visitCount})</Tabs.Trigger>
+              <Tabs.Trigger value="orders">Objednávky ({facts.orderCount})</Tabs.Trigger>
+              <Tabs.Trigger value="history">Historie</Tabs.Trigger>
+              <Tabs.Indicator />
+            </Tabs.List>
+            <Tabs.Content className="py-200" value="contacts">
+              <ContactsTab
+                {...tabProps}
+                onRequestLeave={handleRequestLeave}
+                selectedContactId={selectedContactId}
+                writable={writable && !archived}
+              />
+            </Tabs.Content>
+            <Tabs.Content className="py-200" value="visits">
+              <ClientVisitsTab {...tabProps} />
+            </Tabs.Content>
+            <Tabs.Content className="py-200" value="orders">
+              <ClientOrdersTab {...tabProps} />
+            </Tabs.Content>
+            <Tabs.Content className="py-200" value="history">
+              <HistoryTab client={client} records={records} />
+            </Tabs.Content>
+          </Tabs>
+        </div>
+        {linkingParty && (
+          <PartyLinkDialog
+            busy={busy}
+            client={client}
+            onClose={() => setLinkingParty(false)}
+            records={records}
+            run={run}
+          />
+        )}
+        {assigning && (
+          <AssignDialog client={client} onClose={() => setAssigning(false)} records={records} submit={submit} />
+        )}
+        <Dialog
+          actions={
+            <>
+              <Button onClick={() => setArchiving(false)} theme="outlined" variant="secondary">
+                Zrušit
+              </Button>
+              <Button
+                isLoading={busy}
+                onClick={() => {
+                  browserRuntime.runFork(
+                    run({ _tag: 'ArchiveClient', id: client.id }, 'Klient archivován').pipe(
+                      Effect.tap((ok) =>
+                        Effect.sync(() => {
+                          if (ok) {
+                            setArchiving(false);
+                          }
+                        }),
+                      ),
+                    ),
+                  );
+                }}
+                variant="primary"
               >
                 Archivovat
               </Button>
-            ))}
-        </div>
-
-        <ClientCardFacts client={client} facts={facts} owner={owner} writeAll={records.viewer.writeAll} />
-        {client.note !== undefined && (
-          <div className="flex gap-100 rounded-lg bg-surface-secondary p-200 text-sm">
-            <span aria-hidden className="icon-[mdi--note-text-outline] mt-50 size-200 shrink-0 text-fg-secondary" />
-            <p className="whitespace-pre-line">{client.note}</p>
-          </div>
-        )}
-
-        <Tabs className="crm-client-card-tabs" onValueChange={setTab} value={tab} variant="line">
-          <Tabs.List>
-            <Tabs.Trigger value="contacts">Kontakty ({contacts.length})</Tabs.Trigger>
-            <Tabs.Trigger value="visits">Návštěvy ({visitCount})</Tabs.Trigger>
-            <Tabs.Trigger value="orders">Objednávky ({facts.orderCount})</Tabs.Trigger>
-            <Tabs.Trigger value="history">Historie</Tabs.Trigger>
-            <Tabs.Indicator />
-          </Tabs.List>
-          <Tabs.Content className="py-200" value="contacts">
-            <ContactsTab {...tabProps} selectedContactId={selectedContactId} writable={writable && !archived} />
-          </Tabs.Content>
-          <Tabs.Content className="py-200" value="visits">
-            <ClientVisitsTab {...tabProps} />
-          </Tabs.Content>
-          <Tabs.Content className="py-200" value="orders">
-            <ClientOrdersTab {...tabProps} />
-          </Tabs.Content>
-          <Tabs.Content className="py-200" value="history">
-            <HistoryTab client={client} records={records} />
-          </Tabs.Content>
-        </Tabs>
-      </div>
-      {linkingParty && (
-        <PartyLinkDialog
-          busy={busy}
-          client={client}
-          onClose={() => setLinkingParty(false)}
-          records={records}
-          run={run}
+            </>
+          }
+          closeLabel={dialogCloseLabel}
+          customTrigger
+          description="Klient zmizí z běžného seznamu. Kontakty, návštěvy, objednávky a historie zůstanou zachované a dohledatelné ve filtru Archivovaní; klienta lze kdykoli obnovit."
+          onOpenChange={({ open }) => setArchiving(open)}
+          open={archiving}
+          size="sm"
+          title={`Archivovat ${client.name}?`}
         />
-      )}
-      {assigning && (
-        <AssignDialog busy={busy} client={client} onClose={() => setAssigning(false)} records={records} run={run} />
-      )}
-      <Dialog
-        actions={
-          <>
-            <Button onClick={() => setArchiving(false)} theme="outlined" variant="secondary">
-              Zrušit
-            </Button>
-            <Button
-              isLoading={busy}
-              onClick={() => {
-                browserRuntime.runFork(
-                  run({ _tag: 'ArchiveClient', id: client.id }, 'Klient archivován').pipe(
-                    Effect.tap((ok) =>
-                      Effect.sync(() => {
-                        if (ok) {
-                          setArchiving(false);
-                        }
-                      }),
-                    ),
-                  ),
-                );
-              }}
-              variant="primary"
-            >
-              Archivovat
-            </Button>
-          </>
-        }
-        closeLabel={dialogCloseLabel}
-        customTrigger
-        description="Klient zmizí z běžného seznamu. Kontakty, návštěvy, objednávky a historie zůstanou zachované a dohledatelné ve filtru Archivovaní; klienta lze kdykoli obnovit."
-        onOpenChange={({ open }) => setArchiving(open)}
-        open={archiving}
-        size="sm"
-        title={`Archivovat ${client.name}?`}
-      />
-    </SidePanel>
+      </SidePanel>
+    </UnsavedChangesBoundary>
   );
 };
 

@@ -20,7 +20,6 @@
 --calendar-account-outline
 --calendar-clock
 --card-account-details-outline
---cart-arrow-right
 --cart-plus
 --cctv
 --check
@@ -158,7 +157,6 @@ icon-[mdi--archive-outline]
 icon-[mdi--calendar-account-outline]
 icon-[mdi--calendar-clock]
 icon-[mdi--card-account-details-outline]
-icon-[mdi--cart-arrow-right]
 icon-[mdi--cart-plus]
 icon-[mdi--cctv]
 icon-[mdi--check]

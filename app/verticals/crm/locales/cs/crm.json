@@ -168,7 +168,14 @@
         "selected": "Vybraný kontakt",
         "title": "Kontaktní osoby",
         "unavailableDescription": "Kontakt neexistuje, byl odebrán nebo k němu nemáte přístup. Obchodník vidí jen kontakty klientů, které má přidělené.",
-        "unavailableTitle": "Kontakt není dostupný"
+        "unavailableTitle": "Kontakt není dostupný",
+        "newTitle": "Nová kontaktní osoba",
+        "editTitle": "Upravit kontaktní osobu",
+        "nameRequired": "Vyplňte jméno",
+        "emailInvalid": "Neplatný e-mail",
+        "saveFailed": "Kontaktní osobu se nepodařilo uložit.",
+        "added": "Kontaktní osoba přidána",
+        "saved": "Kontaktní osoba uložena"
       },
       "fields": {
         "address": "Adresa",
@@ -216,7 +223,13 @@
         "responsibleSalesperson": "Odpovědný obchodník",
         "result": "Výsledek",
         "searchLabel": "Hledat v návštěvách",
-        "searchPlaceholder": "Hledat v záznamech"
+        "searchPlaceholder": "Hledat v záznamech",
+        "planContact": "Naplánovat kontakt",
+        "contactPlanned": "Kontakt naplánován",
+        "manualPlanHint": "Ruční plán obchodníka, nejde o doporučení systému.",
+        "clientSalesperson": "Přidělený obchodník klienta",
+        "recordFailed": "Záznam se nepodařilo uložit.",
+        "planFailed": "Uložení se nezdařilo."
       }
     }
   }

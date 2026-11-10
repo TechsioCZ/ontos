@@ -13,9 +13,7 @@ import type { DraftSaveResult, SaveOutcome } from '@app/admin-ui';
 import type { MarketSettings } from '@app/merchandise/domain/market-offers';
 import type { RecordsResponse } from '@app/merchandise/contracts/records';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
-import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { Effect, Predicate, Schema } from 'effect';
 import { useRef, useState } from 'react';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
@@ -25,9 +23,10 @@ import { ExceptionsBlock } from './assortment-exceptions.tsx';
 import type { SetOffer } from './assortment-exceptions.tsx';
 import type { CurrentMarket } from './eshops-model.ts';
 import { PricingFields } from './market-fields.tsx';
-import { configureMarketCommand, defaultPricingForm, pricingFormOf, pricingIssues } from './market-form.ts';
+import { configureMarketCommand, pricingFormOf, pricingIssues } from './market-form.ts';
 import { failureText, useMarketText } from './market-ui.tsx';
-import { marketExceptionsData, runMerchandiseCommand } from './page-data.ts';
+import { marketExceptionsData } from './page-data.ts';
+import { PriceListSetup } from './price-list-setup.tsx';
 import type { ExceptionsInput, MarketInput, WriteFailure, WriteOutcome } from './page-data.ts';
 
 export { priceListSaveResult } from './assortment-save.ts';
@@ -63,8 +62,6 @@ interface PriceListEditorProps {
   readonly revision: number;
   readonly settings: MarketSettings;
 }
-
-const isProposal = Schema.is(ActionProposalAcceptedSchema);
 
 const isSaveOutcome = Schema.is(SaveOutcomeSchema);
 
@@ -231,67 +228,31 @@ const PriceList = ({
   revision,
   settings,
 }: PriceListProps) => {
-  const { text } = useMarketText();
-  const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<WriteFailure | null>(null);
   const editable = canManage && market.lifecycle !== 'RETIRED';
-  if (settings !== undefined) {
+  if (settings === undefined) {
+    // Creating the price list puts the whole catalogue on the market's e-shops: it asks first.
     return (
-      <PriceListEditor
-        canManage={editable}
-        exceptions={exceptions}
-        key={market.marketRef.resourceId}
+      <PriceListSetup
+        editable={editable}
         market={market}
         onAwaitingApproval={onAwaitingApproval}
         onDone={onDone}
-        refresh={refresh}
         revision={revision}
-        settings={settings}
       />
     );
   }
-  /** Starts the price list from the defaults (whole catalogue, catalogue prices); edits are then saved with Save. */
-  const configure = () => {
-    setBusy(true);
-    setFailure(null);
-    runMerchandiseCommand(
-      configureMarketCommand({
-        expectedRevision: 0,
-        form: defaultPricingForm(),
-        marketCode: market.marketCode,
-        marketId: market.marketRef.resourceId,
-      }),
-      revision,
-      (outcome) => {
-        setBusy(false);
-        if (outcome.ok && isProposal(outcome.value)) {
-          onAwaitingApproval();
-          return;
-        }
-        if (outcome.ok) {
-          onDone(text('detail.assortment.saved', { code: market.marketCode }));
-          return;
-        }
-        setFailure(outcome.reason);
-      },
-    );
-  };
   return (
-    <div className="flex flex-col gap-150">
-      <div className="flex flex-wrap items-center justify-between gap-150">
-        <p className="text-sm">{text('detail.assortment.notConfigured')}</p>
-        {editable && (
-          <Button isLoading={busy} loadingText={text('form.saving')} onClick={configure} size="sm" variant="secondary">
-            {text('detail.assortment.configure')}
-          </Button>
-        )}
-      </div>
-      {failure !== null && (
-        <StatusText showIcon status="error">
-          {failureText(text, failure)}
-        </StatusText>
-      )}
-    </div>
+    <PriceListEditor
+      canManage={editable}
+      exceptions={exceptions}
+      key={market.marketRef.resourceId}
+      market={market}
+      onAwaitingApproval={onAwaitingApproval}
+      onDone={onDone}
+      refresh={refresh}
+      revision={revision}
+      settings={settings}
+    />
   );
 };
 

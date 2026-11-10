@@ -4,7 +4,6 @@ import { financeBrowserRuntime } from '../../../runtime/browser.ts';
 import {
   SaveBar,
   dialogCloseLabel,
-  formatDate,
   formatDateTime,
   formatMoney,
   SectionCard,
@@ -18,12 +17,12 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { DateTime, Effect, Option } from 'effect';
-import { useEffect, useReducer, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AccountingExport, Invoice } from '../../../../shared/apis/records.ts';
-import { minorToInput, outcomeMessage, parseAmountMinor } from './finance-ui.tsx';
+import { outcomeMessage } from './finance-ui.tsx';
+import { PriorSettlementForm } from './prior-settlement-form.tsx';
 import type { FinanceCommandDraft, FinanceViewModel } from './finance-ui.tsx';
 import { invoiceLifecycle, latestHandover, LIFECYCLE_PRESENTATION } from './invoice-view.ts';
 import {
@@ -127,94 +126,12 @@ export const InvoiceLifecycleCard = ({ invoice, vm }: { readonly invoice: Invoic
  * S07.R2: a final or partial invoice lists the earlier advance/partial invoices it takes into account, with the
  * amounts a user confirmed by hand. The amount settles that part of the invoice once it is approved.
  */
-interface SettlementDraft {
-  readonly amounts: Readonly<Record<string, string>>;
-  readonly confirmed: boolean;
-  readonly note: string;
-  readonly open: boolean;
-}
-interface SettlementPatch extends Partial<SettlementDraft> {
-  readonly amountId?: string;
-  readonly amountValue?: string;
-}
-const reduceSettlement = (current: SettlementDraft, action: SettlementPatch): SettlementDraft => {
-  const { amountId, amountValue, ...patch } = action;
-  if (amountId !== undefined && amountValue !== undefined) {
-    return { ...current, ...patch, amounts: { ...current.amounts, [amountId]: amountValue } };
-  }
-  return { ...current, ...patch };
-};
-const emptySettlementDraft: SettlementDraft = { amounts: {}, confirmed: false, note: '', open: false };
-
-const priorSettlementSaveProgram = Effect.fn('Finance.save')(function* priorSettlementSaveProgram(
-  context: Pick<
-    ReturnType<typeof usePriorSettlement>,
-    'amounts' | 'available' | 'candidates' | 'confirmed' | 'invoice' | 'note' | 'setError' | 'setOpen' | 'vm'
-  >,
-) {
-  const { amounts, available, candidates, confirmed, invoice, note, setError, setOpen, vm } = context;
-  const entries = candidates.flatMap((entry) => {
-    const raw = (amounts[entry.ref.resourceId] ?? '').trim();
-    if (raw === '') {
-      return [];
-    }
-    const amountMinor = parseAmountMinor(raw);
-    return [{ amountMinor: amountMinor ?? -1, invoiceResourceId: entry.ref.resourceId }];
-  });
-  if (entries.some((entry) => entry.amountMinor <= 0)) {
-    setError('Zadejte kladné částky, např. 25 000 nebo 25 000,50.');
-    return;
-  }
-  const over = entries.find((entry) => {
-    const source = candidates.find((item) => item.ref.resourceId === entry.invoiceResourceId);
-    return source === undefined || entry.amountMinor > available(source);
-  });
-  if (over !== undefined) {
-    setError('Částka přesahuje uhrazenou a dosud nezohledněnou část dřívějšího dokladu.');
-    return;
-  }
-  if (entries.reduce((sum, entry) => sum + entry.amountMinor, 0) > invoice.totalMinor) {
-    setError('Součet zohledněných částek přesahuje celkovou částku této faktury.');
-    return;
-  }
-  if (!confirmed) {
-    setError('Potvrďte, že jste částky zkontrolovali.');
-    return;
-  }
-  const setPriorSettlementCommand: FinanceCommandDraft<'SetPriorSettlement'> = {
-    _tag: 'SetPriorSettlement',
-    entries,
-    invoiceRef: invoice.ref,
-  };
-  if (vm.actorLabel !== undefined) {
-    setPriorSettlementCommand.actorLabel = vm.actorLabel;
-  }
-  if (note.trim() !== '') {
-    setPriorSettlementCommand.note = note.trim();
-  }
-  const outcome = yield* vm.execute(
-    setPriorSettlementCommand,
-    entries.length === 0 ? 'Zohlednění předchozích dokladů odebráno' : 'Zohlednění předchozích dokladů potvrzeno',
-  );
-  if (outcome.ok) {
-    setOpen(false);
-  } else {
-    setError(outcomeMessage(vm, outcome));
-  }
-});
-
 const usePriorSettlement = ({ invoice, vm }: { readonly invoice: Invoice; readonly vm: FinanceViewModel }) => {
   const isTarget =
     invoice.direction === 'OUTGOING' && (invoice.documentKind === 'FINAL' || invoice.documentKind === 'PARTIAL');
   const invoices = vm.snapshot?.state.invoices ?? [];
   const settlement = invoice.priorSettlement;
-  const [draft, updateDraft] = useReducer(reduceSettlement, emptySettlementDraft);
-  const { amounts, confirmed, note, open } = draft;
-  const setOpen = (nextOpen: boolean) => updateDraft({ open: nextOpen });
-  const setAmounts = (nextAmounts: SettlementDraft['amounts']) => updateDraft({ amounts: nextAmounts });
-  const setNote = (nextNote: string) => updateDraft({ note: nextNote });
-  const setConfirmed = (nextConfirmed: boolean) => updateDraft({ confirmed: nextConfirmed });
-  const [error, setError] = useState<string>();
+  const [open, setOpen] = useState(false);
   const visible = isTarget || settlement !== undefined;
   const usedElsewhere = (id: string) => {
     let total = 0;
@@ -243,77 +160,13 @@ const usePriorSettlement = ({ invoice, vm }: { readonly invoice: Invoice; readon
   const total = (settlement?.entries ?? []).reduce((sum, entry) => sum + entry.amountMinor, 0);
   const editable = vm.canWrite && invoice.businessState === 'DRAFT';
 
-  const start = () => {
-    setAmounts(
-      Object.fromEntries(
-        candidates.map((entry) => {
-          const stored = settlement?.entries.find((item) => item.invoiceResourceId === entry.ref.resourceId);
-          return [entry.ref.resourceId, stored === undefined ? '' : minorToInput(stored.amountMinor)];
-        }),
-      ),
-    );
-    setNote(settlement?.note ?? '');
-    setConfirmed(false);
-    setError(undefined);
-    setOpen(true);
-  };
-  const save = (): void => {
-    void financeBrowserRuntime.runPromise(
-      priorSettlementSaveProgram({ amounts, available, candidates, confirmed, invoice, note, setError, setOpen, vm }),
-    );
-  };
-  return {
-    amounts,
-    available,
-    candidates,
-    confirmed,
-    draft,
-    editable,
-    error,
-    invoice,
-    invoices,
-    isTarget,
-    note,
-    open,
-    save,
-    setAmounts,
-    setConfirmed,
-    setError,
-    setNote,
-    setOpen,
-    settlement,
-    start,
-    total,
-    updateDraft,
-    usedElsewhere,
-    visible,
-    vm,
-  };
+  return { available, candidates, editable, invoice, open, setOpen, settlement, total, visible, vm };
 };
 
 export const PriorSettlementCard = (props: { readonly invoice: Invoice; readonly vm: FinanceViewModel }) => {
   const { t } = useModernI18n();
-  const {
-    amounts,
-    available,
-    candidates,
-    confirmed,
-    editable,
-    error,
-    invoice,
-    note,
-    open,
-    save,
-    setConfirmed,
-    setNote,
-    setOpen,
-    settlement,
-    start,
-    total,
-    updateDraft,
-    visible,
-    vm,
-  } = usePriorSettlement(props);
+  const { available, candidates, editable, invoice, open, setOpen, settlement, total, visible, vm } =
+    usePriorSettlement(props);
   if (!visible) {
     return null;
   }
@@ -321,7 +174,13 @@ export const PriorSettlementCard = (props: { readonly invoice: Invoice; readonly
     <SectionCard
       actions={
         editable ? (
-          <Button icon="icon-[mdi--link-variant-plus]" onClick={start} size="sm" theme="outlined" variant="secondary">
+          <Button
+            icon="icon-[mdi--link-variant-plus]"
+            onClick={() => setOpen(true)}
+            size="sm"
+            theme="outlined"
+            variant="secondary"
+          >
             {settlement === undefined ? 'Zohlednit předchozí doklady' : 'Upravit'}
           </Button>
         ) : undefined
@@ -365,85 +224,15 @@ export const PriorSettlementCard = (props: { readonly invoice: Invoice; readonly
           záloh potvrzuje účetní, OntOS ho automaticky neprovádí.
         </p>
       </div>
-      <Dialog
-        actions={
-          <>
-            <Button onClick={() => setOpen(false)} theme="outlined" variant="secondary">
-              Zrušit
-            </Button>
-            <Button
-              disabled={vm.busy}
-              isLoading={vm.busy}
-              onClick={() => {
-                save();
-              }}
-              variant="primary"
-            >
-              Uložit potvrzení
-            </Button>
-          </>
-        }
-        closeLabel={dialogCloseLabel}
-        customTrigger
-        description={`Faktura ${numberOf(invoice)} na ${formatMoney(invoice.totalMinor)}. Zadejte částky, které se z dřívějších dokladů zohlední.`}
-        onOpenChange={(details) => setOpen(details.open)}
-        open={open}
-        placement="center"
-        size="md"
-        title={t('finance-billing.financeUi.settlement.title')}
-      >
-        <div className="flex flex-col gap-150">
-          {error !== undefined && (
-            <StatusText showIcon size="sm" status="error">
-              {error}
-            </StatusText>
-          )}
-          {candidates.length === 0 ? (
-            <p className="text-fg-secondary text-sm">Žádný vhodný dřívější doklad tohoto odběratele.</p>
-          ) : (
-            candidates.map((entry) => (
-              <div
-                className="grid grid-cols-1 items-end gap-100 sm:grid-cols-[minmax(0,1fr)_10rem]"
-                key={entry.ref.resourceId}
-              >
-                <span className="flex min-w-0 flex-col text-sm">
-                  <span className="font-medium">
-                    {numberOf(entry)} · {entry.documentKind === 'ADVANCE' ? 'zálohová' : 'dílčí'} ·{' '}
-                    {formatDate(entry.issueDate)}
-                  </span>
-                  <span className="text-fg-secondary text-xs">
-                    Uhrazeno {formatMoney(entry.paidMinor)} z {formatMoney(entry.totalMinor)} · lze zohlednit nejvýše{' '}
-                    {formatMoney(available(entry))}
-                  </span>
-                </span>
-                <FormInput
-                  id={`prior-${entry.ref.resourceId}`}
-                  inputMode="decimal"
-                  label={t('finance-billing.financeUi.settlement.amount')}
-                  onChange={(event) => updateDraft({ amountId: entry.ref.resourceId, amountValue: event.target.value })}
-                  placeholder="0"
-                  size="sm"
-                  value={amounts[entry.ref.resourceId] ?? ''}
-                />
-              </div>
-            ))
-          )}
-          <FormInput
-            id="prior-note"
-            label={t('finance-billing.financeUi.settlement.note')}
-            onChange={(event) => setNote(event.target.value)}
-            size="sm"
-            value={note}
-          />
-          <FormCheckbox
-            checked={confirmed}
-            id="prior-confirm"
-            label={t('finance-billing.financeUi.settlement.confirm')}
-            onCheckedChange={setConfirmed}
-            size="sm"
-          />
-        </div>
-      </Dialog>
+      {open && (
+        <PriorSettlementForm
+          available={available}
+          candidates={candidates}
+          invoice={invoice}
+          onClose={() => setOpen(false)}
+          vm={vm}
+        />
+      )}
     </SectionCard>
   );
 };

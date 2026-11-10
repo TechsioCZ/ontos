@@ -21,6 +21,15 @@ import {
   validContacts,
 } from '../../src/routes/[lang]/najmy/leasing-save.ts';
 import type { RentDraft } from '../../src/routes/[lang]/najmy/leasing-save.ts';
+import {
+  ConflictOutcomeSchema,
+  FailedOutcomeSchema,
+  ProposedOutcomeSchema,
+  SavedOutcomeSchema,
+  additionResultOf,
+  settleAddition,
+} from '../../src/routes/[lang]/najmy/occupancy-command.ts';
+import type { OccupancyOutcome } from '../../src/routes/[lang]/najmy/occupancy-command.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const counterpartyId = '44444444-4444-4444-8444-444444444444';
@@ -230,6 +239,57 @@ describe('rent terms panel save', () => {
       controller.save();
       yield* Effect.yieldNow;
       expect(sent).toHaveLength(1);
+    }),
+  );
+});
+
+describe('an addition (registration sheet, notice, logged entry)', () => {
+  const saved = SavedOutcomeSchema.make({ resourceRef: null, revision: 8 });
+
+  it('turns a conflict left after the resend into a failed save with its reason, so Uložit sends it again', () => {
+    expect(additionResultOf(ConflictOutcomeSchema.make({}))).toEqual({
+      reason: Option.some('conflict'),
+      status: 'failed',
+    });
+    expect(additionResultOf(FailedOutcomeSchema.make({ reason: 'validation' }))).toEqual({
+      reason: Option.some('validation'),
+      status: 'failed',
+    });
+    expect(additionResultOf(saved)).toEqual({ reason: Option.none(), status: 'saved' });
+    expect(additionResultOf(ProposedOutcomeSchema.make({ proposal }))).toEqual({
+      reason: Option.none(),
+      status: 'proposed',
+    });
+  });
+
+  it.effect('refreshes the lease-related lists after every outcome and re-reads after a save or conflict', () =>
+    Effect.gen(function* settled() {
+      const seen: string[] = [];
+      const parked: ActionProposalAccepted[] = [];
+      const settle = (outcome: OccupancyOutcome) =>
+        settleAddition(Effect.succeed(outcome), {
+          invalidate: () => {
+            seen.push('invalidate');
+          },
+          onProposal: (accepted) => {
+            parked.push(accepted);
+          },
+          reload: Effect.sync(() => {
+            seen.push('reload');
+          }),
+        });
+      expect(yield* settle(saved)).toEqual(saved);
+      expect(seen).toEqual(['invalidate', 'reload']);
+      seen.length = 0;
+      yield* settle(FailedOutcomeSchema.make({ reason: 'forbidden' }));
+      expect(seen).toEqual(['invalidate']);
+      seen.length = 0;
+      yield* settle(ConflictOutcomeSchema.make({}));
+      expect(seen).toEqual(['invalidate', 'reload']);
+      seen.length = 0;
+      yield* settle(ProposedOutcomeSchema.make({ proposal }));
+      expect(seen).toEqual(['invalidate']);
+      expect(parked).toEqual([proposal]);
     }),
   );
 });

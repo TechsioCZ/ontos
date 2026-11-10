@@ -216,6 +216,10 @@ export const clickCancel: Effect.Effect<void> = click(() =>
   Option.getOrThrow(Option.fromNullishOr(named(CANCEL_KEY).at(-1))),
 );
 
+/** The last button named `text`: in a stacked dialog, the one on top. */
+export const clickNamed = (text: string): Effect.Effect<void> =>
+  click(() => Option.getOrThrow(Option.fromNullishOr(named(text).at(-1))));
+
 /** Zahodit změny in the leave question. */
 export const clickDiscard: Effect.Effect<void> = click(() =>
   Option.getOrThrow(Option.fromNullishOr(named(labels.discard).at(-1))),

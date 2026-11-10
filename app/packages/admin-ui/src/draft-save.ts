@@ -7,10 +7,13 @@ import type { Dispatch, SetStateAction } from 'react';
 
 /**
  * What the save bar shows. `dirty` is a changed draft that can be saved, `invalid` a changed draft the form's own
- * validation holds back; `proposed` means the draft was accepted for approval and is not saved yet.
+ * validation holds back; `proposed` means the draft was accepted for approval and is not saved yet. `ready` is a form
+ * that opened with valid values Uložit can send at once (a suggested value) and nothing typed yet: savable, but not
+ * unsaved input.
  */
 export const SaveStateSchema = Schema.Literals([
   'idle',
+  'ready',
   'dirty',
   'invalid',
   'saving',
@@ -52,10 +55,15 @@ export const draftPending = (status: SaveState): boolean => status !== 'idle' &&
  * Statuses in which leaving the form would lose something typed. A draft parked for approval is not one of them:
  * it was handed over and is never sent again.
  */
-export const draftUnsaved = (status: SaveState): boolean => draftPending(status) && status !== 'proposed';
+export const draftUnsaved = (status: SaveState): boolean =>
+  draftPending(status) && status !== 'proposed' && status !== 'ready';
 
-/** Statuses in which the Save button sends the draft: a changed, valid draft, or one whose last save failed. */
-export const draftSavable = (status: SaveState): boolean => status === 'dirty' || status === 'error';
+/**
+ * Statuses in which the Save button sends the draft: a changed, valid draft (typed, or the values the form opened
+ * with), or one whose last save failed.
+ */
+export const draftSavable = (status: SaveState): boolean =>
+  status === 'dirty' || status === 'ready' || status === 'error';
 
 type Fork<R> = <A>(effect: Effect.Effect<A, never, R>) => Fiber.Fiber<A>;
 
@@ -307,7 +315,7 @@ export interface DraftSave<V> extends SavableDraft {
   readonly pending: boolean;
 }
 
-export interface UseDraftSaveOptions<V, R> extends DraftSaveOptions<V, R> {
+export interface UseDraftSaveOptions<V, R> extends Omit<DraftSaveOptions<V, R>, 'save'> {
   /**
    * The version the draft starts from, when it is not the first render's draft: a create form passes its empty form,
    * so the values it opens with already count as a draft the Save button sends.
@@ -325,6 +333,11 @@ export interface UseDraftSaveOptions<V, R> extends DraftSaveOptions<V, R> {
   readonly opened?: V | undefined;
   /** The host's browser runtime; saves run in it. */
   readonly runtime: ManagedRuntime.ManagedRuntime<R, never>;
+  /**
+   * Sends one draft (see `DraftSaveOptions.save`). A save of several commands that stopped after some of them went
+   * through returns `PartlySaved`: its `confirmed` becomes the version later saves and "Zahodit změny" go back to.
+   */
+  readonly save: (value: V) => Effect.Effect<SaveOutcome | PartlySaved<V>, never, R>;
   /** The form's draft. Without `initial`, the first render's value is taken as saved. */
   readonly value: V;
 }
@@ -472,7 +485,9 @@ export const useDraftSave = <V, R>(options: UseDraftSaveOptions<V, R>): DraftSav
   // Only a changed draft can be untouched: once a save of the opening values ran, its result is the user's.
   const untouched =
     options.opened !== undefined && (status === 'dirty' || status === 'invalid') && same(options.value, options.opened);
-  return { ...record, dirty: record.dirty && options.open !== false && !untouched };
+  // Valid opening values are savable but not input: the save bar says nothing about unsaved changes for them.
+  const shown: SaveState = untouched && status === 'dirty' ? 'ready' : status;
+  return { ...record, dirty: record.dirty && options.open !== false && !untouched, status: shown };
 };
 
 export interface UseRecordDraftOptions<V, R> extends Omit<DraftSaveOptions<V, R>, 'save'> {

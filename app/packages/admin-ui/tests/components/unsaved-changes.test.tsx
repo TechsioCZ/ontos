@@ -143,6 +143,27 @@ describe('useUnsavedChangesGuard', () => {
     }),
   );
 
+  it.effect('keeps Zůstat, Zahodit změny and Uložit on one row at desktop widths', () =>
+    Effect.gen(function* oneRow() {
+      const test = harness();
+      render(<Form test={test} />);
+      type('Akros CZ');
+      close();
+      const dialog = yield* Effect.promise(question);
+      const row = within(dialog).getByRole('button', { name: 'Uložit' }).parentElement;
+      expect(row?.dataset['leaveActions']).toBeDefined();
+      expect(row?.className).toContain('sm:flex-nowrap');
+      expect([...(row?.children ?? [])].map((button) => button.textContent)).toEqual([
+        'Zůstat',
+        'Zahodit změny',
+        'Uložit',
+      ]);
+      for (const button of row?.children ?? []) {
+        expect(button.className).toContain('whitespace-nowrap');
+      }
+    }),
+  );
+
   it.effect('Zůstat keeps the form and its draft', () =>
     Effect.gen(function* stays() {
       const test = harness();

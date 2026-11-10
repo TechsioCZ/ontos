@@ -254,14 +254,16 @@ export const UnsavedChangesDialog = ({ labels = saveLabels, prompt }: UnsavedCha
   return (
     <Dialog
       actions={
-        <>
-          <Button onClick={handleStay} theme="outlined" type="button" variant="secondary">
+        // One row from the small breakpoint up: Uložit never drops below Zůstat / Zahodit změny on a desktop.
+        <div className="flex w-full flex-wrap justify-end gap-100 sm:flex-nowrap" data-leave-actions="">
+          <Button className="whitespace-nowrap" onClick={handleStay} theme="outlined" type="button" variant="secondary">
             {labels.stay}
           </Button>
-          <Button onClick={handleDiscard} theme="outlined" type="button" variant="danger">
+          <Button className="whitespace-nowrap" onClick={handleDiscard} theme="outlined" type="button" variant="danger">
             {labels.discard}
           </Button>
           <Button
+            className="whitespace-nowrap"
             disabled={!(prompt.canSave || prompt.saving)}
             isLoading={prompt.saving}
             loadingText={labels.saving}
@@ -271,7 +273,7 @@ export const UnsavedChangesDialog = ({ labels = saveLabels, prompt }: UnsavedCha
           >
             {labels.save}
           </Button>
-        </>
+        </div>
       }
       closeLabel={dialogCloseLabel}
       customTrigger
@@ -283,7 +285,8 @@ export const UnsavedChangesDialog = ({ labels = saveLabels, prompt }: UnsavedCha
       }}
       open={prompt.open}
       role="alertdialog"
-      size="sm"
+      // `sm` (24rem) is too narrow for the three buttons side by side.
+      size="md"
       title={labels.leaveTitle}
     />
   );

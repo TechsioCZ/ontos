@@ -45,7 +45,7 @@ const quickDays = [
 ];
 
 /** A planned contact as typed. */
-interface PlanDraft {
+export interface PlanDraft {
   readonly client: string;
   readonly dueDate: Extract<CrmCommandInput, { readonly _tag: 'PlanContact' }>['dueDate'];
   readonly note: string;
@@ -53,7 +53,7 @@ interface PlanDraft {
 }
 
 /** PlanContact for a new contact, UpdatePlanItem with the changed fields for `item`; none while incomplete. */
-const planCommandOf = (
+export const planCommandOf = (
   value: PlanDraft,
   item: PlanItem | undefined,
   writeAll: boolean,

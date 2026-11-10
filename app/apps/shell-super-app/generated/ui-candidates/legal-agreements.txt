@@ -21,6 +21,7 @@ icon-[mdi--key-variant]
 icon-[mdi--office-building-outline]
 icon-[mdi--receipt-text-outline]
 outline
+running
 transition
 visible
 z

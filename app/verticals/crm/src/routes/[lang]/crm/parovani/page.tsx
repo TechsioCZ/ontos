@@ -1,7 +1,6 @@
-import { pipe, DateTime, Effect } from 'effect';
+import { pipe, DateTime } from 'effect';
 import { orderDateText, needsReview } from '../../../../../shared/domain/imports.ts';
 import type { CustomerLink, ImportedOrder, PairingChange } from '../../../../../shared/domain/imports.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 
 // AREA: imports — owned by the crm-imports lane. C04 Párování objednávek: queue of orders without a confirmed
 // client, orders flagged "vyžaduje kontrolu", approved external customer links and the full pairing history.
@@ -19,11 +18,9 @@ import {
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 
-import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useState } from 'react';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 
@@ -32,8 +29,6 @@ import { useCrmRecords } from '../../../../crm/records.ts';
 import type { CrmCommandSubmit } from '../../../../crm/records.ts';
 
 import { CrmStateGate, crmPaginationProps, crmTableTranslations } from '../../../../crm/ui.tsx';
-import { clientOptions } from '../../../../crm/option-labels.ts';
-import { readableName } from '@app/admin-ui/visible-text';
 import {
   RESIZE_LABEL,
   clientLabel,
@@ -43,9 +38,11 @@ import {
   pairingReason,
   principalLabel,
   reviewSummary,
-  sourcesOf,
 } from '../importy/order-model.ts';
-import { OrderDetailPanel, PairingForm, PairingStateBadge, RawStatusBadge } from '../importy/order-panels.tsx';
+import { OrderDetailPanel, PairingStateBadge, RawStatusBadge } from '../importy/order-panels.tsx';
+import { PairingFields, usePairingForm } from '../importy/pairing-form.tsx';
+import { CrmFormSaveActions } from '../../../../crm/form-save.tsx';
+import { NewLinkPanel } from './new-link-panel.tsx';
 
 const orderLabel = 'Objednávka';
 
@@ -232,29 +229,6 @@ const historyColumns = (records: RecordsResponse): ColumnDef<PairingChange>[] =>
   },
 ];
 
-/** One option per source customer, labelled with what the source says about it, never with its source key. */
-const sourceCustomerOptions = (records: RecordsResponse, source: string) => [
-  ...new Map(
-    records.state.imports.orders.flatMap((order) =>
-      order.source !== source || order.externalCustomerId === undefined
-        ? []
-        : [
-            [
-              order.externalCustomerId,
-              {
-                label:
-                  [order.customerName, order.customerRegNo, order.customerEmail]
-                    .map(readableName)
-                    .filter((part) => part !== undefined)
-                    .join(' · ') || orderTitle(order),
-                value: order.externalCustomerId,
-              },
-            ] as const,
-          ],
-    ),
-  ).values(),
-];
-
 /** Registry name of the Counterparty an approved link correlates to (CRM.md C04), when the client is linked. */
 const partyOfLink = (records: RecordsResponse, link: CustomerLink) => {
   const client = records.state.clients.items.find(
@@ -318,27 +292,23 @@ const linkColumns = (records: RecordsResponse): ColumnDef<CustomerLink>[] => [
 ];
 
 const PairPanel = ({
-  busy,
   onClose,
   order,
   records,
   submit,
 }: {
-  readonly busy: boolean;
   readonly onClose: () => void;
   readonly order: ImportedOrder;
   readonly records: RecordsResponse;
   readonly submit: CrmCommandSubmit;
 }) => {
   const formatAmount = useFormatAmount();
+  const pairing = usePairingForm({ onSaved: onClose, order, submit });
   return (
     <SidePanel
-      actions={
-        <Button onClick={onClose} theme="outlined" variant="secondary">
-          Zavřít
-        </Button>
-      }
+      actions={<CrmFormSaveActions form={pairing.form} onCancel={onClose} />}
       description={`${order.source} · ${orderDate(order)} · ${formatAmount(order.amount, order.currency)}`}
+      guard={pairing.form.guard}
       onOpenChange={(open) => {
         if (!open) {
           onClose();
@@ -367,122 +337,7 @@ const PairPanel = ({
             Stav ve zdroji: <RawStatusBadge status={order.rawStatus} />
           </span>
         </div>
-        <PairingForm busy={busy} onDone={onClose} order={order} records={records} submit={submit} />
-      </div>
-    </SidePanel>
-  );
-};
-
-const NewLinkPanel = ({
-  busy,
-  onClose,
-  records,
-  submit,
-}: {
-  readonly busy: boolean;
-  readonly onClose: () => void;
-  readonly records: RecordsResponse;
-  readonly submit: CrmCommandSubmit;
-}) => {
-  const { t } = useModernI18n();
-  const toaster = useToast();
-  const sources = sourcesOf(records.state.imports.orders);
-  const [source, setSource] = useState(sources[0] ?? 'E-shop');
-  const [externalCustomerId, setExternalCustomerId] = useState('');
-  const [clientId, setClientId] = useState('');
-  const waiting = records.state.imports.orders.filter(
-    (order) =>
-      order.pairing !== 'paired' && order.source === source && order.externalCustomerId === externalCustomerId.trim(),
-  ).length;
-  const save = () => {
-    browserRuntime.runFork(
-      submit({ _tag: 'LinkExternalCustomer', clientId, externalCustomerId: externalCustomerId.trim(), source }).pipe(
-        Effect.tap((outcome) =>
-          Effect.sync(() => {
-            toaster.create(
-              outcome.ok
-                ? {
-                    description:
-                      outcome.entityIds.length > 1
-                        ? `Napárováno čekajících objednávek: ${String(outcome.entityIds.length - 1)}`
-                        : undefined,
-                    title: 'Vazba schválena',
-                    type: 'success',
-                  }
-                : { description: outcome.message, title: 'Uložení se nezdařilo', type: 'error' },
-            );
-            if (outcome.ok) {
-              onClose();
-            }
-          }),
-        ),
-      ),
-    );
-  };
-  return (
-    <SidePanel
-      actions={
-        <>
-          <Button onClick={onClose} theme="outlined" variant="secondary">
-            Zrušit
-          </Button>
-          <Button
-            disabled={clientId === '' || externalCustomerId.trim() === ''}
-            isLoading={busy}
-            loadingText="Ukládám…"
-            onClick={save}
-            variant="primary"
-          >
-            Schválit vazbu
-          </Button>
-        </>
-      }
-      description="Vyberte zákazníka ze zdroje a odpovídajícího klienta CRM. Jeho další objednávky se pak přiřadí samy."
-      onOpenChange={(open) => {
-        if (!open) {
-          onClose();
-        }
-      }}
-      open
-      resizeLabel={RESIZE_LABEL}
-      size="md"
-      title={t('crm.ciWorkflow.newApprovedLink')}
-    >
-      <div className="flex flex-col gap-150">
-        <SelectTemplate
-          items={(sources.length === 0 ? ['E-shop', 'Účetní systém'] : sources).map((entry) => ({
-            label: entry,
-            value: entry,
-          }))}
-          label={t('crm.ciWorkflow.sourceSystem')}
-          name="link-source"
-          onValueChange={(details) => {
-            setSource(details.value[0] ?? source);
-            setExternalCustomerId('');
-          }}
-          size="sm"
-          value={[source]}
-        />
-        <SelectTemplate
-          items={sourceCustomerOptions(records, source)}
-          label={t('crm.ciWorkflow.sourceCustomerId')}
-          name="externalCustomerId"
-          onValueChange={(details) => setExternalCustomerId(details.value[0] ?? '')}
-          size="sm"
-          value={externalCustomerId === '' ? [] : [externalCustomerId]}
-        />
-        <SelectTemplate
-          items={clientOptions(records.state.clients.items.filter((client) => client.status === 'active'))}
-          label={t('crm.ciWorkflow.crmClient')}
-          name="link-client"
-          onValueChange={(details) => setClientId(details.value[0] ?? '')}
-          placeholder={t('crm.ciWorkflow.selectClient')}
-          size="sm"
-          value={clientId === '' ? [] : [clientId]}
-        />
-        {waiting > 0 && (
-          <span className="text-sm">{`Na tuto vazbu čeká ${String(waiting)} nenapárovaných objednávek – po schválení se přiřadí.`}</span>
-        )}
+        <PairingFields order={order} records={records} state={pairing} />
       </div>
     </SidePanel>
   );
@@ -660,7 +515,6 @@ const PairingContent = () => {
             )}
             {pairOrder !== undefined && (
               <PairPanel
-                busy={busy}
                 key={pairOrder.id}
                 onClose={() => setPairId(undefined)}
                 order={pairOrder}
@@ -678,9 +532,7 @@ const PairingContent = () => {
                 submit={submit}
               />
             )}
-            {linkOpen && (
-              <NewLinkPanel busy={busy} onClose={() => setLinkOpen(false)} records={records} submit={submit} />
-            )}
+            {linkOpen && <NewLinkPanel onClose={() => setLinkOpen(false)} records={records} submit={submit} />}
           </>
         );
       }}
