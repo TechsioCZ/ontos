@@ -1,4 +1,7 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
+import { Effect } from 'effect';
+import { constVoid } from 'effect/Function';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -6,13 +9,24 @@ import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { SelectTemplate } from '@app/admin-ui/select-template';
-import { SidePanel, dialogCloseLabel } from '@app/admin-ui';
+import {
+  SaveBar,
+  SidePanel,
+  UnsavedChangesDialog,
+  dialogCloseLabel,
+  saveLabelsFor,
+  useDraftSave,
+  useUnsavedChangesGuard,
+} from '@app/admin-ui';
+import type { SaveLabels, SaveOutcome, SaveState, UnsavedChangesGuard } from '@app/admin-ui';
 import { useState } from 'react';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
 import { sameSku } from '../../../../../shared/domain/merchandise-model.ts';
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
-import { runCommand } from './products-api.ts';
+import { productCommandOutcome, runCommand } from './products-api.ts';
+import type { CommandOutcome, ProductCommand } from './products-api.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { selectItem } from '../../../../ui/select-item.ts';
 import { ProductSearchCombobox } from './product-search.tsx';
 import { useCommandFailure, useProductLabel } from './product-form-labels.ts';
@@ -131,6 +145,141 @@ const ErrorLine = ({ message }: { readonly message: string | null }) =>
     </StatusText>
   );
 
+/** What the create form holds until Uložit. The texts are what the inputs show; the numbers are their parsed values. */
+interface ProductDraft {
+  readonly category: string;
+  readonly lowStock: number;
+  readonly lowStockText: string;
+  readonly name: string;
+  // NaN until typed: an empty price is refused by priceErrorKey instead of starting at 0.
+  readonly priceCzk: number;
+  readonly priceText: string;
+  readonly sku: string;
+  readonly unit: ProductUnit;
+  readonly vatRate: VatRate;
+}
+
+const blankProduct: ProductDraft = {
+  category: '',
+  lowStock: 0,
+  lowStockText: '0',
+  name: '',
+  priceCzk: Number.NaN,
+  priceText: '',
+  sku: '',
+  unit: 'ks',
+  vatRate: 21,
+};
+
+/** The texts carry the numbers, so two drafts with the same texts are the same draft. */
+const sameProduct = (left: ProductDraft, right: ProductDraft): boolean =>
+  left.category === right.category &&
+  left.lowStockText === right.lowStockText &&
+  left.name === right.name &&
+  left.priceText === right.priceText &&
+  left.sku === right.sku &&
+  left.unit === right.unit &&
+  left.vatRate === right.vatRate;
+
+interface FormSaveOptions<V> {
+  /** The product command that sends the draft. */
+  readonly command: (value: V) => ProductCommand;
+  readonly equals: (left: V, right: V) => boolean;
+  /** The version the form opens empty with; the draft is compared with it. */
+  readonly initial: V;
+  /** The form's own validation; an invalid draft is never sent and keeps Uložit disabled. */
+  readonly isValid: (value: V) => boolean;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly onReload: () => void;
+  /** The command went through: the page shows the toast and reloads. */
+  readonly onSaved: () => void;
+  /** Text of a refused save; the general failure text when it returns null. */
+  readonly refused?: (outcome: Extract<CommandOutcome, { readonly ok: false }>, value: V) => string | null;
+  /** Puts `value` back into the form's state. */
+  readonly reset: (value: V) => void;
+  readonly revision: number;
+  readonly value: V;
+}
+
+/**
+ * Explicit save of one create or bulk form: typing changes only the draft, the shared Save button sends it as one
+ * product command, and leaving with unsaved input asks Uložit / Zahodit změny / Zůstat.
+ */
+const useFormSave = <V,>(options: FormSaveOptions<V>) => {
+  const failure = useCommandFailure();
+  const { language } = useModernI18n();
+  const [error, setError] = useState<string | null>(null);
+  const record = useDraftSave<V, never>({
+    equals: options.equals,
+    initial: options.initial,
+    isValid: options.isValid,
+    runtime: browserRuntime,
+    save: (value) =>
+      productCommandOutcome(options.command(value), options.revision).pipe(
+        Effect.map((outcome): SaveOutcome => {
+          if (outcome.ok) {
+            setError(null);
+            return 'saved';
+          }
+          setError(options.refused?.(outcome, value) ?? failure(outcome.reason, options.onReload, outcome.proposal));
+          return outcome.proposal === undefined ? 'failed' : 'proposed';
+        }),
+      ),
+    value: options.value,
+  });
+  // Every way out (Zrušit, the panel's dismissal, a sent draft) starts the next open from the empty form.
+  const startOver = () => {
+    setError(null);
+    options.reset(options.initial);
+    record.adopt(options.initial);
+  };
+  const leave = () => {
+    startOver();
+    options.onOpenChange(false);
+  };
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: startOver });
+  const handleSave = () => {
+    record.save();
+    record.afterSave((status) => {
+      if (status === 'saved') {
+        leave();
+        options.onSaved();
+      }
+    });
+  };
+  return { error, guard, handleSave, labels: saveLabelsFor(language), leave, record };
+};
+
+/** What the footer of a form needs from its save. */
+interface FormSave {
+  readonly error: string | null;
+  readonly guard: UnsavedChangesGuard;
+  readonly handleSave: () => void;
+  readonly labels: SaveLabels;
+  readonly leave: () => void;
+  readonly record: { readonly status: SaveState };
+}
+
+/** Zrušit and the shared Save button, last in the panel's footer. */
+const FormSaveActions = ({ form }: { readonly form: FormSave }) => {
+  const label = useProductLabel();
+  return (
+    <>
+      <Button onClick={() => form.guard.request(form.leave)} theme="outlined" variant="secondary">
+        {label('common.cancel')}
+      </Button>
+      <SaveBar
+        error={form.error}
+        labels={form.labels}
+        onReloadLatest={constVoid}
+        onSave={form.handleSave}
+        status={form.record.status}
+      />
+    </>
+  );
+};
+
 /**
  * Create product: SKU, name, unit, category, VAT, price, minimum stock. Sends CreateProduct. The server refuses a
  * SKU the catalog already has; the field then shows that message until the SKU changes.
@@ -138,151 +287,107 @@ const ErrorLine = ({ message }: { readonly message: string | null }) =>
 export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open, revision }: FormDialogProps) => {
   const k = useProductLabel();
   const { t } = useModernI18n();
-  const failure = useCommandFailure();
-  const [sku, setSku] = useState('');
-  const [name, setName] = useState('');
-  const [category, setCategory] = useState('');
-  const [unit, setUnit] = useState<ProductUnit>('ks');
-  const [vatRate, setVatRate] = useState<VatRate>(21);
-  // NaN until typed: an empty price is refused by priceErrorKey instead of starting at 0. The text is what the
-  // input shows; a string value keeps the two-decimal format from rewriting it on every keystroke.
-  const [priceCzk, setPriceCzk] = useState(Number.NaN);
-  const [priceText, setPriceText] = useState('');
-  const [lowStock, setLowStock] = useState(0);
-  const [lowStockText, setLowStockText] = useState('0');
+  const [draft, setDraft] = useState<ProductDraft>(blankProduct);
+  const update = (patch: Partial<ProductDraft>) => setDraft((current) => ({ ...current, ...patch }));
   // The SKU the server refused as a duplicate. Only that exact value shows the message, so editing it clears it.
   const [takenSku, setTakenSku] = useState<string | null>(null);
-  const [submitted, setSubmitted] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [serverError, setServerError] = useState<string | null>(null);
-  const dirty = sku !== '' || name !== '' || category !== '' || priceText !== '' || lowStock !== 0;
-  const { discardOpen, requestClose, setDiscardOpen } = useDraftClose(dirty, onOpenChange);
 
-  const skuTakenError = takenSku !== null && sameSku(takenSku, sku) ? k('validation.skuTaken') : undefined;
-  const skuError = sku.trim() === '' ? k(REQUIRED_KEY) : (skuTakenError ?? tooLongMessage(k, sku, PRODUCT_LIMITS.sku));
-  const nameError = name.trim() === '' ? k(REQUIRED_KEY) : tooLongMessage(k, name, PRODUCT_LIMITS.name);
-  const categoryError = category.trim() === '' ? k(REQUIRED_KEY) : tooLongMessage(k, category, PRODUCT_LIMITS.category);
-  const priceKey = priceErrorKey(priceCzk);
-  const priceError = priceKey === undefined ? undefined : k(priceKey);
-  const lowStockKey = lowStockErrorKey(lowStock);
-  const lowStockError = lowStockKey === undefined ? undefined : k(lowStockKey);
-  const hasErrors = [skuError, nameError, categoryError, priceError, lowStockError].some(
-    (message) => message !== undefined,
-  );
-
-  const clearForm = () => {
-    setSku('');
-    setTakenSku(null);
-    setName('');
-    setCategory('');
-    setPriceCzk(Number.NaN);
-    setPriceText('');
-    setLowStock(0);
-    setLowStockText('0');
-    setSubmitted(false);
+  const errorsOf = (value: ProductDraft) => {
+    const skuTakenError = takenSku !== null && sameSku(takenSku, value.sku) ? k('validation.skuTaken') : undefined;
+    const priceKey = priceErrorKey(value.priceCzk);
+    const lowStockKey = lowStockErrorKey(value.lowStock);
+    return {
+      category:
+        value.category.trim() === '' ? k(REQUIRED_KEY) : tooLongMessage(k, value.category, PRODUCT_LIMITS.category),
+      lowStock: lowStockKey === undefined ? undefined : k(lowStockKey),
+      name: value.name.trim() === '' ? k(REQUIRED_KEY) : tooLongMessage(k, value.name, PRODUCT_LIMITS.name),
+      price: priceKey === undefined ? undefined : k(priceKey),
+      sku:
+        value.sku.trim() === '' ? k(REQUIRED_KEY) : (skuTakenError ?? tooLongMessage(k, value.sku, PRODUCT_LIMITS.sku)),
+    };
   };
-  const submit = () => {
-    if (busy) {
-      return;
-    }
-    setSubmitted(true);
-    if (hasErrors) {
-      focusFirstInvalid([
-        ['product-sku', skuError !== undefined],
-        ['product-name', nameError !== undefined],
-        ['product-category', categoryError !== undefined],
-        ['product-price', priceError !== undefined],
-        ['product-low-stock', lowStockError !== undefined],
-      ]);
-      return;
-    }
-    setBusy(true);
-    setServerError(null);
-    runCommand(
-      {
-        _tag: 'CreateProduct',
-        active: true,
-        category: category.trim(),
-        lowStockThreshold: lowStock,
-        name: name.trim(),
-        priceMinor: Math.round(priceCzk * 100),
-        sku: sku.trim(),
-        unit,
-        vatRate,
-      },
-      revision,
-      (outcome) => {
-        setBusy(false);
-        if (!outcome.ok) {
-          // CreateProduct's only business refusal is a duplicate SKU, so the stock wording in `rejected` does not apply.
-          if (outcome.reason === 'rejected') {
-            setTakenSku(sku.trim());
-            return;
-          }
-          setServerError(failure(outcome.reason, onReload, outcome.proposal));
-          return;
-        }
-        clearForm();
-        onOpenChange(false);
-        onCommitted(k('messages.created'));
-      },
-    );
-  };
+  const form = useFormSave<ProductDraft>({
+    command: (value) => ({
+      _tag: 'CreateProduct',
+      active: true,
+      category: value.category.trim(),
+      lowStockThreshold: value.lowStock,
+      name: value.name.trim(),
+      priceMinor: Math.round(value.priceCzk * 100),
+      sku: value.sku.trim(),
+      unit: value.unit,
+      vatRate: value.vatRate,
+    }),
+    equals: sameProduct,
+    initial: blankProduct,
+    isValid: (value) => Object.values(errorsOf(value)).every((message) => message === undefined),
+    onOpenChange,
+    onReload,
+    onSaved: () => onCommitted(k('messages.created')),
+    // CreateProduct's only business refusal is a duplicate SKU, so the stock wording in `rejected` does not apply.
+    refused: (outcome, value) => {
+      if (outcome.reason !== 'rejected') {
+        return null;
+      }
+      setTakenSku(value.sku.trim());
+      return k('validation.skuTaken');
+    },
+    reset: (value) => {
+      setDraft(value);
+      setTakenSku(null);
+    },
+    revision,
+    value: draft,
+  });
+  const errors = errorsOf(draft);
+  // Field messages show once the draft cannot be sent, or after the server refused it.
+  const shown = form.record.status === 'invalid' || form.record.status === 'error';
 
   return (
     <>
       <SidePanel
-        actions={
-          <DialogActions
-            busy={busy}
-            onCancel={() => requestClose(false)}
-            onSubmit={submit}
-            submit={k('create.submit')}
-          />
-        }
-        onOpenChange={requestClose}
+        actions={<FormSaveActions form={form} />}
+        guard={form.guard}
+        onOpenChange={(next) => {
+          if (!next) {
+            form.leave();
+          }
+        }}
         open={open}
         resizeLabel={t(RESIZE_LABEL_KEY)}
         size="md"
         title={k('create.title')}
       >
-        <form
-          className="flex flex-col gap-200 py-200"
-          onSubmit={(event) => {
-            event.preventDefault();
-            submit();
-          }}
-        >
-          <ErrorLine message={serverError} />
+        <form className="flex flex-col gap-200 py-200" onSubmit={(event) => event.preventDefault()}>
           <FormInput
             autoComplete="off"
             id="product-sku"
             label={k('fields.sku')}
             name="sku"
-            onChange={(event) => setSku(event.target.value)}
+            onChange={(event) => update({ sku: event.target.value })}
             required
-            value={sku}
-            {...fieldError(submitted, skuError)}
+            value={draft.sku}
+            {...fieldError(shown, errors.sku)}
           />
           <FormInput
             autoComplete="off"
             id="product-name"
             label={k('fields.name')}
             name="name"
-            onChange={(event) => setName(event.target.value)}
+            onChange={(event) => update({ name: event.target.value })}
             required
-            value={name}
-            {...fieldError(submitted, nameError)}
+            value={draft.name}
+            {...fieldError(shown, errors.name)}
           />
           <FormInput
             autoComplete="off"
             id="product-category"
             label={k('fields.category')}
             name="category"
-            onChange={(event) => setCategory(event.target.value)}
+            onChange={(event) => update({ category: event.target.value })}
             required
-            value={category}
-            {...fieldError(submitted, categoryError)}
+            value={draft.category}
+            {...fieldError(shown, errors.category)}
           />
           <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
             <SelectTemplate
@@ -293,11 +398,11 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
                 const [next] = details.value;
                 const picked = UNITS.find((value) => value === next);
                 if (picked !== undefined) {
-                  setUnit(picked);
+                  update({ unit: picked });
                 }
               }}
               placeholder={k('selectPlaceholder')}
-              value={[unit]}
+              value={[draft.unit]}
             />
             <SelectTemplate
               items={VAT_RATES.map((rate) => selectItem(String(rate), `${rate} %`))}
@@ -307,11 +412,11 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
                 const [next] = details.value;
                 const picked = VAT_RATES.find((rate) => String(rate) === next);
                 if (picked !== undefined) {
-                  setVatRate(picked);
+                  update({ vatRate: picked });
                 }
               }}
               placeholder={k('selectPlaceholder')}
-              value={[String(vatRate)]}
+              value={[String(draft.vatRate)]}
             />
           </div>
           <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
@@ -322,14 +427,11 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
               locale="cs-CZ"
               min={0}
               name="price"
-              onValueChange={(details) => {
-                setPriceCzk(details.valueAsNumber);
-                setPriceText(details.value);
-              }}
+              onValueChange={(details) => update({ priceCzk: details.valueAsNumber, priceText: details.value })}
               required
               step={1}
-              value={priceText}
-              {...fieldError(submitted, priceError)}
+              value={draft.priceText}
+              {...fieldError(shown, errors.price)}
             >
               <NumericInput.Control>
                 <NumericInput.Input aria-valuemax={undefined} />
@@ -343,13 +445,10 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
               locale="cs-CZ"
               min={0}
               name="lowStock"
-              onValueChange={(details) => {
-                setLowStock(details.valueAsNumber);
-                setLowStockText(details.value);
-              }}
+              onValueChange={(details) => update({ lowStock: details.valueAsNumber, lowStockText: details.value })}
               step={1}
-              value={lowStockText}
-              {...fieldError(submitted, lowStockError)}
+              value={draft.lowStockText}
+              {...fieldError(shown, errors.lowStock)}
             >
               <NumericInput.Control>
                 <NumericInput.Input aria-valuemax={undefined} />
@@ -358,16 +457,7 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
           </div>
         </form>
       </SidePanel>
-      <DiscardConfirm
-        onConfirm={() => {
-          setDiscardOpen(false);
-          clearForm();
-          onOpenChange(false);
-        }}
-        onKeep={() => setDiscardOpen(false)}
-        open={discardOpen}
-        title={k('create.discardTitle')}
-      />
+      <UnsavedChangesDialog labels={form.labels} prompt={form.guard.prompt} />
     </>
   );
 };
@@ -520,6 +610,19 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
 const PERCENT_MIN = -90;
 const PERCENT_MAX = 1000;
 
+interface PercentDraft {
+  readonly percent: number;
+  // The text is what the input shows; "5,5" reaches validation as 5.5 instead of silently becoming 55.
+  readonly percentText: string;
+}
+
+/** Empty, so the 5 % the form opens with is already a change Uložit sends. */
+const noPercent: PercentDraft = { percent: Number.NaN, percentText: '' };
+const openingPercent: PercentDraft = { percent: 5, percentText: '5' };
+
+const validPercent = (percent: number) =>
+  Number.isInteger(percent) && percent >= PERCENT_MIN && percent <= PERCENT_MAX && percent !== 0;
+
 /** Bulk price change by a whole percent. Sends BulkUpdateProducts with priceChangePercent. */
 export const PriceChangeDialog = ({
   ids,
@@ -530,99 +633,76 @@ export const PriceChangeDialog = ({
   revision,
 }: FormDialogProps & { readonly ids: readonly ProductRecord['id'][] }) => {
   const k = useProductLabel();
-  const failure = useCommandFailure();
   const { t } = useModernI18n();
-  const [percent, setPercent] = useState(5);
-  // The text is what the input shows; "5,5" reaches validation as 5.5 instead of silently becoming 55.
-  const [percentText, setPercentText] = useState('5');
-  const [submitted, setSubmitted] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [serverError, setServerError] = useState<string | null>(null);
-
-  const valid = Number.isInteger(percent) && percent >= PERCENT_MIN && percent <= PERCENT_MAX && percent !== 0;
-  const submit = () => {
-    setSubmitted(true);
-    if (!valid || ids.length === 0) {
-      focusFirstInvalid([['price-percent', !valid]]);
-      return;
-    }
-    setBusy(true);
-    setServerError(null);
-    runCommand(
-      { _tag: 'BulkUpdateProducts', ids: [...ids], patch: { priceChangePercent: percent } },
-      revision,
-      (outcome) => {
-        setBusy(false);
-        if (!outcome.ok) {
-          setServerError(failure(outcome.reason, onReload, outcome.proposal));
-          return;
-        }
-        setPercent(5);
-        setPercentText('5');
-        setSubmitted(false);
-        onOpenChange(false);
-        onCommitted(k('messages.priceChanged'));
-      },
-    );
-  };
+  const [draft, setDraft] = useState<PercentDraft>(openingPercent);
+  const form = useFormSave<PercentDraft>({
+    command: (value) => ({ _tag: 'BulkUpdateProducts', ids: [...ids], patch: { priceChangePercent: value.percent } }),
+    equals: (left, right) => left.percentText === right.percentText,
+    initial: noPercent,
+    isValid: (value) => validPercent(value.percent) && ids.length > 0,
+    onOpenChange,
+    onReload,
+    onSaved: () => onCommitted(k('messages.priceChanged')),
+    // The next open starts at 5 % again.
+    reset: () => setDraft(openingPercent),
+    revision,
+    value: draft,
+  });
 
   return (
-    <SidePanel
-      actions={
-        <DialogActions
-          busy={busy}
-          onCancel={() => onOpenChange(false)}
-          onSubmit={submit}
-          submit={k('priceDialog.submit')}
-        />
-      }
-      description={k('priceDialog.description')}
-      onOpenChange={onOpenChange}
-      open={open}
-      resizeLabel={t(RESIZE_LABEL_KEY)}
-      size="md"
-      title={k('priceDialog.title')}
-    >
-      <form
-        className="flex flex-col gap-200 py-200"
-        onSubmit={(event) => {
-          event.preventDefault();
-          submit();
+    <>
+      <SidePanel
+        actions={<FormSaveActions form={form} />}
+        description={k('priceDialog.description')}
+        guard={form.guard}
+        onOpenChange={(next) => {
+          if (!next) {
+            form.leave();
+          }
         }}
+        open={open}
+        resizeLabel={t(RESIZE_LABEL_KEY)}
+        size="md"
+        title={k('priceDialog.title')}
       >
-        <ErrorLine message={serverError} />
-        <p className="text-fg-secondary text-sm tabular-nums">
-          {t('merchandise.pages.products.priceDialog.affected', { total: ids.length })}
-        </p>
-        {/* The real -90..1000 range for ARIA, without clamping on blur, so validation still sees an out-of-range value. */}
-        <FormNumericInput
-          clampValueOnBlur={false}
-          formatOptions={WHOLE_NUMBER_FORMAT}
-          id="price-percent"
-          label={k('priceDialog.field')}
-          locale="cs-CZ"
-          max={PERCENT_MAX}
-          min={PERCENT_MIN}
-          name="priceChangePercent"
-          onValueChange={(details) => {
-            setPercent(details.valueAsNumber);
-            setPercentText(details.value);
-          }}
-          step={1}
-          value={percentText}
-          {...fieldError(submitted && !valid, k('validation.percent'))}
-        >
-          <NumericInput.Control>
-            <NumericInput.Input />
-          </NumericInput.Control>
-        </FormNumericInput>
-        <StatusText showIcon status="warning">
-          {k('priceDialog.warning')}
-        </StatusText>
-      </form>
-    </SidePanel>
+        <form className="flex flex-col gap-200 py-200" onSubmit={(event) => event.preventDefault()}>
+          <p className="text-fg-secondary text-sm tabular-nums">
+            {t('merchandise.pages.products.priceDialog.affected', { total: ids.length })}
+          </p>
+          {/* The real -90..1000 range for ARIA, without clamping on blur, so validation still sees an out-of-range value. */}
+          <FormNumericInput
+            clampValueOnBlur={false}
+            formatOptions={WHOLE_NUMBER_FORMAT}
+            id="price-percent"
+            label={k('priceDialog.field')}
+            locale="cs-CZ"
+            max={PERCENT_MAX}
+            min={PERCENT_MIN}
+            name="priceChangePercent"
+            onValueChange={(details) => setDraft({ percent: details.valueAsNumber, percentText: details.value })}
+            step={1}
+            value={draft.percentText}
+            {...fieldError(form.record.status === 'invalid' && !validPercent(draft.percent), k('validation.percent'))}
+          >
+            <NumericInput.Control>
+              <NumericInput.Input />
+            </NumericInput.Control>
+          </FormNumericInput>
+          <StatusText showIcon status="warning">
+            {k('priceDialog.warning')}
+          </StatusText>
+        </form>
+      </SidePanel>
+      <UnsavedChangesDialog labels={form.labels} prompt={form.guard.prompt} />
+    </>
   );
 };
+
+interface CategoryDraft {
+  readonly category: string;
+}
+
+const noCategory: CategoryDraft = { category: '' };
 
 /** Bulk category change. Sends BulkUpdateProducts with the new category. */
 export const CategoryDialog = ({
@@ -635,73 +715,51 @@ export const CategoryDialog = ({
 }: FormDialogProps & { readonly ids: readonly ProductRecord['id'][] }) => {
   const k = useProductLabel();
   const { t } = useModernI18n();
-  const failure = useCommandFailure();
-  const [category, setCategory] = useState('');
-  const [submitted, setSubmitted] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [serverError, setServerError] = useState<string | null>(null);
-
-  const categoryError = category.trim() === '' ? k(REQUIRED_KEY) : tooLongMessage(k, category, PRODUCT_LIMITS.category);
-  const submit = () => {
-    setSubmitted(true);
-    if (categoryError !== undefined || ids.length === 0) {
-      focusFirstInvalid([['bulk-category', categoryError !== undefined]]);
-      return;
-    }
-    setBusy(true);
-    setServerError(null);
-    runCommand(
-      { _tag: 'BulkUpdateProducts', ids: [...ids], patch: { category: category.trim() } },
-      revision,
-      (outcome) => {
-        setBusy(false);
-        if (!outcome.ok) {
-          setServerError(failure(outcome.reason, onReload, outcome.proposal));
-          return;
-        }
-        setCategory('');
-        setSubmitted(false);
-        onOpenChange(false);
-        onCommitted(k('messages.bulkUpdated'));
-      },
-    );
-  };
+  const [draft, setDraft] = useState<CategoryDraft>(noCategory);
+  const errorOf = (value: CategoryDraft) =>
+    value.category.trim() === '' ? k(REQUIRED_KEY) : tooLongMessage(k, value.category, PRODUCT_LIMITS.category);
+  const form = useFormSave<CategoryDraft>({
+    command: (value) => ({ _tag: 'BulkUpdateProducts', ids: [...ids], patch: { category: value.category.trim() } }),
+    equals: (left, right) => left.category === right.category,
+    initial: noCategory,
+    isValid: (value) => errorOf(value) === undefined && ids.length > 0,
+    onOpenChange,
+    onReload,
+    onSaved: () => onCommitted(k('messages.bulkUpdated')),
+    reset: setDraft,
+    revision,
+    value: draft,
+  });
 
   return (
-    <SidePanel
-      actions={
-        <DialogActions
-          busy={busy}
-          onCancel={() => onOpenChange(false)}
-          onSubmit={submit}
-          submit={k('category.submit')}
-        />
-      }
-      onOpenChange={onOpenChange}
-      open={open}
-      resizeLabel={t(RESIZE_LABEL_KEY)}
-      size="md"
-      title={k('category.title')}
-    >
-      <form
-        className="flex flex-col gap-200 py-200"
-        onSubmit={(event) => {
-          event.preventDefault();
-          submit();
+    <>
+      <SidePanel
+        actions={<FormSaveActions form={form} />}
+        guard={form.guard}
+        onOpenChange={(next) => {
+          if (!next) {
+            form.leave();
+          }
         }}
+        open={open}
+        resizeLabel={t(RESIZE_LABEL_KEY)}
+        size="md"
+        title={k('category.title')}
       >
-        <ErrorLine message={serverError} />
-        <FormInput
-          autoComplete="off"
-          id="bulk-category"
-          label={k('category.field')}
-          name="category"
-          onChange={(event) => setCategory(event.target.value)}
-          required
-          value={category}
-          {...fieldError(submitted, categoryError)}
-        />
-      </form>
-    </SidePanel>
+        <form className="flex flex-col gap-200 py-200" onSubmit={(event) => event.preventDefault()}>
+          <FormInput
+            autoComplete="off"
+            id="bulk-category"
+            label={k('category.field')}
+            name="category"
+            onChange={(event) => setDraft({ category: event.target.value })}
+            required
+            value={draft.category}
+            {...fieldError(form.record.status === 'invalid', errorOf(draft))}
+          />
+        </form>
+      </SidePanel>
+      <UnsavedChangesDialog labels={form.labels} prompt={form.guard.prompt} />
+    </>
   );
 };

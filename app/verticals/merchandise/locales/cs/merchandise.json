@@ -111,7 +111,6 @@
           "productMeta": "Cena {{price}}, skladem {{stock}} ks",
           "quantity": "Množství (ks)",
           "removeLine": "Odebrat položku",
-          "submit": "Vytvořit objednávku",
           "submitting": "Vytvářím…",
           "title": "Nová objednávka",
           "customerPlaceholder": "Hledat zákazníka…",
@@ -265,7 +264,6 @@
         },
         "category": {
           "field": "Nová kategorie",
-          "submit": "Změnit kategorii",
           "title": "Změnit kategorii"
         },
         "columns": {
@@ -288,8 +286,6 @@
           "save": "Uložit změny"
         },
         "create": {
-          "discardTitle": "Zahodit neuložené změny?",
-          "submit": "Vytvořit produkt",
           "title": "Nový produkt"
         },
         "description": "Produkty, ceny a skladové pohyby.",
@@ -426,7 +422,6 @@
           "affected": "Počet ovlivněných produktů: {{total}}",
           "description": "Zadejte změnu v procentech. Kladné číslo zdraží, záporné zlevní.",
           "field": "Změna ceny (%)",
-          "submit": "Změnit cenu",
           "title": "Změnit cenu o %",
           "warning": "Změna ceny neovlivní vystavené faktury ani objednávky."
         },

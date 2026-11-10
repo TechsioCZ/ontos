@@ -111,7 +111,6 @@
           "productMeta": "Price {{price}}, on hand {{stock}} pcs",
           "quantity": "Quantity (pcs)",
           "removeLine": "Remove item",
-          "submit": "Create order",
           "submitting": "Creating…",
           "title": "New order",
           "customerPlaceholder": "Search for a customer…",
@@ -265,7 +264,6 @@
         },
         "category": {
           "field": "New category",
-          "submit": "Change category",
           "title": "Change category"
         },
         "columns": {
@@ -288,8 +286,6 @@
           "save": "Save changes"
         },
         "create": {
-          "discardTitle": "Discard unsaved changes?",
-          "submit": "Create product",
           "title": "New product"
         },
         "description": "Products, prices and stock movements.",
@@ -422,7 +418,6 @@
           "affected": "Products affected: {{total}}",
           "description": "Enter the change in percent. A positive number raises prices, a negative one lowers them.",
           "field": "Price change (%)",
-          "submit": "Change price",
           "title": "Change price by %",
           "warning": "The price change does not affect issued invoices or orders."
         },

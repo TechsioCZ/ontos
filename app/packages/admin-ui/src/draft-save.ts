@@ -294,9 +294,14 @@ export interface DraftSave<V> extends SavableDraft {
 }
 
 export interface UseDraftSaveOptions<V, R> extends DraftSaveOptions<V, R> {
+  /**
+   * The version the draft starts from, when it is not the first render's draft: a create form passes its empty form,
+   * so the values it opens with already count as a draft the Save button sends.
+   */
+  readonly initial?: V;
   /** The host's browser runtime; saves run in it. */
   readonly runtime: ManagedRuntime.ManagedRuntime<R, never>;
-  /** The form's draft. The first render's value is taken as saved. */
+  /** The form's draft. Without `initial`, the first render's value is taken as saved. */
   readonly value: V;
 }
 
@@ -344,6 +349,8 @@ export interface PartlySaved<V> {
 export type DraftSaveResult<V> = RevisionedSaveResult | PartlySaved<V>;
 
 interface GenerationOptions<V, R> extends Omit<DraftSaveOptions<V, R>, 'save'> {
+  /** The confirmed version of the first generation; `value` when absent. */
+  readonly initial?: V;
   readonly revision: number;
   readonly runtime: ManagedRuntime.ManagedRuntime<R, never>;
   readonly save: (value: V, expectedRevision: number, confirmed: V) => Effect.Effect<DraftSaveResult<V>, never, R>;
@@ -392,7 +399,9 @@ const useGeneration = <V, R>(options: GenerationOptions<V, R>) => {
     controller.configure(boundTo(options, base, controller));
     return { base, controller };
   };
-  const [generation, setGeneration] = useState(() => begin(options.value, options.revision));
+  const [generation, setGeneration] = useState(() =>
+    begin('initial' in options && options.initial !== undefined ? options.initial : options.value, options.revision),
+  );
   const { base, controller } = generation;
   useEffect(() => {
     controller.configure(boundTo(options, base, controller));
