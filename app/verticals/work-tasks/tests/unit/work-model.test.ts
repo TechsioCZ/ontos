@@ -9,7 +9,11 @@ import { expect, it } from 'effect-rstest';
 import { PrincipalIdSchema, RecordKeySchema } from '@app/core-runtime/access/ids';
 import type { ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
 import { withHistory } from '../../src/services/work-history.ts';
-import { AssignablePrincipals, AssigneeIneligible } from '@app/core-runtime/auth/assignable-principals';
+import {
+  AssignablePrincipals,
+  AssignablePrincipalsUnavailable,
+  AssigneeIneligible,
+} from '@app/core-runtime/auth/assignable-principals';
 import type { OperationalScope } from '@app/core-runtime';
 import {
   ContextRefSchema,
@@ -356,6 +360,65 @@ it.effect('projects departed task and project owners without rewriting their sto
     expect(records.projects[0]?.assignmentNeedsReassignment).toBe(true);
     expect(records.assignablePrincipals).toEqual([available]);
     expect(created.task).not.toHaveProperty('assignmentNeedsReassignment');
+  }),
+);
+
+it.effect('one member Core cannot evaluate is left out of the candidates and never withholds the records', () =>
+  Effect.gen(function* unevaluableMemberProjection() {
+    const available = {
+      displayName: 'Available colleague',
+      principalRef: { principalId: scope.principalId, tenantId },
+    };
+    const unevaluable = {
+      displayName: 'Unevaluable member',
+      principalRef: { principalId: scope.authBindingId, tenantId },
+    };
+    const asked: string[][] = [];
+    const records = yield* finishWorkRecords(
+      {},
+      {
+        assignmentDirectory: {
+          legalEntityId: scope.legalEntityId,
+          members: [
+            { ...unevaluable, membershipStatus: 'active', principalStatus: 'active' },
+            { ...available, membershipStatus: 'active', principalStatus: 'active' },
+          ],
+          tenantId,
+        },
+        names: new Map([
+          [available.principalRef.principalId, available.displayName],
+          [unevaluable.principalRef.principalId, unevaluable.displayName],
+        ]),
+        revision: 0,
+      },
+      {
+        lookupAccess: { contracts: 'denied', customers: 'denied', opportunities: 'denied', properties: 'denied' },
+        predicate: { groups: [] },
+        readAll: true,
+        writeAll: true,
+      },
+      scope,
+    ).pipe(
+      Effect.provideService(AssignablePrincipals, {
+        read: (directory) => {
+          const ids = directory.members.map(({ principalRef }) => principalRef.principalId);
+          asked.push(ids);
+          return ids.includes(unevaluable.principalRef.principalId)
+            ? Effect.fail(new AssignablePrincipalsUnavailable({ reason: 'Assignment authorization is unavailable' }))
+            : Effect.succeed([available]);
+        },
+        resolveAssignee: () => Effect.fail(new AssigneeIneligible({ reason: 'Not used by a records read' })),
+      }),
+    );
+    expect(records.assignablePrincipals).toEqual([available]);
+    expect(records.items).toEqual([]);
+    expect(records.principalNames.map(({ displayName }) => displayName)).toEqual([available.displayName]);
+    // The whole directory first, then each member alone and exactly once.
+    expect(asked).toEqual([
+      [unevaluable.principalRef.principalId, available.principalRef.principalId],
+      [unevaluable.principalRef.principalId],
+      [available.principalRef.principalId],
+    ]);
   }),
 );
 
