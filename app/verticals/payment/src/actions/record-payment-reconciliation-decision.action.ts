@@ -65,6 +65,9 @@ type DecisionServices = PaymentEvidenceActionServices & { readonly refunds: Paym
 type DecisionContext = ActionHandlerContext<typeof domainEvents, DecisionServices>;
 type AppliedStep = Extract<PaymentReconciliationStepCase, { readonly _tag: 'Apply' }>;
 
+/** Data-access evidence name of the shared return-evidence read. */
+const RETURN_EVIDENCE_QUERY = 'return-evidence';
+
 const provenanceOf = (context: DecisionContext): PaymentExecutionProvenance => ({
   actionInvocationId: context.actionInvocationId,
   actorPrincipalId: context.scope.principalId,
@@ -241,7 +244,7 @@ const returnCorrectedAmountOf = Effect.fn('RecordPaymentReconciliationDecisionAc
     const evidence = yield* context.services.refunds.selectReturnEvidence(paymentId);
     yield* recordPaymentLookup(context, {
       paymentId,
-      query: 'return-evidence',
+      query: RETURN_EVIDENCE_QUERY,
       recordId: observationId,
       resultCount: evidence.length,
     });
@@ -370,7 +373,7 @@ const priorReturnCollectionOf = Effect.fn('RecordPaymentReconciliationDecisionAc
     const evidence = yield* context.services.refunds.selectReturnEvidence(loaded.payment.paymentId);
     yield* recordPaymentLookup(context, {
       paymentId,
-      query: 'return-evidence',
+      query: RETURN_EVIDENCE_QUERY,
       recordId: observation.observationId,
       resultCount: evidence.length,
     });
@@ -441,13 +444,26 @@ const correctionTargetReliedOn = Effect.fn('RecordPaymentReconciliationDecisionA
     if (correctedObservationId === undefined || Option.isNone(current)) {
       return false;
     }
-    const effects = yield* listEstablishedEffects(context, current.value.payment.paymentId);
+    const { paymentId } = current.value.payment;
+    const effects = yield* listEstablishedEffects(context, paymentId);
     const target = effects.find((effect) => effect.observationId === correctedObservationId);
-    if (target === undefined) {
-      return false;
+    if (target !== undefined) {
+      const operation = current.value.operations.find((candidate) => candidate.operationId === target.operationId);
+      return operation !== undefined && paymentFactMeaning(target.factKind)?.outcome === operation.outcome;
     }
-    const operation = current.value.operations.find((candidate) => candidate.operationId === target.operationId);
-    return operation !== undefined && paymentFactMeaning(target.factKind)?.outcome === operation.outcome;
+    // A held return the funds reader counts against a collection established no outcome, yet Current
+    // funds rest on it: an unapplied correction of it is still owed (#1150).
+    const evidence = yield* context.services.refunds.selectReturnEvidence(paymentId);
+    yield* recordPaymentLookup(context, {
+      paymentId,
+      query: RETURN_EVIDENCE_QUERY,
+      recordId: correctedObservationId,
+      resultCount: evidence.length,
+    });
+    const counted = evidence.find((statement) => statement.observationId === correctedObservationId);
+    return current.value.operations.some(
+      (operation) => operation.operationId === counted?.operationId && operation.kind === 'COLLECT',
+    );
   },
 );
 
