@@ -163,7 +163,8 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   ),
   // </generated-governed-http-handler-support-layers>
   GovernedReadLayer.provide(GovernedReadLayer.mergeAll(ActionPermissionLive)),
-  GovernedReadLayer.provide(GovernedReadLayer.empty),
+  // Owner read callbacks (the write capability) ask the v2 access gate themselves; ReadRuntime keeps its own private.
+  GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
 );
 
 const operationAttributes = (operationContext: OperationContext) => {
