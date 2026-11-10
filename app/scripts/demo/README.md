@@ -380,6 +380,38 @@ The people-model scratch proofs need the same scratch database and local SpiceDB
 `pnpm --filter @app/core-runtime test:operator` runs the company membership and agent profile, operator and status
 lifecycles, and `pnpm --filter @app/shell-super-app test:operator` runs the person invitation lifecycle.
 
+### Stage machine workloads and their companies
+
+A storefront key runs a workload Action only while Core holds an active binding for the declared key (O73) and a
+company registration naming the company it acts for (D6). `register-stage-workloads.mts` writes both through
+Core's own writers, with the identifiers the stage bootstrap derives, so a re-run changes nothing. Its input is an
+operator file outside the repository (ADR-0028):
+
+```json
+{
+  "schemaVersion": 1,
+  "tenants": [
+    {
+      "tenantId": "…",
+      "ownerPrincipalId": "<current human owner>",
+      "workloads": [
+        {
+          "principalId": "<service principal>",
+          "workloadKey": "work.storefront-client",
+          "legalEntityId": "<its company>"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Run it on the app host with only `DATABASE_URL` set: `--mode dry-run` prints every step (`writeBinding`,
+`writeRegistration`) and a fingerprint; `--mode apply --reviewed-plan-sha256 <fingerprint>` writes exactly that plan;
+`--mode verify` reads each one back through the gate's reader. It refuses keys the deployed catalog does not declare,
+non-machine principals, inactive companies, an owner that is not the Tenant's current human owner, and a binding
+already registered for another company. It writes no Role, grant, membership or key.
+
 ## Pseudonymous demo catalog (lane P/b)
 
 The fixed demo company keeps its product/variant identities, prices, stock, category tree/order and offers; only
