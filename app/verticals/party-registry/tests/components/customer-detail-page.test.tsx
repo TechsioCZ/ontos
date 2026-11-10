@@ -1,3 +1,4 @@
+import { useDocumentTitle } from '@app/admin-ui';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
@@ -32,7 +33,6 @@ import {
   loadCustomerDetailPageRecord,
 } from '../../src/routes/[lang]/prodej/zakaznici/customer-detail-page-data.ts';
 import type { CustomerDetailPageRecord } from '../../src/routes/[lang]/prodej/zakaznici/customer-detail-page-data.ts';
-import { RecordRouteTitle } from '../../src/routes/ultramodern-route-head.tsx' with { rstest: 'importActual' };
 import { expectHumanReadable } from '../support/visible-text.ts';
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
@@ -46,7 +46,6 @@ rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   useRouterState: () => '/cs/prodej/zakaznici',
 }));
 rstest.mock('../../src/routes/ultramodern-route-head.tsx', () => ({
-  RecordRouteTitle,
   UltramodernRouteHead: () => null,
 }));
 rstest.mock('../../src/api/counterparty-read-client.ts');
@@ -450,16 +449,25 @@ it.live('a background reload of the same record changes nothing on the full page
   }),
 );
 
-it.live('the full page names the browser tab after the customer, over the Shell title', () =>
+/** The Shell's frame: its title names the record a page gives, else its own destination. */
+const ShellFrameTitle = ({ children, shellName }: { readonly children: ReactNode; readonly shellName: string }) => {
+  const title = useDocumentTitle();
+  return (
+    <>
+      <title>{`${title ?? shellName} | OntOS`}</title>
+      {children}
+    </>
+  );
+};
+
+it.live('the full page names the browser tab after the customer through the Shell frame', () =>
   Effect.gen(function* tabTitle() {
-    const copy = { customerTab: 'Eva Bílá | OntOS', name: 'Eva Bílá', shellTitle: 'Domů | OntOS' } as const;
+    const copy = { customerTab: 'Eva Bílá | OntOS', name: 'Eva Bílá', shellName: 'shell-destination' } as const;
     yield* customerDetailPageData.preload(pageInput);
-    // The Shell's frame renders its own title in the same commit as the page.
     render(
-      <>
-        <title>{copy.shellTitle}</title>
+      <ShellFrameTitle shellName={copy.shellName}>
         <CustomerDetailPage context={context} routeParams={routeParams} />
-      </>,
+      </ShellFrameTitle>,
     );
     yield* Effect.promise(() => waitFor(() => expect(screen.getByRole('heading', { name: copy.name })).toBeTruthy()));
     yield* Effect.promise(() => waitFor(() => expect(document.title).toBe(copy.customerTab)));

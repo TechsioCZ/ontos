@@ -5,7 +5,7 @@ import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { FormInput } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import {
   SaveBar,
