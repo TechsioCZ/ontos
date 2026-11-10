@@ -43,6 +43,8 @@ import {
   recoveryRequests,
   sourceAuthorities,
 } from '../database/schema.ts';
+import { fullyDisprovenTargets } from './payment-full-disproof.ts';
+import type { DisproofCorrectionRow, DisproofTargetRow } from './payment-full-disproof.ts';
 import type { PaymentAggregatePersistence } from './payment-aggregate-persistence.ts';
 import { paymentAuthorizationProofOfRow } from './payment-authorization-persistence.ts';
 
@@ -286,51 +288,9 @@ const caseRecordOf = (row: CaseRow): PaymentReconciliationCaseRecord => ({
   status: row.status,
 });
 
-interface DisproofTargetRow {
-  readonly amountMinor: number | null;
-  readonly observationId: string;
-  readonly paymentId: string | null;
-  readonly sourceAuthorityId: string | null;
-}
-interface DisproofCorrectionRow {
-  readonly acceptanceOutcome: ObservationRow['acceptanceOutcome'];
-  readonly amountMinor: number | null;
-  readonly capabilityCorrelated: boolean | null;
-  readonly correctsObservationId: string | null;
-  readonly factKind: ObservationRow['factKind'];
-  readonly paymentId: string | null;
-  readonly sourceAuthorityId: string | null;
-}
-
-/**
- * The one rule for "this statement is fully disproven" (#1151/#1152), shared by every reader: a qualified
- * SOURCE_CORRECTION of the same Payment, issued by the statement's own authority, capability-proven where
- * its source must prove one, that retracts all of it (no amount, or at least the statement's amount).
- * Whether the correction changed an outcome when it arrived does not matter; partial corrections and
- * corrections that name another Payment or come from another authority never disprove.
- */
-const fullyDisproves = (correction: DisproofCorrectionRow, target: DisproofTargetRow): boolean =>
-  correction.factKind === 'SOURCE_CORRECTION' &&
-  QUALIFIED_CORRECTION_OUTCOMES.some((outcome) => outcome === correction.acceptanceOutcome) &&
-  target.paymentId !== null &&
-  target.sourceAuthorityId !== null &&
-  correction.paymentId === target.paymentId &&
-  correction.sourceAuthorityId === target.sourceAuthorityId &&
-  correction.capabilityCorrelated !== false &&
-  (target.amountMinor === null || correction.amountMinor === null || correction.amountMinor >= target.amountMinor);
-
 /** The fully disproven statements among rows that hold both the statements and their corrections. */
-const fullyDisprovenIds = (rows: readonly (DisproofCorrectionRow & DisproofTargetRow)[]): ReadonlySet<string> => {
-  const byId = new Map(rows.map((row) => [row.observationId, row]));
-  const disproven = new Set<string>();
-  for (const correction of rows) {
-    const target = correction.correctsObservationId === null ? undefined : byId.get(correction.correctsObservationId);
-    if (target !== undefined && fullyDisproves(correction, target)) {
-      disproven.add(target.observationId);
-    }
-  }
-  return disproven;
-};
+const fullyDisprovenIds = (rows: readonly (DisproofCorrectionRow & DisproofTargetRow)[]): ReadonlySet<string> =>
+  fullyDisprovenTargets(rows, rows);
 
 /** The immutable source binding a stored statement was issued under. */
 const effectSourceOf = (row: Pick<ObservationRow, 'accountRef' | 'environment' | 'sourceKind' | 'sourceSystem'>) => ({
@@ -689,7 +649,7 @@ export const paymentEvidencePersistenceForTransaction = (
     },
   );
 
-  /** The statements among these ids that a correction fully disproves (see `fullyDisproves`). */
+  /** The statements among these ids that a correction fully disproves (the shared full-disproof rule). */
   const fullyDisprovenAmong = Effect.fn('PaymentEvidencePersistence.fullyDisprovenAmong')(function* fullyDisprovenAmong(
     observationIds: readonly string[],
   ) {
@@ -732,16 +692,7 @@ export const paymentEvidencePersistenceForTransaction = (
       ],
       { concurrency: 1 },
     );
-    const targetOf = new Map(targets.map((target) => [target.observationId, target]));
-    const disproven = new Set<string>();
-    for (const correction of corrections) {
-      const target =
-        correction.correctsObservationId === null ? undefined : targetOf.get(correction.correctsObservationId);
-      if (target !== undefined && fullyDisproves(correction, target)) {
-        disproven.add(target.observationId);
-      }
-    }
-    return disproven;
+    return fullyDisprovenTargets(targets, corrections);
   });
 
   /**
