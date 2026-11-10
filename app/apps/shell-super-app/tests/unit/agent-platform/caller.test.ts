@@ -3,7 +3,7 @@ import type { AccessDeclarationInput, OntosActionContract, OperationalScope } fr
 import { OntosActionContractSchema } from '@app/core-runtime';
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
-import { Effect, Predicate, Schema } from 'effect';
+import { Effect, Predicate, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ActionPermissionCheckError } from '../../../../../packages/core-runtime/src/actions/errors.ts';
@@ -13,6 +13,7 @@ import {
   AgentPlatformInvalid,
   assertAgentProposalsAuthorized,
   callerModuleAccess,
+  emptySubjectAccessTrace,
   proposalActionKey,
   subjectModuleAccess,
 } from '../../../api/agent-platform/caller.ts';
@@ -500,8 +501,8 @@ const humanRequest = {
   subject: { principalId, tenantId },
 };
 
-it.effect('inspects carriers at most two at a time and keeps carrier order whatever finishes first', () =>
-  Effect.gen(function* boundedCarriers() {
+it.effect('asks every carrier in one batch and keeps carrier order whatever finishes first', () =>
+  Effect.gen(function* batchedCarriers() {
     const ids = ['alpha.pages', 'beta.pages', 'gamma.pages'];
     const { installed, snapshot } = yield* pageCarrierCatalog(ids);
     // Each read yields this many times before it finishes; alpha is first in carrier order and finishes last.
@@ -525,17 +526,68 @@ it.effect('inspects carriers at most two at a time and keeps carrier order whate
       snapshot,
       subjects: [{ legalEntityId, principalId, tenantId }],
     });
-    const result = yield* subjectModuleAccess(humanRequest).pipe(
+    const trace = yield* Ref.make(emptySubjectAccessTrace);
+    const result = yield* subjectModuleAccess(humanRequest, trace).pipe(
       Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
       Effect.provide(inspection.layer),
     );
-    // Concurrency is bounded at two, and two really overlap.
-    expect(probe.maxActive).toBe(2);
+    // The carriers' intent reads overlap inside the one batch, never beyond the engine's own bound of eight.
+    expect(probe.maxActive).toBeGreaterThan(1);
+    expect(probe.maxActive).toBeLessThanOrEqual(8);
     // Access follows carrier order, not completion order: beta and gamma finished before alpha.
     expect(probe.finished.indexOf('alpha.pages.page.open')).toBeGreaterThan(
       probe.finished.indexOf('beta.pages.page.open'),
     );
     expect([...result.access]).toEqual(ids);
+    const traced = yield* Ref.get(trace);
+    // The scope, then the carriers and Actions in one batch: two inspection calls, whatever the carrier count.
+    expect({ actions: traced.actions, active: traced.active, carriers: traced.carriers }).toEqual({
+      actions: 0,
+      active: null,
+      carriers: 3,
+    });
+    expect(traced.inspectionCalls).toBe(2);
+    expect(Object.keys(traced.durations).toSorted()).toEqual(['capabilities', 'catalog', 'scope']);
+  }),
+);
+
+/** Every scripted port call one subject read makes over `ids` page carriers, one readable. */
+const roundTripsFor = (ids: readonly string[]) =>
+  Effect.gen(function* roundTrips() {
+    const { installed, snapshot } = yield* pageCarrierCatalog(ids);
+    const inspection = subjectInspectionFixture({
+      capabilities: readableCarriers(ids.slice(0, 1)),
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const result = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+    );
+    return { access: [...result.access], reads: inspection.reads };
+  });
+
+it.effect('makes a fixed number of identity, scope, engine and evidence round trips however many carriers exist', () =>
+  Effect.gen(function* boundedRoundTrips() {
+    const few = yield* roundTripsFor(['alpha.pages', 'beta.pages']);
+    const many = yield* roundTripsFor(Array.from({ length: 24 }, (_, index) => `module${index}.pages`));
+    expect(few.access).toEqual(['alpha.pages']);
+    expect(many.access).toEqual(['module0.pages']);
+    const fixed = ({ engine, evidenceWrites, facts, kind, scope: scopeReads }: typeof few.reads) => ({
+      engine,
+      evidenceWrites,
+      facts,
+      kind,
+      scopeReads,
+    });
+    // The scope inspection and the one capability batch each resolve the subject once, and the batch asks the engine
+    // once and writes its evidence once; only the per-capability intent reads follow the carrier count.
+    expect(fixed(many.reads)).toEqual(fixed(few.reads));
+    expect(many.reads.evidenceWrites).toBeLessThanOrEqual(1);
+    expect(many.reads.engine).toBeLessThanOrEqual(2);
+    // Every carrier that is not granted is a denial, and every denial keeps its evidence row.
+    expect(many.reads.evidenceRows).toBe(23);
+    expect(many.reads.cells).toBe(24);
   }),
 );
 

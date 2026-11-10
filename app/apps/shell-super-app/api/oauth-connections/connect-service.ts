@@ -32,6 +32,8 @@ import {
 } from '@app/shared-contracts/oauth-connections';
 import { Clock, Crypto, Duration, Effect, Exit, Option, Ref, Schema } from 'effect';
 
+import { emptySubjectAccessTrace } from '../agent-platform/caller.ts';
+import type { SubjectAccessTrace } from '../agent-platform/caller.ts';
 import { finishRevocation, loadActingAuthority } from './connection-service.ts';
 import { effectiveAuthority, isModulesRequestWithin, isPolicyWithin, minWritePolicy } from './effective-authority.ts';
 import { ConnectionForbidden, ConnectionInvalid, ConnectionUnavailable } from './errors.ts';
@@ -137,6 +139,12 @@ interface OptionsTrace {
   readonly durations: Partial<Record<OptionsPhase, number>>;
 }
 
+/** Both traces of one options build: its own phases, and the steps inside the company-authority read. */
+interface OptionsTraces {
+  readonly authority: Ref.Ref<SubjectAccessTrace>;
+  readonly options: Ref.Ref<OptionsTrace>;
+}
+
 interface OptionsTiming {
   readonly phase: <Value, Failure, Requirements>(
     phase: OptionsPhase,
@@ -179,10 +187,12 @@ export interface ConnectOptionsPorts<Requirements> {
   readonly authorityOf: (
     asker: OperationalScope,
     input: ActingAuthorityInput,
+    trace: Ref.Ref<SubjectAccessTrace>,
   ) => Effect.Effect<ActingAuthority, ConnectionUnavailable, Requirements>;
 }
 
 interface OptionsBuild<Requirements> {
+  readonly authorityTrace: Ref.Ref<SubjectAccessTrace>;
   readonly ports: ConnectOptionsPorts<Requirements>;
   readonly request: ConnectOptionsRequest;
   readonly session: ConnectSession;
@@ -190,6 +200,7 @@ interface OptionsBuild<Requirements> {
 }
 
 const buildOptions = Effect.fn('OAuthConnectService.buildOptions')(function* buildOptions<Requirements>({
+  authorityTrace,
   ports,
   request,
   session,
@@ -210,12 +221,16 @@ const buildOptions = Effect.fn('OAuthConnectService.buildOptions')(function* bui
   }
   const own = yield* timing.phase(
     'companyAuthority',
-    ports.authorityOf(session.scope, {
-      actingKind: 'human',
-      actingPrincipalId: session.principalId,
-      legalEntityId: scoped.legalEntityId,
-      tenantId: session.scope.tenantId,
-    }),
+    ports.authorityOf(
+      session.scope,
+      {
+        actingKind: 'human',
+        actingPrincipalId: session.principalId,
+        legalEntityId: scoped.legalEntityId,
+        tenantId: session.scope.tenantId,
+      },
+      authorityTrace,
+    ),
   );
   const companies = [
     {
@@ -250,16 +265,24 @@ const outcomeOf = (exit: Exit.Exit<unknown, unknown>, state: OptionsTrace): stri
 const logSlowOptions = Effect.fn('OAuthConnectService.logSlowOptions')(function* logSlowOptions(input: {
   readonly exit: Exit.Exit<unknown, unknown>;
   readonly startedAt: number;
-  readonly trace: Ref.Ref<OptionsTrace>;
+  readonly traces: OptionsTraces;
 }) {
   const totalMs = (yield* Clock.currentTimeMillis) - input.startedAt;
   if (totalMs <= SLOW_OPTIONS_MILLIS) {
     return;
   }
-  const state = yield* Ref.get(input.trace);
+  const state = yield* Ref.get(input.traces.options);
+  const authority = yield* Ref.get(input.traces.authority);
   yield* Effect.logWarning('OAuth connect options slow').pipe(
     Effect.annotateLogs({
       activePhase: state.active ?? 'none',
+      authorityActions: authority.actions,
+      authorityActivePhase: authority.active ?? 'none',
+      authorityCapabilitiesMs: authority.durations.capabilities ?? null,
+      authorityCarriers: authority.carriers,
+      authorityCatalogMs: authority.durations.catalog ?? null,
+      authorityInspectionCalls: authority.inspectionCalls,
+      authorityScopeMs: authority.durations.scope ?? null,
       companies: state.companies,
       companyAuthorityMs: state.durations.companyAuthority ?? null,
       outcome: outcomeOf(input.exit, state),
@@ -275,22 +298,31 @@ export const connectOptionsWith = <Requirements>(ports: ConnectOptionsPorts<Requ
     session: ConnectSession,
     request: ConnectOptionsRequest,
   ) {
-    const trace = yield* Ref.make<OptionsTrace>({
-      active: null,
-      budgetExceeded: false,
-      companies: session.companies.length,
-      durations: {},
-    });
+    const traces: OptionsTraces = {
+      authority: yield* Ref.make(emptySubjectAccessTrace),
+      options: yield* Ref.make<OptionsTrace>({
+        active: null,
+        budgetExceeded: false,
+        companies: session.companies.length,
+        durations: {},
+      }),
+    };
     const startedAt = yield* Clock.currentTimeMillis;
-    return yield* buildOptions({ ports, request, session, timing: makeTiming(trace) }).pipe(
+    return yield* buildOptions({
+      authorityTrace: traces.authority,
+      ports,
+      request,
+      session,
+      timing: makeTiming(traces.options),
+    }).pipe(
       Effect.timeoutOrElse({
         duration: CONNECT_OPTIONS_BUDGET,
         orElse: () =>
-          Ref.update(trace, (current) => ({ ...current, budgetExceeded: true })).pipe(
+          Ref.update(traces.options, (current) => ({ ...current, budgetExceeded: true })).pipe(
             Effect.andThen(Effect.fail(new ConnectionUnavailable({ cause: OPTIONS_BUDGET_CAUSE }))),
           ),
       }),
-      Effect.onExit((exit) => logSlowOptions({ exit, startedAt, trace })),
+      Effect.onExit((exit) => logSlowOptions({ exit, startedAt, traces })),
     );
   });
 

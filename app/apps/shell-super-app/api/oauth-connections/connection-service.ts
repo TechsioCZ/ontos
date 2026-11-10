@@ -35,8 +35,10 @@ import type {
   ConnectionWritePolicy,
 } from '@app/shared-contracts/oauth-connections';
 import { DateTime, Effect, Option, Schema } from 'effect';
+import type { Ref } from 'effect';
 
 import { subjectModuleAccess } from '../agent-platform/caller.ts';
+import type { SubjectAccessTrace } from '../agent-platform/caller.ts';
 import { composedModulesOf } from '../agent-platform/composed-modules.ts';
 import { mcpModulesOf } from '../mcp/catalog.ts';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
@@ -166,6 +168,8 @@ export const loadActingAuthority = Effect.fn('OAuthConnectionService.loadActingA
       readonly legalEntityId: string;
       readonly tenantId: string;
     },
+    /** Receives the inner steps' progress, so a slow or cut-off caller can say which step it was in. */
+    trace?: Ref.Ref<SubjectAccessTrace>,
   ) {
     if (asker.tenantId !== input.tenantId || asker.legalEntityId !== input.legalEntityId) {
       return yield* new SubjectInspectionUnavailable({ reason: 'Connection scope differs from requester scope' });
@@ -175,11 +179,14 @@ export const loadActingAuthority = Effect.fn('OAuthConnectionService.loadActingA
         reason: 'OAuth agent has no credential-bound access connection and consent revision',
       });
     }
-    const sets = yield* subjectModuleAccess({
-      queryScope: { legalEntityId: input.legalEntityId, tenantId: input.tenantId },
-      requesterScope: asker,
-      subject: { principalId: input.actingPrincipalId, tenantId: input.tenantId },
-    });
+    const sets = yield* subjectModuleAccess(
+      {
+        queryScope: { legalEntityId: input.legalEntityId, tenantId: input.tenantId },
+        requesterScope: asker,
+        subject: { principalId: input.actingPrincipalId, tenantId: input.tenantId },
+      },
+      trace,
+    );
     const { labelOf } = composedModulesOf(mcpModulesOf(sets.installed.composition));
     const live: LiveRights = { read: sets.access, write: new Set([...sets.run, ...sets.propose]) };
     // A module the person may only propose to cannot take a direct write, so while one exists the ceiling is approval.

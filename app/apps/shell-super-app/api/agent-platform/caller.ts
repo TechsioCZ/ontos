@@ -8,7 +8,7 @@ import {
 import type { SubjectInspectionInput } from '@app/core-runtime/access/enforcement';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
 import type { AgentProposalSubmitRequest } from '@app/shared-contracts/agent-proposals';
-import { Data, DateTime, Effect } from 'effect';
+import { Clock, Data, DateTime, Effect, Ref } from 'effect';
 
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import type { ShellInstalledCatalog } from '../modules/installed-module-catalog.ts';
@@ -88,7 +88,7 @@ export const assertAgentProposalsAuthorized = Effect.fn('AgentPlatform.assertAge
 );
 
 /** One capability carrier a module publishes: its declaration, the context it is asked in, and its owner. */
-interface ModuleCarrier {
+export interface ModuleCarrier {
   readonly declaration: AccessDeclaration | undefined;
   readonly legalEntityScope: LegalEntityScope;
   readonly moduleId: string;
@@ -100,7 +100,7 @@ interface ModuleCarrier {
  * declarations, never a legacy `module_access` tuple, so a principal that holds only v2 grants sees its
  * modules and a read-only module stays visible through its read carriers.
  */
-const moduleCarriers = (installed: ShellInstalledCatalog): readonly ModuleCarrier[] => {
+export const moduleCarriers = (installed: ShellInstalledCatalog): readonly ModuleCarrier[] => {
   const carriers: ModuleCarrier[] = [];
   for (const contract of installed.contracts) {
     const moduleId = contract.manifest.module.id;
@@ -226,60 +226,112 @@ export const callerModuleAccess = Effect.fn('AgentPlatform.callerModuleAccess')(
   },
 );
 
+/** The inner steps of one subject read, in the order they run. */
+export const SUBJECT_ACCESS_PHASES = ['catalog', 'scope', 'capabilities'] as const;
+export type SubjectAccessPhase = (typeof SUBJECT_ACCESS_PHASES)[number];
+
 /**
- * Carrier inspections are independent reads, each in its own transaction and writing its own decision row. Two keeps
- * the pool share bounded: the administrator list nests this inside its own bounded fan-outs.
+ * Progress of one subject read: the step running now, each finished step's milliseconds and what was asked. Counts
+ * and fixed names only, never an identity. Kept in a Ref, so a read that stalls or is cut off still names its step.
  */
-const CARRIER_INSPECTION_CONCURRENCY = 2;
+export interface SubjectAccessTrace {
+  /** Distinct Action keys asked about in the capability batch, each in both modes. */
+  readonly actions: number;
+  readonly active: SubjectAccessPhase | null;
+  /** Module capability carriers asked about in the capability batch. */
+  readonly carriers: number;
+  readonly durations: Partial<Record<SubjectAccessPhase, number>>;
+  /** Calls made to the subject inspection service; each is one composition-checked batch. */
+  readonly inspectionCalls: number;
+}
+
+export const emptySubjectAccessTrace: SubjectAccessTrace = Object.freeze({
+  actions: 0,
+  active: null,
+  carriers: 0,
+  durations: {},
+  inspectionCalls: 0,
+});
+
+const tracedPhase = Effect.fn('AgentPlatform.subjectAccessPhase')(function* tracedPhase<Value, Failure, Requirements>(
+  trace: Ref.Ref<SubjectAccessTrace>,
+  phase: SubjectAccessPhase,
+  effect: Effect.Effect<Value, Failure, Requirements>,
+) {
+  yield* Ref.update(trace, (current) => ({ ...current, active: phase }));
+  const startedAt = yield* Clock.currentTimeMillis;
+  const value = yield* effect;
+  const finishedAt = yield* Clock.currentTimeMillis;
+  yield* Ref.update(trace, (current) => ({
+    ...current,
+    active: null,
+    durations: { ...current.durations, [phase]: finishedAt - startedAt },
+  }));
+  return value;
+});
+
+const countInspection = (
+  trace: Ref.Ref<SubjectAccessTrace>,
+  counts: Partial<Pick<SubjectAccessTrace, 'actions' | 'carriers'>>,
+) => Ref.update(trace, (current) => ({ ...current, ...counts, inspectionCalls: current.inspectionCalls + 1 }));
 
 /**
  * Read-only connection-ceiling hints. No subject scope, credential or execution authority is returned; the installed
- * catalog is returned only so the caller names the modules from the same load the hints were taken against.
+ * catalog is returned only so the caller names the modules from the same load the hints were taken against. Two
+ * inspection calls, whatever the catalog size: the subject's scope, then every module carrier and every Action in one
+ * batch.
  */
 export const subjectModuleAccess = Effect.fn('AgentPlatform.subjectModuleAccess')(function* subjectModuleAccessEffect(
   input: SubjectInspectionInput,
+  trace?: Ref.Ref<SubjectAccessTrace>,
 ) {
+  const progress = trace ?? (yield* Ref.make(emptySubjectAccessTrace));
   const inspection = yield* SubjectAccessInspection;
-  const installed = yield* (yield* ShellInstalledModuleCatalog).load.pipe(
-    Effect.mapError((cause) => new AgentStoreUnavailable({ cause })),
+  const installed = yield* tracedPhase(
+    progress,
+    'catalog',
+    (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError((cause) => new AgentStoreUnavailable({ cause }))),
   );
-  const selected = yield* inspection.scope(input);
+  yield* countInspection(progress, {});
+  const selected = yield* tracedPhase(progress, 'scope', inspection.scope(input));
   const access = new Set<string>();
   const propose = new Set<string>();
   const run = new Set<string>();
   if (selected.decision === 'denied') {
     return { access, inspectionOnly: true as const, installed, propose, run };
   }
-  const inspectedCarriers = yield* Effect.forEach(
-    moduleCarriers(installed),
-    Effect.fn('AgentPlatform.inspectModuleCarrier')(function* inspectModuleCarrier(carrier) {
-      const question = {
-        ...input,
-        carrier: { accessDeclaration: carrier.declaration },
-        legalEntityScope: carrier.legalEntityScope,
-      };
-      const result =
-        carrier.declaration?.kind === 'read' && carrier.declaration.selectors.length > 0
-          ? yield* inspection.list(question)
-          : yield* inspection.inspect(question);
-      const { outcome } = result.decision;
-      if (outcome === 'UNAVAILABLE') {
-        return yield* new SubjectInspectionUnavailable({ reason: 'Module inspection returned incomplete authority' });
-      }
-      return { carrier, outcome };
-    }),
-    { concurrency: CARRIER_INSPECTION_CONCURRENCY },
-  );
-  for (const { carrier, outcome } of inspectedCarriers) {
-    if (outcome === 'ALLOWED' || outcome === 'NEEDS_APPROVAL') {
-      access.add(carrier.moduleId);
-    }
-  }
+  const carriers = moduleCarriers(installed);
   const actions = installed.contracts.flatMap(({ manifest }) =>
     manifest.publicSurface.actions.filter((action) => action.legalEntityScope !== 'forbidden'),
   );
   const actionKeys = [...new Set(actions.map(({ actionKey }) => actionKey))];
-  const inspected = yield* inspection.actions({ ...input, actionKeys });
+  yield* countInspection(progress, { actions: actionKeys.length, carriers: carriers.length });
+  const inspected = yield* tracedPhase(
+    progress,
+    'capabilities',
+    inspection.capabilities({
+      ...input,
+      actionKeys,
+      questions: carriers.map((carrier) => ({
+        carrier: { accessDeclaration: carrier.declaration },
+        legalEntityScope: carrier.legalEntityScope,
+        // Visibility for a selector-bearing read is a LIST question, not a targetless record decision.
+        listing: carrier.declaration?.kind === 'read' && carrier.declaration.selectors.length > 0,
+      })),
+    }),
+  );
+  if (inspected.answers.length !== carriers.length) {
+    return yield* new SubjectInspectionUnavailable({ reason: 'Module inspection returned incomplete authority' });
+  }
+  for (const [index, carrier] of carriers.entries()) {
+    const outcome = inspected.answers[index]?.decision.outcome;
+    if (outcome === undefined || outcome === 'UNAVAILABLE') {
+      return yield* new SubjectInspectionUnavailable({ reason: 'Module inspection returned incomplete authority' });
+    }
+    if (outcome === 'ALLOWED' || outcome === 'NEEDS_APPROVAL') {
+      access.add(carrier.moduleId);
+    }
+  }
   const byKey = new Map(inspected.authorities.map((authority) => [authority.actionKey, authority]));
   if (byKey.size !== actionKeys.length || actionKeys.some((key) => !byKey.has(key))) {
     return yield* new SubjectInspectionUnavailable({ reason: 'Action inspection returned incomplete authority' });

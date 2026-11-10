@@ -4,7 +4,7 @@ import {
   ConnectionModuleIdSchema,
   ConnectionPrincipalIdSchema,
 } from '@app/shared-contracts/oauth-connections';
-import { Crypto, DateTime, Duration, Effect, Fiber, Layer, Logger, Option, Result, Schema } from 'effect';
+import { Crypto, DateTime, Duration, Effect, Fiber, Layer, Logger, Option, Ref, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import type {
   ConnectCompanyOption,
@@ -493,8 +493,8 @@ it.effect('ends a stalled options build at the 20 second budget as the retryable
 it.effect('logs one structured line with each phase duration and the counts when the build is slow', () => {
   const entries: unknown[] = [];
   const slow: ConnectOptionsPorts<never> = {
-    authorityOf: (asker, input) =>
-      TestClock.adjust(Duration.seconds(4)).pipe(Effect.andThen(authorityDouble([])(asker, input))),
+    authorityOf: (asker, input, trace) =>
+      TestClock.adjust(Duration.seconds(4)).pipe(Effect.andThen(authorityDouble([])(asker, input, trace))),
   };
   return connectOptionsWith(slow)(session, request).pipe(
     Effect.provide(servicesWith([])),
@@ -521,4 +521,69 @@ it.effect('logs one structured line with each phase duration and the counts when
       }),
     ),
   );
+});
+
+/** A slow-options line may carry only null, numbers and fixed lower-camel names: never an identifier or secret. */
+const SlowOptionsLogSchema = Schema.Struct({
+  annotations: Schema.Record(
+    Schema.String,
+    Schema.Union([Schema.Null, Schema.Number, Schema.String.check(Schema.isPattern(/^[a-z][a-zA-Z_]*$/u))]),
+  ),
+});
+
+it.effect('names the authority step that was running, with its timings and counts, when the budget cuts it off', () => {
+  const entries: unknown[] = [];
+  // The authority read finishes its catalog and scope steps, then stalls inside the capability batch.
+  const stalledInBatch: ConnectOptionsPorts<never> = {
+    authorityOf: (_asker, _input, trace) =>
+      Effect.gen(function* stalledAuthority() {
+        yield* Ref.set(trace, {
+          actions: 240,
+          active: 'capabilities',
+          carriers: 334,
+          durations: { catalog: 12, scope: 340 },
+          inspectionCalls: 2,
+        });
+        return yield* Effect.never;
+      }),
+  };
+  return Effect.gen(function* cutOffBuild() {
+    const fiber = yield* connectOptionsWith(stalledInBatch)(session, request).pipe(
+      Effect.provide(servicesWith([])),
+      Effect.provide(
+        Logger.layer([
+          Logger.make((options) => {
+            entries.push(Logger.formatStructured.log(options));
+          }),
+        ]),
+      ),
+      Effect.forkChild,
+    );
+    yield* TestClock.adjust(Duration.seconds(20));
+    const outcome = yield* Fiber.join(fiber).pipe(Effect.result);
+    expect(Result.isFailure(outcome)).toBe(true);
+    expect(entries).toHaveLength(1);
+    const [entry] = entries;
+    // Fixed names, counts and milliseconds only: no person, tenant, company, token or cookie value is logged.
+    const logged = Schema.decodeUnknownSync(SlowOptionsLogSchema)(entry);
+    expect(Object.values(logged.annotations)).not.toContain(session.principalId);
+    expect(Object.values(logged.annotations)).not.toContain(session.scope.tenantId);
+    expect(entry).toMatchObject({
+      annotations: {
+        activePhase: 'companyAuthority',
+        authorityActions: 240,
+        authorityActivePhase: 'capabilities',
+        authorityCapabilitiesMs: null,
+        authorityCarriers: 334,
+        authorityCatalogMs: 12,
+        authorityInspectionCalls: 2,
+        authorityScopeMs: 340,
+        companies: 2,
+        companyAuthorityMs: null,
+        outcome: 'budget_exceeded',
+        totalMs: 20_000,
+      },
+      message: 'OAuth connect options slow',
+    });
+  });
 });
