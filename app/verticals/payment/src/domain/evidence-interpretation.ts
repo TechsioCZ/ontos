@@ -9,7 +9,7 @@ import type {
 } from '../../shared/domain/payment-vocabulary.ts';
 import type { PaymentSourceBinding } from '../../shared/domain/source-statement.ts';
 import { sameAmount } from './money.ts';
-import { decideOutcomeTransition, OutcomeTransitionDecision } from './operation-lifecycle.ts';
+import { decideOutcomeTransition, isDefinitiveOutcome, OutcomeTransitionDecision } from './operation-lifecycle.ts';
 
 /**
  * Pure interpretation of one qualified Payment Observation against the Current Payment aggregate
@@ -357,7 +357,17 @@ const decideRestatement = (
           (prior) => paymentFactMeaning(prior.factKind)?.outcome === 'EFFECT_CONFIRMED',
         )
       : [];
-  return restatesEstablishedEffect(observation, confirmedPriors)
+  // Every confirmation that established this outcome was fully disproven (for example by a held
+  // retraction): a new confirmation has nothing left to corroborate and is a separate charge.
+  const allConfirmationsDisproven =
+    confirmedPriors.length === 0 &&
+    aggregate.acceptedObservations.some(
+      (prior) =>
+        prior.operationId === operation.operationId &&
+        paymentFactMeaning(prior.factKind)?.outcome === 'EFFECT_CONFIRMED' &&
+        isFullyDisproven(aggregate, prior.observationId),
+    );
+  return !allConfirmationsDisproven && restatesEstablishedEffect(observation, confirmedPriors)
     ? PaymentEvidenceDecision.NO_CHANGE({
         operationId: operation.operationId,
         reason: 'CORROBORATES_ESTABLISHED_OUTCOME',
@@ -366,20 +376,20 @@ const decideRestatement = (
 };
 
 /**
- * A confirmed cancellation and a confirmed collection of the same COLLECT contradict each other. The
- * statement that would complete the contradiction never applies silently: its operation goes to
- * CONFLICT with an open case (#1150/#1151).
+ * A confirmed cancellation and a confirmed collection of the same COLLECT contradict each other. A step
+ * that would complete the pair (automatic acceptance or governed attachment) never applies silently
+ * (#1150/#1151).
  */
-const contradictsCancellationPair = (
-  aggregate: PaymentEvidenceAggregate,
+export const completesCancellationContradiction = (
+  operations: readonly PaymentEvidenceOperationView[],
   operation: PaymentEvidenceOperationView,
-  meaning: FactMeaning,
-) => {
-  if (meaning.outcome !== 'EFFECT_CONFIRMED') {
+  outcome: PaymentOperationOutcome,
+): boolean => {
+  if (outcome !== 'EFFECT_CONFIRMED') {
     return false;
   }
   if (operation.kind === 'COLLECT') {
-    return aggregate.operations.some(
+    return operations.some(
       (other) =>
         other.kind === 'CANCEL_OR_VOID' &&
         other.targetOperationId === operation.operationId &&
@@ -388,7 +398,7 @@ const contradictsCancellationPair = (
   }
   return (
     operation.kind === 'CANCEL_OR_VOID' &&
-    aggregate.operations.some(
+    operations.some(
       (other) =>
         other.kind === 'COLLECT' &&
         other.operationId === operation.targetOperationId &&
@@ -414,17 +424,21 @@ const decideOutcomeFact = (
     return hold('ECONOMIC_EFFECT_ESTABLISHED_ANOTHER_OPERATION', operation.operationId);
   }
   if (
-    meaning.outcome === 'EFFECT_CONFIRMED' &&
+    isDefinitiveOutcome(meaning.outcome) &&
     observation.amount !== undefined &&
     !sameAmount(observation.amount, operation.amount)
   ) {
+    // Not-effected about other money than the operation's proves nothing about this operation either.
     return conflictTo(operation, 'AMOUNT_MISMATCH');
   }
   if (operation.outcome === 'CONFLICT') {
     // Arrival order never resolves a conflict: the evidence waits for governed reconciliation.
     return hold('OPERATION_IN_CONFLICT', operation.operationId);
   }
-  if (operation.outcome !== meaning.outcome && contradictsCancellationPair(aggregate, operation, meaning)) {
+  if (
+    operation.outcome !== meaning.outcome &&
+    completesCancellationContradiction(aggregate.operations, operation, meaning.outcome)
+  ) {
     return conflictTo(operation, 'CONTRADICTS_DEFINITIVE_OUTCOME');
   }
   return OutcomeTransitionDecision.$match(decideOutcomeTransition(operation.outcome, meaning.outcome), {
