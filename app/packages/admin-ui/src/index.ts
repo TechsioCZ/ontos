@@ -28,6 +28,7 @@ export {
 export { DetailViewModeToggle, type DetailViewModeToggleProps } from './detail-view-mode-toggle.tsx';
 export { EmptyState, type EmptyStateProps } from './empty-state.tsx';
 export { formatDate, formatDateTime, formatMoney, formatNumber, formatPercent } from './format.ts';
+export { useHeldSnapshot } from './held-snapshot.ts';
 export { PageHeader, type PageHeaderProps } from './page-header.tsx';
 export { foldSearchText, matchesSearch } from './search-text.ts';
 export { ScrollRegion, type ScrollRegionProps } from './scroll-region.tsx';
