@@ -473,6 +473,41 @@ it.live('a shown scoped store reloads once its value is 20 s old, as a write it 
   }),
 );
 
+it.live('a shown strict scoped store reloads once 20 s old, also when its view subscribes without an input', () =>
+  Effect.gen(function* strictScopedExpiry() {
+    const clock = ManagedRuntime.make(TestClock.layer());
+    let loads = 0;
+    const store = definePageData({
+      changesFrom: ['finance-billing'],
+      key: (id: string) => id,
+      load: (id: string) =>
+        Effect.sync(() => {
+          loads += 1;
+          return `${id}#${loads}`;
+        }),
+      retainStale: false,
+      runtime: clock,
+    });
+    const seen: string[] = [];
+    const unsubscribe = store.subscribe(() => {
+      seen.push(store.snapshot('shown').state);
+    });
+    yield* store.preload('shown');
+    yield* store.preload('hidden');
+    expect(loads).toBe(2);
+    seen.length = 0;
+    yield* Effect.promise(() => clock.runPromise(TestClock.adjust('20 seconds')));
+    yield* Effect.sleep('10 millis');
+    // Asking whether a view shows the value re-reads it while it is still fresh, so the check itself shows no loading.
+    expect(seen[0]).toBe('ready');
+    expect(loads).toBe(3);
+    expect(store.snapshot('shown')).toMatchObject({ state: 'ready', value: 'shown#3' });
+    expect(store.snapshot('hidden')).toMatchObject({ state: 'pending' });
+    unsubscribe();
+    yield* Effect.promise(() => clock.dispose());
+  }),
+);
+
 const changeOf = (detail: ModuleChangeDetail) => new CustomEvent(moduleChangeEvent, { detail });
 
 it('a hook listening to change events itself applies the same app rule as the stores', () => {

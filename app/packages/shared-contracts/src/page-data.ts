@@ -331,7 +331,6 @@ export const definePageData = <I, A, E, R>(options: {
         Effect.andThen(
           Effect.sync(() => {
             if (entry.generation === generation) {
-              entry.stale = true;
               onExpired();
             }
           }),
@@ -357,14 +356,16 @@ export const definePageData = <I, A, E, R>(options: {
     const onExpired = (): void => {
       const key = options.key(entry.input);
       if (entries.get(key) !== entry) {
+        entry.stale = true;
         return;
       }
       // A store that ignores unrelated live changes no longer hears every commit, so a change that never sends one
-      // (an Outbox Worker's write) is picked up by expiry, as for strict stores.
+      // (an Outbox Worker's write) is picked up by expiry, also where a view subscribes without an input.
+      // Checked while the entry is still fresh: a strict snapshot of a stale value is pending, which would re-render.
       const shown =
-        options.retainStale === false
-          ? (mountedKeys.get(key) ?? 0) > 0
-          : changesFrom !== undefined && (mountedKeys.has(key) || (options.cancelWhenUnused !== true && shownNow(key)));
+        (options.retainStale === false && mountedKeys.has(key)) ||
+        (changesFrom !== undefined && (mountedKeys.has(key) || (options.cancelWhenUnused !== true && shownNow(key))));
+      entry.stale = true;
       if (shown) {
         startLoad(entry);
       }
